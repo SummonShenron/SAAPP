@@ -1,0 +1,18 @@
+{
+    "jack_admin": {
+        "email": "jackharper0517@outlook.com",
+        "groups": ["Global_Admins", "Affiliate_A", "Affiliate_A Ingesters", "Affiliate_B", "Affiliate_B Ingesters"]
+    },
+    "sonic_user": {
+        "email": "userA@affiliateA.com",
+        "groups": ["Affiliate_A"]
+    },
+    "dragon_ball_user": {
+        "email": "userB@affiliateB.com",
+        "groups": ["Affiliate_B", "Affiliate_B Ingesters"]
+    },
+    "lonely_user": {
+        "email": "*",
+        "groups": ["Affiliate_A"]
+    }
+}

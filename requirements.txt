@@ -1,0 +1,13 @@
+fastapi>=0.110.0
+uvicorn>=0.28.0
+pydantic>=2.6.0
+langchain>=0.1.0
+langchain-core>=0.1.30
+langchain-community>=0.0.28
+langchain-huggingface>=0.0.1
+sentence-transformers>=2.5.0
+chromadb>=0.4.24
+pypdf>=4.0.0
+watchfiles==0.22.0
+langchain-text-splitters>=0.0.1
+python-multipart>=0.0.5

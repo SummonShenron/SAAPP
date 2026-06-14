@@ -1,0 +1,647 @@
+
+/* ==========================================================================
+   1. GLOBAL RESETS & THEME VARIABLES
+   ========================================================================== */
+:root {
+  --bg-main: #ffffff;       /* Ultra-soft, calming pastel sky blue backdrop */
+  --bg-surface: #ffffff;    /* Clean white surface containers to break up the color */
+  --bg-surface-hover: #f1f5f9;
+  --border-color: #bfdbfe;  /* Gentle light-blue accent borders */
+  --text-main: #1e3a8a;     /* Deep, soft royal blue for comfortable reading */
+  --text-muted: #60a5fa;    /* Balanced sky blue for auxiliary items */
+  --text: #000000;          /* Default text color (same as text-main for consistency) */
+  --accent-primary: #3b82f6; /* Smooth, modern classic blue (clean, non-aggressive) */
+  --accent-success: #10b981; /* Soft emerald green for secure badges */
+  --accent-danger: #ef4444;  /* Muted crimson for alerts */
+  --font-sans: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* THEME OVERRIDE: SHADOW MODE (DARK CRIMSON) */
+.theme-shadow {
+  --bg-main: #0a0a0c;        
+  --bg-surface: #ffffff;     
+  --bg-surface-hover: #222228;
+  --border-color: #af2626;   
+  --text-main: #474343;      
+  --text-muted: #9ca3af;     
+  --accent-primary: #dc2626; 
+  --accent-success: #eab308; 
+  --accent-danger: #ff0000;  
+  --text: #ffffff;
+
+  /* Component Overrides */
+  --bubble-user-bg: #2d1212;
+  --bubble-user-border: #7f1d1d;
+  --bubble-user-text: #f3f4f6;
+  --bubble-ai-bg: #1f1f24;
+  --bubble-ai-border: #2e2e36;
+  --bubble-ai-text: #e5e7eb;
+  --filter-bg: #1c1111;
+  --hero-overlay: linear-gradient(rgba(10, 10, 12, 0.4), rgba(10, 10, 12, 0.85));
+  --input-text: var(--text-main);
+  --card-text: #e5e7eb;
+  --loader-glow: drop-shadow(0 0 6px rgba(220, 38, 38, 0.7));
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body, html {
+  width: 100%;
+  height: 100%;
+  background-color: var(--bg-main); 
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+}
+
+/* Custom Clean Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-main);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-primary);
+}
+
+/* ==========================================================================
+   2. LANDING PAGE STYLES (Identity Gatekeeper)
+   ========================================================================== */
+.landing-page {
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+}
+
+.landing-left {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 10% 5%;
+  background-color: var(--bg-surface);
+  border-right: 1px solid var(--border-color);
+}
+
+.landing-right {
+  flex: 1.2;
+  background-size: cover;
+  background-position: center;
+  position: relative;
+}
+
+/* Clean pastel overlay to anchor the landing image smoothly */
+.landing-right::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: linear-gradient(90deg, var(--bg-surface) 0%, rgba(219, 234, 254, 0.3) 100%);
+}
+
+.landing-hero-text h2 {
+  font-size: 2.2rem;
+  letter-spacing: 0.5px;
+  margin-bottom: 0.5rem;
+  color: var(--text-main);
+}
+
+.landing-hero-text p {
+  color: #4b5563;
+  margin-bottom: 2.5rem;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.enter-btn {
+  width: 100%;
+  max-width: 300px;
+  background: var(--accent-primary);
+  color: #ffffff;
+  border: none;
+  padding: 0.85rem 1.5rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.2);
+}
+
+.enter-btn:hover:not(:disabled) {
+  background: #2563eb;
+  box-shadow: 0 10px 15px -3px rgba(59, 130, 246, 0.3);
+  transform: translateY(-2px);
+}
+.enter-btn:active:not(:disabled) {
+  background: #2563eb;
+  transform: translateY(2px);
+}
+.enter-btn:disabled {
+  background: var(--border-color);
+  color: var(--text-muted);
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* ==========================================================================
+   3. SECURE PORTAL CORE LAYOUT (Chat Interface)
+   ========================================================================== */
+.portal-container {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  min-height: 100vh;
+  background-color: var(--bg-main); 
+  color: var(--text-main);
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* Top Navigation Bar */
+.menu-navigator {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1.5rem;
+  background-color: var(--bg-main);
+  border-bottom: 1px solid var(--border-color);
+  z-index: 10;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+}
+
+.nav-logo {
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  color: var(--accent-primary);
+}
+
+.nav-logo a, 
+.nav-logo a:visited {
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  color: var(--accent-primary) !important; /* Forces the link to stay your primary accent */
+  text-decoration: none;
+}
+
+.banner-context a {
+  color: var(--text-main);
+  text-decoration: underline;
+  font-weight: 500;
+}
+
+.banner-context h4 {
+  color: var(--text-main); /* Uses the soft sky-blue or ash-gray depending on theme */
+  margin-bottom: 0.5rem;
+}
+
+.nav-links {
+  display: flex;
+  gap: 1.5rem;
+  font-size: 0.9rem;
+}
+
+.nav-links span {
+  color: #4b5563;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.nav-links span.active, .nav-links span:hover {
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+
+
+
+.nav-links span.nav-exit:hover {
+  color: var(--accent-danger);
+}
+
+/* Banner Frame (Locked perfectly at 45% position) */
+.hero-banner {
+  height: 110px;
+  background-size: cover;
+  background-position: center 45%; 
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 0 1.5rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+/* Soft white tint shield layer to keep text highly legible */
+.hero-banner::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: linear-gradient(rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.75));
+  z-index: 1;
+}
+
+.banner-context {
+  position: relative;
+  z-index: 2;
+}
+
+.banner-context h3 {
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  margin-bottom: 0.25rem;
+  color: var(--text-main);
+}
+
+.badge {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--accent-success);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  display: inline-block;
+  font-family: monospace;
+  font-weight: 600;
+}
+
+/* Main Body Framework */
+.portal-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 1.5rem;
+  gap: 1rem;
+  min-height: 0;
+}
+
+/* Chat History Matrix */
+.chat-window {
+  flex: 1;
+  border-radius: 8px;
+  padding: 1.5rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.01);
+}
+
+.message-bubble {
+  max-width: 75%;
+  padding: 0.85rem 1.2rem;
+  border-radius: 8px;
+  line-height: 1.5;
+  font-size: 0.95rem;
+  animation: fadeIn 0.2s ease-out forwards;
+}
+
+.message-sender {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  margin-bottom: 0.35rem;
+  font-family: monospace;
+  text-transform: uppercase;
+}
+
+/* Message Variations */
+.message-bubble.system {
+  align-self: center;
+  background: #f8fafc;
+  border: 1px dashed var(--border-color);
+  color: #64748b;
+  font-size: 0.85rem;
+  max-width: 100%;
+  text-align: center;
+}
+.message-bubble.system .message-sender { color: #64748b; }
+
+.message-bubble.user {
+  align-self: flex-end;
+  background: #eff6ff;       /* Very soft, clean light blue bubble */
+  color: var(--text-main);   /* Easy reading deep blue text */
+  border: 1px solid #bfdbfe;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+}
+.message-bubble.user .message-sender { color: var(--accent-primary); }
+
+.message-bubble.ai {
+  align-self: flex-start;
+  background: #f8fafc;       /* Off-white bubble for AI response clarity */
+  border: 1px solid #e2e8f0;
+  color: #334155;
+}
+.message-bubble.ai .message-sender { color: var(--text-main); }
+
+.message-bubble.ai.thinking {
+  color: #94a3b8;
+  font-style: italic;
+  border-style: dashed;
+  background: transparent;
+  box-shadow: none;
+}
+
+.theme-shadow .message-bubble.user {
+  align-self: flex-end;
+  background: #910000;       /* Very soft, clean light blue bubble */
+  color: var(--text);   /* Easy reading deep blue text */
+  border: 1px solid #910000;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+}
+
+.theme-shadow .message-bubble.ai {
+  align-self: flex-start;
+  background: #1a1a1a;       /* Off-white bubble for AI response clarity */
+  border: 1px solid #1a1a1a;
+  color: #334155;
+  color: var(--text);
+}
+
+/* ==========================================================================
+   4. INTERACTIVE EXAMPLE CARDS
+   ========================================================================== */
+.example-cards-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.query-card {
+  background: #dbeafe;
+  border: 1px solid var(--border-color);
+  padding: 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.01);
+  color: var(--text);
+}
+
+
+.theme-shadow .query-card {
+  background: #910000;                  
+  border: 1px solid var(--border-color);
+  filter: var(--loader-glow);         
+}
+
+.query-card:hover {
+  background: #f8fafc;
+  border-color: var(--accent-primary);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+  translate: translateY(-2px);
+}
+
+.theme-shadow .query-card:hover {
+  background: var(--bg-surface-hover);
+  border-color: var(--accent-primary);
+  transform: translateY(-2px);
+  box-shadow: var(--loader-glow);
+}
+
+.query-card:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+}
+
+.query-card p {
+  font-size: 0.9rem;
+  color: var(--text);
+  line-height: 1.4;
+  margin-bottom: 0.75rem;
+}
+
+.query-card span {
+  font-size: 0.75rem;
+  color: var(--accent-primary);
+  font-weight: 600;
+  align-self: flex-end;
+}
+
+/* ==========================================================================
+   5. CONTROLS FOOTER & FILTERS DRAWER
+   ========================================================================== */
+.controls-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.chat-input-area {
+  display: flex;
+  gap: 0.75rem;
+  background: var(--bg-main);
+}
+
+.chat-input-area input:hover {
+  border-color: var(--accent-primary);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+}
+
+.chat-input-area input {
+  flex: 1;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  padding: 0.85rem 1.2rem;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.95rem;
+  outline: none;
+  transition: all 0.2s;
+  background: var(--bg-main);
+
+}
+
+.chat-input-area input:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.chat-input-area input::placeholder {
+  color: #94a3b8;
+}
+
+.chat-input-area button {
+  background: var(--accent-primary);
+  color: #ffffff;
+  border: none;
+  padding: 0 1.75rem;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.chat-input-area button:hover:not(:disabled) {
+  background: #2563eb;
+  box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.3);
+  transform: translateY(-2px);
+}
+
+.chat-input-area button:active:not(:disabled) {
+  background: #2563eb;
+  transform: translateY(2px);
+}
+
+.chat-input-area button:disabled {
+  background: #e2e8f0;
+  color: #94a3b8;
+  border: 1px solid #cbd5e1;
+  cursor: not-allowed;
+}
+
+/* Security Dropdown Filter Component Row */
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.85rem;
+  background: #eff6ff; 
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+}
+
+.theme-shadow .filter-row {
+  background: #1c1111; 
+  border: 1px solid var(--border-color);
+}
+
+.theme-shadow .filter-row:hover {
+  background: #1c1111;
+  border-color: var(--accent-primary);
+  transform: translateY(-2px);
+  box-shadow: var(--loader-glow);
+}
+
+.filter-row:hover {
+  background: #f8fafc;
+  border-color: var(--accent-primary);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+}
+
+.filter-row label {
+  font-size: 0.8rem;
+  color: var(--text-main);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.filter-row select {
+  background: var(--bg-main);
+  color: #334155;
+  border: 1px solid var(--border-color);
+  padding: 0.35rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  outline: none;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.filter-row select:focus {
+  border-color: var(--accent-primary);
+}
+
+
+.affiliate-select:hover {
+  background: #f8fafc;
+  border-color: var(--accent-primary);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+}
+
+.nav-clear:hover {
+  color: #f8fafc !important;
+  text-decoration: underline;
+}
+
+/* Keyframe Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ==========================================================================
+   6. DYNAMIC STATE TRANSITIONS
+   ========================================================================== */
+/* FIX: Move the sizing limits here so the dashboard column stays 
+   perfectly compact, centered, and sized the same before and after chatting */
+.portal-body {
+  max-width: 900px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+/* Keeps cards container compact and perfectly preserves its original size */
+.portal-body.initial-state-view .example-cards-container {
+  flex: none;
+}
+
+/* Forces the footer to pin to the baseline by consuming the empty space above it */
+.portal-body.initial-state-view .controls-footer {
+  margin-top: auto;
+  padding-top: 2rem; 
+}
+
+/* Ensure smooth auto-scroll tracking inside layout calculations */
+.chat-window {
+  scroll-behavior: smooth;
+}
+
+/* ==========================================================================
+   7. LOADING ANIMATIONS
+   ========================================================================== */
+
+
+/* Container alignment for the loader */
+.sonic-loader-container {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  border: none !important; 
+  background: transparent !important;
+  padding: 1rem !important;
+}
+
+/* 🌀 The GIF Sprite Controller */
+.sonic-spin-gif {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  
+  /* 💡 PRO-TIP: Keeps old-school 16-bit pixels razor-sharp instead of blurry */
+  image-rendering: pixelated; 
+  
+  /* Optional: Adds a subtle blue chaos energy glow behind the sprite */
+  /* filter: drop-shadow(0 0 6px rgba(59, 130, 246, 0.6)); */
+}
+
+/* Keeps the text pulsing while waiting */
+.loading-text {
+  color: #94a3b8;
+  font-size: 0.95rem;
+  animation: text-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes text-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}

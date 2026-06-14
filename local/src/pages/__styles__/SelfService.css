@@ -1,0 +1,392 @@
+/* ==========================================================================
+   ARK CORE TENANT INGESTION GATEWAY (SELF SERVICE) STYLES
+   ========================================================================== */
+
+.self-service-container {
+  max-width: 1100px;
+  margin: 2rem auto;
+  padding: 0 1.5rem;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  color: #f1f5f9; /* Soft bright text for dark mode interface compatibility */
+  background-color: var(--bg-main)
+}
+
+/* --- HEADER ZONE --- */
+.self-service-header {
+  margin-bottom: 2.5rem;
+  border-bottom: 1px solid #334155;
+  padding-bottom: 1.5rem;
+}
+
+.self-service-header h1 {
+  font-size: 2.25rem;
+  font-weight: 700;
+  margin: 0 0 0.5rem 0;
+  background: linear-gradient(90deg, #38bdf8, #2563eb);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.theme-shadow .self-service-header h1 {
+  background: linear-gradient(90deg, #f83838, #ffffff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.self-service-header p {
+  color: #94a3b8;
+  margin: 0;
+  font-size: 1rem;
+}
+
+.user-badge {
+  background-color: #1e293b;
+  color: #e2e8f0;
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.9rem;
+  border: 1px solid #475569;
+}
+
+
+/* --- CARD STACK LAYOUT --- */
+.vertical-card-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem; /* Creates clean breathing room between steps */
+  margin-bottom: 5rem;
+}
+
+/* Individual Core Cards */
+.service-card {
+  position: relative;
+  background-color: #1e293b; /* Sleek slate card background */
+  border: 1px solid #334155;
+  border-radius: 12px;
+  padding: 2rem;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -1px rgba(0, 0, 0, 0.15);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  overflow: visible !important;
+}
+
+.theme-shadow .service-card {
+  background-color: #3b1e1e; /* Even darker background for shadow theme */
+  border: 1px solid #553333
+}
+
+.service-card:hover {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+}
+
+.theme-shadow .form-group select {
+  background-color: #2a0f0f;
+  border: 1px solid #553333;
+}
+
+.theme-shadow .custom-file-button {
+  background-color: #2a0f0f;
+  border: 1px solid #553333;
+}
+
+.theme-shadow .manifest-search-input {
+  background-color: #2a0f0f;
+  border: 1px solid #553333;
+}
+
+.theme-shadow .manifest-table th {
+  background-color: #553333;
+}
+
+.theme-shadow .manifest-table td {
+  background-color: #553333;
+}
+
+.theme-shadow .staged-files-preview {
+  background-color: #2a0f0f;
+  border: 1px solid #553333;
+}
+/* Step Badges (Top right of cards) */
+.card-badge {
+  position: absolute;
+  top: 1.5rem;
+  right: 1.5rem;
+  background-color: #334155;
+  color: #94a3b8;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+  letter-spacing: 0.05em;
+  border: 1px solid #475569;
+}
+
+.service-card h2 {
+  font-size: 1.5rem;
+  margin: 0 0 0.5rem 0;
+  color: #f8fafc;
+  font-weight: 600;
+}
+
+.card-description {
+  color: #94a3b8;
+  margin: 0 0 1.5rem 0;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  position: relative;
+  z-index: 11;
+}
+
+
+/* --- STEP 1: FORM CONTROLS --- */
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 400px;
+}
+
+.form-group label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.form-group select {
+  background-color: #0f172a;
+  color: #f8fafc;
+  border: 1px solid #475569;
+  padding: 0.75rem;
+  border-radius: 6px;
+  font-size: 1rem;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.form-group select:focus {
+  border-color: #2563eb;
+}
+
+
+/* --- STEP 2: PROVISIONING & FILE DROPS --- */
+.upload-form-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* Hidden native input file handle wrapped by a gorgeous layout button */
+.file-input-wrapper input[type="file"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+
+.custom-file-button {
+  display: inline-block;
+  padding: 1rem 2rem;
+  background-color: #0f172a;
+  border: 2px dashed #475569;
+  border-radius: 8px;
+  text-align: center;
+  cursor: pointer;
+  font-weight: 500;
+  color: #cbd5e1;
+  transition: all 0.2s ease;
+}
+
+.custom-file-button:hover {
+  border-color: #38bdf8;
+  background-color: rgba(56, 189, 248, 0.02);
+  color: #f8fafc;
+}
+
+/* Multi-file preview log lists */
+.staged-files-preview {
+  margin: 1rem 0 0 0;
+  padding: 0;
+  list-style: none;
+  background-color: #0f172a;
+  border-radius: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid #334155;
+}
+
+.staged-files-preview li {
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid #1e293b;
+  font-size: 0.85rem;
+  color: #cbd5e1;
+  display: flex;
+  align-items: center;
+}
+
+.staged-files-preview li:last-child {
+  border-bottom: none;
+}
+
+/* Action Execution Submits */
+.action-button {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  color: #ffffff;
+  border: none;
+  padding: 0.85rem 1.75rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  align-self: flex-start;
+  transition: opacity 0.2s ease, transform 0.1s ease;
+}
+
+.theme-shadow .action-button {
+  background: linear-gradient(135deg, #eb2525, #000000);
+}
+.action-button:hover:not(:disabled) {
+  opacity: 0.95;
+}
+
+.action-button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.action-button:disabled {
+  background: #334155;
+  color: #64748b;
+  cursor: not-allowed;
+}
+
+/* Status Notifications */
+.status-banner {
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.status-banner.success {
+  background-color: rgba(22, 163, 74, 0.1);
+  border: 1px solid #16a34a;
+  color: #4ade80;
+}
+
+.status-banner.error {
+  background-color: rgba(220, 38, 38, 0.1);
+  border: 1px solid #dc2626;
+  color: #f87171;
+}
+
+
+/* --- STEP 3: AUDITING MANIFEST AND GRIDS --- */
+.search-bar-wrapper {
+  margin-bottom: 1.25rem;
+}
+
+.manifest-search-input {
+  width: 100%;
+  max-width: 400px;
+  background-color: #0f172a;
+  border: 1px solid #475569;
+  color: #f8fafc;
+  padding: 0.65rem 1rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  outline: none;
+}
+
+.manifest-search-input:focus {
+  border-color: #38bdf8;
+}
+
+.loader-subtext, .empty-manifest-notice {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: #64748b;
+  font-size: 0.95rem;
+  background-color: #0f172a;
+  border-radius: 8px;
+  border: 1px dashed #334155;
+}
+
+/* Manifest Scrolling Data Table Workspace */
+.manifest-table-scroll-zone {
+  width: 100%;
+  overflow-x: auto;
+  background-color: #0f172a;
+  border-radius: 8px;
+  border: 1px solid #334155;
+}
+
+.manifest-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 0.9rem;
+}
+
+.manifest-table th {
+  background-color: #1e293b;
+  color: #94a3b8;
+  font-weight: 600;
+  padding: 1rem;
+  border-bottom: 2px solid #334155;
+}
+
+.manifest-table td {
+  padding: 1rem;
+  border-bottom: 1px solid #233149;
+  color: #cbd5e1;
+  vertical-align: middle;
+}
+
+.manifest-table tr:last-child td {
+  border-bottom: none;
+}
+
+.doc-name-cell {
+  font-weight: 500;
+  color: #f1f5f9;
+}
+
+/* Row-Level Ingot Destructive Evictions */
+.delete-row-btn {
+  background-color: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  padding: 0.4rem 0.9rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.delete-row-btn:hover:not(:disabled) {
+  background-color: #ef4444;
+  color: #ffffff;
+  border-color: #ef4444;
+}
+
+.delete-row-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* --- RETRIEVAL REFRESH FALLBACK FALLS --- */
+.self-service-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+  color: #94a3b8;
+  font-size: 1.1rem;
+  font-weight: 500;
+}
