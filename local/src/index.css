@@ -14,11 +14,21 @@
   --accent-success: #10b981; /* Soft emerald green for secure badges */
   --accent-danger: #ef4444;  /* Muted crimson for alerts */
   --font-sans: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --shadow:
+      0 2px 4px rgba(0, 0, 0, 0.02),
+      0 10px 20px rgba(0, 0, 0, 0.04),
+      0 20px 4px rgba(0, 0, 0, 0.04),
+      0 30px 60px rgba(0, 0, 0, 0.06);
+  --shadow-hover: 
+    0 4px 8px rgba(0, 0, 0, 0.04),
+    0 15px 30px rgba(0, 0, 0, 0.08),
+    0 30px 15px rgba(0, 0, 0, 0.06),
+    0 45px 70px rgba(0, 0, 0, 0.1);
 }
 
 /* THEME OVERRIDE: SHADOW MODE (DARK CRIMSON) */
 .theme-shadow {
-  --bg-main: #0a0a0c;        
+  --bg-main: #353333;        
   --bg-surface: #ffffff;     
   --bg-surface-hover: #222228;
   --border-color: #af2626;   
@@ -33,7 +43,7 @@
   --bubble-user-bg: #2d1212;
   --bubble-user-border: #7f1d1d;
   --bubble-user-text: #f3f4f6;
-  --bubble-ai-bg: #1f1f24;
+  --bubble-ai-bg: #0a0a0c;
   --bubble-ai-border: #2e2e36;
   --bubble-ai-text: #e5e7eb;
   --filter-bg: #1c1111;
@@ -41,6 +51,15 @@
   --input-text: var(--text-main);
   --card-text: #e5e7eb;
   --loader-glow: drop-shadow(0 0 6px rgba(220, 38, 38, 0.7));
+  /* Deeper, more aggressive black layering to cut through the dark theme */
+  --shadow:
+      0 4px 6px rgba(0, 0, 0, 0.3),
+      0 15px 30px rgba(0, 0, 0, 0.4),
+      0 30px 60px rgba(0, 0, 0, 0.5); 
+  --shadow-dark-hover: 
+    0 8px 12px rgba(0, 0, 0, 0.45),
+    0 22px 40px rgba(0, 0, 0, 0.55),
+    0 45px 80px rgba(0, 0, 0, 0.65);    
 }
 
 * {
@@ -175,9 +194,13 @@ body, html {
   background-color: var(--bg-main);
   border-bottom: 1px solid var(--border-color);
   z-index: 10;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+  box-shadow: var(--shadow);
 }
-
+.theme-shadow .menu-navigator {
+  background-color: #1c1111;
+  border-bottom: 1px solid var(--border-color);
+  box-shadow: var(--shadow);
+}
 .nav-logo {
   font-weight: 700;
   letter-spacing: 0.5px;
@@ -304,6 +327,7 @@ body, html {
   line-height: 1.5;
   font-size: 0.95rem;
   animation: fadeIn 0.2s ease-out forwards;
+  box-shadow: var(--shadow);
 }
 
 .message-sender {
@@ -332,7 +356,7 @@ body, html {
   background: #eff6ff;       /* Very soft, clean light blue bubble */
   color: var(--text-main);   /* Easy reading deep blue text */
   border: 1px solid #bfdbfe;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+  box-shadow: var(--shadow);
 }
 .message-bubble.user .message-sender { color: var(--accent-primary); }
 
@@ -341,6 +365,7 @@ body, html {
   background: #f8fafc;       /* Off-white bubble for AI response clarity */
   border: 1px solid #e2e8f0;
   color: #334155;
+  box-shadow: var(--shadow);
 }
 .message-bubble.ai .message-sender { color: var(--text-main); }
 
@@ -357,7 +382,7 @@ body, html {
   background: #910000;       /* Very soft, clean light blue bubble */
   color: var(--text);   /* Easy reading deep blue text */
   border: 1px solid #910000;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+  box-shadow: var(--shadow);
 }
 
 .theme-shadow .message-bubble.ai {
@@ -388,7 +413,7 @@ body, html {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.01);
+  box-shadow: var(--shadow);
   color: var(--text);
 }
 
@@ -403,7 +428,7 @@ body, html {
   background: #f8fafc;
   border-color: var(--accent-primary);
   transform: translateY(-2px);
-  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+  box-shadow: var(--shadow-hover);
   translate: translateY(-2px);
 }
 
@@ -411,7 +436,7 @@ body, html {
   background: var(--bg-surface-hover);
   border-color: var(--accent-primary);
   transform: translateY(-2px);
-  box-shadow: var(--loader-glow);
+  box-shadow: var(--shadow-hover);
 }
 
 .query-card:active {
@@ -451,7 +476,7 @@ body, html {
 .chat-input-area input:hover {
   border-color: var(--accent-primary);
   transform: translateY(-2px);
-  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+  box-shadow: var(--shadow-hover);
 }
 
 .chat-input-area input {
@@ -465,6 +490,7 @@ body, html {
   outline: none;
   transition: all 0.2s;
   background: var(--bg-main);
+  box-shadow: var(--shadow);
 
 }
 
@@ -486,17 +512,19 @@ body, html {
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
+  box-shadow: var(--shadow);
 }
 
 .chat-input-area button:hover:not(:disabled) {
   background: #2563eb;
-  box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.3);
+  box-shadow: var(--shadow-hover);
   transform: translateY(-2px);
 }
 
 .chat-input-area button:active:not(:disabled) {
   background: #2563eb;
   transform: translateY(2px);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.02);
 }
 
 .chat-input-area button:disabled {
@@ -515,6 +543,8 @@ body, html {
   background: #eff6ff; 
   border: 1px solid var(--border-color);
   border-radius: 6px;
+  box-shadow: var(--shadow);
+  transition: all 0.2s ease;
 }
 
 .theme-shadow .filter-row {
@@ -526,14 +556,14 @@ body, html {
   background: #1c1111;
   border-color: var(--accent-primary);
   transform: translateY(-2px);
-  box-shadow: var(--loader-glow);
+  box-shadow: var(--shadow-glow);
 }
 
 .filter-row:hover {
   background: #f8fafc;
   border-color: var(--accent-primary);
   transform: translateY(-2px);
-  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+  box-shadow: var(--shadow-hover);
 }
 
 .filter-row label {
@@ -565,7 +595,7 @@ body, html {
   background: #f8fafc;
   border-color: var(--accent-primary);
   transform: translateY(-2px);
-  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+  box-shadow: var(--shadow-hover);
 }
 
 .nav-clear:hover {

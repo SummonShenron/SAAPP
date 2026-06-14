@@ -65,7 +65,7 @@
   border: 1px solid #334155;
   border-radius: 12px;
   padding: 2rem;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -1px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow);
   transition: transform 0.2s ease, box-shadow 0.2s ease;
   overflow: visible !important;
 }
@@ -76,7 +76,7 @@
 }
 
 .service-card:hover {
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-hover);
 }
 
 .theme-shadow .form-group select {
@@ -144,6 +144,11 @@
   flex-direction: column;
   gap: 0.5rem;
   max-width: 400px;
+  box-shadow: var(--shadow);
+}
+
+.form-group:hover {
+  box-shadow: var(--shadow-hover);
 }
 
 .form-group label {
@@ -168,6 +173,9 @@
   border-color: #2563eb;
 }
 
+.Filter active index by filename {
+  box-shadow: var(--shadow);
+}
 
 /* --- STEP 2: PROVISIONING & FILE DROPS --- */
 .upload-form-layout {
@@ -244,6 +252,7 @@
   cursor: pointer;
   align-self: flex-start;
   transition: opacity 0.2s ease, transform 0.1s ease;
+  box-shadow: var(--shadow);
 }
 
 .theme-shadow .action-button {
@@ -251,10 +260,12 @@
 }
 .action-button:hover:not(:disabled) {
   opacity: 0.95;
+  box-shadow: var(--shadow-hover);
 }
 
 .action-button:active:not(:disabled) {
   transform: scale(0.98);
+
 }
 
 .action-button:disabled {
