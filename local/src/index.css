@@ -515,6 +515,10 @@ body, html {
   box-shadow: var(--shadow);
 }
 
+.theme-shadow .chat-input-area .clear-button {
+  background-color: #000000 !important;
+}
+
 .chat-input-area button:hover:not(:disabled) {
   background: #2563eb;
   box-shadow: var(--shadow-hover);
@@ -548,7 +552,7 @@ body, html {
 }
 
 .theme-shadow .filter-row {
-  background: #1c1111; 
+  background: var(--bg-main); 
   border: 1px solid var(--border-color);
 }
 

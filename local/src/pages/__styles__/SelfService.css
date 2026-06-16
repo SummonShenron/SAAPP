@@ -144,7 +144,7 @@
   flex-direction: column;
   gap: 0.5rem;
   max-width: 400px;
-  box-shadow: var(--shadow);
+  /* box-shadow: var(--shadow); */
 }
 
 .form-group:hover {
@@ -173,6 +173,9 @@
   border-color: #2563eb;
 }
 
+.form-group select:hover {
+  box-shadow: var(--shadow-hover) !important;
+}
 .Filter active index by filename {
   box-shadow: var(--shadow);
 }
@@ -311,6 +314,10 @@
   border-radius: 6px;
   font-size: 0.9rem;
   outline: none;
+}
+
+.manifest-search-input:hover {
+  box-shadow: var(--shadow-hover);
 }
 
 .manifest-search-input:focus {

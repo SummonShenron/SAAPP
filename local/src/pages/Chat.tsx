@@ -208,8 +208,9 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
                   onChange={(e) => setInput(e.target.value)}
                   disabled={loading}
                 />
-                <button type="submit" disabled={loading || !input.trim()}>Send</button>
-                <button 
+                <button className="submit-button" type="submit" disabled={loading || !input.trim()}>Send</button>
+                <button
+                  className="clear-button" 
                   type="button" 
                   onClick={handleClearChat} 
                   disabled={loading}
