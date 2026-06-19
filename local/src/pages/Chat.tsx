@@ -22,35 +22,92 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
   const [allowedAffiliates, setAllowedAffiliates] = useState<string[]>([]);
   const [userEmail, setUserEmail] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'chat' | 'self-service'>('chat');
-  const [messages, setMessages] = useState<Message[]>([
-    { sender: 'system', text: `What would you like to find out about, ${username}?` }
-  ]);
+  
+  // 1. Warm-initialize the messages state from localStorage to prevent auto-clearing
+  const [messages, setMessages] = useState<Message[]>(() => {
+    const persistedHistory = localStorage.getItem(`chat-messages-${username}`);
+    if (persistedHistory) {
+      try {
+        return JSON.parse(persistedHistory);
+      } catch (e) {
+        console.error("Failed to parse persisted conversation logs:", e);
+      }
+    }
+    return [
+      { sender: 'system', text: `What would you like to find out about, ${username}?` }
+    ];
+  });
+  
   const [input, setInput] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   const [currentExampleQuestions, setCurrentExampleQuestions] = useState<string[]>([]);
   const [loadingCards, setLoadingCards] = useState<boolean>(false);
+  
   const [theme, setTheme] = useState<'sonic' | 'shadow'>(() => {
     const savedTheme = localStorage.getItem('saapp-theme');
     return (savedTheme === 'shadow' || savedTheme === 'sonic') ? savedTheme : 'sonic';
   });
-  // Ref anchor to target the scrollable chat container viewport
+  
   const chatWindowRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
   const toggleTheme = () => {
     setTheme(prev => (prev === 'sonic' ? 'shadow' : 'sonic'));
   };
-  const handleClearChat = () => {
+
+  // 2. Clear history updates both reactive states, client localStorage, and backend database
+  const handleClearChat = async () => {
     setMessages([
       { sender: 'system', text: `What would you like to find out about, ${username}?` }
     ]);
     setSelectedAffiliate('All');
+    localStorage.removeItem(`chat-messages-${username}`);
+
+    try {
+      // Direct call to purge the persisted memory on your local-RAG backend API
+      await fetch('http://localhost:8000/api/chat/clear', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username })
+      });
+    } catch (e) {
+      console.warn("Backend persistent clearance was skipped (server offline).");
+    }
   };
 
+  // --- PORTABLE DOCUMENT EXPORT ENGINE ---
+  const handleExportChat = () => {
+    const transcript = messages
+      .filter(msg => msg.sender !== 'system')
+      .map(msg => `[${msg.sender.toUpperCase()}] (${new Date().toLocaleTimeString()})\n${msg.text}`)
+      .join("\n\n----------------------------------------\n\n");
+
+    if (!transcript.trim()) return;
+
+    // Build downloadable Markdown asset dynamically
+    const blob = new Blob([`# Secure RAG Chat Session: ${username}\n\n${transcript}`], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `rag_chat_session_${username}_${new Date().toISOString().slice(0, 10)}.md`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  // 3. Sync themes to localStorage
   useEffect(() => {
     localStorage.setItem('saapp-theme', theme);
   }, [theme]);
 
+  // 4. Clean side-effect trigger: Auto-sync dialogue history to localStorage on any message mutations
   useEffect(() => {
-    // Defensive check: Don't fetch cards until permissions have actually loaded
+    localStorage.setItem(`chat-messages-${username}`, JSON.stringify(messages));
+  }, [messages, username]);
+
+  // Fetch dynamic cards based on security clearance and active affiliate
+  useEffect(() => {
     if (allowedAffiliates.length === 0) return;
     const syncQuestionPool = async () => {
       setLoadingCards(true);
@@ -62,16 +119,28 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
     syncQuestionPool();
   }, [allowedAffiliates, selectedAffiliate]);
 
-  // Auto-Scroll Hook: Fires instantly when messages update or streaming starts
+  // Latency-aware Scroll Anchor Hook
   useEffect(() => {
-    if (chatWindowRef.current) {
-      chatWindowRef.current.scrollTo({
-        top: chatWindowRef.current.scrollHeight,
-        behavior: 'smooth'
-      });
-    }
+    const scrollToBottom = () => {
+      if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({
+          // Use instant snap ('auto') during loading/streaming, smooth during idle clicks
+          behavior: loading ? 'auto' : 'smooth',
+          block: 'nearest',
+        });
+      }
+    };
+
+    // 1. Fire immediately for rapid reactive updates
+    scrollToBottom();
+
+    // 2. Fire with a tiny delay to allow the browser to paint newly loaded images/gifs (fixes refresh issue)
+    const timer = setTimeout(scrollToBottom, 50);
+
+    return () => clearTimeout(timer);
   }, [messages, loading]);
 
+  
   const handleSendMessage = async (textToSend: string) => {
     if (!textToSend.trim() || loading) return;
 
@@ -106,7 +175,6 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
     e.preventDefault();
     if (!input.trim()) return;
     handleSendMessage(input);
-    setInput('');
   };
 
   const hasChatted = messages.some(msg => msg.sender === 'user');
@@ -115,7 +183,6 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
     <div className={`portal-container ${theme === 'shadow' ? 'theme-shadow' : ''}`}>
       <nav className="menu-navigator">
         <div className="nav-logo"><a href="/" style={{ textDecoration: 'none' }}> {theme === 'sonic' ? '⚡Sonic Assistant' : '⚡Shadow Engine'}</a></div>
-        {/* 3. UPDATE THE NAV-LINKS SECTION TO HANDLE TAB NAVIGATION TOGGLES */}
         <div className="nav-links">
           <span onClick={toggleTheme} className="theme-toggle-btn">
             {theme === 'sonic' ? 'Hero' : 'Dark'}
@@ -142,10 +209,8 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
       </nav>
 
       {activeTab === 'self-service' ? (
-        // Render Self Service Page layout seamlessly underneath the persistent global navigation bar
         <SelfServicePage />
       ) : (
-        // Standard Chat Assistant Core Interface Layout View
         <>
           <div className="hero-banner" style={{ backgroundImage: `linear-gradient(rgba(18, 24, 36, 0.7), rgba(18, 24, 36, 0.95)), url(${sonicImg})` }}>
             <div className="banner-context">
@@ -199,7 +264,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
               </div>
             )}
 
-            <div className="controls-footer">
+            <footer className="controls-footer" ref={messagesEndRef}>
               <form onSubmit={onSubmitForm} className="chat-input-area">
                 <input
                   type="text"
@@ -209,6 +274,17 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
                   disabled={loading}
                 />
                 <button className="submit-button" type="submit" disabled={loading || !input.trim()}>Send</button>
+                
+                <button
+                  className="export-button"
+                  type="button"
+                  onClick={handleExportChat}
+                  disabled={loading || !hasChatted}
+                  // style={{ backgroundColor: '#4f46e5', color: '#ffffff', marginLeft: '0.5rem' }}
+                >
+                  Export
+                </button>
+
                 <button
                   className="clear-button" 
                   type="button" 
@@ -227,7 +303,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
                 allowedAffiliates={allowedAffiliates}
                 setAllowedAffiliates={setAllowedAffiliates}
               />
-            </div>
+            </footer>
           </main>
         </>
       )}

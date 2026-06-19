@@ -318,6 +318,7 @@ body, html {
   flex-direction: column;
   gap: 1rem;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.01);
+  
 }
 
 .message-bubble {
@@ -606,6 +607,12 @@ body, html {
   color: #f8fafc !important;
   text-decoration: underline;
 }
+.export-button {
+  background-color: var(--accent-primary);
+  color: '#ffffff';
+  marginLeft: '0.5rem'
+}
+
 
 /* Keyframe Animations */
 @keyframes fadeIn {
