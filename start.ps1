@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $ProjectDir = $PSScriptRoot
 
 Write-Host "=====================================================================" -ForegroundColor Cyan
-Write-Host "               ARK KNOWLEDGE GATEWAY RUNTIME BOOTSTRAPPER            " -ForegroundColor Cyan
+Write-Host "            SONIC ASSISTANT APPLICATION INITIALIZATION TERMINAL            " -ForegroundColor Cyan
 Write-Host "=====================================================================" -ForegroundColor Cyan
 Write-Host ""
 

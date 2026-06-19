@@ -17,6 +17,7 @@ from langchain_community.llms import Ollama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 import constraints
 from backend.search import search_service
@@ -29,13 +30,12 @@ DIRECTORY_JSON_PATH = os.path.join(PROJECT_ROOT, "directory.json")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_DIR = os.path.join(BASE_DIR, "chroma_db")
 USER_DIRECTORY_FILE = os.path.join(BASE_DIR, "directory.json")
-
+CHAT_HISTORY_FILE = os.path.join(BASE_DIR, "chat_history.json")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 app = FastAPI(title="Secure RAG Engine API")
 logger = logging.getLogger("SASS Logger")
 logger.setLevel(logging.DEBUG)
 logger.info("--- BOOTING SECURE KNOWLEDGE ASSISTANT ---")
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
@@ -51,13 +51,84 @@ with open(USER_DIRECTORY_FILE, "r") as f:
     user_directory = json.load(f)
 
 logger.info("\nAvailable Simulated Users: jack_admin, sonic_user, dragon_ball_user")
-
 # 2. CONNECT TO DATABASE AND LLM ONCE ON STARTUP
 logger.info("[*] Initializing local HuggingFace embedding engine and connecting to Chroma...")
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 vector_store = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
 llm = Ollama(model="llama3")
+def save_chat_history():
+    """Serializes LangChain message objects to raw JSON dicts and writes to disk."""
+    serialized = {}
+    for user, messages in chat_sessions.items():
+        msg_list = []
+        for msg in messages:
+            # Map Python classes to clean string labels
+            if isinstance(msg, HumanMessage):
+                msg_type = "human"
+            elif isinstance(msg, AIMessage):
+                msg_type = "ai"
+            elif isinstance(msg, SystemMessage):
+                msg_type = "system"
+            else:
+                continue
+            msg_list.append({"type": msg_type, "content": msg.content})
+        serialized[user] = msg_list
 
+    try:
+        with open(CHAT_HISTORY_FILE, "w") as f:
+            json.dump(serialized, f, indent=4)
+        logger.info("[✓] Stateful chat history backed up to local memory.")
+    except Exception as e:
+        logger.error(f"[-] Failed to write chat history backup: {e}")
+
+def load_chat_history() -> dict:
+    """Reads local JSON history and reconstructs live LangChain message class objects."""
+    if not os.path.exists(CHAT_HISTORY_FILE):
+        return {}
+    
+    if os.path.getsize(CHAT_HISTORY_FILE) == 0:
+        logger.warning(f"[!] {CHAT_HISTORY_FILE} was empty. Creating clean sessions dictionary.")
+        return {}
+        
+    try:
+        with open(CHAT_HISTORY_FILE, "r") as f:
+            raw_data = json.load(f)
+        
+        sessions = {}
+        for user, msg_list in raw_data.items():
+            messages = []
+            for msg in msg_list:
+                m_type = msg.get("type")
+                content = msg.get("content", "")
+                
+                # Reconstruct classes on backend load
+                if m_type == "human":
+                    messages.append(HumanMessage(content=content))
+                elif m_type == "ai":
+                    messages.append(AIMessage(content=content))
+                elif m_type == "system":
+                    messages.append(SystemMessage(content=content))
+            sessions[user] = messages
+        
+        logger.info(f"[✓] Restored stateful sessions for {len(sessions)} profiles from disk.")
+        return sessions
+    except Exception as e:
+        logger.error(f"[-] Failed to restore session history: {e}")
+        return {}
+    
+def format_history_as_text(messages) -> str:
+    """Formats the LangChain history array into a clean text transcript block for the prompt."""
+    formatted = []
+    for msg in messages:
+        if isinstance(msg, HumanMessage):
+            formatted.append(f"User: {msg.content}")
+        elif isinstance(msg, AIMessage):
+            formatted.append(f"Assistant: {msg.content}")
+    return "\n".join(formatted)
+
+    
+# In-Memory Session Storage for Chat History
+chat_sessions = load_chat_history()
 class LoginRequest(BaseModel):
     username: str
 
@@ -146,25 +217,47 @@ async def secure_chat(request: ChatRequest):
         top_k=3
     )
 
-    # DYNAMIC METHOD GENERATION: Call constraints to get the system prompt based on user and affiliate context
-    system_instructions = constraints.get_system_prompt(username=username, affiliate=requested_affiliate)
+    # Warm-initialize state list cleanly to prevent KeyError failures on new sessions
+    if username not in chat_sessions:
+        chat_sessions[username] = []
 
-    # Build the strict structural prompt layout
+    # Get conversational history formatted for the prompt layout
+    history_transcript = format_history_as_text(chat_sessions[username])
+
+    # === DYNAMIC INTENT DETECTION & COGNITIVE BYPASS ===
+    conversational_triggers = ["save", "history", "remember", "clear", "hello", "hi", "hey", "who are you", "thank you", "thanks"]
+    is_conversational_query = any(trigger in question.lower() for trigger in conversational_triggers)
+
+    if is_conversational_query:
+        # Soften system instructions for historical inquiries or conversational greetings
+        system_instructions = (
+            "You are a helpful and adaptive conversational assistant. "
+            "You have full access to current conversation history logs. "
+            "Answer the user's conversational query directly, warmly, and concisely."
+        )
+    else:
+        # Enforce strict RAG rules for database document queries
+        system_instructions = constraints.get_system_prompt(username=username, affiliate=requested_affiliate)
+
+    # Build the strict structural prompt layout with past dialogue awareness
     template = f"""{system_instructions}
 
-CONTEXT:
+CONVERSATION HISTORY LOG:
+{{history}}
+
+CONTEXT FROM CURRENT WORKSPACE DOCUMENTS:
 {{context}}
 
-QUESTION: 
+CURRENT QUESTION: 
 {{question}}
 """
     prompt = ChatPromptTemplate.from_template(template)
 
     # 🔗 SECURE PIPELINE LINKING:
-    # We pipe the context generator through our format_docs method to wash out python code.
     rag_chain = (
         {
             "context": retriever | constraints.format_docs, 
+            "history": lambda x: history_transcript,
             "question": RunnablePassthrough()
         }
         | prompt
@@ -172,13 +265,26 @@ QUESTION:
         | StrOutputParser()
     )
 
+    # Keep memory buffer lean
+    if len(chat_sessions[username]) > 10:
+        chat_sessions[username] = chat_sessions[username][-10:]
+
     # Define an asynchronous generator to feed the stream
     async def token_streamer():
+        full_response = ""
         try:
             async for chunk in rag_chain.astream(question):
+                full_response += chunk
                 yield chunk
+            
+            # --- OUTSIDE STREAM LOOP ---
+            # Append conversation state and write to disk ONLY after stream has fully finished!
+            chat_sessions[username].append(HumanMessage(content=question))
+            chat_sessions[username].append(AIMessage(content=full_response))
+            save_chat_history()
+            
         except Exception as e:
-            logger.error(f"[-] Stream disruption: {str(e)}")
+            logger.error(f"[-] Stream disruption: {str(e)}", exc_info=True)
             yield f"\n[Stream Error: {str(e)}]"
 
     logger.info(f"[*] Initializing secured token stream for {username}")
@@ -201,7 +307,7 @@ def load_user_directory_groups(username: str) -> List[str]:
             
     except Exception as e:
         print(f"[!] System processing exception reading directory registry: {e}")
-        
+       
     return []
 
 @app.get("/api/documents")
