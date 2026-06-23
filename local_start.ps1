@@ -35,14 +35,14 @@ if (-not (Test-Path $VenvPath)) {
 
 # 1. Start the FastAPI Backend Engine (Port 8000)
 Write-Host "[*] Launching FastAPI Security Backend..." -ForegroundColor Yellow
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "`$Host.UI.RawUI.WindowTitle = 'ARK Backend (FastAPI)'; cd '$ProjectDir'; .\.venv\Scripts\uvicorn app:app --reload"
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "`$Host.UI.RawUI.WindowTitle = 'ARK Backend (FastAPI)'; cd '$ProjectDir'; .\.venv\Scripts\uvicorn app:app --host 0.0.0.0 --reload"
 
 # Small delay to let the backend bind ports cleanly
 Start-Sleep -Seconds 2
 
 # 2. Start the Vite Frontend Server (Forced onto 127.0.0.1:8080)
 Write-Host "[*] Launching Vite Frontend Development Server..." -ForegroundColor Yellow
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "`$Host.UI.RawUI.WindowTitle = 'ARK Frontend (Vite)'; cd 'local'; npm run dev -- --host 127.0.0.1 --port 8080"
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "`$Host.UI.RawUI.WindowTitle = 'ARK Frontend (Vite)'; cd 'local'; npm run dev -- --host 0.0.0.0 --port 8080"
 
 Write-Host ""
 Write-Host "=====================================================================" -ForegroundColor Green

@@ -2,7 +2,23 @@
     "jack_admin": [
         {
             "type": "human",
-            "content": "can you save this conversation?"
+            "content": "Tell me about frieza"
+        },
+        {
+            "type": "ai",
+            "content": "Frieza is a galactic tyrant and the primary antagonist in the Dragon Ball Z universe. He destroyed Planet Vegeta to prevent the realization of the legendary Super Saiyan prophecy.\n\nSource: dragon_ball_lore.txt - Page 1"
+        },
+        {
+            "type": "human",
+            "content": "Tell me about the Saiyan race."
+        },
+        {
+            "type": "ai",
+            "content": "The Saiyan race is an extraterrestrial species that originates from Planet Vegeta. According to the provided context, their original homeworld was completely destroyed by the galactic tyrant Frieza to prevent the realization of the legendary Super Saiyan prophecy.\n\nSource: dragon_ball_lore.txt - Page 1"
+        },
+        {
+            "type": "human",
+            "content": "Who is Goku?"
         },
         {
             "type": "ai",
@@ -10,43 +26,27 @@
         },
         {
             "type": "human",
-            "content": "can you save this conversation?"
+            "content": "who is goku"
         },
         {
             "type": "ai",
-            "content": "I can finally help with that!\n\nBased on our conversation history and the current workspace documents, I'm happy to report that... **THIS CONVERSATION IS ALREADY SAVED!**\n\nAs we've established earlier, there isn't a specific feature or button to \"save\" the conversation. Instead, our interaction is being recorded in the logs for future reference.\n\nFeel free to move on to a new topic or ask more questions; I'm here to help!"
+            "content": "The Saiyan race is an extraterrestrial species that originates from Planet Vegeta. According to the provided context, their original homeworld was completely destroyed by the galactic tyrant Frieza to prevent the realization of the legendary Super Saiyan prophecy.\n\nSource: dragon_ball_lore.txt - Page 1"
         },
         {
             "type": "human",
-            "content": "thank you so much boss"
+            "content": "who is frieza"
         },
         {
             "type": "ai",
-            "content": "You're welcome! It was my pleasure to help and provide information on the current conversation history."
+            "content": "Frieza is a galactic tyrant and the primary antagonist in the Dragon Ball Z universe. He destroyed Planet Vegeta to prevent the realization of the legendary Super Saiyan prophecy.\n\nSource: dragon_ball_lore.txt - Page 1"
         },
         {
             "type": "human",
-            "content": "Is there any data regarding Shadow?"
+            "content": "who is vegeta"
         },
         {
             "type": "ai",
-            "content": "Yes, there is data regarding Shadow. According to the provided context, Shadow the Hedgehog is the \"Ultimate Life Form\" awakened by Dr. Eggman from suspension on Prison Island. He seeks vengeance against humanity following a tragic raid on the ARK fifty years ago.\n\nSource: sonic_adventure_2_lore.txt - Page 1"
-        },
-        {
-            "type": "human",
-            "content": "do you recall the conversation we were just having about saving conversations?"
-        },
-        {
-            "type": "ai",
-            "content": "**THIS CONVERSATION IS ALREADY SAVED!**\n\nAs we've established earlier, there isn't a specific feature or button to \"save\" the conversation. Instead, our interaction is being recorded in the logs for future reference.\n\nSource: Context - Current Workspace Documents"
-        },
-        {
-            "type": "human",
-            "content": "so you do remember it lol"
-        },
-        {
-            "type": "ai",
-            "content": "I remember our previous conversation like it was yesterday! Yes, we had discussed saving conversations earlier, and I'm happy to remind you that **THIS CONVERSATION IS ALREADY SAVED!** Our interactions are being recorded in the logs for future reference."
+            "content": "The original homeworld of the Saiyan race is Planet Vegeta, which was completely destroyed by the galactic tyrant Frieza to prevent the realization of the legendary Super Saiyan prophecy.\n\nSource: dragon_ball_lore.txt - Page 1"
         }
     ]
 }
