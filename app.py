@@ -9,7 +9,7 @@ from typing import List
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-
+from backend.models import llm
 # Modernized LangChain Imports
 from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -17,13 +17,15 @@ from langchain_community.llms import Ollama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-
-import constraints
-from backend.search import search_service
-sys.path.append(os.path.join(os.path.dirname(__file__), "local-function-app"))
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
+from constraints import get_system_prompt, CONVERSATIONAL_PROMPT, format_docs
+from backend.search import get_secure_retriever, discover_workspace_documents
 from local_function_app.function_app import run_ingestion_pipeline, HOT_FOLDER_DIR
+from backend.graph_state import GraphState
+from backend.agent_workflow import create_workflow, rewrite_query_node, retrieve_node, grading_node
+from backend import graph_db
 
+sys.path.append(os.path.join(os.path.dirname(__file__), "local-function-app"))
 # This automatically finds the folder relative to where app.py is living
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DIRECTORY_JSON_PATH = os.path.join(PROJECT_ROOT, "directory.json")
@@ -31,10 +33,25 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_DIR = os.path.join(BASE_DIR, "chroma_db")
 USER_DIRECTORY_FILE = os.path.join(BASE_DIR, "directory.json")
 CHAT_HISTORY_FILE = os.path.join(BASE_DIR, "chat_history.json")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(level=logging.DEBUG, format="%(levelname)s - %(message)s")
 app = FastAPI(title="Secure RAG Engine API")
 logger = logging.getLogger("SASS Logger")
 logger.setLevel(logging.DEBUG)
+for noisy in [
+    "uvicorn",
+    "uvicorn.error",
+    "uvicorn.access",
+    "httpx",
+    "httpcore",
+    "h11",
+    "anyio",
+    "asyncio",
+    "transformers",
+    "huggingface_hub",
+    "sentence_transformers",
+    "chromadb",
+]:
+    logging.getLogger(noisy).setLevel(logging.CRITICAL)
 logger.info("--- BOOTING SECURE KNOWLEDGE ASSISTANT ---")
 app.add_middleware(
     CORSMiddleware,
@@ -50,12 +67,26 @@ if not os.path.exists(USER_DIRECTORY_FILE):
 with open(USER_DIRECTORY_FILE, "r") as f:
     user_directory = json.load(f)
 
-logger.info("\nAvailable Simulated Users: jack_admin, sonic_user, dragon_ball_user")
+logger.info("Available Simulated Users: jack_admin, sonic_user, dragon_ball_user")
 # 2. CONNECT TO DATABASE AND LLM ONCE ON STARTUP
-logger.info("[*] Initializing local HuggingFace embedding engine and connecting to Chroma...")
+logger.info("Initializing local HuggingFace embedding engine and connecting to Chroma...")
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 vector_store = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
-llm = Ollama(model="llama3")
+# llm = Ollama(model="llama3")
+
+# 3. COMPILE THE LANGGRAPH WORKFLOW ENGINE
+logger.info("Importing and compiling LangGraph workflow execution engine...")
+try:
+    compiled_workflow = create_workflow()
+    logger.info("Compiled LangGraph Workflow successfully loaded.")
+except ImportError:
+    try:
+        compiled_workflow = create_workflow()
+        logger.info("Compiled LangGraph Workflow successfully loaded.")
+    except Exception as e:
+        logger.critical(f"Failed to compile LangGraph workflow: {e}")
+        compiled_workflow = None
+
 def save_chat_history():
     """Serializes LangChain message objects to raw JSON dicts and writes to disk."""
     serialized = {}
@@ -77,9 +108,9 @@ def save_chat_history():
     try:
         with open(CHAT_HISTORY_FILE, "w") as f:
             json.dump(serialized, f, indent=4)
-        logger.info("[✓] Stateful chat history backed up to local memory.")
+        logger.debug("Stateful chat history backed up to local memory.")
     except Exception as e:
-        logger.error(f"[-] Failed to write chat history backup: {e}")
+        logger.error(f"Failed to write chat history backup: {e}")
 
 def load_chat_history() -> dict:
     """Reads local JSON history and reconstructs live LangChain message class objects."""
@@ -87,9 +118,8 @@ def load_chat_history() -> dict:
         return {}
     
     if os.path.getsize(CHAT_HISTORY_FILE) == 0:
-        logger.warning(f"[!] {CHAT_HISTORY_FILE} was empty. Creating clean sessions dictionary.")
-        return {}
-        
+        logger.warning(f"{CHAT_HISTORY_FILE} was empty. Creating clean sessions dictionary.")
+        return {}  
     try:
         with open(CHAT_HISTORY_FILE, "r") as f:
             raw_data = json.load(f)
@@ -110,10 +140,10 @@ def load_chat_history() -> dict:
                     messages.append(SystemMessage(content=content))
             sessions[user] = messages
         
-        logger.info(f"[✓] Restored stateful sessions for {len(sessions)} profiles from disk.")
+        logger.info(f"Restored stateful sessions for {len(sessions)} profiles from disk.")
         return sessions
     except Exception as e:
-        logger.error(f"[-] Failed to restore session history: {e}")
+        logger.error(f"Failed to restore session history: {e}")
         return {}
     
 def format_history_as_text(messages) -> str:
@@ -126,7 +156,63 @@ def format_history_as_text(messages) -> str:
             formatted.append(f"Assistant: {msg.content}")
     return "\n".join(formatted)
 
-    
+async def rewrite_fallback(state: GraphState, username: str, messages_state: list):
+    logger.info("Executing rewrite fallback...")
+
+    # Always preserve messages externally
+    preserved_messages = messages_state
+
+    # 1. Rewrite the question
+    state = rewrite_query_node(state)
+    state["messages"] = preserved_messages
+    rewritten_question = preserved_messages[-1].content
+    state["original_question"] = rewritten_question
+
+    # 2. Retrieve again
+    state = retrieve_node(state)
+    state["messages"] = preserved_messages   # <-- RE-ADD AFTER NODE
+
+    # 3. Grade again
+    state = grading_node(state)
+    state["messages"] = preserved_messages   # <-- RE-ADD AFTER NODE
+
+    # 4. If still irrelevant, bail out
+    if state.get("relevance_grade") != "yes":
+        yield f"data: {json.dumps({'event': 'final_generation', 'text': 'I cannot find the answer in the provided knowledge base.'})}\n\n"
+        return
+
+    # 5. Build a new RAG prompt
+    formatted_docs = format_docs(state.get("documents", []))
+    history_transcript = format_history_as_text(chat_sessions[username])
+    instructions = get_system_prompt(username, ", ".join(state.get("target_scope", [])))
+
+    prompt = instructions.format(
+        context=formatted_docs,
+        history=history_transcript,
+        question=rewritten_question,
+    )
+
+    logger.debug(f"[FALLBACK PROMPT SENT TO LLM]:\n{prompt}")
+
+    # 6. Stream again
+    full_response = ""
+    async for chunk in llm.astream(prompt):
+        token = chunk if isinstance(chunk, str) else getattr(chunk, "content", None) or str(chunk)
+        if not token:
+            continue
+
+        full_response += token
+        yield f"data: {json.dumps({'event': 'token', 'text': token})}\n\n"
+        await asyncio.sleep(0)
+
+    # 7. Final response
+    yield f"data: {json.dumps({'event': 'final_generation', 'text': full_response})}\n\n"
+
+    # 8. Update chat history
+    chat_sessions[username].append(HumanMessage(content=rewritten_question))
+    chat_sessions[username].append(AIMessage(content=full_response))
+    save_chat_history()
+
 # In-Memory Session Storage for Chat History
 chat_sessions = load_chat_history()
 class LoginRequest(BaseModel):
@@ -177,11 +263,21 @@ async def discover_documents(affiliate: str = "All"):
     """
     try:
         # Calls the dynamic metadata extraction layer inside search.py
-        files = search_service.discover_workspace_documents(affiliate)
+        files = discover_workspace_documents(affiliate)
         return {"accessible_documents": files}
     except Exception as e:
         logger.error(f"[-] Catalog discovery anomaly: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/chat/clear")
+async def clear_chat_history(request: dict):
+    username = request.get("username")
+
+    if username in chat_sessions:
+        chat_sessions[username] = []
+        save_chat_history()
+
+    return {"status": "cleared"}
 
 @app.post("/api/chat")
 async def secure_chat(request: ChatRequest):
@@ -189,111 +285,139 @@ async def secure_chat(request: ChatRequest):
     question = request.question.strip()
     requested_affiliate = request.affiliate.strip()
 
+    # ---------- Auth Authorization Boundary ----------
     if username not in user_directory:
         raise HTTPException(status_code=401, detail="Unauthorized: User not found.")
 
     user_claims = user_directory[username]
     user_groups = user_claims["groups"]
-    logger.info(f"[+] Successfully acquired user: {user_claims['email']}")
-    logger.info(f"[+] Token Groups Retrieved: {user_groups}")
+    logger.info(f"User Verified: {user_claims['email']}")
+    logger.debug(f"User Group Claims: {user_groups}")
 
-    # Calculate authorization limits
     accessible_affiliates = []
     if "Affiliate_A" in user_groups or "Global_Admins" in user_groups:
         accessible_affiliates.append("Affiliate_A")
     if "Affiliate_B" in user_groups or "Global_Admins" in user_groups:
         accessible_affiliates.append("Affiliate_B")
 
-    # Anti-Spoofing Check
     if requested_affiliate != "All" and requested_affiliate not in accessible_affiliates:
         raise HTTPException(status_code=403, detail="Security Breach: Unauthorized affiliate scope requested.")
 
-    # Apply data trimming logic
     target_scope = accessible_affiliates if requested_affiliate == "All" else [requested_affiliate]
 
-    retriever = search_service.get_secure_retriever(
-        target_scope=target_scope, 
-        query_text=question, 
-        top_k=3
-    )
-
-    # Warm-initialize state list cleanly to prevent KeyError failures on new sessions
+    # ---------- Conversation Memory State Init ----------
     if username not in chat_sessions:
         chat_sessions[username] = []
 
-    # Get conversational history formatted for the prompt layout
-    history_transcript = format_history_as_text(chat_sessions[username])
-
-    # === DYNAMIC INTENT DETECTION & COGNITIVE BYPASS ===
-    conversational_triggers = ["save", "history", "remember", "clear", "hello", "hi", "hey", "who are you", "thank you", "thanks"]
-    is_conversational_query = any(trigger in question.lower() for trigger in conversational_triggers)
-
-    if is_conversational_query:
-        # Soften system instructions for historical inquiries or conversational greetings
-        system_instructions = (
-            "You are a helpful and adaptive conversational assistant. "
-            "You have full access to current conversation history logs. "
-            "Answer the user's conversational query directly, warmly, and concisely."
-        )
-    else:
-        # Enforce strict RAG rules for database document queries
-        system_instructions = constraints.get_system_prompt(username=username, affiliate=requested_affiliate)
-
-    # Build the strict structural prompt layout with past dialogue awareness
-    template = f"""{system_instructions}
-
-CONVERSATION HISTORY LOG:
-{{history}}
-
-CONTEXT FROM CURRENT WORKSPACE DOCUMENTS:
-{{context}}
-
-CURRENT QUESTION: 
-{{question}}
-"""
-    prompt = ChatPromptTemplate.from_template(template)
-
-    # 🔗 SECURE PIPELINE LINKING:
-    rag_chain = (
-        {
-            "context": retriever | constraints.format_docs, 
-            "history": lambda x: history_transcript,
-            "question": RunnablePassthrough()
-        }
-        | prompt
-        | llm
-        | StrOutputParser()
-    )
-
-    # Keep memory buffer lean
     if len(chat_sessions[username]) > 10:
         chat_sessions[username] = chat_sessions[username][-10:]
 
-    # Define an asynchronous generator to feed the stream
+    messages_state = list(chat_sessions[username])
+    messages_state.append(HumanMessage(content=question))
+
+    initial_state: GraphState = {
+        "messages": messages_state,
+        "username": username,
+        "target_scope": target_scope,
+        "documents": [],
+        "relevance_grade": "",
+        "loop_count": 0,
+        "original_question": question,
+    }
+
+    # ---------- Run LangGraph ONCE (no streaming, logic-only) ----------
+    try:
+        final_state = compiled_workflow.invoke(initial_state)
+    except Exception as e:
+        logger.error(f"[x] Workflow failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Agent workflow failed.")
+
+    # ---------- Build Prompt based on Decision Boundary ----------
+    is_conversational = final_state.get("relevance_grade") == "conversational"
+
+    if is_conversational:
+        # Build conversational friendly response template
+        history_transcript = format_history_as_text(chat_sessions[username])
+        prompt = CONVERSATIONAL_PROMPT.format(
+            username=username,
+            question=question,
+            history=history_transcript
+        )
+    else:
+        # Build advanced RAG query template with final retrieved context
+        final_question = final_state.get("original_question", question)
+        documents = final_state.get("documents", [])
+        accessible_affiliates_str = ", ".join(final_state.get("target_scope", target_scope))
+
+        instructions = get_system_prompt(username, accessible_affiliates_str)
+        formatted_docs = format_docs(documents)
+        history_transcript = format_history_as_text(chat_sessions[username])
+        prompt = instructions.format(
+            context=formatted_docs,
+            history=history_transcript,
+            question=final_question,
+        )
+
+    logger.debug(f"--- FINAL PROMPT SENT TO LLM: ---\n{prompt}")
+    logger.debug("--- END OF PROMPT ---")
+
+    # ---------- Real token streaming from LLM ----------
     async def token_streamer():
         full_response = ""
         try:
-            async for chunk in rag_chain.astream(question):
-                full_response += chunk
-                yield chunk
-            
-            # --- OUTSIDE STREAM LOOP ---
-            # Append conversation state and write to disk ONLY after stream has fully finished!
-            chat_sessions[username].append(HumanMessage(content=question))
-            chat_sessions[username].append(AIMessage(content=full_response))
-            save_chat_history()
-            
-        except Exception as e:
-            logger.error(f"[-] Stream disruption: {str(e)}", exc_info=True)
-            yield f"\n[Stream Error: {str(e)}]"
+            async for chunk in llm.astream(prompt):
+                # Safely parse text or content chunk representations 
+                token = chunk if isinstance(chunk, str) else getattr(chunk, "content", None) or str(chunk)
+                if not token:
+                    continue
 
-    logger.info(f"[*] Initializing secured token stream for {username}")
-    return StreamingResponse(token_streamer(), media_type="text/plain")
+                full_response += token
+                yield f"data: {json.dumps({'event': 'token', 'text': token})}\n\n"
+                await asyncio.sleep(0)  # Cooperatively yield back event loop control
+
+            if full_response:
+                if "I cannot find the answer in the provided knowledge base." in full_response.strip():
+                    logger.info("[!] Grounding failure detected — triggering rewrite fallback...")
+                    fallback_state = {
+                        **initial_state,
+                        "target_scope": final_state.get("target_scope", initial_state["target_scope"]),
+                        "documents": final_state.get("documents", []),
+                        "original_question": final_state.get("original_question", initial_state["original_question"]),
+                    }
+
+                    async for fallback_chunk in rewrite_fallback(fallback_state, username, messages_state):
+                        yield fallback_chunk
+                    return
+                yield f"data: {json.dumps({'event': 'final_generation', 'text': full_response})}\n\n"
+                
+
+                
+                # Update memory session history only after a fully successful stream
+                chat_sessions[username].append(HumanMessage(content=question))
+                chat_sessions[username].append(AIMessage(content=full_response))
+                save_chat_history()
+
+        except Exception as e:
+            logger.error(f"[x] Error in token_streamer loop context: {e}", exc_info=True)
+            yield f"data: {json.dumps({'event': 'error', 'message': str(e)})}\n\n"
+
+    logger.info(f"Initializing secured token stream for {username}")
+    return StreamingResponse(
+        token_streamer(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+    
 
 def load_user_directory_groups(username: str) -> List[str]:
     """Reads directory.json dynamically to collect the security group claims array."""
     if not os.path.exists(DIRECTORY_JSON_PATH):
-        print(f"[!] Directory map file missing at: {DIRECTORY_JSON_PATH}")
+        print(f"Directory map file missing at: {DIRECTORY_JSON_PATH}")
         return []
         
     try:
@@ -306,8 +430,7 @@ def load_user_directory_groups(username: str) -> List[str]:
             return user_record["groups"]
             
     except Exception as e:
-        print(f"[!] System processing exception reading directory registry: {e}")
-       
+        print(f"System processing exception reading directory registry: {e}")
     return []
 
 @app.get("/api/documents")
@@ -427,7 +550,7 @@ async def upload_and_ingest_documents(
 @app.delete("/api/documents/{doc_id}")
 async def delete_document(doc_id: str, affiliate: str = Query(...)):
     try:
-        logger.info(f"[*] Executing absolute database eviction sequence for: {doc_id}")
+        logger.info(f"Executing absolute database eviction sequence for: {doc_id}")
         
         # 1. Reconstruct clean filename tracking variables
         filename = doc_id
@@ -443,8 +566,8 @@ async def delete_document(doc_id: str, affiliate: str = Query(...)):
         # Variation B: The permanent pages archive folder location on disk
         archive_folder_source = os.path.join(HOT_FOLDER_DIR, f"{affiliate}_Pages", filename)
 
-        logger.info(f"[*] Sweeping Chroma for Hot Path: {hot_folder_source}")
-        logger.info(f"[*] Sweeping Chroma for Archive Path: {archive_folder_source}")
+        logger.info(f"Sweeping Chroma for Hot Path: {hot_folder_source}")
+        logger.info(f"Sweeping Chroma for Archive Path: {archive_folder_source}")
 
         # 3. DIRECT CHROMACLIENT EVICTION (Bypasses LangChain limitations)
         try:
@@ -457,16 +580,16 @@ async def delete_document(doc_id: str, affiliate: str = Query(...)):
             # Clear chunks that might only have the raw filename stamp
             vector_store._collection.delete(where={"source": filename})
             
-            logger.info("[✓] Associated vector matrix fragments thoroughly cleared from Chroma collection.")
+            logger.info("Associated vector matrix fragments thoroughly cleared from Chroma collection.")
         except Exception as v_err:
-            logger.error(f"[!] Direct collection level eviction encountered an issue: {v_err}")
+            logger.error(f"Direct collection level eviction encountered an issue: {v_err}")
 
         # 4. PHYSICAL STORAGE CLEANUP
         if os.path.exists(archive_folder_source):
             os.remove(archive_folder_source)
-            logger.info(f"[✓] Physical asset file erased from disk layout: {archive_folder_source}")
+            logger.info(f"Physical asset file erased from disk layout: {archive_folder_source}")
         else:
-            logger.warning(f"[!] Physical asset was not present on disk canvas: {archive_folder_source}")
+            logger.warning(f"Physical asset was not present on disk canvas: {archive_folder_source}")
 
         return {"status": "success", "detail": f"Successfully expelled asset: {filename}"}
 

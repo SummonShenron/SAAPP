@@ -102,16 +102,38 @@ export const api = {
     const decoder = new TextDecoder();
 
     if (!reader) {
-      throw new Error("ReadableStream is completely unsupported on this client client platform.");
+      throw new Error("ReadableStream is unsupported.");
     }
 
-    // Read the network buffer sequentially chunk-by-chunk
+    let buffer = "";
+
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
-      
-      const textChunk = decoder.decode(value, { stream: true });
-      onTokenReceived(textChunk); // Push the new character directly to the UI
+
+      // Append new chunk to buffer
+      buffer += decoder.decode(value, { stream: true });
+
+      // Split into lines
+      const lines = buffer.split("\n");
+
+      // Keep the last partial line in the buffer
+      buffer = lines.pop() || "";
+
+      // Emit complete SSE lines
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("data: ")) {
+          onTokenReceived(trimmed);
+        }
+      }
+    }
+
+    // Flush final line if complete
+    const trimmed = buffer.trim();
+    if (trimmed.startsWith("data: ")) {
+      onTokenReceived(trimmed);
     }
   }
+
 };

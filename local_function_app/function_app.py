@@ -6,16 +6,18 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
-
+import logging
 # Core Pathing Configuration
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 DB_DIR = os.path.join(PROJECT_ROOT, "chroma_db")
 HOT_FOLDER_DIR = os.path.join(PROJECT_ROOT, "index-db")
-
+logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
+logger = logging.getLogger("Function App Logger")
+logger.setLevel(logging.INFO)
 def run_ingestion_pipeline():
     """Executes the multi-tenant document chunking and vector database indexing workflow."""
-    print("--- STARTING MULTI-TENANT INGESTION PIPELINE ---")
+    logger.info("--- STARTING MULTI-TENANT INGESTION PIPELINE ---")
     
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
@@ -29,7 +31,7 @@ def run_ingestion_pipeline():
     pdf_files = glob.glob(pdf_pattern)
 
     if not pdf_files:
-        print("[+] Hot folder empty. No new PDFs found to process.")
+        logger.info("Hot folder empty. No new PDFs found to process.")
         return False
 
     for pdf_path in pdf_files:
@@ -39,7 +41,7 @@ def run_ingestion_pipeline():
             continue
             
         filename = os.path.basename(pdf_path)
-        print(f"-> Processing: {filename} [Mapped to: {folder_name}]")
+        logger.info(f"-> Processing: {filename} [Mapped to: {folder_name}]")
         
         try:
             loader = PyPDFLoader(pdf_path)
@@ -60,13 +62,13 @@ def run_ingestion_pipeline():
             
             target_destination = os.path.join(archive_dir, filename)
             shutil.move(pdf_path, target_destination)
-            print(f"   [✓] Successfully indexed and archived to: {folder_name}_Pages\\{filename}")
+            logger.info(f"   Successfully indexed and archived to: {folder_name}_Pages\\{filename}")
                 
         except Exception as e:
-            print(f"[!] Error processing {pdf_path}: {e}")
+            logger.info(f"Error processing {pdf_path}: {e}")
             raise e
             
-    print("\n[+] Ingestion complete. Hot folder cleared of processed sources.")
+    logger.info("\nIngestion complete. Hot folder cleared of processed sources.")
     return True
 
 # Allows script to still be executed directly via terminal/powershell

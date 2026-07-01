@@ -57,7 +57,7 @@ export const SelfServicePage: React.FC = () => {
             setSelectedAffiliate(affiliates[0]); 
         }
       } catch (err) {
-        console.error("[!] Failed loading user authorization directory:", err);
+        console.error("Failed loading user authorization directory:", err);
       } finally {
         setLoadingInitial(false);
       }
@@ -75,7 +75,7 @@ export const SelfServicePage: React.FC = () => {
         const docs = await api.getIngestedDocuments(username, selectedAffiliate);
         setDocuments(docs);
       } catch (err) {
-        console.error("[!] Error loading active file directories:", err);
+        console.error("Error loading active file directories:", err);
         setDocuments([]);
       } finally {
         setFetchingDocs(false);
@@ -125,7 +125,7 @@ export const SelfServicePage: React.FC = () => {
       await api.deleteDocument(username, selectedAffiliate, docId);
       setDocuments(prev => prev.filter(doc => doc.id !== docId));
     } catch (err) {
-      console.error("[!] Core index expulsion failure:", err);
+      console.error("Core index expulsion failure:", err);
       alert("Failed to safely prune target file elements from vector indices.");
     } finally {
       setDeletingId(null);

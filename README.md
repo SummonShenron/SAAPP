@@ -1,3 +1,56 @@
+## Why? ##
+
+I created the Sonic Assistant (SAAPP) to prove I can independently architect, build, and deploy a modern AI system leveraging both RAG and Agentic workflows. It includes and demonstrates:
+
+full-stack engineering
+cloud-ready architecture
+agentic workflows
+retrieval grading
+query rewriting
+multi-step reasoning
+secure data isolation
+async streaming
+vector + lexical + hybrid retrieval
+
+## Summary and Explanation of Workflow ##
+
+1. Security & Identity Controls
+The application implements a multi-tenant security architecture designed to isolate data between different "Affiliates/Knowledge Bases" (e.g., Sonic Lore vs. Dragon Ball Data).
+
+Simulated Identity Context: the landing page provides users to select a "Persona" (e.g., jack_admin or sonic_user), which is stored in localStorage as x-user-id -- in an azure environment, this would get passed to the backend and a GraphAPI lookup would ensue to obtain the users entra id group memberships via a directory.read.all configured client permission in the app registration
+
+Role-Based Access Control (RBAC): The backend simulates an Entra ID environment. It maps users to specific authorized "affiliates" via /api/affiliates and checks for "Ingester" permissions via /api/user/groups. This ensures data isolation on the user access level
+
+Data Isolation: When performing a search or ingestion, the system enforces a strict scope. Only documents tagged with an affiliate allowed to the current user are retrieved, ensuring cross-tenant data leakage is prevented at the vector database query level (Chroma DB filters). This means the model cannot hallucinate data from other knowledge bases because it can only respond with chunks tagged with the scoped affiliate(s)
+
+Multi-KB Access: While data is isolated between KB's, users with access to multiple KB's can still query them all at once or filter the response to a specific KB.
+
+2. LangGraph & Agent Workflows
+This is how the model "thinks" via a compiled LangGraph workflow that manages the conversation flow by routing queries and responses through several nodes and edges such as a retrieval node, a grading node, and a generation node.
+
+GraphState: Every step of the process shares a GraphState object, which tracks conversation history, the authenticated user identity, the permitted affiliate scope, and retrieved documents.
+
+Workflow Execution:
+
+Routing: The route_user_query function decides whether to trigger the retrieve_node agent (for informational/document-based questions) or the conversational_node agent (for greetings or general chat).
+
+Retrieval & Grading: The retrieve_node agent fetches documents based on the user's scope. These are then passed to the grading_node agent which evaluates relevance and returns a yes/no response.
+
+Rewrite & Generate: If the retrieval quality is poor and the grading_node agent responds with "no", the rewrite_query_node agent is triggered to rephrase the question before attempting retrieval again. Finally, the generate_node synthesizes the response. If the models first response returns a non-contextual answer like "I can't find the answer", it will rewrite the query one more time to try to find an actual answer.
+
+3. Search Strategies
+The system uses a unified search service designed to adapt its strategy based on the type of query.
+
+Intelligent Routing: The _detect_routing_strategy function analyzes the query text for specific markers:
+
+Lexical: Triggered by temporal or keyword markers (e.g., "latest", "date", "timeline").
+
+Hybrid: Triggered by complex or analytical keywords (e.g., "compare", "analyze", "connection") to handle multi-clause or comparative questions.
+
+Vector: The default fallback for general semantic queries.
+
+Graph-Enhanced Context: In addition to standard vector search, the system integrates with a knowledge_graph (using NetworkX) to provide multi-hop content relationships, enriching the retrieved context with explicit entity connections
+
 ## Requirements & Automation
 
 The application uses a setup script designed for **Windows (PowerShell)**. The script leverages Windows Package Manager (`winget`) to check for and interactively install system-level dependencies if they are missing upon user consent.

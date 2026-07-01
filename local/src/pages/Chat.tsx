@@ -8,6 +8,7 @@ import shadowSpinImg from '../assets/shadow.gif';
 import { SelfServicePage } from './SelfService';
 
 interface Message {
+  id: string;
   sender: 'user' | 'ai' | 'system';
   text: string;
 }
@@ -22,7 +23,9 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
   const [allowedAffiliates, setAllowedAffiliates] = useState<string[]>([]);
   const [userEmail, setUserEmail] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'chat' | 'self-service'>('chat');
-  
+  const [agentStatus, setAgentStatus] = useState<string>('');
+  const [agentPath, setAgentPath] = useState<string[]>([]);
+  const genId = () => crypto.randomUUID();
   // 1. Warm-initialize the messages state from localStorage to prevent auto-clearing
   const [messages, setMessages] = useState<Message[]>(() => {
     const persistedHistory = localStorage.getItem(`chat-messages-${username}`);
@@ -34,33 +37,64 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
       }
     }
     return [
-      { sender: 'system', text: `What would you like to find out about, ${username}?` }
+      { id: genId(), sender: 'system', text: `What would you like to find out about, ${username}?` }
     ];
   });
-  
+  const [hasChatted, setHasChatted] = useState<boolean>(() => {
+    // initialize from persisted messages safely
+    try {
+      const persisted = localStorage.getItem(`chat-messages-${username}`);
+      if (persisted) {
+        const parsed: Message[] = JSON.parse(persisted);
+        return parsed.some(m => m.sender === 'user');
+      }
+    } catch {
+      // fall through
+    }
+    // fallback to current messages array
+    return messages.some(msg => msg.sender === 'user');
+  });
   const [input, setInput] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   const [currentExampleQuestions, setCurrentExampleQuestions] = useState<string[]>([]);
   const [loadingCards, setLoadingCards] = useState<boolean>(false);
-  
   const [theme, setTheme] = useState<'sonic' | 'shadow'>(() => {
     const savedTheme = localStorage.getItem('saapp-theme');
     return (savedTheme === 'shadow' || savedTheme === 'sonic') ? savedTheme : 'sonic';
   });
-  
   const chatWindowRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
   const toggleTheme = () => {
     setTheme(prev => (prev === 'sonic' ? 'shadow' : 'sonic'));
   };
 
+  // Synchronize secure directory claims from simulated Entra ID
+  useEffect(() => {
+    const syncUserClaims = async () => {
+      try {
+        const data = await api.getAffiliates(username);
+        if (Array.isArray(data)) {
+          setAllowedAffiliates(data);
+          setUserEmail(`${username.toLowerCase()}@entra.local`);
+        }
+      } catch (err) {
+        console.error("Failed to sync secure security claims:", err);
+      }
+    };
+    if (username !== 'Unknown Principal') {
+      syncUserClaims();
+    }
+  }, [username]);
+
   // 2. Clear history updates both reactive states, client localStorage, and backend database
   const handleClearChat = async () => {
     setMessages([
-      { sender: 'system', text: `What would you like to find out about, ${username}?` }
+      { id: genId(), sender: 'system', text: `What would you like to find out about, ${username}?` }
     ]);
     setSelectedAffiliate('All');
+    setAgentStatus('');
+    setAgentPath([]);
+    setHasChatted(false)
     localStorage.removeItem(`chat-messages-${username}`);
 
     try {
@@ -140,36 +174,134 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
     return () => clearTimeout(timer);
   }, [messages, loading]);
 
+  const getNodeLabel = (nodeName: string): string => {
+    switch (nodeName) {
+      case 'retrieve_node':
+        return 'GraphRAG Retrieval in Progress'
+      case 'grade_documents_node':
+        return 'Evaluating Document Relevance'
+      case 'rewrite_query_node':
+        return 'Refining Query Parameters'
+      case 'generate_node':
+        return 'Collecting Rings and Generating Tokens'
+      case 'conversational_node':
+        return 'generating a friendly hedgehog response'
+      default:
+        return `${nodeName}`;
+    }
+  }
   
   const handleSendMessage = async (textToSend: string) => {
     if (!textToSend.trim() || loading) return;
 
-    const userMsg = { sender: 'user' as const, text: textToSend };
-    setMessages(prev => [...prev, userMsg, { sender: 'ai' as const, text: '' }]);
+    // Add user message + placeholder AI message
+    setMessages(prev => [
+      ...prev,
+      { id: genId(), sender: 'user', text: textToSend },
+      { id: genId(), sender: 'ai', text: '' }
+    ]);
+
+    setHasChatted(true);
     setInput('');
     setLoading(true);
+    setAgentStatus('Running at the speed of sound');
+    setAgentPath([]);
 
     try {
-      await api.sendChatMessage(username, textToSend, selectedAffiliate, (newToken) => {
-        setMessages(prev => {
-          const updated = [...prev];
-          const lastIndex = updated.length - 1;
-          if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
-            updated[lastIndex] = {
-              ...updated[lastIndex],
-              text: updated[lastIndex].text + newToken
-            };
+      await api.sendChatMessage(username, textToSend, selectedAffiliate, (rawChunk) => {
+        if (!rawChunk.trim()) return;
+
+        const cleanLines = rawChunk
+          .split('\n')
+          .map(line => line.trim())
+          .filter(line => line.startsWith('data: '));
+
+        for (const line of cleanLines) {
+          try {
+            const rawJson = line.substring(6);
+            const payload = JSON.parse(rawJson);
+
+            console.log("SSE EVENT RECEIVED:", payload);
+
+            // Node progress updates
+            if (payload.event === 'node_progress') {
+              const nodeLabel = getNodeLabel(payload.node);
+              setAgentStatus(nodeLabel);
+              setAgentPath(prev =>
+                prev.includes(payload.node) ? prev : [...prev, payload.node]
+              );
+            }
+
+            // STREAMING TOKENS — append incrementally
+            if (payload.event === 'token') {
+              setMessages(prev => {
+                const updated = [...prev];
+                const lastIndex = updated.length - 1;
+
+                if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
+                  updated[lastIndex] = {
+                    ...updated[lastIndex],
+                    text: (updated[lastIndex].text || '') + payload.text
+                  };
+                }
+                return updated;
+              });
+            }
+
+            // Final response — overwrite with full text
+            if (payload.event === 'final_generation') {
+              setMessages(prev => {
+                const updated = [...prev];
+                const lastIndex = updated.length - 1;
+
+                if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
+                  updated[lastIndex] = {
+                    ...updated[lastIndex],
+                    text: payload.text
+                  };
+                }
+                return updated;
+              });
+
+              setAgentStatus('');
+            }
+
+            // Error handling
+            if (payload.event === 'error') {
+              setMessages(prev => {
+                const updated = [...prev];
+                const lastIndex = updated.length - 1;
+
+                if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
+                  updated[lastIndex] = {
+                    ...updated[lastIndex],
+                    text: `Execution Fault: ${payload.message}`
+                  };
+                }
+                return updated;
+              });
+
+              setAgentStatus('');
+            }
+
+          } catch (jsonErr) {
+            console.warn("Skipping partial, non-JSON SSE chunk buffer:", jsonErr);
           }
-          return updated;
-        });
+        }
       });
+
     } catch (error) {
       console.error(error);
-      setMessages(prev => [...prev, { sender: 'ai', text: "Vector assertion timed out. Check local engine allocations." }]);
+      setMessages(prev => [
+        ...prev,
+        { id: genId(), sender: 'ai', text: "Vector assertion timed out. Check local engine allocations." }
+      ]);
     } finally {
       setLoading(false);
     }
   };
+
+
 
   const onSubmitForm = (e: React.FormEvent) => {
     e.preventDefault();
@@ -177,7 +309,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
     handleSendMessage(input);
   };
 
-  const hasChatted = messages.some(msg => msg.sender === 'user');
+  // const hasChatted = messages.some(msg => msg.sender === 'user');
 
   return (
     <div className={`portal-container ${theme === 'shadow' ? 'theme-shadow' : ''}`}>
@@ -242,28 +374,31 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
               <div className="chat-window" ref={chatWindowRef}>
                 {messages
                   .filter(msg => !(hasChatted && msg.sender === 'system'))
-                  .map((msg, index) => (
-                    <div key={index} className={`message-bubble ${msg.sender}`}>
+                  .map(msg => (
+                    <div key={msg.id} className={`message-bubble ${msg.sender}`}>
+
                       <div className="message-sender">{msg.sender.toUpperCase()}</div>
-                      <div className="message-text">{msg.text}</div>
+
+                      <div className="message-text">
+                        {msg.text}
+                      </div>
                     </div>
                   ))}
-                  
-                {loading && (
-                  <div className="message-bubble ai thinking sonic-loader-container">
-                    {theme === 'sonic' ? (
-                      <img src={sonicSpinImg} alt="Spinning..." className="sonic-spin-gif" />
-                    ) : (
-                      <img src={shadowSpinImg} alt="Spinning..." className="shadow-spin-gif" />
-                    )}
-                    <div className="loading-text">
-                      Collecting rings & tokens...
+                  {loading && (
+                    <div className="sonic-loader-container">
+                      <img
+                        src={theme === 'sonic' ? sonicSpinImg : shadowSpinImg}
+                        alt="loading"
+                        style={{ width: '48px', height: '48px' }}
+                      />
+                      <div className="loading-text">
+                        {getNodeLabel(agentStatus) || "Collecting rings and tokens..."}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )} 
               </div>
             )}
-
+            
             <footer className="controls-footer" ref={messagesEndRef}>
               <form onSubmit={onSubmitForm} className="chat-input-area">
                 <input
