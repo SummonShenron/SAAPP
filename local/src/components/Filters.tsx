@@ -27,7 +27,7 @@ export const Filters: React.FC<FiltersProps> = ({ selectedAffiliate, setSelected
           setSelectedAffiliate(affiliates[0]);
         }
       } catch (err) {
-        console.error("[!] Metadata filter compilation error:", err);
+        console.error("Metadata filter compilation error:", err);
       } finally {
         setFetchingFilters(false);
       }
