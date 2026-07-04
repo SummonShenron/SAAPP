@@ -6,23 +6,14 @@ from typing import List, Dict, Any
 from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.documents import Document
-from backend.graph_db import get_dynamic_context, knowledge_graph
+from backend.state.graph_db import get_dynamic_context, knowledge_graph
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BASE_DIR) # Navigates up to \local-rag\
 DB_DIR = os.path.join(PROJECT_ROOT, "chroma_db")
 logger = logging.getLogger("SASS Logger")
 logger.info("Initializing Unified Search Service Engine...")
-_embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
-if not os.path.exists(DB_DIR):
-    logger.warning("Chroma DB directory path not found. Ensure ingestion has run.")
-    vector_store = None
-else:
-    vector_store = Chroma(
-        persist_directory=DB_DIR, 
-        embedding_function=_embeddings
-    )
 
 def _detect_routing_strategy(query: str) -> str:
     clean_query = query.lower().strip()
@@ -51,7 +42,7 @@ def _detect_routing_strategy(query: str) -> str:
     # Perfect for open-ended lore, summaries, or semantic themes
     return "vector"
 
-def _retrieve_vector(query: str, search_filter: Dict[str, Any], top_k: int) -> List[Document]:
+def _retrieve_vector(vector_store, query: str, search_filter: Dict[str, Any], top_k: int) -> List[Document]:
     """Runs standard dense vector semantic similarity search."""
     logger.info(f"Retrieving Vector context (k={top_k}).")
     if not vector_store:
@@ -63,7 +54,7 @@ def _retrieve_vector(query: str, search_filter: Dict[str, Any], top_k: int) -> L
         logger.error(f"Dense vector search failure: {e}")
         return []
     
-def _retrieve_lexical(query: str, search_filter: Dict[str, Any], top_k: int) -> List[Document]:
+def _retrieve_lexical(vector_store, query: str, search_filter: Dict[str, Any], top_k: int) -> List[Document]:
     logger.info(f"Retrieving Lexical context (k={top_k}).")
     if not vector_store:
         logger.error("Lexical routing failed.")
@@ -110,11 +101,11 @@ def _retrieve_lexical(query: str, search_filter: Dict[str, Any], top_k: int) -> 
         return []
 
 
-def _retrieve_hybrid(query: str, search_filter: Dict[str, Any], top_k: int) -> List[Document]:
+def _retrieve_hybrid(vector_store, query: str, search_filter: Dict[str, Any], top_k: int) -> List[Document]:
     logger.info(f"Executing Hybrid Retrieval (Vector + Lexical)")
     try:
-        vector_docs = _retrieve_vector(query, search_filter, top_k)
-        lexical_docs = _retrieve_lexical(query, search_filter, top_k)
+        vector_docs = _retrieve_vector(vector_store, query, search_filter, top_k)
+        lexical_docs = _retrieve_lexical(vector_store, query, search_filter, top_k)
 
         # Compute RRF scores: RRF_Score(d) = sum( 1 / (60 + rank(d)) )
         rrf_scores: Dict[str, float] = {}
@@ -137,7 +128,7 @@ def _retrieve_hybrid(query: str, search_filter: Dict[str, Any], top_k: int) -> L
         logger.error(f"Hybrid RRF execution failure: {e}")
         return []
 
-def discover_workspace_documents(affiliate_scope: str) -> List[str]:
+def discover_workspace_documents(vector_store, affiliate_scope: str) -> List[str]:
     """
     Mimics Azure's search("*") wildcard capability.
     """
@@ -160,7 +151,7 @@ def discover_workspace_documents(affiliate_scope: str) -> List[str]:
         logger.error(f"[-] Document discovery disruption: {str(e)}")
         return []
 
-def get_secure_retriever(target_scope: List[str], query_text: str, top_k: int = 3):
+def get_secure_retriever(vector_store, target_scope: List[str], query_text: str, top_k: int = 3):
     """
     Returns a secured LangChain retriever instance with auto-detected retrieval strategy.
     """
@@ -176,14 +167,14 @@ def get_secure_retriever(target_scope: List[str], query_text: str, top_k: int = 
 
     def retrieve(query: str) -> List[Document]:
         if strategy == "vector":
-            return _retrieve_vector(query, search_filter, top_k)
+            return _retrieve_vector(vector_store, query, search_filter, top_k)
         elif strategy == "lexical":
-            return _retrieve_lexical(query, search_filter, top_k)
+            return _retrieve_lexical(vector_store, query, search_filter, top_k)
         elif strategy == "hybrid":
-            return _retrieve_hybrid(query, search_filter, top_k)
+            return _retrieve_hybrid(vector_store, query, search_filter, top_k)
         else:
             logger.warning(f"Unknown strategy '{strategy}'. Falling back to vector.")
-            return _retrieve_vector(query, search_filter, top_k)
+            return _retrieve_vector(vector_store, query, search_filter, top_k)
 
     # Attach itself to its own invoke property to meet LangChain's contract
     retrieve.invoke = retrieve

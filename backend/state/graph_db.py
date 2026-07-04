@@ -3,8 +3,8 @@ import json
 import os
 import logging
 import difflib
-from backend.models import llm
-from constraints import RELATIONSHIP_PROMPT
+from backend.models.models import llm
+from backend.components.constraints import RELATIONSHIP_PROMPT
 
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))

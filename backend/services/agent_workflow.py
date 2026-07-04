@@ -5,18 +5,18 @@ import logging
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langchain_core.documents import Document
 
-from backend.search import get_secure_retriever
-from backend.models import llm
-from backend import graph_db
-from constraints import (
+from backend.services.search import get_secure_retriever
+from backend.models.models import llm
+from backend.state import graph_db
+from backend.components.constraints import (
     get_system_prompt,
     format_docs,
     CONVERSATIONAL_PROMPT,
     GRADING_PROMPT,
     REWRITING_PROMPT
 )
-
-from backend.graph_state import GraphState, route_user_query, route_after_grading
+# from backend.utils.memory_utils import flatten_saved_conversations, grade_memory_docs
+from backend.state.graph_state import GraphState, route_user_query, route_after_grading
 from langgraph.graph import StateGraph, START, END
 
 logger = logging.getLogger("SASS Logger")
@@ -26,20 +26,20 @@ logger = logging.getLogger("SASS Logger")
 # RETRIEVE NODE (sync)
 # ============================================================
 
-def retrieve_node(state: GraphState) -> dict:
+def retrieve_node(state: GraphState, vector_store) -> dict:
     logger.info("--- RETRIEVING DOCUMENTS & GRAPH CONTEXT ---")
-
     # Get user prompt parameters
     question = state["messages"][-1].content
     username = state.get("username")
     target_scope = state.get("target_scope")
     current_loops = state.get("loop_count", 0) or 0
     original_question = state.get("original_question") or question
-    
+    # memory_docs = flatten_saved_conversations(username)
 
     try:
         # 1. Call secure multi-tenant vector search service
         retriever = get_secure_retriever(
+            vector_store=vector_store,
             target_scope=target_scope,
             query_text=question,
             top_k=3
@@ -55,7 +55,12 @@ def retrieve_node(state: GraphState) -> dict:
     except Exception as e:
         logger.error(f"Vector search failed to retrieve documents: {e}")
         docs = []
-
+    # graded_memory = grade_memory_docs(memory_docs, question)
+    # for m in graded_memory:
+    #     docs.append(Document(
+    #         page_content=f"[Saved Conversation: {m['title']}]\n{m['text']}",
+    #         metadata={"source": "saved_conversation", "type": "memory"}
+    #     ))
     # 2. Extract multi-hop context relationships from NetworkX graph
     graph_context = []
     try:
@@ -189,10 +194,11 @@ def rewrite_query_node(state: GraphState) -> dict:
 # WORKFLOW ASSEMBLY & COMPILATION
 # ============================================================
 
-def create_workflow():
+def create_workflow(vector_store):
     workflow = StateGraph(GraphState)
-
-    workflow.add_node("retrieve_node", retrieve_node)
+    def retrieve_node_with_store(state):
+        return retrieve_node(state, vector_store)
+    workflow.add_node("retrieve_node", retrieve_node_with_store)
     workflow.add_node("grade_documents_node", grading_node)
     workflow.add_node("rewrite_query_node", rewrite_query_node)
     workflow.add_node("generate_node", generate_node)
