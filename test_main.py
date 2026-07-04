@@ -6,13 +6,13 @@ from langchain_core.documents import Document
 import pytest
 import asyncio
 import networkx as nx
-from backend import graph_db
+from backend.state import graph_db
 from langchain_core.messages import HumanMessage, AIMessage
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'backend')))
-from backend.graph_state import GraphState, route_user_query
-from backend.agent_workflow import retrieve_node, grading_node, rewrite_query_node
-from backend.search import _detect_routing_strategy
+from backend.state.graph_state import GraphState, route_user_query
+from backend.services.agent_workflow import retrieve_node, grading_node, rewrite_query_node
+from backend.services.search import _detect_routing_strategy
 from app import rewrite_fallback
 
 class MockLLM:

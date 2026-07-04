@@ -96,7 +96,6 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
     setAgentPath([]);
     setHasChatted(false)
     localStorage.removeItem(`chat-messages-${username}`);
-
     try {
       // Direct call to purge the persisted memory on your local-RAG backend API
       await fetch('http://localhost:8000/api/chat/clear', {
@@ -115,9 +114,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
       .filter(msg => msg.sender !== 'system')
       .map(msg => `[${msg.sender.toUpperCase()}] (${new Date().toLocaleTimeString()})\n${msg.text}`)
       .join("\n\n----------------------------------------\n\n");
-
     if (!transcript.trim()) return;
-
     // Build downloadable Markdown asset dynamically
     const blob = new Blob([`# Secure RAG Chat Session: ${username}\n\n${transcript}`], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -164,13 +161,10 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
         });
       }
     };
-
     // 1. Fire immediately for rapid reactive updates
     scrollToBottom();
-
     // 2. Fire with a tiny delay to allow the browser to paint newly loaded images/gifs (fixes refresh issue)
     const timer = setTimeout(scrollToBottom, 50);
-
     return () => clearTimeout(timer);
   }, [messages, loading]);
 
@@ -193,36 +187,29 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
   
   const handleSendMessage = async (textToSend: string) => {
     if (!textToSend.trim() || loading) return;
-
     // Add user message + placeholder AI message
     setMessages(prev => [
       ...prev,
       { id: genId(), sender: 'user', text: textToSend },
       { id: genId(), sender: 'ai', text: '' }
     ]);
-
     setHasChatted(true);
     setInput('');
     setLoading(true);
     setAgentStatus('Running at the speed of sound');
     setAgentPath([]);
-
     try {
       await api.sendChatMessage(username, textToSend, selectedAffiliate, (rawChunk) => {
         if (!rawChunk.trim()) return;
-
         const cleanLines = rawChunk
           .split('\n')
           .map(line => line.trim())
           .filter(line => line.startsWith('data: '));
-
         for (const line of cleanLines) {
           try {
             const rawJson = line.substring(6);
             const payload = JSON.parse(rawJson);
-
-            console.log("SSE EVENT RECEIVED:", payload);
-
+            // console.log("SSE EVENT RECEIVED:", payload);
             // Node progress updates
             if (payload.event === 'node_progress') {
               const nodeLabel = getNodeLabel(payload.node);
@@ -231,13 +218,11 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
                 prev.includes(payload.node) ? prev : [...prev, payload.node]
               );
             }
-
             // STREAMING TOKENS — append incrementally
             if (payload.event === 'token') {
               setMessages(prev => {
                 const updated = [...prev];
                 const lastIndex = updated.length - 1;
-
                 if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
                   updated[lastIndex] = {
                     ...updated[lastIndex],
@@ -247,13 +232,11 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
                 return updated;
               });
             }
-
             // Final response — overwrite with full text
             if (payload.event === 'final_generation') {
               setMessages(prev => {
                 const updated = [...prev];
                 const lastIndex = updated.length - 1;
-
                 if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
                   updated[lastIndex] = {
                     ...updated[lastIndex],
@@ -262,16 +245,13 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
                 }
                 return updated;
               });
-
               setAgentStatus('');
             }
-
             // Error handling
             if (payload.event === 'error') {
               setMessages(prev => {
                 const updated = [...prev];
                 const lastIndex = updated.length - 1;
-
                 if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
                   updated[lastIndex] = {
                     ...updated[lastIndex],
@@ -280,16 +260,13 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
                 }
                 return updated;
               });
-
               setAgentStatus('');
             }
-
           } catch (jsonErr) {
             console.warn("Skipping partial, non-JSON SSE chunk buffer:", jsonErr);
           }
         }
       });
-
     } catch (error) {
       console.error(error);
       setMessages(prev => [
@@ -300,16 +277,11 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
       setLoading(false);
     }
   };
-
-
-
   const onSubmitForm = (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
     handleSendMessage(input);
   };
-
-  // const hasChatted = messages.some(msg => msg.sender === 'user');
 
   return (
     <div className={`portal-container ${theme === 'shadow' ? 'theme-shadow' : ''}`}>
@@ -318,16 +290,14 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
         <div className="nav-links">
           <span onClick={toggleTheme} className="theme-toggle-btn">
             {theme === 'sonic' ? 'Hero' : 'Dark'}
-          </span>
-          
+          </span>      
           {/* Dashboard Tab Link */}
           <span 
             className={activeTab === 'chat' ? 'active' : ''} 
             onClick={() => setActiveTab('chat')}
           >
-            Dashboard
+            Chat
           </span>
-          
           {/* New Self Service Tab Link */}
           <span 
             className={activeTab === 'self-service' ? 'active' : ''} 
@@ -335,11 +305,9 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
           >
             Self Service
           </span>
-          
           <span onClick={onExit} className="nav-exit">Disconnect Session</span>
         </div>
       </nav>
-
       {activeTab === 'self-service' ? (
         <SelfServicePage />
       ) : (
@@ -347,11 +315,10 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
           <div className="hero-banner" style={{ backgroundImage: `linear-gradient(rgba(18, 24, 36, 0.7), rgba(18, 24, 36, 0.95)), url(${sonicImg})` }}>
             <div className="banner-context">
               <h3>{theme === 'sonic' ? 'Sonic Assistant' : 'Shadow Engine'}</h3>
-              <h4>{theme === 'sonic' ? 'rolling around at the speed of thought.' : 'Behold the Ultimate Power.'}</h4>
+              <h4>{theme === 'sonic' ? 'Rolling around at the speed of sound.' : 'Behold the Ultimate Power.'}</h4>
               {userEmail && <p className="badge">Principal Account Identity: {userEmail}</p>}
             </div>
           </div>
-
           <main className={`portal-body ${!hasChatted ? 'initial-state-view' : ''}`}>
             {!hasChatted && (
               <div className="example-cards-container">
@@ -369,16 +336,13 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
                 )}
               </div>
             )}
-
             {hasChatted && (
               <div className="chat-window" ref={chatWindowRef}>
                 {messages
                   .filter(msg => !(hasChatted && msg.sender === 'system'))
                   .map(msg => (
                     <div key={msg.id} className={`message-bubble ${msg.sender}`}>
-
                       <div className="message-sender">{msg.sender.toUpperCase()}</div>
-
                       <div className="message-text">
                         {msg.text}
                       </div>
@@ -398,7 +362,6 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
                   )} 
               </div>
             )}
-            
             <footer className="controls-footer" ref={messagesEndRef}>
               <form onSubmit={onSubmitForm} className="chat-input-area">
                 <input
@@ -408,8 +371,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
                   onChange={(e) => setInput(e.target.value)}
                   disabled={loading}
                 />
-                <button className="submit-button" type="submit" disabled={loading || !input.trim()}>Send</button>
-                
+                <button className="submit-button" type="submit" disabled={loading || !input.trim()}>Send</button>  
                 <button
                   className="export-button"
                   type="button"
@@ -419,7 +381,6 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
                 >
                   Export
                 </button>
-
                 <button
                   className="clear-button" 
                   type="button" 
@@ -430,7 +391,6 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
                   Clear
                 </button>
               </form>
-
               <Filters 
                 selectedAffiliate={selectedAffiliate}
                 setSelectedAffiliate={setSelectedAffiliate}
