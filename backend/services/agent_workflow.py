@@ -15,10 +15,10 @@ from backend.components.constraints import (
     GRADING_PROMPT,
     REWRITING_PROMPT
 )
-# from backend.utils.memory_utils import flatten_saved_conversations, grade_memory_docs
+from backend.utils.memory_utils import flatten_saved_conversations, grade_memory_docs
 from backend.state.graph_state import GraphState, route_user_query, route_after_grading
 from langgraph.graph import StateGraph, START, END
-
+from backend.utils.app_utils import load_saved_conversations
 logger = logging.getLogger("SASS Logger")
 
 
@@ -35,7 +35,6 @@ def retrieve_node(state: GraphState, vector_store) -> dict:
     current_loops = state.get("loop_count", 0) or 0
     original_question = state.get("original_question") or question
     # memory_docs = flatten_saved_conversations(username)
-
     try:
         # 1. Call secure multi-tenant vector search service
         retriever = get_secure_retriever(
@@ -55,13 +54,6 @@ def retrieve_node(state: GraphState, vector_store) -> dict:
     except Exception as e:
         logger.error(f"Vector search failed to retrieve documents: {e}")
         docs = []
-    # graded_memory = grade_memory_docs(memory_docs, question)
-    # for m in graded_memory:
-    #     docs.append(Document(
-    #         page_content=f"[Saved Conversation: {m['title']}]\n{m['text']}",
-    #         metadata={"source": "saved_conversation", "type": "memory"}
-    #     ))
-    # 2. Extract multi-hop context relationships from NetworkX graph
     graph_context = []
     try:
         question_lower = question.lower()
@@ -72,7 +64,6 @@ def retrieve_node(state: GraphState, vector_store) -> dict:
                 graph_context.extend(relations)
     except Exception as e:
         logger.error(f"GraphRAG Entity scanner failed: {e}")
-
     # 3. Securely augment document context array
     if graph_context:
         facts = list(set(graph_context))
@@ -82,7 +73,6 @@ def retrieve_node(state: GraphState, vector_store) -> dict:
                 page_content=f"Connection: {fact}",
                 metadata={"source": "knowledge_graph_db", "type": "relationship"}
             ))
-
     return {
         "documents": docs,
         "loop_count": current_loops + 1,

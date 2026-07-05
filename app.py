@@ -15,7 +15,8 @@ from backend.components.constraints import get_system_prompt, CONVERSATIONAL_PRO
 from backend.services.search import discover_workspace_documents
 from local_function_app.function_app import run_ingestion_pipeline, HOT_FOLDER_DIR
 from backend.state.graph_state import GraphState
-from backend.utils.app_utils import save_conversation, list_saved_conversations, load_saved_conversations, load_saved_conversation, save_chat_history, format_history_as_text, rewrite_fallback, chat_sessions
+from backend.utils.app_utils import save_conversation, list_saved_conversations, load_saved_conversations, load_saved_conversation, save_chat_history, format_history_as_text, chat_sessions
+from backend.utils.fallback_utils import rewrite_fallback
 from backend.logging.sass_logger import setup_logging
 from backend.services.orchestrator import startup_services
 from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access
@@ -60,6 +61,18 @@ async def get_affiliates(username: str):
     username = username.strip()
     return get_accessible_affiliates(username, services.get("user_directory"))
 
+@app.get("/api/user/groups")
+async def get_user_groups_endpoint(
+    username: str, 
+    x_user_id: str = Header(None)
+):
+    """Exposes directory profile groups to the frontend application layout layer."""
+    if not x_user_id:
+        raise HTTPException(status_code=401, detail="Missing authorization context principal.")
+    # Reuses the load_user_directory_groups helper function we wrote earlier!
+    groups = load_user_directory_groups(username)
+    return groups
+
 @app.get("/api/discover-docs")
 async def discover_documents(affiliate: str = "All"):
     """
@@ -73,14 +86,6 @@ async def discover_documents(affiliate: str = "All"):
     except Exception as e:
         logger.error(f"[-] Catalog discovery anomaly: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/chat/clear")
-async def clear_chat_history(request: dict):
-    username = request.get("username")
-    if username in chat_sessions:
-        chat_sessions[username] = []
-        save_chat_history()
-    return {"status": "cleared"}
 
 @app.post("/api/chat")
 async def secure_chat(request: ChatRequest):
@@ -99,17 +104,34 @@ async def secure_chat(request: ChatRequest):
                 "Connection": "keep-alive",
             },
         )
+    async def streamThinkingThen(text: str):
+        async def generator():
+            # tiny "thinking" animation
+            yield f"data: {json.dumps({'event': 'token', 'text': '…'})}\n\n"
+            await asyncio.sleep(0.15)
+            # final streamed message
+            yield f"data: {json.dumps({'event': 'token', 'text': text})}\n\n"
+            yield f"data: {json.dumps({'event': 'final_generation', 'text': text})}\n\n"
+        return StreamingResponse(
+            generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
     if question.lower().startswith("save conversation"):
         # extract title
         parts = question.split("save conversation", 1)
         title = parts[1].strip() or f"Conversation_{datetime.datetime.now().isoformat()}"
         save_conversation(username, title)
-        return await stream_simple_message(f"Conversation '{title}' saved successfully.")
+        return await streamThinkingThen(f"Conversation '{title}' saved successfully.")
     if question.lower().startswith("load conversation"):
         title = question.split("load conversation", 1)[1].strip()
         conversation = load_saved_conversation(username, title)
         if not conversation:
-            return await stream_simple_message("Conversation not found.")
+            return await streamThinkingThen("Conversation not found.")
         # reconstruct LangChain messages
         reconstructed = []
         for msg in conversation["messages"]:
@@ -122,21 +144,20 @@ async def secure_chat(request: ChatRequest):
         chat_sessions[username] = reconstructed
         chat_sessions[username].insert(0, SystemMessage(content="Loaded conversation context."))
         save_chat_history()
-        return await stream_simple_message(f"Conversation '{title}' loaded successfully.")
+        return await streamThinkingThen(f"Conversation '{title}' loaded successfully.")
     if question.lower().startswith("list conversations"):
         titles = list_saved_conversations(username)
         if not titles:
-            return await stream_simple_message("You have no saved conversations.")
-        
+            return await streamThinkingThen("You have no saved conversations.")
         # Build a nice readable list
         formatted = "\n".join(f"• {t}" for t in titles)
-        return await stream_simple_message(f"Saved conversations:\n{formatted}")
+        return await streamThinkingThen(f"Saved conversations:\n{formatted}")
     
     requested_affiliate = request.affiliate.strip()
     user_claims = services.get("user_directory").get(username, {})
     user_groups = user_claims.get("groups", [])
     logger.info(f"User Verified: {user_claims['email']}")
-    logger.debug(f"User Group Claims: {user_groups}")   
+    logger.debug(f"User Group Claims: {user_groups}")
     # ---------- Auth Authorization Boundary ----------
     if username not in services.get("user_directory"):
         raise HTTPException(status_code=401, detail="Unauthorized: User not found.")
@@ -149,7 +170,7 @@ async def secure_chat(request: ChatRequest):
         chat_sessions[username] = []
     if len(chat_sessions[username]) > 10:
         chat_sessions[username] = chat_sessions[username][-10:]
-    messages_state = list(chat_sessions[username])
+    messages_state = chat_sessions[username]
     messages_state.append(HumanMessage(content=question))
     initial_state: GraphState = {
         "messages": messages_state,
@@ -212,7 +233,7 @@ async def secure_chat(request: ChatRequest):
                         "documents": final_state.get("documents", []),
                         "original_question": final_state.get("original_question", initial_state["original_question"]),
                     }
-                    async for fallback_chunk in rewrite_fallback(services.get("vector_store"), fallback_state, username, messages_state):
+                    async for fallback_chunk in rewrite_fallback(services.get("vector_store"), fallback_state, username, messages_state, chat_sessions, save_chat_history):
                         yield fallback_chunk
                     return
                 yield f"data: {json.dumps({'event': 'final_generation', 'text': full_response})}\n\n"
@@ -234,6 +255,14 @@ async def secure_chat(request: ChatRequest):
             "Connection": "keep-alive",
         },
     )
+
+@app.post("/api/chat/clear")
+async def clear_chat_history(request: dict):
+    username = request.get("username")
+    if username in chat_sessions:
+        chat_sessions[username] = []
+        save_chat_history()
+    return {"status": "cleared"}
 
 @app.get("/api/documents")
 async def get_ingested_documents_endpoint(
@@ -267,18 +296,6 @@ async def get_ingested_documents_endpoint(
         return manifest_records
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to scan file system indexes: {str(e)}")
-    
-@app.get("/api/user/groups")
-async def get_user_groups_endpoint(
-    username: str, 
-    x_user_id: str = Header(None)
-):
-    """Exposes directory profile groups to the frontend application layout layer."""
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="Missing authorization context principal.")
-    # Reuses the load_user_directory_groups helper function we wrote earlier!
-    groups = load_user_directory_groups(username)
-    return groups
 
 # --- ELEVATED ENDPOINT: SECURE MULTI-PART FILE UPLOAD ---
 @app.post("/api/upload")
@@ -360,7 +377,26 @@ async def delete_document(doc_id: str, affiliate: str = Query(...)):
     except Exception as e:
         logger.error(f"[CRITICAL] Deletion engine sequence failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Core index expulsion failure: {str(e)}")
-    
+
+@app.get("/api/saved-conversations")
+async def get_saved_conversations(username: str):
+    conversations = load_saved_conversations(username)
+    # conversations is a LIST, not a dict
+    titles = [c["title"] for c in conversations]
+    return {"titles": titles}
+
+@app.get("/api/saved-conversations/{title}")
+async def get_saved_conversation(username: str, title: str):
+    conversations = load_saved_conversations(username)
+    # find the conversation in the list
+    for convo in conversations:
+        if convo["title"] == title:
+            return {
+                "title": convo["title"],
+                "messages": convo["messages"]
+            }
+    return {"error": "Conversation not found"}
+
 @app.get("/api/health")
 async def health_check():
     return {"status": "healthy", "database_connected": os.path.exists(DB_DIR)}

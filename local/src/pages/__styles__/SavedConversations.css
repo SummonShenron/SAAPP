@@ -1,0 +1,175 @@
+/* ==========================================================================
+   SAVED CONVERSATIONS LAYOUT — Sonic/Shadow Theme Compatible
+   ========================================================================== */
+
+/* MAIN CONTAINER */
+.saved-conversations-container {
+  display: flex;
+  height: calc(100vh - 80px);
+  background: var(--bg-main);
+  color: var(--text-main);
+  transition: background-color 0.2s ease, color 0.2s ease;
+  min-height: 100vh;
+}
+
+/* SIDEBAR */
+.saved-conversations-sidebar {
+  width: 280px;
+  background: var(--bg-main);
+  border-right: 1px solid var(--border-color);
+  padding: 1rem;
+  overflow-y: auto;
+  
+  transition: all 0.2s ease;
+}
+
+.saved-conversations-sidebar:hover {
+    box-shadow: var(--shadow-hover);
+    transform: translateY(-2px);
+    transition: all 0.2s ease;
+    box-shadow: var(--shadow);
+}
+
+.sidebar-title {
+  margin-bottom: 1rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+/* LIST */
+.conversation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.conversation-item {
+  padding: 0.75rem;
+  border-radius: 6px;
+  background: var(--bg-main);
+  border: 1px solid var(--user-border-color);
+  cursor: pointer;
+  /* box-shadow: var(--light-shadow); */
+  transition: all 0.5s ease;
+}
+
+.conversation-item:hover {
+  background: var(--bg-surface-hover);
+  box-shadow: var(--shadow);
+  transform: translateY(-2px);
+  transition: 0.2s ease;
+}
+
+.theme-shadow .conversation-item:hover {
+  background: var(--bg-surface-hover);
+  box-shadow: var(--shadow-hover);
+  transform: translateY(-2px);
+  transition: 0.2s ease;
+}
+
+.conversation-item.active {
+  background: var(--bubble-user-bg);
+  color: var(--text-main);
+  border-color: var(--user-border-color);
+  box-shadow: var(--shadow);
+  transition: all 0.2s ease;
+  pointer-events: none;
+  transform: translateY(-2px);
+}
+
+/* .conversation-item.active:hover {
+    box-shadow: var(--shadow-hover);
+} */
+
+.theme-shadow .conversation-item.active {
+  background: var(--bubble-user-bg);
+  color: var(--text);
+  border-color: var(--accent-primary);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+.conversation-item:active {
+    box-shadow: none;
+    transform: translateY(2px);
+    transition: all 0.2s ease;
+    background: var(--bg-main)
+}
+
+.theme-shadow .conversation-item:active {
+    box-shadow: none;
+    transform: translateY(2px);
+    transition: all 0.2s ease;
+    background: var(--bg-main)
+}
+
+/* MAIN VIEWER */
+.saved-chat-wrapper {
+  max-width: 850px;        /* match ChatPage */
+  margin: 0 auto;          /* center it */
+  padding: 1.5rem;         /* match ChatPage padding */
+}
+
+.saved-conversations-viewer {
+  flex: 1;
+  padding: 1.5rem;
+  overflow-y: auto;
+  background: var(--bg-main);
+  /* box-shadow: var(--shadow); */
+  transition: all 0.2s ease;
+}
+
+.saved-conversations-viewer:hover {
+    box-shadow: var(--shadow);
+    transition: all 0.2s ease;
+}
+
+.viewer-title {
+  font-size: 1.2rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  color: var(--text-main);
+}
+
+/* MESSAGE BUBBLES */
+.messages-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.message-bubble {
+  max-width: 70%;
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  line-height: 1.4;
+}
+
+/* Human messages (right aligned) */
+.message-bubble.human {
+  align-self: flex-end;
+  background: var(--bubble-user-bg);
+  color: var(--text-main);
+}
+
+.theme-shadow .message-bubble.human {
+    color: var(--text)
+}
+
+/* AI messages (left aligned) */
+.message-bubble.ai {
+  align-self: flex-start;
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+}
+
+/* System messages (centered, subtle) */
+.message-bubble.system {
+  align-self: center;
+  background: var(--bg-surface-hover);
+  font-size: 0.85rem;
+  opacity: 0.8;
+}

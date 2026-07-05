@@ -5,13 +5,12 @@ from backend.utils.app_utils import load_saved_conversations
 
 # ========== TBD =============
     
-def flatten_saved_conversations(username: str):
-    saved = load_saved_conversations()
-    if username not in saved:
+def flatten_saved_conversations(conversations: list):
+    if not conversations:
         return []
 
     flattened = []
-    for convo in saved[username]:
+    for convo in conversations:
         text = "\n".join(
             f"{msg['type']}: {msg['content']}"
             for msg in convo["messages"]
@@ -21,7 +20,7 @@ def flatten_saved_conversations(username: str):
             "timestamp": convo["timestamp"],
             "text": text
         })
-    return flattened    
+    return flattened  
 
 def grade_memory_docs(memory_docs, question):
     """Simple keyword-based grading for saved conversation memory."""
