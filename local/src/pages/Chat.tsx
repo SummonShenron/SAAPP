@@ -5,7 +5,6 @@ import { getDynamicExampleQuestions } from '../utils/Example_List';
 import { api } from '../api'; 
 import sonicSpinImg from '../assets/sonic-rolling.gif';
 import shadowSpinImg from '../assets/shadow.gif';
-import { SelfServicePage } from './SelfService';
 
 interface Message {
   id: string;
@@ -14,15 +13,16 @@ interface Message {
 }
 
 interface ChatPageProps {
-  onExit: () => void;
+  theme: "sonic" | "shadow";
+  toggleTheme: () => void;
 }
 
-export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
+export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [username] = useState(() => localStorage.getItem('x-user-id') || 'Unknown Principal');
   const [selectedAffiliate, setSelectedAffiliate] = useState<string>('All');
   const [allowedAffiliates, setAllowedAffiliates] = useState<string[]>([]);
   const [userEmail, setUserEmail] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<'chat' | 'self-service'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'self-service' | 'saved-conversations'>('chat');
   const [agentStatus, setAgentStatus] = useState<string>('');
   const [agentPath, setAgentPath] = useState<string[]>([]);
   const genId = () => crypto.randomUUID();
@@ -58,15 +58,12 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
   const [loading, setLoading] = useState<boolean>(false);
   const [currentExampleQuestions, setCurrentExampleQuestions] = useState<string[]>([]);
   const [loadingCards, setLoadingCards] = useState<boolean>(false);
-  const [theme, setTheme] = useState<'sonic' | 'shadow'>(() => {
-    const savedTheme = localStorage.getItem('saapp-theme');
-    return (savedTheme === 'shadow' || savedTheme === 'sonic') ? savedTheme : 'sonic';
-  });
+  
   const chatWindowRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const toggleTheme = () => {
-    setTheme(prev => (prev === 'sonic' ? 'shadow' : 'sonic'));
-  };
+  // const toggleTheme = () => {
+  //   setTheme(prev => (prev === 'sonic' ? 'shadow' : 'sonic'));
+  // };
 
   // Synchronize secure directory claims from simulated Entra ID
   useEffect(() => {
@@ -128,9 +125,9 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
   };
 
   // 3. Sync themes to localStorage
-  useEffect(() => {
-    localStorage.setItem('saapp-theme', theme);
-  }, [theme]);
+  // useEffect(() => {
+  //   localStorage.setItem('saapp-theme', theme);
+  // }, [theme]);
 
   // 4. Clean side-effect trigger: Auto-sync dialogue history to localStorage on any message mutations
   useEffect(() => {
@@ -282,126 +279,101 @@ export const ChatPage: React.FC<ChatPageProps> = ({ onExit }) => {
     if (!input.trim()) return;
     handleSendMessage(input);
   };
-
+  
   return (
-    <div className={`portal-container ${theme === 'shadow' ? 'theme-shadow' : ''}`}>
-      <nav className="menu-navigator">
-        <div className="nav-logo"><a href="/" style={{ textDecoration: 'none' }}> {theme === 'sonic' ? '⚡Sonic Assistant' : '⚡Shadow Engine'}</a></div>
-        <div className="nav-links">
-          <span onClick={toggleTheme} className="theme-toggle-btn">
-            {theme === 'sonic' ? 'Hero' : 'Dark'}
-          </span>      
-          {/* Dashboard Tab Link */}
-          <span 
-            className={activeTab === 'chat' ? 'active' : ''} 
-            onClick={() => setActiveTab('chat')}
-          >
-            Chat
-          </span>
-          {/* New Self Service Tab Link */}
-          <span 
-            className={activeTab === 'self-service' ? 'active' : ''} 
-            onClick={() => setActiveTab('self-service')}
-          >
-            Self Service
-          </span>
-          <span onClick={onExit} className="nav-exit">Disconnect Session</span>
+    <>
+      {/* CHAT UI */}
+      <div className="hero-banner" style={{ backgroundImage: `linear-gradient(rgba(18, 24, 36, 0.7), rgba(18, 24, 36, 0.95)), url(${sonicImg})` }}>
+        <div className="banner-context">
+          <h3>{theme === 'sonic' ? 'Sonic Assistant' : 'Shadow Engine'}</h3>
+          <h4>{theme === 'sonic' ? 'Rolling around at the speed of sound.' : 'Behold the Ultimate Power.'}</h4>
+          {userEmail && <p className="badge">Principal Account Identity: {userEmail}</p>}
         </div>
-      </nav>
-      {activeTab === 'self-service' ? (
-        <SelfServicePage />
-      ) : (
-        <>
-          <div className="hero-banner" style={{ backgroundImage: `linear-gradient(rgba(18, 24, 36, 0.7), rgba(18, 24, 36, 0.95)), url(${sonicImg})` }}>
-            <div className="banner-context">
-              <h3>{theme === 'sonic' ? 'Sonic Assistant' : 'Shadow Engine'}</h3>
-              <h4>{theme === 'sonic' ? 'Rolling around at the speed of sound.' : 'Behold the Ultimate Power.'}</h4>
-              {userEmail && <p className="badge">Principal Account Identity: {userEmail}</p>}
-            </div>
+      </div>
+      <main className={`portal-body ${!hasChatted ? 'initial-state-view' : ''}`}>
+        {!hasChatted && (
+          <div className="example-cards-container">
+            {loadingCards ? (
+              <div style={{ color: '#64748b', fontSize: '0.85rem', padding: '1rem' }}>
+                Querying directory indices for security group context...
+              </div>
+            ) : (
+              currentExampleQuestions.map((q, idx) => (
+                <div key={idx} className="query-card" onClick={() => !loading && handleSendMessage(q)}>
+                  <p>{q}</p>
+                  <span>→</span>
+                </div>
+              ))
+            )}
           </div>
-          <main className={`portal-body ${!hasChatted ? 'initial-state-view' : ''}`}>
-            {!hasChatted && (
-              <div className="example-cards-container">
-                {loadingCards ? (
-                  <div style={{ color: '#64748b', fontSize: '0.85rem', padding: '1rem' }}>
-                    Querying directory indices for security group context...
-                  </div>
-                ) : (
-                  currentExampleQuestions.map((q, idx) => (
-                    <div key={idx} className="query-card" onClick={() => !loading && handleSendMessage(q)}>
-                      <p>{q}</p>
-                      <span>→</span>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-            {hasChatted && (
-              <div className="chat-window" ref={chatWindowRef}>
-                {messages
-                  .filter(msg => !(hasChatted && msg.sender === 'system'))
-                  .map(msg => (
-                    <div key={msg.id} className={`message-bubble ${msg.sender}`}>
-                      <div className="message-sender">{msg.sender.toUpperCase()}</div>
-                      <div className="message-text">
-                        {msg.text}
-                      </div>
-                    </div>
-                  ))}
-                  {loading && (
-                    <div className="sonic-loader-container">
-                      <img
-                        src={theme === 'sonic' ? sonicSpinImg : shadowSpinImg}
-                        alt="loading"
-                        style={{ width: '48px', height: '48px' }}
-                      />
-                      <div className="loading-text">
-                        {getNodeLabel(agentStatus) || "Collecting rings and tokens..."}
-                      </div>
-                    </div>
-                  )} 
-              </div>
-            )}
-            <footer className="controls-footer" ref={messagesEndRef}>
-              <form onSubmit={onSubmitForm} className="chat-input-area">
-                <input
-                  type="text"
-                  placeholder="Ask a question against your isolated data index..."
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  disabled={loading}
+        )}
+        {hasChatted && (
+          <div className="chat-window" ref={chatWindowRef}>
+            {messages
+              .filter(msg => !(hasChatted && msg.sender === 'system'))
+              .map(msg => (
+                <div key={msg.id} className={`message-bubble ${msg.sender}`}>
+                  <div className="message-sender">{msg.sender.toUpperCase()}</div>
+                  <div className="message-text">{msg.text}</div>
+                </div>
+              ))}
+            {loading && (
+              <div className="sonic-loader-container">
+                <img
+                  src={theme === 'sonic' ? sonicSpinImg : shadowSpinImg}
+                  alt="loading"
+                  style={{ width: '48px', height: '48px' }}
                 />
-                <button className="submit-button" type="submit" disabled={loading || !input.trim()}>Send</button>  
-                <button
-                  className="export-button"
-                  type="button"
-                  onClick={handleExportChat}
-                  disabled={loading || !hasChatted}
-                  // style={{ backgroundColor: '#4f46e5', color: '#ffffff', marginLeft: '0.5rem' }}
-                >
-                  Export
-                </button>
-                <button
-                  className="clear-button" 
-                  type="button" 
-                  onClick={handleClearChat} 
-                  disabled={loading}
-                  style={{ backgroundColor: '#334155', marginLeft: '0.5rem' }}
-                >
-                  Clear
-                </button>
-              </form>
-              <Filters 
-                selectedAffiliate={selectedAffiliate}
-                setSelectedAffiliate={setSelectedAffiliate}
-                loadingChat={loading}
-                allowedAffiliates={allowedAffiliates}
-                setAllowedAffiliates={setAllowedAffiliates}
-              />
-            </footer>
-          </main>
-        </>
-      )}
-    </div>
+                <div className="loading-text">
+                  {getNodeLabel(agentStatus) || "Collecting rings and tokens..."}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        <footer className="controls-footer" ref={messagesEndRef}>
+          
+          <form onSubmit={onSubmitForm} className="chat-input-area">
+            <div className="chat-input-wrapper">
+            <input className ="chat-input"
+              type="text"
+              placeholder="Ask a question against your isolated data index..."
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              disabled={loading}
+            />
+            </div>
+            <button className="submit-button" type="submit" disabled={loading || !input.trim()}>
+              Send
+            </button>
+            <button
+              className="export-button"
+              type="button"
+              onClick={handleExportChat}
+              disabled={loading || !hasChatted}
+            >
+              Export
+            </button>
+            <button
+              className="clear-button"
+              type="button"
+              onClick={handleClearChat}
+              disabled={loading}
+              style={{ backgroundColor: '#334155', marginLeft: '0.5rem' }}
+            >
+              Clear
+            </button>
+          </form>
+          <Filters 
+            selectedAffiliate={selectedAffiliate}
+            setSelectedAffiliate={setSelectedAffiliate}
+            loadingChat={loading}
+            allowedAffiliates={allowedAffiliates}
+            setAllowedAffiliates={setAllowedAffiliates}
+          />
+        </footer>
+      </main>
+           
   );
-};
+</>
+)}

@@ -1,52 +1,67 @@
-import { LandingPage } from './pages/LandingPage';
-import { ChatPage } from './pages/Chat';
-import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
-import { api } from './api'; // 🔗 Import your centralized API layer
+import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
+import { useState } from "react";
+import { LandingPage } from "./pages/LandingPage";
+import { ChatPage } from "./pages/Chat";
+import { SelfServicePage } from "./pages/SelfService";
+import { SavedConversationsPage } from "./pages/SavedConversations";
+import { Layout } from "../src/components/Layout";
+import { api } from "./api";
 
 function App() {
   const navigate = useNavigate();
+  // LIFT THEME STATE HERE
+  const [theme, setTheme] = useState<"sonic" | "shadow">("sonic");
+  const toggleTheme = () => setTheme(theme === "sonic" ? "shadow" : "sonic");
+  const username = localStorage.getItem("x-user-id") || "";
 
   return (
     <Routes>
-      {/* 1. Landing Page: Session validation completely delegated to the secure backend */}
-      <Route path="/" element={
-        <LandingPage onEnter={async (username: string) => {
-          // Rule 1: Fast client check for empty payloads to save network overhead
-          if (!username) {
-            alert("Authentication failed: Please select a valid profile.");
-            return;
-          }
-
-          try {
-            // Rule 2: Hand identity evaluation completely off to the backend server
-            const isAuthenticated = await api.verifyIdentity(username);
-
-            if (!isAuthenticated) {
-              console.error(`Security Guard: Access Denied. Backend rejected identity context: [${username}]`);
-              alert("Authorization failed: Unknown or unauthorized profile.");
-              return; // Halt execution. Do not navigate to workspace.
-            }
-
-            // Identity successfully validated by backend authority. Set secure session tracking state.
-            localStorage.setItem('x-user-id', username);
-            navigate('/chat');
-            
-          } catch (err) {
-            console.error("Auth server connection fault:", err);
-            alert("Network error: Could not establish connection to the authorization vault.");
-          }
-        }} />
-      } />
-
-      {/* 2. The Main Chat Portal Workspace */}
-      <Route path="/chat" element={
-        <ChatPage onExit={() => {
-          localStorage.removeItem('x-user-id'); // Completely purge session tracking token
-          navigate('/');
-        }} />
-      } />
-
-      {/* 3. Catch-all safety net redirection */}
+      {/* Landing page (no nav bar) */}
+      <Route
+        path="/"
+        element={
+          <LandingPage
+            onEnter={async (username: string) => {
+              if (!username) {
+                alert("Authentication failed: Please select a valid profile.");
+                return;
+              }
+              try {
+                const isAuthenticated = await api.verifyIdentity(username);
+                if (!isAuthenticated) {
+                  alert("Authorization failed: Unknown or unauthorized profile.");
+                  return;
+                }
+                localStorage.setItem("x-user-id", username);
+                navigate("/chat");
+              } catch {
+                alert("Network error: Could not connect to authorization vault.");
+              }
+            }}
+          />
+        }
+      />
+      {/* Layout wrapper for all authenticated pages */}
+      <Route
+        element={
+          <Layout
+            theme={theme}
+            toggleTheme={toggleTheme}
+            onExit={() => {
+              localStorage.removeItem("x-user-id");
+              navigate("/");
+            }}
+          />
+        }
+      >
+       <Route
+        path="/chat"
+        element={<ChatPage theme={theme} toggleTheme={toggleTheme} />}
+      />
+        <Route path="/self-service" element={<SelfServicePage />} />
+        <Route path="/saved" element={<SavedConversationsPage username={username} />} />
+      </Route>
+      {/* Catch-all */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
