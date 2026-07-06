@@ -17,7 +17,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
 
   const handlePortalEntry = () => {
     // Saves the simulated identity to local storage so Filters.tsx and Chat.tsx can see it
-    localStorage.setItem('x-user-id', selectedPersona);
+    localStorage.setItem('principal', selectedPersona);
     onEnter(selectedPersona);
   };
 

@@ -11,15 +11,16 @@ interface FiltersProps {
 
 export const Filters: React.FC<FiltersProps> = ({ selectedAffiliate, setSelectedAffiliate, loadingChat, allowedAffiliates, setAllowedAffiliates }) => {
   const [fetchingFilters, setFetchingFilters] = useState<boolean>(true);
-  const username = localStorage.getItem('x-user-id') || '';
+  const principal = localStorage.getItem('principal') ?? "";
+
 
   useEffect(() => {
-    if (!username) return;
+    if (!principal) return;
 
     const fetchUserPermissions = async () => {
       setFetchingFilters(true);
       try {
-        const affiliates = await api.getAffiliates(username);
+        const affiliates = await api.getAffiliates(principal);
         setAllowedAffiliates(affiliates);
 
         // If they are on 'All' or an invalid affiliate, force-select their first allowed scope
@@ -34,7 +35,7 @@ export const Filters: React.FC<FiltersProps> = ({ selectedAffiliate, setSelected
     };
 
     fetchUserPermissions();
-  }, [username, selectedAffiliate, setSelectedAffiliate]);
+  }, [principal, selectedAffiliate, setSelectedAffiliate]);
 
   if (fetchingFilters) {
     return (

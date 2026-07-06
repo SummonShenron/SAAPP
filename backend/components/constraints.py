@@ -4,13 +4,21 @@ import logging
 logger = logging.getLogger("SASS Logger")
 
 BASE_RAG_CONSTRAINTS = """
-You are a strict enterprise data safety assistant. Your primary directive is to answer the user's question using ONLY the text blocks provided in the CONTEXT segment below.
+PRIORITY RULE:
+If any document in CONTEXT has metadata field "priority": true or displays the 🔴 PRIORITY DOCUMENT marker,
+you MUST treat that document as the primary and authoritative source.
+You MUST answer the user's question using that document first, even if other documents are present.
+You MUST ignore all non-priority documents unless the priority document is insufficient.
+You are a strict enterprise data safety assistant. Your primary directive is to answer the user's question using only the attached user content and the text blocks provided in the CONTEXT segment below.
+You MUST treat the priority document as authoritative.
+Summaries provided in priority documents ARE considered authoritative.
+You MAY use summarized content as factual.
 CRITICAL OPERATIONAL CONSTRAINTS:
 1. GROUNDING RULE: If the answer cannot be verified with absolute certainty by the provided CONTEXT, you must respond exactly with: 'I cannot find the answer in the provided knowledge base.' Do not guess, speculate, or utilize pre-trained external knowledge layers.
-2. CITATION FORMATTING: When referencing information, append a clean, human-readable citation at the end of your points or paragraphs. Use this exact syntax:
-Source: [Clean Document Name] - Page [Number]
+2. CITATION FORMATTING: When referencing information, append a clean, human-readable citation at the end of your points or paragraphs. Use this exact syntax: Source: [Clean Document Name] - Page [Number]
 3. CODE LEAKAGE BAN: Never output internal programmatic syntax, dictionary structures, or LangChain wrappers. Completely avoid phrases like 'Based on the provided context...', 'Document(metadata=...)', or 'The relevant passage...'.
 4. DIRECT DELIVERY: Deliver the answer directly and cleanly. Do not explain your analytical process or include meta-commentary.
+
 """
 
 BASE_CONTEXT = """RETRIEVED DOCUMENT CONTEXT:
@@ -38,7 +46,13 @@ CURRENT USER INPUT:
 ASSISTANT RESPONSE:
 """
 
+NON_CONTEXTUAL_RESPONSE = """
+If the assistant cannot answer using the provided CONTEXT, it must trigger a query rewrite and attempt retrieval again.
+"""
+
 GRADING_PROMPT = """
+"If any document has metadata "source": "user_attachment_summary",
+you MUST grade relevance as 'yes'"
 "You are a strict QA grader evaluating if retrieved documents contain "
 "facts relevant to answer a user's question.\n\n"
 "Retrieved Documents:\n{context}\n\n"
@@ -66,9 +80,25 @@ Text: {text}
 JSON Output:
 """
 
-NON_CONTEXTUAL_RESPONSE = """
-If the assistant cannot answer using the provided CONTEXT, it must trigger a query rewrite and attempt retrieval again.
+ATTACHMENT_PROMPT = """
+You are a document analysis assistant.
+
+The user has uploaded a PDF. Read the PDF content directly from the raw bytes below.
+Extract all readable text, interpret layout, and produce a structured summary.
+
+Return:
+- Purpose of the document
+- Key sections
+- Important details
+- Skills, experience, or qualifications
+- Any notable metrics or achievements
+
+Text:
+{text}
 """
+
+
+
 
 
 def get_system_prompt(username: str = "default", affiliate: str = "All") -> str:
@@ -88,18 +118,29 @@ def format_docs(docs) -> str:
     so the LLM never catches a glimpse of python metadata code.
     """
     cleaned_blocks = []
+
     for doc in docs:
-        # Extract source path and isolate just the filename
+        # Priority marker (red dot equivalent)
+        if doc.metadata.get("priority"):
+            prefix = "🔴 PRIORITY DOCUMENT — USER UPLOAD\n"
+        else:
+            prefix = ""
+
+        # Extract clean filename
         raw_source = doc.metadata.get("source", "Unknown_Source_File")
         clean_filename = os.path.basename(raw_source)
-        
-        # Isolate page number safely
+
+        # Page number
         page_num = doc.metadata.get("page_label", doc.metadata.get("page", "N/A"))
-        
-        # Build raw contextual presentation blocks
-        block = f"DOCUMENT REPOSITORY SOURCE: {clean_filename} | PAGE NUMBER: {page_num}\n"
-        block += f"TEXT CONTENT:\n{doc.page_content}\n"
-        block += "--------------------------------------------------"
+
+        # Build contextual block
+        block = (
+            f"{prefix}"
+            f"DOCUMENT REPOSITORY SOURCE: {clean_filename} | PAGE NUMBER: {page_num}\n"
+            f"TEXT CONTENT:\n{doc.page_content}\n"
+            "--------------------------------------------------"
+        )
+
         cleaned_blocks.append(block)
-        
+
     return "\n\n".join(cleaned_blocks)

@@ -79,19 +79,46 @@ export const api = {
     }
   },
 
+  async uploadAttachment(username: string, sessionId: string, file: File): Promise<any> {
+    const formData = new FormData();
+    formData.append("username", username);
+    formData.append("session_id", sessionId);
+    formData.append("file", file);
+
+    const res = await fetch(`${BASE_URL}/api/upload-attachment`, {
+      method: "POST",
+      body: formData
+    });
+
+    if (!res.ok) {
+      throw new Error("Attachment upload failed.");
+    }
+
+    return res.json();
+  },
+
+
   /**
    * Hits POST /api/chat to run security matching metrics against LLM
    */
   async sendChatMessage(
     username: string, 
-    question: string, 
+    question: string,
+    attachments: { filename: string; content: string }[],
     borderScope: string,
     onTokenReceived: (token: string) => void
   ): Promise<void> {
     const response = await fetch(`${BASE_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, question, affiliate: borderScope }),
+      body: JSON.stringify(
+        { 
+          username, 
+          question,  
+          affiliate: borderScope,
+          attachments
+        }
+      ),
     });
 
     if (!response.ok) {

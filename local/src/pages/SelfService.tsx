@@ -10,7 +10,7 @@ interface DocumentRecord {
 }
 
 export const SelfServicePage: React.FC = () => {
-  const username = localStorage.getItem('x-user-id') || 'Unknown Principal';
+  const principal = localStorage.getItem('principal') ?? "";
   
   // --- STATE LAYER ---
   const [allowedAffiliates, setAllowedAffiliates] = useState<string[]>([]);
@@ -41,9 +41,9 @@ export const SelfServicePage: React.FC = () => {
   useEffect(() => {
     const initPermissions = async () => {
       try {
-        console.log("Fetching groups for:", username);
-        const affiliates = await api.getAffiliates(username);
-        const profile = await api.getUserGroups(username) as any;
+        console.log("Fetching groups for:", principal);
+        const affiliates = await api.getAffiliates(principal);
+        const profile = await api.getUserGroups(principal) as any;
         
         // Handle both raw array or object { groups: [...] }
         const verifiedGroups = Array.isArray(profile)
@@ -63,7 +63,7 @@ export const SelfServicePage: React.FC = () => {
       }
     };
     initPermissions();
-  }, [username]);
+  }, [principal]);
 
   // --- LIFECYCLE: RE-FETCH DOCUMENTS WHEN TARGET AFFILIATE CHANGES ---
   useEffect(() => {
@@ -72,7 +72,7 @@ export const SelfServicePage: React.FC = () => {
     const loadIndexedDocuments = async () => {
       setFetchingDocs(true);
       try {
-        const docs = await api.getIngestedDocuments(username, selectedAffiliate);
+        const docs = await api.getIngestedDocuments(principal, selectedAffiliate);
         setDocuments(docs);
       } catch (err) {
         console.error("Error loading active file directories:", err);
@@ -83,7 +83,7 @@ export const SelfServicePage: React.FC = () => {
     };
 
     loadIndexedDocuments();
-  }, [selectedAffiliate, username]);
+  }, [selectedAffiliate, principal]);
 
   // --- HANDLERS ---
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -101,13 +101,13 @@ export const SelfServicePage: React.FC = () => {
     setUploadStatus(null);
 
     try {
-      await api.uploadDocuments(username, selectedAffiliate, selectedFiles);
+      await api.uploadDocuments(principal, selectedAffiliate, selectedFiles);
       setUploadStatus({ success: true, message: `Successfully staged ${selectedFiles.length} item(s) for ingestion workflow.` });
       setSelectedFiles(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
       
       // Refresh manifest view
-      const updatedDocs = await api.getIngestedDocuments(username, selectedAffiliate);
+      const updatedDocs = await api.getIngestedDocuments(principal, selectedAffiliate);
       setDocuments(updatedDocs);
     } catch (err: any) {
       setUploadStatus({ success: false, message: err.message || "Pipeline ingest processing exception." });
@@ -122,7 +122,7 @@ export const SelfServicePage: React.FC = () => {
     
     setDeletingId(docId);
     try {
-      await api.deleteDocument(username, selectedAffiliate, docId);
+      await api.deleteDocument(principal, selectedAffiliate, docId);
       setDocuments(prev => prev.filter(doc => doc.id !== docId));
     } catch (err) {
       console.error("Core index expulsion failure:", err);

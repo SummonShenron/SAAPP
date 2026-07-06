@@ -3,19 +3,23 @@ import os
 import datetime
 import json
 import sys
-from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Query
+import base64
+from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Query, Form, Request
 from typing import List
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from backend.models.models import llm
+from backend.models.attachment import Attachment
 # Modernized LangChain Imports
+from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from backend.components.constraints import get_system_prompt, CONVERSATIONAL_PROMPT, format_docs
 from backend.services.search import discover_workspace_documents
 from local_function_app.function_app import run_ingestion_pipeline, HOT_FOLDER_DIR
 from backend.state.graph_state import GraphState
 from backend.utils.app_utils import save_conversation, list_saved_conversations, load_saved_conversations, load_saved_conversation, save_chat_history, format_history_as_text, chat_sessions
+from backend.utils.attachment_utils import process_user_attachment
 from backend.utils.fallback_utils import rewrite_fallback
 from backend.logging.sass_logger import setup_logging
 from backend.services.orchestrator import startup_services
@@ -38,10 +42,13 @@ services = startup_services()
 class LoginRequest(BaseModel):
     username: str
 
+
 class ChatRequest(BaseModel):
     username: str
     question: str
     affiliate: str 
+    attachments: list[Attachment] | None = None
+    
 
 @app.post("/api/login")
 async def verify_identity_profile(payload: LoginRequest):
@@ -88,9 +95,15 @@ async def discover_documents(affiliate: str = "All"):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/chat")
-async def secure_chat(request: ChatRequest):
+async def secure_chat(request: ChatRequest, fastapi_request: Request):
+    # raw = await fastapi_request.json()
+    # logger.info(f"RAW REQUEST BODY: {raw}")
     username = request.username.strip()
     question = request.question.strip()
+    session_id = f"{username}_session"
+    user_docs = []
+    logger.info(f"ChatRequest fields: {request.model_dump().keys()}")
+    # logger.info(f"attachments value: {request.attachments}")
     async def stream_simple_message(text: str):
         async def generator():
             yield f"data: {json.dumps({'event': 'token', 'text': text})}\n\n"
@@ -183,10 +196,37 @@ async def secure_chat(request: ChatRequest):
     }
     # ---------- Run LangGraph ONCE (no streaming, logic-only) ----------
     try:
+        attachment_summaries = []
+
+        if request.attachments:
+            logger.info(f"Summarizing {len(request.attachments)} attachments for {username}")
+            for att in request.attachments:
+                summary = process_user_attachment(att)   # ← correct signature
+                if summary:
+                    attachment_summaries.append(summary)
+
+        # Inject summaries into graph state BEFORE workflow runs
+        initial_state["attachment_summaries"] = attachment_summaries
+        if attachment_summaries:
+            docs = []
+            for summary in attachment_summaries:
+                docs.append(Document(
+                    page_content=summary,
+                    metadata={
+                        "source": "user_attachment_summary",
+                        "priority": True,
+                        "page": "N/A"
+                    }
+                ))
+            initial_state["documents"] = docs
+
+        # Run workflow normally
         final_state = services.get("compiled_workflow").invoke(initial_state)
+
     except Exception as e:
         logger.error(f"[x] Workflow failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Agent workflow failed.")
+
     # ---------- Build Prompt based on Decision Boundary ----------
     is_conversational = final_state.get("relevance_grade") == "conversational"
     if is_conversational:
@@ -203,7 +243,13 @@ async def secure_chat(request: ChatRequest):
         documents = final_state.get("documents", [])
         accessible_affiliates_str = ", ".join(final_state.get("target_scope", target_scope))
         instructions = get_system_prompt(username, accessible_affiliates_str)
-        formatted_docs = format_docs(documents)
+        documents_sorted = sorted(
+            documents,
+            key=lambda d: d.metadata.get("priority", False),
+            reverse=True
+        )
+
+        formatted_docs = format_docs(documents_sorted)
         history_transcript = format_history_as_text(chat_sessions[username])
         prompt = instructions.format(
             context=formatted_docs,
@@ -296,6 +342,24 @@ async def get_ingested_documents_endpoint(
         return manifest_records
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to scan file system indexes: {str(e)}")
+
+@app.post("/api/upload-attachment")
+async def upload_attachment(
+    username: str = Form(...),
+    session_id: str = Form(...),
+    file: UploadFile = File(...)
+):
+    raw_bytes = await file.read()
+
+    # Run your ingestion pipeline
+    raw_bytes = await file.read()
+    
+    encoded = base64.b64encode(raw_bytes).decode("utf-8")
+
+    attachment = Attachment(filename=file.filename, content=encoded)
+
+    return {"status": "ok", "filename": file.filename}
+
 
 # --- ELEVATED ENDPOINT: SECURE MULTI-PART FILE UPLOAD ---
 @app.post("/api/upload")

@@ -32,7 +32,7 @@ function App() {
                   alert("Authorization failed: Unknown or unauthorized profile.");
                   return;
                 }
-                localStorage.setItem("x-user-id", username);
+                localStorage.setItem("principal", username);
                 navigate("/chat");
               } catch {
                 alert("Network error: Could not connect to authorization vault.");
@@ -48,7 +48,7 @@ function App() {
             theme={theme}
             toggleTheme={toggleTheme}
             onExit={() => {
-              localStorage.removeItem("x-user-id");
+              localStorage.removeItem("principal");
               navigate("/");
             }}
           />
