@@ -2,7 +2,7 @@ from backend.services.agent_workflow import rewrite_query_node, retrieve_node, g
 from backend.models.models import llm
 import json
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
-
+from backend.models.attachment import Attachment
 import asyncio
 import logging
 from backend.components.constraints import get_system_prompt, format_docs
@@ -21,16 +21,18 @@ async def rewrite_fallback(
 
     preserved_messages = messages_state
 
-    state = rewrite_query_node(state)
+    state = { **state, **rewrite_query_node(state) }
     state["messages"] = preserved_messages
+
     rewritten_question = preserved_messages[-1].content
     state["original_question"] = rewritten_question
 
-    state = retrieve_node(state, vector_store)
+    state = { **state, **retrieve_node(state, vector_store) }
     state["messages"] = preserved_messages
 
-    state = grading_node(state)
+    state = { **state, **grading_node(state) }
     state["messages"] = preserved_messages
+
 
     if state.get("relevance_grade") != "yes":
         yield f"data: {json.dumps({'event': 'final_generation', 'text': 'I cannot find the answer in the provided knowledge base.'})}\n\n"

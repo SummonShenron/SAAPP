@@ -5,7 +5,7 @@ from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from backend.services.agent_workflow import create_workflow
 from settings import USER_DIRECTORY_FILE, DB_DIR
-
+from backend.models.attachment import Attachment
 logger = logging.getLogger("SASS Logger")
 
 def startup_services():

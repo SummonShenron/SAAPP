@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import List, Any
 from typing_extensions import TypedDict
-
+from backend.models.attachment import Attachment
 from langchain_core.messages import BaseMessage
 import logging
 
@@ -20,6 +20,7 @@ class GraphState(TypedDict):
     relevance_grade: str            # yes/no relevance evaluation
     loop_count: int                 # Rewrite loop counter
     original_question: str          # First question before rewrites
+    attachment_summaries: List[str] # Summary of user attached content
 
 
 def route_user_query(state: GraphState) -> str:
@@ -55,7 +56,12 @@ def route_user_query(state: GraphState) -> str:
 def route_after_grading(state: GraphState) -> str:
     """
     Routes after grading: generate, rewrite, or fallback.
+    Attachments ALWAYS skip rewrite.
     """
+    if state.get("attachment_summaries"):
+        logger.info("Priority attachment detected — skipping rewrite and routing directly to Generation.")
+        return "generate_node"
+
     grade = state.get("relevance_grade")
     loops = state.get("loop_count", 0)
 
@@ -69,3 +75,4 @@ def route_after_grading(state: GraphState) -> str:
 
     logger.warning("Max loops reached, routing to fallback")
     return "fallback_empty"
+

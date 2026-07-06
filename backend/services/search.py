@@ -14,7 +14,6 @@ DB_DIR = os.path.join(PROJECT_ROOT, "chroma_db")
 logger = logging.getLogger("SASS Logger")
 logger.info("Initializing Unified Search Service Engine...")
 
-
 def _detect_routing_strategy(query: str) -> str:
     clean_query = query.lower().strip()
     # 1. TEMPORAL / KEYWORD MARKERS -> Route to Lexical
