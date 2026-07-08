@@ -1,3 +1,7 @@
+# Conversation Logs
+chat_history.json
+saved_conversations.json
+
 # Python build artifacts
 .venv/
 __pycache__/

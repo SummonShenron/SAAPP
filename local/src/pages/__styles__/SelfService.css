@@ -70,6 +70,12 @@
   overflow: visible !important;
 }
 
+.service-card:hover {
+  box-shadow: var(--shadow-hover);
+  transition: all 0.2s ease;
+  transform: translateY(-2px)
+}
+
 .theme-shadow .service-card {
   background-color: #3b1e1e; /* Even darker background for shadow theme */
   border: 1px solid #553333
@@ -145,10 +151,12 @@
   gap: 0.5rem;
   max-width: 400px;
   /* box-shadow: var(--shadow); */
+  transition: all 0.2s ease;
 }
 
 .form-group:hover {
   box-shadow: var(--shadow-hover);
+  transition: all 0.2s ease;
 }
 
 .form-group label {
@@ -314,10 +322,12 @@
   border-radius: 6px;
   font-size: 0.9rem;
   outline: none;
+  transition: all 0.2s ease;
 }
 
 .manifest-search-input:hover {
   box-shadow: var(--shadow-hover);
+  transition: all 0.2s ease;
 }
 
 .manifest-search-input:focus {

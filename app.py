@@ -102,7 +102,7 @@ async def secure_chat(request: ChatRequest, fastapi_request: Request):
     question = request.question.strip()
     session_id = f"{username}_session"
     user_docs = []
-    logger.info(f"ChatRequest fields: {request.model_dump().keys()}")
+    # logger.debug(f"ChatRequest fields: {request.model_dump().keys()}")
     # logger.info(f"attachments value: {request.attachments}")
     async def stream_simple_message(text: str):
         async def generator():
@@ -169,6 +169,7 @@ async def secure_chat(request: ChatRequest, fastapi_request: Request):
     requested_affiliate = request.affiliate.strip()
     user_claims = services.get("user_directory").get(username, {})
     user_groups = user_claims.get("groups", [])
+    logger.info(f"--- BEGINNING CHAT STREAM ---")
     logger.info(f"User Verified: {user_claims['email']}")
     logger.debug(f"User Group Claims: {user_groups}")
     # ---------- Auth Authorization Boundary ----------
