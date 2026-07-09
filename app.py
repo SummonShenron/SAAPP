@@ -6,6 +6,7 @@ import sys
 import base64
 from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Query, Form, Request
 from typing import List
+import uuid
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -23,9 +24,9 @@ from backend.utils.attachment_utils import process_user_attachment
 from backend.utils.fallback_utils import rewrite_fallback
 from backend.logging.sass_logger import setup_logging
 from backend.services.orchestrator import startup_services
-from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access
+from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, verify_paapp_access
 from settings import DB_DIR
-
+from backend.components.time_storage import TimeEntryCreate, add_time_entry, load_user_time, clear_user_time
 sys.path.append(os.path.join(os.path.dirname(__file__), "local-function-app"))
 app = FastAPI(title="Secure RAG Engine API")
 app.add_middleware(
@@ -48,7 +49,22 @@ class ChatRequest(BaseModel):
     question: str
     affiliate: str 
     attachments: list[Attachment] | None = None
-    
+
+class TimeEntryCreate(BaseModel):
+    username: str
+    activity: str
+    duration_minutes: int
+    date: str  # "YYYY-MM-DD"
+    notes: str | None = None    
+
+class TimeEntry(BaseModel):
+    id: str
+    username: str
+    activity: str
+    duration_minutes: int
+    date: str
+    created_at: str
+    notes: str | None = None
 
 @app.post("/api/login")
 async def verify_identity_profile(payload: LoginRequest):
@@ -102,6 +118,8 @@ async def secure_chat(request: ChatRequest, fastapi_request: Request):
     question = request.question.strip()
     session_id = f"{username}_session"
     user_docs = []
+    if not verify_paapp_access(username):
+        return {"message": "Access denied: You are not authorized to use PAAPP integrations."}
     # logger.debug(f"ChatRequest fields: {request.model_dump().keys()}")
     # logger.info(f"attachments value: {request.attachments}")
     async def stream_simple_message(text: str):
@@ -462,6 +480,28 @@ async def get_saved_conversation(username: str, title: str):
             }
     return {"error": "Conversation not found"}
 
+@app.get("/api/is-paapp-admin")
+async def is_paapp_admin(username: str, x_user_id: str = Header(None)):
+    if not x_user_id:
+        raise HTTPException(status_code=401, detail="Missing authorization context principal.")
+    return {"allowed": verify_paapp_access(username)}
+
+TIME_ENTRIES: dict[str, list[TimeEntry]] = {}  # key: username, value: list of entries
+@app.get("/api/time/list")
+def saapp_list_time(username: str):
+    return load_user_time(username)
+
+
+@app.delete("/api/time/clear")
+def saapp_clear_time(username: str):
+    clear_user_time(username)
+    return {"status": "cleared"}
+
+@app.post("/api/time/log")
+def saapp_log_time(payload: TimeEntryCreate):
+    return add_time_entry(payload)
+
 @app.get("/api/health")
 async def health_check():
+    logger.info("Checking health")
     return {"status": "healthy", "database_connected": os.path.exists(DB_DIR)}

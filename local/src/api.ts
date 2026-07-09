@@ -6,12 +6,25 @@ export interface ChatResponse {
   answer: string;
 }
 
+async function isPaappAdmin(username: string): Promise<boolean> {
+  const res = await fetch(
+    `${BASE_URL}/api/is-paapp-admin?username=${encodeURIComponent(username)}`,
+    {
+      headers: { "x-user-id": username }
+    }
+  );
+
+  if (!res.ok) return false;
+
+  const data = await res.json();
+  return data.allowed;
+}
+
 export const api = {
-  /**
-   * Hits GET /api/affiliates?username=... using URL search query parameters
-   */
   async getAffiliates(username: string): Promise<string[]> {
-    const response = await fetch(`${BASE_URL}/api/affiliates?username=${encodeURIComponent(username)}`);
+    const response = await fetch(
+      `${BASE_URL}/api/affiliates?username=${encodeURIComponent(username)}`
+    );
     if (!response.ok) {
       throw new Error("Could not load secure workspace claims.");
     }
@@ -20,32 +33,36 @@ export const api = {
   },
 
   async getUserGroups(username: string): Promise<string[]> {
-    const res = await fetch(`${BASE_URL}/api/user/groups?username=${encodeURIComponent(username)}`, {
-      headers: { 'x-user-id': username }
-    });
+    const res = await fetch(
+      `${BASE_URL}/api/user/groups?username=${encodeURIComponent(username)}`,
+      { headers: { 'x-user-id': username } }
+    );
     if (!res.ok) throw new Error("Failed to retrieve directory authorization groups.");
     return res.json();
   },
 
   async getIngestedDocuments(username: string, affiliate: string): Promise<any[]> {
-    const res = await fetch(`${BASE_URL}/api/documents?affiliate=${encodeURIComponent(affiliate)}`, {
-      headers: { 'x-user-id': username }
-    });
+    const res = await fetch(
+      `${BASE_URL}/api/documents?affiliate=${encodeURIComponent(affiliate)}`,
+      { headers: { 'x-user-id': username } }
+    );
     if (!res.ok) throw new Error("Failed to fetch indexed document manifest.");
     return res.json();
   },
 
   async uploadDocuments(username: string, affiliate: string, files: FileList): Promise<any> {
     const formData = new FormData();
-    Array.from(files).forEach((file) => {
-      formData.append("files", file);
-    });
+    Array.from(files).forEach((file) => formData.append("files", file));
 
-    const res = await fetch(`${BASE_URL}/api/upload?affiliate=${encodeURIComponent(affiliate)}`, {
-      method: "POST",
-      headers: { 'x-user-id': username }, // Let FastAPI handle identity tracking
-      body: formData,
-    });
+    const res = await fetch(
+      `${BASE_URL}/api/upload?affiliate=${encodeURIComponent(affiliate)}`,
+      {
+        method: "POST",
+        headers: { 'x-user-id': username },
+        body: formData,
+      }
+    );
+
     if (!res.ok) {
       const errorData = await res.json();
       throw new Error(errorData.detail || "Upload pipeline execution failed.");
@@ -54,17 +71,17 @@ export const api = {
   },
 
   async deleteDocument(username: string, affiliate: string, docId: string): Promise<any> {
-    const res = await fetch(`${BASE_URL}/api/documents/${docId}?affiliate=${encodeURIComponent(affiliate)}`, {
-      method: "DELETE",
-      headers: { 'x-user-id': username }
-    });
+    const res = await fetch(
+      `${BASE_URL}/api/documents/${docId}?affiliate=${encodeURIComponent(affiliate)}`,
+      {
+        method: "DELETE",
+        headers: { 'x-user-id': username }
+      }
+    );
     if (!res.ok) throw new Error("Failed to purge document from vector space.");
     return res.json();
   },
 
-/**
-   * Post identity parameters to backend to confirm authorization validity.
-   */
   async verifyIdentity(username: string): Promise<boolean> {
     try {
       const response = await fetch(`${BASE_URL}/api/login`, {
@@ -72,12 +89,14 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username }),
       });
-      return response.ok; // Returns true on 200, false on 401/error
+      return response.ok;
     } catch (error) {
       console.error("Identity transmission subsystem error:", error);
       return false;
     }
   },
+
+  isPaappAdmin,
 
   async uploadAttachment(username: string, sessionId: string, file: File): Promise<any> {
     const formData = new FormData();
@@ -97,12 +116,8 @@ export const api = {
     return res.json();
   },
 
-
-  /**
-   * Hits POST /api/chat to run security matching metrics against LLM
-   */
   async sendChatMessage(
-    username: string, 
+    username: string,
     question: string,
     attachments: { filename: string; content: string }[],
     borderScope: string,
@@ -111,14 +126,12 @@ export const api = {
     const response = await fetch(`${BASE_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(
-        { 
-          username, 
-          question,  
-          affiliate: borderScope,
-          attachments
-        }
-      ),
+      body: JSON.stringify({
+        username,
+        question,
+        affiliate: borderScope,
+        attachments
+      }),
     });
 
     if (!response.ok) {
@@ -138,16 +151,10 @@ export const api = {
       const { value, done } = await reader.read();
       if (done) break;
 
-      // Append new chunk to buffer
       buffer += decoder.decode(value, { stream: true });
-
-      // Split into lines
       const lines = buffer.split("\n");
-
-      // Keep the last partial line in the buffer
       buffer = lines.pop() || "";
 
-      // Emit complete SSE lines
       for (const line of lines) {
         const trimmed = line.trim();
         if (trimmed.startsWith("data: ")) {
@@ -156,11 +163,9 @@ export const api = {
       }
     }
 
-    // Flush final line if complete
     const trimmed = buffer.trim();
     if (trimmed.startsWith("data: ")) {
       onTokenReceived(trimmed);
     }
   }
-
 };

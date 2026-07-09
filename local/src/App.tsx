@@ -6,6 +6,7 @@ import { SelfServicePage } from "./pages/SelfService";
 import { SavedConversationsPage } from "./pages/SavedConversations";
 import { Layout } from "../src/components/Layout";
 import { api } from "./api";
+import { TimeTrackingSheet } from "./pages/Time"
 
 function App() {
   const navigate = useNavigate();
@@ -58,8 +59,10 @@ function App() {
         path="/chat"
         element={<ChatPage theme={theme} toggleTheme={toggleTheme} />}
       />
-        <Route path="/self-service" element={<SelfServicePage />} />
         <Route path="/saved" element={<SavedConversationsPage username={username} />} />
+        <Route path="/time-tracking" element={<TimeTrackingSheet />} />
+        <Route path="/self-service" element={<SelfServicePage />} />
+        
       </Route>
       {/* Catch-all */}
       <Route path="*" element={<Navigate to="/" replace />} />

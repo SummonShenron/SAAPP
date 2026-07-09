@@ -41,3 +41,12 @@ def verify_user_ingest_access(username: str, affiliate: str) -> bool:
         return True    
     required_ingester_group = f"{affiliate} Ingesters"
     return required_ingester_group in user_groups
+
+def verify_paapp_access(username: str) -> bool:
+    user_groups = load_user_directory_groups(username)
+    # Global Admins always have access
+    if "Global_Admins" in user_groups:
+        return True
+    # PAAPP-specific admin group
+    return "PAAPP_Admins" in user_groups
+

@@ -1,7 +1,7 @@
 {
     "jack_admin": {
         "email": "jackharper0517@outlook.com",
-        "groups": ["Global_Admins", "Affiliate_A", "Affiliate_A Ingesters", "Affiliate_B", "Affiliate_B Ingesters"]
+        "groups": ["Global_Admins", "Affiliate_A", "Affiliate_A Ingesters", "Affiliate_B", "Affiliate_B Ingesters", "PAAPP_Admins"]
     },
     "sonic_user": {
         "email": "userA@affiliateA.com",
