@@ -92,6 +92,33 @@ Launches the FastAPI server and Vite frontend dev server in separate background 
 Once the initial configuration is complete, you can bypass dependency and model installation checks to instantly launch the web app by running:
 ./local_start.ps1
 
+Optional: Enable Admin Features with PAAPP
+SAAPP can run entirely on its own.
+
+However, to unlock the full admin feature set, you must also run the PAAPP
+headless agent locally.
+
+Admin features include:
+
+Calendar tools
+
+Sticky notes
+
+Time tracking
+
+Multi‑agent workflows
+
+Clone PAAPP (optional but recommended)
+
+git clone https://github.com/SummonShenron/PAAPP
+cd PAAPP
+pip install -r requirements.txt
+uvicorn local_agent.headless_app:app --reload --port 8000
+
+SAAPP will automatically detect PAAPP via:
+http://127.0.0.1:8000/api/headless-chat
+
+
 ## Automated Data Ingestion Pipelines
 
 The project implements a two-tiered data pipeline architecture to separate initial system bootstrapping from runtime data adjustments:

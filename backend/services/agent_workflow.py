@@ -1,9 +1,11 @@
 from __future__ import annotations
 from typing import List, Any, Dict
 import logging
+import requests
 from backend.models.attachment import Attachment
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langchain_core.documents import Document
+from settings import PAAPP_BASE_URL
 from backend.services.search import get_secure_retriever
 from backend.models.models import llm
 from backend.state import graph_db
@@ -14,6 +16,7 @@ from backend.components.constraints import (
     REWRITING_PROMPT,
     FORMATTER_PROMPT
 )
+from backend.components.time_storage import add_time_entry, TimeEntryCreate
 from backend.state.graph_state import GraphState, route_after_grading
 from langgraph.graph import StateGraph, START, END
 
@@ -46,12 +49,16 @@ def coordinator_router(state: GraphState) -> str:
     logger.info("Preparing next step.")
     logger.info("--- COORDINATOR NODE END ---")
     plan = state.get("coordinator_plan", [])
+    intent = state.get("coordinator_intent", [])
     # If no plan, default to conversational
     if not plan:
         return "conversational_node"
     # Pop the next agent from the plan
     next_agent = plan.pop(0)
-    state["coordinator_plan"] = plan  # save updated plan
+    state["coordinator_plan"] = plan
+    state["last_intent"] = intent
+    if next_agent == "paapp":
+        return "paapp_node"  # save updated plan
     # Map agent names → actual node names you currently have
     mapping = {
         "retriever": "retrieve_node",
@@ -59,7 +66,7 @@ def coordinator_router(state: GraphState) -> str:
         "conversational": "conversational_node",
         "formatter": "formatter_node",          
         "summarizer": "summarizer_node",        
-        "paapp": "conversational_node",        # TEMP until paapp_node exists
+        "paapp": "paapp_node",        
         "workflow": "conversational_node",     # TEMP until workflow_node exists
         "tool": "conversational_node",         # TEMP until tool_node exists
         "memory": "memory_node",       
@@ -70,7 +77,6 @@ def coordinator_router(state: GraphState) -> str:
 
 def classify_intent(message: str, attachments) -> str:
     msg = message.lower()
-
     if "plan my day" in msg or "schedule" in msg:
         return "task_paapp"
     if "summarize" in msg or "tl;dr" in msg:
@@ -90,6 +96,10 @@ def classify_intent(message: str, attachments) -> str:
 def build_agent_plan(intent, state):
     flags = state.get("reasoner_flags", {})
     agents = []
+    # FOLLOW-UP OVERRIDE
+    if flags.get("follow_up_intent"):
+        intent = state.get("last_intent", intent)
+        logger.info(f"[Coordinator] Follow-up detected. Reusing last intent: {intent}")
     if flags.get("needs_memory"):
         agents.append("memory")
     if flags.get("needs_retrieval"):
@@ -100,11 +110,15 @@ def build_agent_plan(intent, state):
         agents.append("summarizer")
     if flags.get("needs_formatting"):
         agents.append("formatter")
+    if flags.get("needs_paapp"):
+        agents.append("paapp")
     if flags.get("needs_conversation"):
         agents.append("conversational")
-    # Always end with formatter → generate_node
+    # Always end with formatter
     if "formatter" not in agents:
         agents.append("formatter")
+    # Store last intent for future follow-ups
+    state["last_intent"] = intent
     return {"agents": agents, "skip": []}
 
 def apply_conditional_skips(plan: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
@@ -132,63 +146,91 @@ def reasoner_node(state: GraphState) -> GraphState:
     history = state.get("messages", [])
     logger.info("--- REASONER NODE START ---")
     logger.info(f"[Reasoner] Message: {msg}")
-    # Retrieval intent (expanded)
+
+    # --- FOLLOW-UP DETECTION ---
+    follow_up_phrases = [
+        "yes", "yeah", "yep", "sure", "do it", "go ahead",
+        "nope", "save it", "that one", "please do", "ok", "okay",
+        "confirm", "confirm it", "make it happen", "do that",
+        "that's fine", "sounds good", "alright", "fine"
+    ]
+    is_follow_up = any(p in msg for p in follow_up_phrases)
+
+    # --- NORMAL INTENT FLAGS ---
     explicit_memory = any(
         phrase in msg for phrase in [
-            "remember that",
-            "remember this",
-            "remember me",
-            "save this",
-            "store this",
-            "keep this",
-            "don't forget",
-            "my preference is",
-            "i prefer",
-            "track this",
-            "log this",
+            "remember that", "remember this", "remember me",
+            "save this", "store this", "keep this", "don't forget",
+            "my preference is", "i prefer", "track this", "log this",
             "add to memory"
         ]
     )
+
     is_knowledge_query = any(
         phrase in msg for phrase in [
-            "what is", "what are",
-            "who is", "who are",
-            "define", "meaning of",
-            "explain", "tell me about"
+            "what is", "what are", "who is", "who are",
+            "define", "meaning of", "explain", "tell me about"
         ]
     )
+
     needs_memory = explicit_memory
-    retrieval_keywords = [
-        "find", "lookup", "search", "policy", "document", "docs",
-        "tell me about", "who is", "what is", "explain", "describe",
-        "lore", "history", "background", "origin", "story"
+
+    # --- CALENDAR DETECTION ---
+    calendar_keywords = [
+        "calendar", "google calendar", "create an event",
+        "create event", "calendar event", "add an event",
+        "make an event", "put this on my calendar"
     ]
+    needs_paapp = any(kw in msg for kw in calendar_keywords)
+
+    # --- TIME TRACKING DETECTION (NEW + IMPORTANT) ---
+    time_tracking_keywords = [
+        "log time",
+        "record time",
+        "track time",
+        "time tracking",
+        "log 1 hour",
+        "log one hour",
+        "log 30 minutes",
+        "add another hour",
+        "log more time",
+        "job apps",
+        "job applications",
+        "coding",
+        "work",
+        "today"
+    ]
+
+    if any(kw in msg for kw in time_tracking_keywords):
+        needs_paapp = True
+
+    # --- RETRIEVAL DETECTION ---
     needs_retrieval = (
         is_knowledge_query
         or len(attachments) > 0
         or any(word in msg for word in ["find", "lookup", "search", "policy", "document", "docs"])
     )
+
     explicit_rewrite = any(word in msg for word in [
         "rewrite", "reword", "improve wording", "optimize query", "rewrite this"
     ])
-    # Summarization intent
-    needs_summary = any(word in msg for word in [
-        "summarize", "tl;dr", "shorten"
-    ])
-    # Formatting intent
-    needs_formatting = any(word in msg for word in [
-        "bullet", "format", "report", "clean up", "structure"
-    ])
-    # Conversational intent
-    needs_conversation = not (needs_retrieval or explicit_rewrite or needs_summary or needs_formatting)
+
+    needs_summary = any(word in msg for word in ["summarize", "tl;dr", "shorten"])
+    needs_formatting = any(word in msg for word in ["bullet", "format", "report", "clean up", "structure"])
+    needs_conversation = not (needs_retrieval or explicit_rewrite or needs_summary or needs_formatting or needs_paapp)
+
+    # --- BUILD FLAGS ---
     flags = {
         "needs_retrieval": needs_retrieval,
         "needs_rewrite": explicit_rewrite,
         "needs_summary": needs_summary,
         "needs_formatting": needs_formatting,
         "needs_conversation": needs_conversation,
-        "needs_memory": needs_memory
+        "needs_memory": needs_memory,
+        "needs_paapp": needs_paapp,
+        "follow_up_intent": is_follow_up
     }
+
     logger.info(f"[Reasoner] Flags: {flags}")
     state["reasoner_flags"] = flags
     logger.info("--- REASONER NODE END ---")
@@ -490,6 +532,67 @@ def rewrite_query_node(state: GraphState) -> dict:
         return state
 
 # ============================================================
+# PAAPP NODE (sync)
+# ============================================================
+
+def paapp_node(state: GraphState) -> GraphState:
+    msg = state["messages"][-1].content
+    username = state.get("username", "default_user")
+
+    try:
+        response = call_paapp_chat(username, msg)
+    except Exception as e:
+        fallback = f"PAAPP communication error: {str(e)}"
+        state["raw_generation"] = fallback
+        state["content_to_format"] = fallback
+        return state
+
+    intent = response.get("intent")
+
+    # If the agent identified a log_time tool call
+    if intent and intent.get("tool") == "log_time":
+        try:
+            entry_payload = TimeEntryCreate(
+                username=username,
+                activity=str(intent.get("activity", "Unknown Activity")),
+                minutes=int(intent.get("minutes", 0)),
+                date_iso=str(intent.get("date_iso")),
+                notes=str(intent.get("notes", "No description provided")), # Capture the description
+                hours=float(intent.get("minutes", 0) / 60) # Helper hours field
+            )
+            
+            add_time_entry(entry_payload)
+            logger.info(f"[PAAPP] Successfully logged time locally for {username}")
+            
+        except Exception as e:
+            logger.error(f"[PAAPP] Direct time log failed: {e}")
+            state["raw_generation"] = f"Time log failed: {str(e)}"
+            return state
+        except Exception as e:
+            logger.error(f"[PAAPP] Unexpected time log error: {e}")
+            state["raw_generation"] = f"Time log error: {str(e)}"
+            return state
+
+    message = response.get("message", "PAAPP returned no message.")
+    state["raw_generation"] = message
+    state["content_to_format"] = message
+    return state
+
+
+def call_paapp_chat(username: str, question: str) -> dict:
+    url = f"{PAAPP_BASE_URL}/api/headless-chat"
+    r = requests.post(
+    url,
+    headers={"x-saapp": "true"},
+    json={
+        "username": username,
+        "question": question
+    }
+)
+    r.raise_for_status()
+    return r.json()
+
+# ============================================================
 # WORKFLOW ASSEMBLY & COMPILATION
 # ============================================================
 
@@ -506,6 +609,7 @@ def create_workflow(vector_store):
     workflow.add_node("coordinator_node", coordinator_node)
     workflow.add_node("summarizer_node", summarizer_node)
     workflow.add_node("formatter_node", formatter_node)
+    workflow.add_node("paapp_node", paapp_node)
     workflow.add_edge(START, "coordinator_node")
     workflow.add_conditional_edges(
     "coordinator_node",
@@ -518,10 +622,10 @@ def create_workflow(vector_store):
             "generate_node": "generate_node",
             "summarizer_node": "summarizer_node",
             "formatter_node": "formatter_node",
-            
-            
+            "paapp_node": "paapp_node"
         }
     )
+    workflow.add_edge("paapp_node", "formatter_node")
     workflow.add_edge("memory_node", "formatter_node")
     workflow.add_edge("summarizer_node", "formatter_node")
     workflow.add_edge("formatter_node", "generate_node")
@@ -537,5 +641,5 @@ def create_workflow(vector_store):
         }
     )
     workflow.add_edge("generate_node", END)
-    workflow.add_edge("conversational_node", END)
+    workflow.add_edge("conversational_node", "formatter_node")
     return workflow.compile()

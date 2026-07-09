@@ -1,0 +1,122 @@
+/* ==========================================================================
+   TIME TRACKING TABLE — Soft Pastel + Shadow Mode Adaptive
+   ========================================================================== */
+
+.page-container {
+  padding: 2rem;
+  animation: fadeIn 0.3s ease;
+}
+
+.page-container h1 {
+  font-size: 1.8rem;
+  margin-bottom: 1.5rem;
+  color: var(--text-main);
+  letter-spacing: 0.5px;
+}
+
+/* Table Frame */
+.sa-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  transition: box-shadow 0.3s ease;
+}
+
+.sa-table:hover {
+  box-shadow: var(--shadow-hover);
+}
+
+/* Header */
+.sa-table thead {
+  background: var(--bg-surface-hover);
+}
+
+.sa-table th {
+  padding: 0.85rem 1rem;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-main);
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.9rem;
+  letter-spacing: 0.3px;
+}
+
+/* Rows */
+.sa-table td {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-main);
+  font-size: 0.9rem;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+/* Hover Lift */
+.sa-table tbody tr:hover {
+  background: var(--bg-surface-hover);
+  transform: translateY(-2px);
+  box-shadow: var(--light-shadow-hover);
+}
+
+/* Last Row Cleanup */
+.sa-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Notes Column Style */
+.sa-table td:last-child {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.sa-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-top: 1rem;
+  box-shadow: var(--shadow);
+  transition: box-shadow 0.3s ease;
+}
+
+.sa-card:hover {
+  box-shadow: var(--shadow-hover);
+}
+
+/* Center the table inside the card */
+.sa-card .sa-table {
+  width: 100%;
+  margin: 0 auto;
+}
+
+/* Shadow Theme Overrides */
+.theme-shadow .sa-table {
+  background: #1c1111;
+  border-color: #7f1d1d;
+  box-shadow: var(--shadow);
+}
+
+.theme-shadow .sa-table th {
+  background: #2e2e36;
+  color: var(--card-text);
+  border-color: #7f1d1d;
+}
+
+.theme-shadow .sa-table td {
+  color: var(--card-text);
+  border-color: #7f1d1d;
+}
+
+.theme-shadow .sa-table tbody tr:hover {
+  background: #2e2e36;
+  box-shadow: var(--shadow-dark-hover);
+}
+
+/* Fade-in Animation */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
