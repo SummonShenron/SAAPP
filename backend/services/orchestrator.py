@@ -37,5 +37,5 @@ def startup_services():
     return {
         "user_directory": user_directory,
         "vector_store": vector_store,
-        "compiled_workflow": compiled_workflow
+        "compiled_workflow": compiled_workflow,
     }        

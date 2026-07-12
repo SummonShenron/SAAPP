@@ -6,7 +6,7 @@ import { SelfServicePage } from "./pages/SelfService";
 import { SavedConversationsPage } from "./pages/SavedConversations";
 import { Layout } from "../src/components/Layout";
 import { api } from "./api";
-import { TimeTrackingSheet } from "./pages/Time"
+import { TimeWorkspace } from "./pages/Time"
 
 function App() {
   const navigate = useNavigate();
@@ -34,6 +34,7 @@ function App() {
                   return;
                 }
                 localStorage.setItem("principal", username);
+                localStorage.setItem("x-user-id", username);
                 navigate("/chat");
               } catch {
                 alert("Network error: Could not connect to authorization vault.");
@@ -60,7 +61,7 @@ function App() {
         element={<ChatPage theme={theme} toggleTheme={toggleTheme} />}
       />
         <Route path="/saved" element={<SavedConversationsPage username={username} />} />
-        <Route path="/time-tracking" element={<TimeTrackingSheet />} />
+        <Route path="/time-tracking" element={<TimeWorkspace />} />
         <Route path="/self-service" element={<SelfServicePage />} />
         
       </Route>

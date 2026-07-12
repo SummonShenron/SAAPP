@@ -6,7 +6,7 @@ def setup_logging():
     # 1. Define the specific logger name used across your app
     logger = logging.getLogger("SASS Logger")
     if not logger.handlers:
-        logger.setLevel(logging.INFO)
+        logger.setLevel(logging.DEBUG)
         # 2. Define your desired format
         formatter = logging.Formatter(
             '%(levelname)s - %(message)s'

@@ -1,4 +1,6 @@
 from __future__ import annotations
+import re
+import json
 from typing import List, Any, Dict
 import logging
 import requests
@@ -9,6 +11,7 @@ from settings import PAAPP_BASE_URL
 from backend.services.search import get_secure_retriever
 from backend.models.models import llm
 from backend.state import graph_db
+from backend.utils.attachment_utils import retrieve_from_session
 from backend.components.constraints import (
     format_docs,
     SUMMARIZER_PROMPT,
@@ -42,38 +45,35 @@ def coordinator_node(state: GraphState) -> GraphState:
     return state
 
 def coordinator_router(state: GraphState) -> str:
-    """
-    Reads coordinator_plan and returns the next node to execute.
-    Pops one agent at a time until the plan is empty.
-    """
     logger.info("Preparing next step.")
-    logger.info("--- COORDINATOR NODE END ---")
+
     plan = state.get("coordinator_plan", [])
     intent = state.get("coordinator_intent", [])
-    # If no plan, default to conversational
+
     if not plan:
+        logger.info("--- COORDINATOR NODE END ---")
         return "conversational_node"
-    # Pop the next agent from the plan
+
     next_agent = plan.pop(0)
     state["coordinator_plan"] = plan
     state["last_intent"] = intent
-    if next_agent == "paapp":
-        return "paapp_node"  # save updated plan
-    # Map agent names → actual node names you currently have
+
     mapping = {
         "retriever": "retrieve_node",
-        "reasoner": "reasoner_node",      
+        "reasoner": "reasoner_node",
         "conversational": "conversational_node",
-        "formatter": "formatter_node",          
-        "summarizer": "summarizer_node",        
-        "paapp": "paapp_node",        
-        "workflow": "conversational_node",     # TEMP until workflow_node exists
-        "tool": "conversational_node",         # TEMP until tool_node exists
-        "memory": "memory_node",       
+        "formatter": "formatter_node",
+        "summarizer": "summarizer_node",
+        "paapp": "paapp_node",
+        "workflow": "conversational_node",
+        "tool": "conversational_node",
+        "memory": "memory_node",
     }
-    # Return the mapped node, or fallback to conversational
+
     logger.info(f"sending request to {next_agent}")
+    logger.info("--- COORDINATOR NODE END ---")
     return mapping.get(next_agent, "conversational_node")
+
 
 def classify_intent(message: str, attachments) -> str:
     msg = message.lower()
@@ -203,7 +203,9 @@ def reasoner_node(state: GraphState) -> GraphState:
 
     if any(kw in msg for kw in time_tracking_keywords):
         needs_paapp = True
-
+    time_log_pattern = r"log\s+\d+(\s+hour|\s+hours|\s+minute|\s+minutes)"
+    if re.search(time_log_pattern, msg):
+        needs_paapp = True
     # --- RETRIEVAL DETECTION ---
     needs_retrieval = (
         is_knowledge_query
@@ -296,7 +298,7 @@ def retrieve_node(state: GraphState, vector_store) -> dict:
     current_loops = state.get("loop_count", 0) or 0
     original_question = state.get("original_question") or question
     # memory_docs = flatten_saved_conversations(username)
-    session_id = f"{username}_session"
+    session_id = state.get("session_id") or f"{username}_session"
     if state.get("attachment_summaries"):
         logger.info("Attachment detected — skipping vector search and using only priority docs.")
         return {
@@ -320,6 +322,32 @@ def retrieve_node(state: GraphState, vector_store) -> dict:
         )
         docs = retriever.invoke(question)
         logger.info(f"Retrieved {len(docs)} documents for query: '{question}'")
+        # ============================
+        # SESSION-BASED RETRIEVAL
+        # ============================
+        try:
+            session_hits = retrieve_from_session(username, session_id, question)
+            if session_hits:
+                logger.info(f"Session RAG retrieved {len(session_hits)} items for {username}")
+
+                session_docs = []
+                for hit in session_hits:
+                    session_docs.append(Document(
+                        page_content=f"[Session Document: {hit['filename']}]\nScore: {hit['score']}",
+                        metadata={
+                            "source": "session_vector_store",
+                            "priority": True,
+                            "filename": hit["filename"],
+                            "score": hit["score"]
+                        }
+                    ))
+
+                # Merge session docs FIRST (highest priority)
+                docs = session_docs + docs
+
+        except Exception as e:
+            logger.error(f"Session retrieval failed: {e}")
+
         for idx, doc in enumerate(docs, start=1):
             src = doc.metadata.get("source", "Unknown")
             page = doc.metadata.get("page", doc.metadata.get("page_label", "N/A"))
@@ -548,18 +576,31 @@ def paapp_node(state: GraphState) -> GraphState:
         return state
 
     intent = response.get("intent")
+    if intent and intent.get("tool") == "create_google_calendar_event":
+        entry_payload = TimeEntryCreate(
+            username=username,
+            activity=str(intent.get("summary", "Untitled Event")),
+            duration_hours=float(intent.get("duration_minutes", 0)) / 60,
+            duration_minutes=int(intent.get("duration_minutes", 0)),
+            date=str(intent.get("start_time_iso", "").split("T")[0]),
+            notes="",
+            type="event"
+        )
+        add_time_entry(entry_payload)
+        logger.info(f"[PAAPP] Successfully mirrored calendar event locally for {username}")
 
     # If the agent identified a log_time tool call
     if intent and intent.get("tool") == "log_time":
         try:
             entry_payload = TimeEntryCreate(
-                username=username,
-                activity=str(intent.get("activity", "Unknown Activity")),
-                minutes=int(intent.get("minutes", 0)),
-                date_iso=str(intent.get("date_iso")),
-                notes=str(intent.get("notes", "No description provided")), # Capture the description
-                hours=float(intent.get("minutes", 0) / 60) # Helper hours field
-            )
+            username=username,
+            activity=str(intent.get("activity", "Unknown Activity")),
+            duration_hours=float(intent.get("minutes", 0)) / 60,
+            duration_minutes=int(intent.get("minutes", 0)),
+            date=str(intent.get("date_iso")),
+            notes=str(intent.get("notes", "No description provided")),
+            type="log"
+        )
             
             add_time_entry(entry_payload)
             logger.info(f"[PAAPP] Successfully logged time locally for {username}")
@@ -572,6 +613,12 @@ def paapp_node(state: GraphState) -> GraphState:
             logger.error(f"[PAAPP] Unexpected time log error: {e}")
             state["raw_generation"] = f"Time log error: {str(e)}"
             return state
+
+    if isinstance(response, str):
+        try:
+            response = json.loads(response)
+        except:
+            pass
 
     message = response.get("message", "PAAPP returned no message.")
     state["raw_generation"] = message

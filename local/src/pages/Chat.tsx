@@ -3,6 +3,7 @@ import sonicImg from '../assets/sonicandshadow.jpg';
 import { Filters } from '../components/Filters';
 import { getDynamicExampleQuestions } from '../utils/Example_List';
 import { api } from '../api'; 
+
 import sonicSpinImg from '../assets/sonic-rolling.gif';
 import shadowSpinImg from '../assets/shadow.gif';
 
@@ -27,6 +28,11 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [agentStatus, setAgentStatus] = useState<string>('');
   const [agentPath, setAgentPath] = useState<string[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const BASE_URL = "http://127.0.0.1:8000";
+  const [sessionId, setSessionId] = useState<string>(() => {
+    // new conversation → fresh ID
+    return crypto.randomUUID();
+  });
   const genId = () => crypto.randomUUID();
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
   // 1. Warm-initialize the messages state from localStorage to prevent auto-clearing
@@ -121,29 +127,39 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     setAttachedFiles([]);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (!files) return; // ← FIX: prevents the TS error
+    if (!files) return;
 
-    const fileArray = Array.from(files); // now safe
+    const fileArray = Array.from(files);
     setUploadedFiles(prev => [...prev, ...fileArray]);
-    console.log("UPLOAD HANDLER FIRED");
-    const file = e.target.files?.[0];
+
+    const file = fileArray[0];
     if (!file) return;
 
     const reader = new FileReader();
 
-    reader.onload = () => {
+    reader.onload = async () => {
       const result = reader.result as string;
       const base64 = result.split(",")[1];
 
-      setAttachments(prev => {
-        const updated = [...prev, { filename: file.name, content: base64 }];
-        return updated; // <-- THIS is the correct attachment list
-      });
-
+      // 1. Store locally for UI + chat send
+      setAttachments(prev => [...prev, { filename: file.name, content: base64 }]);
       setAttachedFiles(prev => [...prev, file]);
+
+      // 2. Upload to backend with session_id
+      await fetch(`${BASE_URL}/api/attachments/upload`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: principal,
+          session_id: sessionId,        // ← CRITICAL
+          filename: file.name,
+          content: base64,
+        }),
+      });
     };
+
     reader.readAsDataURL(file);
   };
 
@@ -224,16 +240,16 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     }
   }
   
-  const handleSendMessage = async (
+const handleSendMessage = async (
   textToSend: string,
   currentAttachments: { filename: string; content: string }[]
 ) => {
 
-    if (!textToSend.trim() || loading) return;
+  if (!textToSend.trim() || loading) return;
 
-    // Create a session ID if you don't already have one
-    const sessionId = `${principal}-session`;
-    console.log(principal)
+  // Use stable sessionId from state
+  console.log("Using sessionId:", sessionId);
+
 
     // Add user message + placeholder AI message
     setMessages(prev => [
@@ -257,6 +273,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
         textToSend,
         attachments,
         selectedAffiliate,
+        sessionId,
         (rawChunk) => {
           if (!rawChunk.trim()) return;
 

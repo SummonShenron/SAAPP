@@ -42,3 +42,10 @@ lerna-debug.log*
 *.njsproj
 *.sln
 *.sw?
+
+# Local Agent Data & Vector Stores
+local-rag/
+temp/
+saapp_data/
+chat_history.json
+saved_conversations.json
