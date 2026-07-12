@@ -10,7 +10,7 @@ interface DocumentRecord {
 }
 
 export const SelfServicePage: React.FC = () => {
-  const principal = localStorage.getItem('principal') ?? "";
+  const principal = localStorage.getItem('x-user-id') ?? "";
   
   // --- STATE LAYER ---
   const [allowedAffiliates, setAllowedAffiliates] = useState<string[]>([]);
@@ -52,7 +52,10 @@ export const SelfServicePage: React.FC = () => {
             
         setUserGroups(verifiedGroups);
         setAllowedAffiliates(affiliates);
-        
+        console.log("User groups:", userGroups);
+        console.log("Selected affiliate:", selectedAffiliate);
+        console.log("Checking for:", `${selectedAffiliate} Ingesters`);
+
         if (affiliates.length > 0) {
             setSelectedAffiliate(affiliates[0]); 
         }

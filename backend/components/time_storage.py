@@ -19,15 +19,39 @@ class TimeEntry(BaseModel):
     date: str                # Matches React
     created_at: str
     notes: str | None = None
+    type: str = "log"
 
 # 2. TimeEntryCreate stays the same (this is what the AI/tool sends)
+# In backend/components/time_storage.py
+
 class TimeEntryCreate(BaseModel):
     username: str
     activity: str
-    minutes: int
-    date_iso: str
+    duration_hours: float  # Ensure these match what React sends
+    duration_minutes: int
+    date: str
     notes: str | None = None
-    hours: float | None = None
+    type: str = "log"
+
+def add_time_entry(payload: TimeEntryCreate) -> TimeEntry:
+    entries = load_user_time(payload.username)
+
+    # Use the fields from the payload directly
+    entry = TimeEntry(
+        id=str(uuid.uuid4()),
+        username=payload.username,
+        activity=payload.activity,
+        duration_minutes=payload.duration_minutes, # Corrected field name
+        duration_hours=payload.duration_hours,     # Corrected field name
+        date=payload.date,                         # Corrected field name
+        created_at=datetime.utcnow().isoformat(),
+        notes=payload.notes,
+        type=payload.type
+    )
+
+    entries.append(entry)
+    save_user_time(payload.username, entries)
+    return entry
 
 def _get_user_file(username: str) -> str:
     return os.path.join(DATA_DIR, f"{username}.json")
@@ -56,26 +80,6 @@ def save_user_time(username: str, entries: List[TimeEntry]):
     path = _get_user_file(username)
     with open(path, "w") as f:
         json.dump([entry.dict() for entry in entries], f, indent=2)
-
-def add_time_entry(payload: TimeEntryCreate) -> TimeEntry:
-    entries = load_user_time(payload.username)
-
-    calculated_hours = payload.hours if payload.hours is not None else round(payload.minutes / 60, 2)
-
-    entry = TimeEntry(
-        id=str(uuid.uuid4()),
-        username=payload.username,
-        activity=payload.activity,
-        duration_minutes=payload.minutes,  # Map to new frontend name
-        duration_hours=calculated_hours,   # Map to new frontend name
-        date=payload.date_iso,             # Map to new frontend name
-        created_at=datetime.utcnow().isoformat(),
-        notes=payload.notes
-    )
-
-    entries.append(entry)
-    save_user_time(payload.username, entries)
-    return entry
 
 def clear_user_time(username: str):
     save_user_time(username, [])

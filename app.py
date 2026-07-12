@@ -7,6 +7,8 @@ import base64
 from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Query, Form, Request
 from typing import List
 import uuid
+import traceback
+from datetime import datetime, timezone
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -15,18 +17,20 @@ from backend.models.attachment import Attachment
 # Modernized LangChain Imports
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_community.vectorstores import Chroma
+from backend.components.time_storage import TimeEntry
 from backend.components.constraints import get_system_prompt, CONVERSATIONAL_PROMPT, format_docs
 from backend.services.search import discover_workspace_documents
 from local_function_app.function_app import run_ingestion_pipeline, HOT_FOLDER_DIR
 from backend.state.graph_state import GraphState
 from backend.utils.app_utils import save_conversation, list_saved_conversations, load_saved_conversations, load_saved_conversation, save_chat_history, format_history_as_text, chat_sessions
-from backend.utils.attachment_utils import process_user_attachment
+from backend.utils.attachment_utils import process_user_attachment, ingest_doc_to_session
 from backend.utils.fallback_utils import rewrite_fallback
 from backend.logging.sass_logger import setup_logging
 from backend.services.orchestrator import startup_services
 from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, verify_paapp_access
 from settings import DB_DIR
-from backend.components.time_storage import TimeEntryCreate, add_time_entry, load_user_time, clear_user_time
+from backend.components.time_storage import TimeEntryCreate, add_time_entry, load_user_time, clear_user_time, TimeEntry, save_user_time
 sys.path.append(os.path.join(os.path.dirname(__file__), "local-function-app"))
 app = FastAPI(title="Secure RAG Engine API")
 app.add_middleware(
@@ -49,22 +53,9 @@ class ChatRequest(BaseModel):
     question: str
     affiliate: str 
     attachments: list[Attachment] | None = None
+    session_id: str | None = None
 
-class TimeEntryCreate(BaseModel):
-    username: str
-    activity: str
-    duration_minutes: int
-    date: str  # "YYYY-MM-DD"
-    notes: str | None = None    
-
-class TimeEntry(BaseModel):
-    id: str
-    username: str
-    activity: str
-    duration_minutes: int
-    date: str
-    created_at: str
-    notes: str | None = None
+    
 
 @app.post("/api/login")
 async def verify_identity_profile(payload: LoginRequest):
@@ -80,21 +71,18 @@ async def verify_identity_profile(payload: LoginRequest):
     return {"status": "authenticated", "principal": username}
     
 @app.get("/api/affiliates")
-async def get_affiliates(username: str):
-    username = username.strip()
-    return get_accessible_affiliates(username, services.get("user_directory"))
+async def get_affiliates(x_user_id: str = Header(None)):
+    if not x_user_id:
+        raise HTTPException(status_code=401, detail="Missing authorization context.")
+    return get_accessible_affiliates(x_user_id, services.get("user_directory"))
+
 
 @app.get("/api/user/groups")
-async def get_user_groups_endpoint(
-    username: str, 
-    x_user_id: str = Header(None)
-):
-    """Exposes directory profile groups to the frontend application layout layer."""
+async def get_user_groups_endpoint(x_user_id: str = Header(None)):
     if not x_user_id:
-        raise HTTPException(status_code=401, detail="Missing authorization context principal.")
-    # Reuses the load_user_directory_groups helper function we wrote earlier!
-    groups = load_user_directory_groups(username)
-    return groups
+        raise HTTPException(status_code=401, detail="Missing authorization context.")
+    return load_user_directory_groups(x_user_id)
+
 
 @app.get("/api/discover-docs")
 async def discover_documents(affiliate: str = "All"):
@@ -116,7 +104,8 @@ async def secure_chat(request: ChatRequest, fastapi_request: Request):
     # logger.info(f"RAW REQUEST BODY: {raw}")
     username = request.username.strip()
     question = request.question.strip()
-    session_id = f"{username}_session"
+    session_id = request.session_id.strip() if request.session_id else f"{username}_session"
+
     user_docs = []
     if not verify_paapp_access(username):
         return {"message": "Access denied: You are not authorized to use PAAPP integrations."}
@@ -218,11 +207,17 @@ async def secure_chat(request: ChatRequest, fastapi_request: Request):
         attachment_summaries = []
 
         if request.attachments:
-            logger.info(f"Summarizing {len(request.attachments)} attachments for {username}")
+            logger.info(f"Processing {len(request.attachments)} attachments for {username}")
+
             for att in request.attachments:
-                summary = process_user_attachment(att)   # ← correct signature
+                # 1. Extract + save raw text into session store
+                ingest_result = ingest_doc_to_session(username, session_id, att)
+                # 2. Summarize for immediate context injection
+                summary = process_user_attachment(att)
                 if summary:
                     attachment_summaries.append(summary)
+
+
 
         # Inject summaries into graph state BEFORE workflow runs
         initial_state["attachment_summaries"] = attachment_summaries
@@ -334,32 +329,36 @@ async def get_ingested_documents_endpoint(
     affiliate: str,
     x_user_id: str = Header(None)
 ):
-    """
-    Scans the archive folder for the given affiliate and returns a list 
-    of indexed files to populate the Self-Service audit table.
-    """
     if not x_user_id:
         raise HTTPException(status_code=401, detail="Missing authorization principal context.")
-    # target the archived path, e.g., local-rag/index-db/Affiliate_A_Pages/
+
+    if not verify_user_ingest_access(x_user_id, affiliate):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    # Ensure we are using the correct path format
+    # Ensure HOT_FOLDER_DIR is defined and imported correctly in your app.py
     archive_target_zone = os.path.join(HOT_FOLDER_DIR, f"{affiliate}_Pages")
-    manifest_records = []
+    
+    # ADD THIS: Create the directory if it doesn't exist, or return empty
     if not os.path.exists(archive_target_zone):
-        return manifest_records # Return clean empty array if folder hasn't been generated yet
+        logger.info(f"Directory not found: {archive_target_zone}, returning empty manifest.")
+        return []
+
     try:
-        # Loop through files in the archive directory to build our UI dashboard table rows
+        manifest_records = []
         for filename in os.listdir(archive_target_zone):
             file_path = os.path.join(archive_target_zone, filename) 
             if os.path.isfile(file_path) and filename.lower().endswith('.pdf'):
                 file_stats = os.stat(file_path)    
-                # Mock up an ID string and details matching your DocumentRecord interface
                 manifest_records.append({
                     "id": f"id_{filename.replace('.', '_')}", 
                     "filename": filename,
-                    "uploadDate": datetime.datetime.fromtimestamp(file_stats.st_mtime).isoformat(),
-                    "fileSize": f"{round(file_stats.st_size / 1024, 1)} KB" if hasattr(file_stats, 'st_size') else f"{round(file_stats.st_size / 1024, 1)} KB"
+                    "uploadDate": datetime.fromtimestamp(file_stats.st_mtime).isoformat(),
+                    "fileSize": f"{round(file_stats.st_size / 1024, 1)} KB"
                 })
         return manifest_records
     except Exception as e:
+        logger.error(f"Failed to scan file system indexes: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to scan file system indexes: {str(e)}")
 
 @app.post("/api/upload-attachment")
@@ -422,6 +421,32 @@ async def upload_and_ingest_documents(
         raise HTTPException(status_code=500, detail=f"Pipeline Processing Fault: {str(e)}")
     
 # --- ELEVATED ENDPOINT: PURGE FROM VECTOR INDEX ---
+@app.get("/api/documents")
+async def list_documents(affiliate: str = Query(...), x_user_id: str = Header(None)):
+    # 1. Permission check
+    if not verify_user_ingest_access(x_user_id, affiliate):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    # 2. Target folder (your ingestion pipeline stores pages here)
+    folder = os.path.join(HOT_FOLDER_DIR, f"{affiliate}_Pages")
+    os.makedirs(folder, exist_ok=True)
+
+    # 3. Build manifest
+    manifest = []
+    for filename in os.listdir(folder):
+        full_path = os.path.join(folder, filename)
+        if os.path.isfile(full_path):
+            stat = os.stat(full_path)
+            manifest.append({
+                "id": filename,
+                "filename": filename,
+                "uploadDate": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "fileSize": stat.st_size
+            })
+
+    return manifest
+
+
 @app.delete("/api/documents/{doc_id}")
 async def delete_document(doc_id: str, affiliate: str = Query(...)):
     try:
@@ -462,14 +487,29 @@ async def delete_document(doc_id: str, affiliate: str = Query(...)):
         raise HTTPException(status_code=500, detail=f"Core index expulsion failure: {str(e)}")
 
 @app.get("/api/saved-conversations")
-async def get_saved_conversations(username: str):
+async def get_saved_conversations(
+    username: str, 
+    x_user_id: str = Header(None)
+):
+    # Enforce identity authorization
+    if not x_user_id or username != x_user_id:
+        raise HTTPException(status_code=403, detail="Unauthorized to view these conversations.")
+        
     conversations = load_saved_conversations(username)
     # conversations is a LIST, not a dict
     titles = [c["title"] for c in conversations]
     return {"titles": titles}
 
 @app.get("/api/saved-conversations/{title}")
-async def get_saved_conversation(username: str, title: str):
+async def get_saved_conversation(
+    username: str, 
+    title: str, 
+    x_user_id: str = Header(None)
+):
+    # Enforce identity authorization
+    if not x_user_id or username != x_user_id:
+        raise HTTPException(status_code=403, detail="Unauthorized to view this conversation.")
+        
     conversations = load_saved_conversations(username)
     # find the conversation in the list
     for convo in conversations:
@@ -488,7 +528,14 @@ async def is_paapp_admin(username: str, x_user_id: str = Header(None)):
 
 TIME_ENTRIES: dict[str, list[TimeEntry]] = {}  # key: username, value: list of entries
 @app.get("/api/time/list")
-def saapp_list_time(username: str):
+def saapp_list_time(
+    username: str, 
+    x_user_id: str = Header(None)
+):
+    # Enforce identity authorization
+    if not x_user_id or username != x_user_id:
+        raise HTTPException(status_code=403, detail="Unauthorized to view time entries.")
+        
     return load_user_time(username)
 
 
@@ -498,9 +545,154 @@ def saapp_clear_time(username: str):
     return {"status": "cleared"}
 
 @app.post("/api/time/log")
-def saapp_log_time(payload: TimeEntryCreate):
-    return add_time_entry(payload)
+async def log_time(entry: TimeEntryCreate):
+    try:
+        new_entry = TimeEntry(
+            id=str(uuid.uuid4()),
+            username=entry.username,
+            activity=entry.activity,
+            duration_hours=entry.duration_hours,
+            duration_minutes=entry.duration_minutes,
+            date=entry.date,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            notes=entry.notes,
+            type=entry.type
+        )
+        add_time_entry(new_entry)
+        return {"status": "ok"}
+    except Exception:
+        # This will print the actual error (e.g., ValidationError, KeyError) to your terminal
+        traceback.print_exc() 
+        raise HTTPException(status_code=500, detail="Check terminal for traceback")
 
+
+@app.delete("/api/time/delete")
+async def delete_time_entry(username: str, id: str): # Add username parameter
+    entries = load_user_time(username) # Use your utility function
+    new_data = [entry for entry in entries if entry.id != id]
+    save_user_time(username, new_data) # Use your utility function
+    return {"status": "ok", "deleted": id}
+
+@app.delete("/api/events/delete")
+async def delete_event(username: str, id: str):
+    base_dir = os.path.join("saapp_data", "events")
+    os.makedirs(base_dir, exist_ok=True)
+    event_file = os.path.join(base_dir, f"{username}_events.json")
+    
+
+    # Load existing events
+    try:
+        with open(event_file, "r") as f:
+            events = json.load(f)
+    except FileNotFoundError:
+        return {"status": "error", "message": "No events file found"}
+
+    # Filter out the event to delete
+    updated_events = [e for e in events if str(e["id"]) != str(id)]
+
+    # Save updated list
+    with open(event_file, "w") as f:
+        json.dump(updated_events, f, indent=2)
+
+    return {"status": "deleted", "id": id}
+
+@app.post("/api/events/create")
+async def create_event(payload: dict):
+    try:
+        username = payload.get("username")
+        if not username:
+            raise HTTPException(status_code=400, detail="Username missing")
+
+        # 1. Ensure the directory exists
+        base_dir = os.path.join("saapp_data", "events")
+        os.makedirs(base_dir, exist_ok=True)
+        
+        event_file = os.path.join(base_dir, f"{username}_events.json")
+        logger.info(base_dir)
+
+        # 2. Safely load existing data
+        events = []
+        if os.path.exists(event_file):
+            with open(event_file, "r") as f:
+                try:
+                    events = json.load(f)
+                except json.JSONDecodeError:
+                    events = []
+
+        # 3. Create the event object
+        new_event = {
+            "id": str(len(events) + 1),
+            "activity": payload.get("activity"),
+            "start_time": payload.get("start_time"),
+            "date": payload.get("date"),
+            "notes": payload.get("notes", ""),
+            "type": "event",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+
+        events.append(new_event)
+
+        # 4. Save
+        with open(event_file, "w") as f:
+            json.dump(events, f, indent=4)
+
+        return {"status": "ok", "event": new_event}
+        
+    except Exception as e:
+        logger.error(f"Event creation failed: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/events/log")
+async def saapp_log_event(entry: TimeEntryCreate):
+    saapp_time_dir = r"C:\Users\jackh\local-rag\saapp_data\events"
+    path = os.path.join(saapp_time_dir, f"{entry.username}_events.json")
+
+    # Load existing events
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            data = json.load(f)
+    else:
+        data = []
+
+    # Build event entry
+    new_entry = {
+        "id": str(uuid.uuid4()),
+        "username": entry.username,
+        "activity": entry.activity,
+        "duration_hours": entry.duration_hours,
+        "duration_minutes": entry.duration_minutes,
+        "date": entry.date,
+        "notes": entry.notes,
+        "type": "event",
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+
+    # Save event
+    data.append(new_entry)
+    with open(path, "w") as f:
+        json.dump(data, f)
+
+    return {"status": "ok"}
+
+# Add this in app.py
+@app.get("/api/events/list")
+def saapp_list_events(
+    username: str, 
+    x_user_id: str = Header(None)
+):
+    # Enforce identity authorization
+    if not x_user_id or username != x_user_id:
+        raise HTTPException(status_code=403, detail="Unauthorized to view events.")
+
+    # Point this to the same _events.json path used by the agent
+    saapp_time_dir = r"C:\Users\jackh\local-rag\saapp_data\events"
+    path = os.path.join(saapp_time_dir, f"{username}_events.json")
+    if not os.path.exists(path):
+        return []
+    with open(path, "r") as f:
+        return json.load(f)
+    
 @app.get("/api/health")
 async def health_check():
     logger.info("Checking health")

@@ -9,11 +9,23 @@ from settings import CHAT_HISTORY_FILE, SAVED_CONVERSATIONS_FILE
    
 logger = logging.getLogger("SASS Logger")
 
+def get_user_file_path(username: str):
+    # Ensure this directory exists
+    os.makedirs("saapp_data/saved_conversations", exist_ok=True)
+    return os.path.join("saapp_data/saved_conversations", f"{username}.json")
+
+def load_saved_conversations(username: str):
+    user_file = get_user_file_path(username)
+    if not os.path.exists(user_file):
+        return []
+    with open(user_file, "r") as f:
+        return json.load(f)
+    
 def save_conversation(username: str, title: str):
-    saved = load_all_saved_conversations()
-    if username not in saved:
-        saved[username] = []
-    # serialize messages
+    # 1. Load the list specifically for this user
+    user_conversations = load_saved_conversations(username)
+    
+    # 2. Serialize messages
     msg_list = []
     for msg in chat_sessions.get(username, []):
         if isinstance(msg, HumanMessage):
@@ -25,41 +37,36 @@ def save_conversation(username: str, title: str):
         else:
             continue
         msg_list.append({"type": msg_type, "content": msg.content})
-    saved[username].append({
+    
+    # 3. Create the new entry
+    new_entry = {
         "title": title.strip(),
         "timestamp": datetime.datetime.now().isoformat(),
         "messages": msg_list
-    })
-    with open(SAVED_CONVERSATIONS_FILE, "w") as f:
-        json.dump(saved, f, indent=4)
+    }
+    
+    # 4. Append to the user's list
+    user_conversations.append(new_entry)
+    
+    # 5. Save to the user-specific file
+    with open(get_user_file_path(username), "w") as f:
+        json.dump(user_conversations, f, indent=4)
 
 def list_saved_conversations(username: str):
-    saved = load_all_saved_conversations()
-    if username not in saved:
-        return []
-    return [c["title"] for c in saved[username]]    
-
-def load_all_saved_conversations():
-    if not os.path.exists(SAVED_CONVERSATIONS_FILE):
-        return {}
-    try:
-        with open(SAVED_CONVERSATIONS_FILE, "r") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-def load_saved_conversations(username: str):
-    saved = load_all_saved_conversations()
-    return saved.get(username, [])
+    # Load the specific file for this user
+    conversations = load_saved_conversations(username)
+    # Extract titles from the list
+    return [c["title"] for c in conversations]
 
 def load_saved_conversation(username: str, title: str):
-    saved = load_all_saved_conversations()
-    if username not in saved:
-        return None
-    for conversation in saved[username]:
+    # Load the specific file for this user
+    conversations = load_saved_conversations(username)
+    # Search the list
+    for conversation in conversations:
         if conversation["title"].lower() == title.lower():
             return conversation
-    return None
+    return None   
+
 
 def save_chat_history():
     """Serializes LangChain message objects to raw JSON dicts and writes to disk."""

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import './__styles__/SavedConversations.css';
+
 interface SavedMessage {
   type: "human" | "ai" | "system";
   content: string;
@@ -15,19 +16,26 @@ export const SavedConversationsPage: React.FC<SavedConversationsPageProps> = ({ 
   const [messages, setMessages] = useState<SavedMessage[]>([]);
 
   useEffect(() => {
-    fetch(`/api/saved-conversations?username=${username}`)
+    // 1. Fetch the list with the required header
+    fetch(`/api/saved-conversations?username=${username}`, {
+      headers: { "x-user-id": username }
+    })
       .then(res => res.json())
-      .then((data: { titles: string[] }) => setTitles(data.titles));
+      .then((data: { titles: string[] }) => setTitles(Array.isArray(data.titles) ? data.titles : []))
+      .catch(() => setTitles([]));
   }, [username]);
 
   const loadConversation = (title: string) => {
     setSelectedTitle(title);
-    console.log("Fetching:", `/api/saved-conversations?username=${username}`);
-    fetch(`/api/saved-conversations/${title}?username=${username}`)
+    // 2. Fetch specific convo with the required header
+    fetch(`/api/saved-conversations/${title}?username=${username}`, {
+      headers: { "x-user-id": username }
+    })
       .then(res => res.json())
       .then((data: { title: string; messages: SavedMessage[] }) => {
-        setMessages(data.messages);
-      });
+        setMessages(Array.isArray(data.messages) ? data.messages : []);
+      })
+      .catch(() => setMessages([]));
   };
 
   return (
@@ -35,9 +43,8 @@ export const SavedConversationsPage: React.FC<SavedConversationsPageProps> = ({ 
     {/* LEFT SIDEBAR */}
     <aside className="saved-conversations-sidebar">
         <h3 className="sidebar-title">Saved Conversations</h3>
-
         <div className="conversation-list">
-        {titles.map(t => (
+        {Array.isArray(titles) && titles.map(t => (
             <div
             key={t}
             className={`conversation-item ${selectedTitle === t ? "active" : ""}`}
@@ -57,7 +64,7 @@ export const SavedConversationsPage: React.FC<SavedConversationsPageProps> = ({ 
 
         <div className="saved-chat-wrapper">
             <div className="messages-container">
-            {messages.map((msg, idx) => (
+            {Array.isArray(messages) && messages.map((msg, idx) => (
                 <div key={idx} className={`message-bubble ${msg.type}`}>
                 <div className="message-content">{msg.content}</div>
                 </div>
@@ -65,8 +72,6 @@ export const SavedConversationsPage: React.FC<SavedConversationsPageProps> = ({ 
             </div>
         </div>
         </main>
-
     </div>
-
   );
 };

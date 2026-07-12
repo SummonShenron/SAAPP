@@ -22,9 +22,11 @@ async function isPaappAdmin(username: string): Promise<boolean> {
 
 export const api = {
   async getAffiliates(username: string): Promise<string[]> {
-    const response = await fetch(
-      `${BASE_URL}/api/affiliates?username=${encodeURIComponent(username)}`
-    );
+  const response = await fetch(
+    `${BASE_URL}/api/affiliates?username=${encodeURIComponent(username)}`,
+    { headers: { "x-user-id": username } }
+  );
+
     if (!response.ok) {
       throw new Error("Could not load secure workspace claims.");
     }
@@ -121,8 +123,10 @@ export const api = {
     question: string,
     attachments: { filename: string; content: string }[],
     borderScope: string,
+    session_id: string,                     // ← NEW ARGUMENT
     onTokenReceived: (token: string) => void
   ): Promise<void> {
+
     const response = await fetch(`${BASE_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -130,7 +134,8 @@ export const api = {
         username,
         question,
         affiliate: borderScope,
-        attachments
+        attachments,
+        session_id
       }),
     });
 
