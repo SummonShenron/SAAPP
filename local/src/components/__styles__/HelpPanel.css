@@ -1,0 +1,114 @@
+.help-panel {
+  padding: 20px;
+  background: var(--bg-main);
+  border-left: 1px solid var(--border-color);
+  overflow-y: auto;
+  transition: all 0.2s ease;
+}
+
+
+.help-panel .help-title {
+  font-size: 1.4rem;
+  font-weight: bold;
+  margin-bottom: 5px;
+}
+
+.help-panel .help-subtitle {
+  font-size: 0.9rem;
+  color: var(--text-main);
+  margin-bottom: 20px;
+}
+
+.help-panel .help-section {
+  margin-bottom: 15px;
+}
+
+.help-panel .help-section-header {
+  width: 100%;
+  background: var(--bg-main);
+  border-color: var(--border-color);
+  padding: 10px;
+  font-size: 1rem;
+  display: flex;
+  justify-content: space-between;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-radius: 16px;
+}
+
+.help-panel .help-section-header:hover {
+    box-shadow: var(--shadow-hover);
+    transform: translateY(-2px);
+    transition: all 0.2s ease;
+}
+
+.help-panel .help-section-body {
+  padding: 10px;
+  background: var(--bg-main);
+  border-left: 1px solid var(--border-color);
+}
+
+.help-panel .help-code {
+  background: var(--bg-main);
+  padding: 8px;
+  border-radius: 4px;
+  font-family: monospace;
+}
+
+.help-panel-container {
+  position: fixed;
+  left: 0;
+  top: 0;
+  height: 100%;
+  width: 350px;
+  background: var(--bg-main);
+  border-right: 1px solid var(--border-color);
+  overflow-y: auto;
+  z-index: 999;
+  box-shadow: 2px 0 8px rgba(0,0,0,0.15);
+  animation: slideInLeft 0.25s ease-out;
+}
+
+@keyframes slideInLeft {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.help-panel-container.closing {
+  animation: slideOutLeft 0.25s ease-in forwards;
+}
+
+@keyframes slideOutLeft {
+  from { transform: translateX(0); }
+  to { transform: translateX(-100%); }
+}
+
+/* Fix bullet indentation */
+.help-panel .help-section-body ul {
+  margin-left: 0;          /* Remove default browser margin */
+  padding-left: 20px;      /* Controlled indentation */
+}
+
+/* Fix bullet alignment so they don't spill past the border */
+.help-panel .help-section-body li {
+  margin-bottom: 6px;
+  font-size: 0.95rem;      /* Slightly smaller, cleaner */
+  line-height: 1.4;
+}
+
+/* Fix code block spacing */
+.help-panel .help-code {
+  margin-left: 0;
+  padding-left: 12px;
+  font-size: 0.9rem;
+}
+
+/* Fix section body padding so content stays inside the vertical line */
+.help-panel .help-section-body {
+  padding: 12px 16px;
+  border-left: 3px solid #4a6fa5;
+}

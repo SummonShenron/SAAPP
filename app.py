@@ -4,7 +4,7 @@ import datetime
 import json
 import sys
 import base64
-from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Query, Form, Request
+from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Query, Form, Request, Depends
 from typing import List
 import uuid
 import traceback
@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from backend.components import taskboard
+from backend.utils.taskboard_utils import require_taskboard_admin, is_taskboard_admin_for_user
 from backend.models.models import llm
 from backend.models.attachment import Attachment
 # Modernized LangChain Imports
@@ -28,7 +30,7 @@ from backend.utils.attachment_utils import process_user_attachment, ingest_doc_t
 from backend.utils.fallback_utils import rewrite_fallback
 from backend.logging.sass_logger import setup_logging
 from backend.services.orchestrator import startup_services
-from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, verify_paapp_access
+from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, verify_paapp_access, load_directory
 from settings import DB_DIR
 from backend.components.time_storage import TimeEntryCreate, add_time_entry, load_user_time, clear_user_time, TimeEntry, save_user_time
 sys.path.append(os.path.join(os.path.dirname(__file__), "local-function-app"))
@@ -55,7 +57,14 @@ class ChatRequest(BaseModel):
     attachments: list[Attachment] | None = None
     session_id: str | None = None
 
-    
+@app.get("/api/me")
+def get_me(x_user_id: str | None = Header(None, alias="x-user-id")):
+    if not x_user_id:
+        raise HTTPException(status_code=401, detail="Unauthenticated")
+    directory = load_directory()
+    entry = directory.get(x_user_id)
+    logger.info("GET /api/me for %s -> %s", x_user_id, bool(entry))
+    return {"username": x_user_id, "email": entry.get("email") if entry else None, "groups": entry.get("groups", []) if entry else []}
 
 @app.post("/api/login")
 async def verify_identity_profile(payload: LoginRequest):
@@ -78,10 +87,16 @@ async def get_affiliates(x_user_id: str = Header(None)):
 
 
 @app.get("/api/user/groups")
-async def get_user_groups_endpoint(x_user_id: str = Header(None)):
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="Missing authorization context.")
-    return load_user_directory_groups(x_user_id)
+def get_user_groups(username: str | None = Query(None), x_user_id: str | None = Header(None, alias="x-user-id")):
+    # Accept either ?username= or x-user-id header for dev flexibility
+    user = username or x_user_id
+    if not user:
+        raise HTTPException(status_code=400, detail="Missing username")
+    directory = load_directory()
+    entry = directory.get(user)
+    groups = entry.get("groups", []) if entry else []
+    logger.info("Fetching groups for: %s -> %s", user, groups)
+    return groups
 
 
 @app.get("/api/discover-docs")
@@ -521,10 +536,16 @@ async def get_saved_conversation(
     return {"error": "Conversation not found"}
 
 @app.get("/api/is-paapp-admin")
-async def is_paapp_admin(username: str, x_user_id: str = Header(None)):
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="Missing authorization context principal.")
-    return {"allowed": verify_paapp_access(username)}
+def is_paapp_admin(username: str | None = Query(None), x_user_id: str | None = Header(None, alias="x-user-id")):
+    user = username or x_user_id
+    if not user:
+        return {"allowed": False}
+    directory = load_directory()
+    entry = directory.get(user, {})
+    groups = entry.get("groups", [])
+    allowed = "PAAPP_Admins" in groups or "Global_Admins" in groups
+    logger.info("is-paapp-admin for %s -> %s", user, allowed)
+    return {"allowed": allowed}
 
 TIME_ENTRIES: dict[str, list[TimeEntry]] = {}  # key: username, value: list of entries
 @app.get("/api/time/list")
@@ -692,7 +713,52 @@ def saapp_list_events(
         return []
     with open(path, "r") as f:
         return json.load(f)
+
+@app.get("/api/tasks")
+def get_tasks():
+    store = taskboard.read_store()
+    return store.get("tasks", [])
+
+@app.put("/api/tasks/{task_id}")
+def update_task_lane(task_id: str, payload: dict, username: str = Depends(require_taskboard_admin)):
+    """
+    Updates an existing task's lane position or metadata on the server.
+    """
+    store = taskboard.read_store()
+    tasks = store.get("tasks", [])
     
+    # Find the task and update its properties
+    task_found = False
+    for t in tasks:
+        if str(t.get("id")) == str(task_id):
+            if "lane" in payload:
+                t["lane"] = payload["lane"]
+            if "title" in payload:
+                t["title"] = payload["title"]
+            if "description" in payload:
+                t["description"] = payload["description"]
+            task_found = True
+            break
+            
+    if not task_found:
+        raise HTTPException(status_code=404, detail="Task not found")
+        
+    store["tasks"] = tasks
+    taskboard.write_store(store)
+    return {"status": "ok"}
+
+@app.delete("/api/tasks/{task_id}")
+def delete_task(task_id: str, username: str = Depends(require_taskboard_admin)):
+    """
+    Protected: only Taskboard_Admins can delete tasks.
+    """
+    store = taskboard.read_store()
+    tasks = store.get("tasks", [])
+    filtered = [t for t in tasks if str(t.get("id")) != str(task_id)]
+    store["tasks"] = filtered
+    taskboard.write_store(store)
+    return {"status": "deleted", "id": task_id}
+
 @app.get("/api/health")
 async def health_check():
     logger.info("Checking health")

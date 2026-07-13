@@ -95,7 +95,7 @@
   border: 1px solid var(--border-color);
   border-radius: 12px;
   padding: 1.5rem;
-  margin-top: 1rem;
+  margin-top: 3rem !important;
   box-shadow: var(--shadow);
   transition: box-shadow 0.3s ease;
   margin-top: 3rem;
@@ -205,4 +205,32 @@
     position: relative;
     z-index: 1;
     
+}
+
+.sa-card glass {
+  margin-top: 3rem !important;
+
+}
+
+
+/* Custom theme-aligned table selection highlight */
+.sa-table tr.selected-row td {
+  background: var(--accent-primary) !important;
+  color: #ffffff !important;
+  font-weight: 600;
+  transition: background-color 0.15s ease;
+}
+
+/* Universal override: Targets any cells inside a selected row regardless of framework */
+tr.selected-row td {
+  background: var(--accent-primary) !important;
+  color: #ffffff !important;
+  font-weight: 600;
+}
+/* Override the explicit framework table cell selectors */
+table.sa-table tbody tr.selected-row td,
+table.sa-table tr.selected-row td {
+  background: var(--accent-primary) !important;
+  color: #ffffff !important;
+  font-weight: 600;
 }

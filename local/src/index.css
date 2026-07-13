@@ -3,7 +3,8 @@
    1. GLOBAL RESETS & THEME VARIABLES
    ========================================================================== */
 :root {
-  --bg-main: #ffffff;       /* Ultra-soft, calming pastel sky blue backdrop */
+  --bg-main: #ffffff;
+  --bg-alt: #eff6ff;       /* Ultra-soft, calming pastel sky blue backdrop */
   --bg-surface: #ffffff;    /* Clean white surface containers to break up the color */
   --bg-surface-hover: #f1f5f9;
   --border-color: #bfdbfe;  /* Gentle light-blue accent borders */
@@ -52,7 +53,8 @@
 
 /* THEME OVERRIDE: SHADOW MODE (DARK CRIMSON) */
 .theme-shadow {
-  --bg-main: #353333;        
+  --bg-main: #353333;   
+  --bg-alt: #910000;    
   --bg-surface: #ffffff;     
   --bg-surface-hover: #2e2e36;
   --border-color: #af2626;
