@@ -7,6 +7,7 @@ import { SavedConversationsPage } from "./pages/SavedConversations";
 import { Layout } from "../src/components/Layout";
 import { api } from "./api";
 import { TimeWorkspace } from "./pages/Time"
+import { Taskboard } from "./pages/Taskboard"
 
 function App() {
   const navigate = useNavigate();
@@ -63,7 +64,8 @@ function App() {
         <Route path="/saved" element={<SavedConversationsPage username={username} />} />
         <Route path="/time-tracking" element={<TimeWorkspace />} />
         <Route path="/self-service" element={<SelfServicePage />} />
-        
+        <Route path="/taskboard" element={<Taskboard />} />
+
       </Route>
       {/* Catch-all */}
       <Route path="*" element={<Navigate to="/" replace />} />

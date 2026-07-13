@@ -78,6 +78,7 @@ function CalendarPane({
 /* ---------------------------------------------------------
    Time Log Table
 --------------------------------------------------------- */
+
 function TimeLogTable({
     entries,
     selectedId,
@@ -89,6 +90,15 @@ function TimeLogTable({
 }) {
     return (
         <div className="sa-card glass">
+            {/* ⚡ Injected Style Block to guarantee override regardless of file bundle state */}
+            <style>{`
+                table.sa-table tbody tr.selected-row td {
+                    background-color: var(--accent-primary) !important;
+                    color: #ffffff !important;
+                    font-weight: 600;
+                }
+            `}</style>
+
             <table className="sa-table">
                 <thead>
                     <tr>
@@ -240,17 +250,21 @@ export function TimeWorkspace() {
 
         const username = localStorage.getItem("principal");
 
-        // DELETE FROM SAAPP CALENDAR (correct endpoint)
-        await fetch(
-            `http://127.0.0.1:8000/api/events/delete?username=${username}&id=${selectedId}`,
-            {
-                method: "DELETE",
-            }
-        );
+        // 1. Check if the active ID belongs to the logs array
+        const isLogEntry = entries.some(e => e.id === selectedId);
+
+        // 2. Route dynamically to /time/delete or /events/delete
+        const endpoint = isLogEntry
+            ? `http://127.0.0.1:8000/api/time/delete?username=${username}&id=${selectedId}`
+            : `http://127.0.0.1:8000/api/events/delete?username=${username}&id=${selectedId}`;
+
+        await fetch(endpoint, {
+            method: "DELETE",
+        });
 
         setSelectedId(null);
-            fetchEntries();
-        }
+        fetchEntries();
+    }
     async function fetchEntries() {
         setLoading(true);
         const username = localStorage.getItem("principal") || "";
@@ -291,7 +305,11 @@ export function TimeWorkspace() {
                 backgroundSize: "cover",
                 backgroundRepeat: "no-repeat",
                 backgroundPosition: "center",
-                minHeight: "100vh"
+                minHeight: "100vh",
+                display: "flex",
+                flexDirection: "row",
+                gap: "24px",
+                padding: "24px"
             }}
             >
             {/* LEFT: Calendar */}
@@ -309,7 +327,7 @@ export function TimeWorkspace() {
                 }}
             />
             {/* RIGHT: Tabs + Content */}
-            <div className="details-pane">
+            <div className="details-pane" style={{ flex: 1, minWidth: "0" }}>
                 {/* <Tabs active={activeTab} setActive={setActiveTab} /> */}
 
                 <div className="tab-content">

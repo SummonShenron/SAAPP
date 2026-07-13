@@ -1,10 +1,22 @@
 import os
 import json
 import logging
-from typing import List
+from typing import List, Dict, Any
 from settings import DIRECTORY_JSON_PATH
 
 logger = logging.getLogger("SASS Logger")
+
+def load_directory() -> Dict[str, Any]:
+    try:
+        if not os.path.exists(DIRECTORY_JSON_PATH):
+            logger.warning("directory.json missing at %s", DIRECTORY_JSON_PATH)
+            return {}
+        with open(DIRECTORY_JSON_PATH, "r", encoding="utf-8") as f:
+            logger.info("Successfully located directory")
+            return json.load(f)
+    except Exception as e:
+        logger.exception("Failed to load directory.json: %s", e)
+        return {}
 
 def get_accessible_affiliates(username: str, user_directory: dict) -> dict:
     # Now this function just does logic, it doesn't care about startup
