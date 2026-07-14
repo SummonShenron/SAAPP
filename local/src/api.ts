@@ -267,6 +267,9 @@ export const api = {
     if (!response.ok) throw new Error("Failed to delete task");
     return response.json();
   },
+  getInsights(username: string) {
+    return fetch(`/api/insights?username=${username}`).then(r => r.json());
+  },
   getAffiliates,
   getUserGroups,
   getIngestedDocuments,

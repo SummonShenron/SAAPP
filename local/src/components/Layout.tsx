@@ -53,6 +53,7 @@ export function Layout({ theme, toggleTheme, onExit }: LayoutProps) {
             </span>
           )}
           <span onClick={() => navigate("/taskboard")}>Taskboard</span>
+          <span onClick={() => navigate("/insights")}>Insights</span>
           <span onClick={toggleHelp}>Help</span>
           <span onClick={onExit} className="nav-exit">Disconnect Session</span>
         </div>

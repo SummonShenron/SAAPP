@@ -4,6 +4,7 @@ import logging
 from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from backend.services.agent_workflow import create_workflow
+from backend.services.insights_workflow import create_insight_workflow
 from settings import USER_DIRECTORY_FILE, DB_DIR
 from backend.models.attachment import Attachment
 logger = logging.getLogger("SASS Logger")
@@ -34,8 +35,17 @@ def startup_services():
         except Exception as e:
             logger.critical(f"Failed to compile LangGraph workflow: {e}")
             compiled_workflow = None
+    try:
+        insight_workflow = create_insight_workflow()
+        logger.info("Compiled Insight Workflow successfully")
+    except Exception as e:
+        print("INSIGHT WORKFLOW ERROR:", e)
+        logger.critical(f"Failed to compile Insight workflow: {e}")
+        insight_workflow = None
+        
     return {
         "user_directory": user_directory,
         "vector_store": vector_store,
         "compiled_workflow": compiled_workflow,
+        "insight_workflow": insight_workflow
     }        

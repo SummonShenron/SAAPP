@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Any
+from typing import List, Any, Optional, Dict
 from typing_extensions import TypedDict
 from backend.models.attachment import Attachment
 from langchain_core.messages import BaseMessage
@@ -22,7 +22,12 @@ class GraphState(TypedDict):
     attachment_summaries: List[str] # Summary of user attached content
     coordinator_intent: str         # e.g. "retrieve", "summarize", "paapp", etc.
     coordinator_plan: List[str]     # ordered list of agents to run
-
+    snapshot: Optional[Dict[str, Any]]
+    classified: Optional[Dict[str, Any]]
+    analysis_output: Optional[Dict[str, Any]]
+    patterns: Optional[Dict[str, Any]]
+    trends: Optional[Dict[str, Any]]
+    insights: Optional[List[Dict[str, Any]]]
 
 # def route_user_query(state: GraphState) -> str:
 #     """

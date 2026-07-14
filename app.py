@@ -25,6 +25,7 @@ from backend.components.constraints import get_system_prompt, CONVERSATIONAL_PRO
 from backend.services.search import discover_workspace_documents
 from local_function_app.function_app import run_ingestion_pipeline, HOT_FOLDER_DIR
 from backend.state.graph_state import GraphState
+from backend.services.insights_workflow import create_insight_workflow
 from backend.utils.app_utils import save_conversation, list_saved_conversations, load_saved_conversations, load_saved_conversation, save_chat_history, format_history_as_text, chat_sessions
 from backend.utils.attachment_utils import process_user_attachment, ingest_doc_to_session
 from backend.utils.fallback_utils import rewrite_fallback
@@ -33,6 +34,7 @@ from backend.services.orchestrator import startup_services
 from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, verify_paapp_access, load_directory
 from settings import DB_DIR
 from backend.components.time_storage import TimeEntryCreate, add_time_entry, load_user_time, clear_user_time, TimeEntry, save_user_time
+
 sys.path.append(os.path.join(os.path.dirname(__file__), "local-function-app"))
 app = FastAPI(title="Secure RAG Engine API")
 app.add_middleware(
@@ -45,10 +47,10 @@ app.add_middleware(
 logger = setup_logging()  # Initialize the logger from backend/logging/sass_logger.py
 logger.info("--- BOOTING SECURE KNOWLEDGE ASSISTANT ---")
 services = startup_services()
+insight_workflow = services["insight_workflow"]
 
 class LoginRequest(BaseModel):
     username: str
-
 
 class ChatRequest(BaseModel):
     username: str
@@ -257,17 +259,29 @@ async def secure_chat(request: ChatRequest, fastapi_request: Request):
         raise HTTPException(status_code=500, detail="Agent workflow failed.")
 
     # ---------- Build Prompt based on Decision Boundary ----------
+    insight_answer = final_state.get("insight_answer")
     is_conversational = final_state.get("relevance_grade") == "conversational"
-    if is_conversational:
-        # Build conversational friendly response template
+
+    if insight_answer:
         history_transcript = format_history_as_text(chat_sessions[username])
         prompt = CONVERSATIONAL_PROMPT.format(
             username=username,
             question=question,
-            history=history_transcript
+            history=history_transcript,
+            insight=insight_answer
         )
+
+    elif is_conversational:
+        history_transcript = format_history_as_text(chat_sessions[username])
+        prompt = CONVERSATIONAL_PROMPT.format(
+            username=username,
+            question=question,
+            history=history_transcript,
+            insight=final_state.get("insight_answer")
+        )
+
     else:
-        # Build advanced RAG query template with final retrieved context
+        # RAG branch
         final_question = final_state.get("original_question", question)
         documents = final_state.get("documents", [])
         accessible_affiliates_str = ", ".join(final_state.get("target_scope", target_scope))
@@ -285,6 +299,7 @@ async def secure_chat(request: ChatRequest, fastapi_request: Request):
             history=history_transcript,
             question=final_question,
         )
+
     logger.debug(f"--- FINAL PROMPT SENT TO LLM: ---\n{prompt}")
     logger.debug("--- END OF PROMPT ---")
     # ---------- Real token streaming from LLM ----------
@@ -714,6 +729,23 @@ def saapp_list_events(
     with open(path, "r") as f:
         return json.load(f)
 
+@app.post("/api/tasks")
+def create_task(payload: dict, username: str = Depends(require_taskboard_admin)):
+    """
+    Protected: only Taskboard_Admins can create tasks.
+    """
+    store = taskboard.read_store()
+    tasks = store.get("tasks", [])
+    
+    # Append the new task data sent from the frontend
+    tasks.append(payload)
+    
+    # Save it back to the store
+    store["tasks"] = tasks
+    taskboard.write_store(store)
+    
+    return {"status": "ok", "task": payload}
+
 @app.get("/api/tasks")
 def get_tasks():
     store = taskboard.read_store()
@@ -759,6 +791,22 @@ def delete_task(task_id: str, username: str = Depends(require_taskboard_admin)):
     taskboard.write_store(store)
     return {"status": "deleted", "id": task_id}
 
+@app.get("/api/insights")
+def get_insights(current_user: str = "jack_admin"): 
+    # 1. Ensure we pass the active user ('jack_admin'), not 'default_user'
+    # (If you have a dependency injection for auth here like Depends(get_current_user), use that)
+    state = {
+        "messages": [], 
+        "username": current_user
+    }
+    logger.info(f"Triggering insight workflow for user: {state['username']}")
+    result = insight_workflow.invoke(state)
+    
+    logger.info(f"Final graph result dictionary:{result}")    
+    # 2. Extract what the frontend actually needs.
+    # If your graph saves the final product to a key named 'insights', return that.
+    # If it formats it into a message content string, return result["messages"][-1].content
+    return result.get("insights", [])
 @app.get("/api/health")
 async def health_check():
     logger.info("Checking health")

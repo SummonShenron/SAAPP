@@ -20,10 +20,13 @@ def setup_logging():
             logger.propagate = False
         # 4. Silence noisy third-party libraries
         noisy_loggers = [
-            "uvicorn", "uvicorn.error", "uvicorn.access",
+            "uvicorn.access",
             "httpx", "httpcore", "h11", "anyio", "asyncio",
             "transformers", "huggingface_hub", "sentence_transformers", "chromadb"
         ]
         for logger_name in noisy_loggers:
             logging.getLogger(logger_name).setLevel(logging.CRITICAL)     
+        logging.getLogger("uvicorn.error").setLevel(logging.ERROR)
+        logging.getLogger("uvicorn").setLevel(logging.ERROR)
+        
     return logger

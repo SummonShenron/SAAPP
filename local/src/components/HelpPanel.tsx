@@ -117,9 +117,15 @@ const HelpPanel: React.FC = () => {
           <li>Reorder tasks basedon priority</li>
         </ul>
       </HelpSection>
-
-      
-
+      {/* Taskboard */}
+      <HelpSection title="Insights">
+        <p>Users can both view (via insights tab) and query the model to recieve personalized insight metrics.</p>
+        <ul>
+          <li>Ask questions like "how many hours did I spend debugging last week?</li>
+          <li>View the Insights tab to see customized insights and accomplishments</li>
+          <li>Helpful for calculating time, usage, and schedules</li>
+        </ul>
+      </HelpSection>
       {/* Identity */}
       <HelpSection title="Identity & Permissions">
         <p>SAAPP uses unified identity across all modules.</p>
@@ -134,7 +140,9 @@ const HelpPanel: React.FC = () => {
 
       {/* Multi-Agent Workflow */}
       <HelpSection title="Multi-Agent Workflow">
-        <p>SAAPP is powered by multiple internal agents:</p>
+        <p>SAAPP is powered by two internal agent pipelines that work together to understand your requests and produce intelligent responses.</p>
+
+        <h4>Knowledge & Conversation Pipeline</h4>
         <ul>
           <li>Coordinator</li>
           <li>Reasoner</li>
@@ -144,10 +152,25 @@ const HelpPanel: React.FC = () => {
           <li>Decision Boundary</li>
         </ul>
         <p>
-          These agents collaborate to produce responses, retrieve documents,
-          process attachments, and manage context.
+          These agents handle normal chat, knowledge-base retrieval, document attachments,
+          and PAAPP tool interactions.
+        </p>
+
+        <h4>Insight Pipeline (Activity Analytics)</h4>
+        <ul>
+          <li>Snapshot</li>
+          <li>Classifier</li>
+          <li>Pattern Detector</li>
+          <li>Trend Analyzer</li>
+          <li>Insight Query</li>
+          <li>Insight Formatter</li>
+        </ul>
+        <p>
+          This pipeline activates when you ask questions about your activity history,
+          such as weekly summaries, productivity trends, streaks, or category insights.
         </p>
       </HelpSection>
+
     </div>
   );
 };

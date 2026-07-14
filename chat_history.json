@@ -2,11 +2,39 @@
     "jack_admin": [
         {
             "type": "human",
-            "content": "are goku and sonic comparable in power?"
+            "content": "what did i do the most last week?"
+        },
+        {
+            "type": "human",
+            "content": "what did i do the most last week?"
         },
         {
             "type": "ai",
-            "content": "Based on the provided context, I can answer your question:\n\nGoku and Sonic are not comparable in power. The text states that Frieza's power level is significantly higher than Goku's and Vegeta's, with Frieza effortlessly defeating both of them with a single strike each. In contrast, there is no mention of Sonic's power being comparable to Frieza's.\n\nSource: frieza_black.pdf - Page 1"
+            "content": "Based on the provided priority document, you spent most of your time on coding (3 logs) last week."
+        },
+        {
+            "type": "human",
+            "content": "what tasks do i stil need to complete?"
+        },
+        {
+            "type": "human",
+            "content": "what tasks do i stil need to complete?"
+        },
+        {
+            "type": "ai",
+            "content": "Based on the provided priority document, it appears that your oldest backlog task is **laundry**. It does not seem like this task has been completed yet, so you still need to complete this task.\n\nSource: system_insight - N/A"
+        },
+        {
+            "type": "human",
+            "content": "what tasks do i stil need to complete?"
+        },
+        {
+            "type": "human",
+            "content": "what tasks do i stil need to complete?"
+        },
+        {
+            "type": "ai",
+            "content": "Based on the provided priority document, it appears that your oldest backlog task is **clean room**. It does not seem like this task has been completed yet, so you still need to complete this task.\n\nSource: system_insight - N/A"
         }
     ],
     "dragon_ball_user": [
