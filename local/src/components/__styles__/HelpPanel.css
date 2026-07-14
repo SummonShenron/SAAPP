@@ -42,6 +42,12 @@
     transition: all 0.2s ease;
 }
 
+.help-panel .help-section-header:active {
+  box-shadow: none;
+  transform: translateY(2px);
+  transition: all 0.2s ease;
+}
+
 .help-panel .help-section-body {
   padding: 10px;
   background: var(--bg-main);

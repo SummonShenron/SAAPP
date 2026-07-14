@@ -283,7 +283,45 @@ No prose. No explanation. No extra text.
 <|end_of_text|>
 
 """
+INSIGHTS_PROMPT = """
+Here are your system insights:
 
+Time Patterns:
+- Top Categories: {top_categories}
+- Productivity Windows: {productivity_windows}
+- Weekday Activity: {dict(analysis['time_patterns']['weekday_activity'])}
+
+Task Patterns:
+- Stagnant Tasks: {analysis['task_patterns']['stagnant_tasks']}
+- Fast Tasks: {analysis['task_patterns']['fast_tasks']}
+- Backlog Distribution: {dict(analysis['task_patterns']['backlog_category_distribution'])}
+
+Calendar Patterns:
+- Event Categories: {dict(analysis['calendar_patterns']['event_categories'])}
+- Busy Days: {analysis['calendar_patterns']['busy_days']}
+- Free Days: {analysis['calendar_patterns']['free_days']}
+"""
+
+INSIGHT_QUERY_PROMPT = """
+You classify user questions about their activity logs, tasks, calendar, and productivity.
+
+    Question: {question}
+
+    Return JSON with:
+    - type: one of [
+        "top_category",
+        "busiest_day",
+        "productivity_window",
+        "streaks",
+        "category_trend",
+        "task_aging",
+        "task_velocity",
+        "calendar_load",
+        "weekday_pattern"
+    ]
+    - time_range: optional ("last_week", "this_month", "today", "all_time")
+    - category: optional
+"""
 
 
 def get_system_prompt(username: str = "default", affiliate: str = "All") -> str:

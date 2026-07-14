@@ -1,9 +1,13 @@
 from __future__ import annotations
+import os
 import re
 import json
 from typing import List, Any, Dict
 import logging
 import requests
+from collections import Counter, defaultdict
+from datetime import datetime, timedelta
+from backend.components.time_storage import load_user_time
 from backend.models.attachment import Attachment
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langchain_core.documents import Document
@@ -12,14 +16,18 @@ from backend.services.search import get_secure_retriever
 from backend.models.models import llm
 from backend.state import graph_db
 from backend.utils.attachment_utils import retrieve_from_session
+from backend.utils.isolation_kb_utils import load_directory
 from backend.components.constraints import (
     format_docs,
     SUMMARIZER_PROMPT,
     GRADING_PROMPT,
     REWRITING_PROMPT,
-    FORMATTER_PROMPT
+    FORMATTER_PROMPT,
+    INSIGHTS_PROMPT,
+    INSIGHT_QUERY_PROMPT
 )
 from backend.components.time_storage import add_time_entry, TimeEntryCreate
+from backend.components import taskboard
 from backend.state.graph_state import GraphState, route_after_grading
 from langgraph.graph import StateGraph, START, END
 
@@ -68,6 +76,7 @@ def coordinator_router(state: GraphState) -> str:
         "workflow": "conversational_node",
         "tool": "conversational_node",
         "memory": "memory_node",
+        "insight": "snapshot_node"
     }
 
     logger.info(f"sending request to {next_agent}")
@@ -91,6 +100,29 @@ def classify_intent(message: str, attachments) -> str:
         return "memory"
     if any(w in msg for w in ["bullet", "report", "format this"]):
         return "format"
+    if any(phrase in msg for phrase in [
+        "what did i do",
+        "what was my",
+        "how much time",
+        "how many",
+        "most",
+        "least",
+        "trend",
+        "trends",
+        "pattern",
+        "patterns",
+        "streak",
+        "productivity",
+        "calendar",
+        "logs",
+        "tasks",
+        "insight",
+        "analyze",
+        "review my week",
+        "review my day",
+        "review my month"
+    ]):
+        return "insight"
     return "conversational"
 
 def build_agent_plan(intent, state):
@@ -117,6 +149,9 @@ def build_agent_plan(intent, state):
     # Always end with formatter
     if "formatter" not in agents:
         agents.append("formatter")
+    if intent == "insight":
+        return {"agents": ["insight"], "skip": []}
+
     # Store last intent for future follow-ups
     state["last_intent"] = intent
     return {"agents": agents, "skip": []}
@@ -443,8 +478,12 @@ def summarizer_node(state: GraphState) -> GraphState:
 def formatter_node(state: GraphState) -> dict:
     logger.info("--- FORMATTER NODE CALLED ---")
     # 1. Choose the correct content source
+    messages = state.get("messages")
+    if messages:
+        user_msg = state["messages"][-1].content
+    else:
+        user_msg = "Generate system insights"
     content_to_format = state.get("content_to_format")
-    user_msg = state["messages"][-1].content
     lower_msg = user_msg.lower()
     # Fallback if memory/summarizer/generator didn't set content
     if not content_to_format:
@@ -477,7 +516,18 @@ def formatter_node(state: GraphState) -> dict:
     state["formatted_output"] = formatted_text
     return state
 
+def insight_formatter_node(state: dict) -> dict:
+    """
+    Passes the structured insights array directly to the endpoint 
+    instead of converting it into a chatbot string.
+    """
+    username = state.get("username")
+    insights = state.get("insights", [])
 
+    return {
+        "insights": insights,
+        "username": username
+    }
 # ============================================================
 # CONVERSATIONAL NODE (sync - pass-through for stream)
 # ============================================================
@@ -640,6 +690,895 @@ def call_paapp_chat(username: str, question: str) -> dict:
     return r.json()
 
 # ============================================================
+# Data Snapshot Node
+# ============================================================
+def load_user_calendar_events(username: str):
+    """
+    Reads mirrored calendar events created by PAAPP.
+    These live in: saapp_data/time/<username>_events.json
+    """
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    events_path = os.path.join(project_root, "saapp_data", "time", f"{username}_events.json")
+
+    if not os.path.exists(events_path):
+        return []
+
+    try:
+        with open(events_path, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error reading calendar events: {e}")
+        return []
+
+
+def data_snapshot_node(state: dict) -> dict:
+    """
+    Collects structured data from Logs, Taskboard, Calendar (local mirror),
+    and optionally directory info.
+    """
+
+    username = state.get("username")
+    logger.info(f"DATA SNAPSHOT - Fetching data for user: {username}")
+
+    # --- Logs ---
+    logs = load_user_time(username)
+    logger.info(f"DATA SNAPSHOT - Raw Logs Found: {len(logs) if logs else 0}")
+
+    # --- Taskboard ---
+    taskboard_store = taskboard.read_store()
+    taskboard_store = taskboard.read_store()
+    all_tasks = taskboard_store.get("tasks", [])
+    
+    # Filter the single list into the expected structure
+    taskboard_data = {
+        "backlog": [t for t in all_tasks if t.get("lane") == "backlog"],
+        "in_progress": [t for t in all_tasks if t.get("lane") == "in_progress"],
+        "completed": [t for t in all_tasks if t.get("lane") == "completed"]
+    }
+    
+    logger.info(
+        f"DATA SNAPSHOT - Tasks Found -> Backlog: {len(taskboard_data['backlog'])}, "
+        f"In Progress: {len(taskboard_data['in_progress'])}, "
+        f"Completed: {len(taskboard_data['completed'])}"
+    )
+
+    # --- Calendar (local mirror) ---
+    calendar_events = load_user_calendar_events(username)
+    logger.info(f"DATA SNAPSHOT - Calendar Events Found: {len(calendar_events) if calendar_events else 0}")
+
+    # --- Directory (optional) ---
+    directory = load_directory()
+    user_entry = directory.get(username, {})
+    user_groups = user_entry.get("groups", [])
+
+    snapshot = {
+        "calendar": calendar_events,
+        "logs": logs,
+        "taskboard": taskboard_data,
+        "groups": user_groups,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+    return { **state, "snapshot": snapshot }
+
+# ============================================================
+# Activity Classifier Node
+# ============================================================
+
+# --- Lightweight keyword-based classifier -------------------
+
+CATEGORY_KEYWORDS = {
+    "coding": ["code", "coding", "react", "fastapi", "python", "typescript", "debug", "fix", "build"],
+    "learning": ["learn", "study", "course", "tutorial", "read", "research"],
+    "admin": ["email", "paperwork", "form", "admin", "file", "organize"],
+    "job_search": ["apply", "application", "resume", "cover letter", "interview", "linkedin"],
+    "creative": ["design", "write", "draft", "create", "brainstorm"],
+    "health": ["gym", "workout", "run", "walk", "doctor"],
+    "personal": ["clean", "laundry", "errand", "shopping"],
+    "meeting": ["meeting", "call", "zoom", "chat"],
+}
+
+def classify_text(text: str) -> str:
+    """
+    Returns the best-fit category based on keyword matching.
+    Falls back to 'misc' if nothing matches.
+    """
+    if not text:
+        return "misc"
+
+    text_lower = text.lower()
+
+    for category, keywords in CATEGORY_KEYWORDS.items():
+        for kw in keywords:
+            if kw in text_lower:
+                return category
+
+    return "misc"
+
+
+# --- Main Node ------------------------------------------------
+
+def activity_classifier_node(state: dict) -> dict:
+    """
+    Takes the snapshot and classifies logs, tasks, and calendar events
+    into meaningful activity categories.
+    """
+
+    snapshot = state.get("snapshot", {})
+    username = state.get("username")
+
+    # --- Logs --------------------------------------------------
+    logs = snapshot.get("logs", [])
+    classified_logs = []
+
+    for entry in logs:
+        category = classify_text(entry.activity)
+        classified_logs.append({
+            "id": entry.id,
+            "activity": entry.activity,
+            "category": category,
+            "duration_hours": entry.duration_hours,
+            "duration_minutes": entry.duration_minutes,
+            "date": entry.date,
+            "type": entry.type,
+        })
+
+    # --- Taskboard --------------------------------------------
+    tb = snapshot.get("taskboard", {})
+    classified_tasks = {
+        "backlog": [],
+        "in_progress": [],
+        "completed": []
+    }
+
+    for lane in ["backlog", "in_progress", "completed"]:
+        for task in tb.get(lane, []):
+            title = task.get("title", "")
+            category = classify_text(title)
+            classified_tasks[lane].append({
+                **task,
+                "category": category
+            })
+
+    # --- Calendar ----------------------------------------------
+    calendar_events = snapshot.get("calendar", [])
+    classified_calendar = []
+
+    for event in calendar_events:
+        title = event.get("activity", "")
+        category = classify_text(title)
+        classified_calendar.append({
+            **event,
+            "category": category
+        })
+
+    # --- Output -------------------------------------------------
+    classified_snapshot = {
+        "classified_logs": classified_logs,
+        "classified_tasks": classified_tasks,
+        "classified_calendar": classified_calendar,
+        "timestamp": snapshot.get("timestamp")
+    }
+
+    return { **state, "classified": classified_snapshot }
+
+# ============================================================
+# Pattern Detector Node
+# ============================================================
+
+def detect_time_patterns(classified_logs):
+    """
+    Detects patterns in time usage:
+    - Most common activity categories
+    - Productivity windows (morning/afternoon/evening)
+    - Day-of-week activity patterns
+    """
+    category_counter = Counter()
+    hour_buckets = Counter()
+    weekday_counter = Counter()
+
+    for entry in classified_logs:
+        category_counter[entry["category"]] += 1
+
+        # Productivity windows
+        try:
+            dt = datetime.fromisoformat(entry["date"])
+            hour = dt.hour
+            if 5 <= hour < 12:
+                hour_buckets["morning"] += 1
+            elif 12 <= hour < 17:
+                hour_buckets["afternoon"] += 1
+            elif 17 <= hour < 22:
+                hour_buckets["evening"] += 1
+            else:
+                hour_buckets["late_night"] += 1
+
+            weekday_counter[dt.strftime("%A")] += 1
+        except:
+            pass
+
+    return {
+        "top_categories": category_counter.most_common(3),
+        "productivity_windows": hour_buckets,
+        "weekday_activity": weekday_counter
+    }
+
+
+def detect_task_patterns(classified_tasks):
+    stagnant = []
+    fast = []
+    backlog_categories = Counter()
+
+    # 1. Identify Oldest Backlog Tasks
+    backlog = classified_tasks.get("backlog", [])
+    # Sort by 'createdAt' (oldest first)
+    sorted_backlog = sorted(backlog, key=lambda x: x.get("createdAt", ""))
+    # Take the top 3 oldest
+    stagnant = sorted_backlog[:3] 
+
+    # 2. Calculate category distribution
+    for task in backlog:
+        backlog_categories[task["category"]] += 1
+
+    # 3. Detect fast-moving tasks (completed within 24 hours)
+    for task in classified_tasks.get("completed", []):
+        created = task.get("createdAt") # Ensure this matches your JSON key
+        completed = task.get("completedAt") # Ensure this key exists or is tracked
+        if created and completed:
+            try:
+                dt_created = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                dt_completed = datetime.fromisoformat(completed.replace("Z", "+00:00"))
+                if dt_completed - dt_created < timedelta(days=1):
+                    fast.append(task)
+            except Exception:
+                pass
+
+    return {
+        "stagnant_tasks": stagnant, # Now contains the oldest backlog tasks
+        "fast_tasks": fast,
+        "backlog_category_distribution": backlog_categories
+    }
+
+
+def detect_calendar_patterns(classified_calendar):
+    """
+    Detects patterns in calendar events:
+    - Most common event categories
+    - Busy vs free days
+    - Meeting-heavy days
+    """
+    category_counter = Counter()
+    day_load = Counter()
+
+    for event in classified_calendar:
+        category_counter[event["category"]] += 1
+
+        date = event.get("date")
+        if date:
+            day_load[date] += 1
+
+    return {
+        "event_categories": category_counter,
+        "busy_days": day_load.most_common(3),
+        "free_days": [d for d, count in day_load.items() if count == 0]
+    }
+
+
+def pattern_detector_node(state: dict) -> dict:
+    """
+    Reads the classified snapshot and extracts behavioral patterns.
+    """
+
+    classified = state.get("classified", {})
+    logs = classified.get("classified_logs", [])
+    tasks = classified.get("classified_tasks", {})
+    calendar = classified.get("classified_calendar", [])
+
+    patterns = {
+        "time_patterns": detect_time_patterns(logs),
+        "task_patterns": detect_task_patterns(tasks),
+        "calendar_patterns": detect_calendar_patterns(calendar),
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+    return { **state, "patterns": patterns }
+
+# ============================================================
+# Trend Analyzer Node
+# ============================================================
+
+def compute_daily_totals(logs):
+    """
+    Returns a dict: { '2026-07-10': total_minutes, ... }
+    """
+    totals = defaultdict(int)
+    for entry in logs:
+        try:
+            totals[entry["date"]] += entry["duration_minutes"]
+        except:
+            pass
+    return dict(totals)
+
+
+def compute_category_trends(classified_logs):
+    """
+    Tracks category frequency over time.
+    Example output:
+    {
+        "coding": { "2026-07-10": 2, "2026-07-11": 1 },
+        "learning": { ... }
+    }
+    """
+    trends = defaultdict(lambda: defaultdict(int))
+
+    for entry in classified_logs:
+        category = entry["category"]
+        date = entry["date"]
+        trends[category][date] += 1
+
+    return {cat: dict(days) for cat, days in trends.items()}
+
+
+def compute_streaks(daily_totals):
+    """
+    Detects productivity streaks:
+    - consecutive days with activity
+    - longest streak
+    - current streak
+    """
+    if not daily_totals:
+        return {
+            "current_streak": 0,
+            "longest_streak": 0,
+            "streak_days": []
+        }
+
+    dates = sorted(daily_totals.keys())
+    streak = 0
+    longest = 0
+    streak_days = []
+
+    prev_date = None
+
+    for d in dates:
+        dt = datetime.fromisoformat(d)
+        if prev_date and dt - prev_date == timedelta(days=1):
+            streak += 1
+        else:
+            streak = 1
+        longest = max(longest, streak)
+        streak_days.append(d)
+        prev_date = dt
+
+    return {
+        "current_streak": streak,
+        "longest_streak": longest,
+        "streak_days": streak_days
+    }
+
+
+def compute_task_velocity(classified_tasks):
+    """
+    Measures how quickly tasks move from backlog → in-progress → completed.
+    """
+    velocities = []
+
+    for task in classified_tasks.get("completed", []):
+        created = task.get("created_at")
+        completed = task.get("completed_at")
+
+        if created and completed:
+            try:
+                dt_created = datetime.fromisoformat(created)
+                dt_completed = datetime.fromisoformat(completed)
+                delta = dt_completed - dt_created
+                velocities.append(delta.total_seconds() / 3600)  # hours
+            except:
+                pass
+
+    if not velocities:
+        return {
+            "average_completion_hours": None,
+            "fastest_completion_hours": None,
+            "slowest_completion_hours": None
+        }
+
+    return {
+        "average_completion_hours": sum(velocities) / len(velocities),
+        "fastest_completion_hours": min(velocities),
+        "slowest_completion_hours": max(velocities)
+    }
+
+
+def compute_calendar_load_trends(classified_calendar):
+    """
+    Tracks how busy your calendar is over time.
+    """
+    load = defaultdict(int)
+
+    for event in classified_calendar:
+        date = event.get("date")
+        if date:
+            load[date] += 1
+
+    return dict(load)
+
+
+def trend_analyzer_node(state: dict) -> dict:
+    """
+    Computes temporal trends from logs, tasks, and calendar with explicit data step logging.
+    """
+    snapshot = state.get("snapshot", {})
+    username = state.get("username")
+    
+    logs = snapshot.get("logs", [])
+    tb = snapshot.get("taskboard", {})
+    calendar_events = snapshot.get("calendar", [])
+    
+    logger.info(f"TREND ANALYZER - Incoming Raw Logs Count: {len(logs)}")
+    logger.info(f"TREND ANALYZER - Incoming Raw Tasks Count: {sum(len(tb.get(k, [])) for k in tb)}")
+    logger.info(f"TREND ANALYZER - Incoming Raw Calendar Count: {len(calendar_events)}")
+
+    # --- Process Logs ---
+    classified_logs = []
+    for entry in logs:
+        # FIX: Check if it's a dict first. If not, safely use getattr for the Pydantic model.
+        activity_text = entry.get("activity", "") if isinstance(entry, dict) else getattr(entry, "activity", str(entry))
+        
+        # Test classification call
+        try:
+            category = classify_text(activity_text) or "Uncategorized"
+        except Exception as ce:
+            logger.error(f"TREND ANALYZER - classify_text failed on log: {str(ce)}")
+            category = "Uncategorized"
+            
+        classified_logs.append({
+            "id": getattr(entry, "id", None),
+            "activity": activity_text,
+            "category": category,
+            "duration_hours": getattr(entry, "duration_hours", 0),
+            "duration_minutes": getattr(entry, "duration_minutes", 0),
+            "date": getattr(entry, "date", ""),
+            "type": getattr(entry, "type", "log"),
+        })
+    logger.info(f"TREND ANALYZER - Successfully Classified Logs Count: {len(classified_logs)}")
+
+    # --- Process Tasks ---
+    classified_tasks = {"backlog": [], "in_progress": [], "completed": []}
+    for lane in ["backlog", "in_progress", "completed"]:
+        for task in tb.get(lane, []):
+            title = task.get("title", "")
+            try:
+                cat = classify_text(title) or "Uncategorized"
+            except Exception:
+                cat = "Uncategorized"
+            classified_tasks[lane].append({**task, "category": cat})
+    logger.info(f"TREND ANALYZER - Successfully Classified Tasks Count: {sum(len(classified_tasks[k]) for k in classified_tasks)}")
+
+    # --- Process Calendar ---
+    classified_calendar = []
+    for event in calendar_events:
+        title = event.get("activity", event.get("title", ""))
+        try:
+            cat = classify_text(title) or "Uncategorized"
+        except Exception:
+            cat = "Uncategorized"
+        classified_calendar.append({**event, "category": cat})
+    logger.info(f"TREND ANALYZER - Successfully Classified Calendar Count: {len(classified_calendar)}")
+
+    # --- Compute Trends & Patterns ---
+    daily_totals = compute_daily_totals(classified_logs)
+    category_trends = compute_category_trends(classified_logs)
+    streaks = compute_streaks(daily_totals)
+    task_velocity = compute_task_velocity(classified_tasks)
+    calendar_trends = compute_calendar_load_trends(classified_calendar)
+
+    trends = {
+        "daily_totals": daily_totals,
+        "category_trends": category_trends,
+        "streaks": streaks,
+        "task_velocity": task_velocity,
+        "calendar_trends": calendar_trends,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+    patterns = {
+        "time_patterns": detect_time_patterns(classified_logs),
+        "task_patterns": detect_task_patterns(classified_tasks),
+        "calendar_patterns": detect_calendar_patterns(classified_calendar),
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+    logger.info(f"ANALYZER OUTPUT PATTERNS: {patterns}")
+
+    return {
+        **state,
+        "analysis_output": patterns
+    }
+
+
+
+def insight_generator_node(state: dict) -> dict:
+    """
+    Converts patterns + trends into readable insights.
+    """
+
+    # Extract analysis output
+    analysis = state.get("analysis_output", {})
+
+    # Extract classified tasks
+    classified_tasks = state.get("classified", {}).get("classified_tasks", {})
+
+    # Initialize insights list
+    insights = []
+
+    # -----------------------------
+    # EXISTING INSIGHTS
+    # -----------------------------
+    patterns = {
+        "time_patterns": analysis.get("time_patterns", {}),
+        "task_patterns": analysis.get("task_patterns", {}),
+        "calendar_patterns": analysis.get("calendar_patterns", {})
+    }
+
+    # Time-based insights
+    insights.extend(generate_time_insights(patterns, analysis))
+
+    # Taskboard insights
+    insights.extend(generate_task_insights(patterns, analysis))
+
+    # Calendar insights
+    insights.extend(generate_calendar_insights(patterns, analysis))
+
+    return { **state, "insights": insights }
+
+
+
+    
+# ============================================================
+# Insight Generator Node
+# ============================================================
+
+def generate_time_insights(patterns, trends):
+    insights = []
+    time_patterns = patterns.get("time_patterns", {})
+    
+    # --- Top categories ---
+    top = time_patterns.get("top_categories", [])
+    if top:
+        cat, count = top[0]
+        insights.append({
+            "title": "Most Frequent Activity Category",
+            "description": f"You spend most of your time on **{cat}** ({count} logged entries).",
+            "data": top
+        })
+
+    # --- Productivity windows ---
+    # Fix: Fetch "productivity_windows" from the nested time_patterns dictionary
+    windows = time_patterns.get("productivity_windows", {})
+    if isinstance(windows, dict) and windows:
+        best_window = max(windows, key=windows.get)
+        insights.append({
+            "title": "Productivity Window",
+            "description": f"Your most productive time of day is **{best_window}**.",
+            "data": windows
+        })
+
+    # --- Streaks ---
+    # Fix: Safely fetch streaks and default to an empty dict to prevent KeyError
+    streaks = trends.get("streaks", {})
+    longest_streak = streaks.get("longest_streak", 0)
+    if longest_streak > 1:
+        insights.append({
+            "title": "Consistency Streak",
+            "description": f"You had a **{longest_streak}-day streak** of logged activity.",
+            "data": streaks
+        })
+
+    return insights
+
+
+def generate_task_insights(patterns, trends):
+    insights = []
+    
+    # Define task_patterns first so it's available for all blocks
+    task_patterns = patterns.get("task_patterns", {})
+    
+    # --- Oldest Backlog Tasks ---
+    # Now this works because task_patterns is already defined
+    oldest = task_patterns.get("stagnant_tasks", []) 
+    if oldest:
+        titles = [t.get("title") for t in oldest]
+        insights.append({
+            "title": "Oldest Backlog Tasks",
+            "description": f"The oldest tasks waiting are: {', '.join(titles)}.",
+            "data": oldest
+        })
+
+    # --- Stagnant Tasks ---
+    stagnant = task_patterns.get("stagnant_tasks", [])
+    if stagnant:
+        insights.append({
+            "title": "Stagnant Tasks",
+            "description": f"You have **{len(stagnant)}** tasks that haven't moved recently. Consider breaking them down.",
+            "data": stagnant
+        })
+    # --- Fast Tasks ---
+    fast = task_patterns.get("fast_tasks", [])  # Cleaned up to use your task_patterns variable
+    if fast:
+        insights.append({
+            "title": "Fast-Moving Tasks",
+            "description": f"You completed **{len(fast)} tasks** within 24 hours — nice momentum.",
+            "data": fast
+        })
+
+    # --- Task Velocity (Fixed) ---
+    velocity = trends.get("task_velocity", {})  # Default to empty dict instead of None
+    avg_hours = velocity.get("average_completion_hours")  # Safely check for the key
+    
+    if avg_hours is not None:  # Ensure it exists and isn't None
+        avg = round(avg_hours, 1)
+        insights.append({
+            "title": "Task Completion Speed",
+            "description": f"Your average task completion time is **{avg} hours**.",
+            "data": velocity
+        })
+
+    return insights
+
+def generate_calendar_insights(patterns, trends):
+    insights = []
+    
+    # Safely get calendar_patterns, defaulting to an empty dict if missing
+    calendar_patterns = patterns.get("calendar_patterns", {})
+    
+    # Fix: Safely fetch busy_days with a default fallback list
+    busy = calendar_patterns.get("busy_days", [])
+    if busy:
+        # Assuming busy is a list of tuples/lists or days like [("Monday", 3)]
+        day, count = busy[0] if isinstance(busy[0], (list, tuple)) else (busy[0], "multiple")
+        insights.append({
+            "title": "Busiest Calendar Day",
+            "description": f"Your calendar is most packed on **{day}** with {count} scheduled events.",
+            "data": busy
+        })
+
+    # Apply the same safe fetching to meeting heavy days or total hours if they exist
+    meeting_heavy = calendar_patterns.get("meeting_heavy_days", [])
+    if meeting_heavy:
+        insights.append({
+            "title": "Meeting Heavy Days",
+            "description": f"You have **{len(meeting_heavy)}** days upcoming with back-to-back meetings.",
+            "data": meeting_heavy
+        })
+
+    return insights
+
+# ============================================================
+# INSIGHT QUERY NODE
+# ============================================================
+
+import json
+import re
+
+def llm_json_call(prompt: str) -> dict:
+    """
+    Calls the LLM and safely extracts JSON from the response.
+    Ensures the insight intent interpreter always returns a valid dict.
+    """
+
+    raw = llm.invoke(prompt)
+    text = raw.content if hasattr(raw, "content") else str(raw)
+
+    # Extract JSON block
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        return {"type": "unknown", "time_range": None, "category": None}
+
+    try:
+        return json.loads(match.group(0))
+    except Exception:
+        return {"type": "unknown", "time_range": None, "category": None}
+
+def interpret_insight_question(question: str) -> dict:
+    prompt = INSIGHT_QUERY_PROMPT.format(question=question)
+    return llm_json_call(prompt)
+
+
+def run_insight_query(intent, analysis, classified_tasks, classified_logs, classified_calendar):
+    t = intent.get("type")
+
+    if t == "top_category":
+        return answer_top_category(analysis)
+
+    if t == "busiest_day":
+        return answer_busiest_day(analysis)
+
+    if t == "productivity_window":
+        return answer_productivity_window(analysis)
+
+    if t == "streaks":
+        return answer_streaks(analysis)
+
+    if t == "category_trend":
+        return answer_category_trend(analysis)
+
+    if t == "task_aging":
+        return answer_task_aging(classified_tasks)
+
+    if t == "task_velocity":
+        return answer_task_velocity(analysis)
+
+    if t == "calendar_load":
+        return answer_calendar_load(analysis)
+
+    if t == "weekday_pattern":
+        return answer_weekday_pattern(analysis)
+
+    return {
+        "answer": "I couldn’t map that question to your insights yet.",
+        "details": {}
+    }
+
+def answer_top_category(analysis):
+    top = analysis.get("time_patterns", {}).get("top_categories", [])
+    if not top:
+        return {"answer": "You have no logged activity.", "details": {}}
+
+    cat, count = top[0]
+    return {
+        "answer": f"You spent most of your time on **{cat}** ({count} logs).",
+        "details": {"top_categories": top}
+    }
+
+def answer_busiest_day(analysis):
+    busy = analysis.get("calendar_patterns", {}).get("busy_days", [])
+    if not busy:
+        return {"answer": "I don’t see any busy days in your calendar.", "details": {}}
+
+    day, count = busy[0]
+    return {
+        "answer": f"Your busiest day was **{day}** with {count} events.",
+        "details": {"busy_days": busy}
+    }
+
+def answer_productivity_window(analysis):
+    windows = analysis.get("time_patterns", {}).get("productivity_windows", {})
+    if not windows:
+        return {"answer": "I couldn’t detect a productivity window.", "details": {}}
+
+    best = max(windows, key=windows.get)
+    return {
+        "answer": f"Your most productive time of day is **{best}**.",
+        "details": {"windows": windows}
+    }
+
+def answer_streaks(analysis):
+    streaks = analysis.get("streaks", {})
+    longest = streaks.get("longest_streak", 0)
+
+    if longest <= 1:
+        return {"answer": "You don’t have any multi-day streaks yet.", "details": streaks}
+
+    return {
+        "answer": f"You had a **{longest}-day streak** of logged activity.",
+        "details": streaks
+    }
+
+def answer_category_trend(analysis):
+    trends = analysis.get("category_trends", {})
+    if not trends:
+        return {"answer": "I couldn’t detect any category trends.", "details": {}}
+
+    # Find category with most growth
+    growth = {}
+    for cat, days in trends.items():
+        if len(days) >= 2:
+            first = days[min(days)]
+            last = days[max(days)]
+            growth[cat] = last - first
+
+    if not growth:
+        return {"answer": "No category shows meaningful change over time.", "details": trends}
+
+    top_cat = max(growth, key=growth.get)
+    return {
+        "answer": f"Your fastest-growing category is **{top_cat}**.",
+        "details": {"category_trends": trends, "growth": growth}
+    }
+
+def answer_task_aging(classified_tasks):
+    backlog = classified_tasks.get("backlog", [])
+    if not backlog:
+        return {"answer": "You have no backlog tasks.", "details": {}}
+
+    oldest = sorted(backlog, key=lambda t: t.get("createdAt", ""))
+
+    return {
+        "answer": f"Your oldest backlog task is **{oldest[0].get('title')}**.",
+        "details": {"oldest_tasks": oldest}
+    }
+
+def answer_task_velocity(analysis):
+    velocity = analysis.get("task_velocity", {})
+    avg = velocity.get("average_completion_hours")
+
+    if avg is None:
+        return {"answer": "I couldn’t compute task velocity.", "details": velocity}
+
+    return {
+        "answer": f"Your average task completion time is **{avg:.1f} hours**.",
+        "details": velocity
+    }
+
+def answer_calendar_load(analysis):
+    load = analysis.get("calendar_trends", {})
+    if not load:
+        return {"answer": "Your calendar has no recorded load trends.", "details": {}}
+
+    busiest = max(load, key=load.get)
+    return {
+        "answer": f"Your busiest calendar day was **{busiest}** with {load[busiest]} events.",
+        "details": load
+    }
+
+def answer_weekday_pattern(analysis):
+    weekday = analysis.get("time_patterns", {}).get("weekday_activity", {})
+    if not weekday:
+        return {"answer": "I couldn’t detect weekday activity patterns.", "details": {}}
+
+    best = max(weekday, key=weekday.get)
+    return {
+        "answer": f"You’re most active on **{best}**.",
+        "details": weekday
+    }
+
+def insight_query_node(state: dict) -> dict:
+    question = state.get("original_question")
+    analysis = state.get("analysis_output", {})
+    classified = state.get("classified", {}).get("classified_tasks", {})
+    logs = state.get("classified", {}).get("classified_logs", [])
+    calendar = state.get("classified", {}).get("classified_calendar", [])
+
+    if not question:
+        return {
+            **state,
+            "relevance_grade": "conversational",
+            "content_to_format": "I didn't receive a question to analyze."
+        }
+
+    # 1. Interpret the question
+    intent = interpret_insight_question(question)
+
+    # 2. Run the query
+    answer = run_insight_query(
+        intent=intent,
+        analysis=analysis,
+        classified_tasks=classified,
+        classified_logs=logs,
+        classified_calendar=calendar
+    )
+
+    # 3. THE FIX: Inject the calculated answer as a high-priority "document"
+    doc = Document(
+        page_content=f"SYSTEM ANALYTICS REPORT:\n{answer['answer']}",
+        metadata={"source": "system_insight", "priority": True}
+    )
+
+    current_docs = state.get("documents", [])
+    current_docs.append(doc)
+
+    # 4. Return a NEW dictionary so LangGraph strictly registers the update.
+    # We set relevance_grade="yes" so app.py uses the permissive RAG prompt.
+    return {
+        **state,
+        "documents": current_docs,
+        "relevance_grade": "yes",
+        "content_to_format": answer["answer"]
+    }
+
+
+# ============================================================
 # WORKFLOW ASSEMBLY & COMPILATION
 # ============================================================
 
@@ -657,6 +1596,11 @@ def create_workflow(vector_store):
     workflow.add_node("summarizer_node", summarizer_node)
     workflow.add_node("formatter_node", formatter_node)
     workflow.add_node("paapp_node", paapp_node)
+    workflow.add_node("snapshot_node", data_snapshot_node)
+    workflow.add_node("classifier_node", activity_classifier_node)
+    workflow.add_node("pattern_node", pattern_detector_node)
+    workflow.add_node("trend_node", trend_analyzer_node)
+    workflow.add_node("insight_query_node", insight_query_node)  # we will create this next
     workflow.add_edge(START, "coordinator_node")
     workflow.add_conditional_edges(
     "coordinator_node",
@@ -669,7 +1613,13 @@ def create_workflow(vector_store):
             "generate_node": "generate_node",
             "summarizer_node": "summarizer_node",
             "formatter_node": "formatter_node",
-            "paapp_node": "paapp_node"
+            "paapp_node": "paapp_node",
+            "insight": "snapshot_node",
+            "snapshot_node": "snapshot_node",
+            "classifier_node": "classifier_node",
+            "pattern_node": "pattern_node",
+            "trend_node": "trend_node",
+            "insight_query_node": "insight_query_node",
         }
     )
     workflow.add_edge("paapp_node", "formatter_node")
@@ -678,6 +1628,11 @@ def create_workflow(vector_store):
     workflow.add_edge("formatter_node", "generate_node")
     workflow.add_edge("retrieve_node", "grade_documents_node")
     workflow.add_edge("rewrite_query_node", "retrieve_node")
+    workflow.add_edge("snapshot_node", "classifier_node")
+    workflow.add_edge("classifier_node", "pattern_node")
+    workflow.add_edge("pattern_node", "trend_node")
+    workflow.add_edge("trend_node", "insight_query_node")
+    workflow.add_edge("insight_query_node", "formatter_node")
     workflow.add_conditional_edges(
         "grade_documents_node",
         route_after_grading,
