@@ -3,20 +3,37 @@ import json
 import logging
 from typing import List, Dict, Any
 from settings import DIRECTORY_JSON_PATH
+from backend.utils.db_utils import get_db
 
 logger = logging.getLogger("SASS Logger")
 
 def load_directory() -> Dict[str, Any]:
+    """Primary entry point for all directory data."""
+    # 1. Try MongoDB First
+    db = get_db()
+    if db is not None:
+        doc = db['config'].find_one({"_id": "user_directory"})
+        if doc:
+            return doc.get("data", {})
+            
+    # 2. Fallback to Local JSON file
     try:
         if not os.path.exists(DIRECTORY_JSON_PATH):
             logger.warning("directory.json missing at %s", DIRECTORY_JSON_PATH)
             return {}
         with open(DIRECTORY_JSON_PATH, "r", encoding="utf-8") as f:
-            logger.info("Successfully located directory")
             return json.load(f)
     except Exception as e:
         logger.exception("Failed to load directory.json: %s", e)
         return {}
+
+def load_user_directory_groups(username: str) -> List[str]:
+    """Now uses the centralized load_directory() function."""
+    directory_data = load_directory() # Centralized call
+    user_record = directory_data.get(username)
+    if user_record and "groups" in user_record:
+        return user_record["groups"]
+    return []
 
 def get_accessible_affiliates(username: str, user_directory: dict) -> dict:
     # Now this function just does logic, it doesn't care about startup
@@ -28,22 +45,6 @@ def get_accessible_affiliates(username: str, user_directory: dict) -> dict:
     if "Affiliate_B" in user_groups or "Global_Admins" in user_groups:
         accessible_affiliates.append("Affiliate_B") 
     return {"accessible_affiliates": accessible_affiliates}
-
-def load_user_directory_groups(username: str) -> List[str]:
-    """Reads directory.json dynamically to collect the security group claims array."""
-    if not os.path.exists(DIRECTORY_JSON_PATH):
-        print(f"Directory map file missing at: {DIRECTORY_JSON_PATH}")
-        return []    
-    try:
-        with open(DIRECTORY_JSON_PATH, "r") as f:
-            directory_data = json.load(f)       
-        # Target user key inside the object
-        user_record = directory_data.get(username)
-        if user_record and "groups" in user_record:
-            return user_record["groups"]          
-    except Exception as e:
-        print(f"System processing exception reading directory registry: {e}")
-    return []
 
 def verify_user_ingest_access(username: str, affiliate: str) -> bool:
     """Validates if the user's groups contain the designated administrative Ingesters role."""

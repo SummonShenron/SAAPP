@@ -30,6 +30,7 @@ from backend.components.time_storage import add_time_entry, TimeEntryCreate
 from backend.components import taskboard
 from backend.state.graph_state import GraphState, route_after_grading
 from langgraph.graph import StateGraph, START, END
+from backend.utils.db_utils import get_db
 
 logger = logging.getLogger("SASS Logger")
 
@@ -320,116 +321,75 @@ def memory_node(state: GraphState) -> dict:
     state["content_to_format"] = confirmation
     return state
 
-# ============================================================
-# RETRIEVE NODE (sync)
-# ============================================================
-
 def retrieve_node(state: GraphState, vector_store) -> dict:
     logger.info("--- RETRIEVING DOCUMENTS & GRAPH CONTEXT ---")
-    # Get user prompt parameters
     question = state["messages"][-1].content
     username = state.get("username")
     target_scope = state.get("target_scope")
     current_loops = state.get("loop_count", 0) or 0
     original_question = state.get("original_question") or question
-    # memory_docs = flatten_saved_conversations(username)
     session_id = state.get("session_id") or f"{username}_session"
+
+    # 1. EARLY EXIT: If attachments exist, use only those
     if state.get("attachment_summaries"):
         logger.info("Attachment detected — skipping vector search and using only priority docs.")
         return {
             **state,
-            "documents": [
-                Document(
-                    page_content=summary,
-                    metadata={"source": "user_attachment_summary", "priority": True}
-                )
-                for summary in state.get("attachment_summaries", [])
-            ],
-            "loop_count": state.get("loop_count", 0) + 1
+            "documents": [Document(page_content=s, metadata={"source": "user_attachment_summary", "priority": True}) 
+                          for s in state.get("attachment_summaries", [])],
+            "loop_count": current_loops + 1
         }
+
+    # 2. VECTOR RETRIEVAL (Call ONCE)
+    docs = []
     try:
-        # 1. Call secure multi-tenant vector search service
         retriever = get_secure_retriever(
             vector_store=vector_store,
             target_scope=target_scope,
             query_text=question,
             top_k=3
         )
-        docs = retriever.invoke(question)
+        docs = retriever.invoke(question) or []
         logger.info(f"Retrieved {len(docs)} documents for query: '{question}'")
-        # ============================
-        # SESSION-BASED RETRIEVAL
-        # ============================
-        try:
-            session_hits = retrieve_from_session(username, session_id, question)
-            if session_hits:
-                logger.info(f"Session RAG retrieved {len(session_hits)} items for {username}")
-
-                session_docs = []
-                for hit in session_hits:
-                    session_docs.append(Document(
-                        page_content=f"[Session Document: {hit['filename']}]\nScore: {hit['score']}",
-                        metadata={
-                            "source": "session_vector_store",
-                            "priority": True,
-                            "filename": hit["filename"],
-                            "score": hit["score"]
-                        }
-                    ))
-
-                # Merge session docs FIRST (highest priority)
-                docs = session_docs + docs
-
-        except Exception as e:
-            logger.error(f"Session retrieval failed: {e}")
-
-        for idx, doc in enumerate(docs, start=1):
-            src = doc.metadata.get("source", "Unknown")
-            page = doc.metadata.get("page", doc.metadata.get("page_label", "N/A"))
-            logger.info(f"    - Rank {idx}: {src} (Page {page})")
-        if docs is None:
-            docs = []
     except Exception as e:
-        logger.error(f"Vector search failed to retrieve documents: {e}")
-        docs = []
+        logger.error(f"Vector search failed: {e}")
+
+    # 3. SESSION-BASED RETRIEVAL (Append to existing list)
+    try:
+        session_hits = retrieve_from_session(username, session_id, question)
+        if session_hits:
+            session_docs = [Document(
+                page_content=f"[Session Document: {hit['filename']}]\nScore: {hit['score']}",
+                metadata={"source": "session_vector_store", "priority": True, "filename": hit["filename"]}
+            ) for hit in session_hits]
+            # Merge: session docs first (highest priority)
+            docs = session_docs + docs
+    except Exception as e:
+        logger.error(f"Session retrieval failed: {e}")
+
+    # 4. ATTACHMENT SUMMARIES (Append to existing list)
     summaries = state.get("attachment_summaries", [])
     for summary in summaries:
         docs.append(Document(
             page_content=summary,
             metadata={"source": "user_attachment_summary", "priority": True}
-        )) 
-    # 1. Retrieve vector docs
-    docs = retriever.invoke(question) or []
-    logger.info(f"Retrieved {len(docs)} documents for query: '{question}'")
-    # 2. Priority attachment docs FIRST
-    priority_docs = []
-    summaries = state.get("attachment_summaries", [])
-    for summary in summaries:
-        priority_docs.append(Document(
-            page_content=summary,
-            metadata={"source": "user_attachment_summary", "priority": True}
         ))
-    # 3. Merge: priority docs first, then vector docs
-    docs = priority_docs + docs
-    graph_context = []
+
+    # 5. GRAPH CONTEXT (Append to existing list)
     try:
         question_lower = question.lower()
+        # Ensure graph_db is available in scope
         for entity in graph_db.knowledge_graph.nodes:
             if str(entity).lower() in question_lower:
-                logger.info(f"GraphRAG Entity match ID found: '{entity}'")
                 relations = graph_db.get_dynamic_context(entity, hops=2)
-                graph_context.extend(relations)
+                for fact in relations:
+                    docs.append(Document(
+                        page_content=f"Connection: {fact}",
+                        metadata={"source": "knowledge_graph_db", "type": "relationship"}
+                    ))
     except Exception as e:
         logger.error(f"GraphRAG Entity scanner failed: {e}")
-    # 3. Securely augment document context array
-    if graph_context:
-        facts = list(set(graph_context))
-        logger.info(f"Merging {len(facts)} GraphRAG relationships into vector arrays")
-        for fact in facts:
-            docs.append(Document(
-                page_content=f"Connection: {fact}",
-                metadata={"source": "knowledge_graph_db", "type": "relationship"}
-            ))
+
     return {
         **state,
         "documents": docs,
@@ -712,11 +672,6 @@ def load_user_calendar_events(username: str):
 
 
 def data_snapshot_node(state: dict) -> dict:
-    """
-    Collects structured data from Logs, Taskboard, Calendar (local mirror),
-    and optionally directory info.
-    """
-
     username = state.get("username")
     logger.info(f"DATA SNAPSHOT - Fetching data for user: {username}")
 
@@ -724,10 +679,14 @@ def data_snapshot_node(state: dict) -> dict:
     logs = load_user_time(username)
     logger.info(f"DATA SNAPSHOT - Raw Logs Found: {len(logs) if logs else 0}")
 
-    # --- Taskboard ---
-    taskboard_store = taskboard.read_store()
-    taskboard_store = taskboard.read_store()
-    all_tasks = taskboard_store.get("tasks", [])
+    # --- Taskboard (UPDATED FOR MONGO) ---
+    db = get_db()
+    all_tasks = list(db["tasks"].find({})) if db is not None else []
+    
+    # Strip the raw ObjectId to prevent serialization crashes in the graph
+    for t in all_tasks:
+        t["id"] = str(t["_id"])
+        t.pop("_id", None)
     
     # Filter the single list into the expected structure
     taskboard_data = {

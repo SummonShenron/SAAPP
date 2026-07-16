@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import List
 from pydantic import BaseModel
 import uuid
+from backend.utils.db_utils import get_db # Add this import
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DATA_DIR = os.path.join(PROJECT_ROOT, "saapp_data", "time")
@@ -58,28 +59,45 @@ def _get_user_file(username: str) -> str:
 
 # 3. Safe loading prevents the 500 crash!
 def load_user_time(username: str) -> List[TimeEntry]:
+    """Loads entries from MongoDB, falling back to JSON file."""
+    db = get_db()
+    
+    # 1. Try MongoDB
+    if db is not None:
+        doc = db['time_entries'].find_one({"username": username})
+        if doc and "entries" in doc:
+            # Convert stored dicts back to TimeEntry objects
+            return [TimeEntry(**item) for item in doc["entries"]]
+            
+    # 2. Fallback to Local JSON
     path = _get_user_file(username)
     if not os.path.exists(path):
         return []
-    
     with open(path, "r") as f:
         try:
             raw = json.load(f)
-            entries = []
-            for entry in raw:
-                try:
-                    entries.append(TimeEntry(**entry))
-                except Exception as e:
-                    print(f"Skipping malformed entry: {e}")
-            return entries
-        except Exception as e:
-            print(f"Error reading JSON: {e}")
+            return [TimeEntry(**item) for item in raw]
+        except Exception:
             return []
 
 def save_user_time(username: str, entries: List[TimeEntry]):
+    """Saves entries to MongoDB and syncs to local JSON file."""
+    # Convert objects to dicts for storage
+    entries_dicts = [entry.dict() for entry in entries]
+    
+    # 1. Save to MongoDB
+    db = get_db()
+    if db is not None:
+        db['time_entries'].update_one(
+            {"username": username},
+            {"$set": {"entries": entries_dicts}},
+            upsert=True
+        )
+        
+    # 2. Sync to Local JSON (The Safety Net)
     path = _get_user_file(username)
     with open(path, "w") as f:
-        json.dump([entry.dict() for entry in entries], f, indent=2)
+        json.dump(entries_dicts, f, indent=2)
 
 def clear_user_time(username: str):
     save_user_time(username, [])

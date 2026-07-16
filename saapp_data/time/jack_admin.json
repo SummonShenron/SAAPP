@@ -7,6 +7,84 @@
     "duration_minutes": 60,
     "date": "2026-07-09",
     "created_at": "2026-07-09T23:19:45.931512",
-    "notes": "I guess it wasn't that awful."
+    "notes": "I guess it wasn't that awful.",
+    "type": "log"
+  },
+  {
+    "id": "fbb7cf45-6b54-4b73-88be-ba6164b402c7",
+    "username": "jack_admin",
+    "activity": "CSS debugging notes: its a struggle",
+    "duration_hours": 2.0,
+    "duration_minutes": 120,
+    "date": "2026-07-12",
+    "created_at": "2026-07-12T18:40:53.613847",
+    "notes": "No description provided",
+    "type": "log"
+  },
+  {
+    "id": "7090dcfe-c181-48d4-bc8d-8b7fd036a506",
+    "username": "jack_admin",
+    "activity": "Taskboard Debugging",
+    "duration_hours": 2.0,
+    "duration_minutes": 0,
+    "date": "2026-07-13",
+    "created_at": "2026-07-13T15:56:18.160879",
+    "notes": "close to ready to commit",
+    "type": "log"
+  },
+  {
+    "id": "1c401e66-2f60-42f5-a468-0241770eb4f7",
+    "username": "jack_admin",
+    "activity": "job searching",
+    "duration_hours": 2.0,
+    "duration_minutes": 0,
+    "date": "2026-07-13",
+    "created_at": "2026-07-14T00:16:46.292967",
+    "notes": "applied to 8 jobs",
+    "type": "log"
+  },
+  {
+    "id": "54e70389-19f3-47db-bf2b-7f7499774610",
+    "username": "jack_admin",
+    "activity": "insights debugging",
+    "duration_hours": 3.0,
+    "duration_minutes": 0,
+    "date": "2026-07-13",
+    "created_at": "2026-07-14T00:17:20.636469",
+    "notes": "finally insights are populating",
+    "type": "log"
+  },
+  {
+    "id": "a6b5169d-22de-4bbc-9b0d-25721288bc63",
+    "username": "jack_admin",
+    "activity": "Insights Debugging",
+    "duration_hours": 2.0,
+    "duration_minutes": 0,
+    "date": "2026-07-14",
+    "created_at": "2026-07-14T19:08:37.858416",
+    "notes": "pushed release 1.12 today",
+    "type": "log"
+  },
+  {
+    "id": "a867f69f-38e4-4761-a32a-9cfd5a57e2dc",
+    "username": "jack_admin",
+    "activity": "apply for jobs",
+    "duration_hours": 2.0,
+    "duration_minutes": 0,
+    "date": "2026-07-14",
+    "created_at": "2026-07-14T21:43:50.719030",
+    "notes": "",
+    "type": "log"
+  },
+  {
+    "id": "2fd9ba91-26f1-4686-99b4-814c31d5b914",
+    "username": "jack_admin",
+    "activity": "created new MongoDB",
+    "duration_hours": 2.0,
+    "duration_minutes": 0,
+    "date": "2026-07-15",
+    "created_at": "2026-07-15T20:21:03.575557",
+    "notes": "",
+    "type": "log"
   }
 ]

@@ -2,39 +2,15 @@
     "jack_admin": [
         {
             "type": "human",
-            "content": "what did i do the most last week?"
+            "content": "Who is Goku?"
         },
         {
             "type": "human",
-            "content": "what did i do the most last week?"
+            "content": "Who is Goku?"
         },
         {
             "type": "ai",
-            "content": "Based on the provided priority document, you spent most of your time on coding (3 logs) last week."
-        },
-        {
-            "type": "human",
-            "content": "what tasks do i stil need to complete?"
-        },
-        {
-            "type": "human",
-            "content": "what tasks do i stil need to complete?"
-        },
-        {
-            "type": "ai",
-            "content": "Based on the provided priority document, it appears that your oldest backlog task is **laundry**. It does not seem like this task has been completed yet, so you still need to complete this task.\n\nSource: system_insight - N/A"
-        },
-        {
-            "type": "human",
-            "content": "what tasks do i stil need to complete?"
-        },
-        {
-            "type": "human",
-            "content": "what tasks do i stil need to complete?"
-        },
-        {
-            "type": "ai",
-            "content": "Based on the provided priority document, it appears that your oldest backlog task is **clean room**. It does not seem like this task has been completed yet, so you still need to complete this task.\n\nSource: system_insight - N/A"
+            "content": "Goku is a powerful warrior and one of the main protagonists in the Dragon Ball Z series. He is a Saiyan, a member of a extraterrestrial race known for their incredible strength and combat abilities. According to the document \"Dragon Ball Z Universe and Transformation Data\" [1], Goku's Super Saiyan transformation relies on a high concentration of microscopic \"S-Cells\" within his bloodstream, typically triggered by an intense emotional catalyst such as extreme rage or despair.\n\nAs stated in the same document, Goku has achieved this advanced genetic state multiple times throughout the series. His incredible strength and abilities have allowed him to compete with some of the most powerful foes in the Dragon Ball universe.\n\nSource: Dragon Ball Z Universe and Transformation Data - Page 1"
         }
     ],
     "dragon_ball_user": [

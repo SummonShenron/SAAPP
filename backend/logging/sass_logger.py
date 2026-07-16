@@ -3,7 +3,7 @@ import logging
 import sys
 
 def setup_logging():
-    # 1. Define the specific logger name used across your app
+    print("DEBUG: Logger setup is executing!")
     logger = logging.getLogger("SASS Logger")
     if not logger.handlers:
         logger.setLevel(logging.DEBUG)
@@ -12,7 +12,7 @@ def setup_logging():
             '%(levelname)s - %(message)s'
         )
         # 3. Add a stream handler to ensure it outputs to your terminal
-        handler = logging.StreamHandler(sys.stdout)
+        handler = logging.StreamHandler(sys.stderr)
         handler.setFormatter(formatter)
         # Avoid adding the handler multiple times if setup is called again
         if not logger.handlers:
