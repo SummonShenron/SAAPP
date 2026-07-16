@@ -42,13 +42,14 @@ def _detect_routing_strategy(query: str) -> str:
     return "vector"
 
 def _retrieve_vector(vector_store, query: str, search_filter: Dict[str, Any], top_k: int) -> List[Document]:
-    """Runs standard dense vector semantic similarity search."""
+    """Runs standard dense vector semantic similarity search on MongoDB."""
     logger.info(f"Retrieving Vector context (k={top_k}).")
     if not vector_store:
         logger.error("Vector store is uninitialized.")
         return []
     try:
-        return vector_store.similarity_search(query, k=top_k, filter=search_filter)
+        # Note: MongoDBAtlasVectorSearch uses 'pre_filter' for metadata filtering
+        return vector_store.similarity_search(query, k=top_k, pre_filter=search_filter)
     except Exception as e:
         logger.error(f"Dense vector search failure: {e}")
         return []
@@ -129,17 +130,21 @@ def _retrieve_hybrid(vector_store, query: str, search_filter: Dict[str, Any], to
 
 def discover_workspace_documents(vector_store, affiliate_scope: str) -> List[str]:
     """
-    Mimics Azure's search("*") wildcard capability.
+    Updates to use MongoDB collection.find() instead of Chroma.get().
     """
-    if not vector_store:
+    if not vector_store or not hasattr(vector_store, "collection"):
         return []
 
     try:
-        raw_data = vector_store.get(include=["metadatas"])
-        metadatas = raw_data.get("metadatas", [])
-
+        # Access the underlying MongoDB collection
+        collection = vector_store.collection
+        
+        # Query only the metadata field
+        cursor = collection.find({}, {"metadata": 1})
+        
         unique_files = set()
-        for meta in metadatas:
+        for doc in cursor:
+            meta = doc.get("metadata", {})
             if meta.get("affiliate") == affiliate_scope or affiliate_scope == "All":
                 source_path = meta.get("source", "Unknown")
                 filename = os.path.basename(source_path)
@@ -151,19 +156,25 @@ def discover_workspace_documents(vector_store, affiliate_scope: str) -> List[str
         return []
 
 def get_secure_retriever(vector_store, target_scope: List[str], query_text: str, top_k: int = 3):
-    """
-    Returns a secured LangChain retriever instance with auto-detected retrieval strategy.
-    """
     if not vector_store:
         raise RuntimeError("Vector store layer is uninitialized.")
 
-    # Automatically determine the best engine mapping for the user's specific prompt
     strategy = _detect_routing_strategy(query_text)
     logger.info(f"Routing query to [{strategy.upper()}] engine.")
-    logger.info(f"Strategy used: {strategy}")
-    search_filter = {"affiliate": {"$in": target_scope}}
     
+    # MongoDB filter structure
+    search_filter = {"metadata.affiliate": {"$in": target_scope}}
 
+    def retrieve(query: str) -> List[Document]:
+        if strategy == "vector":
+            return _retrieve_vector(vector_store, query, search_filter, top_k)
+        elif strategy == "lexical":
+            return _retrieve_lexical(vector_store, query, search_filter, top_k)
+        elif strategy == "hybrid":
+            return _retrieve_hybrid(vector_store, query, search_filter, top_k)
+        else:
+            return _retrieve_vector(vector_store, query, search_filter, top_k)
+    
     def retrieve(query: str) -> List[Document]:
         if strategy == "vector":
             return _retrieve_vector(vector_store, query, search_filter, top_k)
