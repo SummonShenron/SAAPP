@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useAuth } from '@clerk/clerk-react';
 import "./__styles__/Time.css";
 import { SimpleCalendar } from "../components/calendar/Calendar";
 import "../components/__styles__/Calendar.css";
@@ -169,6 +170,7 @@ function TimeLogTable({
    MAIN PAGE — Combined Calendar + Time Workspace
 --------------------------------------------------------- */
 export function TimeWorkspace() {
+    const { getToken } = useAuth();
     const [entries, setEntries] = useState<TimeEntry[]>([]);
     const [events, setEvents] = useState<TimeEntry[]>([]);
     const [loading, setLoading] = useState(true);
@@ -186,111 +188,98 @@ export function TimeWorkspace() {
     const [selectedEntry, setSelectedEntry] = useState<any>(null);
     const [summaryModalOpen, setSummaryModalOpen] = useState(false);
     const [eventStartTime, setEventStartTime] = useState("");
-
     const [modalOpen, setModalOpen] = useState(false);
     const [modalType, setModalType] = useState<"event" | "log" | null>(null);
+    const authenticatedFetch = async (url: string, options: RequestInit = {}) => {
+        const token = await getToken();
+        return fetch(url, {
+            ...options,
+            headers: {
+                ...options.headers,
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json"
+            }
+        });
+    };
     async function handleCreateNote() {
-        const username = localStorage.getItem("principal");
+    await authenticatedFetch("http://127.0.0.1:8000/api/time/log", {
+        method: "POST",
+        body: JSON.stringify({
+            activity: noteTitle,
+            duration_hours: Math.floor(noteMinutes / 60),
+            duration_minutes: noteMinutes % 60,
+            date: noteDate,
+            notes: noteBody,
+            type: "log"
+        })
+    });
+    setModalOpen(false);
+    fetchEntries();
+}
 
-        await fetch("http://127.0.0.1:8000/api/time/log", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                username,
-                activity: noteTitle,
-                duration_hours: Math.floor(noteMinutes / 60),
-                duration_minutes: noteMinutes % 60,
-                date: noteDate,
-                notes: noteBody,
-                type: "log"
-            })
-        });
+async function handleDelete() {
+    if (!selectedId) return;
 
-        setModalOpen(false);
-        fetchEntries();
-    }
+    const isLogEntry = entries.some(e => e.id === selectedId);
+    // Remove username query param; rely on the Authorization header instead
+    const endpoint = isLogEntry
+        ? `http://127.0.0.1:8000/api/time/delete?id=${selectedId}`
+        : `http://127.0.0.1:8000/api/events/delete?id=${selectedId}`;
+
+    await authenticatedFetch(endpoint, { method: "DELETE" });
+
+    setSelectedId(null);
+    fetchEntries();
+}
     async function handleCreateEvent() {
-        const username = localStorage.getItem("principal");
+    // 1. Save event in SAAPP (Port 8000)
+    // Use your authenticatedFetch helper here!
+    await authenticatedFetch("http://127.0.0.1:8000/api/events/create", {
+        method: "POST",
+        body: JSON.stringify({
+            activity: eventTitle,
+            start_time: eventStartTime,
+            date: eventDate,
+            notes: eventNotes,
+            type: "event"
+        })
+    });
 
-        // 1. Save event in SAAPP
-        await fetch("http://127.0.0.1:8000/api/events/create", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                username,
-                activity: eventTitle,
-                start_time: eventStartTime,
-                date: eventDate,
-                notes: eventNotes,
-                type: "event"
-            })
-        });
+    // 2. Sync event to PAAPP (Port 8003)
+    // You likely need to authenticate this call too!
+    await authenticatedFetch("http://127.0.0.1:8003/api/saapp/event", {
+        method: "POST",
+        body: JSON.stringify({
+            activity: eventTitle,
+            start_time: eventStartTime,
+            date: eventDate,
+            notes: eventNotes,
+            type: "event"
+        })
+    });
 
-        // 2. Sync event to PAAPP → Google Calendar
-        await fetch("http://127.0.0.1:8003/api/saapp/event", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                username,
-                activity: eventTitle,
-                start_time: eventStartTime,
-                date: eventDate,
-                notes: eventNotes,
-                type: "event"
-            })
-        });
+    setModalOpen(false);
+    fetchEntries();
+}
 
-        setModalOpen(false);
-        fetchEntries();
-    }
-
-
-    async function handleDelete() {
-        if (!selectedId) return;
-
-        const username = localStorage.getItem("principal");
-
-        // 1. Check if the active ID belongs to the logs array
-        const isLogEntry = entries.some(e => e.id === selectedId);
-
-        // 2. Route dynamically to /time/delete or /events/delete
-        const endpoint = isLogEntry
-            ? `http://127.0.0.1:8000/api/time/delete?username=${username}&id=${selectedId}`
-            : `http://127.0.0.1:8000/api/events/delete?username=${username}&id=${selectedId}`;
-
-        await fetch(endpoint, {
-            method: "DELETE",
-        });
-
-        setSelectedId(null);
-        fetchEntries();
-    }
     async function fetchEntries() {
-        setLoading(true);
-        const username = localStorage.getItem("principal") || "";
+    setLoading(true);
+    try {
+        // Remove username from URL and headers
+        const logRes = await authenticatedFetch(`http://127.0.0.1:8000/api/time/list`);
+        const logs = await logRes.json();
+        setEntries(Array.isArray(logs) ? logs : []);
         
-        try {
-            // 1. Fetch original logs 
-            const logRes = await fetch(`http://127.0.0.1:8000/api/time/list?username=${username}`, {
-                headers: { "x-user-id": username } // <-- Changed to hyphen
-            });
-            const logs = await logRes.json();
-            setEntries(Array.isArray(logs) ? logs : []);
-            
-            // 2. Fetch new events 
-            const eventRes = await fetch(`http://127.0.0.1:8000/api/events/list?username=${username}`, {
-                headers: { "x-user-id": username } // <-- Changed to hyphen
-            });
-            const eventsData = await eventRes.json();
-            setEvents(Array.isArray(eventsData) ? eventsData : []); 
-        } catch (error) {
-            console.error("Failed to fetch entries:", error);
-            setEntries([]);
-            setEvents([]);
-        }
-        
-        setLoading(false);
+        const eventRes = await authenticatedFetch(`http://127.0.0.1:8000/api/events/list`);
+        const eventsData = await eventRes.json();
+        setEvents(Array.isArray(eventsData) ? eventsData : []); 
+    } catch (error) {
+        console.error("Failed to fetch entries:", error);
+        setEntries([]);
+        setEvents([]);
     }
+    setLoading(false);
+}
     useEffect(() => {
         fetchEntries();
     }, []);

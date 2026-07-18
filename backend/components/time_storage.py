@@ -5,7 +5,10 @@ from typing import List
 from pydantic import BaseModel
 import uuid
 from backend.utils.db_utils import get_db # Add this import
+import logging
+from typing import Optional
 
+logger = logging.getLogger("SASS Logger")
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DATA_DIR = os.path.join(PROJECT_ROOT, "saapp_data", "time")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -26,25 +29,27 @@ class TimeEntry(BaseModel):
 # In backend/components/time_storage.py
 
 class TimeEntryCreate(BaseModel):
-    username: str
+    # Add "= None" or "= 0" to make them optional
+    username: str = "default_user" 
     activity: str
-    duration_hours: float  # Ensure these match what React sends
-    duration_minutes: int
     date: str
-    notes: str | None = None
-    type: str = "log"
+    type: str = "event"
+    notes: Optional[str] = ""
+    duration_minutes: Optional[int] = 0
+    duration_hours: Optional[float] = 0
+
+import requests # You already use this for your headless-chat, so it's likely available
 
 def add_time_entry(payload: TimeEntryCreate) -> TimeEntry:
     entries = load_user_time(payload.username)
 
-    # Use the fields from the payload directly
     entry = TimeEntry(
         id=str(uuid.uuid4()),
         username=payload.username,
         activity=payload.activity,
-        duration_minutes=payload.duration_minutes, # Corrected field name
-        duration_hours=payload.duration_hours,     # Corrected field name
-        date=payload.date,                         # Corrected field name
+        duration_minutes=payload.duration_minutes,
+        duration_hours=payload.duration_hours,
+        date=payload.date,
         created_at=datetime.utcnow().isoformat(),
         notes=payload.notes,
         type=payload.type
@@ -52,6 +57,21 @@ def add_time_entry(payload: TimeEntryCreate) -> TimeEntry:
 
     entries.append(entry)
     save_user_time(payload.username, entries)
+    
+    # --- RESTORED SYNC TRIGGER ---
+    if entry.type == "event":
+        try:
+            # Re-trigger the headless API to handle the Google sync 
+            # This mimics the "Zero-Import" behavior by delegating the work
+            requests.post(
+                f"{os.getenv('PAAPP_BASE_URL', 'http://localhost:8000')}/api/sync-google",
+                json={"activity": entry.activity, "date": entry.date, "duration": entry.duration_minutes},
+                headers={"x-saapp": "true"}
+            )
+            logger.info(f"Sync triggered for event: {entry.activity}")
+        except Exception as e:
+            logger.error(f"Sync trigger failed: {e}")
+
     return entry
 
 def _get_user_file(username: str) -> str:

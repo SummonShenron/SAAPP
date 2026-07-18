@@ -8,8 +8,21 @@ from backend.models.models import llm
 from settings import CHAT_HISTORY_FILE, SAVED_CONVERSATIONS_FILE
 from backend.utils.db_utils import get_db # Ensure this is imported
 from fastapi import HTTPException
-
+import subprocess
+import sys
 logger = logging.getLogger("SASS Logger")
+
+# def sync_run_script(script_path):
+#     """Synchronous function to run the script via subprocess."""
+#     # We use subprocess.run, which handles the execution and waits for completion
+#     subprocess.run([sys.executable, script_path], check=True)
+
+
+def serialize_doc(doc):
+    if doc and "_id" in doc:
+        doc["id"] = str(doc["_id"])
+        del doc["_id"]
+    return doc
 
 # Add this function to your app.py
 def get_db_dependency():

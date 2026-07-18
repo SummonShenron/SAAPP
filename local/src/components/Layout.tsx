@@ -1,29 +1,36 @@
 import { Outlet, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { api } from "../api";
-import HelpPanel from "../components/HelpPanel"
+import HelpPanel from "../components/HelpPanel";
 
 interface LayoutProps {
   theme: string;
   toggleTheme: () => void;
-  onExit: () => void;
 }
 
-export function Layout({ theme, toggleTheme, onExit }: LayoutProps) {
+export function Layout({ theme, toggleTheme }: LayoutProps) {
   const navigate = useNavigate();
   const [isAdmin, setIsAdmin] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [closing, setClosing] = useState(false);
+
   const toggleHelp = () => {
     if (showHelp) {
       setClosing(true);
-
       setTimeout(() => {
         setShowHelp(false);
         setClosing(false);
-      }, 250); // match your CSS animation duration
+      }, 250);
     } else {
       setShowHelp(true);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await api.logout();
+    } catch (error) {
+      console.error("Logout failed:", error);
     }
   };
 
@@ -55,14 +62,16 @@ export function Layout({ theme, toggleTheme, onExit }: LayoutProps) {
           <span onClick={() => navigate("/taskboard")}>Taskboard</span>
           <span onClick={() => navigate("/insights")}>Insights</span>
           <span onClick={toggleHelp}>Help</span>
-          <span onClick={onExit} className="nav-exit">Disconnect Session</span>
+          <span onClick={handleLogout} className="nav-exit">
+            Disconnect Session
+          </span>
         </div>
       </nav>
 
-      {/* 1. Main page content stays as the second element block */}
+      {/* 1. Main page content */}
       <Outlet />
 
-      {/* 2. Sidebar panel moved down here so it doesn't disrupt child indexing */}
+      {/* 2. Sidebar panel */}
       {showHelp && (
         <div className={`help-panel-container ${closing ? "closing" : ""}`}>
           <HelpPanel />

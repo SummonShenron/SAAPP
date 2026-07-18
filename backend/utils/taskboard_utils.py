@@ -3,21 +3,23 @@ import json
 import os
 from fastapi import HTTPException, Header, Query, status
 from typing import Optional
-
+from backend.utils.isolation_kb_utils import load_directory
 # Resolve project root and directory.json next to app.py
 # This works even when the backend package is imported from elsewhere.
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DIRECTORY_JSON_PATH = os.path.join(ROOT_DIR, "directory.json")
 
-def load_directory():
-    try:
-        with open(DIRECTORY_JSON_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        # Helpful debug message but return empty dict so app doesn't crash
-        return {}
-    except Exception:
-        return {}
+
+
+# def load_directory():
+#     try:
+#         with open(DIRECTORY_JSON_PATH, "r", encoding="utf-8") as f:
+#             return json.load(f)
+#     except FileNotFoundError:
+#         # Helpful debug message but return empty dict so app doesn't crash
+#         return {}
+#     except Exception:
+#         return {}
 
 def is_taskboard_admin_for_user(username: str) -> bool:
     directory = load_directory()

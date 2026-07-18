@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import './__styles__/SelfService.css';
+import { useAuth } from '@clerk/clerk-react';
 
 interface DocumentRecord {
   id: string;
@@ -10,7 +11,8 @@ interface DocumentRecord {
 }
 
 export const SelfServicePage: React.FC = () => {
-  const principal = localStorage.getItem('x-user-id') ?? "";
+  const { getToken } = useAuth(); // <-- 2. ADD THIS
+  const [principal, setPrincipal] = useState<string>('');
   
   // --- STATE LAYER ---
   const [allowedAffiliates, setAllowedAffiliates] = useState<string[]>([]);
@@ -37,27 +39,36 @@ export const SelfServicePage: React.FC = () => {
   // This prevents searching for " Ingesters" (empty string prefix) when the component initializes.
   const hasIngestPermission = isGlobalAdmin || (selectedAffiliate && userGroups.includes(`${selectedAffiliate} Ingesters`));
 
+  useEffect(() => {
+  const storedId = localStorage.getItem('x-user-id') ?? "";
+  setPrincipal(storedId);
+}, []); // Runs once on mount
+
   // --- LIFECYCLE: FETCH INITIAL PERMISSIONS & ALL GROUPS ---
   useEffect(() => {
     const initPermissions = async () => {
       try {
         console.log("Fetching groups for:", principal);
-        const affiliates = await api.getAffiliates(principal);
-        const profile = await api.getUserGroups(principal) as any;
         
-        // Handle both raw array or object { groups: [...] }
+        // 1. Fetch the raw response (Note: no 'token' argument needed anymore)
+        const rawAffiliates = await api.getAffiliates(principal); 
+        
+        // 2. Defensively ensure it is an array
+        const verifiedAffiliates = Array.isArray(rawAffiliates) ? rawAffiliates : [];
+
+        // 3. Set the verified array
+        setAllowedAffiliates(verifiedAffiliates);
+        
+        const profile = await api.getUserGroups(principal) as any; 
+        
         const verifiedGroups = Array.isArray(profile)
             ? profile
             : (profile && Array.isArray(profile.groups) ? profile.groups : []); 
             
         setUserGroups(verifiedGroups);
-        setAllowedAffiliates(affiliates);
-        console.log("User groups:", userGroups);
-        console.log("Selected affiliate:", selectedAffiliate);
-        console.log("Checking for:", `${selectedAffiliate} Ingesters`);
-
-        if (affiliates.length > 0) {
-            setSelectedAffiliate(affiliates[0]); 
+        
+        if (verifiedAffiliates.length > 0) {
+            setSelectedAffiliate(verifiedAffiliates[0]); 
         }
       } catch (err) {
         console.error("Failed loading user authorization directory:", err);
@@ -73,17 +84,19 @@ export const SelfServicePage: React.FC = () => {
     if (!selectedAffiliate) return;
 
     const loadIndexedDocuments = async () => {
-      setFetchingDocs(true);
-      try {
-        const docs = await api.getIngestedDocuments(principal, selectedAffiliate);
-        setDocuments(docs);
-      } catch (err) {
-        console.error("Error loading active file directories:", err);
-        setDocuments([]);
-      } finally {
-        setFetchingDocs(false);
-      }
-    };
+  setFetchingDocs(true);
+    try {
+      console.log(`Fetching docs for: Principal=${principal}, Affiliate=${selectedAffiliate}`);
+      const docs = await api.getIngestedDocuments(principal, selectedAffiliate);
+      console.log("API returned documents:", docs); // Check this in Browser Console
+      setDocuments(docs);
+    } catch (err) {
+      console.error("Error loading active file directories:", err);
+      setDocuments([]);
+    } finally {
+      setFetchingDocs(false);
+    }
+  };
 
     loadIndexedDocuments();
   }, [selectedAffiliate, principal]);
@@ -169,7 +182,7 @@ export const SelfServicePage: React.FC = () => {
               }}
               disabled={uploading || deletingId !== null}
             >
-              {allowedAffiliates.map(aff => (
+              {(allowedAffiliates || []).map((aff) => (
                 <option key={aff} value={aff}>{aff.replace('_', ' ')}</option>
               ))}
             </select>

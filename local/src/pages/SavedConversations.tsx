@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import './__styles__/SavedConversations.css';
+import { useAuth } from '@clerk/clerk-react';
 
 interface SavedMessage {
   type: "human" | "ai" | "system";
@@ -11,30 +12,33 @@ interface SavedConversationsPageProps {
 }
 
 export const SavedConversationsPage: React.FC<SavedConversationsPageProps> = ({ username }) => {
+  const { getToken } = useAuth();
   const [titles, setTitles] = useState<string[]>([]);
   const [selectedTitle, setSelectedTitle] = useState<string | null>(null);
   const [messages, setMessages] = useState<SavedMessage[]>([]);
 
+  const fetchWithAuth = async (url: string) => {
+    const token = await getToken(); // Get the real Clerk token
+    return fetch(url, {
+      headers: { 
+        "Authorization": `Bearer ${token}`, // Use standard Bearer auth
+        "Content-Type": "application/json" 
+      }
+    });
+  };
+
   useEffect(() => {
-    // 1. Fetch the list with the required header
-    fetch(`/api/saved-conversations?username=${username}`, {
-      headers: { "x-user-id": username }
-    })
+    fetchWithAuth(`/api/saved-conversations`)
       .then(res => res.json())
-      .then((data: { titles: string[] }) => setTitles(Array.isArray(data.titles) ? data.titles : []))
+      .then(data => setTitles(data.titles || []))
       .catch(() => setTitles([]));
-  }, [username]);
+  }, []); // No dependency on username needed anymore
 
   const loadConversation = (title: string) => {
     setSelectedTitle(title);
-    // 2. Fetch specific convo with the required header
-    fetch(`/api/saved-conversations/${title}?username=${username}`, {
-      headers: { "x-user-id": username }
-    })
+    fetchWithAuth(`/api/saved-conversations/${title}`)
       .then(res => res.json())
-      .then((data: { title: string; messages: SavedMessage[] }) => {
-        setMessages(Array.isArray(data.messages) ? data.messages : []);
-      })
+      .then(data => setMessages(data.messages || []))
       .catch(() => setMessages([]));
   };
 
