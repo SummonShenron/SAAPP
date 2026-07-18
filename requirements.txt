@@ -26,3 +26,4 @@ google-auth-oauthlib
 python-multipart>=0.0.5
 pyjwt requests
 langchain-google-genai
+gunicorn
