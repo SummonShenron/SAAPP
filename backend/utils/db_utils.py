@@ -15,13 +15,13 @@ def get_db():
     global _client
     
     if os.getenv("USE_DB") != "true":
-        logger.info("Using MongoDB")
+        logger.info("Not Using MongoDB")
         return None
         
     if _client is None:
         uri = os.getenv("MONGO_URI")
         _client = MongoClient(uri)
-        
+    # logger.info(f"Connecting to MongoDB at: {os.environ.get('MONGO_URI', 'NOT SET')}")
     # 'saapp_database' will be the name of your DB in the cluster
     return _client['saapp_database']
 

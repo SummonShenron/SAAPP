@@ -329,7 +329,7 @@ def retrieve_node(state: GraphState, vector_store) -> dict:
     current_loops = state.get("loop_count", 0) or 0
     original_question = state.get("original_question") or question
     session_id = state.get("session_id") or f"{username}_session"
-
+    logger.debug(f"retrieve_node target_scope is: {state.get('target_scope')}")
     # 1. EARLY EXIT: If attachments exist, use only those
     if state.get("attachment_summaries"):
         logger.info("Attachment detected — skipping vector search and using only priority docs.")
@@ -586,6 +586,11 @@ def paapp_node(state: GraphState) -> GraphState:
         return state
 
     intent = response.get("intent")
+    
+    # DEBUG: Always log what the API sends so we can see if the tool name matches
+    logger.info(f"DEBUG: PAAPP intent received: {intent}")
+
+    # --- 1. HANDLE CALENDAR EVENT ---
     if intent and intent.get("tool") == "create_google_calendar_event":
         entry_payload = TimeEntryCreate(
             username=username,
@@ -596,34 +601,52 @@ def paapp_node(state: GraphState) -> GraphState:
             notes="",
             type="event"
         )
+        
+        # Save locally (MongoDB + Mirror)
         add_time_entry(entry_payload)
         logger.info(f"[PAAPP] Successfully mirrored calendar event locally for {username}")
 
-    # If the agent identified a log_time tool call
+        # FIX: Restore Sync by re-pinging the headless API (The "Zero-Import" Handshake)
+        try:
+            requests.post(
+                f"{PAAPP_BASE_URL}/api/headless-chat",
+                headers={"x-saapp": "true"},
+                json={"username": username, "question": f"sync event {entry_payload.activity}"}
+            )
+            logger.info(f"[PAAPP] Sync trigger request sent to headless API.")
+        except Exception as e:
+            logger.error(f"[PAAPP] Sync trigger failed: {e}")
+
+        # FIX: Update state['snapshot'] so the UI updates without a refresh
+        if "snapshot" in state:
+            state["snapshot"]["calendar"] = load_user_calendar_events(username)
+
+    # --- 2. HANDLE LOG TIME ---
     if intent and intent.get("tool") == "log_time":
         try:
             entry_payload = TimeEntryCreate(
-            username=username,
-            activity=str(intent.get("activity", "Unknown Activity")),
-            duration_hours=float(intent.get("minutes", 0)) / 60,
-            duration_minutes=int(intent.get("minutes", 0)),
-            date=str(intent.get("date_iso")),
-            notes=str(intent.get("notes", "No description provided")),
-            type="log"
-        )
+                username=username,
+                activity=str(intent.get("activity", "Unknown Activity")),
+                duration_hours=float(intent.get("minutes", 0)) / 60,
+                duration_minutes=int(intent.get("minutes", 0)),
+                date=str(intent.get("date_iso")),
+                notes=str(intent.get("notes", "No description provided")),
+                type="log"
+            )
             
             add_time_entry(entry_payload)
             logger.info(f"[PAAPP] Successfully logged time locally for {username}")
             
+            # FIX: Update state['snapshot'] for logs too
+            if "snapshot" in state:
+                state["snapshot"]["logs"] = load_user_time(username)
+
         except Exception as e:
-            logger.error(f"[PAAPP] Direct time log failed: {e}")
+            logger.error(f"[PAAPP] Time log failed: {e}")
             state["raw_generation"] = f"Time log failed: {str(e)}"
             return state
-        except Exception as e:
-            logger.error(f"[PAAPP] Unexpected time log error: {e}")
-            state["raw_generation"] = f"Time log error: {str(e)}"
-            return state
 
+    # --- 3. RETURN RESPONSE ---
     if isinstance(response, str):
         try:
             response = json.loads(response)

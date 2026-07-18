@@ -1,8 +1,14 @@
 {
     "jack_admin": {
+        "email": "jackharper0517@gmail.com",
+        "groups": ["Global_Admins", "Affiliate_A", "Affiliate_A Ingesters", "Affiliate_B", "Affiliate_B Ingesters", "PAAPP_Admins", "Taskboard_Admins"]
+    },
+
+    "BGAdmin": {
         "email": "jackharper0517@outlook.com",
         "groups": ["Global_Admins", "Affiliate_A", "Affiliate_A Ingesters", "Affiliate_B", "Affiliate_B Ingesters", "PAAPP_Admins", "Taskboard_Admins"]
     },
+    
     "sonic_user": {
         "email": "userA@affiliateA.com",
         "groups": ["Affiliate_A"]
@@ -13,6 +19,10 @@
     },
     "lonely_user": {
         "email": "*",
+        "groups": ["Affiliate_A"]
+    },
+    "guest": {
+        "email": "guest@guestington.com",
         "groups": ["Affiliate_A"]
     }
 }

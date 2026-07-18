@@ -4,16 +4,21 @@ import glob
 import shutil
 import tempfile
 import logging
+import time
 from pymongo import MongoClient
 from gridfs import GridFS
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_mongodb import MongoDBAtlasVectorSearch
 
+from dotenv import load_dotenv 
+
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 # --- Standalone Self-Contained Configuration ---
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-DB_NAME = os.getenv("DB_NAME", "your_database_name")
+DB_NAME = os.getenv("DB_NAME", "saapp_database")
 HOT_FOLDER_DIR = os.getenv("HOT_FOLDER_DIR", "./index-db")
 DB_DIR = os.getenv("DB_DIR", "./chroma_db")
 
@@ -34,12 +39,18 @@ def get_db_client():
 
 def run_ingestion_pipeline():
     """Executes the multi-tenant document chunking and vector database indexing workflow."""
+    print(f"DEBUG: MONGO_URI is currently: {os.getenv('MONGO_URI')}")
+    print(f"DEBUG: DB_NAME is currently: {os.getenv('DB_NAME')}")
     logger.info("--- STARTING MULTI-TENANT INGESTION PIPELINE ---")
     
     db = get_db_client()
     fs = GridFS(db) if db is not None else None
     
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    # CRITICAL FIX: Swapped HuggingFace for Google Gemini with exact dimensionality matching
+    embeddings = GoogleGenerativeAIEmbeddings(
+        model="gemini-embedding-001",
+        output_dimensionality=768
+    )
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
 
     if os.path.exists(DB_DIR):
@@ -53,11 +64,19 @@ def run_ingestion_pipeline():
     if db is not None and fs is not None:
         logger.info("[+] MongoDB Connected. Executing GridFS Cloud Mode.")
         
-        # Read files explicitly tagged as "raw"
-        files_to_process = list(fs.find({"metadata.status": "raw"}))
+        # --- NEW POLLING LOGIC ---
+        files_to_process = []
+        max_retries = 5
+        for i in range(max_retries):
+            files_to_process = list(fs.find({"metadata.status": "raw"}))
+            if files_to_process:
+                break
+            logger.info(f"Container empty. Waiting for file (Attempt {i+1}/{max_retries})...")
+            time.sleep(2) # Wait 2 seconds before checking again
+        # -------------------------
 
         if not files_to_process:
-            logger.info("Raw container empty. No new PDFs found to process in MongoDB.")
+            logger.info("Raw container empty after retries. No new PDFs found.")
             return False
         
         for file_obj in files_to_process:
@@ -65,52 +84,61 @@ def run_ingestion_pipeline():
             affiliate = file_obj.metadata.get("affiliate", "Unknown") if file_obj.metadata else "Unknown"
             logger.info(f"-> Processing Raw Asset: {filename} [Mapped to: {affiliate}]")
             
+            # Create file with delete=False to avoid Windows file-locking permission errors
+            tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+            tmp_path = tmp.name
+            
             try:
-                # Use tempfile module safely
-                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as tmp:
-                    tmp.write(file_obj.read())
-                    tmp.flush()
-                    
-                    loader = PyPDFLoader(tmp.name)
-                    documents = loader.load()
-                    
-                    # Stamp chunks with metadata so we can delete them if something goes wrong
-                    for doc in documents:
-                        doc.metadata["affiliate"] = affiliate
-                        doc.metadata["source"] = filename 
-                        
-                    chunks = text_splitter.split_documents(documents)
-                    
-                    if vector_store is None:
-                        vector_store = Chroma.from_documents(chunks, embeddings, persist_directory=DB_DIR)
-                    else:
-                        vector_store.add_documents(chunks)
+                # 1. Prepare File
+                tmp.write(file_obj.read())
+                tmp.close() 
                 
-                # MOVE TO PAGES CONTAINER (Success)
-                # By updating status to "pages", it transitions out of raw and into your permanent archive
+                # 2. Process
+                loader = PyPDFLoader(tmp_path)
+                documents = loader.load()
+                
+                for doc in documents:
+                    doc.metadata["affiliate"] = affiliate
+                    doc.metadata["source"] = filename 
+                    
+                chunks = text_splitter.split_documents(documents)
+                
+                collection = db["documents"] # Ensure this matches your collection name
+                vector_store = MongoDBAtlasVectorSearch.from_documents(
+                    chunks, 
+                    embeddings, 
+                    collection=collection, 
+                    index_name="vector_index"
+                )
+                
+                # 3. Success (Move to pages container)
                 db["fs.files"].update_one(
                     {"_id": file_obj._id}, 
                     {"$set": {"metadata.status": "pages"}}
                 )
                 logger.info(f"   [✓] Success: Indexed and moved {filename} to Pages container.")
-                
+
             except Exception as e:
-                # DELETE ON FAILURE (Rollback)
+                # DELETE ON FAILURE (Rollback) - THIS IS YOUR ORIGINAL BLOCK
                 logger.error(f"   [X] Error processing {filename}: {e}. Initiating rollback...")
                 
-                # Expel file entirely from GridFS
                 fs.delete(file_obj._id)
                 logger.info(f"       -> Deleted {filename} from GridFS storage.")
                 
-                # Scrub any orphaned vector chunks out of Chroma
                 if vector_store is not None:
                     try:
-                        vector_store._collection.delete(where={"source": filename})
+                        vector_store.delete(where={"source": filename})
                         logger.info(f"       -> Scrubbed orphaned vectors for {filename} from Chroma.")
                     except Exception as v_err:
                         logger.error(f"       -> Failed to scrub Chroma collection: {v_err}")
                 
-                raise e
+                raise e # This keeps your original error reporting active
+
+            finally:
+                # Cleanup: This runs even if the 'except' block was triggered
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+                    logger.info(f"       -> Cleaned up temporary file: {tmp_path}")
 
     # =========================================================================
     # 2. LEGACY MODE: Process from Local Filesystem (Local Folder Containers)
@@ -168,7 +196,7 @@ def run_ingestion_pipeline():
                 # Scrub any partial chunks that made it to Chroma
                 if vector_store is not None:
                     try:
-                        vector_store._collection.delete(where={"source": filename})
+                        vector_store.delete(where={"source": filename})
                         logger.info(f"       -> Scrubbed orphaned vectors for {filename} from Chroma.")
                     except Exception as v_err:
                         logger.error(f"       -> Failed to scrub Chroma collection: {v_err}")

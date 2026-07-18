@@ -336,27 +336,26 @@ def get_system_prompt(username: str = "default", affiliate: str = "All") -> str:
     return base_instructions
 
 def format_docs(docs) -> str:
-    """
-    Transforms raw LangChain Document objects into clean text streams 
-    so the LLM never catches a glimpse of python metadata code.
-    """
     cleaned_blocks = []
 
     for doc in docs:
-        # Priority marker (red dot equivalent)
-        if doc.metadata.get("priority"):
+        # Access the metadata dictionary. 
+        # If 'metadata' key exists within the metadata, use that. Otherwise, use the top level.
+        meta = doc.metadata.get("metadata", doc.metadata) 
+        
+        # Priority marker
+        if meta.get("priority"):
             prefix = "🔴 PRIORITY DOCUMENT — USER UPLOAD\n"
         else:
             prefix = ""
 
-        # Extract clean filename
-        raw_source = doc.metadata.get("source", "Unknown_Source_File")
+        # Extract clean filename from the nested 'meta' dict
+        raw_source = meta.get("source", "Unknown_Source_File")
         clean_filename = os.path.basename(raw_source)
 
         # Page number
-        page_num = doc.metadata.get("page_label", doc.metadata.get("page", "N/A"))
+        page_num = meta.get("page_label", meta.get("page", "N/A"))
 
-        # Build contextual block
         block = (
             f"{prefix}"
             f"DOCUMENT REPOSITORY SOURCE: {clean_filename} | PAGE NUMBER: {page_num}\n"

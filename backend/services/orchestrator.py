@@ -1,6 +1,7 @@
 import json
 import os
 import logging
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_huggingface import HuggingFaceEmbeddings
 from backend.services.agent_workflow import create_workflow
 from backend.services.insights_workflow import create_insight_workflow
@@ -23,13 +24,16 @@ def startup_services():
 
     # 3. INITIALIZE EMBEDDINGS & VECTOR STORE
     logger.info("Initializing embedding engine...")
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    
+    # embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    embeddings = GoogleGenerativeAIEmbeddings(
+        model="gemini-embedding-001",
+        output_dimensionality=768
+    )
     logger.info("Connecting to MongoDB Atlas Vector Search...")
     vector_store = MongoDBAtlasVectorSearch(
         collection=db["documents"],
         embedding=embeddings,
-        index_name="saapp_index"
+        index_name="vector_index"
     )
     
     # Verification Log

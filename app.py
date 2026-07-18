@@ -4,7 +4,9 @@ import datetime
 import json
 import sys
 import base64
-from bson import ObjectId
+import subprocess
+import traceback
+from bson import ObjectId, errors
 from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Query, Form, Request, Depends
 from typing import List
 import uuid
@@ -29,17 +31,22 @@ from backend.services.search import discover_workspace_documents
 from local_function_app.function_app import run_ingestion_pipeline, HOT_FOLDER_DIR
 from backend.state.graph_state import GraphState
 from backend.services.insights_workflow import create_insight_workflow
-from backend.utils.app_utils import save_conversation, list_saved_conversations, load_saved_conversations, load_saved_conversation, save_chat_history, format_history_as_text, chat_sessions, get_db_dependency
+from backend.utils.app_utils import save_conversation, list_saved_conversations, load_saved_conversations, load_saved_conversation, save_chat_history, format_history_as_text, chat_sessions, get_db_dependency, serialize_doc
 from backend.utils.attachment_utils import process_user_attachment, ingest_doc_to_session
 from backend.utils.fallback_utils import rewrite_fallback
 from backend.logging.sass_logger import setup_logging
 from backend.services.orchestrator import startup_services
-from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, verify_paapp_access, load_directory
+from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, verify_paapp_access, load_directory, seed_guest_tasks
 from backend.utils.db_utils import get_db
+from backend.auth.isolation_auth import get_current_user
 from settings import DB_DIR
 from backend.components.time_storage import TimeEntryCreate, add_time_entry, load_user_time, clear_user_time, TimeEntry, save_user_time
+import aiohttp
+import aiohttp.resolver
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "local-function-app"))
+aiohttp.resolver.DefaultResolver = aiohttp.resolver.ThreadedResolver
+os.environ["AIOHTTP_NO_EXTENSIONS"] = "1"
+sys.path.append(os.path.join(os.path.dirname(__file__), "local_function_app"))
 app = FastAPI(title="Secure RAG Engine API")
 app.add_middleware(
     CORSMiddleware,
@@ -57,63 +64,119 @@ class LoginRequest(BaseModel):
     username: str
 
 class ChatRequest(BaseModel):
-    username: str
     question: str
     affiliate: str 
     attachments: list[Attachment] | None = None
     session_id: str | None = None
 
-@app.get("/api/me")
-def get_me(x_user_id: str | None = Header(None, alias="x-user-id")):
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="Unauthenticated")
-    directory = load_directory()
-    entry = directory.get(x_user_id)
-    logger.info("GET /api/me for %s -> %s", x_user_id, bool(entry))
-    return {"username": x_user_id, "email": entry.get("email") if entry else None, "groups": entry.get("groups", []) if entry else []}
+class EventCreate(BaseModel):
+    activity: str
+    start_time: str
+    date: str
+    notes: str = ""
+    type: str = "event"    
 
+@app.get("/api/me")
+def get_me(current_user: dict = Depends(get_current_user)):
+    clerk_id = current_user.get("sub")
+    email = current_user.get("email")
+    
+    db = get_db() #[cite: 1]
+    
+    if db is not None:
+        users_col = db["directory"] 
+        
+        # 1. Look for the user by clerk_id
+        user_doc = users_col.find_one({"clerk_id": clerk_id})
+        
+        # 2. LAZY MIGRATION: If not found, look for them by email
+        if not user_doc and email:
+            user_doc = users_col.find_one({"email": email})
+            if user_doc:
+                logger.info(f"Lazy migrating user record for: {email}")
+                # Add the missing clerk_id to the existing record
+                users_col.update_one(
+                    {"_id": user_doc["_id"]}, 
+                    {"$set": {"clerk_id": clerk_id}}
+                )
+                # Refresh user_doc with the new id
+                user_doc["clerk_id"] = clerk_id
+        
+        # 3. If still not found, provision new user
+        if not user_doc:
+            logger.info(f"[+] Provisioning new database user: {email or clerk_id}")
+            new_user = {
+                "clerk_id": clerk_id,
+                "email": email,
+                "username": email.split("@")[0] if email else "new_user",
+                "groups": ["Affiliate_A", "Affiliate_B", "PAAPP_Admins", "Taskboard_Admins"],
+                "created_at": datetime.utcnow()
+            }
+            users_col.insert_one(new_user)
+            user_doc = new_user
+            
+        return {
+            "username": user_doc.get("username"),
+            "email": user_doc.get("email"),
+            "groups": user_doc.get("groups", [])
+        }
+        
+    # --- FALLBACK LOCAL JSON FLOW ---
+    else:
+        logger.warning("Database disabled. Falling back to local directory.")
+        directory = load_directory()
+        
+        # Attempt to map them based on email, or fallback to the clerk_id 
+        # (This will fail for new users unless manually added to your JSON)
+        directory_key = email if email in directory else clerk_id
+        entry = directory.get(directory_key)
+        
+        if not entry:
+            raise HTTPException(status_code=403, detail="User not found in local directory.")
+            
+        return {
+            "username": directory_key,
+            "email": entry.get("email"),
+            "groups": entry.get("groups", [])
+        }
 @app.post("/api/login")
 async def verify_identity_profile(payload: LoginRequest):
-    """
-    Secure single-point identity verification gatekeeper.
-    Validates identity claims against the internal server directory (DB or JSON).
-    """
-    username = payload.username.strip()
-    # Update: Use the new load_directory() which checks MongoDB first
-    directory = load_directory()
+    # Just check if the user exists in your MongoDB "users" collection
+    db = get_db()
+    user_exists = db["users"].find_one({"clerk_id": payload.username})
     
-    if username not in directory:
-        logger.warning(f"[-] Security Audit: Unauthorized identity profile attempt: '{username}'")
-        raise HTTPException(status_code=401, detail="Unauthorized: Profile missing from security directory.")
+    if not user_exists:
+        # If they aren't in the DB, create them or handle registration
+        return {"status": "needs_registration"}
         
-    logger.info(f"[+] Security Audit: Validated profile session for '{username}'")
-    return {"status": "authenticated", "principal": username}
+    return {"status": "authenticated", "principal": payload.username}
     
 @app.get("/api/affiliates")
-async def get_affiliates(x_user_id: str = Header(None)):
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="Missing authorization context.")
-    
-    # Updated: Fetch live from MongoDB via load_directory()
+async def get_affiliates(current_user = Depends(get_current_user)):
+    clerk_id = current_user.get("sub")
     directory = load_directory()
-    return get_accessible_affiliates(x_user_id, directory)
+    
+    # DEBUG: See if we can find the user with the new ID
+    user_data = directory.get(clerk_id)
+    logger.debug(f"Lookup result for {clerk_id}: {user_data}")
+    
+    return get_accessible_affiliates(clerk_id, directory)
 
 
 @app.get("/api/user/groups")
-def get_user_groups(username: str | None = Query(None), x_user_id: str | None = Header(None, alias="x-user-id")):
-    # Accept either ?username= or x-user-id header for dev flexibility
-    user = username or x_user_id
-    if not user:
-        raise HTTPException(status_code=400, detail="Missing username")
+def get_user_groups(current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    
     directory = load_directory()
-    entry = directory.get(user)
+    entry = directory.get(username)
     groups = entry.get("groups", []) if entry else []
-    logger.info("Fetching groups for: %s -> %s", user, groups)
+    
+    logger.info("Fetching groups for: %s -> %s", username, groups)
     return groups
 
 
 @app.get("/api/discover-docs")
-async def discover_documents(affiliate: str = "All"):
+async def discover_documents(affiliate: str = "All", current_user = Depends(get_current_user)):
     """
     Simulates an Azure AI Search broad discovery sweep. 
     It requests all unique filenames within the user's active security clearance scope.
@@ -127,10 +190,10 @@ async def discover_documents(affiliate: str = "All"):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/chat")
-async def secure_chat(request: ChatRequest, fastapi_request: Request):
+async def secure_chat(request: ChatRequest, current_user = Depends(get_current_user)):
     # raw = await fastapi_request.json()
     # logger.info(f"RAW REQUEST BODY: {raw}")
-    username = request.username.strip()
+    username = current_user.get("sub")
     question = request.question.strip()
     session_id = request.session_id.strip() if request.session_id else f"{username}_session"
 
@@ -318,32 +381,45 @@ async def secure_chat(request: ChatRequest, fastapi_request: Request):
     async def token_streamer():
         full_response = ""
         try:
+            # Execute primary stream
             async for chunk in llm.astream(prompt):
-                # Safely parse text or content chunk representations 
-                token = chunk if isinstance(chunk, str) else getattr(chunk, "content", None) or str(chunk)
+                # 1. Extract content from the chunk
+                content = getattr(chunk, "content", "")
+                
+                # 2. Handle cases where content is a list (multimodal parts)
+                if isinstance(content, list):
+                    # Join all text parts into a single string
+                    token = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
+                else:
+                    token = str(content) if content else ""
+                
                 if not token:
                     continue
+                
                 full_response += token
                 yield f"data: {json.dumps({'event': 'token', 'text': token})}\n\n"
-                await asyncio.sleep(0)  # Cooperatively yield back event loop control
-            if full_response:
-                if "I cannot find the answer in the provided knowledge base." in full_response.strip():
-                    logger.info("Grounding failure detected — triggering rewrite fallback...")
-                    fallback_state = {
-                        **initial_state,
-                        "target_scope": final_state.get("target_scope", initial_state["target_scope"]),
-                        "documents": final_state.get("documents", []),
-                        "original_question": final_state.get("original_question", initial_state["original_question"]),
-                    }
-                    async for fallback_chunk in rewrite_fallback(services.get("vector_store"), fallback_state, username, messages_state, chat_sessions, save_chat_history):
-                        yield fallback_chunk
-                    return
-                yield f"data: {json.dumps({'event': 'final_generation', 'text': full_response})}\n\n"
-                # Update memory session history only after a fully successful stream
-                chat_sessions[username].append(HumanMessage(content=question))
-                chat_sessions[username].append(AIMessage(content=full_response))
-                save_chat_history()
-                logger.info("--- End of token stream ---")
+                await asyncio.sleep(0)
+
+            # Check for grounding failure requiring a rewrite
+            if full_response and "I cannot find the answer in the provided knowledge base." in full_response.strip():
+                logger.info("Grounding failure detected — triggering rewrite fallback...")
+                fallback_state = {
+                    **initial_state,
+                    "target_scope": final_state.get("target_scope", initial_state["target_scope"]),
+                    "documents": final_state.get("documents", []),
+                    "original_question": final_state.get("original_question", initial_state["original_question"]),
+                }
+                async for fallback_chunk in rewrite_fallback(services.get("vector_store"), fallback_state, username, messages_state, chat_sessions, save_chat_history):
+                    yield fallback_chunk
+                return
+
+            # Stream completion and history saving
+            yield f"data: {json.dumps({'event': 'final_generation', 'text': full_response})}\n\n"
+            chat_sessions[username].append(HumanMessage(content=question))
+            chat_sessions[username].append(AIMessage(content=full_response))
+            save_chat_history()
+            logger.info("--- End of token stream ---")
+            
         except Exception as e:
             logger.error(f"[x] Error in token_streamer loop context: {e}", exc_info=True)
             yield f"data: {json.dumps({'event': 'error', 'message': str(e)})}\n\n"
@@ -359,130 +435,77 @@ async def secure_chat(request: ChatRequest, fastapi_request: Request):
     )
 
 @app.post("/api/chat/clear")
-async def clear_chat_history(request: dict):
-    username = request.get("username")
+async def clear_chat_history(current_user = Depends(get_current_user)):
+    # We no longer need the 'request: dict' since the JWT has the identity
+    username = current_user.get("sub")
+    
     if username in chat_sessions:
         chat_sessions[username] = []
         save_chat_history()
     return {"status": "cleared"}
 
-@app.get("/api/documents")
-async def get_ingested_documents_endpoint(
-    affiliate: str,
-    x_user_id: str = Header(None)
-):
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="Missing authorization principal context.")
-
-    if not verify_user_ingest_access(x_user_id, affiliate):
-        raise HTTPException(status_code=403, detail="Unauthorized")
-
-    # Ensure we are using the correct path format
-    # Ensure HOT_FOLDER_DIR is defined and imported correctly in your app.py
-    archive_target_zone = os.path.join(HOT_FOLDER_DIR, f"{affiliate}_Pages")
-    
-    # ADD THIS: Create the directory if it doesn't exist, or return empty
-    if not os.path.exists(archive_target_zone):
-        logger.info(f"Directory not found: {archive_target_zone}, returning empty manifest.")
-        return []
-
-    try:
-        manifest_records = []
-        for filename in os.listdir(archive_target_zone):
-            file_path = os.path.join(archive_target_zone, filename) 
-            if os.path.isfile(file_path) and filename.lower().endswith('.pdf'):
-                file_stats = os.stat(file_path)    
-                manifest_records.append({
-                    "id": f"id_{filename.replace('.', '_')}", 
-                    "filename": filename,
-                    "uploadDate": datetime.fromtimestamp(file_stats.st_mtime).isoformat(),
-                    "fileSize": f"{round(file_stats.st_size / 1024, 1)} KB"
-                })
-        return manifest_records
-    except Exception as e:
-        logger.error(f"Failed to scan file system indexes: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to scan file system indexes: {str(e)}")
-
 @app.post("/api/upload-attachment")
 async def upload_attachment(
-    username: str = Form(...),
-    session_id: str = Form(...),
-    file: UploadFile = File(...)
+    session_id: str = Form(...), 
+    file: UploadFile = File(...),
+    current_user = Depends(get_current_user) # Replaced username: str = Form(...)
 ):
+    username = current_user.get("sub") # Currently unused in this block, but ready if needed
     raw_bytes = await file.read()
-
-    # Run your ingestion pipeline
-    raw_bytes = await file.read()
-    
     encoded = base64.b64encode(raw_bytes).decode("utf-8")
-
     attachment = Attachment(filename=file.filename, content=encoded)
 
     return {"status": "ok", "filename": file.filename}
 
 
 # --- ELEVATED ENDPOINT: SECURE MULTI-PART FILE UPLOAD (MongoDB GridFS) ---
+def sync_run_script(script_path):
+    process = subprocess.Popen(
+        [sys.executable, script_path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+
+    stdout, stderr = process.communicate()
+
+    logger.info(f"[INGEST STDOUT]\n{stdout}")
+    logger.error(f"[INGEST STDERR]\n{stderr}")
+    logger.info(f"[INGEST EXIT CODE] {process.returncode}")
+
 @app.post("/api/upload")
 async def upload_and_ingest_documents(
     affiliate: str,
     files: List[UploadFile] = File(...),
-    x_user_id: str = Header(None)
+    current_user = Depends(get_current_user)
 ):
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="Missing required security context header.")  
-    
-    # CHECK CLAIMS DATABASE: Validate Ingesters group
-    if not verify_user_ingest_access(x_user_id, affiliate):
-        raise HTTPException(
-            status_code=403, 
-            detail=f"Access Denied: Account lacks required '{affiliate} Ingesters' claims configuration."
-        )
-    
+    # 1. Access/Upload Logic
     db = get_db()
-    if db is None:
-        raise HTTPException(status_code=500, detail="Database connection unavailable")
-        
     fs = GridFS(db)
-    saved_files = 0
-    
+    for file in files:
+        content = await file.read()
+        fs.put(content, filename=file.filename, metadata={"affiliate": affiliate, "status": "raw", "processed": False})
+    await asyncio.sleep(3)
+    # 2. Diagnostics & Trigger
     try:
-        for file in files:
-            if not file.filename.lower().endswith('.pdf'):
-                raise HTTPException(status_code=400, detail="Invalid extension format. Only PDFs accepted.")    
-            
-            content = await file.read()
-            
-            # Place file directly into the MongoDB "Raw Container" state
-            fs.put(
-                content,
-                filename=file.filename,
-                metadata={
-                    "affiliate": affiliate,
-                    "status": "raw",       # Flags it for function_app.py to process
-                    "processed": False
-                }
-            )
-            saved_files += 1
-
-        # Execute programmatic module pipeline dynamically
-        pipeline_executed = run_ingestion_pipeline() 
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        script_path = os.path.join(base_dir, "local_function_app", "function_app.py")
         
-        return {
-            "status": "success",
-            "message": f"Successfully staged {saved_files} assets into {affiliate.replace('_', ' ')}.",
-            "pipeline_triggered": pipeline_executed
-        }
+        # This sends the function to a background thread, preventing the main app crash
+        await asyncio.to_thread(sync_run_script, script_path)
+        
+        logger.info(f"Ingestion pipeline triggered in thread: {script_path}")
+        return {"status": "success", "message": "Uploaded and started ingestion."}
+        
     except Exception as e:
-        logger.error(f"Pipeline Processing Fault: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Pipeline Processing Fault: {str(e)}")
+        logger.error(f"Failed to spawn ingestion process: {str(e)}")
+        raise HTTPException(status_code=500, detail="Trigger failed.")
 
 # --- ELEVATED ENDPOINT: FETCH INDEXED MANIFEST (MongoDB GridFS) ---
 @app.get("/api/documents")
-async def list_documents(affiliate: str = Query(...), x_user_id: str = Header(None)):
+async def list_documents(affiliate: str = Query(...), current_user = Depends(get_current_user)):
     # 1. Permission check
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="Missing authorization principal context.")
-    if not verify_user_ingest_access(x_user_id, affiliate):
+    if not verify_user_ingest_access(current_user.get("sub"), affiliate):
         raise HTTPException(status_code=403, detail="Unauthorized")
 
     db = get_db()
@@ -511,113 +534,97 @@ async def list_documents(affiliate: str = Query(...), x_user_id: str = Header(No
 
 # --- ELEVATED ENDPOINT: PURGE FROM VECTOR INDEX (MongoDB GridFS) ---
 @app.delete("/api/documents/{doc_id}")
-async def delete_document(doc_id: str, affiliate: str = Query(...)):
-    try:
-        logger.info(f"Executing absolute database eviction sequence for ID: {doc_id}") 
-        db = get_db()
-        if db is None:
-            raise HTTPException(status_code=500, detail="Database connection unavailable")
-            
-        fs = GridFS(db)
-        
-        # 1. Fetch file first to get the true filename for Chroma scrubbing
-        try:
-            file_obj = fs.get(ObjectId(doc_id))
-            filename = file_obj.filename
-        except Exception as get_err:
-            logger.error(f"Could not find document in GridFS: {get_err}")
-            raise HTTPException(status_code=404, detail="Document not found in GridFS")
-            
-        logger.info(f"Sweeping Chroma for filename stamp: {filename}")
-        
-        # 2. DIRECT CHROMACLIENT EVICTION 
-        try:
-            # We explicitly stamped the chunk metadata with "source": filename in function_app.py
-            services.get("vector_store")._collection.delete(where={"source": filename})
-            logger.info("Associated vector matrix fragments thoroughly cleared from Chroma collection.")
-        except Exception as v_err:
-            logger.error(f"Direct collection level eviction encountered an issue: {v_err}")
-        
-        # 3. DATABASE STORAGE CLEANUP
-        fs.delete(ObjectId(doc_id))
-        logger.info(f"File erased from GridFS storage: {filename}")
-        
-        return {"status": "success", "detail": f"Successfully expelled asset: {filename}"}
-        
-    except Exception as e:
-        logger.error(f"[CRITICAL] Deletion engine sequence failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Core index expulsion failure: {str(e)}")
-
-@app.get("/api/saved-conversations")
-async def get_saved_conversations(
-    username: str, 
-    x_user_id: str = Header(None)
+async def delete_document(
+    doc_id: str, 
+    affiliate: str = Query(...),
+    current_user = Depends(get_current_user)
 ):
-    # Enforce identity authorization
-    if not x_user_id or username != x_user_id:
-        raise HTTPException(status_code=403, detail="Unauthorized to view these conversations.")
+    # Security Check
+    user_id = current_user.get("sub")
+    if not verify_user_ingest_access(user_id, affiliate):
+        raise HTTPException(status_code=403, detail="Unauthorized.")
+
+    # Initialize DB in scope
+    db = get_db() 
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database connection unavailable")
+    
+    # GridFS Logic
+    fs = GridFS(db)
+    try:
+        file_obj = fs.get(ObjectId(doc_id))
+        filename = file_obj.filename
+    except Exception:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # Vector Deletion
+    logger.info(f"Sweeping MongoDB Atlas 'documents' for filename: {filename}")
+    
+    try:
+        vector_collection = db["documents"]
+        # Regex query for the full path
+        query = {"metadata.source": {"$regex": f".*{filename}$"}}
+        result = vector_collection.delete_many(query)
         
+        logger.info(f"Successfully cleared {result.deleted_count} vector fragments.")
+        
+        # Finally, remove from GridFS
+        fs.delete(ObjectId(doc_id))
+        return {"status": "success", "detail": f"Expelled {filename}"}
+
+    except Exception as e:
+        logger.error(f"Deletion failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Update these two endpoints in app.py
+@app.get("/api/saved-conversations")
+async def get_saved_conversations(current_user = Depends(get_current_user)):
+    # Use the 'sub' claim from the verified JWT
+    username = current_user.get("sub") 
     conversations = load_saved_conversations(username)
-    # conversations is a LIST, not a dict
-    titles = [c["title"] for c in conversations]
-    return {"titles": titles}
+    return {"titles": [c["title"] for c in conversations]}
 
 @app.get("/api/saved-conversations/{title}")
-async def get_saved_conversation(
-    username: str, 
-    title: str, 
-    x_user_id: str = Header(None)
-):
-    # Enforce identity authorization
-    if not x_user_id or username != x_user_id:
-        raise HTTPException(status_code=403, detail="Unauthorized to view this conversation.")
-        
+async def get_saved_conversation(title: str, current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
     conversations = load_saved_conversations(username)
-    # find the conversation in the list
     for convo in conversations:
         if convo["title"] == title:
-            return {
-                "title": convo["title"],
-                "messages": convo["messages"]
-            }
-    return {"error": "Conversation not found"}
+            return {"title": convo["title"], "messages": convo["messages"]}
+    raise HTTPException(status_code=404, detail="Conversation not found")
 
-@app.get("/api/is-paapp-admin")
-def is_paapp_admin(username: str | None = Query(None), x_user_id: str | None = Header(None, alias="x-user-id")):
-    user = username or x_user_id
-    if not user:
-        return {"allowed": False}
-    directory = load_directory()
-    entry = directory.get(user, {})
-    groups = entry.get("groups", [])
-    allowed = "PAAPP_Admins" in groups or "Global_Admins" in groups
-    logger.info("is-paapp-admin for %s -> %s", user, allowed)
+@app.get("/admin/paapp")
+def access_paapp_data(current_user = Depends(get_current_user)):
+    # 1. Identity is handled by get_current_user (Clerk JWT)
+    username = current_user.get("sub")
+    
+    # 2. Use your existing logic from isolation_kb_utils.py
+    allowed = verify_paapp_access(username)
+    
+    logger.info("is-paapp-admin for %s -> %s", username, allowed)
+    
     return {"allowed": allowed}
 
 TIME_ENTRIES: dict[str, list[TimeEntry]] = {}  # key: username, value: list of entries
 @app.get("/api/time/list")
-def saapp_list_time(
-    username: str, 
-    x_user_id: str = Header(None)
-):
-    # Enforce identity authorization
-    if not x_user_id or username != x_user_id:
-        raise HTTPException(status_code=403, detail="Unauthorized to view time entries.")
-        
+def saapp_list_time(current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
     return load_user_time(username)
 
-
 @app.delete("/api/time/clear")
-def saapp_clear_time(username: str):
-    clear_user_time(username)
+def saapp_clear_time(current_user = Depends(get_current_user)):
+    clear_user_time(current_user.sub)
     return {"status": "cleared"}
 
 @app.post("/api/time/log")
-async def log_time(entry: TimeEntryCreate):
+async def log_time(
+    entry: TimeEntryCreate, 
+    current_user = Depends(get_current_user)
+):
     try:
         new_entry = TimeEntry(
             id=str(uuid.uuid4()),
-            username=entry.username,
+            username=current_user.get("sub"),  # Overriding the payload with verified ID
             activity=entry.activity,
             duration_hours=entry.duration_hours,
             duration_minutes=entry.duration_minutes,
@@ -629,61 +636,58 @@ async def log_time(entry: TimeEntryCreate):
         add_time_entry(new_entry)
         return {"status": "ok"}
     except Exception:
-        # This will print the actual error (e.g., ValidationError, KeyError) to your terminal
         traceback.print_exc() 
         raise HTTPException(status_code=500, detail="Check terminal for traceback")
 
-
 @app.delete("/api/time/delete")
-async def delete_time_entry(username: str, id: str): # Add username parameter
-    entries = load_user_time(username) # Use your utility function
+async def delete_time_entry(id: str, current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    entries = load_user_time(username)
     new_data = [entry for entry in entries if entry.id != id]
-    save_user_time(username, new_data) # Use your utility function
+    save_user_time(username, new_data) 
     return {"status": "ok", "deleted": id}
 
 @app.delete("/api/events/delete")
-async def delete_event(username: str, id: str):
-    # Ensure ownership check
-    db = get_db() # Get the database connection
+async def delete_event(id: str, current_user = Depends(get_current_user)):
+    db = get_db()
     if db is None:
         raise HTTPException(status_code=500, detail="Database connection unavailable")
-    result = db["events"].delete_one({"_id": ObjectId(id), "username": username})
+        
+    # The database query strictly limits deletion to the active user's documents
+    result = db["events"].delete_one({"_id": ObjectId(id), "username": current_user.get("sub")})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Event not found")
     return {"status": "deleted", "id": id}
-@app.post("/api/events/create")
-@app.post("/api/events/create")
-async def create_event(payload: dict):
-    db = get_db() # Get the database connection
-    if db is None:
-        raise HTTPException(status_code=500, detail="Database connection unavailable")
-    username = payload.get("username")
-    if not username:
-        raise HTTPException(status_code=400, detail="Username missing")
 
-    new_event = {
-        "username": username,
-        "activity": payload.get("activity"),
-        "start_time": payload.get("start_time"),
-        "date": payload.get("date"),
-        "notes": payload.get("notes", ""),
-        "type": "event",
-        "created_at": datetime.now(timezone.utc).isoformat()
-    }
+@app.post("/api/events/create")
+async def create_event(
+    event: EventCreate, 
+    current_user = Depends(get_current_user)
+):
+    username = current_user.get("sub")
+    db = get_db()
     
-    # Save to MongoDB
-    result = db["events"].insert_one(new_event)
-    new_event["id"] = str(result.inserted_id)
-    return {"status": "ok", "event": new_event}
-
+    # Convert Pydantic model to a dictionary
+    event_dict = event.dict() 
+    event_dict["username"] = username # Attach the user from the token
+    
+    # Insert into database
+    result = db["events"].insert_one(event_dict)
+    
+    # Fetch it back to return the full object with ID
+    inserted_doc = db["events"].find_one({"_id": result.inserted_id})
+    
+    return serialize_doc(inserted_doc)
 
 @app.post("/api/events/log")
-async def saapp_log_event(entry: TimeEntryCreate, db = Depends(get_db_dependency)):
-    # Build the event dictionary
-    # We keep the 'id' field as a string so your frontend doesn't break
+async def saapp_log_event(
+    entry: TimeEntryCreate, 
+    db = Depends(get_db_dependency),
+    current_user = Depends(get_current_user)
+):
     new_entry = {
         "id": str(uuid.uuid4()), 
-        "username": entry.username,
+        "username": current_user.sub, # Override with verified session
         "activity": entry.activity,
         "duration_hours": entry.duration_hours,
         "duration_minutes": entry.duration_minutes,
@@ -693,61 +697,71 @@ async def saapp_log_event(entry: TimeEntryCreate, db = Depends(get_db_dependency
         "created_at": datetime.now(timezone.utc).isoformat()
     }
 
-    # Atomic insert into the MongoDB 'events' collection
     db["events"].insert_one(new_entry)
-
     return {"status": "ok"}
 
-# Add this in app.py
 @app.get("/api/events/list")
-def saapp_list_events(username: str, x_user_id: str = Header(None)):
+def saapp_list_events(current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
     db = get_db()
     if db is None:
         raise HTTPException(status_code=500, detail="Database connection unavailable")
-    if not x_user_id or username != x_user_id:
-        raise HTTPException(status_code=403, detail="Unauthorized.")
     
     events = list(db["events"].find({"username": username}))
     
     for e in events:
-        e["id"] = str(e["_id"]) # Keep your string ID for the frontend
-        e.pop("_id", None)      # CRITICAL: Remove the raw ObjectId that causes the crash
+        e["id"] = str(e["_id"]) 
+        e.pop("_id", None)      
         
     return events
-@app.post("/api/tasks")
-def create_task(payload: dict, username: str = Depends(require_taskboard_admin)):
-    db = get_db()
-    if db is None:
-        raise HTTPException(status_code=500, detail="Database connection unavailable")
-        
-    result = db["tasks"].insert_one(payload)
-    
-    # Add the string version of the ID for the frontend
-    payload["id"] = str(result.inserted_id)
-    
-    # CRITICAL: Strip out the raw ObjectId that PyMongo just injected
-    payload.pop("_id", None) 
-    
-    return {"status": "ok", "task": payload}
 
 @app.get("/api/tasks")
-def get_tasks():
+def get_tasks(current_user = Depends(get_current_user)):
     db = get_db()
-    if db is None:
-        raise HTTPException(status_code=500, detail="Database connection unavailable")
+    
+    # Query ONLY tasks owned by the active logged-in user
+    tasks = list(db["tasks"].find({"username": current_user.get("sub")}))
+    
+    # If a guest logs in and has no tasks yet, seed 3 mock ones for them!
+    if not tasks and current_user.get("sub") == "guest-recruiter@example.com":
+        seed_guest_tasks(db, current_user.get("sub"))
+        tasks = list(db["tasks"].find({"username": current_user.get("sub")}))
         
-    tasks = list(db["tasks"].find({}))
     for t in tasks:
-        # Add the string version
         t["id"] = str(t["_id"])
-        
-        # CRITICAL: Strip out the raw ObjectId
         t.pop("_id", None)
-        
     return tasks
 
+# @app.get("/api/tasks")
+# def get_tasks(current_user = Depends(get_current_user)): # SECURED: Added auth check
+#     db = get_db()
+#     if db is None:
+#         raise HTTPException(status_code=500, detail="Database connection unavailable")
+        
+#     tasks = list(db.get("tasks").find({}))
+#     for t in tasks:
+#         # Add the string version
+#         t["id"] = str(t["_id"])
+        
+#         # CRITICAL: Strip out the raw ObjectId
+#         t.pop("_id", None)
+        
+#     return tasks
+
+@app.post("/api/tasks")
+def create_task(task_data: dict, current_user = Depends(get_current_user)):
+    db = get_db()
+    # Add the username to the new task to ensure data isolation
+    task_data["username"] = current_user.get("sub")
+    
+    result = db["tasks"].insert_one(task_data)
+    task_data["id"] = str(result.inserted_id)
+    task_data.pop("_id", None)
+    
+    return task_data
+
 @app.put("/api/tasks/{task_id}")
-def update_task_lane(task_id: str, payload: dict, username: str = Depends(require_taskboard_admin)):
+def update_task_lane(task_id: str, payload: dict, current_user = Depends(get_current_user)):
     db = get_db() # Get the database connection
     if db is None:
         raise HTTPException(status_code=500, detail="Database connection unavailable")
@@ -758,31 +772,47 @@ def update_task_lane(task_id: str, payload: dict, username: str = Depends(requir
     return {"status": "ok"}
 
 @app.delete("/api/tasks/{task_id}")
-def delete_task(task_id: str, username: str = Depends(require_taskboard_admin)):
-    db = get_db() # Get the database connection
-    if db is None:
-        raise HTTPException(status_code=500, detail="Database connection unavailable")
-    result = db["tasks"].delete_one({"_id": ObjectId(task_id)})
+def delete_task(task_id: str, current_user: dict = Depends(get_current_user)):
+    db = get_db()
+    username = current_user.get("sub")
+    
+    # 1. Attempt to handle both ObjectId and string IDs
+    query_id = task_id
+    if len(task_id) == 24:
+        try:
+            query_id = ObjectId(task_id)
+        except errors.InvalidId:
+            pass # Keep as string if it's not a valid ObjectId
+
+    # 2. Add debug logging to see exactly what you are querying
+    print(f"DEBUG: Deleting task with ID: {query_id} (Type: {type(query_id)}) for user: {username}")
+    
+    result = db["tasks"].delete_one({
+        "_id": query_id,
+        "username": username
+    })
+    
     if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Task not found")
+        # 3. Log what happened if nothing was found
+        print(f"DEBUG: No task found with ID {query_id} for user {username}")
+        raise HTTPException(status_code=404, detail="Task not found or unauthorized")
+        
     return {"status": "deleted", "id": task_id}
 
 @app.get("/api/insights")
-def get_insights(current_user: str = "jack_admin"): 
-    # 1. Ensure we pass the active user ('jack_admin'), not 'default_user'
-    # (If you have a dependency injection for auth here like Depends(get_current_user), use that)
+def get_insights(current_user = Depends(get_current_user)): 
+    username = current_user.get("sub")
+    
     state = {
         "messages": [], 
-        "username": current_user
+        "username": username
     }
     logger.info(f"Triggering insight workflow for user: {state['username']}")
     result = insight_workflow.invoke(state)
     
     logger.info(f"Final graph result dictionary:{result}")    
-    # 2. Extract what the frontend actually needs.
-    # If your graph saves the final product to a key named 'insights', return that.
-    # If it formats it into a message content string, return result["messages"][-1].content
     return result.get("insights", [])
+
 @app.get("/api/health")
 async def health_check():
     logger.info("Checking health")

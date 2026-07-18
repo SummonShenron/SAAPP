@@ -7,26 +7,37 @@ from backend.utils.db_utils import get_db
 
 logger = logging.getLogger("SASS Logger")
 
-def load_directory() -> Dict[str, Any]:
-    """Primary entry point for all directory data."""
-    # 1. Try MongoDB First
-    db = get_db()
-    if db is not None:
-        doc = db['config'].find_one({"_id": "user_directory"})
-        if doc:
-            return doc.get("data", {})
-            
-    # 2. Fallback to Local JSON file
-    try:
-        if not os.path.exists(DIRECTORY_JSON_PATH):
-            logger.warning("directory.json missing at %s", DIRECTORY_JSON_PATH)
-            return {}
-        with open(DIRECTORY_JSON_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.exception("Failed to load directory.json: %s", e)
-        return {}
+def get_user_record(clerk_id: str):
+    """
+    Retrieves a user document from MongoDB by clerk_id.
+    This replaces the legacy load_directory() logic.
+    """
+    db = get_db() #[cite: 1]
+    if db is None:
+        return None
+        
+    return db["users"].find_one({"clerk_id": clerk_id})
 
+def load_directory() -> Dict[str, Any]:
+    db = get_db()
+    directory = {}
+    
+    try:
+        cursor = db["directory"].find({})
+        for user in cursor:
+            # Use clerk_id, fallback to email if clerk_id is missing
+            key = user.get("clerk_id") or user.get("email")
+            
+            if key:
+                directory[key] = user
+            else:
+                logger.warning(f"Skipping directory entry with no ID or email: {user.get('_id')}")
+        
+        return directory
+    except Exception as e:
+        logger.error(f"Failed to fetch directory from MongoDB: {e}")
+        return {}
+    
 def load_user_directory_groups(username: str) -> List[str]:
     """Now uses the centralized load_directory() function."""
     directory_data = load_directory() # Centralized call
@@ -63,3 +74,31 @@ def verify_paapp_access(username: str) -> bool:
     # PAAPP-specific admin group
     return "PAAPP_Admins" in user_groups
 
+def seed_guest_tasks(db, username: str):
+    """
+    Auto-populates the MongoDB tasks collection with interactive, 
+    sandbox data for the guest recruiter.
+    """
+    mock_tasks = [
+        {
+            "username": username,
+            "lane": "todo",
+            "title": "Review Jack's Resume 📄",
+            "description": "Download his resume from the Chat tab or ask the AI assistant about his qualifications."
+        },
+        {
+            "username": username,
+            "lane": "in_progress",
+            "title": "Test RAG Engine 🤖",
+            "description": "Go to the Chat page and ask: 'What technologies did Jack use to build this app?'"
+        },
+        {
+            "username": username,
+            "lane": "done",
+            "title": "Schedule a Chat ☕",
+            "description": "Reach out to Jack to set up a technical pairing session or virtual coffee."
+        }
+    ]
+    
+    # Batch insert the mock tasks into MongoDB
+    db["tasks"].insert_many(mock_tasks)
