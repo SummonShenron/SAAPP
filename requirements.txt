@@ -18,7 +18,6 @@ dateparser
 portalocker
 pymongo[srv]
 langchain-mongodb
-MongoDBAtlasVectorSearch
 clerk-backend-api
 google-api-python-client
 google-auth-httplib2
