@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from '@clerk/clerk-react';
-import "../__styles__/Time.css";
+import "./__styles__/time.css"
 import { SimpleCalendar } from "../components/calendar/Calendar";
 import "../components/__styles__/Calendar.css";
 import sonicVShadow from '../assets/sonicvsshadow.jpg';
