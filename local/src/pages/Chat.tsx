@@ -115,7 +115,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     localStorage.removeItem(`chat-messages-${principal}`);
     try {
       // Direct call to purge the persisted memory on your local-RAG backend API
-      await fetch('http://localhost:8000/api/chat/clear', {
+      await fetch('https://saapp.onrender.com/api/chat/clear', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: principal })
