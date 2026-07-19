@@ -52,7 +52,7 @@ def load_saved_conversations(username: str) -> list:
         return []
     with open(user_file, "r") as f:
         return json.load(f)
-    
+   
 def save_conversation(username: str, title: str, messages: list):
     """Saves the explicitly provided messages to MongoDB."""
     

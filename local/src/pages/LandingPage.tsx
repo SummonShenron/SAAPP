@@ -1,9 +1,10 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useSignIn, useAuth, useClerk } from '@clerk/clerk-react';
 import { useNavigate } from 'react-router-dom'; // or your custom router hook
 import sonicImg from '../assets/sonicandshadow.jpg';
 import { getMe } from '../api'
-
+import sonicSpinImg from '../assets/sonic-rolling.gif';
+import shadowSpinImg from '../assets/shadow.gif';
 interface LandingPageProps {
   onEnter: (username: string) => void;
 }
@@ -13,7 +14,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
   const { openSignIn } = useClerk();
   const { userId, isSignedIn, isLoaded: isAuthLoaded } = useAuth();
   const navigate = useNavigate();
-
+  const [showNotice, setShowNotice] = useState(true);
+  const [serverStarting, setServerStarting] = useState(false);
+  const handleDismiss = () => {
+    setShowNotice(false);
+    localStorage.setItem('hideNotice', '1');
+  };
   // 1. Clerk Auto-redirect Hook
   // If Clerk detects they successfully logged in via Google/Email, 
   // automatically push them into the app with their real username/email!
@@ -44,41 +50,58 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
   // 2. The Guest Sandbox Handler
   const handleGuestEntry = () => {
     localStorage.setItem('guest_token', 'guest-sandbox-token');
-    
-    // Change both of these to 'guest' to match your MongoDB 'username' field!
     localStorage.setItem('principal', 'guest');
     localStorage.setItem('x-user-id', 'guest');
-    
-    onEnter('guest');
+
+    setServerStarting(true);   // show the "Starting server…" indicator
+    onEnter('guest');          // existing navigation / entry logic
   };
 
-  // 3. Trigger Google OAuth via Clerk
   const handleGoogleLogin = async () => {
     if (!isSignInLoaded) return;
     try {
+      setServerStarting(true);
       await signIn.authenticateWithRedirect({
         strategy: 'oauth_google',
-        redirectUrl: '/sso-callback', // Set this up in Clerk Dashboard redirects
+        redirectUrl: '/sso-callback',
         redirectUrlComplete: '/'
       });
     } catch (err) {
       console.error("Error signing in with Google:", err);
+      setServerStarting(false);
     }
   };
 
   const handleLogin = () => {
-    openSignIn({
-      // Keeps users on the same page after they finish logging in
-      fallbackRedirectUrl: window.location.origin
-    });
+    openSignIn({ fallbackRedirectUrl: window.location.origin });
   };
 
   useEffect(() => {
-  if (isAuthLoaded && isSignedIn) {
-    // Navigate to chat immediately if user is already signed in
-    navigate("/chat"); // Replace with your actual chat route
-  }
-}, [isAuthLoaded, isSignedIn, navigate]);
+    if (isAuthLoaded && isSignedIn) {
+      navigate("/chat");
+    }
+  }, [isAuthLoaded, isSignedIn, navigate]);
+
+  useEffect(() => {
+    // clear serverStarting if chat already marked server started
+    if (localStorage.getItem('serverStarted')) {
+      setServerStarting(false);
+      localStorage.removeItem('serverStarted');
+    }
+
+    // auto-clear spinner after 90s to avoid indefinite state
+    let t: number | undefined;
+    if (serverStarting) {
+      t = window.setTimeout(() => {
+        setServerStarting(false);
+      }, 90000);
+    }
+    return () => { if (t) clearTimeout(t); };
+  }, [serverStarting]);
+
+  useEffect(() => {
+    if (localStorage.getItem('hideNotice')) setShowNotice(false);
+  }, []);
 
   return (
     <div className="landing-page">
@@ -133,9 +156,67 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
             Sign in as Guest (One-Click Sandbox)
           </button>
           
+          {/* Guest mode description */}
           <p style={{ color: '#64748b', fontSize: '0.8rem', textAlign: 'center', lineHeight: '1.4' }}>
             Guest mode provides interactive, safe access to sandboxed features and Jack's portfolio knowledge base.
           </p>
+
+          {/* Disclaimer Banner */}
+          {showNotice && (
+            <div style={{
+              marginTop: '1rem',
+              padding: '0.9rem',
+              borderRadius: 8,
+              background: 'linear-gradient(90deg, rgba(255,249,230,1) 0%, rgba(255,243,230,1) 100%)',
+              border: '1px solid #f59e0b',
+              color: '#92400e',
+              maxWidth: 420,
+              marginLeft: 'auto',
+              marginRight: 'auto',
+              textAlign: 'left'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
+                <div style={{ flex: 1 }}>
+                  <strong>Notice</strong>
+                  <div style={{ fontSize: '0.85rem', marginTop: 6 }}>
+                    Services may take a moment to start. First request after inactivity can be slow while the server spins up.
+                  </div>
+
+                  <details style={{ marginTop: 8, fontSize: '0.82rem', color: '#6b7280' }}>
+                    <summary style={{ cursor: 'pointer' }}>Learn more</summary>
+                    <div style={{ marginTop: 8 }}>
+                      We run on cost‑sensitive infrastructure and use third‑party LLMs on free tiers. This can cause longer response times or temporary unavailability during peak demand. If the app appears to hang after signing in, wait 30–60 seconds and try again. You may be redirected to the chat page while the backend starts.
+                    </div>
+                  </details>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+                  <button
+                    onClick={() => setShowNotice(false)}
+                    aria-label="Dismiss notice"
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#92400e',
+                      cursor: 'pointer',
+                      fontSize: '0.9rem'
+                    }}
+                  >
+                    Dismiss
+                  </button>
+
+                  {/* Inline server starting indicator */}
+                  {serverStarting ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {/* reuse your existing spinner image if you prefer */}
+                      <img src={sonicSpinImg} alt="starting" style={{ width: 18, height: 18 }} />
+                      <span style={{ fontSize: '0.82rem', color: '#6b7280' }}>Starting server…</span>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
       <div className="landing-right" style={{ backgroundImage: `url(${sonicImg})` }}>
