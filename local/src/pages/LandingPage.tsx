@@ -67,11 +67,18 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
   };
 
   const handleLogin = () => {
-  openSignIn({
-    // Keeps users on the same page after they finish logging in
-    fallbackRedirectUrl: window.location.origin
-  });
-};
+    openSignIn({
+      // Keeps users on the same page after they finish logging in
+      fallbackRedirectUrl: window.location.origin
+    });
+  };
+
+  useEffect(() => {
+  if (isAuthLoaded && isSignedIn) {
+    // Navigate to chat immediately if user is already signed in
+    navigate("/chat"); // Replace with your actual chat route
+  }
+}, [isAuthLoaded, isSignedIn, navigate]);
 
   return (
     <div className="landing-page">

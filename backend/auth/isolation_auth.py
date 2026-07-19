@@ -35,17 +35,23 @@ async def get_current_user(request: Request):
     
     token = auth_header.split(" ")[1]
     
+    # 1. GUEST BYPASS: Check for your sandbox token first
+    if token == "guest-sandbox-token":
+        logger.info("Guest session detected. Bypassing JWT verification.")
+        # Return a dictionary that mimics the Clerk payload structure
+        return {"sub": "guest-recruiter@example.com", "email": "guest@example.com"}
+
+    # 2. Existing JWT verification logic
     try:
-        # 1. Get header to find the 'kid' (Key ID)
+        # Get header to find the 'kid' (Key ID)
         header = jwt.get_unverified_header(token)
         jwks = get_clerk_public_key()
         
-        # 2. Find matching key
+        # Find matching key
         key_data = next(k for k in jwks['keys'] if k['kid'] == header['kid'])
         public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key_data)
         
-        # 3. Verify
-        # Adjust 'audience' if you have one configured, otherwise remove it
+        # Verify
         payload = jwt.decode(token, public_key, algorithms=["RS256"])
         return payload 
         
