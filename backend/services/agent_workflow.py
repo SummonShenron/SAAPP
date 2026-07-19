@@ -510,35 +510,59 @@ def generate_node(state: GraphState) -> dict:
 # GRADING NODE (sync)
 # ============================================================
 
+def _ensure_str(value):
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        return " ".join(map(str, value))
+    return str(value)
+
 def grading_node(state: GraphState) -> dict:
     logger.info("--- GRADING RETRIEVED CONTENT ---")
-    question = state["messages"][-1].content
-    documents = state.get("documents", [])
-    # If no documents, preserve state
+    # Defensive extraction of question
+    try:
+        raw_question = state.get("messages", [])[-1].content
+    except Exception:
+        raw_question = state.get("question", "")
+    question = _ensure_str(raw_question)
+
+    documents = state.get("documents", []) or []
     if not documents:
-        return { **state, "relevance_grade": "no" }
+        logger.info("No documents found; preserving state with relevance_grade=no")
+        return {**state, "relevance_grade": "no"}
+
+    # Ensure format_docs returns a string; if it returns list, join it
     combined_docs = format_docs(documents)
+    combined_docs = _ensure_str(combined_docs)
+
     formatted_prompt = GRADING_PROMPT.format(
         context=combined_docs,
         question=question,
-        history=""
+        history=state.get("history", "") or ""
     )
+
     try:
         logger.info("Grading response")
         response = llm.invoke(formatted_prompt)
         response_text = response.content if hasattr(response, "content") else str(response)
-        response_clean = response_text.lower().strip()
+        response_clean = _ensure_str(response_text).lower().strip()
         grade = "yes" if "yes" in response_clean else "no"
         logger.info(f"Document grading complete. Grade: {grade}")
-        for idx, doc in enumerate(state["documents"], start=1):
-            src = doc.metadata.get("source", "Unknown")
-            page = doc.metadata.get("page", doc.metadata.get("page_label", "N/A"))
+
+        for idx, doc in enumerate(documents, start=1):
+            try:
+                src = doc.metadata.get("source", "Unknown")
+                page = doc.metadata.get("page", doc.metadata.get("page_label", "N/A"))
+            except Exception:
+                src = "Unknown"
+                page = "N/A"
             logger.info(f"    - Doc {idx}: {src} (Page {page}) → Grade: {grade}")
-        # Preserve entire state
-        return { **state, "relevance_grade": grade }
+
+        return {**state, "relevance_grade": grade}
     except Exception as e:
-        logger.error(f"Grading failed: {e}. Defaulting to no.")
-        return { **state, "relevance_grade": "no" }
+        logger.exception(f"Grading failed: {e}. Defaulting to no.")
+        return {**state, "relevance_grade": "no"}
+
 
 # ============================================================
 # QUERY REWRITE NODE (sync)
@@ -546,27 +570,35 @@ def grading_node(state: GraphState) -> dict:
 
 def rewrite_query_node(state: GraphState) -> dict:
     logger.info("--- REWRITING QUERY FOR BETTER RETRIEVAL ---")
-    # Original question
-    original_question = state["messages"][-1].content
-    # Build rewrite prompt
-    formatted_prompt = REWRITING_PROMPT.format(question=original_question)
+    # Defensive extraction of original question
     try:
-        # Call LLM
+        raw_original = state.get("messages", [])[-1].content
+    except Exception:
+        raw_original = state.get("question", "")
+    original_question = _ensure_str(raw_original)
+
+    formatted_prompt = REWRITING_PROMPT.format(question=original_question)
+
+    try:
         response = llm.invoke(formatted_prompt)
         rewrite_text = response.content if hasattr(response, "content") else str(response)
-        rewrite_clean = rewrite_text.strip()
+        rewrite_clean = _ensure_str(rewrite_text).strip()
         logger.info(f"Query rewritten: '{original_question}' -> '{rewrite_clean}'")
-        # Replace the last HumanMessage with rewritten query
-        new_messages = list(state["messages"])
-        new_messages[-1] = HumanMessage(content=rewrite_clean)
-        # Return updated state
+
+        # Replace the last HumanMessage safely
+        new_messages = list(state.get("messages", []))
+        if new_messages:
+            new_messages[-1] = HumanMessage(content=rewrite_clean)
+        else:
+            new_messages = [HumanMessage(content=rewrite_clean)]
+
         return {
             **state,
             "messages": new_messages,
             "question": rewrite_clean
         }
     except Exception as e:
-        logger.error(f"Query rewrite node failed: {e}")
+        logger.exception(f"Query rewrite node failed: {e}")
         return state
 
 # ============================================================
