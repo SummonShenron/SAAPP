@@ -189,6 +189,7 @@ export function TimeWorkspace() {
     const [summaryModalOpen, setSummaryModalOpen] = useState(false);
     const [eventStartTime, setEventStartTime] = useState("");
     const [modalOpen, setModalOpen] = useState(false);
+    const PAAPP_BASE_URL = import.meta.env.VITE_PAAPP_BASE || "https://paapp-u2l9.onrender.com";
     const [modalType, setModalType] = useState<"event" | "log" | null>(null);
     const authenticatedFetch = async (url: string, options: RequestInit = {}) => {
         const token = await getToken();
@@ -234,7 +235,7 @@ async function handleDelete() {
     async function handleCreateEvent() {
     // 1. Save event in SAAPP (Port 8000)
     // Use your authenticatedFetch helper here!
-    await authenticatedFetch("https://saapp.onrender.com//api/events/create", {
+    await authenticatedFetch("https://saapp.onrender.com/api/events/create", {
         method: "POST",
         body: JSON.stringify({
             activity: eventTitle,
@@ -247,7 +248,7 @@ async function handleDelete() {
 
     // 2. Sync event to PAAPP (Port 8003)
     // You likely need to authenticate this call too!
-    await authenticatedFetch("https://saapp.onrender.com/api/saapp/event", {
+    await authenticatedFetch("https://${PAAPP_BASE_URL}/api/saapp/event", {
         method: "POST",
         body: JSON.stringify({
             activity: eventTitle,
