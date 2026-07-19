@@ -270,7 +270,7 @@ async function handleDelete() {
         const logs = await logRes.json();
         setEntries(Array.isArray(logs) ? logs : []);
         
-        const eventRes = await authenticatedFetch(`https://saapp.onrender.com//api/events/list`);
+        const eventRes = await authenticatedFetch(`https://saapp.onrender.com/api/events/list`);
         const eventsData = await eventRes.json();
         setEvents(Array.isArray(eventsData) ? eventsData : []); 
     } catch (error) {
