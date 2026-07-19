@@ -11,7 +11,8 @@ export default defineConfig({
     dedupe: ['react', 'react-dom'],
   },
   build: {
-    cssMinify: 'esbuild' // This forces Vite to use the more lenient minifier
+    // Setting this to false bypasses the CSS minifier entirely
+    cssMinify: false,
   },
   server: {
     proxy: {
