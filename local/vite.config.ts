@@ -10,7 +10,9 @@ export default defineConfig({
   resolve: {
     dedupe: ['react', 'react-dom'],
   },
-
+  build: {
+    cssMinify: 'esbuild' // This forces Vite to use the more lenient minifier
+  },
   server: {
     proxy: {
       "/api": {
