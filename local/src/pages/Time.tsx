@@ -257,6 +257,7 @@ async function handleDelete() {
     await authenticatedFetch("https://paapp-u2l9.onrender.com/api/saapp/event", {
         method: "POST",
         body: JSON.stringify({
+            username: localStorage.getItem('principal') || 'guest',
             activity: eventTitle,
             start_time: eventStartTime,
             date: eventDate,
