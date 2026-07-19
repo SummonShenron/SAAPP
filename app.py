@@ -68,7 +68,7 @@ app = FastAPI(lifespan=lifespan)
 app = FastAPI(title="Secure RAG Engine API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://saapp-delta.vercel.app", "https://saapp-9w9p265cy-jackharper0517-6113s-projects.vercel.app", "https://paapp-u2l9.onrender.com"], 
+    allow_origins=["https://saapp-delta.vercel.app", "https://saapp-9w9p265cy-jackharper0517-6113s-projects.vercel.app", "https://paapp-u2l9.onrender.com", "https://saapp-7o2j0iaih-jackharper0517-6113s-projects.vercel.app"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
