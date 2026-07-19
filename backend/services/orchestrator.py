@@ -2,7 +2,7 @@ import json
 import os
 import logging
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from langchain_huggingface import HuggingFaceEmbeddings
+
 from backend.services.agent_workflow import create_workflow
 from backend.services.insights_workflow import create_insight_workflow
 from backend.utils.db_utils import get_db
