@@ -131,7 +131,35 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
           >
             Sign In / Sign Up
           </button>
-
+          {/* Affiliate access note (place after Sign In button) */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              marginTop: 8,
+              fontSize: '0.85rem',
+              color: '#64748b',
+              width: '100%',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap'
+            }}
+          >
+            <div style={{ flex: '1 1 auto', minWidth: 180 }}>
+              <strong style={{ color: '#111827' }}>Affiliate access</strong>
+              <div style={{ marginTop: 4 }}>
+                <span style={{ display: 'inline-block', marginRight: 10 }}>
+                  <strong>A</strong> — Sonic docs
+                </span>
+                <span style={{ display: 'inline-block', marginRight: 10 }}>
+                  <strong>B</strong> — Dragon Ball docs
+                </span>
+                <span style={{ display: 'inline-block' }}>
+                  <strong>C</strong> — Jack's portfolio
+                </span>
+              </div>
+            </div>
+          </div>
           <div style={{ display: 'flex', alignItems: 'center', color: '#64748b', fontSize: '0.85rem', margin: '0.5rem 0' }}>
             <div style={{ flex: 1, height: '1px', backgroundColor: '#334155' }}></div>
             <span style={{ padding: '0 10px' }}>OR</span>
