@@ -13,6 +13,11 @@ const AFFILIATE_QUESTION_POOLS: Record<string, string[]> = {
     "Tell me about the Saiyan race.",
     "Who is Vegeta?",
     "What is a Senzu Bean?"
+  ],
+  'Affiliate_C': [
+    "Tell me about Jack's work history.",
+    "What technologies did Jack build SAAPP with?",
+    "How does SAAPP work?"
   ]
 };
 

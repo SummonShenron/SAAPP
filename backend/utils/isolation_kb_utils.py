@@ -55,6 +55,8 @@ def get_accessible_affiliates(username: str, user_directory: dict) -> dict:
         accessible_affiliates.append("Affiliate_A")
     if "Affiliate_B" in user_groups or "Global_Admins" in user_groups:
         accessible_affiliates.append("Affiliate_B") 
+    if "Affiliate_C" in user_groups or "Global_Admins" in user_groups:
+        accessible_affiliates.append("Affiliate_C")
     return {"accessible_affiliates": accessible_affiliates}
 
 def verify_user_ingest_access(username: str, affiliate: str) -> bool:

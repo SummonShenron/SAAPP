@@ -132,7 +132,7 @@ def get_me(current_user: dict = Depends(get_current_user)):
                 "clerk_id": clerk_id,
                 "email": email,
                 "username": email.split("@")[0] if email else "new_user",
-                "groups": ["Affiliate_A", "Affiliate_B", "PAAPP_Admins", "Taskboard_Admins"],
+                "groups": ["Affiliate_A", "Affiliate_B", "Affiliate_C", "PAAPP_Admins", "Taskboard_Admins"],
                 "created_at": datetime.utcnow()
             }
             users_col.insert_one(new_user)
