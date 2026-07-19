@@ -51,3 +51,9 @@ chat_history.json
 saved_conversations.json
 jack_admin.json
 .env
+# Ignore built assets
+/dist
+/local/dist
+local/live_bundle.js
+bundle.js
+index.html
