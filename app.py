@@ -68,9 +68,9 @@ app = FastAPI(lifespan=lifespan)
 app = FastAPI(title="Secure RAG Engine API")
 app.add_middleware(
     CORSMiddleware,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_origins=[
         "http://localhost:5173",
-        "https://*.vercel.app",
         "https://paapp-u2l9.onrender.com"
     ],
     allow_credentials=True,
