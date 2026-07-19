@@ -247,7 +247,7 @@ async function handleDelete() {
 
     // 2. Sync event to PAAPP (Port 8003)
     // You likely need to authenticate this call too!
-    await authenticatedFetch("http://https://saapp.onrender.com/api/saapp/event", {
+    await authenticatedFetch("https://saapp.onrender.com/api/saapp/event", {
         method: "POST",
         body: JSON.stringify({
             activity: eventTitle,
