@@ -31,7 +31,7 @@ from backend.services.search import discover_workspace_documents
 from local_function_app.function_app import run_ingestion_pipeline, HOT_FOLDER_DIR
 from backend.state.graph_state import GraphState
 from backend.services.insights_workflow import create_insight_workflow
-from backend.utils.app_utils import save_conversation, list_saved_conversations, load_saved_conversations, load_saved_conversation, save_chat_history, format_history_as_text, chat_sessions, get_db_dependency, serialize_doc
+from backend.utils.app_utils import save_conversation, list_saved_conversations, load_saved_conversations, load_saved_conversation, save_chat_history, format_history_as_text, chat_sessions, get_db_dependency, serialize_doc, load_chat_history
 from backend.utils.attachment_utils import process_user_attachment, ingest_doc_to_session
 from backend.utils.fallback_utils import rewrite_fallback
 from backend.logging.sass_logger import setup_logging
@@ -39,6 +39,7 @@ from backend.services.orchestrator import startup_services
 from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, verify_paapp_access, load_directory, seed_guest_tasks
 from backend.utils.db_utils import get_db
 from backend.auth.isolation_auth import get_current_user
+from contextlib import asynccontextmanager
 from settings import DB_DIR
 from backend.components.time_storage import TimeEntryCreate, add_time_entry, load_user_time, clear_user_time, TimeEntry, save_user_time
 import aiohttp
@@ -47,6 +48,24 @@ import aiohttp.resolver
 aiohttp.resolver.DefaultResolver = aiohttp.resolver.ThreadedResolver
 os.environ["AIOHTTP_NO_EXTENSIONS"] = "1"
 sys.path.append(os.path.join(os.path.dirname(__file__), "local_function_app"))
+chat_sessions = {}
+
+# 2. Define the startup/shutdown logic
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global chat_sessions
+    # This runs once when the server starts
+    try:
+        print("Loading chat history from database...")
+        chat_sessions = load_chat_history()
+    except Exception as e:
+        print(f"Error loading chat history: {e}")
+    yield
+    # Cleanup tasks would go here
+    chat_sessions = {}
+
+# 3. Pass the lifespan to the app
+app = FastAPI(lifespan=lifespan)
 app = FastAPI(title="Secure RAG Engine API")
 app.add_middleware(
     CORSMiddleware,
@@ -59,6 +78,7 @@ logger = setup_logging()  # Initialize the logger from backend/logging/sass_logg
 logger.info("--- BOOTING SECURE KNOWLEDGE ASSISTANT ---")
 services = startup_services()
 insight_workflow = services["insight_workflow"]
+chat_sessions = {}
 
 class LoginRequest(BaseModel):
     username: str
