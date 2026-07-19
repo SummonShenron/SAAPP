@@ -6,6 +6,7 @@ import HelpPanel from "../components/HelpPanel";
 interface LayoutProps {
   theme: string;
   toggleTheme: () => void;
+  onExit: () => void;
 }
 
 export function Layout({ theme, toggleTheme }: LayoutProps) {
