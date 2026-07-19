@@ -17,7 +17,7 @@ logger = logging.getLogger("SASS Logger")
 #     # We use subprocess.run, which handles the execution and waits for completion
 #     subprocess.run([sys.executable, script_path], check=True)
 
-
+chat_sessions = {}
 def serialize_doc(doc):
     if doc and "_id" in doc:
         doc["id"] = str(doc["_id"])
@@ -165,5 +165,3 @@ def format_history_as_text(messages) -> str:
         elif isinstance(msg, AIMessage):
             formatted.append(f"Assistant: {msg.content}")
     return "\n".join(formatted)
-
-chat_sessions = load_chat_history()

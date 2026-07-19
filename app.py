@@ -48,7 +48,6 @@ import aiohttp.resolver
 aiohttp.resolver.DefaultResolver = aiohttp.resolver.ThreadedResolver
 os.environ["AIOHTTP_NO_EXTENSIONS"] = "1"
 sys.path.append(os.path.join(os.path.dirname(__file__), "local_function_app"))
-chat_sessions = {}
 
 # 2. Define the startup/shutdown logic
 @asynccontextmanager
