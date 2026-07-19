@@ -202,7 +202,7 @@ export function TimeWorkspace() {
         });
     };
     async function handleCreateNote() {
-    await authenticatedFetch("http://127.0.0.1:8000/api/time/log", {
+    await authenticatedFetch("https://saapp.onrender.com/api/time/log", {
         method: "POST",
         body: JSON.stringify({
             activity: noteTitle,
@@ -223,8 +223,8 @@ async function handleDelete() {
     const isLogEntry = entries.some(e => e.id === selectedId);
     // Remove username query param; rely on the Authorization header instead
     const endpoint = isLogEntry
-        ? `http://127.0.0.1:8000/api/time/delete?id=${selectedId}`
-        : `http://127.0.0.1:8000/api/events/delete?id=${selectedId}`;
+        ? `http://https://saapp.onrender.com//api/time/delete?id=${selectedId}`
+        : `http://https://saapp.onrender.com//api/events/delete?id=${selectedId}`;
 
     await authenticatedFetch(endpoint, { method: "DELETE" });
 
@@ -234,7 +234,7 @@ async function handleDelete() {
     async function handleCreateEvent() {
     // 1. Save event in SAAPP (Port 8000)
     // Use your authenticatedFetch helper here!
-    await authenticatedFetch("http://127.0.0.1:8000/api/events/create", {
+    await authenticatedFetch("https://saapp.onrender.com//api/events/create", {
         method: "POST",
         body: JSON.stringify({
             activity: eventTitle,
@@ -247,7 +247,7 @@ async function handleDelete() {
 
     // 2. Sync event to PAAPP (Port 8003)
     // You likely need to authenticate this call too!
-    await authenticatedFetch("http://127.0.0.1:8003/api/saapp/event", {
+    await authenticatedFetch("http://https://saapp.onrender.com/api/saapp/event", {
         method: "POST",
         body: JSON.stringify({
             activity: eventTitle,
@@ -266,11 +266,11 @@ async function handleDelete() {
     setLoading(true);
     try {
         // Remove username from URL and headers
-        const logRes = await authenticatedFetch(`http://127.0.0.1:8000/api/time/list`);
+        const logRes = await authenticatedFetch(`https://saapp.onrender.com/api/time/list`);
         const logs = await logRes.json();
         setEntries(Array.isArray(logs) ? logs : []);
         
-        const eventRes = await authenticatedFetch(`http://127.0.0.1:8000/api/events/list`);
+        const eventRes = await authenticatedFetch(`https://saapp.onrender.com//api/events/list`);
         const eventsData = await eventRes.json();
         setEvents(Array.isArray(eventsData) ? eventsData : []); 
     } catch (error) {

@@ -28,7 +28,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [agentStatus, setAgentStatus] = useState<string>('');
   const [agentPath, setAgentPath] = useState<string[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
-  const BASE_URL = "http://127.0.0.1:8000";
+  const BASE_URL = "https://saapp.onrender.com/";
   const [sessionId, setSessionId] = useState<string>(() => {
     // new conversation → fresh ID
     return crypto.randomUUID();
