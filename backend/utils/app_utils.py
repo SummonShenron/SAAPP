@@ -53,18 +53,15 @@ def load_saved_conversations(username: str) -> list:
     with open(user_file, "r") as f:
         return json.load(f)
     
-def save_conversation(username: str, title: str):
-    """Serializes the current session and saves to MongoDB or local JSON."""
-    # (Serialization logic remains the same)
-    msg_list = []
-    for msg in chat_sessions.get(username, []):
-        msg_type = "human" if isinstance(msg, HumanMessage) else "ai" if isinstance(msg, AIMessage) else "system"
-        msg_list.append({"type": msg_type, "content": msg.content})
+def save_conversation(username: str, title: str, messages: list):
+    """Saves the explicitly provided messages to MongoDB."""
     
+    # We no longer need the for-loop reading from chat_sessions!
+    # The frontend is going to pass the formatted messages directly to us.
     new_entry = {
         "title": title.strip(),
         "timestamp": datetime.datetime.now().isoformat(),
-        "messages": msg_list
+        "messages": messages # Take it straight from the argument
     }
     
     # 1. Update MongoDB

@@ -168,6 +168,26 @@ export async function deleteDocument(username: string, affiliate: string, docId:
 }
 
 /**
+ * Save the current conversation state
+ */
+export async function saveConversation(title: string, messages: any[]): Promise<any> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/saved-conversations`, {
+    method: "POST",
+    headers: { 
+      "Content-Type": "application/json",
+      ...authHeaders 
+    },
+    body: JSON.stringify({ title, messages })
+  });
+
+  if (!res.ok) {
+    throw new Error("Failed to save conversation.");
+  }
+  return res.json();
+}
+
+/**
  * Dev utility login validator
  */
 export async function verifyIdentity(username: string): Promise<boolean> {
@@ -372,4 +392,5 @@ export const api = {
   isPaappAdmin,
   uploadAttachment,
   sendChatMessage,
+  saveConversation
 };

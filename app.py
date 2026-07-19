@@ -8,7 +8,7 @@ import subprocess
 import traceback
 from bson import ObjectId, errors
 from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Query, Form, Request, Depends
-from typing import List
+from typing import List, Dict, Any
 import uuid
 import traceback
 from gridfs import GridFS
@@ -97,7 +97,11 @@ class EventCreate(BaseModel):
     start_time: str
     date: str
     notes: str = ""
-    type: str = "event"    
+    type: str = "event"   
+
+class SaveConversationRequest(BaseModel):
+    title: str
+    messages: List[Dict[str, Any]] 
 
 @app.get("/api/me")
 def get_me(current_user: dict = Depends(get_current_user)):
@@ -600,12 +604,23 @@ async def delete_document(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/saved-conversations")
-async def get_saved_conversations(current_user = Depends(get_current_user)):
-    # Use the 'sub' claim from the verified JWT
-    username = current_user.get("sub") 
-    conversations = load_saved_conversations(username)
-    return {"titles": [c["title"] for c in conversations]}
+def save_conversation(username: str, title: str, messages: list):
+    """
+    Saves the messages passed directly from the frontend.
+    """
+    new_entry = {
+        "title": title.strip(),
+        "timestamp": datetime.datetime.now().isoformat(),
+        "messages": messages # Use the data provided by the frontend!
+    }
+    
+    db = get_db()
+    if db is not None:
+        db['saved_conversations'].update_one(
+            {"username": username},
+            {"$push": {"conversations": new_entry}},
+            upsert=True
+        )
 
 @app.get("/api/saved-conversations/{title}")
 async def get_saved_conversation(title: str, current_user = Depends(get_current_user)):
