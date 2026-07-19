@@ -1,7 +1,7 @@
 // src/api.ts
 
 // 1. Automatically adapt the backend URL based on development or production hosting
-const BASE_URL = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
+const BASE_URL = import.meta.env.VITE_API_BASE || "https://saapp.onrender.com";
 
 export interface ChatResponse {
   user: string;
