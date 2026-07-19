@@ -1,29 +1,26 @@
-fastapi>=0.110.0
-uvicorn>=0.28.0
-pydantic>=2.0
-langchain>=0.1.0
-langchain-core>=0.1.30
-langchain-community>=0.0.28
-langchain-huggingface>=0.0.1
-sentence-transformers>=2.5.0
-chromadb>=0.4.24
-pypdf>=4.0.0
-# watchfiles==0.22.0
-langchain-text-splitters>=0.0.1
-python-multipart>=0.0.5
-pdfplumber>=0.10.0
-python-docx>=1.1.0
-pandas>=2.2.0
-dateparser
-portalocker
+# Web Frameworks
+fastapi
+uvicorn
+gunicorn
+
+# Database & Cloud
 pymongo[srv]
 langchain-mongodb
-clerk-backend-api
+langchain-google-genai
+
+# Shared Utilities
+pydantic
+python-multipart
+pyjwt
+requests
+dateparser
+portalocker
 google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
-python-multipart>=0.0.5
-pyjwt 
-requests
-langchain-google-genai
-gunicorn
+
+# File Processing (Only if needed)
+pypdf
+pdfplumber
+python-docx
+pandas
