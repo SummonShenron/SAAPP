@@ -16,7 +16,7 @@ export const SavedConversationsPage: React.FC<SavedConversationsPageProps> = ({ 
   const [titles, setTitles] = useState<string[]>([]);
   const [selectedTitle, setSelectedTitle] = useState<string | null>(null);
   const [messages, setMessages] = useState<SavedMessage[]>([]);
-
+  const BASE_URL = "https://saapp.onrender.com/";
   const fetchWithAuth = async (url: string) => {
     const token = await getToken(); // Get the real Clerk token
     return fetch(url, {
@@ -28,7 +28,7 @@ export const SavedConversationsPage: React.FC<SavedConversationsPageProps> = ({ 
   };
 
   useEffect(() => {
-    fetchWithAuth(`/api/saved-conversations`)
+    fetchWithAuth(`${BASE_URL}api/saved-conversations`)
       .then(res => res.json())
       .then(data => setTitles(data.titles || []))
       .catch(() => setTitles([]));
@@ -36,7 +36,7 @@ export const SavedConversationsPage: React.FC<SavedConversationsPageProps> = ({ 
 
   const loadConversation = (title: string) => {
     setSelectedTitle(title);
-    fetchWithAuth(`/api/saved-conversations/${title}`)
+    fetchWithAuth(`${BASE_URL}api/saved-conversations/${title}`)
       .then(res => res.json())
       .then(data => setMessages(data.messages || []))
       .catch(() => setMessages([]));

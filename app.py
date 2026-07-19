@@ -599,7 +599,7 @@ async def delete_document(
         logger.error(f"Deletion failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Update these two endpoints in app.py
+
 @app.get("/api/saved-conversations")
 async def get_saved_conversations(current_user = Depends(get_current_user)):
     # Use the 'sub' claim from the verified JWT

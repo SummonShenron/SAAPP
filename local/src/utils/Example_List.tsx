@@ -15,9 +15,9 @@ const AFFILIATE_QUESTION_POOLS: Record<string, string[]> = {
     "What is a Senzu Bean?"
   ],
   'Affiliate_C': [
-    "Tell me about Jack's work history.",
-    "What technologies did Jack build SAAPP with?",
-    "How does SAAPP work?"
+    "Tell me about Jack's work.",
+    "What is the Story of the Sonic Assistant",
+    "why did Jack Build the Sonic Assistant?"
   ]
 };
 
