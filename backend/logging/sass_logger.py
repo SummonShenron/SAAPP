@@ -6,7 +6,7 @@ def setup_logging():
     print("DEBUG: Logger setup is executing!")
     logger = logging.getLogger("SASS Logger")
     if not logger.handlers:
-        logger.setLevel(logging.DEBUG)
+        logger.setLevel(logging.INFO)
         # 2. Define your desired format
         formatter = logging.Formatter(
             '%(levelname)s - %(message)s'

@@ -222,10 +222,16 @@ async function handleDelete() {
     if (!selectedId) return;
 
     const isLogEntry = entries.some(e => e.id === selectedId);
+    if (!isLogEntry) {
+    await authenticatedFetch("https://paapp-u2l9.onrender.com/api/saapp/delete", {
+        method: "POST",
+        body: JSON.stringify({ id: selectedId })
+    });
+}
     // Remove username query param; rely on the Authorization header instead
     const endpoint = isLogEntry
-        ? `http://https://saapp.onrender.com//api/time/delete?id=${selectedId}`
-        : `http://https://saapp.onrender.com//api/events/delete?id=${selectedId}`;
+        ? `https://saapp.onrender.com/api/time/delete?id=${selectedId}`
+        : `https://saapp.onrender.com/api/events/delete?id=${selectedId}`;
 
     await authenticatedFetch(endpoint, { method: "DELETE" });
 
