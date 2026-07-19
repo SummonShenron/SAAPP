@@ -1,26 +1,15 @@
-# Web Frameworks
 fastapi
 uvicorn
 gunicorn
-
-# Database & Cloud
-pymongo[srv]
+pydantic
+pydantic-settings
+langchain
+langchain-core
+langchain-community
 langchain-mongodb
 langchain-google-genai
-
-# Shared Utilities
-pydantic
-python-multipart
-pyjwt
+pymongo
 requests
-dateparser
-portalocker
+python-dotenv
+python-multipart
 google-api-python-client
-google-auth-httplib2
-google-auth-oauthlib
-
-# File Processing (Only if needed)
-pypdf
-pdfplumber
-python-docx
-pandas
