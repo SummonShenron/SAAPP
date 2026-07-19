@@ -31,6 +31,7 @@ from backend.components import taskboard
 from backend.state.graph_state import GraphState, route_after_grading
 from langgraph.graph import StateGraph, START, END
 from backend.utils.db_utils import get_db
+from backend.utils.normalize_utils import ensure_str
 
 logger = logging.getLogger("SASS Logger")
 
@@ -510,13 +511,6 @@ def generate_node(state: GraphState) -> dict:
 # GRADING NODE (sync)
 # ============================================================
 
-def _ensure_str(value):
-    if isinstance(value, str):
-        return value
-    if isinstance(value, (list, tuple)):
-        return " ".join(map(str, value))
-    return str(value)
-
 def grading_node(state: GraphState) -> dict:
     logger.info("--- GRADING RETRIEVED CONTENT ---")
     # Defensive extraction of question
@@ -524,7 +518,7 @@ def grading_node(state: GraphState) -> dict:
         raw_question = state.get("messages", [])[-1].content
     except Exception:
         raw_question = state.get("question", "")
-    question = _ensure_str(raw_question)
+    question = ensure_str(raw_question)
 
     documents = state.get("documents", []) or []
     if not documents:
@@ -533,7 +527,7 @@ def grading_node(state: GraphState) -> dict:
 
     # Ensure format_docs returns a string; if it returns list, join it
     combined_docs = format_docs(documents)
-    combined_docs = _ensure_str(combined_docs)
+    combined_docs = ensure_str(combined_docs)
 
     formatted_prompt = GRADING_PROMPT.format(
         context=combined_docs,
@@ -545,7 +539,7 @@ def grading_node(state: GraphState) -> dict:
         logger.info("Grading response")
         response = llm.invoke(formatted_prompt)
         response_text = response.content if hasattr(response, "content") else str(response)
-        response_clean = _ensure_str(response_text).lower().strip()
+        response_clean = ensure_str(response_text).lower().strip()
         grade = "yes" if "yes" in response_clean else "no"
         logger.info(f"Document grading complete. Grade: {grade}")
 
@@ -575,14 +569,14 @@ def rewrite_query_node(state: GraphState) -> dict:
         raw_original = state.get("messages", [])[-1].content
     except Exception:
         raw_original = state.get("question", "")
-    original_question = _ensure_str(raw_original)
+    original_question = ensure_str(raw_original)
 
     formatted_prompt = REWRITING_PROMPT.format(question=original_question)
 
     try:
         response = llm.invoke(formatted_prompt)
         rewrite_text = response.content if hasattr(response, "content") else str(response)
-        rewrite_clean = _ensure_str(rewrite_text).strip()
+        rewrite_clean = ensure_str(rewrite_text).strip()
         logger.info(f"Query rewritten: '{original_question}' -> '{rewrite_clean}'")
 
         # Replace the last HumanMessage safely
