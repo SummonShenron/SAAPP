@@ -57,3 +57,4 @@ jack_admin.json
 local/live_bundle.js
 bundle.js
 index.html
+settings.toml
