@@ -54,17 +54,32 @@ def load_saved_conversations(username: str) -> list:
         return json.load(f)
    
 def save_conversation(username: str, title: str, messages: list):
-    """Saves the explicitly provided messages to MongoDB."""
+    """Saves conversation messages to MongoDB and local JSON after serializing LangChain objects."""
     
-    # We no longer need the for-loop reading from chat_sessions!
-    # The frontend is going to pass the formatted messages directly to us.
+    # 1. Convert LangChain message objects into plain dictionaries
+    serialized_messages = []
+    for msg in messages:
+        if hasattr(msg, "content"):
+            msg_type = "human"
+            if isinstance(msg, AIMessage) or getattr(msg, "type", "") == "ai":
+                msg_type = "ai"
+            elif isinstance(msg, SystemMessage) or getattr(msg, "type", "") == "system":
+                msg_type = "system"
+                
+            serialized_messages.append({
+                "type": msg_type,
+                "content": msg.content
+            })
+        elif isinstance(msg, dict):
+            serialized_messages.append(msg)
+
     new_entry = {
         "title": title.strip(),
         "timestamp": datetime.datetime.now().isoformat(),
-        "messages": messages # Take it straight from the argument
+        "messages": serialized_messages  # Now populated with real serialized data!
     }
     
-    # 1. Update MongoDB
+    # 2. Update MongoDB
     db = get_db()
     if db is not None:
         db['saved_conversations'].update_one(
@@ -72,11 +87,11 @@ def save_conversation(username: str, title: str, messages: list):
             {"$push": {"conversations": new_entry}},
             upsert=True
         )
-        logger.info(f"Saved conversation '{title}' for {username} to MongoDB.")
+        logger.info(f"Saved conversation '{title}' for {username} to MongoDB with {len(serialized_messages)} messages.")
     
-    # 2. Update Local JSON (Always keep this as your safety net)
-    user_conversations = load_saved_conversations(username) # This will pull from Mongo if available
-    user_conversations.append(new_entry) # Add to the list
+    # 3. Update Local JSON safety net
+    user_conversations = load_saved_conversations(username) 
+    user_conversations.append(new_entry) 
     with open(get_user_file_path(username), "w") as f:
         json.dump(user_conversations, f, indent=4)
 

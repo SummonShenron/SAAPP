@@ -73,11 +73,17 @@ def process_user_attachment(att):
 
     response = llm.invoke(prompt)
 
-    # Normalize LLM output
+    # Normalize LLM output safely
     if hasattr(response, "content"):
         summary_text = response.content
     else:
         summary_text = str(response)
+
+    # Handle cases where summary_text is a list of blocks/parts
+    if isinstance(summary_text, list):
+        summary_text = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in summary_text])
+    elif not isinstance(summary_text, str):
+        summary_text = str(summary_text)
 
     return summary_text.strip()
 

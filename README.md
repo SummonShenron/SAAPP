@@ -1,56 +1,52 @@
-## Why? ##
+# Sonic Assistant (SAAPP)
 
-I created the Sonic Assistant (SAAPP) to prove I can independently architect, build, and deploy a modern AI system leveraging both RAG and Agentic workflows. It includes and demonstrates:
+## Why?
+I created the Sonic Assistant (SAAPP) to prove I can independently architect, build, and deploy a modern, cloud-native AI system leveraging both RAG and Agentic workflows. It includes and demonstrates:
+* Full-stack cloud engineering (React, Vite, FastAPI)
+* Cloud-ready architecture (Deployed on Vercel & Render using MongoDB and Google Gemini API)
+* Agentic workflows with LangGraph
+* Retrieval grading, query rewriting, and multi-step reasoning
+* Multi-tenant secure data isolation
+* Asynchronous token streaming
+* Hybrid retrieval and vector indexing powered by MongoDB
 
-full-stack engineering
-cloud-ready architecture
-agentic workflows
-retrieval grading
-query rewriting
-multi-step reasoning
-secure data isolation
-async streaming
-vector + lexical + hybrid retrieval
+---
 
-## Summary and Explanation of Workflow ##
+## Architecture & Tech Stack
+* **Frontend:** React, Vite, Tailwind/Custom CSS, deployed globally on **Vercel** (`sonicassistant.com`).
+* **Backend:** FastAPI service deployed on **Render** (`https://saapp.onrender.com`).
+* **AI Engine:** Google **Gemini API** for high-performance generation and reasoning.
+* **Database & Vector Store:** **MongoDB** for secure multi-tenant data storage and retrieval.
+* **Authentication:** **Clerk** integrated with role-based access control (RBAC).
 
-1. Security & Identity Controls
-The application implements a multi-tenant security architecture designed to isolate data between different "Affiliates/Knowledge Bases" (e.g., Sonic Lore vs. Dragon Ball Data).
+---
 
-Simulated Identity Context: the landing page provides users to select a "Persona" (e.g., jack_admin or sonic_user), which is stored in localStorage as x-user-id -- in an azure environment, this would get passed to the backend and a GraphAPI lookup would ensue to obtain the users entra id group memberships via a directory.read.all configured client permission in the app registration
+## Summary and Explanation of Workflow
 
-Role-Based Access Control (RBAC): The backend simulates an Entra ID environment. It maps users to specific authorized "affiliates" via /api/affiliates and checks for "Ingester" permissions via /api/user/groups. This ensures data isolation on the user access level
+### Security & Identity Controls
+The application implements a multi-tenant security architecture designed to isolate data between different "Affiliates / Knowledge Bases" (e.g., Sonic Lore vs. Dragon Ball Data).
+* **Identity Context:** Authenticated via Clerk, mapping user identities and session states to authorized organization scopes.
+* **Role-Based Access Control (RBAC):** The backend maps users to specific authorized "affiliates" via `/api/affiliates` and checks permissions via `/api/user/groups`. 
+* **Data Isolation:** When performing a search or ingestion, the system enforces a strict scope query against MongoDB. Only documents tagged with an affiliate allowed to the current user are retrieved, preventing cross-tenant data leakage at the query level.
+* **Multi-KB Access:** Users with access to multiple knowledge bases can query them simultaneously or scope their responses down to a specific target KB.
 
-Data Isolation: When performing a search or ingestion, the system enforces a strict scope. Only documents tagged with an affiliate allowed to the current user are retrieved, ensuring cross-tenant data leakage is prevented at the vector database query level (Chroma DB filters). This means the model cannot hallucinate data from other knowledge bases because it can only respond with chunks tagged with the scoped affiliate(s)
+### LangGraph & Agent Workflows
+The model coordinates its reasoning through a compiled LangGraph workflow that manages conversation flow by routing queries and responses through specialized nodes and edges:
+* **GraphState:** Tracks conversation history, authenticated user identity, permitted affiliate scope, and retrieved documents across every step.
+* **Workflow Execution:**
+  * **Routing:** `route_user_query` determines whether to trigger the `retrieve_node` agent (for document-backed questions) or the `conversational_node` agent (for general chat).
+  * **Retrieval & Grading:** `retrieve_node` fetches documents based on user scope from MongoDB. The `grading_node` evaluates relevance, returning a binary yes/no response.
+  * **Rewrite & Generate:** If retrieval quality is low, `rewrite_query_node` rephrases the question before trying again. Finally, `generate_node` synthesizes the final response using Gemini.
 
-Multi-KB Access: While data is isolated between KB's, users with access to multiple KB's can still query them all at once or filter the response to a specific KB.
+### Search Strategies
+The system uses a unified search service designed to adapt its strategy based on query intent:
+* **Intelligent Routing:** Analyzes query text to pick the optimal retrieval strategy:
+  * **Lexical:** Triggered by temporal or keyword markers (e.g., "latest", "date", "timeline").
+  * **Hybrid:** Triggered by comparative keywords (e.g., "compare", "analyze", "connection").
+  * **Vector:** Default fallback for semantic queries.
+* **Graph-Enhanced Context:** Integrates with a NetworkX knowledge graph to surface multi-hop entity relationships and enrich retrieved context.
 
-2. LangGraph & Agent Workflows
-This is how the model "thinks" via a compiled LangGraph workflow that manages the conversation flow by routing queries and responses through several nodes and edges such as a retrieval node, a grading node, and a generation node.
-
-GraphState: Every step of the process shares a GraphState object, which tracks conversation history, the authenticated user identity, the permitted affiliate scope, and retrieved documents.
-
-Workflow Execution:
-
-Routing: The route_user_query function decides whether to trigger the retrieve_node agent (for informational/document-based questions) or the conversational_node agent (for greetings or general chat).
-
-Retrieval & Grading: The retrieve_node agent fetches documents based on the user's scope. These are then passed to the grading_node agent which evaluates relevance and returns a yes/no response.
-
-Rewrite & Generate: If the retrieval quality is poor and the grading_node agent responds with "no", the rewrite_query_node agent is triggered to rephrase the question before attempting retrieval again. Finally, the generate_node synthesizes the response. If the models first response returns a non-contextual answer like "I can't find the answer", it will rewrite the query one more time to try to find an actual answer.
-
-3. Search Strategies
-The system uses a unified search service designed to adapt its strategy based on the type of query.
-
-Intelligent Routing: The _detect_routing_strategy function analyzes the query text for specific markers:
-
-Lexical: Triggered by temporal or keyword markers (e.g., "latest", "date", "timeline").
-
-Hybrid: Triggered by complex or analytical keywords (e.g., "compare", "analyze", "connection") to handle multi-clause or comparative questions.
-
-Vector: The default fallback for general semantic queries.
-
-Graph-Enhanced Context: In addition to standard vector search, the system integrates with a knowledge_graph (using NetworkX) to provide multi-hop content relationships, enriching the retrieved context with explicit entity connections
-
+---
 ## Requirements & Automation
 
 The application uses a setup script designed for **Windows (PowerShell)**. The script leverages Windows Package Manager (`winget`) to check for and interactively install system-level dependencies if they are missing upon user consent.
@@ -68,13 +64,13 @@ PowerShell scripts are provided in the root directory to automate cross-platform
 
 > *Note: If you encounter a script execution policy restriction in your terminal, run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` before executing.*
 
-### 1. First-Time Environment Setup
-If you are running the project for the first time, simply execute the bootstrapper script:
+### First-Time Environment Setup
+If you are running the project for the first time, execute the bootstrapper script:
+```powershell
 ./start.ps1
-
 What this script automates for you:
 
-Looks for Python 3.11, Node.js, and Ollama and prompts for consent to install via winget if missing.
+Checks for Python 3.11 and Node.js, prompting for consent to install via winget if missing.
 
 Provisions an isolated Python virtual environment (.venv) and upgrades pip.
 
@@ -82,49 +78,40 @@ Installs all backend dependencies from requirements.txt.
 
 Compiles and installs frontend UI dependencies (npm install).
 
-Wakes up the Ollama background engine and pulls the Llama 3 model file.
+Configures MongoDB connection hooks and cleans stale collections.
 
-Purges stale indexes and triggers the initialization chunking pipeline (ingest.py).
+Triggers the initialization chunking pipeline (ingest.py) to seed initial documents.
 
 Launches the FastAPI server and Vite frontend dev server in separate background instances.
 
 2. Subsequent Faster Bootups
-Once the initial configuration is complete, you can bypass dependency and model installation checks to instantly launch the web app by running:
+Once the initial configuration is complete, you can bypass dependency checks to instantly launch the local web app by running:
+
+PowerShell
 ./local_start.ps1
-
 Optional: Enable Admin Features with PAAPP
-SAAPP can run entirely on its own.
+SAAPP can run entirely on its own for chat and RAG workloads. However, to unlock the full admin feature set (including calendar tools, sticky notes, time tracking, and multi-agent workflows), you can run the PAAPP headless agent locally:
 
-However, to unlock the full admin feature set, you must also run the PAAPP
-headless agent locally.
-
-Admin features include:
-
-Calendar tools
-
-Sticky notes
-
-Time tracking
-
-Multi‑agent workflows
-
-Clone PAAPP (optional but recommended)
-
-git clone https://github.com/SummonShenron/PAAPP
+Bash
+git clone [https://github.com/SummonShenron/PAAPP](https://github.com/SummonShenron/PAAPP)
 cd PAAPP
 pip install -r requirements.txt
 uvicorn local_agent.headless_app:app --reload --port 8000
+SAAPP automatically detects PAAPP via http://127.0.0.1:8000/api/headless-chat.
 
-SAAPP will automatically detect PAAPP via:
-http://127.0.0.1:8000/api/headless-chat
-
-
-## Automated Data Ingestion Pipelines
-
+Automated Data Ingestion Pipelines
 The project implements a two-tiered data pipeline architecture to separate initial system bootstrapping from runtime data adjustments:
 
-### 1. Database Bootstrapper (`ingest.py`)
-When the application is launched for the first time via `start.ps1`, the system automatically invokes the bootstrapper script.
-- **Purpose:** Purges stale database remnants to prevent vector index collisions, scans the root drop-zones for default data, splits content into clean `600-token` overlapping semantic structures, and locks down the initial vector blocks inside `chroma_db/`.
+1. Database Bootstrapper (ingest.py)
+When the application is launched for the first time via start.ps1, the system automatically invokes the bootstrapper script.
 
-if you would like to ingest new material, you must place a new .pdf inside either the index-db\Affiliate_A or Affilaite_B (or create a new one) folders, then navigate to the function app directory (cd local-function-app) and run start.ps1 to start it. it will pick up and ingest the new files and exit upon completion. Additionally, you can also use the self-service page in the app itself to ingest and remove material.
+Purpose: Purges stale database remnants to prevent vector index collisions, scans the root drop-zones for default data, splits content into clean 600-token overlapping semantic structures, and indexes them securely into MongoDB.
+
+2. Adding New Material
+If you would like to ingest new material locally:
+
+Place a new .pdf inside either index-db\Affiliate_A or index-db\Affiliate_B (or create a custom affiliate folder).
+
+Navigate to the function app directory (cd local-function-app) and run its start.ps1 script to process and push the new files into MongoDB.
+
+Alternatively, you can use the built-in Self-Service page directly inside the web application UI to upload, ingest, and manage material on the fly.

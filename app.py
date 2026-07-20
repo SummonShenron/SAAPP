@@ -67,8 +67,7 @@ async def lifespan(app: FastAPI):
     chat_sessions = {}
 
 # 3. Pass the lifespan to the app
-app = FastAPI(lifespan=lifespan)
-app = FastAPI(title="Secure RAG Engine API")
+app = FastAPI(title="Secure RAG Engine API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"https://.*\.vercel\.app",
@@ -76,7 +75,9 @@ app.add_middleware(
         "http://127.0.0.1:8080", 
         "http://localhost:8080",
         "http://localhost:5173",
-        "https://paapp-u2l9.onrender.com"
+        "https://paapp-u2l9.onrender.com",
+        "https://sonicassistant.com",
+        "https://www.sonicassistant.com/"
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -268,7 +269,8 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
         # extract title
         parts = question.split("save conversation", 1)
         title = parts[1].strip() or f"Conversation_{datetime.datetime.now().isoformat()}"
-        save_conversation(username, title)
+        # Include the chat history messages as the third argument
+        save_conversation(username, title, chat_sessions.get(username, []))
         return await streamThinkingThen(f"Conversation '{title}' saved successfully.")
     if question.lower().startswith("load conversation"):
         title = question.split("load conversation", 1)[1].strip()
@@ -329,10 +331,8 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
     # ---------- Run LangGraph ONCE (no streaming, logic-only) ----------
     try:
         attachment_summaries = []
-
         if request.attachments:
             logger.info(f"Processing {len(request.attachments)} attachments for {username}")
-
             for att in request.attachments:
                 # 1. Extract + save raw text into session store
                 ingest_result = ingest_doc_to_session(username, session_id, att)
@@ -340,9 +340,6 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                 summary = process_user_attachment(att)
                 if summary:
                     attachment_summaries.append(summary)
-
-
-
         # Inject summaries into graph state BEFORE workflow runs
         initial_state["attachment_summaries"] = attachment_summaries
         if attachment_summaries:
@@ -357,7 +354,13 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                     }
                 ))
             initial_state["documents"] = docs
-
+        final_state = {
+            "insight_answer": None,
+            "relevance_grade": "conversational",
+            "target_scope": target_scope,
+            "documents": [],
+            "original_question": question
+        }
         # Run workflow normally
         try:
             if settings.LOCAL_DEV:
@@ -460,7 +463,6 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
 
             # Stream completion and history saving
             yield f"data: {json.dumps({'event': 'final_generation', 'text': full_response})}\n\n"
-            chat_sessions[username].append(HumanMessage(content=question))
             chat_sessions[username].append(AIMessage(content=full_response))
             save_chat_history()
             logger.info("--- End of token stream ---")
