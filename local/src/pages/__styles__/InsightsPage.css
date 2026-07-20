@@ -4,3 +4,34 @@
   border-radius: 12px;
   height: 350px;
 }
+
+/* --- Mobile Responsive Overrides for Insights --- */
+@media (max-width: 768px) {
+  .insights-container,
+  .insights-grid {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 1rem !important;
+    width: 100% !important;
+    box-sizing: border-box;
+    padding: 1rem !important;
+  }
+
+  /* Make individual stat cards take full width */
+  .insight-card,
+  .stat-card {
+    width: 100% !important;
+  }
+
+  /* Scale SVG charts and visual containers for small screens */
+  .chart-container,
+  .activity-breakdown-chart {
+    width: 100% !important;
+    overflow-x: auto;
+  }
+  
+  .chart-container svg {
+    max-width: 100%;
+    height: auto;
+  }
+}

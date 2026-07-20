@@ -234,3 +234,52 @@ table.sa-table tr.selected-row td {
   color: #ffffff !important;
   font-weight: 600;
 }
+
+/* --- Mobile Viewport Overrides (Phones under 768px) --- */
+@media (max-width: 768px) {
+  .time-workspace {
+    flex-direction: column !important;
+    padding: 12px !important;
+    gap: 16px !important;
+  }
+
+  .calendar-pane,
+  .details-pane {
+    width: 100% !important;
+  }
+
+  /* Make calendar toolbar wrap its action buttons cleanly on mobile */
+  .calendar-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .calendar-toolbar .sa-btn {
+    flex: 1;
+    min-width: 45%;
+    padding: 8px 10px;
+    font-size: 0.85rem;
+    text-align: center;
+  }
+
+  /* Optimize modal sizing and inputs for mobile viewports */
+  .modal {
+    width: 90% !important;
+    max-width: 400px;
+    padding: 1.25rem !important;
+    box-sizing: border-box;
+  }
+
+  .modal .sa-input,
+  .modal textarea {
+    font-size: 16px !important; /* Prevents auto-zoom on iOS */
+    padding: 0.65rem;
+  }
+
+  .primary-action-btn {
+    width: 100%;
+    margin-top: 0.5rem;
+  }
+}

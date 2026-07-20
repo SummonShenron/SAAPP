@@ -14,17 +14,11 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
   const [isAdmin, setIsAdmin] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [closing, setClosing] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const toggleHelp = () => {
-    if (showHelp) {
-      setClosing(true);
-      setTimeout(() => {
-        setShowHelp(false);
-        setClosing(false);
-      }, 250);
-    } else {
-      setShowHelp(true);
-    }
+    setShowHelp(!showHelp);
+    setMobileMenuOpen(false);
   };
 
   const handleLogout = async () => {
@@ -42,32 +36,68 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
     }
   }, []);
 
+  const handleNavClick = (path: string) => {
+    navigate(path);
+    setMobileMenuOpen(false);
+  };
+
   return (
     <div className={`portal-container ${theme === "shadow" ? "theme-shadow" : ""}`}>
       <nav className="menu-navigator">
         <div className="nav-logo" onClick={() => navigate("/")}>
           {theme === "sonic" ? "⚡Sonic Assistant" : "⚡Shadow Engine"}
         </div>
-        <div className="nav-links">
+
+        {/* Desktop Links */}
+        <div className="nav-links desktop-only">
           <span onClick={toggleTheme} className="theme-toggle-btn">
             {theme === "sonic" ? "Hero" : "Dark"}
           </span>
           <span onClick={() => navigate("/chat")}>Chat</span>
-          <span onClick={() => navigate("/saved")}>Saved Conversations</span>
+          <span onClick={() => navigate("/saved")}>Saved</span>
           <span onClick={() => navigate("/self-service")}>Self Service</span>
-          {isAdmin && (
-            <span onClick={() => navigate("/time-tracking")}>
-              Time Tracking
-            </span>
-          )}
+          {isAdmin && <span onClick={() => navigate("/time-tracking")}>Time Tracking</span>}
           <span onClick={() => navigate("/taskboard")}>Taskboard</span>
           <span onClick={() => navigate("/insights")}>Insights</span>
           <span onClick={toggleHelp}>Help</span>
+          <span onClick={handleLogout} className="nav-exit">Disconnect</span>
+        </div>
+
+        {/* Mobile Quick Actions Header */}
+        <div className="mobile-actions-group">
           <span onClick={handleLogout} className="nav-exit">
-            Disconnect Session
+            Disconnect
           </span>
+          <button 
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="hamburger-btn"
+            aria-label="Toggle menu"
+          >
+            {mobileMenuOpen ? "✕" : "☰"}
+          </button>
         </div>
       </nav>
+
+      {/* Mobile Slide-Down Drawer for Pages */}
+      {mobileMenuOpen && (
+        <div className="mobile-drawer">
+          <div className="mobile-drawer-header">
+            <span>Workspace Navigation</span>
+            <span onClick={toggleTheme} className="theme-toggle-btn-mobile">
+              Mode: {theme === "sonic" ? "⚡ Sonic" : "🌑 Shadow"}
+            </span>
+          </div>
+          <div className="mobile-drawer-links">
+            <span onClick={() => handleNavClick("/chat")}>Chat Workspace</span>
+            <span onClick={() => handleNavClick("/saved")}>Saved Conversations</span>
+            <span onClick={() => handleNavClick("/self-service")}>Self Service</span>
+            {isAdmin && <span onClick={() => handleNavClick("/time-tracking")}>⏱ Time Tracking</span>}
+            <span onClick={() => handleNavClick("/taskboard")}>Taskboard</span>
+            <span onClick={() => handleNavClick("/insights")}>Insights</span>
+            <span onClick={() => { toggleHelp(); setMobileMenuOpen(false); }}>Help Panel</span>
+          </div>
+        </div>
+      )}
 
       {/* 1. Main page content */}
       <Outlet />

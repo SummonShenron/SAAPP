@@ -173,3 +173,77 @@
   font-size: 0.85rem;
   opacity: 0.8;
 }
+
+/* Hide mobile back button by default on desktop */
+.mobile-back-btn {
+  display: none;
+}
+
+/* --- Mobile Viewport Overrides (Phones under 768px) --- */
+@media (max-width: 768px) {
+  .saved-conversations-container {
+    flex-direction: column;
+    height: calc(100vh - 60px);
+    overflow: hidden;
+  }
+
+  .saved-conversations-sidebar {
+    width: 100% !important;
+    height: 100%;
+    border-right: none;
+  }
+
+  .saved-conversations-viewer {
+    width: 100% !important;
+    height: 100%;
+    display: none;
+  }
+
+  /* When a conversation is selected, hide the sidebar list and show the chat viewer full screen */
+  .saved-conversations-container.chat-active .saved-conversations-sidebar {
+    display: none;
+  }
+
+  .saved-conversations-container.chat-active .saved-conversations-viewer {
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Style the mobile back button header */
+  .mobile-back-btn {
+    display: inline-flex;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #f8fafc;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    margin-right: 12px;
+    flex-shrink: 0;
+  }
+
+  .viewer-header-row {
+    display: flex;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    background: rgba(18, 24, 36, 0.6);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .viewer-title {
+    margin: 0;
+    font-size: 0.95rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .saved-chat-wrapper {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem;
+  }
+}
