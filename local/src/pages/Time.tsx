@@ -191,6 +191,7 @@ export function TimeWorkspace() {
     const [modalOpen, setModalOpen] = useState(false);
     const PAAPP_BASE_URL = import.meta.env.VITE_PAAPP_BASE || "https://paapp-u2l9.onrender.com";
     const [modalType, setModalType] = useState<"event" | "log" | null>(null);
+
     const authenticatedFetch = async (url: string, options: RequestInit = {}) => {
         const token = await getToken();
         return fetch(url, {
@@ -202,98 +203,95 @@ export function TimeWorkspace() {
             }
         });
     };
+
     async function handleCreateNote() {
-    await authenticatedFetch("https://saapp.onrender.com/api/time/log", {
-        method: "POST",
-        body: JSON.stringify({
-            activity: noteTitle,
-            duration_hours: Math.floor(noteMinutes / 60),
-            duration_minutes: noteMinutes % 60,
-            date: noteDate,
-            notes: noteBody,
-            type: "log"
-        })
-    });
-    setModalOpen(false);
-    fetchEntries();
-}
+        await authenticatedFetch("https://saapp.onrender.com/api/time/log", {
+            method: "POST",
+            body: JSON.stringify({
+                activity: noteTitle,
+                duration_hours: Math.floor(noteMinutes / 60),
+                duration_minutes: noteMinutes % 60,
+                date: noteDate,
+                notes: noteBody,
+                type: "log"
+            })
+        });
+        setModalOpen(false);
+        fetchEntries();
+    }
 
-async function handleDelete() {
-    if (!selectedId) return;
+    async function handleDelete() {
+        if (!selectedId) return;
 
-    const isLogEntry = entries.some(e => e.id === selectedId);
-    if (!isLogEntry) {
-    await authenticatedFetch("https://paapp-u2l9.onrender.com/api/saapp/delete", {
-        method: "POST",
-        body: JSON.stringify({ id: selectedId })
-    });
-}
-    // Remove username query param; rely on the Authorization header instead
-    const endpoint = isLogEntry
-        ? `https://saapp.onrender.com/api/time/delete?id=${selectedId}`
-        : `https://saapp.onrender.com/api/events/delete?id=${selectedId}`;
+        const isLogEntry = entries.some(e => e.id === selectedId);
+        if (!isLogEntry) {
+            await authenticatedFetch("https://paapp-u2l9.onrender.com/api/saapp/delete", {
+                method: "POST",
+                body: JSON.stringify({ id: selectedId })
+            });
+        }
+        
+        const endpoint = isLogEntry
+            ? `https://saapp.onrender.com/api/time/delete?id=${selectedId}`
+            : `https://saapp.onrender.com/api/events/delete?id=${selectedId}`;
 
-    await authenticatedFetch(endpoint, { method: "DELETE" });
+        await authenticatedFetch(endpoint, { method: "DELETE" });
 
-    setSelectedId(null);
-    fetchEntries();
-}
+        setSelectedId(null);
+        fetchEntries();
+    }
+
     async function handleCreateEvent() {
-    // 1. Save event in SAAPP (Port 8000)
-    // Use your authenticatedFetch helper here!
-    await authenticatedFetch("https://saapp.onrender.com/api/events/create", {
-        method: "POST",
-        body: JSON.stringify({
-            activity: eventTitle,
-            start_time: eventStartTime,
-            date: eventDate,
-            notes: eventNotes,
-            type: "event"
-        })
-    });
+        await authenticatedFetch("https://saapp.onrender.com/api/events/create", {
+            method: "POST",
+            body: JSON.stringify({
+                activity: eventTitle,
+                start_time: eventStartTime,
+                date: eventDate,
+                notes: eventNotes,
+                type: "event"
+            })
+        });
 
-    // 2. Sync event to PAAPP (Port 8003)
-    // You likely need to authenticate this call too!
     await authenticatedFetch("https://paapp-u2l9.onrender.com/api/saapp/event", {
-        method: "POST",
-        body: JSON.stringify({
-            username: localStorage.getItem('principal') || 'guest',
-            activity: eventTitle,
-            start_time: eventStartTime,
-            date: eventDate,
-            notes: eventNotes,
-            type: "event"
-        })
-    });
+            method: "POST",
+            body: JSON.stringify({
+                username: localStorage.getItem('principal') || 'guest',
+                activity: eventTitle,
+                start_time: eventStartTime,
+                date: eventDate,
+                notes: eventNotes,
+                type: "event"
+            })
+        });
 
-    setModalOpen(false);
-    fetchEntries();
-}
+        setModalOpen(false);
+        fetchEntries();
+    }
 
     async function fetchEntries() {
-    setLoading(true);
-    try {
-        // Remove username from URL and headers
-        const logRes = await authenticatedFetch(`https://saapp.onrender.com/api/time/list`);
-        const logs = await logRes.json();
-        setEntries(Array.isArray(logs) ? logs : []);
-        
-        const eventRes = await authenticatedFetch(`https://saapp.onrender.com/api/events/list`);
-        console.log("Fetching https://saapp.onrender.com/api/events/list")
-        const eventsData = await eventRes.json();
-        setEvents(Array.isArray(eventsData) ? eventsData : []); 
-    } catch (error) {
-        console.error("Failed to fetch entries:", error);
-        setEntries([]);
-        setEvents([]);
+        setLoading(true);
+        try {
+            const logRes = await authenticatedFetch(`https://saapp.onrender.com/api/time/list`);
+            const logs = await logRes.json();
+            setEntries(Array.isArray(logs) ? logs : []);
+            
+            const eventRes = await authenticatedFetch(`https://saapp.onrender.com/api/events/list`);
+            const eventsData = await eventRes.json();
+            setEvents(Array.isArray(eventsData) ? eventsData : []); 
+        } catch (error) {
+            console.error("Failed to fetch entries:", error);
+            setEntries([]);
+            setEvents([]);
+        }
+        setLoading(false);
     }
-    setLoading(false);
-}
+
     useEffect(() => {
         fetchEntries();
     }, []);
 
-    if (loading) return <div>Loading time entries...</div>;
+    if (loading) return <div className="self-service-loading">Loading time entries...</div>;
 
     return (
         <div
@@ -309,7 +307,7 @@ async function handleDelete() {
                 gap: "24px",
                 padding: "24px"
             }}
-            >
+        >
             {/* LEFT: Calendar */}
             <CalendarPane
                 entries={events}
@@ -320,21 +318,22 @@ async function handleDelete() {
                 setSelectedId={setSelectedId}
                 onCellClick={(date) => {
                     setModalType("event");
-                    setEventDate(date);      // pre-fill date
+                    setEventDate(date);
                     setModalOpen(true);
                 }}
             />
-            {/* RIGHT: Tabs + Content */}
-            <div className="details-pane" style={{ flex: 1, minWidth: "0" }}>
-                {/* <Tabs active={activeTab} setActive={setActiveTab} /> */}
 
+            {/* RIGHT: Tabs + Content */}
+            <div className="details-pane">
                 <div className="tab-content">
                     {activeTab === "log" && (
-                        <TimeLogTable
-                            entries={entries}
-                            selectedId={selectedId}
-                            setSelectedId={setSelectedId}
-                        />
+                        <div className="table-scroll-wrapper">
+                            <TimeLogTable
+                                entries={entries}
+                                selectedId={selectedId}
+                                setSelectedId={setSelectedId}
+                            />
+                        </div>
                     )}
                 </div>
             </div>
@@ -342,31 +341,29 @@ async function handleDelete() {
             {/* MODAL */}
             <Modal open={modalOpen} onClose={() => setModalOpen(false)}>
                 {modalType === "event" && (
-                    <div>
+                    <div className="modal-form-content">
                         <h3>Create Event</h3>
                         <input className="sa-input" placeholder="Event title" value={eventTitle} onChange={(e) => setEventTitle(e.target.value)} />
                         <input className="sa-input" type="date" value={eventDate} onChange={(e) => setEventDate(e.target.value)} />
                         <input className="sa-input" type="time" value={eventStartTime} onChange={(e) => setEventStartTime(e.target.value)} />
                         <input className="sa-input" type="number" placeholder="Hours" value={Math.floor(noteMinutes / 60)} onChange={(e) => setNoteMinutes(Number(e.target.value) * 60 + (noteMinutes % 60))} />
                         <textarea className="sa-input" placeholder="Notes" value={eventNotes} onChange={(e) => setEventNotes(e.target.value)} />
-                        <button className="sa-btn" onClick={handleCreateEvent}>Create Event</button>
+                        <button className="sa-btn primary-action-btn" onClick={handleCreateEvent}>Create Event</button>
                     </div>
                 )}
 
                 {modalType === "log" && (
-                    <div>
+                    <div className="modal-form-content">
                         <h3>Create Note</h3>
                         <input className="sa-input" placeholder="Note title" value={noteTitle} onChange={(e) => setNoteTitle(e.target.value)} />
                         <input className="sa-input" type="date" value={noteDate} onChange={(e) => setNoteDate(e.target.value)} />
                         <input className="sa-input" type="number" placeholder="Hours" value={Math.floor(noteMinutes / 60)} onChange={(e) => setNoteMinutes(Number(e.target.value) * 60 + (noteMinutes % 60))} />
                         <input className="sa-input" type="number" placeholder="Minutes" value={noteMinutes} onChange={(e) => setNoteMinutes(Number(e.target.value))} />
                         <textarea className="sa-input" placeholder="Notes" value={noteBody} onChange={(e) => setNoteBody(e.target.value)} />
-                        <button className="sa-btn" onClick={handleCreateNote}>Create Note</button>
+                        <button className="sa-btn primary-action-btn" onClick={handleCreateNote}>Create Note</button>
                     </div>
                 )}
-
             </Modal>
-
         </div>
     );
 }

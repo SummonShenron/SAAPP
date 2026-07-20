@@ -147,6 +147,8 @@
   height: 100%;
   padding: 20px;
   background-size: cover;
+  minHeight: "100vh";
+  width: "100%",
 }
 
 .details-pane {

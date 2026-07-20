@@ -29,6 +29,19 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [agentPath, setAgentPath] = useState<string[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const BASE_URL = "https://saapp.onrender.com/";
+  const [showTooltip, setShowTooltip] = useState(false);
+    const tooltipRef = useRef<HTMLDivElement>(null);
+
+    // Optional: Close tooltip when clicking outside of it
+    useEffect(() => {
+        function handleClickOutside(event: MouseEvent) {
+            if (tooltipRef.current && !tooltipRef.current.contains(event.target as Node)) {
+                setShowTooltip(false);
+            }
+        }
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
   const [sessionId, setSessionId] = useState<string>(() => {
     // new conversation → fresh ID
     return crypto.randomUUID();
@@ -148,7 +161,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
       setAttachedFiles(prev => [...prev, file]);
 
       // 2. Upload to backend with session_id
-      await fetch(`${BASE_URL}/api/attachments/upload`, {
+      await fetch(`${BASE_URL}api/upload-attachment`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -469,55 +482,100 @@ const handleSendMessage = async (
               />
 
               <div className="icon-row-overlay">
-                <button
-                  type="button"
+              {/* Tooltip / Info Button Wrapper */}
+              <div style={{ position: "relative" }}>
+                <button 
+                  type="button" 
                   className="circle-icon-button"
-                  onClick={() => document.getElementById("file-upload")?.click()}
+                  onClick={() => setShowTooltip(!showTooltip)}
+                  title="Help / Info"
                 >
-                  <svg width="18" height="18" viewBox="0 0 24 24">
-                    <line x1="12" y1="5" x2="12" y2="19" />
-                    <line x1="5" y1="12" x2="19" y2="12" />
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="9" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
                   </svg>
                 </button>
 
-                <button
-                  type="button"
-                  className="circle-icon-button"
-                  onClick={handleExportChat}
-                  disabled={loading || !hasChatted}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
-                  </svg>
-                </button>
-
-                <button
-                  type="submit"
-                  className="circle-icon-button"
-                  disabled={loading || !input.trim()}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24">
-                    <polyline points="2 12 22 12" />
-                    <polyline points="12 2 22 12 12 22" />
-                  </svg>
-                </button>
-
-                <button
-                  type="button"
-                  className="circle-icon-button"
-                  onClick={handleClearChat}
-                  disabled={loading}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24">
-                    <polyline points="3 6 5 6 21 6" />
-                    <path d="M19 6l-2 14H7L5 6" />
-                    <line x1="10" y1="11" x2="10" y2="17" />
-                    <line x1="14" y1="11" x2="14" y2="17" />
-                  </svg>
-                </button>
+                {/* Tooltip Popup Message Box */}
+                {showTooltip && (
+                  <div className="chat-tooltip-popover" style={{
+                    position: "absolute",
+                    bottom: "45px",
+                    right: "0",
+                    width: "220px",
+                    background: "var(--card-bg, #ffffff)",
+                    border: "1px solid var(--border-color, #e2e8f0)",
+                    padding: "10px 14px",
+                    borderRadius: "8px",
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                    zIndex: 100,
+                    fontSize: "13px",
+                    color: "var(--text-main, #1e293b)",
+                    lineHeight: "1.4"
+                  }}>
+                    <strong>Secure Index Tip:</strong>
+                    <p style={{ margin: "8px 8px 8px" }}>
+                      <ul>
+                        <li> Please only begin your queries once you see the example questions and the green (or yellow in dark mode) username in the top left indicating your session permissions are set. </li>
+                        <li> If the example questions have not loaded yet, it means the backend is still spinning up due to inactivity. please wait for the app to be fully loaded before using.</li>
+                        <li> Due to operating on cost-sensitive infrastructure, response times may vary or be unavailable due to model demand.</li>
+                        <li> If you encounter any bugs, issues, or would like your permissions changed, please reach out to jackharper0517@outlook.com.</li>
+                      </ul>
+                    </p>
+                  </div>
+                )}
               </div>
+
+              <button
+                type="button"
+                className="circle-icon-button"
+                onClick={() => document.getElementById("file-upload")?.click()}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+              </button>
+
+              <button
+                type="button"
+                className="circle-icon-button"
+                onClick={handleExportChat}
+                disabled={loading || !hasChatted}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+              </button>
+
+              <button
+                type="submit"
+                className="circle-icon-button"
+                disabled={loading || !input.trim()}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="2 12 22 12" />
+                  <polyline points="12 2 22 12 12 22" />
+                </svg>
+              </button>
+
+              <button
+                type="button"
+                className="circle-icon-button"
+                onClick={handleClearChat}
+                disabled={loading}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6l-2 14H7L5 6" />
+                  <line x1="10" y1="11" x2="10" y2="17" />
+                  <line x1="14" y1="11" x2="14" y2="17" />
+                </svg>
+              </button>
+            </div>
             </div>
           </form>
 
