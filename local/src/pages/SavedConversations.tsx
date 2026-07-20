@@ -11,17 +11,18 @@ interface SavedConversationsPageProps {
   username: string;
 }
 
-export const SavedConversationsPage: React.FC<SavedConversationsPageProps> = ({ username }) => {
+export const SavedConversationsPage: React.FC<SavedConversationsPageProps> = () => {
   const { getToken } = useAuth();
   const [titles, setTitles] = useState<string[]>([]);
   const [selectedTitle, setSelectedTitle] = useState<string | null>(null);
   const [messages, setMessages] = useState<SavedMessage[]>([]);
   const BASE_URL = "https://saapp.onrender.com/";
+
   const fetchWithAuth = async (url: string) => {
-    const token = await getToken(); // Get the real Clerk token
+    const token = await getToken(); 
     return fetch(url, {
       headers: { 
-        "Authorization": `Bearer ${token}`, // Use standard Bearer auth
+        "Authorization": `Bearer ${token}`, 
         "Content-Type": "application/json" 
       }
     });
@@ -32,7 +33,7 @@ export const SavedConversationsPage: React.FC<SavedConversationsPageProps> = ({ 
       .then(res => res.json())
       .then(data => setTitles(data.titles || []))
       .catch(() => setTitles([]));
-  }, []); // No dependency on username needed anymore
+  }, []);
 
   const loadConversation = (title: string) => {
     setSelectedTitle(title);
@@ -43,39 +44,48 @@ export const SavedConversationsPage: React.FC<SavedConversationsPageProps> = ({ 
   };
 
   return (
-    <div className="saved-conversations-container">
-    {/* LEFT SIDEBAR */}
-    <aside className="saved-conversations-sidebar">
+    <div className={`saved-conversations-container ${selectedTitle ? "chat-active" : ""}`}>
+      {/* LEFT SIDEBAR */}
+      <aside className="saved-conversations-sidebar">
         <h3 className="sidebar-title">Saved Conversations</h3>
         <div className="conversation-list">
-        {Array.isArray(titles) && titles.map(t => (
+          {Array.isArray(titles) && titles.map(t => (
             <div
-            key={t}
-            className={`conversation-item ${selectedTitle === t ? "active" : ""}`}
-            onClick={() => loadConversation(t)}
+              key={t}
+              className={`conversation-item ${selectedTitle === t ? "active" : ""}`}
+              onClick={() => loadConversation(t)}
             >
-            <div className="conversation-title">{t}</div>
+              <div className="conversation-title">{t}</div>
             </div>
-        ))}
+          ))}
         </div>
-    </aside>
+      </aside>
 
-    {/* RIGHT PANEL */}
-    <main className="saved-conversations-viewer">
-        <h3 className="viewer-title">
+      {/* RIGHT PANEL */}
+      <main className="saved-conversations-viewer">
+        <div className="viewer-header-row">
+          <button 
+            className="mobile-back-btn" 
+            onClick={() => setSelectedTitle(null)}
+            aria-label="Back to conversations list"
+          >
+            ← Back
+          </button>
+          <h3 className="viewer-title">
             {selectedTitle || "Select a conversation"}
-        </h3>
+          </h3>
+        </div>
 
         <div className="saved-chat-wrapper">
-            <div className="messages-container">
+          <div className="messages-container">
             {Array.isArray(messages) && messages.map((msg, idx) => (
-                <div key={idx} className={`message-bubble ${msg.type}`}>
+              <div key={idx} className={`message-bubble ${msg.type}`}>
                 <div className="message-content">{msg.content}</div>
-                </div>
+              </div>
             ))}
-            </div>
+          </div>
         </div>
-        </main>
+      </main>
     </div>
   );
 };

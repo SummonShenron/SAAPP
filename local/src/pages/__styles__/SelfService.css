@@ -418,3 +418,80 @@
   font-size: 1.1rem;
   font-weight: 500;
 }
+
+/* --- Mobile Responsive Overrides for Self-Service --- */
+@media (max-width: 768px) {
+  .self-service-container {
+    padding: 1rem !important;
+    max-width: 100% !important;
+  }
+
+  .self-service-header h1 {
+    font-size: 1.4rem;
+    text-align: center;
+    margin-bottom: 1rem;
+  }
+
+  .vertical-card-stack {
+    gap: 1rem;
+  }
+
+  /* Make individual service cards full-width and compact */
+  .service-card {
+    padding: 1.25rem !important;
+    border-radius: 10px;
+  }
+
+  .service-card h2 {
+    font-size: 1.1rem;
+  }
+
+  .card-description {
+    font-size: 0.85rem;
+  }
+
+  /* Form controls and dropdowns take full width for easy tapping */
+  .form-group select,
+  .manifest-search-input {
+    width: 100%;
+    font-size: 16px; /* Prevents iOS auto-zoom */
+    padding: 0.75rem;
+  }
+
+  /* Custom file button styling for mobile touch targets */
+  .custom-file-button {
+    display: block;
+    text-align: center;
+    padding: 0.85rem 1rem;
+    font-size: 0.95rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px dashed rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  .upload-submit-btn {
+    width: 100%;
+    padding: 0.85rem;
+    font-size: 1rem;
+    margin-top: 0.75rem;
+  }
+
+  /* Manifest table scroll zone wrapper */
+  .manifest-table-scroll-zone {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin-top: 0.75rem;
+  }
+
+  .manifest-table {
+    min-width: 500px; /* Ensures columns don't crunch together */
+    font-size: 0.85rem;
+  }
+
+  .manifest-table th,
+  .manifest-table td {
+    padding: 0.6rem 0.5rem;
+  }
+}
