@@ -44,7 +44,10 @@ from settings import DB_DIR
 from backend.components.time_storage import TimeEntryCreate, add_time_entry, load_user_time, clear_user_time, TimeEntry, save_user_time
 import aiohttp
 import aiohttp.resolver
+import settings
 
+def is_local_dev():
+    return os.getenv("LOCAL_DEV", "false").lower() == "true"
 aiohttp.resolver.DefaultResolver = aiohttp.resolver.ThreadedResolver
 os.environ["AIOHTTP_NO_EXTENSIONS"] = "1"
 sys.path.append(os.path.join(os.path.dirname(__file__), "local_function_app"))
@@ -70,6 +73,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"https://.*\.vercel\.app",
     allow_origins=[
+        "http://127.0.0.1:8080", 
+        "http://localhost:8080",
         "http://localhost:5173",
         "https://paapp-u2l9.onrender.com"
     ],
@@ -354,7 +359,20 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
             initial_state["documents"] = docs
 
         # Run workflow normally
-        final_state = services.get("compiled_workflow").invoke(initial_state)
+        try:
+            if settings.LOCAL_DEV:
+                logger.info("--- [LOCAL DEV MODE] Bypassing Graph Workflow ---")
+                final_state = {
+                    "insight_answer": "Local dev mode active: Graph API bypassed.",
+                    "relevance_grade": "conversational",
+                    "target_scope": [request.affiliate],
+                    "documents": []
+                }
+            else:
+                # Production execution
+                final_state = services.get("compiled_workflow").invoke(initial_state)
+        except Exception as e:
+            logger.error("workflow failed")
 
     except Exception as e:
         logger.error(f"[x] Workflow failed: {e}", exc_info=True)
