@@ -27,13 +27,11 @@ def _get_mongo_collection(collection_name: str):
     client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2000)
     db = client[DB_NAME]
     return db[collection_name]
-
 # Embeddings helper (reused by retrieval functions)
 _embeddings = GoogleGenerativeAIEmbeddings(
     model=EMBEDDING_MODEL,
     output_dimensionality=EMBEDDING_DIM
 )
-
 # -------------------------
 # Routing strategy
 # -------------------------
@@ -45,16 +43,13 @@ def _detect_routing_strategy(query: str) -> str:
     ]
     if any(marker in clean_query for marker in lexical_markers):
         return "lexical"
-
     hybrid_markers = [
         "compare", "difference", "versus", "vs", "relationship",
         "how does", "why did", "explain the connection", "analyze"
     ]
     if any(marker in clean_query for marker in hybrid_markers) or len(clean_query.split()) > 12:
         return "hybrid"
-
     return "vector"
-
 # -------------------------
 # Core MongoDB vector search
 # -------------------------
@@ -71,7 +66,6 @@ def _mongo_vector_search(
     collection = _get_mongo_collection(collection_name)
     try:
         query_vector = _embeddings.embed_query(query)
-
         pipeline = [
             {
                 "$vectorSearch": {
@@ -102,28 +96,23 @@ def _mongo_vector_search(
                 }
             }
         ]
-
         results = list(collection.aggregate(pipeline))
         docs: List[Document] = []
-        
         for r in results:
             page_content = r.get("page_content") or r.get("text") or ""
             raw_meta = r.get("metadata") if isinstance(r.get("metadata"), dict) else {}
-            
             # Combine root-level fields and nested metadata into LangChain's metadata dict
             metadata = {
-                "source": r.get("source") or r.get("filename") or raw_meta.get("source") or raw_meta.get("filename"),
+                **raw_meta,
+                "source": r.get("source") or r.get("filename") or raw_meta.get("source") or raw_meta.get("filename") or "Unknown",
                 "page": r.get("page") if "page" in r else raw_meta.get("page"),
                 "page_label": r.get("page_label") or raw_meta.get("page_label"),
                 "affiliate": r.get("affiliate") or raw_meta.get("affiliate"),
-                "priority": r.get("priority") or raw_meta.get("priority"),
-                **raw_meta  # Retain any additional nested keys
+                # Safely fallback to False/0 if priority is None or missing
+                "priority": r.get("priority") or raw_meta.get("priority") or False,
             }
-            
             docs.append(Document(page_content=page_content, metadata=metadata))
-            
         return docs
-
     except Exception as e:
         logger.error(f"MongoDB vector search failed: {e}")
         return []
@@ -143,16 +132,13 @@ def _retrieve_lexical(
         candidate_pool = _mongo_vector_search(query, affiliate_scope, top_k * 5)
         if not candidate_pool:
             return []
-
         keywords = [w.lower() for w in re.findall(r'\w+', query) if len(w) > 2]
         if not keywords:
             return candidate_pool[:top_k]
-
         num_docs = len(candidate_pool)
         doc_frequencies = {}
         for kw in keywords:
             doc_frequencies[kw] = sum(1 for doc in candidate_pool if kw in doc.page_content.lower())
-
         scored_candidates = []
         for doc in candidate_pool:
             content_lower = doc.page_content.lower()
@@ -165,11 +151,9 @@ def _retrieve_lexical(
                     idf = math.log(1 + (num_docs / (1 + df)))
                     doc_score += tf * idf
             scored_candidates.append((doc, doc_score))
-
         scored_candidates.sort(key=lambda x: x[1], reverse=True)
         top_docs = [doc for doc, score in scored_candidates if score > 0.0][:top_k]
         return top_docs or candidate_pool[:top_k]
-
     except Exception as e:
         logger.error(f"Lexical retrieval pipeline exception: {e}")
         return []
