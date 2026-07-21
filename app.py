@@ -20,7 +20,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from backend.components import taskboard
 from backend.utils.taskboard_utils import require_taskboard_admin, is_taskboard_admin_for_user
-from backend.models.models import llm
+from backend.models.models import llm, stream_llm
 from backend.models.attachment import Attachment
 # Modernized LangChain Imports
 from langchain_core.documents import Document
@@ -445,18 +445,16 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
         first_token = True
         t_stream_start = time.perf_counter()
         try:
-            # Execute primary stream
-            async for chunk in llm.astream(prompt):
+            # Use stream_llm (AFC/tool buffering disabled)
+            async for chunk in stream_llm.astream(prompt):
                 if first_token:
                     t_ttft = time.perf_counter()
                     logger.info(f"[PERF] Time To First Token (TTFT): {(t_ttft - t_stream_start) * 1000:.2f}ms")
                     first_token = False
-                # 1. Extract content from the chunk
+                
                 content = getattr(chunk, "content", "")
                 
-                # 2. Handle cases where content is a list (multimodal parts)
                 if isinstance(content, list):
-                    # Join all text parts into a single string
                     token = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
                 else:
                     token = str(content) if content else ""
