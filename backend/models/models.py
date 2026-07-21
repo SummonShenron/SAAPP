@@ -21,7 +21,7 @@ class LazyLLM:
             )
             session = aiohttp.ClientSession(connector=connector)
             self._real_llm = ChatGoogleGenerativeAI(
-                model="gemini-1.5-flash", # Stable, low-latency production model
+                model="gemini-3.5-flash",  # Active production model
                 api_key=os.getenv("GOOGLE_API_KEY"),
                 temperature=0.7,
                 streaming=True,
@@ -59,9 +59,7 @@ class LazyLLM:
                 raise e
 
     def __getattr__(self, name):
-        # Fallback for any other methods LangChain might call on the LLM
         if self.dev_mode:
-            # Catch-all mock for other LangChain internals during dev
             return lambda *args, **kwargs: AIMessage(content="Mocked method call.")
         
         self._ensure_initialized()
