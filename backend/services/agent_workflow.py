@@ -730,7 +730,7 @@ def data_snapshot_node(state: dict) -> dict:
 
     # --- Taskboard (UPDATED FOR MONGO) ---
     db = get_db()
-    all_tasks = list(db["tasks"].find({})) if db is not None else []
+    all_tasks = list(db["tasks"].find({"username": username})) if db is not None else []
     
     # Strip the raw ObjectId to prevent serialization crashes in the graph
     for t in all_tasks:

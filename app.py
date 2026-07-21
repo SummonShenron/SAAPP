@@ -6,6 +6,7 @@ import sys
 import base64
 import subprocess
 import traceback
+import time
 from bson import ObjectId, errors
 from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Query, Form, Request, Depends
 from typing import List, Dict, Any
@@ -229,7 +230,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
     username = current_user.get("sub")
     question = request.question.strip()
     session_id = request.session_id.strip() if request.session_id else f"{username}_session"
-
+    t_auth_start = time.perf_counter()
     user_docs = []
     if not verify_paapp_access(username):
         return {"message": "Access denied: You are not authorized to use PAAPP integrations."}
@@ -309,6 +310,8 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
     if username not in directory:
         raise HTTPException(status_code=401, detail="Unauthorized: User not found.")
     accessible_affiliates = get_accessible_affiliates(username, directory)
+    t_auth_end = time.perf_counter()
+    logger.info(f"[PERF] Step 1 (Auth & Directory Lookup): {(t_auth_end - t_auth_start) * 1000:.2f}ms")
     if requested_affiliate != "All" and requested_affiliate not in accessible_affiliates["accessible_affiliates"]:
         raise HTTPException(status_code=403, detail="Security Breach: Unauthorized affiliate scope requested.")
     target_scope = accessible_affiliates["accessible_affiliates"] if requested_affiliate == "All" else [requested_affiliate]
@@ -330,6 +333,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
     }
     # ---------- Run LangGraph ONCE (no streaming, logic-only) ----------
     try:
+        t_attach_start = time.perf_counter()
         attachment_summaries = []
         if request.attachments:
             logger.info(f"Processing {len(request.attachments)} attachments for {username}")
@@ -340,6 +344,9 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                 summary = process_user_attachment(att)
                 if summary:
                     attachment_summaries.append(summary)
+        t_attach_end = time.perf_counter()            
+        if request.attachments:
+            logger.info(f"[PERF] Step 2 (Attachment Processing): {(t_attach_end - t_attach_start) * 1000:.2f}ms")
         # Inject summaries into graph state BEFORE workflow runs
         initial_state["attachment_summaries"] = attachment_summaries
         if attachment_summaries:
@@ -362,6 +369,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
             "original_question": question
         }
         # Run workflow normally
+        t_graph_start = time.perf_counter()
         try:
             if settings.LOCAL_DEV:
                 logger.info("--- [LOCAL DEV MODE] Bypassing Graph Workflow ---")
@@ -376,12 +384,14 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                 final_state = services.get("compiled_workflow").invoke(initial_state)
         except Exception as e:
             logger.error("workflow failed")
-
+        t_graph_end = time.perf_counter()
+        logger.info(f"[PERF] Step 3 (LangGraph Workflow Execution): {(t_graph_end - t_graph_start) * 1000:.2f}ms")
     except Exception as e:
         logger.error(f"[x] Workflow failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Agent workflow failed.")
 
     # ---------- Build Prompt based on Decision Boundary ----------
+    t_prompt_start = time.perf_counter()
     insight_answer = final_state.get("insight_answer")
     is_conversational = final_state.get("relevance_grade") == "conversational"
 
@@ -424,13 +434,23 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
         )
 
     logger.debug(f"--- FINAL PROMPT SENT TO LLM: ---\n{prompt}")
+    t_prompt_end = time.perf_counter()
+    logger.info(f"[PERF] Step 4 (Prompt Construction): {(t_prompt_end - t_prompt_start) * 1000:.2f}ms")
+    
     logger.debug("--- END OF PROMPT ---")
+
     # ---------- Real token streaming from LLM ----------
     async def token_streamer():
         full_response = ""
+        first_token = True
+        t_stream_start = time.perf_counter()
         try:
             # Execute primary stream
             async for chunk in llm.astream(prompt):
+                if first_token:
+                    t_ttft = time.perf_counter()
+                    logger.info(f"[PERF] Time To First Token (TTFT): {(t_ttft - t_stream_start) * 1000:.2f}ms")
+                    first_token = False
                 # 1. Extract content from the chunk
                 content = getattr(chunk, "content", "")
                 
@@ -466,7 +486,8 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
             chat_sessions[username].append(AIMessage(content=full_response))
             save_chat_history()
             logger.info("--- End of token stream ---")
-            
+            t_stream_end = time.perf_counter()
+            logger.info(f"[PERF] Total LLM Stream Duration: {(t_stream_end - t_stream_start) * 1000:.2f}ms")
         except Exception as e:
             logger.error(f"[x] Error in token_streamer loop context: {e}", exc_info=True)
             yield f"data: {json.dumps({'event': 'error', 'message': str(e)})}\n\n"

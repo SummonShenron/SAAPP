@@ -34,6 +34,7 @@
   cursor: pointer;
   transition: all 0.2s ease;
   border-radius: 16px;
+  color: var(--text-main)
 }
 
 .help-panel .help-section-header:hover {

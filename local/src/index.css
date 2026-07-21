@@ -60,7 +60,7 @@
   --border-color: #af2626;
   --ai-border-color: #ffffff; 
   --user-border-color: #910000;   
-  --text-main: #666262;      
+  --text-main: #e6e6e6;      
   --text-muted: #9ca3af;     
   --accent-primary: #dc2626; 
   --accent-success: #eab308; 
@@ -261,6 +261,9 @@ body, html {
   font-weight: 500;
 }
 
+.theme-shadow .banner-context {
+  color: var(--text-muted)
+}
 .banner-context h4 {
   color: var(--text-main); /* Uses the soft sky-blue or ash-gray depending on theme */
   margin-bottom: 0.5rem;
@@ -781,6 +784,9 @@ div:has(.portal-body) {
   transition: all 0.2s;
 }
 
+.theme-shadow .chat-textarea {
+  border: 1px solid var(--bubble-user-border)
+}
 .chat-textarea:active {
   box-shadow: none;
 }
