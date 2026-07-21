@@ -346,27 +346,33 @@ def format_docs(docs) -> str:
         # 1. Safely handle both standard LangChain Document objects & raw Mongo dicts
         if isinstance(doc, dict):
             text_content = doc.get("text") or doc.get("page_content") or ""
-            meta = doc
+            root_dict = doc
         else:
             text_content = getattr(doc, "page_content", "")
-            meta = getattr(doc, "metadata", {}) or {}
+            root_dict = getattr(doc, "metadata", {}) or {}
 
-        # Fallback if metadata happens to be nested inside a 'metadata' sub-key
-        if isinstance(meta.get("metadata"), dict):
-            meta = meta["metadata"]
+        # Safely reference nested metadata if present, without overwriting root_dict
+        inner_meta = root_dict.get("metadata") if isinstance(root_dict.get("metadata"), dict) else {}
 
-        # 2. Extract Priority Marker
-        prefix = "🔴 PRIORITY DOCUMENT — USER UPLOAD\n" if meta.get("priority") else ""
+        # 2. Extract Priority Marker (Check root first, then inner_meta)
+        is_priority = root_dict.get("priority") or inner_meta.get("priority")
+        prefix = "🔴 PRIORITY DOCUMENT — USER UPLOAD\n" if is_priority else ""
 
-        # 3. Extract Source Filename
-        raw_source = meta.get("source") or meta.get("filename") or "Unknown_Source_File"
+        # 3. Extract Source Filename (Check root 'filename'/'source' FIRST, then inner_meta)
+        raw_source = (
+            root_dict.get("filename")
+            or root_dict.get("source")
+            or inner_meta.get("filename")
+            or inner_meta.get("source")
+            or "Unknown_Source_File"
+        )
         clean_filename = os.path.basename(str(raw_source))
 
-        # 4. Extract Page Number (Safely handling 'page_label' and 'page: 0')
-        page_val = meta.get("page_label")
+        # 4. Extract Page Number (Handling 'page_label' and 0-indexed 'page')
+        page_val = root_dict.get("page_label") or inner_meta.get("page_label")
         
         if page_val is None:
-            raw_page = meta.get("page")
+            raw_page = root_dict.get("page") if "page" in root_dict else inner_meta.get("page")
             if raw_page is not None:
                 # Mongo stores 0-indexed page ints (e.g. page: 0 -> Page 1)
                 page_val = int(raw_page) + 1 if isinstance(raw_page, (int, float)) else raw_page
@@ -380,7 +386,7 @@ def format_docs(docs) -> str:
             f"{prefix}"
             f"DOCUMENT REPOSITORY SOURCE: {clean_filename} | PAGE NUMBER: {page_num}\n"
             f"TEXT CONTENT:\n{text_content}\n"
-            "--------------------------------------------------"
+            f"--------------------------------------------------"
         )
 
         cleaned_blocks.append(block)
