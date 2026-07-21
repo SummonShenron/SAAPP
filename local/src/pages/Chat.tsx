@@ -417,8 +417,18 @@ const handleSendMessage = async (
                   <div className="message-text">
                     <ReactMarkdown
                       components={{
-                        a: ({ node, ref, href, children, ...rest }) => {
-                          // Automatically prepends BASE_URL if the LLM returned a relative path like /api/...
+                        a: ({
+                          href,
+                          children,
+                          node,
+                          ...rest
+                        }: {
+                          href?: string;
+                          children?: React.ReactNode;
+                          node?: any;
+                          [key: string]: any;
+                        }) => {
+                          // Prepend BASE_URL if LLM returns a relative endpoint like /api/...
                           const finalHref = href?.startsWith('/')
                             ? `${BASE_URL.replace(/\/$/, '')}${href}`
                             : href;
