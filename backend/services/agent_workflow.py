@@ -5,6 +5,7 @@ import json
 from typing import List, Any, Dict
 import logging
 import requests
+from concurrent.futures import ThreadPoolExecutor
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from backend.components.time_storage import load_user_time
@@ -13,7 +14,7 @@ from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langchain_core.documents import Document
 from settings import PAAPP_BASE_URL
 from backend.services.search import get_secure_retriever
-from backend.models.models import llm
+from backend.models.models import llm, lite_llm
 from backend.state import graph_db
 from backend.utils.attachment_utils import retrieve_from_session
 from backend.utils.isolation_kb_utils import load_directory
@@ -323,15 +324,15 @@ def memory_node(state: GraphState) -> dict:
     return state
 
 def retrieve_node(state: GraphState, vector_store) -> dict:
-    logger.info("--- RETRIEVING DOCUMENTS & GRAPH CONTEXT ---")
+    logger.info("--- PARALLEL RETRIEVING DOCUMENTS & GRAPH CONTEXT ---")
     question = state["messages"][-1].content
     username = state.get("username")
     target_scope = state.get("target_scope")
     current_loops = state.get("loop_count", 0) or 0
     original_question = state.get("original_question") or question
     session_id = state.get("session_id") or f"{username}_session"
-    logger.debug(f"retrieve_node target_scope is: {state.get('target_scope')}")
-    # 1. EARLY EXIT: If attachments exist, use only those
+
+    # 1. EARLY EXIT: Priority attachments
     if state.get("attachment_summaries"):
         logger.info("Attachment detected — skipping vector search and using only priority docs.")
         return {
@@ -341,55 +342,69 @@ def retrieve_node(state: GraphState, vector_store) -> dict:
             "loop_count": current_loops + 1
         }
 
-    # 2. VECTOR RETRIEVAL (Call ONCE)
-    docs = []
-    try:
-        retriever = get_secure_retriever(
-            vector_store=vector_store,
-            target_scope=target_scope,
-            query_text=question,
-            top_k=3
-        )
-        docs = retriever.invoke(question) or []
-        logger.info(f"Retrieved {len(docs)} documents for query: '{question}'")
-    except Exception as e:
-        logger.error(f"Vector search failed: {e}")
+    # Parallel Task 1: Vector Search
+    def fetch_vector_docs():
+        try:
+            retriever = get_secure_retriever(
+                vector_store=vector_store,
+                target_scope=target_scope,
+                query_text=question,
+                top_k=3
+            )
+            return retriever.invoke(question) or []
+        except Exception as e:
+            logger.error(f"Vector search failed: {e}")
+            return []
 
-    # 3. SESSION-BASED RETRIEVAL (Append to existing list)
-    try:
-        session_hits = retrieve_from_session(username, session_id, question)
-        if session_hits:
-            session_docs = [Document(
-                page_content=f"[Session Document: {hit['filename']}]\nScore: {hit['score']}",
-                metadata={"source": "session_vector_store", "priority": True, "filename": hit["filename"]}
-            ) for hit in session_hits]
-            # Merge: session docs first (highest priority)
-            docs = session_docs + docs
-    except Exception as e:
-        logger.error(f"Session retrieval failed: {e}")
+    # Parallel Task 2: Session Search
+    def fetch_session_docs():
+        try:
+            session_hits = retrieve_from_session(username, session_id, question)
+            if session_hits:
+                return [Document(
+                    page_content=f"[Session Document: {hit['filename']}]\nScore: {hit['score']}",
+                    metadata={"source": "session_vector_store", "priority": True, "filename": hit["filename"]}
+                ) for hit in session_hits]
+        except Exception as e:
+            logger.error(f"Session retrieval failed: {e}")
+        return []
 
-    # 4. ATTACHMENT SUMMARIES (Append to existing list)
+    # Parallel Task 3: Knowledge Graph Search
+    def fetch_graph_docs():
+        graph_docs = []
+        try:
+            question_lower = question.lower()
+            for entity in graph_db.knowledge_graph.nodes:
+                if str(entity).lower() in question_lower:
+                    relations = graph_db.get_dynamic_context(entity, hops=2)
+                    for fact in relations:
+                        graph_docs.append(Document(
+                            page_content=f"Connection: {fact}",
+                            metadata={"source": "knowledge_graph_db", "type": "relationship"}
+                        ))
+        except Exception as e:
+            logger.error(f"GraphRAG Entity scanner failed: {e}")
+        return graph_docs
+
+    # Execute all 3 fetches concurrently
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        future_vec = executor.submit(fetch_vector_docs)
+        future_sess = executor.submit(fetch_session_docs)
+        future_graph = executor.submit(fetch_graph_docs)
+
+        vector_docs = future_vec.result()
+        session_docs = future_sess.result()
+        graph_docs = future_graph.result()
+
+    # Combine prioritized results
+    docs = session_docs + vector_docs + graph_docs
+
     summaries = state.get("attachment_summaries", [])
     for summary in summaries:
         docs.append(Document(
             page_content=summary,
             metadata={"source": "user_attachment_summary", "priority": True}
         ))
-
-    # 5. GRAPH CONTEXT (Append to existing list)
-    try:
-        question_lower = question.lower()
-        # Ensure graph_db is available in scope
-        for entity in graph_db.knowledge_graph.nodes:
-            if str(entity).lower() in question_lower:
-                relations = graph_db.get_dynamic_context(entity, hops=2)
-                for fact in relations:
-                    docs.append(Document(
-                        page_content=f"Connection: {fact}",
-                        metadata={"source": "knowledge_graph_db", "type": "relationship"}
-                    ))
-    except Exception as e:
-        logger.error(f"GraphRAG Entity scanner failed: {e}")
 
     return {
         **state,
@@ -537,7 +552,7 @@ def grading_node(state: GraphState) -> dict:
 
     try:
         logger.info("Grading response")
-        response = llm.invoke(formatted_prompt)
+        response = lite_llm.invoke(formatted_prompt)
         response_text = response.content if hasattr(response, "content") else str(response)
         response_clean = ensure_str(response_text).lower().strip()
         grade = "yes" if "yes" in response_clean else "no"
@@ -574,7 +589,7 @@ def rewrite_query_node(state: GraphState) -> dict:
     formatted_prompt = REWRITING_PROMPT.format(question=original_question)
 
     try:
-        response = llm.invoke(formatted_prompt)
+        response = lite_llm.invoke(formatted_prompt)
         rewrite_text = response.content if hasattr(response, "content") else str(response)
         rewrite_clean = ensure_str(rewrite_text).strip()
         logger.info(f"Query rewritten: '{original_question}' -> '{rewrite_clean}'")
@@ -1375,7 +1390,7 @@ def llm_json_call(prompt: str) -> dict:
     Ensures the insight intent interpreter always returns a valid dict.
     """
 
-    raw = llm.invoke(prompt)
+    raw = lite_llm.invoke(prompt)
     text = raw.content if hasattr(raw, "content") else str(raw)
 
     # Extract JSON block
@@ -1594,6 +1609,7 @@ def create_workflow(vector_store):
     workflow = StateGraph(GraphState)
     def retrieve_node_with_store(state):
         return retrieve_node(state, vector_store)
+        
     workflow.add_node("memory_node", memory_node)
     workflow.add_node("retrieve_node", retrieve_node_with_store)
     workflow.add_node("grade_documents_node", grading_node)
@@ -1608,10 +1624,11 @@ def create_workflow(vector_store):
     workflow.add_node("classifier_node", activity_classifier_node)
     workflow.add_node("pattern_node", pattern_detector_node)
     workflow.add_node("trend_node", trend_analyzer_node)
-    workflow.add_node("insight_query_node", insight_query_node)  # we will create this next
+    workflow.add_node("insight_query_node", insight_query_node)
+    
     workflow.add_edge(START, "coordinator_node")
     workflow.add_conditional_edges(
-    "coordinator_node",
+        "coordinator_node",
         coordinator_router,  
         {
             "memory_node": "memory_node",
@@ -1630,16 +1647,23 @@ def create_workflow(vector_store):
             "insight_query_node": "insight_query_node",
         }
     )
+    
     workflow.add_edge("paapp_node", "formatter_node")
     workflow.add_edge("memory_node", "formatter_node")
     workflow.add_edge("summarizer_node", "formatter_node")
     workflow.add_edge("formatter_node", "generate_node")
     workflow.add_edge("retrieve_node", "grade_documents_node")
     workflow.add_edge("rewrite_query_node", "retrieve_node")
+    
+    # --- PARALLEL FAN-OUT FOR ANALYTICS ---
     workflow.add_edge("snapshot_node", "classifier_node")
+    # LangGraph runs pattern_node and trend_node concurrently
     workflow.add_edge("classifier_node", "pattern_node")
-    workflow.add_edge("pattern_node", "trend_node")
+    workflow.add_edge("classifier_node", "trend_node")
+    # Fan-in back to insight_query_node (waits for both to complete)
+    workflow.add_edge("pattern_node", "insight_query_node")
     workflow.add_edge("trend_node", "insight_query_node")
+    
     workflow.add_edge("insight_query_node", "formatter_node")
     workflow.add_conditional_edges(
         "grade_documents_node",
