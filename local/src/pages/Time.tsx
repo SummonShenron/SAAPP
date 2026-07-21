@@ -36,6 +36,9 @@ function Modal({ open, onClose, children }: any) {
 /* ---------------------------------------------------------
    Calendar Pane — with toolbar
 --------------------------------------------------------- */
+/* ---------------------------------------------------------
+   Calendar Pane — with toggle logs button
+--------------------------------------------------------- */
 function CalendarPane({
     entries,
     onNewEvent,
@@ -43,7 +46,9 @@ function CalendarPane({
     onDelete,
     selectedId,
     setSelectedId,
-    onCellClick  
+    onCellClick,
+    logsOpen,
+    setLogsOpen
 }: {
     entries: TimeEntry[];
     onNewEvent: () => void;
@@ -52,6 +57,8 @@ function CalendarPane({
     selectedId: string | null;
     setSelectedId: (id: string | null) => void;
     onCellClick: (date: string) => void;
+    logsOpen: boolean;
+    setLogsOpen: (open: boolean) => void;
 }) {
     return (
         <div className="calendar-pane">
@@ -59,6 +66,9 @@ function CalendarPane({
                 <button className="sa-btn" onClick={onNewNote}>+ New Log Entry</button>
                 <button className="sa-btn" onClick={onNewEvent}>+ New Calendar Event</button>
                 <button className="sa-btn danger" onClick={onDelete}>Delete</button>
+                <button className="sa-btn" onClick={() => setLogsOpen(!logsOpen)} style={{ background: 'var(--bg-surface-hover)' }}>
+                    {logsOpen ? "Hide Logs" : "Show Logs"}
+                </button>
             </div>
             <SimpleCalendar
                 events={entries.map(e => ({
@@ -189,8 +199,12 @@ export function TimeWorkspace() {
     const [summaryModalOpen, setSummaryModalOpen] = useState(false);
     const [eventStartTime, setEventStartTime] = useState("");
     const [modalOpen, setModalOpen] = useState(false);
-    const PAAPP_BASE_URL = import.meta.env.VITE_PAAPP_BASE || "https://paapp-u2l9.onrender.com";
     const [modalType, setModalType] = useState<"event" | "log" | null>(null);
+    
+    // Toggle state for logs side panel
+    const [logsOpen, setLogsOpen] = useState(true);
+
+    const PAAPP_BASE_URL = import.meta.env.VITE_PAAPP_BASE || "https://paapp-u2l9.onrender.com";
 
     const authenticatedFetch = async (url: string, options: RequestInit = {}) => {
         const token = await getToken();
@@ -253,7 +267,7 @@ export function TimeWorkspace() {
             })
         });
 
-    await authenticatedFetch("https://paapp-u2l9.onrender.com/api/saapp/event", {
+        await authenticatedFetch("https://paapp-u2l9.onrender.com/api/saapp/event", {
             method: "POST",
             body: JSON.stringify({
                 username: localStorage.getItem('principal') || 'guest',
@@ -302,10 +316,11 @@ export function TimeWorkspace() {
                 backgroundRepeat: "no-repeat",
                 backgroundPosition: "center",
                 minHeight: "100vh",
-                display: "flex",
-                flexDirection: "row",
+                display: "grid",
+                gridTemplateColumns: logsOpen ? "2fr 1fr" : "1fr",
                 gap: "24px",
-                padding: "24px"
+                padding: "24px",
+                transition: "grid-template-columns 0.3s ease"
             }}
         >
             {/* LEFT: Calendar */}
@@ -321,22 +336,26 @@ export function TimeWorkspace() {
                     setEventDate(date);
                     setModalOpen(true);
                 }}
+                logsOpen={logsOpen}
+                setLogsOpen={setLogsOpen}
             />
 
-            {/* RIGHT: Tabs + Content */}
-            <div className="details-pane">
-                <div className="tab-content">
-                    {activeTab === "log" && (
-                        <div className="table-scroll-wrapper">
-                            <TimeLogTable
-                                entries={entries}
-                                selectedId={selectedId}
-                                setSelectedId={setSelectedId}
-                            />
-                        </div>
-                    )}
+            {/* RIGHT: Tabs + Content (Conditionally rendered) */}
+            {logsOpen && (
+                <div className="details-pane">
+                    <div className="tab-content">
+                        {activeTab === "log" && (
+                            <div className="table-scroll-wrapper">
+                                <TimeLogTable
+                                    entries={entries}
+                                    selectedId={selectedId}
+                                    setSelectedId={setSelectedId}
+                                />
+                            </div>
+                        )}
+                    </div>
                 </div>
-            </div>
+            )}
 
             {/* MODAL */}
             <Modal open={modalOpen} onClose={() => setModalOpen(false)}>
