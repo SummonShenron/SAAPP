@@ -573,6 +573,21 @@ def download_document(filename: str):
         }
     )
 
+# --- ELEVATED ENDPOINT: SECURE MULTI-PART FILE UPLOAD (MongoDB GridFS) ---
+def sync_run_script(script_path):
+    process = subprocess.Popen(
+        [sys.executable, script_path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+
+    stdout, stderr = process.communicate()
+
+    logger.info(f"[INGEST STDOUT]\n{stdout}")
+    logger.error(f"[INGEST STDERR]\n{stderr}")
+    logger.info(f"[INGEST EXIT CODE] {process.returncode}")
+    
 @app.post("/api/upload")
 async def upload_and_ingest_documents(
     affiliate: str,
