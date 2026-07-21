@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from backend.components import taskboard
 from backend.utils.taskboard_utils import require_taskboard_admin, is_taskboard_admin_for_user
 from backend.models.models import llm, stream_llm
@@ -523,6 +524,39 @@ async def upload_attachment(
 
     return {"status": "ok", "filename": file.filename}
 
+@app.get("/api/documents/download/{filename}")
+async def download_document(filename: str):
+    """
+    Streams a document from MongoDB GridFS by filename.
+    """
+    try:
+        # Access the GridFS bucket from your existing MongoDB database handle
+        bucket = AsyncIOMotorGridFSBucket(db)
+        
+        # Open download stream from Mongo fs.files / fs.chunks
+        grid_out = await bucket.open_download_stream_by_name(filename)
+
+        async def stream_gridfs_file():
+            while True:
+                chunk = await grid_out.readchunk()
+                if not chunk:
+                    break
+                yield chunk
+
+        # Return as an inline streaming response (opens in browser tab instead of forcing immediate save)
+        return StreamingResponse(
+            stream_gridfs_file(),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'inline; filename="{filename}"',
+                "Content-Length": str(grid_out.length)
+            }
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Document '{filename}' not found in database repository."
+        )
 
 # --- ELEVATED ENDPOINT: SECURE MULTI-PART FILE UPLOAD (MongoDB GridFS) ---
 def sync_run_script(script_path):

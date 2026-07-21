@@ -16,7 +16,11 @@ You MAY use summarized content as factual.
 If no document is attached to the request, disregard the previous instructions.
 CRITICAL OPERATIONAL CONSTRAINTS:
 1. GROUNDING RULE: If the answer cannot be verified with absolute certainty by the provided CONTEXT, you must respond exactly with: 'I cannot find the answer in the provided knowledge base.' Do not guess, speculate, or utilize pre-trained external knowledge layers.
-2. CITATION FORMATTING: When referencing information, append a clean, human-readable citation at the end of your points or paragraphs. Use this exact syntax: Source: [Clean Document Name] - Page [Number]
+2. CITATION FORMATTING: When referencing information, append a clean, clickable Markdown citation link at the end of your points or paragraphs. Use this exact Markdown syntax:
+   [Source: {Clean Document Name} - Page {Number}](/api/documents/download/{Clean Document Name}#page={Number})
+
+   Example:
+   [Source: frieza_black.pdf - Page 1](/api/documents/download/frieza_black.pdf#page=1)
 3. CODE LEAKAGE BAN: Never output internal programmatic syntax, dictionary structures, or LangChain wrappers. Completely avoid phrases like 'Based on the provided context...', 'Document(metadata=...)', or 'The relevant passage...'.
 4. DIRECT DELIVERY: Deliver the answer directly and cleanly. Do not explain your analytical process or include meta-commentary.
 
@@ -339,27 +343,43 @@ def format_docs(docs) -> str:
     cleaned_blocks = []
 
     for doc in docs:
-        # Access the metadata dictionary. 
-        # If 'metadata' key exists within the metadata, use that. Otherwise, use the top level.
-        meta = doc.metadata.get("metadata", doc.metadata) 
-        
-        # Priority marker
-        if meta.get("priority"):
-            prefix = "🔴 PRIORITY DOCUMENT — USER UPLOAD\n"
+        # 1. Safely handle both standard LangChain Document objects & raw Mongo dicts
+        if isinstance(doc, dict):
+            text_content = doc.get("text") or doc.get("page_content") or ""
+            meta = doc
         else:
-            prefix = ""
+            text_content = getattr(doc, "page_content", "")
+            meta = getattr(doc, "metadata", {}) or {}
 
-        # Extract clean filename from the nested 'meta' dict
-        raw_source = meta.get("source", "Unknown_Source_File")
-        clean_filename = os.path.basename(raw_source)
+        # Fallback if metadata happens to be nested inside a 'metadata' sub-key
+        if isinstance(meta.get("metadata"), dict):
+            meta = meta["metadata"]
 
-        # Page number
-        page_num = meta.get("page_label", meta.get("page", "N/A"))
+        # 2. Extract Priority Marker
+        prefix = "🔴 PRIORITY DOCUMENT — USER UPLOAD\n" if meta.get("priority") else ""
 
+        # 3. Extract Source Filename
+        raw_source = meta.get("source") or meta.get("filename") or "Unknown_Source_File"
+        clean_filename = os.path.basename(str(raw_source))
+
+        # 4. Extract Page Number (Safely handling 'page_label' and 'page: 0')
+        page_val = meta.get("page_label")
+        
+        if page_val is None:
+            raw_page = meta.get("page")
+            if raw_page is not None:
+                # Mongo stores 0-indexed page ints (e.g. page: 0 -> Page 1)
+                page_val = int(raw_page) + 1 if isinstance(raw_page, (int, float)) else raw_page
+            else:
+                page_val = "N/A"
+
+        page_num = str(page_val)
+
+        # 5. Format the clean chunk block for the LLM
         block = (
             f"{prefix}"
             f"DOCUMENT REPOSITORY SOURCE: {clean_filename} | PAGE NUMBER: {page_num}\n"
-            f"TEXT CONTENT:\n{doc.page_content}\n"
+            f"TEXT CONTENT:\n{text_content}\n"
             "--------------------------------------------------"
         )
 

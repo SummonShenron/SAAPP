@@ -3,7 +3,7 @@ import sonicImg from '../assets/sonicandshadow.jpg';
 import { Filters } from '../components/Filters';
 import { getDynamicExampleQuestions } from '../utils/Example_List';
 import { api } from '../api'; 
-
+import ReactMarkdown from 'react-markdown';
 import sonicSpinImg from '../assets/sonic-rolling.gif';
 import shadowSpinImg from '../assets/shadow.gif';
 
@@ -414,7 +414,38 @@ const handleSendMessage = async (
               .map(msg => (
                 <div key={msg.id} className={`message-bubble ${msg.sender}`}>
                   <div className="message-sender">{msg.sender.toUpperCase()}</div>
-                  <div className="message-text">{msg.text}</div>
+                  <div className="message-text">
+                    <ReactMarkdown
+                      components={{
+                        a: ({ node, ref, href, children, ...rest }) => {
+                          // Automatically prepends BASE_URL if the LLM returned a relative path like /api/...
+                          const finalHref = href?.startsWith('/')
+                            ? `${BASE_URL.replace(/\/$/, '')}${href}`
+                            : href;
+
+                          return (
+                            <a
+                              {...rest}
+                              href={finalHref}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="citation-link"
+                              style={{
+                                color: '#3b82f6',
+                                textDecoration: 'underline',
+                                fontWeight: 500,
+                                cursor: 'pointer'
+                              }}
+                            >
+                              {children}
+                            </a>
+                          );
+                        },
+                      }}
+                    >
+                      {msg.text}
+                    </ReactMarkdown>
+                  </div>
                 </div>
               ))}
             {loading && (
