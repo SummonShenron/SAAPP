@@ -170,6 +170,17 @@ const HelpPanel: React.FC = () => {
           such as weekly summaries, productivity trends, streaks, or category insights.
         </p>
       </HelpSection>
+      <HelpSection title="Current Known Issues">
+        <p>Current issues the team is aware of:</p>
+        <ul>
+          <li>Save conversations currently saves additional chat history due to a bug with the api/chat/clear endpoint.</li>
+          <li>Currently cannot remove deleted calendar events from Google Calendar if integrated</li>
+          <li>Dark mode does not persist after refresh</li>
+          <li>Some effects in dark mode are inverted</li>
+        </ul>
+        <p>Identity ensures correct permissions and isolated data.</p>
+      </HelpSection>
+
 
     </div>
   );
