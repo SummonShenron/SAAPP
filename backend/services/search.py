@@ -66,11 +66,10 @@ def _mongo_vector_search(
 ) -> List[Document]:
     """
     Run a MongoDB $vectorSearch aggregation against the specified collection.
-    Returns a list of LangChain Document objects.
+    Returns a list of LangChain Document objects with populated metadata.
     """
     collection = _get_mongo_collection(collection_name)
     try:
-        # Embed the query using the same embedding model used at ingestion
         query_vector = _embeddings.embed_query(query)
 
         pipeline = [
@@ -91,6 +90,13 @@ def _mongo_vector_search(
                     "page_content": {
                         "$ifNull": ["$text", "$page_content"]
                     },
+                    # Explicitly project root-level metadata fields!
+                    "source": 1,
+                    "filename": 1,
+                    "page": 1,
+                    "page_label": 1,
+                    "affiliate": 1,
+                    "priority": 1,
                     "metadata": 1,
                     "score": {"$meta": "searchScore"}
                 }
@@ -99,17 +105,28 @@ def _mongo_vector_search(
 
         results = list(collection.aggregate(pipeline))
         docs: List[Document] = []
+        
         for r in results:
             page_content = r.get("page_content") or r.get("text") or ""
-            metadata = r.get("metadata", {})
-            # Keep original source and page_label if present
+            raw_meta = r.get("metadata") if isinstance(r.get("metadata"), dict) else {}
+            
+            # Combine root-level fields and nested metadata into LangChain's metadata dict
+            metadata = {
+                "source": r.get("source") or r.get("filename") or raw_meta.get("source") or raw_meta.get("filename"),
+                "page": r.get("page") if "page" in r else raw_meta.get("page"),
+                "page_label": r.get("page_label") or raw_meta.get("page_label"),
+                "affiliate": r.get("affiliate") or raw_meta.get("affiliate"),
+                "priority": r.get("priority") or raw_meta.get("priority"),
+                **raw_meta  # Retain any additional nested keys
+            }
+            
             docs.append(Document(page_content=page_content, metadata=metadata))
+            
         return docs
 
     except Exception as e:
         logger.error(f"MongoDB vector search failed: {e}")
         return []
-
 # -------------------------
 # Lexical retrieval (TF-IDF over candidate pool)
 # -------------------------
