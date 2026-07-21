@@ -1,6 +1,6 @@
 import os
 import logging
-
+import urllib.parse
 logger = logging.getLogger("SASS Logger")
 
 BASE_RAG_CONSTRAINTS = """
@@ -351,14 +351,14 @@ def format_docs(docs) -> str:
             text_content = getattr(doc, "page_content", "")
             root_dict = getattr(doc, "metadata", {}) or {}
 
-        # Safely reference nested metadata if present, without overwriting root_dict
+        # Safely reference nested metadata if present
         inner_meta = root_dict.get("metadata") if isinstance(root_dict.get("metadata"), dict) else {}
 
-        # 2. Extract Priority Marker (Check root first, then inner_meta)
+        # 2. Extract Priority Marker
         is_priority = root_dict.get("priority") or inner_meta.get("priority")
         prefix = "🔴 PRIORITY DOCUMENT — USER UPLOAD\n" if is_priority else ""
 
-        # 3. Extract Source Filename (Check root 'filename'/'source' FIRST, then inner_meta)
+        # 3. Extract Source Filename
         raw_source = (
             root_dict.get("filename")
             or root_dict.get("source")
@@ -368,23 +368,39 @@ def format_docs(docs) -> str:
         )
         clean_filename = os.path.basename(str(raw_source))
 
-        # 4. Extract Page Number (Handling 'page_label' and 0-indexed 'page')
+        # 4. Extract Page Number
         page_val = root_dict.get("page_label") or inner_meta.get("page_label")
-        
         if page_val is None:
             raw_page = root_dict.get("page") if "page" in root_dict else inner_meta.get("page")
             if raw_page is not None:
-                # Mongo stores 0-indexed page ints (e.g. page: 0 -> Page 1)
                 page_val = int(raw_page) + 1 if isinstance(raw_page, (int, float)) else raw_page
             else:
                 page_val = "N/A"
 
         page_num = str(page_val)
 
-        # 5. Format the clean chunk block for the LLM
+        # -------------------------------------------------------------
+        # 5. PRE-BUILD THE ENCODED CITATION LINK
+        # -------------------------------------------------------------
+        # URL-encode spaces & special chars (e.g. "jack facts.pdf" -> "jack%20facts.pdf")
+        encoded_filename = urllib.parse.quote(clean_filename)
+        
+        # Build page anchor fragment
+        page_anchor = f"#page={page_num}" if page_num != "N/A" else ""
+        page_label_str = f" - Page {page_num}" if page_num != "N/A" else ""
+
+        # Pre-formatted Markdown citation string
+        exact_citation = (
+            f"[Source: {clean_filename}{page_label_str}]"
+            f"(/api/documents/download/{encoded_filename}{page_anchor})"
+        )
+        # -------------------------------------------------------------
+
+        # 6. Format the block for the LLM
         block = (
             f"{prefix}"
             f"DOCUMENT REPOSITORY SOURCE: {clean_filename} | PAGE NUMBER: {page_num}\n"
+            f"EXACT CITATION LINK: {exact_citation}\n"
             f"TEXT CONTENT:\n{text_content}\n"
             f"--------------------------------------------------"
         )

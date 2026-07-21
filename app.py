@@ -7,6 +7,9 @@ import base64
 import subprocess
 import traceback
 import time
+import urllib.parse
+import re
+from gridfs import GridFSBucket
 from bson import ObjectId, errors
 from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Query, Form, Request, Depends
 from typing import List, Dict, Any
@@ -524,54 +527,51 @@ async def upload_attachment(
 
     return {"status": "ok", "filename": file.filename}
 
-@app.get("/api/documents/download/{filename}")
-async def download_document(filename: str):
-    """
-    Streams a document from MongoDB GridFS by filename.
-    """
-    try:
-        # Access the GridFS bucket from your existing MongoDB database handle
-        bucket = AsyncIOMotorGridFSBucket(db)
-        
-        # Open download stream from Mongo fs.files / fs.chunks
-        grid_out = await bucket.open_download_stream_by_name(filename)
-
-        async def stream_gridfs_file():
-            while True:
-                chunk = await grid_out.readchunk()
-                if not chunk:
-                    break
-                yield chunk
-
-        # Return as an inline streaming response (opens in browser tab instead of forcing immediate save)
-        return StreamingResponse(
-            stream_gridfs_file(),
-            media_type="application/pdf",
-            headers={
-                "Content-Disposition": f'inline; filename="{filename}"',
-                "Content-Length": str(grid_out.length)
-            }
-        )
-    except Exception as e:
+@app.get("/api/documents/download/{filename:path}")
+def download_document(filename: str):
+    # Fetch DB instance from your helper
+    db = get_db()
+    if db is None:
         raise HTTPException(
-            status_code=404, 
-            detail=f"Document '{filename}' not found in database repository."
+            status_code=500, 
+            detail="Database connection is disabled (USE_DB is not set to true)."
         )
 
-# --- ELEVATED ENDPOINT: SECURE MULTI-PART FILE UPLOAD (MongoDB GridFS) ---
-def sync_run_script(script_path):
-    process = subprocess.Popen(
-        [sys.executable, script_path],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
+    # Initialize GridFS bucket with the synchronous PyMongo db handle
+    gridfs_bucket = GridFSBucket(db)
+
+    # 1. Decode URL encoded spaces/characters (%20 -> " ")
+    decoded_filename = urllib.parse.unquote(filename)
+    
+    # 2. Extract bare filename in case full path was supplied
+    clean_basename = decoded_filename.split("/")[-1].split("\\")[-1]
+
+    # 3. Flexible lookup against GridFS (Synchronous PyMongo: NO await)
+    file_doc = db["fs.files"].find_one({
+        "$or": [
+            {"filename": decoded_filename},
+            {"filename": clean_basename},
+            {"filename": {"$regex": f"^{re.escape(clean_basename)}$", "$options": "i"}},
+            {"metadata.filename": clean_basename}
+        ]
+    })
+
+    if not file_doc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Document '{clean_basename}' not found in database repository."
+        )
+
+    # 4. Stream from GridFS bucket using matched document ID (Synchronous: NO await)
+    grid_out = gridfs_bucket.open_download_stream(file_doc["_id"])
+    
+    return StreamingResponse(
+        grid_out,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{clean_basename}"'
+        }
     )
-
-    stdout, stderr = process.communicate()
-
-    logger.info(f"[INGEST STDOUT]\n{stdout}")
-    logger.error(f"[INGEST STDERR]\n{stderr}")
-    logger.info(f"[INGEST EXIT CODE] {process.returncode}")
 
 @app.post("/api/upload")
 async def upload_and_ingest_documents(
