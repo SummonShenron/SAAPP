@@ -22,7 +22,7 @@ class LazyLLM:
         self.thinking_level = thinking_level
         self.thinking_budget = thinking_budget
         self._real_llm = None
-        self.dev_mode = os.getenv("DEV_MODE", "false").lower() == "true"
+        self.dev_mode = False
 
     def _ensure_initialized(self):
         if self._real_llm is None and not self.dev_mode:
@@ -118,5 +118,5 @@ stream_llm = LazyLLM(
     model_name="gemini-3.5-flash",
     fallback_model="gemini-3.1-flash-lite",
     temperature=0.7,
-    thinking_level="low",  # <--- Drops TTFT from ~31s to ~1-2s while retaining quality
+    thinking_level="minimal",  # <--- Drops TTFT from ~31s to ~1-2s while retaining quality
 )

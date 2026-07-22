@@ -31,7 +31,7 @@ from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_community.vectorstores import Chroma
 from backend.components.time_storage import TimeEntry
-from backend.components.constraints import get_system_prompt, CONVERSATIONAL_PROMPT, format_docs
+from backend.components.constraints import get_system_prompt, CONVERSATIONAL_PROMPT, WEB_SEARCH_PROMPT, format_docs
 from backend.services.search import discover_workspace_documents
 from local_function_app.function_app import run_ingestion_pipeline, HOT_FOLDER_DIR
 from backend.state.graph_state import GraphState
@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI):
     global chat_sessions
     # This runs once when the server starts
     try:
-        print("Loading chat history from database...")
+        logger.info("Loading chat history from database...")
         chat_sessions = load_chat_history()
     except Exception as e:
         print(f"Error loading chat history: {e}")
@@ -75,7 +75,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Secure RAG Engine API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origin_regex=r"https://(saapp|saapp-[\w-]+)\.vercel\.app",
     allow_origins=[
         "http://127.0.0.1:8080", 
         "http://localhost:8080",
@@ -302,7 +302,8 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
         # Build a nice readable list
         formatted = "\n".join(f"• {t}" for t in titles)
         return await streamThinkingThen(f"Saved conversations:\n{formatted}")
-    
+    web_triggers = ["search the web", "search online", "search google", "web search", "look up online"]
+    force_web_search = any(kw in question.lower() for kw in web_triggers)
     requested_affiliate = request.affiliate.strip()
     directory = load_directory()
     user_claims = directory.get(username, {})
@@ -331,9 +332,10 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
         "username": username,
         "target_scope": target_scope,
         "documents": [],
-        "relevance_grade": "",
+        "relevance_grade": "web_search" if force_web_search else "", 
         "loop_count": 0,
         "original_question": question,
+        "force_web_search": force_web_search
     }
     # ---------- Run LangGraph ONCE (no streaming, logic-only) ----------
     try:
@@ -385,7 +387,10 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                 }
             else:
                 # Production execution
-                final_state = services.get("compiled_workflow").invoke(initial_state)
+                try:   
+                    final_state = services.get("compiled_workflow").invoke(initial_state)
+                except Exception as e:
+                    traceback.print_exc()
         except Exception as e:
             logger.error("workflow failed")
         t_graph_end = time.perf_counter()
@@ -397,9 +402,19 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
     # ---------- Build Prompt based on Decision Boundary ----------
     t_prompt_start = time.perf_counter()
     insight_answer = final_state.get("insight_answer")
-    is_conversational = final_state.get("relevance_grade") == "conversational"
+    relevance_grade = final_state.get("relevance_grade")
+    documents = final_state.get("documents", [])
 
-    if insight_answer:
+    # 1. WEB SEARCH BRANCH
+    if relevance_grade == "web_search":
+        formatted_docs = format_docs(documents)
+        prompt = WEB_SEARCH_PROMPT.format(
+            context=formatted_docs,
+            question=question
+        )
+
+    # 2. INSIGHTS BRANCH
+    elif insight_answer:
         history_transcript = format_history_as_text(chat_sessions[username])
         prompt = CONVERSATIONAL_PROMPT.format(
             username=username,
@@ -408,21 +423,22 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
             insight=insight_answer
         )
 
-    elif is_conversational:
+    # 3. GENERAL CONVERSATIONAL BRANCH
+    elif relevance_grade == "conversational":
         history_transcript = format_history_as_text(chat_sessions[username])
         prompt = CONVERSATIONAL_PROMPT.format(
             username=username,
             question=question,
             history=history_transcript,
-            insight=final_state.get("insight_answer")
+            insight=""
         )
 
+    # 4. DEFAULT STRICT KNOWLEDGE BASE RAG BRANCH
     else:
-        # RAG branch
         final_question = final_state.get("original_question", question)
-        documents = final_state.get("documents", [])
         accessible_affiliates_str = ", ".join(final_state.get("target_scope", target_scope))
         instructions = get_system_prompt(username, accessible_affiliates_str)
+        
         documents_sorted = sorted(
             documents,
             key=lambda d: d.metadata.get("priority", False),
@@ -431,6 +447,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
 
         formatted_docs = format_docs(documents_sorted)
         history_transcript = format_history_as_text(chat_sessions[username])
+        
         prompt = instructions.format(
             context=formatted_docs,
             history=history_transcript,
@@ -505,13 +522,19 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
     )
 
 @app.post("/api/chat/clear")
-async def clear_chat_history(current_user = Depends(get_current_user)):
-    # We no longer need the 'request: dict' since the JWT has the identity
-    username = current_user.get("sub")
-    
-    if username in chat_sessions:
-        chat_sessions[username] = []
-        save_chat_history()
+async def clear_chat(request: Request, user = Depends(get_current_user)):
+    db = get_db()
+    data = await request.json()
+    session_id = data.get("session_id")
+
+    # Wipe by session_id OR user_id (covers all bases)
+    await db.chat_history.delete_many({
+        "$or": [
+            {"session_id": session_id},
+            {"user_id": user.id},
+            {"username": data.get("username")}
+        ]
+    })
     return {"status": "cleared"}
 
 @app.post("/api/upload-attachment")
@@ -528,7 +551,10 @@ async def upload_attachment(
     return {"status": "ok", "filename": file.filename}
 
 @app.get("/api/documents/download/{filename:path}")
-def download_document(filename: str):
+def download_document(
+    filename: str, 
+    current_user: dict = Depends(get_current_user)  # Locks down endpoint to valid logged-in users
+):
     # Fetch DB instance from your helper
     db = get_db()
     if db is None:
@@ -546,7 +572,7 @@ def download_document(filename: str):
     # 2. Extract bare filename in case full path was supplied
     clean_basename = decoded_filename.split("/")[-1].split("\\")[-1]
 
-    # 3. Flexible lookup against GridFS (Synchronous PyMongo: NO await)
+    # 3. Flexible lookup against GridFS
     file_doc = db["fs.files"].find_one({
         "$or": [
             {"filename": decoded_filename},
@@ -562,7 +588,7 @@ def download_document(filename: str):
             detail=f"Document '{clean_basename}' not found in database repository."
         )
 
-    # 4. Stream from GridFS bucket using matched document ID (Synchronous: NO await)
+    # 4. Stream from GridFS bucket using matched document ID
     grid_out = gridfs_bucket.open_download_stream(file_doc["_id"])
     
     return StreamingResponse(
@@ -587,7 +613,7 @@ def sync_run_script(script_path):
     logger.info(f"[INGEST STDOUT]\n{stdout}")
     logger.error(f"[INGEST STDERR]\n{stderr}")
     logger.info(f"[INGEST EXIT CODE] {process.returncode}")
-    
+
 @app.post("/api/upload")
 async def upload_and_ingest_documents(
     affiliate: str,
@@ -648,6 +674,9 @@ async def list_documents(affiliate: str = Query(...), current_user = Depends(get
     return manifest
 
 # --- ELEVATED ENDPOINT: PURGE FROM VECTOR INDEX (MongoDB GridFS) ---
+import re  # Ensure 're' is imported at top of app.py
+
+# --- ELEVATED ENDPOINT: PURGE FROM VECTOR INDEX (MongoDB GridFS) ---
 @app.delete("/api/documents/{doc_id}")
 async def delete_document(
     doc_id: str, 
@@ -668,30 +697,56 @@ async def delete_document(
     fs = GridFS(db)
     try:
         file_obj = fs.get(ObjectId(doc_id))
-        filename = file_obj.filename
+        raw_filename = file_obj.filename
     except Exception:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    # Vector Deletion
-    logger.info(f"Sweeping MongoDB Atlas 'documents' for filename: {filename}")
+    # 1. Normalize filename: Strip browser copy suffixes like " (1)", " (2)", " - Copy"
+    # e.g., "jack facts (1).pdf" -> "jack facts.pdf"
+    base_filename = re.sub(r'[\s\-_]*\(\d+\)|[\s\-_]*copy', '', raw_filename, flags=re.IGNORECASE)
+
+    # 2. Escape special characters for regex matching
+    safe_raw = re.escape(raw_filename)
+    safe_base = re.escape(base_filename)
+
+    logger.info(f"Sweeping MongoDB Atlas 'documents' for: '{raw_filename}' and base target: '{base_filename}'")
     
     try:
         vector_collection = db["documents"]
-        # Regex query for the full path
-        query = {"metadata.source": {"$regex": f".*{filename}$"}}
+        
+        # Sweep both root-level 'source' AND nested 'metadata.source'
+        query = {
+            "$or": [
+                # 1. Root-level field checks (Matches your chunk payload)
+                {"source": raw_filename},
+                {"source": base_filename},
+                {"source": {"$regex": f".*{safe_raw}$", "$options": "i"}},
+                {"source": {"$regex": f".*{safe_base}$", "$options": "i"}},
+                
+                # 2. Nested field fallback (if other ingestors use metadata)
+                {"metadata.source": raw_filename},
+                {"metadata.source": base_filename},
+                {"metadata.source": {"$regex": f".*{safe_raw}$", "$options": "i"}},
+                {"metadata.source": {"$regex": f".*{safe_base}$", "$options": "i"}}
+            ]
+        }
+        
         result = vector_collection.delete_many(query)
-        
         logger.info(f"Successfully cleared {result.deleted_count} vector fragments.")
-        
-        # Finally, remove from GridFS
+        # 4. Remove target file from GridFS
         fs.delete(ObjectId(doc_id))
-        return {"status": "success", "detail": f"Expelled {filename}"}
+
+        # 5. Optional: Clean up older orphaned GridFS file objects matching base name
+        orphan_files = db["fs.files"].find({"filename": base_filename})
+        for orphan in orphan_files:
+            fs.delete(orphan["_id"])
+            logger.info(f"Cleaned orphaned GridFS file record for: {base_filename}")
+
+        return {"status": "success", "detail": f"Expelled {raw_filename} and cleared {result.deleted_count} vector fragments."}
 
     except Exception as e:
         logger.error(f"Deletion failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
 
 @app.get("/api/saved-conversations")
 async def get_saved_conversations(current_user = Depends(get_current_user)):

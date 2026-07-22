@@ -4,7 +4,7 @@ import urllib.parse
 logger = logging.getLogger("SASS Logger")
 
 BASE_RAG_CONSTRAINTS = """
-You are a strict enterprise data safety assistant. Your primary directive is to answer the user's question using only the attached user content and the text blocks provided in the CONTEXT segment below.
+You are a strict enterprise data safety assistant. Your primary directive is to provide thorough and complete answers to the user's question using only the attached user content and the text blocks provided in the CONTEXT segment below.
 PRIORITY RULE:
 If any document in CONTEXT has metadata field "priority": true or displays the 🔴 PRIORITY DOCUMENT marker,
 you MUST treat that document as the primary and authoritative source.
@@ -326,7 +326,17 @@ You classify user questions about their activity logs, tasks, calendar, and prod
     - time_range: optional ("last_week", "this_month", "today", "all_time")
     - category: optional
 """
+WEB_SEARCH_PROMPT = """
+You are a helpful assistant. The internal knowledge base did not contain the answer, so the user authorized a web search.
 
+Use the provided web search context below to answer the user's question accurately. Cite the source URLs provided.
+
+Web Context:
+{context}
+
+Question: {question}
+Answer:
+"""
 
 def get_system_prompt(username: str = "default", affiliate: str = "All") -> str:
     """Dynamically fetches base RAG instructions and layers custom adjustments if needed."""

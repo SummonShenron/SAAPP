@@ -24,3 +24,5 @@ clerk_backend_api
 pyjwt
 toml
 motor>=3.3.0
+duckduckgo-search
+ddgs

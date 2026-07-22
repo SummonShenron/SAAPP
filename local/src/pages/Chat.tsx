@@ -6,6 +6,7 @@ import { api } from '../api';
 import ReactMarkdown from 'react-markdown';
 import sonicSpinImg from '../assets/sonic-rolling.gif';
 import shadowSpinImg from '../assets/shadow.gif';
+import { useAuth, useUser } from '@clerk/clerk-react';
 
 interface Message {
   id: string;
@@ -29,6 +30,8 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [agentPath, setAgentPath] = useState<string[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const BASE_URL = "https://saapp.onrender.com/";
+  const { getToken } = useAuth();
+  const { user } = useUser();
   const [showTooltip, setShowTooltip] = useState(false);
     const tooltipRef = useRef<HTMLDivElement>(null);
 
@@ -125,12 +128,16 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     setAgentStatus('');
     setAgentPath([]);
     setHasChatted(false)
+    const token = await getToken();
     localStorage.removeItem(`chat-messages-${principal}`);
     try {
       // Direct call to purge the persisted memory on your local-RAG backend API
       await fetch('https://saapp.onrender.com/api/chat/clear', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+         },
         body: JSON.stringify({ username: principal })
       });
     } catch (e) {
