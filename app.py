@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI):
     global chat_sessions
     # This runs once when the server starts
     try:
-        print("Loading chat history from database...")
+        logger.info("Loading chat history from database...")
         chat_sessions = load_chat_history()
     except Exception as e:
         print(f"Error loading chat history: {e}")
@@ -75,7 +75,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Secure RAG Engine API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origin_regex=r"https://(saapp|saapp-[\w-]+)\.vercel\.app",
     allow_origins=[
         "http://127.0.0.1:8080", 
         "http://localhost:8080",
@@ -302,7 +302,8 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
         # Build a nice readable list
         formatted = "\n".join(f"• {t}" for t in titles)
         return await streamThinkingThen(f"Saved conversations:\n{formatted}")
-    force_web_search = "search the web" in question.lower()
+    web_triggers = ["search the web", "search online", "search google", "web search", "look up online"]
+    force_web_search = any(kw in question.lower() for kw in web_triggers)
     requested_affiliate = request.affiliate.strip()
     directory = load_directory()
     user_claims = directory.get(username, {})
@@ -334,6 +335,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
         "relevance_grade": "web_search" if force_web_search else "", 
         "loop_count": 0,
         "original_question": question,
+        "force_web_search": force_web_search
     }
     # ---------- Run LangGraph ONCE (no streaming, logic-only) ----------
     try:
@@ -385,7 +387,10 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                 }
             else:
                 # Production execution
-                final_state = services.get("compiled_workflow").invoke(initial_state)
+                try:   
+                    final_state = services.get("compiled_workflow").invoke(initial_state)
+                except Exception as e:
+                    traceback.print_exc()
         except Exception as e:
             logger.error("workflow failed")
         t_graph_end = time.perf_counter()
@@ -517,13 +522,19 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
     )
 
 @app.post("/api/chat/clear")
-async def clear_chat_history(current_user = Depends(get_current_user)):
-    # We no longer need the 'request: dict' since the JWT has the identity
-    username = current_user.get("sub")
-    
-    if username in chat_sessions:
-        chat_sessions[username] = []
-        save_chat_history()
+async def clear_chat(request: Request, user = Depends(get_current_user)):
+    db = get_db()
+    data = await request.json()
+    session_id = data.get("session_id")
+
+    # Wipe by session_id OR user_id (covers all bases)
+    await db.chat_history.delete_many({
+        "$or": [
+            {"session_id": session_id},
+            {"user_id": user.id},
+            {"username": data.get("username")}
+        ]
+    })
     return {"status": "cleared"}
 
 @app.post("/api/upload-attachment")
@@ -540,7 +551,10 @@ async def upload_attachment(
     return {"status": "ok", "filename": file.filename}
 
 @app.get("/api/documents/download/{filename:path}")
-def download_document(filename: str):
+def download_document(
+    filename: str, 
+    current_user: dict = Depends(get_current_user)  # Locks down endpoint to valid logged-in users
+):
     # Fetch DB instance from your helper
     db = get_db()
     if db is None:
@@ -558,7 +572,7 @@ def download_document(filename: str):
     # 2. Extract bare filename in case full path was supplied
     clean_basename = decoded_filename.split("/")[-1].split("\\")[-1]
 
-    # 3. Flexible lookup against GridFS (Synchronous PyMongo: NO await)
+    # 3. Flexible lookup against GridFS
     file_doc = db["fs.files"].find_one({
         "$or": [
             {"filename": decoded_filename},
@@ -574,7 +588,7 @@ def download_document(filename: str):
             detail=f"Document '{clean_basename}' not found in database repository."
         )
 
-    # 4. Stream from GridFS bucket using matched document ID (Synchronous: NO await)
+    # 4. Stream from GridFS bucket using matched document ID
     grid_out = gridfs_bucket.open_download_stream(file_doc["_id"])
     
     return StreamingResponse(

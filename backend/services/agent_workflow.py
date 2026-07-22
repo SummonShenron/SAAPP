@@ -84,7 +84,9 @@ def coordinator_router(state: GraphState) -> str:
         "insight": "snapshot_node",
         "web_search": "web_search_node"
     }
-
+    destination = mapping.get(next_agent, "conversational_node")
+    logger.debug(f"Next agent from plan: '{next_agent}'")
+    logger.debug(f"Router returning destination string: '{destination}'")
     logger.info(f"sending request to {next_agent}")
     logger.info("--- COORDINATOR NODE END ---")
     return mapping.get(next_agent, "conversational_node")
@@ -191,7 +193,13 @@ def reasoner_node(state: GraphState) -> GraphState:
     logger.info("--- REASONER NODE START ---")
     logger.info(f"[Reasoner] Message: {msg}")
 
-    # 1. Define follow-up check FIRST
+    # 1. Check for web search triggers
+    force_web = state.get("force_web_search", False)
+    forced_by_api = state.get("relevance_grade") == "web_search"
+    web_phrases = ["search the web", "search online", "search google", "web search", "look up online"]
+    explicit_web_request = force_web or forced_by_api or any(phrase in msg for phrase in web_phrases)
+
+    # 2. Check for follow-up confirmations ("yes", "sure", etc.)
     follow_up_phrases = [
         "yes", "yeah", "yep", "sure", "do it", "go ahead",
         "nope", "save it", "that one", "please do", "ok", "okay",
@@ -200,24 +208,28 @@ def reasoner_node(state: GraphState) -> GraphState:
     ]
     is_follow_up = any(p in msg for p in follow_up_phrases)
 
-    # 2. Check last AI message safely
+    # 3. Safely extract last AI message
     last_ai_msg = ""
     for m in reversed(history[:-1]):
-        if isinstance(m, AIMessage):
-            last_ai_msg = m.content.lower()
+        content = getattr(m, "content", "") or (m.get("content") if isinstance(m, dict) else "")
+        role = getattr(m, "type", "") or (m.get("type") or m.get("role") if isinstance(m, dict) else "")
+        if role in ["ai", "assistant"] and content:
+            last_ai_msg = str(content).lower()
             break
 
-    web_search_requested = "search the web" in last_ai_msg and is_follow_up
-    
-    # Also check if secure_chat explicitly forced web_search
-    forced_by_api = state.get("relevance_grade") == "web_search"
+    ai_offered_web = any(kw in last_ai_msg for kw in ["search the web", "search online", "internal knowledge base"])
 
-    # 3. Rest of intent checks ...
+    # Final decision on web search
+    needs_web_search = explicit_web_request or (is_follow_up and ai_offered_web)
+
+    # 4. Intent checks (SUPPRESS retrieval if web search is active)
     explicit_memory = any(phrase in msg for phrase in ["remember that", "remember this", "save this", "store this"])
     is_knowledge_query = any(phrase in msg for phrase in ["what is", "what are", "who is", "explain", "tell me about"])
     
     needs_memory = explicit_memory
-    needs_retrieval = (
+    
+    # ✅ FIX: Do NOT trigger internal vector retrieval if we are doing a web search
+    needs_retrieval = not needs_web_search and (
         is_knowledge_query
         or len(attachments) > 0
         or any(word in msg for word in ["find", "lookup", "search", "policy", "document", "docs"])
@@ -231,9 +243,11 @@ def reasoner_node(state: GraphState) -> GraphState:
     time_tracking_keywords = ["log time", "record time", "track time", "coding", "work"]
     needs_paapp = any(kw in msg for kw in calendar_keywords + time_tracking_keywords)
 
-    needs_conversation = not (needs_retrieval or explicit_rewrite or needs_summary or needs_formatting or needs_paapp)
+    needs_conversation = not (
+        needs_retrieval or explicit_rewrite or needs_summary or 
+        needs_formatting or needs_paapp or needs_web_search
+    )
 
-    # 4. Build flags with matching key name
     flags = {
         "needs_retrieval": needs_retrieval,
         "needs_rewrite": explicit_rewrite,
@@ -243,7 +257,7 @@ def reasoner_node(state: GraphState) -> GraphState:
         "needs_memory": needs_memory,
         "needs_paapp": needs_paapp,
         "follow_up_intent": is_follow_up,
-        "needs_web_search": forced_by_api or web_search_requested or any(kw in msg for kw in ["web search", "search google", "search internet", "search the web"])
+        "needs_web_search": needs_web_search
     }
 
     logger.info(f"[Reasoner] Flags: {flags}")
@@ -1581,24 +1595,42 @@ def insight_query_node(state: dict) -> dict:
 
 def web_search_node(state: GraphState) -> dict:
     logger.info("--- EXECUTING WEB SEARCH ESCALATION ---")
-    question = state.get("original_question") or state["messages"][-1].content
     
-    # Run web search (using DuckDuckGo or Tavily/Google)
-    search = DuckDuckGoSearchAPIWrapper()
-    results = search.results(question, max_results=3)
+    # Safe question extraction
+    question = state.get("original_question")
+    if not question and state.get("messages"):
+        question = state["messages"][-1].content
     
-    web_docs = [
-        Document(
-            page_content=f"Title: {r['title']}\nSnippet: {r['snippet']}",
-            metadata={"source": r["link"], "type": "web_search"}
-        )
-        for r in results
-    ]
+    web_docs = []
     
+    try:
+        search = DuckDuckGoSearchAPIWrapper()
+        results = search.results(question, max_results=3)
+        
+        if results:
+            web_docs = [
+                Document(
+                    page_content=f"Title: {r.get('title', 'N/A')}\nSnippet: {r.get('snippet', 'N/A')}",
+                    metadata={"source": r.get("link", "web_search"), "type": "web_search"}
+                )
+                for r in results if isinstance(r, dict)
+            ]
+    except Exception as e:
+        logger.error(f"Web search execution error: {str(e)}", exc_info=True)
+
+    # Fallback document if search returned empty or threw an error
+    if not web_docs:
+        web_docs = [
+            Document(
+                page_content="No direct web search results were found for this query.",
+                metadata={"source": "web_search", "type": "web_search"}
+            )
+        ]
+
+    # Return ONLY modified state keys — do NOT spread **state
     return {
-        **state,
         "documents": web_docs,
-        "relevance_grade": "web_search"  # Signal to app.py to relax strict RAG rules
+        "relevance_grade": "web_search"
     }
 
 # ============================================================
@@ -1641,7 +1673,7 @@ def create_workflow(vector_store):
             "formatter_node": "formatter_node",
             "paapp_node": "paapp_node",
             "insight": "snapshot_node",
-            "web_search": "web_search_node",
+            "web_search_node": "web_search_node",
             "snapshot_node": "snapshot_node",
             "classifier_node": "classifier_node",
             "pattern_node": "pattern_node",

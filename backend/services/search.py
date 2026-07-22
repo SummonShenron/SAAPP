@@ -13,25 +13,29 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BASE_DIR)
 logger = logging.getLogger("SASS Logger")
 logger.setLevel(logging.INFO)
-logger.info("Initializing Unified Search Service Engine (MongoDB backend)...")
 
 # Environment-driven configuration
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 DB_NAME = os.getenv("DB_NAME", "saapp_database")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "gemini-embedding-001")
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "768"))
-EMBEDDINGS_BATCH_SIZE = int(os.getenv("EMBEDDINGS_BATCH_SIZE", "16"))
 
-# Initialize MongoDB client and collection handle
+# Singleton MongoDB Client connection pool
+_mongo_client: Optional[MongoClient] = None
+
 def _get_mongo_collection(collection_name: str):
-    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2000)
-    db = client[DB_NAME]
+    global _mongo_client
+    if _mongo_client is None:
+        _mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2000)
+    db = _mongo_client[DB_NAME]
     return db[collection_name]
-# Embeddings helper (reused by retrieval functions)
+
+# Embeddings helper
 _embeddings = GoogleGenerativeAIEmbeddings(
     model=EMBEDDING_MODEL,
     output_dimensionality=EMBEDDING_DIM
 )
+
 # -------------------------
 # Routing strategy
 # -------------------------
@@ -43,13 +47,16 @@ def _detect_routing_strategy(query: str) -> str:
     ]
     if any(marker in clean_query for marker in lexical_markers):
         return "lexical"
+        
     hybrid_markers = [
         "compare", "difference", "versus", "vs", "relationship",
         "how does", "why did", "explain the connection", "analyze"
     ]
     if any(marker in clean_query for marker in hybrid_markers) or len(clean_query.split()) > 12:
         return "hybrid"
+        
     return "vector"
+
 # -------------------------
 # Core MongoDB vector search
 # -------------------------
@@ -61,30 +68,31 @@ def _mongo_vector_search(
 ) -> List[Document]:
     """
     Run a MongoDB $vectorSearch aggregation against the specified collection.
-    Returns a list of LangChain Document objects with populated metadata.
     """
     collection = _get_mongo_collection(collection_name)
     try:
         query_vector = _embeddings.embed_query(query)
+        
+        vector_search_stage: Dict[str, Any] = {
+            "queryVector": query_vector,
+            "index": "vector_index",
+            "path": "embedding",
+            "numCandidates": max(100, top_k * 10),
+            "limit": top_k,
+        }
+
+        # Fix: Only apply affiliate filter if specific scopes are passed (ignoring "All")
+        active_filters = [a for a in affiliate_scope if a and a != "All"]
+        if active_filters:
+            vector_search_stage["filter"] = {
+                "affiliate": {"$in": active_filters}
+            }
+
         pipeline = [
-            {
-                "$vectorSearch": {
-                    "queryVector": query_vector,
-                    "index": "vector_index",
-                    "path": "embedding",
-                    "numCandidates": max(100, top_k * 10),
-                    "limit": top_k,
-                    "filter": {
-                        "affiliate": {"$in": affiliate_scope}
-                    }
-                }
-            },
+            {"$vectorSearch": vector_search_stage},
             {
                 "$project": {
-                    "page_content": {
-                        "$ifNull": ["$text", "$page_content"]
-                    },
-                    # Explicitly project root-level metadata fields!
+                    "page_content": {"$ifNull": ["$text", "$page_content"]},
                     "source": 1,
                     "filename": 1,
                     "page": 1,
@@ -96,113 +104,100 @@ def _mongo_vector_search(
                 }
             }
         ]
+        
         results = list(collection.aggregate(pipeline))
         docs: List[Document] = []
+        
         for r in results:
             page_content = r.get("page_content") or r.get("text") or ""
             raw_meta = r.get("metadata") if isinstance(r.get("metadata"), dict) else {}
-            # Combine root-level fields and nested metadata into LangChain's metadata dict
+            
             metadata = {
                 **raw_meta,
                 "source": r.get("source") or r.get("filename") or raw_meta.get("source") or raw_meta.get("filename") or "Unknown",
                 "page": r.get("page") if "page" in r else raw_meta.get("page"),
                 "page_label": r.get("page_label") or raw_meta.get("page_label"),
                 "affiliate": r.get("affiliate") or raw_meta.get("affiliate"),
-                # Safely fallback to False/0 if priority is None or missing
                 "priority": r.get("priority") or raw_meta.get("priority") or False,
+                "score": r.get("score", 0.0)
             }
             docs.append(Document(page_content=page_content, metadata=metadata))
+            
         return docs
     except Exception as e:
         logger.error(f"MongoDB vector search failed: {e}")
         return []
+
 # -------------------------
-# Lexical retrieval (TF-IDF over candidate pool)
+# Lexical TF-IDF Scoring Helper
 # -------------------------
-def _retrieve_lexical(
-    vector_store: Optional[Any],
-    query: str,
-    search_filter: Dict[str, Any],
-    top_k: int
-) -> List[Document]:
-    logger.info(f"Retrieving Lexical context (k={top_k}).")
-    try:
-        affiliate_scope = search_filter.get("metadata.affiliate", {}).get("$in", ["All"])
-        # Use vector search to get a candidate pool, then rank lexically
-        candidate_pool = _mongo_vector_search(query, affiliate_scope, top_k * 5)
-        if not candidate_pool:
-            return []
-        keywords = [w.lower() for w in re.findall(r'\w+', query) if len(w) > 2]
-        if not keywords:
-            return candidate_pool[:top_k]
-        num_docs = len(candidate_pool)
-        doc_frequencies = {}
+def _score_lexical(candidate_pool: List[Document], query: str, top_k: int) -> List[Document]:
+    keywords = [w.lower() for w in re.findall(r'\w+', query) if len(w) > 2]
+    if not keywords or not candidate_pool:
+        return candidate_pool[:top_k]
+
+    num_docs = len(candidate_pool)
+    doc_frequencies = {
+        kw: sum(1 for doc in candidate_pool if kw in doc.page_content.lower()) 
+        for kw in keywords
+    }
+
+    scored_candidates = []
+    for doc in candidate_pool:
+        content_lower = doc.page_content.lower()
+        doc_score = 0.0
         for kw in keywords:
-            doc_frequencies[kw] = sum(1 for doc in candidate_pool if kw in doc.page_content.lower())
-        scored_candidates = []
-        for doc in candidate_pool:
-            content_lower = doc.page_content.lower()
-            doc_score = 0.0
-            for kw in keywords:
-                term_count = content_lower.count(kw)
-                if term_count > 0:
-                    tf = 1 + math.log(term_count)
-                    df = doc_frequencies.get(kw, 0)
-                    idf = math.log(1 + (num_docs / (1 + df)))
-                    doc_score += tf * idf
-            scored_candidates.append((doc, doc_score))
-        scored_candidates.sort(key=lambda x: x[1], reverse=True)
-        top_docs = [doc for doc, score in scored_candidates if score > 0.0][:top_k]
-        return top_docs or candidate_pool[:top_k]
-    except Exception as e:
-        logger.error(f"Lexical retrieval pipeline exception: {e}")
-        return []
+            term_count = content_lower.count(kw)
+            if term_count > 0:
+                tf = 1 + math.log(term_count)
+                df = doc_frequencies.get(kw, 0)
+                idf = math.log(1 + (num_docs / (1 + df)))
+                doc_score += tf * idf
+        scored_candidates.append((doc, doc_score))
+
+    scored_candidates.sort(key=lambda x: x[1], reverse=True)
+    top_docs = [doc for doc, score in scored_candidates if score > 0.0][:top_k]
+    return top_docs or candidate_pool[:top_k]
 
 # -------------------------
-# Vector retrieval wrapper (uses MongoDB)
+# Retrieval Strategies
 # -------------------------
-def _retrieve_vector(
-    vector_store: Optional[Any],
-    query: str,
-    search_filter: Dict[str, Any],
-    top_k: int
-) -> List[Document]:
+def _retrieve_lexical(query: str, search_filter: Dict[str, Any], top_k: int) -> List[Document]:
+    logger.info(f"Retrieving Lexical context (k={top_k}).")
+    affiliate_scope = search_filter.get("metadata.affiliate", {}).get("$in", ["All"])
+    candidate_pool = _mongo_vector_search(query, affiliate_scope, top_k * 5)
+    return _score_lexical(candidate_pool, query, top_k)
+
+def _retrieve_vector(query: str, search_filter: Dict[str, Any], top_k: int) -> List[Document]:
     logger.info(f"Retrieving Vector context (k={top_k}).")
-    print(f"DEBUG: Searching with Filter: {search_filter}")
-    print(f"DEBUG: Searching with Query: {query}")
-    try:
-        affiliate_scope = search_filter.get("metadata.affiliate", {}).get("$in", ["All"])
-        return _mongo_vector_search(query, affiliate_scope, top_k)
-    except Exception as e:
-        logger.error(f"Dense vector search failure: {e}")
-        return []
+    affiliate_scope = search_filter.get("metadata.affiliate", {}).get("$in", ["All"])
+    return _mongo_vector_search(query, affiliate_scope, top_k)
 
-# -------------------------
-# Hybrid retrieval (RRF fusion)
-# -------------------------
-def _retrieve_hybrid(
-    vector_store: Optional[Any],
-    query: str,
-    search_filter: Dict[str, Any],
-    top_k: int
-) -> List[Document]:
+def _retrieve_hybrid(query: str, search_filter: Dict[str, Any], top_k: int) -> List[Document]:
     logger.info("Executing Hybrid Retrieval (Vector + Lexical)")
     try:
-        vector_docs = _retrieve_vector(vector_store, query, search_filter, top_k)
-        lexical_docs = _retrieve_lexical(vector_store, query, search_filter, top_k)
+        affiliate_scope = search_filter.get("metadata.affiliate", {}).get("$in", ["All"])
+        
+        # Optimization: Embed and retrieve candidate pool ONCE
+        candidate_pool = _mongo_vector_search(query, affiliate_scope, top_k * 4)
+        if not candidate_pool:
+            return []
+
+        vector_docs = candidate_pool[:top_k]
+        lexical_docs = _score_lexical(candidate_pool, query, top_k)
 
         rrf_scores: Dict[str, float] = {}
         doc_mapping: Dict[str, Document] = {}
 
-        for rank, doc in enumerate(vector_docs):
-            doc_id = doc.page_content
-            doc_mapping[doc_id] = doc
-            rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + (1.0 / (60.0 + (rank + 1)))
+        def process_rankings(docs: List[Document]):
+            for rank, doc in enumerate(docs):
+                # Unique ID prevents collisions on duplicate chunk texts
+                doc_id = f"{doc.metadata.get('source')}_{doc.metadata.get('page')}_{hash(doc.page_content)}"
+                doc_mapping[doc_id] = doc
+                rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + (1.0 / (60.0 + (rank + 1)))
 
-        for rank, doc in enumerate(lexical_docs):
-            doc_id = doc.page_content
-            doc_mapping[doc_id] = doc
-            rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + (1.0 / (60.0 + (rank + 1)))
+        process_rankings(vector_docs)
+        process_rankings(lexical_docs)
 
         fused_results = sorted(rrf_scores.keys(), key=lambda x: rrf_scores[x], reverse=True)
         return [doc_mapping[doc_id] for doc_id in fused_results][:top_k]
@@ -216,22 +211,29 @@ def _retrieve_hybrid(
 # -------------------------
 def discover_workspace_documents(vector_store: Optional[Any], affiliate_scope: str, collection_name: str = "documents") -> List[str]:
     """
-    Enumerate unique filenames (source) for the given affiliate scope.
+    Enumerate unique filenames using fast indexed MongoDB distinct calls.
     """
     if not collection_name:
         return []
 
     try:
         collection = _get_mongo_collection(collection_name)
-        cursor = collection.find({}, {"metadata": 1})
-        unique_files = set()
-        for doc in cursor:
-            nested_meta = doc.get("metadata", {})
-            meta = nested_meta.get("metadata", nested_meta)
-            if meta.get("affiliate") == affiliate_scope or affiliate_scope == "All":
-                source_path = meta.get("source", "Unknown")
-                filename = os.path.basename(source_path)
-                unique_files.add(filename)
+        
+        query_filter = {}
+        if affiliate_scope and affiliate_scope != "All":
+            query_filter = {
+                "$or": [
+                    {"affiliate": affiliate_scope},
+                    {"metadata.affiliate": affiliate_scope}
+                ]
+            }
+
+        # Fix: Use native distinct queries rather than loading full documents into Python memory
+        sources = collection.distinct("metadata.source", query_filter)
+        if not sources:
+            sources = collection.distinct("filename", query_filter)
+
+        unique_files = {os.path.basename(s) for s in sources if s}
         return sorted(list(unique_files))
     except Exception as e:
         logger.error(f"[-] Document discovery disruption: {str(e)}")
@@ -240,11 +242,14 @@ def discover_workspace_documents(vector_store: Optional[Any], affiliate_scope: s
 # -------------------------
 # Secure retriever factory (LangChain-compatible)
 # -------------------------
-def get_secure_retriever(vector_store: Optional[Any], target_scope: List[str], query_text: str, top_k: int = 3, collection_name: str = "documents") -> Callable[[str], List[Document]]:
-    """
-    Returns a callable retriever that LangChain-style code can call.
-    The 'vector_store' parameter is accepted for compatibility but is not used (MongoDB is the source).
-    """
+def get_secure_retriever(
+    vector_store: Optional[Any], 
+    target_scope: List[str], 
+    query_text: str, 
+    top_k: int = 3, 
+    collection_name: str = "documents"
+) -> Callable[[str], List[Document]]:
+
     if not target_scope:
         target_scope = ["All"]
 
@@ -255,15 +260,13 @@ def get_secure_retriever(vector_store: Optional[Any], target_scope: List[str], q
 
     def retrieve(query: str) -> List[Document]:
         if strategy == "vector":
-            return _retrieve_vector(None, query, search_filter, top_k)
+            return _retrieve_vector(query, search_filter, top_k)
         elif strategy == "lexical":
-            return _retrieve_lexical(None, query, search_filter, top_k)
+            return _retrieve_lexical(query, search_filter, top_k)
         elif strategy == "hybrid":
-            return _retrieve_hybrid(None, query, search_filter, top_k)
+            return _retrieve_hybrid(query, search_filter, top_k)
         else:
-            logger.warning(f"Unknown strategy '{strategy}'. Falling back to vector.")
-            return _retrieve_vector(None, query, search_filter, top_k)
+            return _retrieve_vector(query, search_filter, top_k)
 
-    # LangChain compatibility: attach invoke
     retrieve.invoke = retrieve
     return retrieve

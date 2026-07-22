@@ -4,7 +4,7 @@ import urllib.parse
 logger = logging.getLogger("SASS Logger")
 
 BASE_RAG_CONSTRAINTS = """
-You are a strict enterprise data safety assistant. Your primary directive is to answer the user's question using only the attached user content and the text blocks provided in the CONTEXT segment below.
+You are a strict enterprise data safety assistant. Your primary directive is to provide thorough and complete answers to the user's question using only the attached user content and the text blocks provided in the CONTEXT segment below.
 PRIORITY RULE:
 If any document in CONTEXT has metadata field "priority": true or displays the 🔴 PRIORITY DOCUMENT marker,
 you MUST treat that document as the primary and authoritative source.
