@@ -6,10 +6,12 @@ from typing import List, Any, Dict
 import logging
 import requests
 from concurrent.futures import ThreadPoolExecutor
+
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from backend.components.time_storage import load_user_time
 from backend.models.attachment import Attachment
+from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langchain_core.documents import Document
 from settings import PAAPP_BASE_URL
@@ -79,7 +81,8 @@ def coordinator_router(state: GraphState) -> str:
         "workflow": "conversational_node",
         "tool": "conversational_node",
         "memory": "memory_node",
-        "insight": "snapshot_node"
+        "insight": "snapshot_node",
+        "web_search": "web_search_node"
     }
 
     logger.info(f"sending request to {next_agent}")
@@ -149,6 +152,8 @@ def build_agent_plan(intent, state):
         agents.append("paapp")
     if flags.get("needs_conversation"):
         agents.append("conversational")
+    if flags.get("needs_web_search"):
+        agents.append("web_search")
     # Always end with formatter
     if "formatter" not in agents:
         agents.append("formatter")
@@ -182,10 +187,11 @@ def reasoner_node(state: GraphState) -> GraphState:
     msg = state["messages"][-1].content.lower().strip()
     attachments = state.get("attachment_summaries", [])
     history = state.get("messages", [])
+    
     logger.info("--- REASONER NODE START ---")
     logger.info(f"[Reasoner] Message: {msg}")
 
-    # --- FOLLOW-UP DETECTION ---
+    # 1. Define follow-up check FIRST
     follow_up_phrases = [
         "yes", "yeah", "yep", "sure", "do it", "go ahead",
         "nope", "save it", "that one", "please do", "ok", "okay",
@@ -194,72 +200,40 @@ def reasoner_node(state: GraphState) -> GraphState:
     ]
     is_follow_up = any(p in msg for p in follow_up_phrases)
 
-    # --- NORMAL INTENT FLAGS ---
-    explicit_memory = any(
-        phrase in msg for phrase in [
-            "remember that", "remember this", "remember me",
-            "save this", "store this", "keep this", "don't forget",
-            "my preference is", "i prefer", "track this", "log this",
-            "add to memory"
-        ]
-    )
+    # 2. Check last AI message safely
+    last_ai_msg = ""
+    for m in reversed(history[:-1]):
+        if isinstance(m, AIMessage):
+            last_ai_msg = m.content.lower()
+            break
 
-    is_knowledge_query = any(
-        phrase in msg for phrase in [
-            "what is", "what are", "who is", "who are",
-            "define", "meaning of", "explain", "tell me about"
-        ]
-    )
+    web_search_requested = "search the web" in last_ai_msg and is_follow_up
+    
+    # Also check if secure_chat explicitly forced web_search
+    forced_by_api = state.get("relevance_grade") == "web_search"
 
+    # 3. Rest of intent checks ...
+    explicit_memory = any(phrase in msg for phrase in ["remember that", "remember this", "save this", "store this"])
+    is_knowledge_query = any(phrase in msg for phrase in ["what is", "what are", "who is", "explain", "tell me about"])
+    
     needs_memory = explicit_memory
-
-    # --- CALENDAR DETECTION ---
-    calendar_keywords = [
-        "calendar", "google calendar", "create an event",
-        "create event", "calendar event", "add an event",
-        "make an event", "put this on my calendar"
-    ]
-    needs_paapp = any(kw in msg for kw in calendar_keywords)
-
-    # --- TIME TRACKING DETECTION (NEW + IMPORTANT) ---
-    time_tracking_keywords = [
-        "log time",
-        "record time",
-        "track time",
-        "time tracking",
-        "log 1 hour",
-        "log one hour",
-        "log 30 minutes",
-        "add another hour",
-        "log more time",
-        "job apps",
-        "job applications",
-        "coding",
-        "work",
-        "today"
-    ]
-
-    if any(kw in msg for kw in time_tracking_keywords):
-        needs_paapp = True
-    time_log_pattern = r"log\s+\d+(\s+hour|\s+hours|\s+minute|\s+minutes)"
-    if re.search(time_log_pattern, msg):
-        needs_paapp = True
-    # --- RETRIEVAL DETECTION ---
     needs_retrieval = (
         is_knowledge_query
         or len(attachments) > 0
         or any(word in msg for word in ["find", "lookup", "search", "policy", "document", "docs"])
     )
-
-    explicit_rewrite = any(word in msg for word in [
-        "rewrite", "reword", "improve wording", "optimize query", "rewrite this"
-    ])
-
+    
+    explicit_rewrite = any(word in msg for word in ["rewrite", "reword", "improve wording", "optimize query"])
     needs_summary = any(word in msg for word in ["summarize", "tl;dr", "shorten"])
     needs_formatting = any(word in msg for word in ["bullet", "format", "report", "clean up", "structure"])
+    
+    calendar_keywords = ["calendar", "google calendar", "create event", "add event"]
+    time_tracking_keywords = ["log time", "record time", "track time", "coding", "work"]
+    needs_paapp = any(kw in msg for kw in calendar_keywords + time_tracking_keywords)
+
     needs_conversation = not (needs_retrieval or explicit_rewrite or needs_summary or needs_formatting or needs_paapp)
 
-    # --- BUILD FLAGS ---
+    # 4. Build flags with matching key name
     flags = {
         "needs_retrieval": needs_retrieval,
         "needs_rewrite": explicit_rewrite,
@@ -268,7 +242,8 @@ def reasoner_node(state: GraphState) -> GraphState:
         "needs_conversation": needs_conversation,
         "needs_memory": needs_memory,
         "needs_paapp": needs_paapp,
-        "follow_up_intent": is_follow_up
+        "follow_up_intent": is_follow_up,
+        "needs_web_search": forced_by_api or web_search_requested or any(kw in msg for kw in ["web search", "search google", "search internet", "search the web"])
     }
 
     logger.info(f"[Reasoner] Flags: {flags}")
@@ -1600,6 +1575,31 @@ def insight_query_node(state: dict) -> dict:
         "content_to_format": answer["answer"]
     }
 
+# ============================================================
+# WEB SEARCH NODE
+# ============================================================
+
+def web_search_node(state: GraphState) -> dict:
+    logger.info("--- EXECUTING WEB SEARCH ESCALATION ---")
+    question = state.get("original_question") or state["messages"][-1].content
+    
+    # Run web search (using DuckDuckGo or Tavily/Google)
+    search = DuckDuckGoSearchAPIWrapper()
+    results = search.results(question, max_results=3)
+    
+    web_docs = [
+        Document(
+            page_content=f"Title: {r['title']}\nSnippet: {r['snippet']}",
+            metadata={"source": r["link"], "type": "web_search"}
+        )
+        for r in results
+    ]
+    
+    return {
+        **state,
+        "documents": web_docs,
+        "relevance_grade": "web_search"  # Signal to app.py to relax strict RAG rules
+    }
 
 # ============================================================
 # WORKFLOW ASSEMBLY & COMPILATION
@@ -1625,6 +1625,7 @@ def create_workflow(vector_store):
     workflow.add_node("pattern_node", pattern_detector_node)
     workflow.add_node("trend_node", trend_analyzer_node)
     workflow.add_node("insight_query_node", insight_query_node)
+    workflow.add_node("web_search_node", web_search_node)
     
     workflow.add_edge(START, "coordinator_node")
     workflow.add_conditional_edges(
@@ -1640,11 +1641,12 @@ def create_workflow(vector_store):
             "formatter_node": "formatter_node",
             "paapp_node": "paapp_node",
             "insight": "snapshot_node",
+            "web_search": "web_search_node",
             "snapshot_node": "snapshot_node",
             "classifier_node": "classifier_node",
             "pattern_node": "pattern_node",
             "trend_node": "trend_node",
-            "insight_query_node": "insight_query_node",
+            "insight_query_node": "insight_query_node"
         }
     )
     
@@ -1654,7 +1656,7 @@ def create_workflow(vector_store):
     workflow.add_edge("formatter_node", "generate_node")
     workflow.add_edge("retrieve_node", "grade_documents_node")
     workflow.add_edge("rewrite_query_node", "retrieve_node")
-    
+    workflow.add_edge("web_search_node", "formatter_node")
     # --- PARALLEL FAN-OUT FOR ANALYTICS ---
     workflow.add_edge("snapshot_node", "classifier_node")
     # LangGraph runs pattern_node and trend_node concurrently

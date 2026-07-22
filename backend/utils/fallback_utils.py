@@ -60,9 +60,13 @@ async def rewrite_fallback(
         logger.exception("grading_node failed: %s", e)
     state["messages"] = preserved_messages
 
-    # If not relevant, short-circuit
+    # If re-retrieval/rewrite still fails relevance grading:
     if state.get("relevance_grade") != "yes":
-        yield f"data: {json.dumps({'event': 'final_generation', 'text': 'I cannot find the answer in the provided knowledge base.'})}\n\n"
+        ask_web_search_msg = (
+            "I couldn't find an answer to your question in the knowledge base. "
+            "Would you like me to break RAG restrictions and search the web to answer this?"
+        )
+        yield f"data: {json.dumps({'event': 'final_generation', 'text': ask_web_search_msg})}\n\n"
         return
 
     # Prepare prompt pieces defensively

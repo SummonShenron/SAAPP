@@ -326,7 +326,17 @@ You classify user questions about their activity logs, tasks, calendar, and prod
     - time_range: optional ("last_week", "this_month", "today", "all_time")
     - category: optional
 """
+WEB_SEARCH_PROMPT = """
+You are a helpful assistant. The internal knowledge base did not contain the answer, so the user authorized a web search.
 
+Use the provided web search context below to answer the user's question accurately. Cite the source URLs provided.
+
+Web Context:
+{context}
+
+Question: {question}
+Answer:
+"""
 
 def get_system_prompt(username: str = "default", affiliate: str = "All") -> str:
     """Dynamically fetches base RAG instructions and layers custom adjustments if needed."""
