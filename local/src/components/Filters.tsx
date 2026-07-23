@@ -22,25 +22,37 @@ export const Filters: React.FC<FiltersProps> = ({
   const principal = localStorage.getItem('principal') ?? "";
 
   useEffect(() => {
-    // Only fetch if Clerk is fully loaded and user is signed in
-    if (!isLoaded || !isSignedIn || !principal) {
-        if (isLoaded) setFetchingFilters(false);
+    // 1. Block until Clerk is fully loaded
+    if (!isLoaded) return;
+    
+    const isGuest = principal === 'guest';
+    const hasAuth = isSignedIn || isGuest;
+    
+    if (!hasAuth || !principal) {
+        setFetchingFilters(false);
         return;
     }
 
     const fetchUserPermissions = async () => {
       setFetchingFilters(true);
       try {
+        // 2. Prevent Guests from hitting the secure database endpoint
+        if (isGuest) {
+          setAllowedAffiliates(['Guest Sandbox']); // Set a default scope for guests
+          if (selectedAffiliate === 'All') {
+            setSelectedAffiliate('Guest Sandbox');
+          }
+          return; // Stop execution here!
+        }
+
         console.log("Fetching affiliates for:", principal);
         const affiliates = await api.getAffiliates(principal);
         console.log("Affiliates received:", affiliates);
         
         setAllowedAffiliates(affiliates);
 
+        // Safely update parent state
         if (affiliates.length > 0) {
-          // Only set to the first affiliate if 'All' is currently selected 
-          // (which is your default) and you WANT to force a selection.
-          // To keep "Select a knowledge base..." as the default, do nothing here.
           if (selectedAffiliate !== 'All' && !affiliates.includes(selectedAffiliate)) {
             setSelectedAffiliate(affiliates[0]);
           }
@@ -53,7 +65,10 @@ export const Filters: React.FC<FiltersProps> = ({
     };
 
     fetchUserPermissions();
-  }, [principal, isLoaded, isSignedIn]); 
+    
+  // 3. REMOVE `selectedAffiliate` from this array to prevent infinite fetch loops
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [principal, isLoaded, isSignedIn, setAllowedAffiliates, setSelectedAffiliate]);
 
   if (fetchingFilters) {
     return <div className="filter-row"><span>Loading security scope...</span></div>;

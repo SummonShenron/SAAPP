@@ -43,7 +43,7 @@ from backend.logging.sass_logger import setup_logging
 from backend.services.orchestrator import startup_services
 from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, verify_paapp_access, load_directory, seed_guest_tasks
 from backend.utils.db_utils import get_db
-from backend.auth.isolation_auth import get_current_user
+from backend.auth.isolation_auth import get_current_user, record_login_event
 from contextlib import asynccontextmanager
 from settings import DB_DIR
 from backend.components.time_storage import TimeEntryCreate, add_time_entry, load_user_time, clear_user_time, TimeEntry, save_user_time
@@ -188,7 +188,25 @@ async def verify_identity_profile(payload: LoginRequest):
         return {"status": "needs_registration"}
         
     return {"status": "authenticated", "principal": payload.username}
+
+@app.post("/api/log-login")
+async def log_user_login(request: Request, current_user: dict = Depends(get_current_user)):
+    client_ip = request.client.host if request.client else "unknown"
     
+    sub = current_user.get("sub", "")
+    email = current_user.get("email") or sub
+    
+    # Detect if the current principal is a guest session
+    is_guest = (sub == "guest-recruiter@example.com") or (token := request.headers.get("Authorization", "") == "Bearer guest-sandbox-token")
+
+    record_login_event(
+        user_id=sub,
+        email=email,
+        is_guest=is_guest,
+        ip_address=client_ip
+    )
+    return {"status": "success"}
+
 @app.get("/api/affiliates")
 async def get_affiliates(current_user = Depends(get_current_user)):
     clerk_id = current_user.get("sub")

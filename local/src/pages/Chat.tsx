@@ -6,7 +6,7 @@ import { api } from '../api';
 import ReactMarkdown from 'react-markdown';
 import sonicSpinImg from '../assets/sonic-rolling.gif';
 import shadowSpinImg from '../assets/shadow.gif';
-import { useAuth, useUser } from '@clerk/clerk-react';
+import { useAuth } from '@clerk/clerk-react';
 
 interface Message {
   id: string;
@@ -21,6 +21,7 @@ interface ChatPageProps {
 
 
 export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
+  const { isLoaded, isSignedIn } = useAuth();
   const principal = localStorage.getItem("principal") ?? "";
   const [selectedAffiliate, setSelectedAffiliate] = useState<string>('All');
   const [allowedAffiliates, setAllowedAffiliates] = useState<string[]>([]);
@@ -30,8 +31,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [agentPath, setAgentPath] = useState<string[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const BASE_URL = "https://saapp.onrender.com/";
-  const { getToken } = useAuth();
-  const { user } = useUser();
+  
   const [showTooltip, setShowTooltip] = useState(false);
     const tooltipRef = useRef<HTMLDivElement>(null);
 
@@ -98,7 +98,35 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   // const toggleTheme = () => {
   //   setTheme(prev => (prev === 'sonic' ? 'shadow' : 'sonic'));
   // };
+  
+  useEffect(() => {
+    // Block execution until Clerk script has fully loaded
+    if (!isLoaded) return;
 
+    const isGuest = localStorage.getItem('principal') === 'guest';
+
+    // If they are NOT a guest, and NOT signed in, stop here.
+    if (!isGuest && !isSignedIn) return;
+
+    const syncUserClaims = async () => {
+      try {
+        // Guests shouldn't hit these secure workspace endpoints
+        if (isGuest) {
+          console.log("Guest mode active: skipping secure claims sync.");
+          return; 
+        }
+
+        // Now it is safe to call your authenticated endpoints
+        // getAffiliates()
+        // getAdminPaapp()
+        
+      } catch (err) {
+        console.error("Failed to sync user claims:", err);
+      }
+    };
+
+    syncUserClaims();
+  }, [isLoaded, isSignedIn]);
   // Synchronize secure directory claims from simulated Entra ID
   useEffect(() => {
     const syncUserClaims = async () => {
@@ -128,16 +156,12 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     setAgentStatus('');
     setAgentPath([]);
     setHasChatted(false)
-    const token = await getToken();
     localStorage.removeItem(`chat-messages-${principal}`);
     try {
       // Direct call to purge the persisted memory on your local-RAG backend API
       await fetch('https://saapp.onrender.com/api/chat/clear', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-         },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: principal })
       });
     } catch (e) {
@@ -230,15 +254,18 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     const scrollToBottom = () => {
       if (messagesEndRef.current) {
         messagesEndRef.current.scrollIntoView({
-          // Use instant snap ('auto') during loading/streaming, smooth during idle clicks
+          // 'auto' snaps instantly during high-speed token streaming
           behavior: loading ? 'auto' : 'smooth',
-          block: 'nearest',
+          // 'end' forces the element to anchor flush against the bottom
+          block: 'end', 
         });
       }
     };
-    // 1. Fire immediately for rapid reactive updates
+
+    // Fire immediately on message/loading updates
     scrollToBottom();
-    // 2. Fire with a tiny delay to allow the browser to paint newly loaded images/gifs (fixes refresh issue)
+    
+    // Tiny timeout fallback for DOM paint/images
     const timer = setTimeout(scrollToBottom, 50);
     return () => clearTimeout(timer);
   }, [messages, loading]);

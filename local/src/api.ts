@@ -26,26 +26,28 @@ export interface MeResponse {
  */
 async function getAuthHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = {};
-  
+
+  // 1. Check for Guest Token first
   const guestToken = localStorage.getItem('guest_token');
   if (guestToken) {
     headers["Authorization"] = `Bearer ${guestToken}`;
-  } else {
-    const clerk = (window as any).Clerk;
-    if (clerk && clerk.session) {
-      // UPDATED: Now requests your specific JWT template
-      const clerkToken = await clerk.session.getToken({ template: "email" });
-      
-      console.log("DEBUG: Clerk Token retrieved:", clerkToken ? "Yes" : "No");
-      
+    return headers;
+  }
+
+  // 2. Check for Clerk Token (Non-blocking)
+  const clerk = (window as any).Clerk;
+  if (clerk?.loaded && clerk?.session) {
+    try {
+      // Use standard session token (or pass template name ONLY if configured in Clerk Dashboard)
+      const clerkToken = await clerk.session.getToken();
       if (clerkToken) {
         headers["Authorization"] = `Bearer ${clerkToken}`;
       }
-    } else {
-      console.log("DEBUG: Clerk session not found.");
+    } catch (err) {
+      console.error("Failed to retrieve Clerk JWT:", err);
     }
   }
-  
+
   return headers;
 }
 
@@ -66,6 +68,32 @@ export async function getMe(usernameHint?: string): Promise<MeResponse> {
   return res.json();
 }
 
+async function waitForClerk(): Promise<any> {
+  const clerk = (window as any).Clerk;
+  // If Clerk already loaded a session or is done loading, return immediately
+  if (clerk?.session || (clerk?.loaded && !clerk?.user)) return clerk;
+
+  for (let i = 0; i < 20; i++) { // poll up to 20 times (2 seconds total)
+    await new Promise((res) => setTimeout(res, 100));
+    const currentClerk = (window as any).Clerk;
+    if (currentClerk?.session || currentClerk?.loaded) {
+      return currentClerk;
+    }
+  }
+  return (window as any).Clerk;
+}
+
+export async function logLogin(): Promise<void> {
+  try {
+    const authHeaders = await getAuthHeaders();
+    await fetch(`${BASE_URL}/api/log-login`, {
+      method: "POST",
+      headers: { ...authHeaders }
+    });
+  } catch (err) {
+    console.error("Failed to transmit login log event:", err);
+  }
+}
 /**
  * Check PAAPP admin access (calls backend endpoint).
  */

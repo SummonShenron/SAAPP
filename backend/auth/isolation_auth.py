@@ -4,9 +4,9 @@ from fastapi import Request, HTTPException, Security
 from fastapi.security import HTTPBearer
 import os
 from clerk_backend_api import Clerk
-
-import os
+from datetime import datetime, timezone
 import logging
+from backend.utils.db_utils import get_db
 
 logger = logging.getLogger("SASS Logger")
 security = HTTPBearer()
@@ -58,3 +58,23 @@ async def get_current_user(request: Request):
     except Exception as e:
         logger.error(f"Manual JWT verification failed: {e}")
         raise HTTPException(status_code=401, detail="Authentication failed")
+    
+def record_login_event(user_id: str, email: str, is_guest: bool = False, ip_address: str = None):
+    """
+    Writes a single login document to MongoDB.
+    """
+    try:
+        db = get_db()
+        if db is None:
+            return
+
+        db["login_logs"].insert_one({
+            "user_id": user_id,
+            "email": email,
+            "is_guest": is_guest,
+            "ip_address": ip_address,
+            "logged_at": datetime.now(timezone.utc)
+        })
+        logger.info(f"Recorded login for: {email} (Guest={is_guest})")
+    except Exception as e:
+        logger.error(f"Failed to record login in MongoDB: {e}")

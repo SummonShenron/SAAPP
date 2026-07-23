@@ -2,6 +2,7 @@ import { Outlet, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { api } from "../api";
 import HelpPanel from "../components/HelpPanel";
+import { useAuth } from '@clerk/clerk-react';
 
 interface LayoutProps {
   theme: string;
@@ -10,6 +11,7 @@ interface LayoutProps {
 }
 
 export function Layout({ theme, toggleTheme }: LayoutProps) {
+  const { isLoaded, isSignedIn } = useAuth();
   const navigate = useNavigate();
   const [isAdmin, setIsAdmin] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
@@ -36,6 +38,18 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
     }
   }, []);
 
+  useEffect(() => {
+    // Block execution until Clerk script has fully loaded
+    if (!isLoaded) return;
+    
+    const hasAuth = isSignedIn || !!localStorage.getItem('guest_token');
+    if (!hasAuth) return;
+
+    const username = localStorage.getItem("principal");
+    if (username) {
+      api.isPaappAdmin(username).then(setIsAdmin);
+    }
+  }, [isLoaded, isSignedIn]);
   const handleNavClick = (path: string) => {
     navigate(path);
     setMobileMenuOpen(false);
