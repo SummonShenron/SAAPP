@@ -23,19 +23,22 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
       if (isAuthLoaded && isSignedIn && userId) {
         try {
           console.log("Fetching user profile for:", userId);
+          
+          // Give Clerk a split-second to ensure the session token is fully loaded and attached
+          await new Promise((resolve) => setTimeout(resolve, 300));
+
           const userProfile = await getMe(userId); 
           
           localStorage.setItem('principal', userProfile.username);
           localStorage.setItem('x-user-id', userProfile.username);
 
-          // Log the login event ONCE per session in sessionStorage
           if (!sessionStorage.getItem('login_logged')) {
             await logLogin();
             sessionStorage.setItem('login_logged', 'true');
           }
 
           onEnter(userProfile.username);
-          navigate("/chat"); // Redirect AFTER profile & storage are set!
+          navigate("/chat");
         } catch (err) {
           console.error("Backend error initializing Clerk user:", err);
         }

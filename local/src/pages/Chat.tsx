@@ -21,7 +21,7 @@ interface ChatPageProps {
 
 
 export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
-  const { isLoaded, isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn, getToken } = useAuth();
   const principal = localStorage.getItem("principal") ?? "";
   const [selectedAffiliate, setSelectedAffiliate] = useState<string>('All');
   const [allowedAffiliates, setAllowedAffiliates] = useState<string[]>([]);
@@ -462,15 +462,65 @@ const handleSendMessage = async (
                           node?: any;
                           [key: string]: any;
                         }) => {
-                          // Prepend BASE_URL if LLM returns a relative endpoint like /api/...
                           const finalHref = href?.startsWith('/')
                             ? `${BASE_URL.replace(/\/$/, '')}${href}`
                             : href;
+
+                          const isDownloadLink = finalHref?.includes('/api/documents/download/');
+
+                          const handleClick = async (e: React.MouseEvent) => {
+                            if (isDownloadLink && finalHref) {
+                              e.preventDefault();
+
+                              // 1. Open a blank tab synchronously to satisfy browser pop-up blockers
+                              const newTab = window.open('', '_blank');
+                              if (newTab) {
+                                newTab.document.write('<html><body style="background: #121824; color: #fff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;"><h3>Loading secure document preview...</h3></body></html>');
+                              }
+
+                              try {
+                                let token = null;
+                                const isGuest = localStorage.getItem('principal') === 'guest';
+
+                                if (isGuest) {
+                                  token = localStorage.getItem('guest_token');
+                                } else if (getToken) {
+                                  token = await getToken();
+                                }
+
+                                // 2. Fetch with the authenticated Bearer token
+                                const response = await fetch(finalHref, {
+                                  headers: {
+                                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                                  },
+                                });
+
+                                if (!response.ok) {
+                                  throw new Error(`Server responded with status ${response.status}`);
+                                }
+
+                                // 3. Convert to blob and load it into the pre-opened tab
+                                const blob = await response.blob();
+                                const blobUrl = window.URL.createObjectURL(blob);
+                                
+                                if (newTab) {
+                                  newTab.location.href = blobUrl;
+                                } else {
+                                  window.open(blobUrl, '_blank');
+                                }
+                              } catch (err) {
+                                console.error("Document preview failed:", err);
+                                if (newTab) newTab.close();
+                                alert("Failed to load document. Please check your session.");
+                              }
+                            }
+                          };
 
                           return (
                             <a
                               {...rest}
                               href={finalHref}
+                              onClick={handleClick}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="citation-link"

@@ -32,13 +32,6 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
   };
 
   useEffect(() => {
-    const username = localStorage.getItem("principal");
-    if (username) {
-      api.isPaappAdmin(username).then(setIsAdmin);
-    }
-  }, []);
-
-  useEffect(() => {
     // Block execution until Clerk script has fully loaded
     if (!isLoaded) return;
     

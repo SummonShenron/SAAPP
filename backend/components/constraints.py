@@ -21,6 +21,7 @@ CRITICAL OPERATIONAL CONSTRAINTS:
 
    Example:
    [Source: frieza_black.pdf - Page 1](/api/documents/download/frieza_black.pdf#page=1)
+2A. when possible, try to only cite a source 1 time in your response to avoid having duplicate citations
 3. CODE LEAKAGE BAN: Never output internal programmatic syntax, dictionary structures, or LangChain wrappers. Completely avoid phrases like 'Based on the provided context...', 'Document(metadata=...)', or 'The relevant passage...'.
 4. DIRECT DELIVERY: Deliver the answer directly and cleanly. Do not explain your analytical process or include meta-commentary.
 
@@ -151,159 +152,50 @@ Text:
 {text}
 """
 
-ROUTER_PROMPT = """
-<|begin_of_text|><|start_header_id|>system<|end_header_id|>
-You are a strict backend intent‑routing component for Sonic Assistant (SAAPP). 
-Your job is to classify the user's message into one of the numbered OPTIONS below 
-and return ONLY the JSON object described for that option.
+REASONER_PROMPT = """
+You are the intent-classification engine for an enterprise assistant. 
+Analyze the user's latest input alongside the conversation history and classify the required system action by outputting JSON flags.
 
-You NEVER answer the user directly.  
-You ONLY return JSON describing the action SAAPP should take.
+AVAILABLE PATHWAYS & FLAGS:
+1. "needs_code_interpreter": 
+   - Set to TRUE if the user is asking to query, search, aggregate, or fetch data from MongoDB or database collections (e.g., tasks, login_logs, users).
+   - Set to TRUE if the user is asking a follow-up question about a previously executed database query or asking how a database result was calculated (e.g., "how did you get that result?", "show me the code used").
 
-===========================================================
-OPTION 1 — Create a new calendar event
-Trigger phrases:
-- "schedule"
-- "set up a meeting"
-- "create an event"
-- "add to my calendar"
-Return JSON:
-{
-  "action": "call_tool",
-  "tool": "create_event",
-  "title": "<event title>",
-  "date": "<YYYY-MM-DD>",
-  "time": "<HH:MM>",
-  "notes": "<optional>"
-}
+2. "needs_retrieval": 
+   - Set to TRUE if the user is asking a factual domain question that requires searching the enterprise Knowledge Base / uploaded documents.
 
-===========================================================
-OPTION 2 — Reschedule or update an existing event
-Trigger phrases:
-- "move my meeting"
-- "change the time"
-- "reschedule"
-Return JSON:
-{
-  "action": "call_tool",
-  "tool": "update_event",
-  "event_id": "<id>",
-  "new_date": "<YYYY-MM-DD>",
-  "new_time": "<HH:MM>"
-}
+3. "needs_conversation": 
+   - Set to TRUE ONLY if the message is general chit-chat, greetings, or pleasantries unrelated to database queries or KB documents.
 
-===========================================================
-OPTION 3 — List calendar events
-Trigger phrases:
-- "what's on my calendar"
-- "show my schedule"
-- "list events"
-Return JSON:
-{
-  "action": "call_tool",
-  "tool": "list_events"
-}
+4. "follow_up_intent": 
+   - Set to TRUE if the user's message directly references a result, answer, or code output from the immediately preceding turn.
 
-===========================================================
-OPTION 4 — General conversational chat
-Trigger phrases:
-- Anything NOT matching any other option
-Return JSON:
-{
-  "action": "chat"
-}
+5. "needs_paapp": 
+   - Set to TRUE if the user wants to log time, track activity, or manage calendar events.
 
-===========================================================
-OPTION 5 — Save a sticky note
-Trigger phrases:
-- "remember this"
-- "save a note"
-- "store this"
-Return JSON:
-{
-  "action": "call_tool",
-  "tool": "save_note",
-  "content": "<note text>"
-}
+CLASSIFICATION RULES:
+- If the user asks "how did you get that result?" or "can you show me the query?", set "needs_code_interpreter": true and "follow_up_intent": true.
+- Do NOT classify questions about previous code or database outputs as purely conversational.
 
-===========================================================
-OPTION 6 — Read sticky notes
-Trigger phrases:
-- "show my notes"
-- "read my notes"
-Return JSON:
-{
-  "action": "call_tool",
-  "tool": "read_notes"
-}
+CONVERSATION HISTORY:
+{history}
 
-===========================================================
-OPTION 7 — Delete sticky notes
-Trigger phrases:
-- "clear my notes"
-- "delete notes"
-Return JSON:
-{
-  "action": "call_tool",
-  "tool": "clear_notes"
-}
+CURRENT USER INPUT:
+{question}
 
-===========================================================
-OPTION 8 — Log or track time spent on an activity (PAAPP tool)
-Trigger phrases (VERY IMPORTANT — match ANY of these):
-- "log time"
-- "record time"
-- "track time"
-- "time tracking"
-- "log 1 hour"
-- "log one hour"
-- "log 30 minutes"
-- "add another hour"
-- "log more time"
-- "job apps"
-- "job applications"
-- "coding"
-- "work"
-- "today"
-- "for time tracking"
-
-If the user expresses ANY intent to log time, ALWAYS choose OPTION 8.
-
-Return JSON:
-{
-  "action": "call_tool",
-  "tool": "log_time",
-  "activity": "<activity name>",
-  "minutes": <integer>,
-  "date_iso": "<YYYY-MM-DD>",
-  "notes": "<optional notes>"
-}
-
-===========================================================
-
-You MUST choose exactly one option.  
-Return ONLY the JSON object for that option.  
-No prose. No explanation. No extra text.
-<|end_of_text|>
-
-"""
-INSIGHTS_PROMPT = """
-Here are your system insights:
-
-Time Patterns:
-- Top Categories: {top_categories}
-- Productivity Windows: {productivity_windows}
-- Weekday Activity: {dict(analysis['time_patterns']['weekday_activity'])}
-
-Task Patterns:
-- Stagnant Tasks: {analysis['task_patterns']['stagnant_tasks']}
-- Fast Tasks: {analysis['task_patterns']['fast_tasks']}
-- Backlog Distribution: {dict(analysis['task_patterns']['backlog_category_distribution'])}
-
-Calendar Patterns:
-- Event Categories: {dict(analysis['calendar_patterns']['event_categories'])}
-- Busy Days: {analysis['calendar_patterns']['busy_days']}
-- Free Days: {analysis['calendar_patterns']['free_days']}
+Return ONLY a JSON object matching this schema:
+{{
+  "needs_retrieval": false,
+  "needs_rewrite": false,
+  "needs_summary": false,
+  "needs_formatting": false,
+  "needs_conversation": false,
+  "needs_memory": false,
+  "needs_paapp": false,
+  "follow_up_intent": false,
+  "needs_web_search": false,
+  "needs_code_interpreter": false
+}}
 """
 
 INSIGHT_QUERY_PROMPT = """
@@ -336,6 +228,39 @@ Web Context:
 
 Question: {question}
 Answer:
+"""
+
+CODE_DRAFTING_PROMPT = """
+You are an advanced AI Software Engineer assistant with access to a MongoDB database via PyMongo `db` and Python execution.
+User Request: {msg}
+
+Return ONLY a valid JSON object with:
+- "purpose": short description of what the query does
+- "code": executable python code string assigning the final data output to a variable named `result`. 
+
+STRICT RULES:
+1. Always assign output to `result`.
+2. Wrap cursor operations like `.find()` or `.aggregate()` in `list(...)`.
+3. **MANDATORY TEXT MATCHING RULE:** When querying text fields (such as `lane`, `status`, `username`, or categories) that may contain trailing spaces, hyphens, underscores, or capitalization differences, **NEVER use strict exact string matching**. Always use MongoDB regular expressions (`$regex`) with case-insensitivity (`$options': 'i'`).
+   - Example for status/lane queries: `result = list(db['tasks'].find({'lane': {'$regex': 'backlog', '$options': 'i'}}))`
+   - Example for multi-variation queries (like in-progress): `result = list(db['tasks'].find({'lane': {'$regex': 'in[-_\\s]?progress', '$options': 'i'}}))`
+
+Example: {{"purpose": "Get IP list", "code": "result = list(db['login_logs'].distinct('ip_address'))"}}
+"""
+
+CODE_INTERPRETER_PROMPT = """
+You are a secure Code Interpreter & Data Analyst assistant.
+The database query has already executed successfully. Review the output below and present the final findings cleanly and directly to the user.
+
+Execution Results / Output:
+{content}
+
+User Request: {question}
+
+FORMATTING INSTRUCTIONS:
+- Use standard Markdown tables or bulleted lists for data.
+- Ensure Markdown tables have correct single-pipe alignment (e.g., | # | IP Address |).
+- Keep descriptions concise and directly answer the request.
 """
 
 def get_system_prompt(username: str = "default", affiliate: str = "All") -> str:

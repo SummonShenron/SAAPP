@@ -19,15 +19,16 @@ from backend.services.search import get_secure_retriever
 from backend.models.models import llm, lite_llm
 from backend.state import graph_db
 from backend.utils.attachment_utils import retrieve_from_session
-from backend.utils.isolation_kb_utils import load_directory
+from backend.utils.isolation_kb_utils import load_directory, load_user_directory_groups
 from backend.components.constraints import (
     format_docs,
     SUMMARIZER_PROMPT,
     GRADING_PROMPT,
     REWRITING_PROMPT,
     FORMATTER_PROMPT,
-    INSIGHTS_PROMPT,
-    INSIGHT_QUERY_PROMPT
+    INSIGHT_QUERY_PROMPT,
+    CODE_DRAFTING_PROMPT,
+    REASONER_PROMPT
 )
 from backend.components.time_storage import add_time_entry, TimeEntryCreate
 from backend.components import taskboard
@@ -82,7 +83,8 @@ def coordinator_router(state: GraphState) -> str:
         "tool": "conversational_node",
         "memory": "memory_node",
         "insight": "snapshot_node",
-        "web_search": "web_search_node"
+        "web_search": "web_search_node",
+        "code_interpreter": "code_interpreter_node"
     }
     destination = mapping.get(next_agent, "conversational_node")
     logger.debug(f"Next agent from plan: '{next_agent}'")
@@ -94,6 +96,8 @@ def coordinator_router(state: GraphState) -> str:
 
 def classify_intent(message: str, attachments) -> str:
     msg = message.lower()
+    if any(w in msg for w in ["run code", "execute", "query db", "database query", "mongodb", "script", "analyze data", "search mongo"]):
+        return "code_interpreter"
     if "plan my day" in msg or "schedule" in msg:
         return "task_paapp"
     if "summarize" in msg or "tl;dr" in msg:
@@ -108,6 +112,7 @@ def classify_intent(message: str, attachments) -> str:
         return "memory"
     if any(w in msg for w in ["bullet", "report", "format this"]):
         return "format"
+    
     if any(phrase in msg for phrase in [
         "what did i do",
         "what was my",
@@ -136,10 +141,12 @@ def classify_intent(message: str, attachments) -> str:
 def build_agent_plan(intent, state):
     flags = state.get("reasoner_flags", {})
     agents = []
+    
     # FOLLOW-UP OVERRIDE
     if flags.get("follow_up_intent"):
         intent = state.get("last_intent", intent)
         logger.info(f"[Coordinator] Follow-up detected. Reusing last intent: {intent}")
+        
     if flags.get("needs_memory"):
         agents.append("memory")
     if flags.get("needs_retrieval"):
@@ -156,12 +163,20 @@ def build_agent_plan(intent, state):
         agents.append("conversational")
     if flags.get("needs_web_search"):
         agents.append("web_search")
-    # Always end with formatter
-    if "formatter" not in agents:
+    if flags.get("needs_code_interpreter"):
+        agents.append("code_interpreter")  
+    # Always end with formatter (unless code interpreter handles its own formatting)
+    if "formatter" not in agents and "code_interpreter" not in agents:
         agents.append("formatter")
-    if intent == "insight":
-        return {"agents": ["insight"], "skip": []}
-
+    # If flags explicitly triggered code interpreter, prioritize that over legacy intent
+    if flags.get("needs_code_interpreter"):
+        state["last_intent"] = "code_interpreter"
+        return {"agents": ["code_interpreter"], "skip": ["retriever"]}
+    # Fallback to intent only if no specific operational flags were raised
+    if not agents or agents == ["formatter"]:
+        if intent == "insight":
+            state["last_intent"] = intent
+            return {"agents": ["insight"], "skip": []}
     # Store last intent for future follow-ups
     state["last_intent"] = intent
     return {"agents": agents, "skip": []}
@@ -186,85 +201,54 @@ def apply_conditional_skips(plan: Dict[str, Any], state: Dict[str, Any]) -> Dict
 # ============================================================
 
 def reasoner_node(state: GraphState) -> GraphState:
-    msg = state["messages"][-1].content.lower().strip()
-    attachments = state.get("attachment_summaries", [])
+    msg = state["messages"][-1].content.strip()
     history = state.get("messages", [])
     
+    # Format message history into a clean string for the LLM
+    formatted_history = "\n".join([f"{getattr(m, 'type', 'user')}: {getattr(m, 'content', '')}" for m in history[:-1]])
+
+    formatted_prompt = REASONER_PROMPT.format(
+        history=formatted_history, 
+        question=msg
+    )
+    
     logger.info("--- REASONER NODE START ---")
-    logger.info(f"[Reasoner] Message: {msg}")
 
-    # 1. Check for web search triggers
-    force_web = state.get("force_web_search", False)
-    forced_by_api = state.get("relevance_grade") == "web_search"
-    web_phrases = ["search the web", "search online", "search google", "web search", "look up online"]
-    explicit_web_request = force_web or forced_by_api or any(phrase in msg for phrase in web_phrases)
+    try:
+        # Call the LLM to classify intent
+        response = lite_llm.invoke(formatted_prompt)
+        resp_content = response.content if hasattr(response, "content") else str(response)
+        
+        # Safely handle list vs string response types
+        if isinstance(resp_content, list):
+            raw_text = "".join([block.get("text", "") if isinstance(block, dict) else str(block) for block in resp_content])
+        else:
+            raw_text = str(resp_content)
+        
+        # Clean response string if wrapped in markdown codeblocks
+        clean_json = raw_text.replace("```json", "").replace("```", "").strip()
+        flags = json.loads(clean_json)
 
-    # 2. Check for follow-up confirmations ("yes", "sure", etc.)
-    follow_up_phrases = [
-        "yes", "yeah", "yep", "sure", "do it", "go ahead",
-        "nope", "save it", "that one", "please do", "ok", "okay",
-        "confirm", "confirm it", "make it happen", "do that",
-        "that's fine", "sounds good", "alright", "fine"
-    ]
-    is_follow_up = any(p in msg for p in follow_up_phrases)
-
-    # 3. Safely extract last AI message
-    last_ai_msg = ""
-    for m in reversed(history[:-1]):
-        content = getattr(m, "content", "") or (m.get("content") if isinstance(m, dict) else "")
-        role = getattr(m, "type", "") or (m.get("type") or m.get("role") if isinstance(m, dict) else "")
-        if role in ["ai", "assistant"] and content:
-            last_ai_msg = str(content).lower()
-            break
-
-    ai_offered_web = any(kw in last_ai_msg for kw in ["search the web", "search online", "internal knowledge base"])
-
-    # Final decision on web search
-    needs_web_search = explicit_web_request or (is_follow_up and ai_offered_web)
-
-    # 4. Intent checks (SUPPRESS retrieval if web search is active)
-    explicit_memory = any(phrase in msg for phrase in ["remember that", "remember this", "save this", "store this"])
-    is_knowledge_query = any(phrase in msg for phrase in ["what is", "what are", "who is", "explain", "tell me about"])
-    
-    needs_memory = explicit_memory
-    
-    # ✅ FIX: Do NOT trigger internal vector retrieval if we are doing a web search
-    needs_retrieval = not needs_web_search and (
-        is_knowledge_query
-        or len(attachments) > 0
-        or any(word in msg for word in ["find", "lookup", "search", "policy", "document", "docs"])
-    )
-    
-    explicit_rewrite = any(word in msg for word in ["rewrite", "reword", "improve wording", "optimize query"])
-    needs_summary = any(word in msg for word in ["summarize", "tl;dr", "shorten"])
-    needs_formatting = any(word in msg for word in ["bullet", "format", "report", "clean up", "structure"])
-    
-    calendar_keywords = ["calendar", "google calendar", "create event", "add event"]
-    time_tracking_keywords = ["log time", "record time", "track time", "coding", "work"]
-    needs_paapp = any(kw in msg for kw in calendar_keywords + time_tracking_keywords)
-
-    needs_conversation = not (
-        needs_retrieval or explicit_rewrite or needs_summary or 
-        needs_formatting or needs_paapp or needs_web_search
-    )
-
-    flags = {
-        "needs_retrieval": needs_retrieval,
-        "needs_rewrite": explicit_rewrite,
-        "needs_summary": needs_summary,
-        "needs_formatting": needs_formatting,
-        "needs_conversation": needs_conversation,
-        "needs_memory": needs_memory,
-        "needs_paapp": needs_paapp,
-        "follow_up_intent": is_follow_up,
-        "needs_web_search": needs_web_search
-    }
+    except Exception as e:
+        logger.error(f"[Reasoner] LLM classification failed ({e}), using fallback rules.")
+        # Fallback to standard false flags if JSON parsing fails
+        flags = {
+            "needs_retrieval": False,
+            "needs_rewrite": False,
+            "needs_summary": False,
+            "needs_formatting": False,
+            "needs_conversation": True,  # Safe default to avoid triggering unintended actions
+            "needs_memory": False,
+            "needs_paapp": False,
+            "follow_up_intent": False,
+            "needs_web_search": False,
+            "needs_code_interpreter": False
+        }
 
     logger.info(f"[Reasoner] Flags: {flags}")
     state["reasoner_flags"] = flags
     logger.info("--- REASONER NODE END ---")
     return state
-
 # ============================================================
 # MEMORY NODE
 # ============================================================
@@ -1634,6 +1618,203 @@ def web_search_node(state: GraphState) -> dict:
     }
 
 # ============================================================
+# CODE INTERPRETOR NODE
+# ============================================================
+def code_interpreter_node(state: GraphState) -> Dict[str, Any]:
+    username = state.get("username")
+    
+    # 1. Verify Global Admin access
+    user_groups = load_user_directory_groups(username)
+    if "Global_Admins" not in user_groups:
+        logger.warning(f"Unauthorized code interpreter attempt by non-admin user: {username}")
+        return {
+            "content_to_format": "Access denied: The code interpreter tool is restricted to Global Administrators.",
+            "relevance_grade": "code_interpreter",
+            "code_approval_status": "rejected"
+        }
+        
+    approval_status = state.get("code_approval_status")
+    existing_draft = state.get("drafted_code")
+
+    # =========================================================================
+    # BRANCH 1: Handle User Approvals for Write Operations
+    # =========================================================================
+    if approval_status == "approved" and existing_draft:
+        logger.info(f"Executing approved write operation for user {username}...")
+        try:
+            db = get_db()
+            if hasattr(db, "list_collection_names") is False and hasattr(db, "list_database_names"):
+                db = db.get_default_database() or db[list(db.list_database_names())[0]]
+
+            local_scope = {"db": db, "username": username, "result": None}
+            
+            exec(existing_draft, {"__builtins__": {
+                "range": range, "len": len, "str": str, "int": int, 
+                "float": float, "list": list, "dict": dict, "set": set, 
+                "tuple": tuple, "min": min, "max": max, "sum": sum, "round": round
+            }}, local_scope)
+            
+            execution_result = local_scope.get("result", "Write operation executed successfully.")
+            output_msg = f"**Write Operation Executed Successfully:**\n```json\n{json.dumps(execution_result, default=str, indent=2)}\n```"
+            
+            return {
+                **state,
+                "drafted_code": None,
+                "code_approval_status": "completed",
+                "raw_generation": output_msg,
+                "content_to_format": output_msg,
+                "relevance_grade": "code_interpreter"
+            }
+        except Exception as e:
+            logger.error(f"Write operation execution failed: {e}")
+            error_msg = f"**Write Operation Execution Failed:**\n```error\n{str(e)}\n```"
+            return {
+                **state,
+                "drafted_code": None,
+                "code_approval_status": "error",
+                "raw_generation": error_msg,
+                "content_to_format": error_msg,
+                "relevance_grade": "code_interpreter"
+            }
+
+    # =========================================================================
+    # BRANCH 2 & 3: Draft, Safety Check, Execute, and Auto-Retry on Empty Results
+    # =========================================================================
+    msg = state.get("messages", [])[-1].content.strip()
+    max_retries = 2
+    execution_result = None
+    drafted_code = ""
+    purpose = "Database query"
+    
+    db = get_db()
+    if hasattr(db, "list_collection_names") is False and hasattr(db, "list_database_names"):
+        db = db.get_default_database() or db[list(db.list_database_names())[0]]
+
+    for attempt in range(max_retries):
+        current_msg = msg
+        if attempt > 0:
+            # Force a completely different query structure on retry
+            current_msg = (
+                f"{msg} (CRITICAL ERROR: The exact match query returned 0 results "
+                f"due to potential hidden whitespace or formatting. You MUST use a MongoDB "
+                f"regular expression like: result = list(db['tasks'].find({{'lane': {{'$regex': 'backlog', '$options': 'i'}}}}))"
+            )
+        # Format drafting prompt safely without triggering curly brace KeyErrors
+        if "{msg}" in CODE_DRAFTING_PROMPT:
+            prompt = CODE_DRAFTING_PROMPT.replace("{msg}", current_msg)
+        else:
+            prompt = f"{CODE_DRAFTING_PROMPT}\n\nUser Request: {current_msg}"
+
+        try:
+            response = lite_llm.invoke(prompt)
+            resp_content = response.content if hasattr(response, "content") else str(response)
+            raw_text = "".join([block.get("text", "") if isinstance(block, dict) else str(block) for block in resp_content]) if isinstance(resp_content, list) else str(resp_content)
+            
+            # Clean markdown code fences if the LLM wrapped it
+            clean_text = raw_text.strip()
+            clean_text = re.sub(r"^```(?:json|python)?\s*", "", clean_text, flags=re.IGNORECASE)
+            clean_text = re.sub(r"\s*```$", "", clean_text)
+            
+            drafted_code = ""
+            purpose = "Database query"
+
+            # 1. Try direct JSON parsing
+            try:
+                parsed = json.loads(clean_text)
+                if isinstance(parsed, dict):
+                    drafted_code = parsed.get("code", "")
+                    purpose = parsed.get("purpose", "Database query")
+            except Exception:
+                # 2. Fallback: Search for any JSON object inside the text using regex
+                json_match = re.search(r"(\{.*?\})", clean_text, re.DOTALL)
+                if json_match:
+                    try:
+                        parsed = json.loads(json_match.group(1))
+                        if isinstance(parsed, dict):
+                            drafted_code = parsed.get("code", "")
+                            purpose = parsed.get("purpose", "Database query")
+                    except Exception:
+                        pass
+
+            # 3. Final fallback if JSON parsing completely failed
+            if not drafted_code:
+                code_match = re.search(r"```(?:python)?\s*(.*?)\s*```", raw_text, re.DOTALL)
+                drafted_code = code_match.group(1).strip() if code_match else clean_text
+                
+        except Exception as e:
+            logger.error(f"Code drafting failed on attempt {attempt+1}: {e}")
+            continue
+
+        logger.info(f"Attempt {attempt+1} - Extracted Code to Execute: {drafted_code}")
+
+        # Safety Check
+        unsafe_keywords = ["insert", "update", "delete", "drop", "remove", "replace", "write"]
+        is_safe_read = not any(kw in drafted_code.lower() for kw in unsafe_keywords)
+
+        if is_safe_read:
+            try:
+                local_scope = {"db": db, "username": username, "result": None}
+                exec(drafted_code, {"__builtins__": {
+                    "range": range, "len": len, "str": str, "int": int, 
+                    "float": float, "list": list, "dict": dict, "set": set, 
+                    "tuple": tuple, "min": min, "max": max, "sum": sum, "round": round,
+                    "enumerate": enumerate, "zip": zip
+                }}, local_scope)
+                
+                execution_result = local_scope.get("result", None)
+                
+                # Check if results came back valid and non-empty
+                if execution_result is not None and (not isinstance(execution_result, list) or len(execution_result) > 0):
+                    logger.info(f"Query succeeded on attempt {attempt+1}.")
+                    break
+                else:
+                    logger.warning(f"Attempt {attempt+1} returned empty/null results. Retrying with broader instructions...")
+            except Exception as e:
+                logger.error(f"Execution runtime error on attempt {attempt+1}: {e}")
+                if attempt == max_retries - 1:
+                    error_msg = f"Execution Error: {str(e)}"
+                    return {
+                        **state,
+                        "drafted_code": None,
+                        "code_approval_status": "error",
+                        "raw_generation": error_msg,
+                        "content_to_format": error_msg,
+                        "relevance_grade": "code_interpreter"
+                    }
+        else:
+            approval_message = f"**Destructive Operation Requires Approval:**\n\n**Purpose:** {purpose}\n```python\n{drafted_code}\n```"
+            return {
+                **state,
+                "drafted_code": drafted_code,
+                "code_approval_status": "pending",
+                "raw_generation": approval_message,
+                "content_to_format": approval_message,
+                "relevance_grade": "code_interpreter"
+            }
+
+    # Format final successful results with code transparency
+    output_msg = (
+        f"**Query Purpose:** {purpose}\n\n"
+        f"**Executed Code:**\n```python\n{drafted_code}\n```\n\n"
+        f"**MongoDB Results:**\n```json\n{json.dumps(execution_result, default=str, indent=2)}\n```"
+    )
+    
+    doc = Document(
+        page_content=f"DATABASE QUERY RESULTS:\n{output_msg}",
+        metadata={"source": "mongodb_code_interpreter", "priority": True}
+    )
+    current_docs = state.get("documents", [])
+    current_docs.append(doc)
+    
+    return {
+        "documents": current_docs,
+        "drafted_code": None,
+        "code_approval_status": "completed",
+        "raw_generation": output_msg,
+        "content_to_format": output_msg,
+        "relevance_grade": "code_interpreter"
+    }
+# ============================================================
 # WORKFLOW ASSEMBLY & COMPILATION
 # ============================================================
 
@@ -1658,7 +1839,8 @@ def create_workflow(vector_store):
     workflow.add_node("trend_node", trend_analyzer_node)
     workflow.add_node("insight_query_node", insight_query_node)
     workflow.add_node("web_search_node", web_search_node)
-    
+    workflow.add_node("code_interpreter_node", code_interpreter_node)
+
     workflow.add_edge(START, "coordinator_node")
     workflow.add_conditional_edges(
         "coordinator_node",
@@ -1678,7 +1860,8 @@ def create_workflow(vector_store):
             "classifier_node": "classifier_node",
             "pattern_node": "pattern_node",
             "trend_node": "trend_node",
-            "insight_query_node": "insight_query_node"
+            "insight_query_node": "insight_query_node",
+            "code_interpreter_node": "code_interpreter_node"
         }
     )
     
@@ -1689,6 +1872,7 @@ def create_workflow(vector_store):
     workflow.add_edge("retrieve_node", "grade_documents_node")
     workflow.add_edge("rewrite_query_node", "retrieve_node")
     workflow.add_edge("web_search_node", "formatter_node")
+    workflow.add_edge("code_interpreter_node", "formatter_node")
     # --- PARALLEL FAN-OUT FOR ANALYTICS ---
     workflow.add_edge("snapshot_node", "classifier_node")
     # LangGraph runs pattern_node and trend_node concurrently
