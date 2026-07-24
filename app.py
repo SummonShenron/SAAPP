@@ -422,13 +422,13 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
     t_prompt_start = time.perf_counter()
     insight_answer = final_state.get("insight_answer")
     relevance_grade = final_state.get("relevance_grade")
-    if relevance_grade == "hitl_approval_required":
-        card_text = final_state.get("generation") or (
-            final_state["messages"][-1].content 
-            if final_state.get("messages") 
-            else "Approval required for this action."
+    if relevance_grade in ["hitl_approval_required", "action_complete"]:
+        card_text = (
+            final_state.get("generation") 
+            or final_state.get("content_to_format") 
+            or (final_state["messages"][-1].content if final_state.get("messages") else "Action complete.")
         )
-        logger.info("[HITL] Bypassing RAG LLM streaming — returning action card directly.")
+        logger.info("[ACTION] Bypassing RAG LLM streaming — returning direct action result.")
         return await stream_simple_message(card_text)
     documents = final_state.get("documents", [])
 
