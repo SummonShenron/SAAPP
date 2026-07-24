@@ -429,6 +429,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
             or (final_state["messages"][-1].content if final_state.get("messages") else "Action complete.")
         )
         logger.info("[ACTION] Bypassing RAG LLM streaming — returning direct action result.")
+        logger.info("Bypassed streaming")
         return await stream_simple_message(card_text)
     documents = final_state.get("documents", [])
 
