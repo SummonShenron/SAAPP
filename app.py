@@ -11,7 +11,7 @@ import urllib.parse
 import re
 from gridfs import GridFSBucket
 from bson import ObjectId, errors
-from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Query, Form, Request, Depends
+from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Query, Form, Request, Depends, BackgroundTasks
 from typing import List, Dict, Any
 import uuid
 import traceback
@@ -26,12 +26,13 @@ from backend.components import taskboard
 from backend.utils.taskboard_utils import require_taskboard_admin, is_taskboard_admin_for_user
 from backend.models.models import llm, stream_llm
 from backend.models.attachment import Attachment
+from backend.services.github_service import process_pr_summary
 # Modernized LangChain Imports
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_community.vectorstores import Chroma
 from backend.components.time_storage import TimeEntry
-from backend.components.constraints import get_system_prompt, CONVERSATIONAL_PROMPT, WEB_SEARCH_PROMPT, CODE_INTERPRETER_PROMPT, format_docs
+from backend.components.constraints import get_system_prompt, CONVERSATIONAL_PROMPT, WEB_SEARCH_PROMPT, CODE_INTERPRETER_PROMPT, GITHUB_FORMAT_PROMPT, PR_FORMAT_PROMPT, format_docs
 from backend.services.search import discover_workspace_documents
 from local_function_app.function_app import run_ingestion_pipeline, HOT_FOLDER_DIR
 from backend.state.graph_state import GraphState
@@ -421,6 +422,14 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
     t_prompt_start = time.perf_counter()
     insight_answer = final_state.get("insight_answer")
     relevance_grade = final_state.get("relevance_grade")
+    if relevance_grade == "hitl_approval_required":
+        card_text = final_state.get("generation") or (
+            final_state["messages"][-1].content 
+            if final_state.get("messages") 
+            else "Approval required for this action."
+        )
+        logger.info("[HITL] Bypassing RAG LLM streaming — returning action card directly.")
+        return await stream_simple_message(card_text)
     documents = final_state.get("documents", [])
 
     # 1. WEB SEARCH BRANCH
@@ -434,6 +443,19 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
     elif relevance_grade == "code_interpreter":
         content = final_state.get("content_to_format", "")
         prompt = CODE_INTERPRETER_PROMPT.format(
+            content=content,
+            question=question
+        )
+    elif relevance_grade == "github_search":
+        content = final_state.get("content_to_format", "")
+        prompt = GITHUB_FORMAT_PROMPT.format(
+            content=content,
+            question=question
+        )
+
+    elif relevance_grade == "pr_summary":
+        content = final_state.get("content_to_format", "")
+        prompt = PR_FORMAT_PROMPT.format(
             content=content,
             question=question
         )
@@ -1008,6 +1030,30 @@ def get_insights(current_user = Depends(get_current_user)):
     
     logger.info(f"Final graph result dictionary:{result}")    
     return result.get("insights", [])
+
+@app.post("/webhooks/github")
+async def github_webhook(request: Request, background_tasks: BackgroundTasks):
+    """
+    Listens for GitHub webhook events and triggers automated PR reviews.
+    """
+    event = request.headers.get("X-GitHub-Event")
+    
+    # Safely parse JSON payload without throwing a 500 error on empty bodies
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
+    if event == "pull_request" and payload.get("action") in ["opened", "synchronize", "reopened"]:
+        pr_number = payload.get("number")
+        repo = payload.get("repository", {}).get("full_name")
+
+        if pr_number and repo:
+            background_tasks.add_task(process_pr_summary, repo, pr_number)
+            logger.info(f"Queued background PR summary job for {repo} #{pr_number}")
+            return {"status": "event_queued", "pr_number": pr_number}
+
+    return {"status": "ignored_event"}
 
 @app.get("/api/health")
 async def health_check():

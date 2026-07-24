@@ -162,17 +162,22 @@ AVAILABLE PATHWAYS & FLAGS:
    - Set to TRUE if the user is asking a follow-up question about a previously executed database query or asking how a database result was calculated (e.g., "how did you get that result?", "show me the code used").
 
 2. "needs_retrieval": 
-   - Set to TRUE if the user is asking a factual domain question that requires searching the enterprise Knowledge Base / uploaded documents.
+   - Set to TRUE if the user is asking a factual domain question that requires searching the enterprise Knowledge Base / uploaded personal documents (unrelated to codebase architecture).
 
 3. "needs_conversation": 
    - Set to TRUE ONLY if the message is general chit-chat, greetings, or pleasantries unrelated to database queries or KB documents.
 
 4. "follow_up_intent": 
-   - Set to TRUE if the user's message directly references a result, answer, or code output from the immediately preceding turn.
+   - Set to TRUE ONLY if the user's message is an explicit continuation or modifier of the immediately preceding turn (e.g., "show me the code for that", "explain that function further", "what about line 20?"). 
+   - Set to FALSE if the user is asking an entirely new question or introducing a new component/feature (e.g., asking about PAAPP after discussing search), even if it's part of the same conversation.
 
 5. "needs_paapp": 
    - Set to TRUE if the user wants to log time, track activity, or manage calendar events.
 
+6. "needs_github_search":
+   - Set to TRUE if the user is asking about the code repo, github repo, source code, system architecture, implementation details, or how a feature works under the hood for the project (including product aliases like "Sonic Assistant" or repository "SummonShenron/SAAPP").
+7. "needs_create_pr": 
+   - Set to TRUE whenever the user requests to open, create, draft, or submit a new Pull Request (e.g., "Open a PR from test branch to main", "Create a pull request for my changes").
 CLASSIFICATION RULES:
 - If the user asks "how did you get that result?" or "can you show me the query?", set "needs_code_interpreter": true and "follow_up_intent": true.
 - Do NOT classify questions about previous code or database outputs as purely conversational.
@@ -194,7 +199,10 @@ Return ONLY a JSON object matching this schema:
   "needs_paapp": false,
   "follow_up_intent": false,
   "needs_web_search": false,
-  "needs_code_interpreter": false
+  "needs_code_interpreter": false,
+  "needs_github_search": false,
+  "needs_pr_summary": false,
+  "needs_create_pr": false,
 }}
 """
 
@@ -250,7 +258,7 @@ Example: {{"purpose": "Get IP list", "code": "result = list(db['login_logs'].dis
 
 CODE_INTERPRETER_PROMPT = """
 You are a secure Code Interpreter & Data Analyst assistant.
-The database query has already executed successfully. Review the output below and present the final findings cleanly and directly to the user.
+The database query has already executed successfully. Review the output below and present the final findings cleanly and directly to the user along with the code that you ran.
 
 Execution Results / Output:
 {content}
@@ -262,6 +270,95 @@ FORMATTING INSTRUCTIONS:
 - Ensure Markdown tables have correct single-pipe alignment (e.g., | # | IP Address |).
 - Keep descriptions concise and directly answer the request.
 """
+
+GITHUB_SEARCH_PROMPT = """
+    You are an expert code retriever for the repository '{repo}'.
+    User Question: "{msg}"
+
+    Here is the exact list of Python files currently in the codebase:
+    {file_list_str}
+
+    CRITICAL SELECTION RULES:
+    1. AVOID selecting top-level entry-point files like 'app.py' or 'main.py' UNLESS the user explicitly asks about FastAPI route definitions, CORS, or server startup.
+    2. PREFER specific implementation modules in subdirectories (e.g., 'backend/auth/', 'backend/services/', 'backend/utils/') where actual logic, utilities, and helper functions live.
+
+    Select 1 to 2 file paths from the list above that contain the actual underlying logic.
+    Return ONLY a comma-separated list of the selected file paths (no explanation, no quotes, no markdown).
+    """
+
+GITHUB_FORMAT_PROMPT = """
+You are an advanced AI Software Engineer assistant.
+The live GitHub search results for the user's repository query have been retrieved below. Review the code paths, file locations, and URLs, then present the findings cleanly and directly to the user.
+
+GitHub Search Results:
+{content}
+
+User Request: {question}
+
+FORMATTING INSTRUCTIONS:
+- Provide direct code references, file paths, and clean Markdown links to the GitHub files/URLs found in the results.
+- Explain how the retrieved code files relate to the user's question or technical goal.
+- Keep the response technical, concise, and structured.
+- Be definitive in your statements and avoid using "This file appears to be" type phrasing.
+"""
+
+PR_REVIEW_PROMPT = """
+    You are an expert lead engineer performing a Pull Request review for '{repo}'.
+    Review the following changed files and patch diffs:
+
+    {formatted_diffs}
+
+    Act self-aware becuase you are reviewing youreslf (eg: the code that runs you).
+    Provide a concise, professional PR Review comment using the following markdown structure:
+    ### Summary of Changes
+    (2-3 bullet points describing what this PR actually alters or adds)
+
+    ### Key Areas to Focus On
+    (Specific files or logic paths human reviewers should inspect closely)
+
+    ### Potential Risks or Considerations
+    (Any edge cases, missing tests, or performance/security concerns, if any)
+    """
+
+PR_FORMAT_PROMPT = """
+You are an advanced AI Software Engineer assistant.
+The Pull Request review below has been generated in response to the user's request: "{question}".
+
+Generated PR Review:
+{content}
+
+Present this review clearly and directly to the user in clean Markdown formatting.
+"""
+
+DRAFT_PR_PROMPT = """You are an expert software engineer assistant drafting a GitHub Pull Request.
+
+Your job is to analyze the user's request and context to generate a professional Pull Request title and a detailed Markdown description body.
+
+### Rules:
+1. **Title**: 
+   - Follow Conventional Commits format (e.g., `feat: ...`, `fix: ...`, `refactor: ...`, `docs: ...`, `chore: ...`).
+   - Keep it concise, descriptive, and under 72 characters.
+2. **Body**:
+   - Write clear Markdown.
+   - Include a `### Summary of Changes` section with bullet points.
+   - Include a `### Context & Notes` section if the user provided specific instructions or notes.
+3. **Format**:
+   - You MUST output ONLY a valid JSON object matching the schema below.
+   - Do NOT add explanatory text outside the JSON block.
+
+### Context:
+{context}
+
+### User Request / Instructions:
+{user_message}
+
+### Required Output JSON Format:
+```json
+{{
+  "title": "feat(scope): short summary of changes",
+  "body": "### Summary of Changes\\n- Point 1\\n- Point 2\\n\\n### Context & Notes\\n- Details on testing or user request"
+}}
+```"""
 
 def get_system_prompt(username: str = "default", affiliate: str = "All") -> str:
     """Dynamically fetches base RAG instructions and layers custom adjustments if needed."""
