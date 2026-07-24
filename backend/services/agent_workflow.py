@@ -2374,7 +2374,7 @@ def execute_pr_node(state: dict) -> dict:
             "pending_action": None,
         }
 
-    # 5. POST to GitHub API
+    # 5. POST to GitHub API to CREATE the PR
     token = os.getenv("GITHUB_TOKEN")
     api_url = f"https://api.github.com/repos/{repo}/pulls"
     headers = {
@@ -2389,16 +2389,31 @@ def execute_pr_node(state: dict) -> dict:
         "base": base_branch,
     }
 
-    logger.info(
-        f"[Execute PR Node] Firing GitHub API POST to {api_url} with payload: {payload}"
-    )
+    logger.info(f"[Execute PR Node] Firing GitHub API POST to {api_url}")
     res = requests.post(api_url, headers=headers, json=payload)
 
     if res.status_code == 201:
         pr_data = res.json()
         pr_url = pr_data.get("html_url")
         pr_num = pr_data.get("number")
-        output_text = f"**Pull Request Created Successfully!**\n\n[View PR #{pr_num} on GitHub]({pr_url})"
+        
+        # 6. OPTIONAL: AUTOMATICALLY MERGE THE PR
+        merge_url = f"https://api.github.com/repos/{repo}/pulls/{pr_num}/merge"
+        merge_payload = {
+            "commit_title": f"Merge pull request #{pr_num} from {head_branch}",
+            "merge_method": "squash"  # Or "merge" / "rebase"
+        }
+        
+        merge_res = requests.put(merge_url, headers=headers, json=merge_payload)
+        
+        if merge_res.status_code == 200:
+            output_text = f"**Pull Request Created and Merged Successfully!** \n\n[View Merged PR #{pr_num} on GitHub]({pr_url})"
+        else:
+            output_text = (
+                f"**Pull Request #{pr_num} Created**, but merge failed (HTTP {merge_res.status_code}):\n"
+                f"```json\n{merge_res.text}\n```\n"
+                f"[View PR #{pr_num} on GitHub]({pr_url})"
+            )
     else:
         output_text = f"**Failed to create Pull Request** (HTTP {res.status_code}):\n```json\n{res.text}\n```"
 
