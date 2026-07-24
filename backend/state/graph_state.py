@@ -1,8 +1,9 @@
 from __future__ import annotations
-from typing import List, Any, Optional, Dict
+from typing import List, Any, Optional, Dict, Annotated
 from typing_extensions import TypedDict
 from backend.models.attachment import Attachment
 from langchain_core.messages import BaseMessage
+from langgraph.graph import add_messages
 import logging
 
 logger = logging.getLogger("SASS Logger")
@@ -12,7 +13,7 @@ class GraphState(TypedDict):
     Message-based state for LangGraph streaming.
     Every node receives this state, modifies it, and passes it forward.
     """
-    messages: List[BaseMessage]     # Full conversation history (Human + AI)
+    messages: Annotated[List[BaseMessage], add_messages]    # Full conversation history (Human + AI)
     username: str                   # Authenticated user identity
     target_scope: List[str]         # Allowed tenant affiliates
     documents: List[Any]            # Retrieved vector + GraphRAG docs
@@ -28,6 +29,11 @@ class GraphState(TypedDict):
     patterns: Optional[Dict[str, Any]]
     trends: Optional[Dict[str, Any]]
     insights: Optional[List[Dict[str, Any]]]
+    content_to_format: Optional[str]
+    raw_generation: Optional[str]
+    code_approval_status: Optional[str]
+    drafted_code: Optional[str]
+    formatted_output: Optional[str]
 
 # def route_user_query(state: GraphState) -> str:
 #     """

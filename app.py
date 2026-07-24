@@ -31,7 +31,7 @@ from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_community.vectorstores import Chroma
 from backend.components.time_storage import TimeEntry
-from backend.components.constraints import get_system_prompt, CONVERSATIONAL_PROMPT, WEB_SEARCH_PROMPT, format_docs
+from backend.components.constraints import get_system_prompt, CONVERSATIONAL_PROMPT, WEB_SEARCH_PROMPT, CODE_INTERPRETER_PROMPT, format_docs
 from backend.services.search import discover_workspace_documents
 from local_function_app.function_app import run_ingestion_pipeline, HOT_FOLDER_DIR
 from backend.state.graph_state import GraphState
@@ -428,6 +428,13 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
         formatted_docs = format_docs(documents)
         prompt = WEB_SEARCH_PROMPT.format(
             context=formatted_docs,
+            question=question
+        )
+    
+    elif relevance_grade == "code_interpreter":
+        content = final_state.get("content_to_format", "")
+        prompt = CODE_INTERPRETER_PROMPT.format(
+            content=content,
             question=question
         )
 
