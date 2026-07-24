@@ -2095,6 +2095,30 @@ def pr_summarizer_node(state: GraphState) -> dict:
         "relevance_grade": "pr_summary"
     }
 
+def fetch_branch_diff_summary(repo: str, base: str, head: str) -> str:
+    """Fetches recent commit messages and changed files between two branches."""
+    token = os.getenv("GITHUB_TOKEN")
+    url = f"https://api.github.com/repos/{repo}/compare/{base}...{head}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json"
+    }
+    
+    res = requests.get(url, headers=headers)
+    if res.status_code != 200:
+        return "No diff context available."
+    
+    data = res.json()
+    
+    # Extract commit messages
+    commits = [c["commit"]["message"].strip() for c in data.get("commits", [])]
+    # Extract changed filenames
+    files = [f["filename"] for f in data.get("files", [])]
+    
+    summary = f"Commits ({len(commits)}):\n- " + "\n- ".join(commits[:10])
+    summary += f"\n\nFiles Changed ({len(files)}):\n- " + "\n- ".join(files[:15])
+    return summary
+
 def draft_pr_node(state: GraphState) -> GraphState:
     logger.info("--- DRAFT PR NODE (HITL) CALLED ---")
 
@@ -2129,14 +2153,21 @@ def draft_pr_node(state: GraphState) -> GraphState:
         "repo", "SummonShenron/SAAPP"
     )
 
-    # 2. DYNAMIC TITLE & SUMMARY GENERATION
+    # 2. FETCH REAL GIT DIFF CONTEXT FROM GITHUB API
+    logger.info(
+        f"[Draft PR Node] Fetching real branch diff for {repo}: {base_branch} <- {head_branch}"
+    )
+    diff_context = fetch_branch_diff_summary(repo, base_branch, head_branch)
+
+    # 3. DYNAMIC TITLE & SUMMARY GENERATION
     logger.info(
         "[Draft PR Node] Invoking LLM for title and body generation..."
     )
     try:
+        # Pass the REAL diff_context into the prompt context parameter!
         formatted_prompt = DRAFT_PR_PROMPT.format(
             user_message=last_msg,
-            context=f"Merging {head_branch} into {base_branch} in repository {repo}.",
+            context=f"Repository: {repo}\nBase Branch: {base_branch}\nHead Branch: {head_branch}\n\n{diff_context}",
         )
 
         llm_response = llm.invoke(formatted_prompt)
@@ -2175,7 +2206,7 @@ def draft_pr_node(state: GraphState) -> GraphState:
         title = f"feat: merge {head_branch} into {base_branch}"
         body = f"### Summary\n- Automated pull request draft created for `{head_branch}` -> `{base_branch}`."
 
-    # 3. SET STRUCTURED PENDING ACTION (Matches execute_pr_node schema)
+    # 4. SET STRUCTURED PENDING ACTION (Matches execute_pr_node schema)
     new_pending_action = {
         "action_type": "create_pr",
         "details": {
@@ -2187,10 +2218,7 @@ def draft_pr_node(state: GraphState) -> GraphState:
         },
     }
 
-    state["pending_action"] = new_pending_action
-    state["relevance_grade"] = "hitl_approval_required"
-
-    # 4. FORMAT HITL ACTION CARD
+    # 5. FORMAT HITL ACTION CARD
     card_msg = (
         "**Approval Required**\n\n"
         f"Ready to create a Pull Request for `{repo}`:\n"
@@ -2200,16 +2228,16 @@ def draft_pr_node(state: GraphState) -> GraphState:
         "*Please Approve, Modify parameters, or Reject this action.*"
     )
 
-    state["generation"] = card_msg
-    state["messages"].append(AIMessage(content=card_msg))
+    # Clean message list update (Single append)
+    new_messages = list(state.get("messages", [])) + [AIMessage(content=card_msg)]
+
     return {
         **state,
-        "pending_action": new_pending_action, # <--- DO NOT OMIT
+        "pending_action": new_pending_action,
         "relevance_grade": "hitl_approval_required",
         "generation": card_msg,
-        "messages": state["messages"] + [AIMessage(content=card_msg)],
+        "messages": new_messages,
     }
-
 
 def execute_pr_node(state: dict) -> dict:
     """Executes PR creation after human approval with prompt-fallback parameter recovery."""
