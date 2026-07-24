@@ -2420,7 +2420,7 @@ def execute_pr_node(state: dict) -> dict:
     return {
         **state,
         "content_to_format": output_text,
-        "relevance_grade": "conversational",
+        "relevance_grade": "action_complete",
         "pending_action": None,
     }
 
