@@ -33,7 +33,17 @@ class GraphState(TypedDict):
     raw_generation: Optional[str]
     code_approval_status: Optional[str]
     drafted_code: Optional[str]
+    github_query: str
+    github_results: str
+    repo: Optional[str]
+    pr_number: Optional[int]
+    pr_review_status: Optional[str]
+    comment_url: Optional[str]
     formatted_output: Optional[str]
+    user_groups: List[str]
+    pending_action: Optional[Dict[str, Any]]  # Stores original draft payload
+    user_decision: Optional[str]              # "approve" | "modify" | "reject"
+    modified_details: Optional[Dict[str, Any]] # Overrides if user modified title/body/branches
 
 # def route_user_query(state: GraphState) -> str:
 #     """

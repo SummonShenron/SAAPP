@@ -17,7 +17,11 @@ const AFFILIATE_QUESTION_POOLS: Record<string, string[]> = {
   'Affiliate_C': [
     "Tell me about Jack and his work.",
     "What is the Story of the Sonic Assistant",
-    "Who is Jack Harper?"
+    "How does Sonic Assistant's multi-agent workflow work?",
+    "Who is Jack Harper?",
+    "What was changed in the last pull request?",
+    "What are the different routing strategies leveraged by the Sonic Assistant?",
+    "How does the Sonic Assistant enforce data isolation?"
   ]
 };
 
