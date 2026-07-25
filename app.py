@@ -113,7 +113,7 @@ class EventCreate(BaseModel):
 class SaveConversationRequest(BaseModel):
     title: str
     messages: List[Dict[str, Any]] 
-
+logger.info("TEST")
 @app.get("/api/me")
 def get_me(current_user: dict = Depends(get_current_user)):
     clerk_id = current_user.get("sub")
