@@ -1039,9 +1039,9 @@ div:has(.portal-body) {
   }
 
   .hamburger-btn {
-    background: rgba(0, 0, 0, 0.05) !important;
-    border: 1px solid rgba(0, 0, 0, 0.15);
-    color: #1e293b; /* Dark text for Sonic mode visibility */
+    background: rgba(87, 125, 250, 0.05) !important;
+    border: 1px solid var(--accent-primary) !important;
+    color: var(--accent-primary) !important; /* Dark text for Sonic mode visibility */
     font-size: 1.2rem;
     padding: 0.2rem 0.5rem;
     border-radius: 6px;
@@ -1136,15 +1136,6 @@ div:has(.portal-body) {
     cursor: pointer;
   }
 
-  .hamburger-btn {
-    background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    color: var(--text-color, #fff);
-    font-size: 1.2rem;
-    padding: 0.2rem 0.5rem;
-    border-radius: 6px;
-    cursor: pointer;
-  }
 }
 
 @keyframes slideDown {
