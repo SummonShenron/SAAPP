@@ -19,8 +19,25 @@ interface ChatPageProps {
   toggleTheme: () => void;
 }
 
+interface TraceStep {
+  id: string;
+  title: string;
+  detail: string;
+  status: "active" | "complete";
+}
+
+
+
 
 export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
+  const [showTracePanel, setShowTracePanel] = useState(() => {
+    // Turn OFF by default on mobile (< 768px), keep ON for desktop
+    if (typeof window !== 'undefined') {
+      return window.innerWidth > 768;
+    }
+    return false;
+  });
+  const [traceSteps, setTraceSteps] = useState<TraceStep[]>([]);
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const principal = localStorage.getItem("principal") ?? "";
   const [selectedAffiliate, setSelectedAffiliate] = useState<string>('All');
@@ -31,7 +48,20 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [agentPath, setAgentPath] = useState<string[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const BASE_URL = "https://saapp.onrender.com/";
-  
+  const nodeQueueRef = useRef<{ node: string; detail?: string }[]>([]);
+  const isProcessingQueue = useRef<boolean>(false);
+  const [showTrace, setShowTrace] = useState<boolean>(() => {
+    const saved = localStorage.getItem('showTracePanel');
+    return saved !== null ? JSON.parse(saved) : true;
+  });
+
+  const toggleTrace = () => {
+    setShowTrace(prev => {
+      const next = !prev;
+      localStorage.setItem('showTracePanel', JSON.stringify(next));
+      return next;
+    });
+  };
   const [showTooltip, setShowTooltip] = useState(false);
     const tooltipRef = useRef<HTMLDivElement>(null);
 
@@ -272,31 +302,125 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
 
   const getNodeLabel = (nodeName: string): string => {
     switch (nodeName) {
+      // Core Workflow Nodes
+      case 'coordinator_node':
+        return 'Analyzing intent and planning route...';
+      case 'reasoner_node':
+        return 'Evaluating request context...';
+      case 'memory_node':
+        return 'Updating memory and preferences...';
       case 'retrieve_node':
-        return 'GraphRAG Retrieval in Progress'
+        return 'GraphRAG Retrieval in progress...';
       case 'grade_documents_node':
-        return 'Evaluating Document Relevance'
+        return 'Evaluating document relevance...';
       case 'rewrite_query_node':
-        return 'Refining Query Parameters'
-      case 'generate_node':
-        return 'Collecting Rings and Generating Tokens'
+        return 'Refining search parameters...';
+      case 'summarizer_node':
+        return 'Summarizing retrieved documents...';
+      case 'formatter_node':
+        return 'Formatting output structure...';
       case 'conversational_node':
-        return 'generating a friendly hedgehog response'
+        return 'Generating response...';
+      case 'generate_node':
+        return 'Collecting rings and generating tokens...';
+
+      // Tool & Specialized Agent Nodes
+      case 'paapp_node':
+        return 'Processing schedule and task data...';
+      case 'web_search_node':
+        return 'Searching the web for real-time info...';
+      case 'code_interpreter_node':
+        return 'Executing query in code interpreter...';
+      case 'github_search':
+        return 'Searching GitHub repositories...';
+      case 'pr_summary':
+        return 'Analyzing pull request changes...';
+      case 'draft_pr_node':
+        return 'Drafting pull request...';
+      case 'execute_pr_node':
+        return 'Executing pull request action...';
+
+      // Analytics & Insight Engine Nodes
+      case 'snapshot_node':
+        return 'Taking analytical data snapshot...';
+      case 'classifier_node':
+        return 'Classifying activity patterns...';
+      case 'pattern_node':
+        return 'Detecting behavioral patterns...';
+      case 'trend_node':
+        return 'Analyzing metrics and trends...';
+      case 'insight_query_node':
+        return 'Synthesizing data insights...';
+
       default:
-        return `${nodeName}`;
+        return nodeName ? `Processing step: ${nodeName}` : 'Collecting rings and tokens...';
     }
-  }
+  };
+
   
+  
+  const addTraceStep = (payload: any) => {
+    const title = payload?.title || payload?.message || "Agent step";
+    const detail = payload?.detail || payload?.message || "";
+    const id = `${title}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+    setTraceSteps(prev => [
+      ...prev,
+      {
+        id,
+        title,
+        detail,
+        status: payload?.status === "complete" ? "complete" : "active"
+      }
+    ]);
+  };
+
+  const markTraceComplete = () => {
+    setTraceSteps(prev => {
+      if (!prev.length) return prev;
+      return prev.map((step, index) =>
+        index === prev.length - 1 ? { ...step, status: "complete" } : step
+      );
+    });
+  };
+  
+  const processNodeQueue = () => {
+    if (nodeQueueRef.current.length === 0) {
+      isProcessingQueue.current = false;
+      return;
+    }
+
+    isProcessingQueue.current = true;
+    const item = nodeQueueRef.current.shift()!;
+    const friendlyLabel = getNodeLabel(item.node);
+
+    setAgentStatus(item.node);
+    setAgentPath(prev => (prev.includes(item.node) ? prev : [...prev, item.node]));
+
+    markTraceComplete();
+    addTraceStep({
+      title: friendlyLabel,
+      // Use the dynamic detail from backend if present, else fallback to node name
+      detail: item.detail || `Node: ${item.node}`,
+      status: 'active'
+    });
+
+    setTimeout(() => {
+      processNodeQueue();
+    }, 700);
+  };
+
 const handleSendMessage = async (
   textToSend: string,
   currentAttachments: { filename: string; content: string }[]
 ) => {
-
+  setTraceSteps([]);
+  // setShowTracePanel(true);
   if (!textToSend.trim() || loading) return;
 
   // Use stable sessionId from state
   console.log("Using sessionId:", sessionId);
-
+  
 
     // Add user message + placeholder AI message
     setMessages(prev => [
@@ -312,10 +436,9 @@ const handleSendMessage = async (
     setAgentPath([]);
     console.log("ATTACHMENTS AT SEND TIME:", attachments);
 
-
     try {
       // 2. THEN send chat message WITHOUT attachments
-      await api.sendChatMessage(
+            await api.sendChatMessage(
         principal,
         textToSend,
         attachments,
@@ -334,12 +457,19 @@ const handleSendMessage = async (
               const rawJson = line.substring(6);
               const payload = JSON.parse(rawJson);
 
+              if (payload.event === 'trace') {
+                addTraceStep(payload);
+              }
+
               if (payload.event === 'node_progress') {
-                const nodeLabel = getNodeLabel(payload.node);
-                setAgentStatus(nodeLabel);
-                setAgentPath(prev =>
-                  prev.includes(payload.node) ? prev : [...prev, payload.node]
-                );
+                nodeQueueRef.current.push({
+                  node: payload.node,
+                  detail: payload.detail // Pass along dynamic detail from backend!
+                });
+
+                if (!isProcessingQueue.current) {
+                  processNodeQueue();
+                }
               }
 
               if (payload.event === 'token') {
@@ -371,7 +501,8 @@ const handleSendMessage = async (
                   return updated;
                 });
 
-                setAgentStatus('');
+                
+                markTraceComplete();
               }
 
               if (payload.event === 'error') {
@@ -389,6 +520,12 @@ const handleSendMessage = async (
                 });
 
                 setAgentStatus('');
+                addTraceStep({
+                  title: "Execution error",
+                  detail: payload.message,
+                  status: "active"
+                });
+                markTraceComplete();
               }
 
             } catch (jsonErr) {
@@ -406,6 +543,7 @@ const handleSendMessage = async (
       ]);
     } finally {
       setLoading(false);
+      setAgentStatus('');
     }
   };
   const onSubmitForm = (e: React.FormEvent) => {
@@ -416,7 +554,7 @@ const handleSendMessage = async (
   
   return (
     <div>
-      {/* CHAT UI */}
+      {/* HERO BANNER */}
       <div className="hero-banner" style={{ backgroundImage: `linear-gradient(rgba(18, 24, 36, 0.7), rgba(18, 24, 36, 0.95)), url(${sonicImg})` }}>
         <div className="banner-context">
           <h3>{theme === 'sonic' ? 'Sonic Assistant' : 'Shadow Engine'}</h3>
@@ -424,7 +562,11 @@ const handleSendMessage = async (
           {userEmail && <p className="badge">Principal Account Identity: {userEmail}</p>}
         </div>
       </div>
+
+      {/* PORTAL BODY */}
       <main className={`portal-body ${!hasChatted ? 'initial-state-view' : ''}`}>
+
+        {/* 1. INITIAL STATE / CARDS */}
         {!hasChatted && (
           <div className="example-cards-container">
             {loadingCards ? (
@@ -441,8 +583,10 @@ const handleSendMessage = async (
             )}
           </div>
         )}
+
+        {/* 2. CHAT MESSAGES WINDOW */}
         {hasChatted && (
-          <div className="chat-window" ref={chatWindowRef}>
+          <div className="chat-window" ref={chatWindowRef} style={{ maxHeight: 'calc(100vh - 380px)', overflowY: 'auto' }}>
             {messages
               .filter(msg => !(hasChatted && msg.sender === 'system'))
               .map(msg => (
@@ -451,17 +595,7 @@ const handleSendMessage = async (
                   <div className="message-text">
                     <ReactMarkdown
                       components={{
-                        a: ({
-                          href,
-                          children,
-                          node,
-                          ...rest
-                        }: {
-                          href?: string;
-                          children?: React.ReactNode;
-                          node?: any;
-                          [key: string]: any;
-                        }) => {
+                        a: ({ href, children, node, ...rest }: any) => {
                           const finalHref = href?.startsWith('/')
                             ? `${BASE_URL.replace(/\/$/, '')}${href}`
                             : href;
@@ -471,8 +605,6 @@ const handleSendMessage = async (
                           const handleClick = async (e: React.MouseEvent) => {
                             if (isDownloadLink && finalHref) {
                               e.preventDefault();
-
-                              // 1. Open a blank tab synchronously to satisfy browser pop-up blockers
                               const newTab = window.open('', '_blank');
                               if (newTab) {
                                 newTab.document.write('<html><body style="background: #121824; color: #fff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;"><h3>Loading secure document preview...</h3></body></html>');
@@ -488,7 +620,6 @@ const handleSendMessage = async (
                                   token = await getToken();
                                 }
 
-                                // 2. Fetch with the authenticated Bearer token
                                 const response = await fetch(finalHref, {
                                   headers: {
                                     ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -499,10 +630,9 @@ const handleSendMessage = async (
                                   throw new Error(`Server responded with status ${response.status}`);
                                 }
 
-                                // 3. Convert to blob and load it into the pre-opened tab
                                 const blob = await response.blob();
                                 const blobUrl = window.URL.createObjectURL(blob);
-                                
+
                                 if (newTab) {
                                   newTab.location.href = blobUrl;
                                 } else {
@@ -542,6 +672,7 @@ const handleSendMessage = async (
                   </div>
                 </div>
               ))}
+
             {loading && (
               <div className="sonic-loader-container">
                 <img
@@ -557,13 +688,14 @@ const handleSendMessage = async (
             <div ref={messagesEndRef} />
           </div>
         )}
-        <footer className="controls-footer" ref={messagesEndRef}>
+        {/* 3. INPUT AREA & FOOTER */}
+        <footer className="controls-footer">
           {uploadedFiles.length > 0 && (
             <div className="attached-files-banner">
               {uploadedFiles.map((file, idx) => (
                 <div key={idx} className="attached-file-pill">
                   📎 {file.name}
-                   <button
+                  <button
                     className="remove-file-btn"
                     onClick={() => handleRemoveAttachment(idx)}
                   >
@@ -573,17 +705,17 @@ const handleSendMessage = async (
               ))}
             </div>
           )}
+
           <form onSubmit={onSubmitForm} className="chat-input-area">
-            {/* Hidden file input */}
             <input
               id="file-upload"
               type="file"
               multiple
               style={{ display: "none" }}
               onChange={(e) => {
-              console.log("FILE INPUT ONCHANGE FIRED");
-              handleFileUpload(e);
-            }}
+                console.log("FILE INPUT ONCHANGE FIRED");
+                handleFileUpload(e);
+              }}
             />
 
             <div className="chat-input-wrapper">
@@ -607,105 +739,113 @@ const handleSendMessage = async (
               />
 
               <div className="icon-row-overlay">
-              {/* Tooltip / Info Button Wrapper */}
-              <div style={{ position: "relative" }}>
-                <button 
-                  type="button" 
+                <div style={{ position: "relative" }}>
+                  <button 
+                    type="button" 
+                    className="circle-icon-button"
+                    onClick={() => setShowTooltip(!showTooltip)}
+                    title="Help / Info"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="9" />
+                      <line x1="12" y1="8" x2="12" y2="12" />
+                      <line x1="12" y1="16" x2="12.01" y2="16" />
+                    </svg>
+                  </button>
+
+                  {showTooltip && (
+                    <div className="chat-tooltip-popover" style={{
+                      position: "absolute",
+                      bottom: "45px",
+                      right: "0",
+                      width: "220px",
+                      background: "var(--card-bg, #ffffff)",
+                      border: "1px solid var(--border-color, #e2e8f0)",
+                      padding: "10px 14px",
+                      borderRadius: "8px",
+                      boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                      zIndex: 100,
+                      fontSize: "13px",
+                      color: "var(--text-main, #1e293b)",
+                      lineHeight: "1.4"
+                    }}>
+                      <strong>Secure Index Tip:</strong>
+                      <p style={{ margin: "8px 8px 8px" }}>
+                        <ul>
+                          <li> Please only begin your queries once you see the example questions and the green (or yellow in dark mode) username in the top left indicating your session permissions are set. </li>
+                          <li> If the example questions have not loaded yet, it means the backend is still spinning up due to inactivity. please wait for the app to be fully loaded before using.</li>
+                          <li> Due to operating on cost-sensitive infrastructure, response times may vary or be unavailable due to model demand.</li>
+                          <li> If you encounter any bugs, issues, or would like your permissions changed, please reach out to jackharper0517@outlook.com.</li>
+                        </ul>
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  type="button"
                   className="circle-icon-button"
-                  onClick={() => setShowTooltip(!showTooltip)}
-                  title="Help / Info"
+                  onClick={() => setShowTracePanel(prev => !prev)}
+                  title="Toggle execution trace"
                 >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="9" />
-                    <line x1="12" y1="8" x2="12" y2="12" />
-                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M4 5h16" />
+                    <path d="M7 10h10" />
+                    <path d="M10 15h4" />
                   </svg>
                 </button>
 
-                {/* Tooltip Popup Message Box */}
-                {showTooltip && (
-                  <div className="chat-tooltip-popover" style={{
-                    position: "absolute",
-                    bottom: "45px",
-                    right: "0",
-                    width: "220px",
-                    background: "var(--card-bg, #ffffff)",
-                    border: "1px solid var(--border-color, #e2e8f0)",
-                    padding: "10px 14px",
-                    borderRadius: "8px",
-                    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-                    zIndex: 100,
-                    fontSize: "13px",
-                    color: "var(--text-main, #1e293b)",
-                    lineHeight: "1.4"
-                  }}>
-                    <strong>Secure Index Tip:</strong>
-                    <p style={{ margin: "8px 8px 8px" }}>
-                      <ul>
-                        <li> Please only begin your queries once you see the example questions and the green (or yellow in dark mode) username in the top left indicating your session permissions are set. </li>
-                        <li> If the example questions have not loaded yet, it means the backend is still spinning up due to inactivity. please wait for the app to be fully loaded before using.</li>
-                        <li> Due to operating on cost-sensitive infrastructure, response times may vary or be unavailable due to model demand.</li>
-                        <li> If you encounter any bugs, issues, or would like your permissions changed, please reach out to jackharper0517@outlook.com.</li>
-                      </ul>
-                    </p>
-                  </div>
-                )}
+                <button
+                  type="button"
+                  className="circle-icon-button"
+                  onClick={() => document.getElementById("file-upload")?.click()}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                </button>
+
+                <button
+                  type="button"
+                  className="circle-icon-button"
+                  onClick={handleExportChat}
+                  disabled={loading || !hasChatted}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                </button>
+
+                <button
+                  type="submit"
+                  className="circle-icon-button"
+                  disabled={loading || !input.trim()}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="2 12 22 12" />
+                    <polyline points="12 2 22 12 12 22" />
+                  </svg>
+                </button>
+
+                <button
+                  type="button"
+                  className="circle-icon-button"
+                  onClick={handleClearChat}
+                  disabled={loading}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6l-2 14H7L5 6" />
+                    <line x1="10" y1="11" x2="10" y2="17" />
+                    <line x1="14" y1="11" x2="14" y2="17" />
+                  </svg>
+                </button>
               </div>
-
-              <button
-                type="button"
-                className="circle-icon-button"
-                onClick={() => document.getElementById("file-upload")?.click()}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-              </button>
-
-              <button
-                type="button"
-                className="circle-icon-button"
-                onClick={handleExportChat}
-                disabled={loading || !hasChatted}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-              </button>
-
-              <button
-                type="submit"
-                className="circle-icon-button"
-                disabled={loading || !input.trim()}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="2 12 22 12" />
-                  <polyline points="12 2 22 12 12 22" />
-                </svg>
-              </button>
-
-              <button
-                type="button"
-                className="circle-icon-button"
-                onClick={handleClearChat}
-                disabled={loading}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="3 6 5 6 21 6" />
-                  <path d="M19 6l-2 14H7L5 6" />
-                  <line x1="10" y1="11" x2="10" y2="17" />
-                  <line x1="14" y1="11" x2="14" y2="17" />
-                </svg>
-              </button>
-            </div>
             </div>
           </form>
-
-
-
 
           <Filters 
             selectedAffiliate={selectedAffiliate}
@@ -715,6 +855,76 @@ const handleSendMessage = async (
             setAllowedAffiliates={setAllowedAffiliates}
           />
         </footer>
+
+        {/* 4. EXECUTION TRACE PANEL (Overlayed into Right Margin) */}
+        {showTracePanel && (
+          <aside
+            style={{
+              width: '320px',
+              position: 'absolute',
+              top: '0',
+              left: 'calc(100% + 1.25rem)',
+              border: '1px solid rgba(148, 163, 184, 0.24)',
+              borderRadius: '16px',
+              background: 'rgba(15, 23, 42, 0.95)',
+              padding: '1rem',
+              color: '#e2e8f0',
+              boxShadow: '0 12px 28px rgba(0,0,0,0.35)',
+              maxHeight: 'calc(100vh - 180px)',
+              overflowY: 'auto',
+              zIndex: 10
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+              <div>
+                <div style={{ fontSize: '0.9rem', fontWeight: 700 }}>How it works</div>
+                <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Live execution trace</div>
+              </div>
+              <button
+                type="button"
+                className="circle-icon-button"
+                onClick={() => setShowTracePanel(false)}
+                title="Hide trace panel"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ fontSize: '0.8rem', color: '#cbd5e1', marginBottom: '0.75rem' }}>
+              {traceSteps.length
+                ? traceSteps.map(step => step.title).join(' → ')
+                : 'Waiting for the first execution step...'}
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+              {traceSteps.length === 0 && (
+                <div style={{ fontSize: '0.85rem', color: '#94a3b8' }}>
+                  Start a request and the route will appear here.
+                </div>
+              )}
+
+              {traceSteps.map(step => (
+                <div
+                  key={step.id}
+                  style={{
+                    border: '1px solid rgba(148, 163, 184, 0.2)',
+                    borderRadius: '10px',
+                    padding: '0.7rem',
+                    background: step.status === 'complete'
+                      ? 'rgba(30, 41, 59, 0.8)'
+                      : 'rgba(15, 23, 42, 0.95)'
+                  }}
+                >
+                  <div style={{ fontSize: '0.82rem', fontWeight: 700 }}>{step.title}</div>
+                  <div style={{ fontSize: '0.76rem', color: '#94a3b8', marginTop: '0.25rem' }}>
+                    {step.detail}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </aside>
+        )}
+
       </main>
     </div>  
   );

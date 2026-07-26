@@ -48,14 +48,14 @@ async def rewrite_fallback(
 
     # Retrieve documents (defensive)
     try:
-        state = { **state, **retrieve_node(state, vector_store) }
+        state = { **state, **(await retrieve_node(state, vector_store)) }
     except Exception as e:
         logger.exception("retrieve_node failed: %s", e)
     state["messages"] = preserved_messages
 
     # Grade retrieved docs (defensive)
     try:
-        state = { **state, **grading_node(state) }
+        state = { **state, **(await grading_node(state)) }
     except Exception as e:
         logger.exception("grading_node failed: %s", e)
     state["messages"] = preserved_messages

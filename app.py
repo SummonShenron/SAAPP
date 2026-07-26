@@ -248,17 +248,14 @@ async def discover_documents(affiliate: str = "All", current_user = Depends(get_
 
 @app.post("/api/chat")
 async def secure_chat(request: ChatRequest, current_user = Depends(get_current_user)):
-    # raw = await fastapi_request.json()
-    # logger.info(f"RAW REQUEST BODY: {raw}")
     username = current_user.get("sub")
     question = request.question.strip()
     session_id = request.session_id.strip() if request.session_id else f"{username}_session"
     t_auth_start = time.perf_counter()
-    user_docs = []
+    
     if not verify_paapp_access(username):
         return {"message": "Access denied: You are not authorized to use PAAPP integrations."}
-    # logger.debug(f"ChatRequest fields: {request.model_dump().keys()}")
-    # logger.info(f"attachments value: {request.attachments}")
+
     async def stream_simple_message(text: str):
         async def generator():
             yield f"data: {json.dumps({'event': 'token', 'text': text})}\n\n"
@@ -266,86 +263,79 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
         return StreamingResponse(
             generator(),
             media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-                "Connection": "keep-alive",
-            },
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
         )
+
     async def streamThinkingThen(text: str):
         async def generator():
-            # tiny "thinking" animation
             yield f"data: {json.dumps({'event': 'token', 'text': '…'})}\n\n"
-            await asyncio.sleep(0.15)
-            # final streamed message
+            await asyncio.sleep(0.2)
             yield f"data: {json.dumps({'event': 'token', 'text': text})}\n\n"
             yield f"data: {json.dumps({'event': 'final_generation', 'text': text})}\n\n"
         return StreamingResponse(
             generator(),
             media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-                "Connection": "keep-alive",
-            },
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
         )
+
+    # ---------- Command Overrides ----------
     if question.lower().startswith("save conversation"):
-        # extract title
         parts = question.split("save conversation", 1)
-        title = parts[1].strip() or f"Conversation_{datetime.datetime.now().isoformat()}"
-        # Include the chat history messages as the third argument
+        title = parts[1].strip() or f"Conversation_{datetime.now().isoformat()}"
         save_conversation(username, title, chat_sessions.get(username, []))
         return await streamThinkingThen(f"Conversation '{title}' saved successfully.")
+
     if question.lower().startswith("load conversation"):
         title = question.split("load conversation", 1)[1].strip()
         conversation = load_saved_conversation(username, title)
         if not conversation:
             return await streamThinkingThen("Conversation not found.")
-        # reconstruct LangChain messages
+        
         reconstructed = []
         for msg in conversation["messages"]:
-            if msg["type"] == "human":
-                reconstructed.append(HumanMessage(content=msg["content"]))
-            elif msg["type"] == "ai":
-                reconstructed.append(AIMessage(content=msg["content"]))
-            elif msg["type"] == "system":
-                reconstructed.append(SystemMessage(content=msg["content"]))
+            if msg["type"] == "human": reconstructed.append(HumanMessage(content=msg["content"]))
+            elif msg["type"] == "ai": reconstructed.append(AIMessage(content=msg["content"]))
+            elif msg["type"] == "system": reconstructed.append(SystemMessage(content=msg["content"]))
         chat_sessions[username] = reconstructed
         chat_sessions[username].insert(0, SystemMessage(content="Loaded conversation context."))
         save_chat_history()
         return await streamThinkingThen(f"Conversation '{title}' loaded successfully.")
+
     if question.lower().startswith("list conversations"):
         titles = list_saved_conversations(username)
         if not titles:
             return await streamThinkingThen("You have no saved conversations.")
-        # Build a nice readable list
         formatted = "\n".join(f"• {t}" for t in titles)
         return await streamThinkingThen(f"Saved conversations:\n{formatted}")
+
+    # ---------- Auth Authorization Boundary ----------
     web_triggers = ["search the web", "search online", "search google", "web search", "look up online"]
     force_web_search = any(kw in question.lower() for kw in web_triggers)
     requested_affiliate = request.affiliate.strip()
     directory = load_directory()
     user_claims = directory.get(username, {})
-    user_groups = user_claims.get("groups", [])
-    logger.info(f"--- BEGINNING CHAT STREAM ---")
-    logger.info(f"User Verified: {user_claims['email']}")
-    logger.debug(f"User Group Claims: {user_groups}")
-    # ---------- Auth Authorization Boundary ----------
+    
+    logger.info("--- BEGINNING CHAT STREAM ---")
+    
     if username not in directory:
         raise HTTPException(status_code=401, detail="Unauthorized: User not found.")
+    
     accessible_affiliates = get_accessible_affiliates(username, directory)
-    t_auth_end = time.perf_counter()
-    logger.info(f"[PERF] Step 1 (Auth & Directory Lookup): {(t_auth_end - t_auth_start) * 1000:.2f}ms")
+    
     if requested_affiliate != "All" and requested_affiliate not in accessible_affiliates["accessible_affiliates"]:
         raise HTTPException(status_code=403, detail="Security Breach: Unauthorized affiliate scope requested.")
+
     target_scope = accessible_affiliates["accessible_affiliates"] if requested_affiliate == "All" else [requested_affiliate]
+
     # ---------- Conversation Memory State Init ----------
     if username not in chat_sessions:
         chat_sessions[username] = []
     if len(chat_sessions[username]) > 10:
         chat_sessions[username] = chat_sessions[username][-10:]
+
     messages_state = chat_sessions[username]
     messages_state.append(HumanMessage(content=question))
+
     initial_state: GraphState = {
         "messages": messages_state,
         "username": username,
@@ -356,45 +346,32 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
         "original_question": question,
         "force_web_search": force_web_search
     }
-    # ---------- Run LangGraph ONCE (no streaming, logic-only) ----------
-    try:
-        t_attach_start = time.perf_counter()
-        attachment_summaries = []
-        if request.attachments:
-            logger.info(f"Processing {len(request.attachments)} attachments for {username}")
-            for att in request.attachments:
-                # 1. Extract + save raw text into session store
-                ingest_result = ingest_doc_to_session(username, session_id, att)
-                # 2. Summarize for immediate context injection
-                summary = process_user_attachment(att)
-                if summary:
-                    attachment_summaries.append(summary)
-        t_attach_end = time.perf_counter()            
-        if request.attachments:
-            logger.info(f"[PERF] Step 2 (Attachment Processing): {(t_attach_end - t_attach_start) * 1000:.2f}ms")
-        # Inject summaries into graph state BEFORE workflow runs
-        initial_state["attachment_summaries"] = attachment_summaries
-        if attachment_summaries:
-            docs = []
-            for summary in attachment_summaries:
-                docs.append(Document(
-                    page_content=summary,
-                    metadata={
-                        "source": "user_attachment_summary",
-                        "priority": True,
-                        "page": "N/A"
-                    }
-                ))
-            initial_state["documents"] = docs
-        final_state = {
-            "insight_answer": None,
-            "relevance_grade": "conversational",
-            "target_scope": target_scope,
-            "documents": [],
-            "original_question": question
-        }
-        # Run workflow normally
-        t_graph_start = time.perf_counter()
+
+    # ---------- Early Attachments Processing ----------
+    attachment_summaries = []
+    if request.attachments:
+        logger.info(f"Processing {len(request.attachments)} attachments for {username}")
+        for att in request.attachments:
+            ingest_doc_to_session(username, session_id, att)
+            summary = process_user_attachment(att)
+            if summary:
+                attachment_summaries.append(summary)
+                
+    initial_state["attachment_summaries"] = attachment_summaries
+    if attachment_summaries:
+        initial_state["documents"] = [Document(
+            page_content=s, metadata={"source": "user_attachment_summary", "priority": True, "page": "N/A"}
+        ) for s in attachment_summaries]
+
+    # =====================================================================
+    # THE MEGA-STREAMER (Graph Execution + Prompting + LLM Generation)
+    # =====================================================================
+    async def token_streamer():
+        full_response = ""
+        first_token = True
+        t_stream_start = time.perf_counter()
+        final_state = {}
+
         try:
             if settings.LOCAL_DEV:
                 logger.info("--- [LOCAL DEV MODE] Bypassing Graph Workflow ---")
@@ -402,127 +379,74 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                     "insight_answer": "Local dev mode active: Graph API bypassed.",
                     "relevance_grade": "conversational",
                     "target_scope": [request.affiliate],
-                    "documents": []
+                    "documents": [],
+                    "messages": initial_state["messages"],
+                    "original_question": question
                 }
             else:
-                # Production execution
-                try:   
-                    final_state = services.get("compiled_workflow").invoke(initial_state)
-                except Exception as e:
-                    traceback.print_exc()
-        except Exception as e:
-            logger.error("workflow failed")
-        t_graph_end = time.perf_counter()
-        logger.info(f"[PERF] Step 3 (LangGraph Workflow Execution): {(t_graph_end - t_graph_start) * 1000:.2f}ms")
-    except Exception as e:
-        logger.error(f"[x] Workflow failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Agent workflow failed.")
+                # 1. LIVE GRAPH EXECUTION & EVENT STREAMING
+                logger.info("--- STARTING LIVE GRAPH EXECUTION ---")
+                workflow = services.get("compiled_workflow")
+                
+                async for event in workflow.astream_events(initial_state, version="v2"):
+                    kind = event["event"]
 
-    # ---------- Build Prompt based on Decision Boundary ----------
-    t_prompt_start = time.perf_counter()
-    insight_answer = final_state.get("insight_answer")
-    relevance_grade = final_state.get("relevance_grade")
-    if relevance_grade in ["hitl_approval_required", "action_complete"]:
-        card_text = (
-            final_state.get("generation") 
-            or final_state.get("content_to_format") 
-            or (final_state["messages"][-1].content if final_state.get("messages") else "Action complete.")
-        )
-        logger.info("[ACTION] Bypassing RAG LLM streaming — returning direct action result.")
-        logger.info("Bypassed streaming")
-        return await stream_simple_message(card_text)
-    documents = final_state.get("documents", [])
+                    # Catch Custom Thoughts emitted by your nodes via adispatch_custom_event
+                    if kind == "on_custom_event" and event.get("name") == "trace_detail":
+                        data = event.get("data", {})
+                        yield f"data: {json.dumps({'event': 'node_progress', 'node': data.get('node', 'system'), 'title': data.get('title', 'Processing...'), 'detail': data.get('detail', '')})}\n\n"
+                        await asyncio.sleep(0.01)
 
-    # 1. WEB SEARCH BRANCH
-    if relevance_grade == "web_search":
-        formatted_docs = format_docs(documents)
-        prompt = WEB_SEARCH_PROMPT.format(
-            context=formatted_docs,
-            question=question
-        )
-    
-    elif relevance_grade == "code_interpreter":
-        content = final_state.get("content_to_format", "")
-        prompt = CODE_INTERPRETER_PROMPT.format(
-            content=content,
-            question=question
-        )
-    elif relevance_grade == "github_search":
-        content = final_state.get("content_to_format", "")
-        prompt = GITHUB_FORMAT_PROMPT.format(
-            content=content,
-            question=question
-        )
+                    # Catch Final State when the graph finishes (Look for the final dictionary output)
+                    if kind == "on_chain_end":
+                        output = event.get("data", {}).get("output")
+                        # Ensure we grab the actual state dict and not a sub-node return
+                        if output and isinstance(output, dict) and "relevance_grade" in output:
+                            final_state = output
 
-    elif relevance_grade == "pr_summary":
-        content = final_state.get("content_to_format", "")
-        prompt = PR_FORMAT_PROMPT.format(
-            content=content,
-            question=question
-        )
+            # Fallback just in case event streaming missed the final state dict
+            if not final_state:
+                final_state = await workflow.ainvoke(initial_state)
 
-    # 2. INSIGHTS BRANCH
-    elif insight_answer:
-        history_transcript = format_history_as_text(chat_sessions[username])
-        prompt = CONVERSATIONAL_PROMPT.format(
-            username=username,
-            question=question,
-            history=history_transcript,
-            insight=insight_answer
-        )
+            # 2. EVALUATE FINAL STATE & BUILD PROMPT
+            relevance_grade = final_state.get("relevance_grade")
+            insight_answer = final_state.get("insight_answer")
+            documents = final_state.get("documents", [])
 
-    # 3. GENERAL CONVERSATIONAL BRANCH
-    elif relevance_grade == "conversational":
-        history_transcript = format_history_as_text(chat_sessions[username])
-        prompt = CONVERSATIONAL_PROMPT.format(
-            username=username,
-            question=question,
-            history=history_transcript,
-            insight=""
-        )
+            if relevance_grade in ["hitl_approval_required", "action_complete"]:
+                card_text = final_state.get("generation") or final_state.get("content_to_format") or (final_state.get("messages")[-1].content if final_state.get("messages") else "Action complete.")
+                yield f"data: {json.dumps({'event': 'token', 'text': card_text})}\n\n"
+                yield f"data: {json.dumps({'event': 'final_generation', 'text': card_text})}\n\n"
+                return
 
-    # 4. DEFAULT STRICT KNOWLEDGE BASE RAG BRANCH
-    else:
-        final_question = final_state.get("original_question", question)
-        accessible_affiliates_str = ", ".join(final_state.get("target_scope", target_scope))
-        instructions = get_system_prompt(username, accessible_affiliates_str)
-        
-        documents_sorted = sorted(
-            documents,
-            key=lambda d: d.metadata.get("priority", False),
-            reverse=True
-        )
+            if relevance_grade == "web_search":
+                prompt = WEB_SEARCH_PROMPT.format(context=format_docs(documents), question=question)
+            elif relevance_grade == "code_interpreter":
+                prompt = CODE_INTERPRETER_PROMPT.format(content=final_state.get("content_to_format", ""), question=question)
+            elif relevance_grade == "github_search":
+                prompt = GITHUB_FORMAT_PROMPT.format(content=final_state.get("content_to_format", ""), question=question)
+            elif relevance_grade == "pr_summary":
+                prompt = PR_FORMAT_PROMPT.format(content=final_state.get("content_to_format", ""), question=question)
+            elif insight_answer:
+                prompt = CONVERSATIONAL_PROMPT.format(username=username, question=question, history=format_history_as_text(chat_sessions[username]), insight=insight_answer)
+            elif relevance_grade == "conversational":
+                prompt = CONVERSATIONAL_PROMPT.format(username=username, question=question, history=format_history_as_text(chat_sessions[username]), insight="")
+            else:
+                final_question = final_state.get("original_question", question)
+                accessible_affiliates_str = ", ".join(final_state.get("target_scope", target_scope))
+                instructions = get_system_prompt(username, accessible_affiliates_str)
+                documents_sorted = sorted(documents, key=lambda d: d.metadata.get("priority", False), reverse=True)
+                prompt = instructions.format(context=format_docs(documents_sorted), history=format_history_as_text(chat_sessions[username]), question=final_question)
 
-        formatted_docs = format_docs(documents_sorted)
-        history_transcript = format_history_as_text(chat_sessions[username])
-        
-        prompt = instructions.format(
-            context=formatted_docs,
-            history=history_transcript,
-            question=final_question,
-        )
+            # Announce LLM generation start
+            yield f"data: {json.dumps({'event': 'node_progress', 'node': 'formatter_node', 'title': 'Formatting output structure...', 'detail': f'Synthesizing final answer for {question[:30]}...'})}\n\n"
 
-    logger.debug(f"--- FINAL PROMPT SENT TO LLM: ---\n{prompt}")
-    t_prompt_end = time.perf_counter()
-    logger.info(f"[PERF] Step 4 (Prompt Construction): {(t_prompt_end - t_prompt_start) * 1000:.2f}ms")
-    
-    logger.debug("--- END OF PROMPT ---")
-
-    # ---------- Real token streaming from LLM ----------
-    async def token_streamer():
-        full_response = ""
-        first_token = True
-        t_stream_start = time.perf_counter()
-        try:
-            # Use stream_llm (AFC/tool buffering disabled)
+            # 3. STREAM RESPONSE TOKENS FROM LLM
             async for chunk in stream_llm.astream(prompt):
                 if first_token:
-                    t_ttft = time.perf_counter()
-                    logger.info(f"[PERF] Time To First Token (TTFT): {(t_ttft - t_stream_start) * 1000:.2f}ms")
                     first_token = False
                 
                 content = getattr(chunk, "content", "")
-                
                 if isinstance(content, list):
                     token = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
                 else:
@@ -535,9 +459,11 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                 yield f"data: {json.dumps({'event': 'token', 'text': token})}\n\n"
                 await asyncio.sleep(0)
 
-            # Check for grounding failure requiring a rewrite
+            # 4. GROUNDING CHECK & FALLBACK
             if full_response and "I cannot find the answer in the provided knowledge base." in full_response.strip():
                 logger.info("Grounding failure detected — triggering rewrite fallback...")
+                yield f"data: {json.dumps({'event': 'node_progress', 'node': 'rewrite_query_node', 'title': 'Refining search parameters...', 'detail': f'Expanding query parameters...'})}\n\n"
+
                 fallback_state = {
                     **initial_state,
                     "target_scope": final_state.get("target_scope", initial_state["target_scope"]),
@@ -548,16 +474,15 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                     yield fallback_chunk
                 return
 
-            # Stream completion and history saving
             yield f"data: {json.dumps({'event': 'final_generation', 'text': full_response})}\n\n"
             chat_sessions[username].append(AIMessage(content=full_response))
             save_chat_history()
             logger.info("--- End of token stream ---")
-            t_stream_end = time.perf_counter()
-            logger.info(f"[PERF] Total LLM Stream Duration: {(t_stream_end - t_stream_start) * 1000:.2f}ms")
+
         except Exception as e:
             logger.error(f"[x] Error in token_streamer loop context: {e}", exc_info=True)
-            yield f"data: {json.dumps({'event': 'error', 'message': str(e)})}\n\n"
+            yield f"data: {json.dumps({'event': 'trace', 'title': 'Execution error', 'detail': str(e), 'status': 'active'})}\n\n"
+
     logger.info(f"Initializing secured token stream for {username}")
     return StreamingResponse(
         token_streamer(),
@@ -1060,3 +985,4 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
 async def health_check():
     logger.info("Checking health")
     return {"status": "healthy", "database_connected": os.path.exists(DB_DIR)}
+

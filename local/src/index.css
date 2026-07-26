@@ -382,6 +382,7 @@ body:has(.theme-shadow) {
   max-width: 900px;
   width: 100%;
   margin: 0 auto;
+  position: relative;
 }
 
 div:has(.portal-body) {

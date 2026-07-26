@@ -177,3 +177,5 @@ def format_history_as_text(messages) -> str:
         elif isinstance(msg, AIMessage):
             formatted.append(f"Assistant: {msg.content}")
     return "\n".join(formatted)
+
+

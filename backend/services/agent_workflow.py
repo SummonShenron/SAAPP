@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 import base64
 import os
 import re
@@ -7,6 +8,7 @@ from typing import List, Any, Dict
 import logging
 import requests
 import urllib.parse
+from functools import partial
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
 from collections import Counter, defaultdict
@@ -16,6 +18,7 @@ from backend.models.attachment import Attachment
 from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langchain_core.documents import Document
+from langchain_core.callbacks.manager import adispatch_custom_event
 from settings import PAAPP_BASE_URL
 from backend.services.search import get_secure_retriever
 from backend.models.models import llm, lite_llm
@@ -44,17 +47,31 @@ from backend.utils.normalize_utils import ensure_str
 
 load_dotenv()
 logger = logging.getLogger("SASS Logger")
-
+async def safe_emit_event(name: str, data: dict):
+    """Safely emit a custom event, ignoring errors if called outside an active run context."""
+    try:
+        await adispatch_custom_event(name, data)
+    except RuntimeError:
+        # Safely ignored when called from fallback utilities or standalone scripts
+        pass
 # ============================================================
 # COORDINATOR_NODE (sync)
 # ============================================================
 
-def coordinator_node(state: GraphState) -> GraphState:
+async def coordinator_node(state: GraphState) -> GraphState:
     last_msg = state["messages"][-1].content.lower().strip()
     logger.info("--- COORDINATOR NODE START ---")
+    await safe_emit_event(
+        "trace_detail", 
+        {
+            "node": "coordinator_node", 
+            "title": "Analyzing intent and planning route...", 
+            "detail": "Evaluating user query to determine the best tools to use."
+        }
+    )
     logger.info(f"User message: {last_msg}")
     # Run reasoner first
-    state = reasoner_node(state)
+    state = await reasoner_node(state)
     intent = classify_intent(last_msg, state.get("attachment_summaries", []))
     logger.info(f"Intent classified as: {intent}")
     plan = build_agent_plan(intent, state)
@@ -245,7 +262,7 @@ def apply_conditional_skips(plan: Dict[str, Any], state: Dict[str, Any]) -> Dict
 # REASONER NODE (sync)
 # ============================================================
 
-def reasoner_node(state: GraphState) -> GraphState:
+async def reasoner_node(state: GraphState) -> GraphState:
     msg = state["messages"][-1].content.strip()
     history = state.get("messages", [])
     
@@ -258,10 +275,20 @@ def reasoner_node(state: GraphState) -> GraphState:
     )
     
     logger.info("--- REASONER NODE START ---")
+    
+    # 1. EMIT THE LIVE THOUGHT (This brings the trace back to the UI!)
+    await safe_emit_event(
+        "trace_detail", 
+        {
+            "node": "reasoner_node", 
+            "title": "Analyzing intent and planning route...", 
+            "detail": f"Classifying workflow intent for: '{msg[:30]}...'"
+        }
+    )
 
     try:
-        # Call the LLM to classify intent
-        response = lite_llm.invoke(formatted_prompt)
+        # 2. USE AINVOKE FOR NON-BLOCKING LLAMA CALL
+        response = await lite_llm.ainvoke(formatted_prompt)
         resp_content = response.content if hasattr(response, "content") else str(response)
         
         # Safely handle list vs string response types
@@ -344,7 +371,7 @@ def memory_node(state: GraphState) -> dict:
     state["content_to_format"] = confirmation
     return state
 
-def retrieve_node(state: GraphState, vector_store) -> dict:
+async def retrieve_node(state: GraphState, vector_store) -> dict:
     logger.info("--- PARALLEL RETRIEVING DOCUMENTS & GRAPH CONTEXT ---")
     question = state["messages"][-1].content
     username = state.get("username")
@@ -352,14 +379,45 @@ def retrieve_node(state: GraphState, vector_store) -> dict:
     current_loops = state.get("loop_count", 0) or 0
     original_question = state.get("original_question") or question
     session_id = state.get("session_id") or f"{username}_session"
-
-    # 1. EARLY EXIT: Priority attachments
+    
+    # 1. First thought line: Starting the search
+    await safe_emit_event(
+        "trace_detail", 
+        {
+            "node": "retrieve_node", 
+            "title": "GraphRAG Retrieval in progress...", 
+            "detail": f"Querying vector index for '{original_question[:30]}...'"
+        }
+    )
+    
+    # 2. EARLY EXIT: Priority attachments
+    if state.get("attachment_summaries"):
+        logger.info("Attachment detected — skipping vector search and using only priority docs.")
+        docs = [Document(page_content=s, metadata={"source": "user_attachment_summary", "priority": True}) 
+                for s in state.get("attachment_summaries", [])]
+    else:
+        # Your actual vector retrieval / search execution here
+        docs = vector_store.similarity_search(original_question, k=4)
+        
+        # 3. Second thought line: Dynamic result update! 
+        if docs:
+            sources = list(set([d.metadata.get("source", "knowledge base") for d in docs]))
+            await safe_emit_event(
+                "trace_detail", 
+                {
+                    "node": "retrieve_node", 
+                    "title": "GraphRAG Retrieval in progress...", 
+                    "detail": f"Extracted {len(docs)} chunks from {sources[0]}."
+                }
+            )
+    
+    # 1. EARLY EXIT: Priority attachments (Only returns early IF attachments exist)
     if state.get("attachment_summaries"):
         logger.info("Attachment detected — skipping vector search and using only priority docs.")
         return {
             **state,
             "documents": [Document(page_content=s, metadata={"source": "user_attachment_summary", "priority": True}) 
-                          for s in state.get("attachment_summaries", [])],
+                         for s in state.get("attachment_summaries", [])],
             "loop_count": current_loops + 1
         }
 
@@ -547,8 +605,19 @@ def generate_node(state: GraphState) -> dict:
 # GRADING NODE (sync)
 # ============================================================
 
-def grading_node(state: GraphState) -> dict:
+async def grading_node(state: GraphState) -> dict:
     logger.info("--- GRADING RETRIEVED CONTENT ---")
+    
+    # 1. EMIT THE LIVE THOUGHT: Start grading
+    await safe_emit_event(
+        "trace_detail", 
+        {
+            "node": "grading_node", 
+            "title": "Evaluating document relevance...", 
+            "detail": "Checking if the retrieved context contains the answer."
+        }
+    )
+
     # Defensive extraction of question
     try:
         raw_question = state.get("messages", [])[-1].content
@@ -573,7 +642,10 @@ def grading_node(state: GraphState) -> dict:
 
     try:
         logger.info("Grading response")
-        response = lite_llm.invoke(formatted_prompt)
+        
+        # 2. USE AINVOKE FOR NON-BLOCKING LLM CALL
+        response = await lite_llm.ainvoke(formatted_prompt)
+        
         response_text = response.content if hasattr(response, "content") else str(response)
         response_clean = ensure_str(response_text).lower().strip()
         grade = "yes" if "yes" in response_clean else "no"
@@ -587,6 +659,17 @@ def grading_node(state: GraphState) -> dict:
                 src = "Unknown"
                 page = "N/A"
             logger.info(f"    - Doc {idx}: {src} (Page {page}) → Grade: {grade}")
+
+        # 3. DYNAMIC TRACE: Announce the result to the UI!
+        grade_text = "Relevant" if grade == "yes" else "Irrelevant (Triggering fallback...)"
+        await safe_emit_event(
+            "trace_detail", 
+            {
+                "node": "grading_node", 
+                "title": "Evaluating document relevance...", 
+                "detail": f"Evaluation complete. Context marked as: {grade_text}"
+            }
+        )
 
         return {**state, "relevance_grade": grade}
     except Exception as e:
@@ -1625,8 +1708,18 @@ def insight_query_node(state: dict) -> dict:
 # WEB SEARCH NODE
 # ============================================================
 
-def web_search_node(state: GraphState) -> dict:
+async def web_search_node(state: GraphState) -> dict:
     logger.info("--- EXECUTING WEB SEARCH ESCALATION ---")
+    
+    # 1. Emit the live thought to the UI
+    await safe_emit_event(
+        "trace_detail", 
+        {
+            "node": "web_search_node", 
+            "title": "Searching the web...", 
+            "detail": "Querying DuckDuckGo for live context..."
+        }
+    )
     
     # Safe question extraction
     question = state.get("original_question")
@@ -1637,7 +1730,9 @@ def web_search_node(state: GraphState) -> dict:
     
     try:
         search = DuckDuckGoSearchAPIWrapper()
-        results = search.results(question, max_results=3)
+        
+        # 2. Offload the blocking DuckDuckGo search to a background thread
+        results = await asyncio.to_thread(search.results, question, max_results=3)
         
         if results:
             web_docs = [
@@ -1867,8 +1962,20 @@ def code_interpreter_node(state: GraphState) -> Dict[str, Any]:
 # REPO SEARCH NODES
 # ============================================================
 
-def github_search_node(state: dict) -> dict:
+async def github_search_node(state: dict) -> dict:
     print("--- GITHUB SEARCH NODE (DYNAMIC TREE ROUTER) CALLED ---")
+    logger.info("--- GITHUB SEARCH NODE (DYNAMIC TREE ROUTER) CALLED ---")
+    
+    # 1. Emit live thought to the UI
+    await safe_emit_event(
+        "trace_detail", 
+        {
+            "node": "github_search_node", 
+            "title": "Searching GitHub repository...", 
+            "detail": "Fetching repository tree and querying code structure..."
+        }
+    )
+    
     msg = state.get("messages", [])[-1].content.strip()
     
     repo = "SummonShenron/SAAPP"
@@ -1881,12 +1988,17 @@ def github_search_node(state: dict) -> dict:
     api_parts = ["https", "api.github.com"]
     api_base = f"{api_parts[0]}://{api_parts[1]}"
     
-    # 1. Fetch the actual file tree from GitHub
-    repo_res = requests.get(f"{api_base}/repos/{repo}", headers=headers)
-    default_branch = repo_res.json().get("default_branch", "main") if repo_res.status_code == 200 else "main"
-    
-    tree_url = f"{api_base}/repos/{repo}/git/trees/{default_branch}?recursive=1"
-    response = requests.get(tree_url, headers=headers)
+    def _fetch_github_data():
+        # 1. Fetch the actual file tree from GitHub
+        repo_res = requests.get(f"{api_base}/repos/{repo}", headers=headers)
+        default_branch = repo_res.json().get("default_branch", "main") if repo_res.status_code == 200 else "main"
+        
+        tree_url = f"{api_base}/repos/{repo}/git/trees/{default_branch}?recursive=1"
+        response = requests.get(tree_url, headers=headers)
+        return response, default_branch
+
+    # Offload the blocking requests network calls to a background thread
+    response, default_branch = await asyncio.to_thread(_fetch_github_data)
     
     if response.status_code != 200:
         return {
@@ -1906,13 +2018,12 @@ def github_search_node(state: dict) -> dict:
         and not any(exclude in item.get("path", "") for exclude in ["Example_List", "node_modules", "dist", "tests", "__pycache__"])
     ]
 
-    # 2. Let the LLM select from the actual repository tree dynamically
+    # 2. Let the LLM select from the actual repository tree dynamically (USING AINVOKE)
     file_list_str = "\n".join(f"- {p}" for p in valid_paths)
-    
     router_prompt = GITHUB_SEARCH_PROMPT
 
     try:
-        router_response = lite_llm.invoke(router_prompt)
+        router_response = await lite_llm.ainvoke(router_prompt)
         raw_output = (router_response.content if hasattr(router_response, "content") else str(router_response)).replace("```", "").strip()
         selected_paths = [p.strip() for p in raw_output.split(",") if p.strip() in valid_paths]
     except Exception:
@@ -1922,25 +2033,28 @@ def github_search_node(state: dict) -> dict:
     if not selected_paths and valid_paths:
         selected_paths = [valid_paths[0]]
 
-    # 3. Fetch contents of only the dynamically chosen files
-    results = []
-    gh_parts = ["https", "github.com"]
-    gh_base = f"{gh_parts[0]}://{gh_parts[1]}"
-    
-    for path in selected_paths:
-        file_url = f"{api_base}/repos/{repo}/contents/{path}"
-        file_res = requests.get(file_url, headers=headers)
-        if file_res.status_code == 200:
-            try:
-                file_data = file_res.json()
-                content_encoded = file_data.get("content", "")
-                decoded = base64.b64decode(content_encoded).decode("utf-8")
-                html_url = f"{gh_base}/{repo}/blob/{default_branch}/{path}"
-                snippet = decoded[:3500] + ("\n... [Code truncated]" if len(decoded) > 3500 else "")
-                results.append(f"File: {path}\nURL: {html_url}\nCode Snippet:\n```python\n{snippet}\n```")
-            except Exception:
-                pass
+    # 3. Fetch contents of only the dynamically chosen files (Offloaded to background thread)
+    def _fetch_file_contents():
+        results = []
+        gh_parts = ["https", "github.com"]
+        gh_base = f"{gh_parts[0]}://{gh_parts[1]}"
+        
+        for path in selected_paths:
+            file_url = f"{api_base}/repos/{repo}/contents/{path}"
+            file_res = requests.get(file_url, headers=headers)
+            if file_res.status_code == 200:
+                try:
+                    file_data = file_res.json()
+                    content_encoded = file_data.get("content", "")
+                    decoded = base64.b64decode(content_encoded).decode("utf-8")
+                    html_url = f"{gh_base}/{repo}/blob/{default_branch}/{path}"
+                    snippet = decoded[:3500] + ("\n... [Code truncated]" if len(decoded) > 3500 else "")
+                    results.append(f"File: {path}\nURL: {html_url}\nCode Snippet:\n```python\n{snippet}\n```")
+                except Exception:
+                    pass
+        return results
 
+    results = await asyncio.to_thread(_fetch_file_contents)
     formatted_results = "\n\n---\n\n".join(results) if results else "No matching files retrieved."
 
     return {
@@ -1963,7 +2077,7 @@ def resolve_pr_number(user_msg: str, repo: str, headers: dict, api_base: str) ->
 
     # 2. Handle "first / oldest / initial"
     if any(word in msg_lower for word in ["first", "oldest", "initial"]):
-        logger.info(f"🔍 Fetching initial/first PR for {repo}...")
+        logger.info(f"Fetching initial/first PR for {repo}...")
         res = requests.get(f"{api_base}/repos/{repo}/pulls?state=all&sort=created&direction=asc&per_page=1", headers=headers)
         if res.status_code == 200 and res.json():
             return res.json()[0].get("number")
@@ -2010,8 +2124,18 @@ def resolve_pr_number(user_msg: str, repo: str, headers: dict, api_base: str) ->
     return None
 
 
-def pr_summarizer_node(state: GraphState) -> dict:
+async def pr_summarizer_node(state: GraphState) -> dict:
     logger.info("--- PR SUMMARIZER NODE CALLED ---")
+    
+    # 1. Emit live thought to the UI
+    await safe_emit_event(
+        "trace_detail", 
+        {
+            "node": "pr_summarizer_node", 
+            "title": "Analyzing Pull Request...", 
+            "detail": "Fetching PR details and code diffs from GitHub..."
+        }
+    )
     
     repo = state.get("repo", "SummonShenron/SAAPP")
     token = os.getenv("GITHUB_TOKEN")
@@ -2026,8 +2150,17 @@ def pr_summarizer_node(state: GraphState) -> dict:
     if state.get("messages"):
         user_msg = state["messages"][-1].content
 
-    # Resolve PR number dynamically
-    pr_number = state.get("pr_number") or resolve_pr_number(user_msg, repo, headers, api_base)
+    # 2. Offload blocking PR resolution and file fetches to a background thread
+    def _fetch_pr_data():
+        pr_num = state.get("pr_number") or resolve_pr_number(user_msg, repo, headers, api_base)
+        if not pr_num:
+            return None, None
+        
+        files_url = f"{api_base}/repos/{repo}/pulls/{pr_num}/files"
+        files_res = requests.get(files_url, headers=headers)
+        return pr_num, files_res
+
+    pr_number, files_res = await asyncio.to_thread(_fetch_pr_data)
 
     if not pr_number:
         output_text = f"Could not locate the requested Pull Request for `{repo}`. Please specify a PR number (e.g., 'Review PR #2')."
@@ -2038,12 +2171,6 @@ def pr_summarizer_node(state: GraphState) -> dict:
             "relevance_grade": "pr_summary"
         }
 
-    logger.info(f"Resolved target Pull Request: {repo} #{pr_number}")
-
-    # Fetch changed files
-    files_url = f"{api_base}/repos/{repo}/pulls/{pr_number}/files"
-    files_res = requests.get(files_url, headers=headers)
-    
     if files_res.status_code != 200:
         output_text = f"Failed to fetch PR #{pr_number} files: {files_res.text}"
         return {
@@ -2070,7 +2197,8 @@ def pr_summarizer_node(state: GraphState) -> dict:
         review_prompt = f"{PR_REVIEW_PROMPT}\n\nPull Request Diffs:\n{formatted_diffs}"
 
     try:
-        review_response = lite_llm.invoke(review_prompt)
+        # 3. Use ainvoke for non-blocking LLM review generation
+        review_response = await lite_llm.ainvoke(review_prompt)
         raw_content = getattr(review_response, "content", review_response)
         
         if isinstance(raw_content, list):
@@ -2430,8 +2558,8 @@ def execute_pr_node(state: dict) -> dict:
 
 def create_workflow(vector_store):
     workflow = StateGraph(GraphState)
-    def retrieve_node_with_store(state):
-        return retrieve_node(state, vector_store)
+    async def retrieve_node_with_store(state):
+        return await retrieve_node(state, vector_store)
         
     workflow.add_node("memory_node", memory_node)
     workflow.add_node("retrieve_node", retrieve_node_with_store)
