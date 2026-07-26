@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import sonicImg from '../assets/sonicandshadow.jpg';
 import { Filters } from '../components/Filters';
 import { getDynamicExampleQuestions } from '../utils/Example_List';
-import { api } from '../api'; 
+import { api, BASE_URL} from '../api'; 
 import ReactMarkdown from 'react-markdown';
 import sonicSpinImg from '../assets/sonic-rolling.gif';
 import shadowSpinImg from '../assets/shadow.gif';
@@ -12,6 +12,7 @@ interface Message {
   id: string;
   sender: 'user' | 'ai' | 'system';
   text: string;
+  feedback?: 'like' | 'dislike' | null;
 }
 
 interface ChatPageProps {
@@ -53,7 +54,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [agentStatus, setAgentStatus] = useState<string>('');
   const [agentPath, setAgentPath] = useState<string[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
-  const BASE_URL = "https://saapp.onrender.com/";
+  // const BASE_URL = "https://saapp.onrender.com/";
   const [isMobileTraceOpen, setIsMobileTraceOpen] = useState(false);
   const [latestStepTitle, setLatestStepTitle] = useState("");
   const nodeQueueRef = useRef<{ node: string; detail?: string }[]>([]);
@@ -424,6 +425,52 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     if (!input.trim()) return;
     handleSendMessage(input, attachmentsRef.current);
   };
+
+ const handleFeedback = async (messageId: string, choice: 'like' | 'dislike') => {
+  // 1. Get Auth token
+  let token: string | null = null;
+  const isGuest = localStorage.getItem('principal') === 'guest';
+  if (isGuest) {
+    token = localStorage.getItem('guest_token');
+  } else if (getToken) {
+    token = await getToken();
+  }
+
+  // 2. Find the target AI response and its corresponding user prompt
+  const msgIndex = messages.findIndex(m => m.id === messageId);
+  const targetMsg = messages[msgIndex];
+  const userPromptMsg = messages.slice(0, msgIndex).reverse().find(m => m.sender === 'user');
+
+  // 3. Optimistically update local UI state
+  setMessages(prev =>
+    prev.map(m => (m.id === messageId ? { ...m, feedback: choice } : m))
+  );
+
+  // 4. Send the complete payload matching app.py's FeedbackPayload schema
+  try {
+    await fetch(`${BASE_URL}/api/chat/feedback`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({
+        username: principal,
+        session_id: sessionId,
+        message_id: messageId,
+        feedback: choice,
+        rating: choice,
+        choice: choice,
+        user_prompt: userPromptMsg ? userPromptMsg.text : "",
+        bad_response: targetMsg ? targetMsg.text : "",
+        reason: choice === 'dislike' ? 'User marked response as unhelpful' : 'Positive feedback',
+        tag: choice === 'dislike' ? 'correction' : 'positive'
+      }),
+    });
+  } catch (err) {
+    console.error("Feedback submission failed:", err);
+  }
+};
   
   return (
     <div>
@@ -524,6 +571,33 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
                       {msg.text}
                     </ReactMarkdown>
                   </div>
+                  {msg.sender === 'ai' && !loading && msg.text && (
+                    <div className="feedback-actions" style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
+                      <button 
+                        type="button"
+                        onClick={() => handleFeedback(msg.id, 'like')}
+                        className={`circle-icon-button ${msg.feedback === 'like' ? 'active' : ''}`}
+                        title="Helpful"
+                        style={msg.feedback === 'like' ? { color: '#22c55e', borderColor: '#22c55e' } : {}}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
+                        </svg>
+                      </button>
+
+                      <button 
+                        type="button"
+                        onClick={() => handleFeedback(msg.id, 'dislike')}
+                        className={`circle-icon-button ${msg.feedback === 'dislike' ? 'active' : ''}`}
+                        title="Not helpful"
+                        style={msg.feedback === 'dislike' ? { color: '#ef4444', borderColor: '#ef4444' } : {}}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
 

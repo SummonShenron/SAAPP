@@ -5,8 +5,10 @@
 // src/api.ts
 const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
 
-const BASE_URL = import.meta.env.VITE_API_BASE || 
-                 (isLocal ? "http://localhost:8000" : "https://saapp.onrender.com");
+export const BASE_URL = import.meta.env.VITE_API_BASE || 
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+    ? "http://localhost:8000" 
+    : "https://saapp.onrender.com");
 
 export interface ChatResponse {
   user: string;

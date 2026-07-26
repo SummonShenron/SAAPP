@@ -10,6 +10,8 @@ from backend.utils.db_utils import get_db # Ensure this is imported
 from fastapi import HTTPException
 import subprocess
 import sys
+import re
+
 logger = logging.getLogger("SASS Logger")
 
 # def sync_run_script(script_path):
@@ -178,4 +180,40 @@ def format_history_as_text(messages) -> str:
             formatted.append(f"Assistant: {msg.content}")
     return "\n".join(formatted)
 
+def fetch_relevant_corrections(username: str, question: str) -> str:
+    db = get_db()
+    if db is None or not question:
+        return ""
 
+    try:
+        # 1. Take a clean slice of the user prompt
+        clean_prompt = question.strip()[:30]
+        if not clean_prompt:
+            return ""
+
+        # 2. Use re.compile so PyMongo handles BSON regex encoding natively
+        pattern = re.compile(re.escape(clean_prompt), re.IGNORECASE)
+
+        # 3. Fetch negative feedback / corrections matching the prompt
+        past_corrections = list(db["corrections"].find({
+            "username": username,
+            "rating": {"$ne": "positive"},
+            "user_prompt": pattern
+        }).limit(2))
+
+        if not past_corrections:
+            return ""
+
+        guardrails = "\n\nCRITICAL GUARDRAILS (Avoid past errors for this prompt):\n"
+        for idx, corr in enumerate(past_corrections, 1):
+            tag = corr.get("tag", "general")
+            reason = corr.get("reason", "Inaccurate output")
+            bad_response = corr.get("bad_response", "")[:150]
+            guardrails += f"- Rule {idx} [{tag}]: Do NOT generate responses like: '{bad_response}'. Reason: {reason}\n"
+
+        return guardrails
+
+    except Exception as e:
+        # Gracefully log and fallback so a DB lookup error NEVER breaks chat streaming
+        logger.warning(f"[GUARDRAIL WARNING] Could not fetch corrections: {e}")
+        return ""
