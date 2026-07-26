@@ -273,14 +273,15 @@ export async function sendChatMessage(
   attachments: { filename: string; content: string }[],
   borderScope: string,
   session_id: string,
-  onTokenReceived: (token: string) => void
+  onTokenReceived: (token: string) => void,
+  onTraceReceived?: (payload: any) => void
 ): Promise<void> {
   const authHeaders = await getAuthHeaders();
   const response = await fetch(`${BASE_URL}/api/chat`, {
     method: "POST",
-    headers: { 
+    headers: {
       "Content-Type": "application/json",
-      ...authHeaders 
+      ...authHeaders
     },
     body: JSON.stringify({
       username,
@@ -315,6 +316,15 @@ export async function sendChatMessage(
     for (const line of lines) {
       const trimmed = line.trim();
       if (trimmed.startsWith("data: ")) {
+        try {
+          const payload = JSON.parse(trimmed.substring(6));
+          if (payload.event === "trace" && onTraceReceived) {
+            onTraceReceived(payload);
+          }
+        } catch {
+          // ignore non-JSON chunks
+        }
+
         onTokenReceived(trimmed);
       }
     }
@@ -322,6 +332,15 @@ export async function sendChatMessage(
 
   const trimmed = buffer.trim();
   if (trimmed.startsWith("data: ")) {
+    try {
+      const payload = JSON.parse(trimmed.substring(6));
+      if (payload.event === "trace" && onTraceReceived) {
+        onTraceReceived(payload);
+      }
+    } catch {
+      // ignore non-JSON chunks
+    }
+
     onTokenReceived(trimmed);
   }
 }

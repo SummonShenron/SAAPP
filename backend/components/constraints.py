@@ -178,6 +178,8 @@ AVAILABLE PATHWAYS & FLAGS:
    - Set to TRUE if the user is asking about the code repo, github repo, source code, system architecture, implementation details, or how a feature works under the hood for the project (including product aliases like "Sonic Assistant" or repository "SummonShenron/SAAPP").
 7. "needs_create_pr": 
    - Set to TRUE whenever the user requests to open, create, draft, or submit a new Pull Request (e.g., "Open a PR from test branch to main", "Create a pull request for my changes").
+8. "needs_pr_summary'
+   - Set to TRUE whenever the user asks about a recent PR change or anytime the user references a PR/pull request outside of needing to create one
 CLASSIFICATION RULES:
 - If the user asks "how did you get that result?" or "can you show me the query?", set "needs_code_interpreter": true and "follow_up_intent": true.
 - Do NOT classify questions about previous code or database outputs as purely conversational.
@@ -307,8 +309,7 @@ PR_REVIEW_PROMPT = """
     Review the following changed files and patch diffs:
 
     {formatted_diffs}
-
-    Act self-aware becuase you are reviewing youreslf (eg: the code that runs you).
+    Avoid phrasing such as: "the code appears to" -- you should be definitive in your responses, you know what the code does.
     Provide a concise, professional PR Review comment using the following markdown structure:
     ### Summary of Changes
     (2-3 bullet points describing what this PR actually alters or adds)
