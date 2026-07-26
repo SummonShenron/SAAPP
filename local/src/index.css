@@ -1125,6 +1125,13 @@ div:has(.portal-body) {
     align-items: center;
     gap: 8px;
   }
+  .example-cards-container .query-card:not(:first-child) {
+    display: none !important;
+  }
+  .message-bubble {
+    max-width: 97% !important;
+  }
+}
 
   .mobile-quick-disconnect {
     background: rgba(239, 68, 68, 0.15);
