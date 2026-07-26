@@ -26,17 +26,23 @@ interface TraceStep {
   status: "active" | "complete";
 }
 
-
-
-
 export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
+  // 1. Trace panel ON by default everywhere (desktop & mobile)[cite: 2]
   const [showTracePanel, setShowTracePanel] = useState(() => {
-    // Turn OFF by default on mobile (< 768px), keep ON for desktop
     if (typeof window !== 'undefined') {
-      return window.innerWidth > 768;
+      const saved = localStorage.getItem('showTracePanel');
+      if (saved !== null) return JSON.parse(saved);
     }
-    return false;
+    return true; 
   });
+
+  const toggleTracePanel = () => {
+    setShowTracePanel((prev: boolean) => {
+      const next = !prev;
+      localStorage.setItem('showTracePanel', JSON.stringify(next));
+      return next;
+    });
+  };
   const [traceSteps, setTraceSteps] = useState<TraceStep[]>([]);
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const principal = localStorage.getItem("principal") ?? "";
@@ -48,40 +54,28 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [agentPath, setAgentPath] = useState<string[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const BASE_URL = "https://saapp.onrender.com/";
+  const [isMobileTraceOpen, setIsMobileTraceOpen] = useState(false);
+  const [latestStepTitle, setLatestStepTitle] = useState("");
   const nodeQueueRef = useRef<{ node: string; detail?: string }[]>([]);
   const isProcessingQueue = useRef<boolean>(false);
-  const [showTrace, setShowTrace] = useState<boolean>(() => {
-    const saved = localStorage.getItem('showTracePanel');
-    return saved !== null ? JSON.parse(saved) : true;
-  });
 
-  const toggleTrace = () => {
-    setShowTrace(prev => {
-      const next = !prev;
-      localStorage.setItem('showTracePanel', JSON.stringify(next));
-      return next;
-    });
-  };
   const [showTooltip, setShowTooltip] = useState(false);
-    const tooltipRef = useRef<HTMLDivElement>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
 
-    // Optional: Close tooltip when clicking outside of it
-    useEffect(() => {
-        function handleClickOutside(event: MouseEvent) {
-            if (tooltipRef.current && !tooltipRef.current.contains(event.target as Node)) {
-                setShowTooltip(false);
-            }
-        }
-        document.addEventListener("mousedown", handleClickOutside);
-        return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, []);
-  const [sessionId, setSessionId] = useState<string>(() => {
-    // new conversation → fresh ID
-    return crypto.randomUUID();
-  });
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (tooltipRef.current && !tooltipRef.current.contains(event.target as Node)) {
+        setShowTooltip(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const [sessionId, setSessionId] = useState<string>(() => crypto.randomUUID());
   const genId = () => crypto.randomUUID();
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
-  // 1. Warm-initialize the messages state from localStorage to prevent auto-clearing
+  
   const [messages, setMessages] = useState<Message[]>(() => {
     const persistedHistory = localStorage.getItem(`chat-messages-${principal}`);
     if (persistedHistory) {
@@ -95,8 +89,8 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
       { id: genId(), sender: 'system', text: `What would you like to find out about, ${principal}?` }
     ];
   });
+
   const [hasChatted, setHasChatted] = useState<boolean>(() => {
-    // initialize from persisted messages safely
     try {
       const persisted = localStorage.getItem(`chat-messages-${principal}`);
       if (persisted) {
@@ -106,62 +100,37 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     } catch {
       // fall through
     }
-    // fallback to current messages array
     return messages.some(msg => msg.sender === 'user');
   });
+
   const [input, setInput] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   const [currentExampleQuestions, setCurrentExampleQuestions] = useState<string[]>([]);
   const [loadingCards, setLoadingCards] = useState<boolean>(false);
   const [attachments, setAttachments] = useState<{ filename: string; content: string }[]>([]);
   const attachmentsRef = useRef<{ filename: string; content: string }[]>([]);
+
   const handleRemoveAttachment = (idx: number) => {
-        setUploadedFiles(prev => prev.filter((_, i) => i !== idx));
-        setAttachments(prev => prev.filter((_, i) => i !== idx));
-    };
+    setUploadedFiles(prev => prev.filter((_, i) => i !== idx));
+    setAttachments(prev => prev.filter((_, i) => i !== idx));
+  };
+
   useEffect(() => {
     attachmentsRef.current = attachments;
   }, [attachments]);
 
   const chatWindowRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  // const toggleTheme = () => {
-  //   setTheme(prev => (prev === 'sonic' ? 'shadow' : 'sonic'));
-  // };
   
   useEffect(() => {
-    // Block execution until Clerk script has fully loaded
     if (!isLoaded) return;
-
     const isGuest = localStorage.getItem('principal') === 'guest';
-
-    // If they are NOT a guest, and NOT signed in, stop here.
     if (!isGuest && !isSignedIn) return;
-
-    const syncUserClaims = async () => {
-      try {
-        // Guests shouldn't hit these secure workspace endpoints
-        if (isGuest) {
-          console.log("Guest mode active: skipping secure claims sync.");
-          return; 
-        }
-
-        // Now it is safe to call your authenticated endpoints
-        // getAffiliates()
-        // getAdminPaapp()
-        
-      } catch (err) {
-        console.error("Failed to sync user claims:", err);
-      }
-    };
-
-    syncUserClaims();
   }, [isLoaded, isSignedIn]);
-  // Synchronize secure directory claims from simulated Entra ID
+
   useEffect(() => {
     const syncUserClaims = async () => {
-      if (!principal) return; // <-- FIX
-
+      if (!principal) return;
       try {
         const data = await api.getAffiliates(principal);
         if (Array.isArray(data)) {
@@ -172,12 +141,9 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
         console.error("Failed to sync user claims:", err);
       }
     };
-
     syncUserClaims();
   }, [principal]);
 
-
-  // 2. Clear history updates both reactive states, client localStorage, and backend database
   const handleClearChat = async () => {
     setMessages([
       { id: genId(), sender: 'system', text: `What would you like to find out about, ${principal}?` }
@@ -185,10 +151,9 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     setSelectedAffiliate('All');
     setAgentStatus('');
     setAgentPath([]);
-    setHasChatted(false)
+    setHasChatted(false);
     localStorage.removeItem(`chat-messages-${principal}`);
     try {
-      // Direct call to purge the persisted memory on your local-RAG backend API
       await fetch('https://saapp.onrender.com/api/chat/clear', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -212,39 +177,33 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     if (!file) return;
 
     const reader = new FileReader();
-
     reader.onload = async () => {
       const result = reader.result as string;
       const base64 = result.split(",")[1];
 
-      // 1. Store locally for UI + chat send
       setAttachments(prev => [...prev, { filename: file.name, content: base64 }]);
       setAttachedFiles(prev => [...prev, file]);
 
-      // 2. Upload to backend with session_id
       await fetch(`${BASE_URL}api/upload-attachment`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           username: principal,
-          session_id: sessionId,        // ← CRITICAL
+          session_id: sessionId,
           filename: file.name,
           content: base64,
         }),
       });
     };
-
     reader.readAsDataURL(file);
   };
 
-  // --- PORTABLE DOCUMENT EXPORT ENGINE ---
   const handleExportChat = () => {
     const transcript = messages
       .filter(msg => msg.sender !== 'system')
       .map(msg => `[${msg.sender.toUpperCase()}] (${new Date().toLocaleTimeString()})\n${msg.text}`)
       .join("\n\n----------------------------------------\n\n");
     if (!transcript.trim()) return;
-    // Build downloadable Markdown asset dynamically
     const blob = new Blob([`# Secure RAG Chat Session: ${principal}\n\n${transcript}`], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -256,17 +215,10 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     URL.revokeObjectURL(url);
   };
 
-  // 3. Sync themes to localStorage
-  // useEffect(() => {
-  //   localStorage.setItem('saapp-theme', theme);
-  // }, [theme]);
-
-  // 4. Clean side-effect trigger: Auto-sync dialogue history to localStorage on any message mutations
   useEffect(() => {
     localStorage.setItem(`chat-messages-${principal}`, JSON.stringify(messages));
   }, [messages, principal]);
 
-  // Fetch dynamic cards based on security clearance and active affiliate
   useEffect(() => {
     if (allowedAffiliates.length === 0) return;
     const syncQuestionPool = async () => {
@@ -275,103 +227,59 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
       setCurrentExampleQuestions(questions);
       setLoadingCards(false);
     };
-
     syncQuestionPool();
   }, [allowedAffiliates, selectedAffiliate]);
 
-  // Latency-aware Scroll Anchor Hook
   useEffect(() => {
     const scrollToBottom = () => {
       if (messagesEndRef.current) {
         messagesEndRef.current.scrollIntoView({
-          // 'auto' snaps instantly during high-speed token streaming
           behavior: loading ? 'auto' : 'smooth',
-          // 'end' forces the element to anchor flush against the bottom
           block: 'end', 
         });
       }
     };
-
-    // Fire immediately on message/loading updates
     scrollToBottom();
-    
-    // Tiny timeout fallback for DOM paint/images
     const timer = setTimeout(scrollToBottom, 50);
     return () => clearTimeout(timer);
   }, [messages, loading]);
 
   const getNodeLabel = (nodeName: string): string => {
     switch (nodeName) {
-      // Core Workflow Nodes
-      case 'coordinator_node':
-        return 'Analyzing intent and planning route...';
-      case 'reasoner_node':
-        return 'Evaluating request context...';
-      case 'memory_node':
-        return 'Updating memory and preferences...';
-      case 'retrieve_node':
-        return 'GraphRAG Retrieval in progress...';
-      case 'grade_documents_node':
-        return 'Evaluating document relevance...';
-      case 'rewrite_query_node':
-        return 'Refining search parameters...';
-      case 'summarizer_node':
-        return 'Summarizing retrieved documents...';
-      case 'formatter_node':
-        return 'Formatting output structure...';
-      case 'conversational_node':
-        return 'Generating response...';
-      case 'generate_node':
-        return 'Collecting rings and generating tokens...';
-
-      // Tool & Specialized Agent Nodes
-      case 'paapp_node':
-        return 'Processing schedule and task data...';
-      case 'web_search_node':
-        return 'Searching the web for real-time info...';
-      case 'code_interpreter_node':
-        return 'Executing query in code interpreter...';
-      case 'github_search':
-        return 'Searching GitHub repositories...';
-      case 'pr_summary':
-        return 'Analyzing pull request changes...';
-      case 'draft_pr_node':
-        return 'Drafting pull request...';
-      case 'execute_pr_node':
-        return 'Executing pull request action...';
-
-      // Analytics & Insight Engine Nodes
-      case 'snapshot_node':
-        return 'Taking analytical data snapshot...';
-      case 'classifier_node':
-        return 'Classifying activity patterns...';
-      case 'pattern_node':
-        return 'Detecting behavioral patterns...';
-      case 'trend_node':
-        return 'Analyzing metrics and trends...';
-      case 'insight_query_node':
-        return 'Synthesizing data insights...';
-
-      default:
-        return nodeName ? `Processing step: ${nodeName}` : 'Collecting rings and tokens...';
+      case 'coordinator_node': return 'Analyzing intent and planning route...';
+      case 'reasoner_node': return 'Evaluating request context...';
+      case 'memory_node': return 'Updating memory and preferences...';
+      case 'retrieve_node': return 'GraphRAG Retrieval in progress...';
+      case 'grade_documents_node': return 'Evaluating document relevance...';
+      case 'rewrite_query_node': return 'Refining search parameters...';
+      case 'summarizer_node': return 'Summarizing retrieved documents...';
+      case 'formatter_node': return 'Formatting output structure...';
+      case 'conversational_node': return 'Generating response...';
+      case 'generate_node': return 'Collecting rings and generating tokens...';
+      case 'paapp_node': return 'Processing schedule and task data...';
+      case 'web_search_node': return 'Searching the web for real-time info...';
+      case 'code_interpreter_node': return 'Executing query in code interpreter...';
+      case 'github_search': return 'Searching GitHub repositories...';
+      case 'pr_summary': return 'Analyzing pull request changes...';
+      case 'draft_pr_node': return 'Drafting pull request...';
+      case 'execute_pr_node': return 'Executing pull request action...';
+      case 'snapshot_node': return 'Taking analytical data snapshot...';
+      case 'classifier_node': return 'Classifying activity patterns...';
+      case 'pattern_node': return 'Detecting behavioral patterns...';
+      case 'trend_node': return 'Analyzing metrics and trends...';
+      case 'insight_query_node': return 'Synthesizing data insights...';
+      default: return nodeName ? `Processing step: ${nodeName}` : 'Collecting rings and tokens...';
     }
   };
 
-  
-  
   const addTraceStep = (payload: any) => {
     const title = payload?.title || payload?.message || "Agent step";
     const detail = payload?.detail || payload?.message || "";
     const id = `${title}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-
+    setLatestStepTitle(title);
     setTraceSteps(prev => [
       ...prev,
-      {
-        id,
-        title,
-        detail,
-        status: payload?.status === "complete" ? "complete" : "active"
-      }
+      { id, title, detail, status: payload?.status === "complete" ? "complete" : "active" }
     ]);
   };
 
@@ -383,24 +291,23 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
       );
     });
   };
-  
+
   const processNodeQueue = () => {
     if (nodeQueueRef.current.length === 0) {
       isProcessingQueue.current = false;
       return;
     }
-
     isProcessingQueue.current = true;
     const item = nodeQueueRef.current.shift()!;
     const friendlyLabel = getNodeLabel(item.node);
 
     setAgentStatus(item.node);
     setAgentPath(prev => (prev.includes(item.node) ? prev : [...prev, item.node]));
-
     markTraceComplete();
+    setLatestStepTitle(friendlyLabel);
+
     addTraceStep({
       title: friendlyLabel,
-      // Use the dynamic detail from backend if present, else fallback to node name
       detail: item.detail || `Node: ${item.node}`,
       status: 'active'
     });
@@ -410,19 +317,13 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     }, 700);
   };
 
-const handleSendMessage = async (
-  textToSend: string,
-  currentAttachments: { filename: string; content: string }[]
-) => {
-  setTraceSteps([]);
-  // setShowTracePanel(true);
-  if (!textToSend.trim() || loading) return;
+  const handleSendMessage = async (
+    textToSend: string,
+    currentAttachments: { filename: string; content: string }[]
+  ) => {
+    setTraceSteps([]);
+    if (!textToSend.trim() || loading) return;
 
-  // Use stable sessionId from state
-  console.log("Using sessionId:", sessionId);
-  
-
-    // Add user message + placeholder AI message
     setMessages(prev => [
       ...prev,
       { id: genId(), sender: 'user', text: textToSend },
@@ -434,11 +335,9 @@ const handleSendMessage = async (
     setLoading(true);
     setAgentStatus('Running at the speed of sound');
     setAgentPath([]);
-    console.log("ATTACHMENTS AT SEND TIME:", attachments);
 
     try {
-      // 2. THEN send chat message WITHOUT attachments
-            await api.sendChatMessage(
+      await api.sendChatMessage(
         principal,
         textToSend,
         attachments,
@@ -446,7 +345,6 @@ const handleSendMessage = async (
         sessionId,
         (rawChunk) => {
           if (!rawChunk.trim()) return;
-
           const cleanLines = rawChunk
             .split('\n')
             .map(line => line.trim())
@@ -460,23 +358,16 @@ const handleSendMessage = async (
               if (payload.event === 'trace') {
                 addTraceStep(payload);
               }
-
               if (payload.event === 'node_progress') {
-                nodeQueueRef.current.push({
-                  node: payload.node,
-                  detail: payload.detail // Pass along dynamic detail from backend!
-                });
-
+                nodeQueueRef.current.push({ node: payload.node, detail: payload.detail });
                 if (!isProcessingQueue.current) {
                   processNodeQueue();
                 }
               }
-
               if (payload.event === 'token') {
                 setMessages(prev => {
                   const updated = [...prev];
                   const lastIndex = updated.length - 1;
-
                   if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
                     updated[lastIndex] = {
                       ...updated[lastIndex],
@@ -486,55 +377,36 @@ const handleSendMessage = async (
                   return updated;
                 });
               }
-
               if (payload.event === 'final_generation') {
                 setMessages(prev => {
                   const updated = [...prev];
                   const lastIndex = updated.length - 1;
-
                   if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
-                    updated[lastIndex] = {
-                      ...updated[lastIndex],
-                      text: payload.text
-                    };
+                    updated[lastIndex] = { ...updated[lastIndex], text: payload.text };
                   }
                   return updated;
                 });
-
-                
                 markTraceComplete();
               }
-
               if (payload.event === 'error') {
                 setMessages(prev => {
                   const updated = [...prev];
                   const lastIndex = updated.length - 1;
-
                   if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
-                    updated[lastIndex] = {
-                      ...updated[lastIndex],
-                      text: `Execution Fault: ${payload.message}`
-                    };
+                    updated[lastIndex] = { ...updated[lastIndex], text: `Execution Fault: ${payload.message}` };
                   }
                   return updated;
                 });
-
                 setAgentStatus('');
-                addTraceStep({
-                  title: "Execution error",
-                  detail: payload.message,
-                  status: "active"
-                });
+                addTraceStep({ title: "Execution error", detail: payload.message, status: "active" });
                 markTraceComplete();
               }
-
             } catch (jsonErr) {
               console.warn("Skipping partial, non-JSON SSE chunk buffer:", jsonErr);
             }
           }
         }
       );
-
     } catch (err) {
       console.error("Chat send failed:", err);
       setMessages(prev => [
@@ -546,6 +418,7 @@ const handleSendMessage = async (
       setAgentStatus('');
     }
   };
+
   const onSubmitForm = (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
@@ -599,7 +472,6 @@ const handleSendMessage = async (
                           const finalHref = href?.startsWith('/')
                             ? `${BASE_URL.replace(/\/$/, '')}${href}`
                             : href;
-
                           const isDownloadLink = finalHref?.includes('/api/documents/download/');
 
                           const handleClick = async (e: React.MouseEvent) => {
@@ -609,35 +481,22 @@ const handleSendMessage = async (
                               if (newTab) {
                                 newTab.document.write('<html><body style="background: #121824; color: #fff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;"><h3>Loading secure document preview...</h3></body></html>');
                               }
-
                               try {
                                 let token = null;
                                 const isGuest = localStorage.getItem('principal') === 'guest';
-
                                 if (isGuest) {
                                   token = localStorage.getItem('guest_token');
                                 } else if (getToken) {
                                   token = await getToken();
                                 }
-
                                 const response = await fetch(finalHref, {
-                                  headers: {
-                                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                                  },
+                                  headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
                                 });
-
-                                if (!response.ok) {
-                                  throw new Error(`Server responded with status ${response.status}`);
-                                }
-
+                                if (!response.ok) throw new Error(`Server responded with status ${response.status}`);
                                 const blob = await response.blob();
                                 const blobUrl = window.URL.createObjectURL(blob);
-
-                                if (newTab) {
-                                  newTab.location.href = blobUrl;
-                                } else {
-                                  window.open(blobUrl, '_blank');
-                                }
+                                if (newTab) newTab.location.href = blobUrl;
+                                else window.open(blobUrl, '_blank');
                               } catch (err) {
                                 console.error("Document preview failed:", err);
                                 if (newTab) newTab.close();
@@ -654,12 +513,7 @@ const handleSendMessage = async (
                               target="_blank"
                               rel="noopener noreferrer"
                               className="citation-link"
-                              style={{
-                                color: '#3b82f6',
-                                textDecoration: 'underline',
-                                fontWeight: 500,
-                                cursor: 'pointer'
-                              }}
+                              style={{ color: '#3b82f6', textDecoration: 'underline', fontWeight: 500, cursor: 'pointer' }}
                             >
                               {children}
                             </a>
@@ -688,19 +542,56 @@ const handleSendMessage = async (
             <div ref={messagesEndRef} />
           </div>
         )}
+
         {/* 3. INPUT AREA & FOOTER */}
-        <footer className="controls-footer">
+        <footer className="controls-footer" style={{ position: 'relative' }}>
+          {/* MOBILE TRACE PILL (Pinned inside top of footer) */}
+          <div className="mobile-trace-pill-container">
+            <style>{`
+              @media (min-width: 768px) {
+                .mobile-trace-pill-container {
+                  display: none !important;
+                }
+              }
+            `}</style>
+
+            {showTracePanel && (
+              <div style={{ display: 'flex', justifyContent: 'center', width: '100%', marginBottom: '8px' }}>
+                <button
+                  type="button"
+                  onClick={() => setIsMobileTraceOpen(true)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '6px 14px',
+                    background: 'rgba(30, 41, 59, 0.9)',
+                    border: '1px solid rgba(148, 163, 184, 0.3)',
+                    borderRadius: '9999px',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                    fontSize: '12px',
+                    color: '#cbd5e1',
+                    cursor: 'pointer',
+                    backdropFilter: 'blur(8px)',
+                    zIndex: 50
+                  }}
+                >
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#6366f1', display: 'inline-block' }} />
+                  <span style={{ maxWidth: '200px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {latestStepTitle || "View live execution trace..."}
+                  </span>
+                  <span>▲</span>
+                </button>
+              </div>
+            )}
+          </div>
+
           {uploadedFiles.length > 0 && (
             <div className="attached-files-banner">
               {uploadedFiles.map((file, idx) => (
                 <div key={idx} className="attached-file-pill">
                   📎 {file.name}
-                  <button
-                    className="remove-file-btn"
-                    onClick={() => handleRemoveAttachment(idx)}
-                  >
-                    ✕
-                  </button>
+                  <button className="remove-file-btn" onClick={() => handleRemoveAttachment(idx)}>✕</button>
                 </div>
               ))}
             </div>
@@ -712,10 +603,7 @@ const handleSendMessage = async (
               type="file"
               multiple
               style={{ display: "none" }}
-              onChange={(e) => {
-                console.log("FILE INPUT ONCHANGE FIRED");
-                handleFileUpload(e);
-              }}
+              onChange={(e) => handleFileUpload(e)}
             />
 
             <div className="chat-input-wrapper">
@@ -772,10 +660,10 @@ const handleSendMessage = async (
                       <strong>Secure Index Tip:</strong>
                       <p style={{ margin: "8px 8px 8px" }}>
                         <ul>
-                          <li> Please only begin your queries once you see the example questions and the green (or yellow in dark mode) username in the top left indicating your session permissions are set. </li>
-                          <li> If the example questions have not loaded yet, it means the backend is still spinning up due to inactivity. please wait for the app to be fully loaded before using.</li>
-                          <li> Due to operating on cost-sensitive infrastructure, response times may vary or be unavailable due to model demand.</li>
-                          <li> If you encounter any bugs, issues, or would like your permissions changed, please reach out to jackharper0517@outlook.com.</li>
+                          <li>Please only begin your queries once you see the example questions and the green (or yellow in dark mode) username in the top left indicating your session permissions are set.[cite: 2]</li>
+                          <li>If the example questions have not loaded yet, it means the backend is still spinning up due to inactivity. please wait for the app to be fully loaded before using.[cite: 2]</li>
+                          <li>Due to operating on cost-sensitive infrastructure, response times may vary or be unavailable due to model demand.[cite: 2]</li>
+                          <li>If you encounter any bugs, issues, or would like your permissions changed, please reach out to jackharper0517@outlook.com.[cite: 2]</li>
                         </ul>
                       </p>
                     </div>
@@ -784,11 +672,22 @@ const handleSendMessage = async (
 
                 <button
                   type="button"
-                  className="circle-icon-button"
-                  onClick={() => setShowTracePanel(prev => !prev)}
+                  className={`circle-icon-button ${showTracePanel ? 'trace-active' : ''}`}
+                  onClick={toggleTracePanel}
                   title="Toggle execution trace"
+                  style={showTracePanel ? {
+                    background: '#3b82f6',
+                    border: '1px solid #3b82f6',
+                    boxShadow: '0 0 8px rgba(99, 102, 241, 0.5)'
+                  } : {}}
                 >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <style>{`
+                    .circle-icon-button.trace-active svg,
+                    .circle-icon-button.trace-active svg * {
+                      stroke: #ffffff !important;
+                    }
+                  `}</style>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M4 5h16" />
                     <path d="M7 10h10" />
                     <path d="M10 15h4" />
@@ -856,25 +755,117 @@ const handleSendMessage = async (
           />
         </footer>
 
-        {/* 4. EXECUTION TRACE PANEL (Overlayed into Right Margin) */}
+        {/* --- MOBILE TRACE MODAL DRAWER (Root Level) --- */}
+        {isMobileTraceOpen && (
+          <div className="mobile-trace-modal-root">
+            <style>{`
+              @media (min-width: 768px) {
+                .mobile-trace-modal-root {
+                  display: none !important;
+                }
+              }
+            `}</style>
+            <div 
+              onClick={() => setIsMobileTraceOpen(false)}
+              style={{
+                position: 'fixed',
+                inset: 0,
+                background: 'rgba(0, 0, 0, 0.7)',
+                backdropFilter: 'blur(4px)',
+                zIndex: 999
+              }}
+            />
+            <div
+              style={{
+                position: 'fixed',
+                bottom: 0,
+                left: 0,
+                right: 0,
+                maxHeight: '75vh',
+                background: 'rgba(15, 23, 42, 0.98)',
+                borderTop: '1px solid rgba(148, 163, 184, 0.3)',
+                borderRadius: '20px 20px 0 0',
+                padding: '1.25rem',
+                color: '#e2e8f0',
+                boxShadow: '0 -10px 30px rgba(0,0,0,0.5)',
+                zIndex: 1000,
+                overflowY: 'auto',
+                boxSizing: 'border-box'
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', borderBottom: '1px solid rgba(148, 163, 184, 0.2)', paddingBottom: '0.5rem' }}>
+                <div>
+                  <div style={{ fontSize: '0.95rem', fontWeight: 700 }}>How it works</div>
+                  <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Live execution trace</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsMobileTraceOpen(false)}
+                  style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer', padding: '4px' }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div style={{ fontSize: '0.8rem', color: '#cbd5e1', marginBottom: '0.75rem', fontFamily: 'monospace' }}>
+                {traceSteps.length
+                  ? traceSteps.map(step => step.title).join(' → ')
+                  : 'Waiting for the first execution step...'}
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                {traceSteps.length === 0 && (
+                  <div style={{ fontSize: '0.85rem', color: '#94a3b8' }}>
+                    Start a request and the route will appear here.
+                  </div>
+                )}
+
+                {traceSteps.map(step => (
+                  <div
+                    key={step.id}
+                    style={{
+                      border: '1px solid rgba(148, 163, 184, 0.2)',
+                      borderRadius: '10px',
+                      padding: '0.7rem',
+                      background: step.status === 'complete' ? 'rgba(30, 41, 59, 0.8)' : 'rgba(15, 23, 42, 0.95)'
+                    }}
+                  >
+                    <div style={{ fontSize: '0.82rem', fontWeight: 700 }}>{step.title}</div>
+                    <div style={{ fontSize: '0.76rem', color: '#94a3b8', marginTop: '0.25rem' }}>
+                      {step.detail}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* --- DESKTOP TRACE SIDEBAR (Desktop Only) --- */}
         {showTracePanel && (
-          <aside
-            style={{
-              width: '320px',
-              position: 'absolute',
-              top: '0',
-              left: 'calc(100% + 1.25rem)',
-              border: '1px solid rgba(148, 163, 184, 0.24)',
-              borderRadius: '16px',
-              background: 'rgba(15, 23, 42, 0.95)',
-              padding: '1rem',
-              color: '#e2e8f0',
-              boxShadow: '0 12px 28px rgba(0,0,0,0.35)',
-              maxHeight: 'calc(100vh - 180px)',
-              overflowY: 'auto',
-              zIndex: 10
-            }}
-          >
+          <aside className="desktop-trace-sidebar" style={{
+            position: 'absolute',
+            top: 0,
+            left: 'calc(100% + 1.25rem)',
+            width: '320px',
+            maxHeight: 'calc(100vh - 180px)',
+            border: '1px solid rgba(148, 163, 184, 0.24)',
+            borderRadius: '16px',
+            background: 'rgba(15, 23, 42, 0.98)',
+            padding: '1rem',
+            color: '#e2e8f0',
+            boxShadow: '0 12px 28px rgba(0,0,0,0.5)',
+            overflowY: 'auto',
+            zIndex: 100,
+            boxSizing: 'border-box'
+          }}>
+            <style>{`
+              @media (max-width: 767px) {
+                .desktop-trace-sidebar {
+                  display: none !important;
+                }
+              }
+            `}</style>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
               <div>
                 <div style={{ fontSize: '0.9rem', fontWeight: 700 }}>How it works</div>
@@ -883,14 +874,14 @@ const handleSendMessage = async (
               <button
                 type="button"
                 className="circle-icon-button"
-                onClick={() => setShowTracePanel(false)}
+                onClick={toggleTracePanel}
                 title="Hide trace panel"
               >
                 ✕
               </button>
             </div>
 
-            <div style={{ fontSize: '0.8rem', color: '#cbd5e1', marginBottom: '0.75rem' }}>
+            <div style={{ fontSize: '0.8rem', color: '#cbd5e1', marginBottom: '0.75rem', fontFamily: 'monospace' }}>
               {traceSteps.length
                 ? traceSteps.map(step => step.title).join(' → ')
                 : 'Waiting for the first execution step...'}
@@ -910,9 +901,7 @@ const handleSendMessage = async (
                     border: '1px solid rgba(148, 163, 184, 0.2)',
                     borderRadius: '10px',
                     padding: '0.7rem',
-                    background: step.status === 'complete'
-                      ? 'rgba(30, 41, 59, 0.8)'
-                      : 'rgba(15, 23, 42, 0.95)'
+                    background: step.status === 'complete' ? 'rgba(30, 41, 59, 0.8)' : 'rgba(15, 23, 42, 0.95)'
                   }}
                 >
                   <div style={{ fontSize: '0.82rem', fontWeight: 700 }}>{step.title}</div>
@@ -924,7 +913,6 @@ const handleSendMessage = async (
             </div>
           </aside>
         )}
-
       </main>
     </div>  
   );
