@@ -144,14 +144,18 @@ def classify_intent(message: str, attachments=None, state: dict = None) -> str:
 
     messages = state.get("messages", []) or []
 
-    # --- SUPER SIMPLE PR APPROVAL HACK ---
-    # If 2–3 messages ago we asked to create a PR,
-    # and now the user is approving, treat it as execute_pr.
-    if len(messages) >= 4:
-        msg_minus_4 = getattr(messages[-4], "content", "").lower()
-        logger.debug(f"messages[-4]: {msg_minus_4}")
-        if any(phrase in msg_minus_4 for phrase in ["create pr", "merge", "pull request"]):
-            logger.debug("Detected PR creation in messages[-4]")
+    user_messages = [m for m in messages if getattr(m, "type", None) == "human"]
+
+    logger.debug(f"User messages count: {len(user_messages)}")
+    for i, um in enumerate(user_messages):
+        logger.debug(f"user_messages[{i}]: {um.content}")
+
+    if len(user_messages) >= 2:
+        prev_user_msg = user_messages[-2].content.lower()
+        logger.debug(f"Previous user message: {prev_user_msg}")
+
+        if any(phrase in prev_user_msg for phrase in ["create pr", "merge", "pull request"]):
+            logger.debug("Detected PR creation in previous user message")
             if msg_clean in APPROVAL_KEYWORDS:
                 logger.debug("Approval keyword detected — returning execute_pr")
                 return "execute_pr"
