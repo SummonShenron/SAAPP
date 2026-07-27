@@ -136,30 +136,45 @@ def classify_intent(message: str, attachments=None, state: dict = None) -> str:
     msg = message.lower().strip()
     msg_clean = msg.strip("!.,")
     state = state or {}
-    last_intent = state.get("last_intent")
+
     APPROVAL_KEYWORDS = {"approve", "approved", "confirm", "yes", "lgtm", "do it", "sure", "yep", "go ahead"}
     REJECTION_KEYWORDS = {"reject", "cancel", "no", "stop", "nah", "don't"}
-    if msg_clean in APPROVAL_KEYWORDS and last_intent == "create_pr":
-        return "execute_pr"
+
+    messages = state.get("messages", []) or []
+
+    # --- SUPER SIMPLE PR APPROVAL HACK ---
+    # If 2–3 messages ago we asked to create a PR,
+    # and now the user is approving, treat it as execute_pr.
+    if len(messages) >= 3:
+        prev_msg = getattr(messages[-3], "content", "").lower()
+        if "create pr" in prev_msg or "merge" in prev_msg or "pull request" in prev_msg:
+            if msg_clean in APPROVAL_KEYWORDS:
+                return "execute_pr"
+
+    # existing pending_action logic can stay if you want
     pending_action = state.get("pending_action") or {}
     status = pending_action.get("status")
 
+    if status == "awaiting_approval":
+        action_type = pending_action.get("action_type")
+        if msg_clean in APPROVAL_KEYWORDS and action_type == "create_pr":
+            return "execute_pr"
+        if msg_clean in REJECTION_KEYWORDS:
+            return "cancel_action"
+
     # 1. Handle Active HITL Approvals (PRs, Web Search, etc.)
     if status in {"awaiting_approval", "hitl_approval_required"}:
-        action_type = pending_action.get("type")
+        action_type = pending_action.get("action_type") or pending_action.get("type")
         
         if msg_clean in APPROVAL_KEYWORDS:
-            # Route based on the specific pending action type
             if action_type in {"web_search", "web_search_fallback"}:
                 return "web_search"
             elif action_type in {"create_pr", "execute_pr"}:
                 return "execute_pr"
-            
-            # Fallback to whatever action_type was requested
             return action_type or "web_search"
 
         if msg_clean in REJECTION_KEYWORDS:
-            return "conversational"  # User declined, treat as normal chat
+            return "conversational"
     # 2. Strict Tool Matching (Using regex word boundaries for short terms like 'pr')
     if any(w in msg for w in ["github", "repository", "commit history", "code search"]):
         return "github_search"
