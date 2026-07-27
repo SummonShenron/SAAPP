@@ -136,7 +136,9 @@ def classify_intent(message: str, attachments=None, state: dict = None) -> str:
     msg = message.lower().strip()
     msg_clean = msg.strip("!.,")
     state = state or {}
-
+    logger.debug(f"State keys: {list(state.keys())}")
+    logger.debug(f"pending_action: {state.get('pending_action')}")
+    logger.debug(f"last_intent: {state.get('last_intent')}")
     APPROVAL_KEYWORDS = {"approve", "approved", "confirm", "yes", "lgtm", "do it", "sure", "yep", "go ahead"}
     REJECTION_KEYWORDS = {"reject", "cancel", "no", "stop", "nah", "don't"}
 
@@ -146,15 +148,18 @@ def classify_intent(message: str, attachments=None, state: dict = None) -> str:
     # If 2–3 messages ago we asked to create a PR,
     # and now the user is approving, treat it as execute_pr.
     if len(messages) >= 4:
-        prev_msg = getattr(messages[-4], "content", "").lower()
-        if "create pr" in prev_msg or "merge" in prev_msg or "pull request" in prev_msg:
+        msg_minus_4 = getattr(messages[-4], "content", "").lower()
+        logger.debug(f"messages[-4]: {msg_minus_4}")
+        if any(phrase in msg_minus_4 for phrase in ["create pr", "merge", "pull request"]):
+            logger.debug("Detected PR creation in messages[-4]")
             if msg_clean in APPROVAL_KEYWORDS:
+                logger.debug("Approval keyword detected — returning execute_pr")
                 return "execute_pr"
 
     # existing pending_action logic can stay if you want
     pending_action = state.get("pending_action") or {}
     status = pending_action.get("status")
-
+    logger.debug(f"pending_action.status: {status}")
     if status == "awaiting_approval":
         action_type = pending_action.get("action_type")
         if msg_clean in APPROVAL_KEYWORDS and action_type == "create_pr":
@@ -221,6 +226,9 @@ def classify_intent(message: str, attachments=None, state: dict = None) -> str:
     
 def build_agent_plan(intent: str, state: dict) -> dict:
     flags = state.get("reasoner_flags", {})
+    logger.debug(f"Incoming intent: {intent}")
+    logger.debug(f"State.last_intent: {state.get('last_intent')}")
+    logger.debug(f"Reasoner flags: {state.get('reasoner_flags')}")
     agents = []
 
     # 1. Approval execution takes absolute precedence
