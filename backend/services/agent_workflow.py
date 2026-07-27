@@ -245,14 +245,13 @@ def build_agent_plan(intent: str, state: dict) -> dict:
     # 3. Prevent Mutating Actions from standard follow-up sticky logic
     # Follow-up messages MUST re-classify intent so approvals work
     if flags.get("follow_up_intent"):
-        # Re-run classify_intent on the actual user message
+        logger.debug("[Coordinator] follow_up_intent=True — reclassifying intent")
         intent = classify_intent(
             state["messages"][-1].content,
             state.get("attachment_summaries", []),
             state=state
         )
-        logger.info(f"[Coordinator] Contextual follow-up reusing last safe intent: {intent}")
-
+        logger.debug(f"[Coordinator] Reclassified follow-up intent: {intent}")
     # 4. Standard Operational Flag Mapping
     is_pr_request = flags.get("needs_pr_summary") or intent == "pr_summary"
     
