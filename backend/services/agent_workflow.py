@@ -235,13 +235,15 @@ def build_agent_plan(intent: str, state: dict) -> dict:
         return {"agents": ["draft_pr", "formatter"], "skip": []}
 
     # 3. Prevent Mutating Actions from standard follow-up sticky logic
-    NON_STICKY_INTENTS = {"execute_pr", "create_pr", "cancel_action"}
-    
+    # Follow-up messages MUST re-classify intent so approvals work
     if flags.get("follow_up_intent"):
-        previous_intent = state.get("last_intent")
-        if previous_intent and previous_intent not in NON_STICKY_INTENTS:
-            intent = previous_intent
-            logger.info(f"[Coordinator] Contextual follow-up reusing last safe intent: {intent}")
+        # Re-run classify_intent on the actual user message
+        intent = classify_intent(
+            state["messages"][-1].content,
+            state.get("attachment_summaries", []),
+            state=state
+        )
+        logger.info(f"[Coordinator] Contextual follow-up reusing last safe intent: {intent}")
 
     # 4. Standard Operational Flag Mapping
     is_pr_request = flags.get("needs_pr_summary") or intent == "pr_summary"
