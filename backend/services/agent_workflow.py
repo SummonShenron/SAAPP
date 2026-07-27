@@ -63,25 +63,15 @@ async def coordinator_node(state: GraphState) -> GraphState:
     logger.info("--- COORDINATOR NODE START ---")
     logger.debug(f"Incoming state pending_action: {state.get('pending_action')}")
     # 1. Fast deterministic classification FIRST (Passing state=state!)
+    state = await reasoner_node(state)
+
+    # NOW classify intent with the updated state
     intent = classify_intent(
         last_msg,
         state.get("messages", []) + state.get("attachment_summaries", []),
         state=state
     )
 
-    logger.info(f"Deterministic intent classified as: {intent}")
-
-    # 2. Skip LLM reasoner for clear, unambiguous actions (Eliminates latency)
-    FAST_PATH_INTENTS = {"create_pr", "execute_pr", "cancel_action", "github_search", "code_interpreter"}
-
-    if intent in FAST_PATH_INTENTS:
-        logger.info(f"[Coordinator] Fast-path triggered for: '{intent}'. Skipping LLM reasoner.")
-        state["reasoner_flags"] = {}
-    else:
-        # Only run reasoner if query requires fuzzy flag extraction
-        state = await reasoner_node(state)
-
-    # 3. Build execution plan
     plan = build_agent_plan(intent, state)
     
     state["coordinator_intent"] = intent
