@@ -61,6 +61,7 @@ async def safe_emit_event(name: str, data: dict):
 async def coordinator_node(state: GraphState) -> GraphState:
     last_msg = state["messages"][-1].content.lower().strip()
     logger.info("--- COORDINATOR NODE START ---")
+    
     await safe_emit_event(
         "trace_detail", 
         {
@@ -70,6 +71,24 @@ async def coordinator_node(state: GraphState) -> GraphState:
         }
     )
     logger.info(f"User message: {last_msg}")
+    # ==========================================================
+    # 1. INTERCEPT APPROVALS BEFORE THE REASONER
+    # ==========================================================
+    pending = state.get("pending_action")
+    if pending and last_msg in ["approve", "yes", "y", "confirm", "lgtm"]:
+        action_type = pending.get("action_type")
+        if action_type in ["create_pr_approval", "create_pr"]:
+            logger.info("[Coordinator] Executing pending PR creation...")
+            state["coordinator_intent"] = "execute_pr"
+            state["coordinator_plan"] = ["execute_pr", "formatter"] # Or whatever your PR runner node is called
+            return state  
+        elif action_type == "web_search_approval":
+            logger.info("[Coordinator] Executing pending Web Search...")
+            state["coordinator_intent"] = "web_search"
+            state["coordinator_plan"] = ["web_search", "formatter"]
+            return state
+    # ==========================================================
+    # 2. RUN NORMAL LOGIC IF NO APPROVAL WAS TRIGGERED
     # Run reasoner first
     state = await reasoner_node(state)
     intent = classify_intent(last_msg, state.get("attachment_summaries", []))

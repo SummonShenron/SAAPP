@@ -414,7 +414,8 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                         if output and isinstance(output, dict) and "relevance_grade" in output:
                             final_state = output
                             # Clean up pending action after completion
-                           
+                            if "pending_action" in final_state and final_state["pending_action"]:
+                                chat_sessions[f"{username}_pending_action"] = final_state["pending_action"]
 
             # Fallback just in case event streaming missed the final state dict
             if not final_state:
