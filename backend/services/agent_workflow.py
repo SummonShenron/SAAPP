@@ -147,7 +147,7 @@ def classify_intent(message: str, attachments=None, state: dict = None) -> str:
     # and now the user is approving, treat it as execute_pr.
     if len(messages) >= 3:
         prev_msg = getattr(messages[-3], "content", "").lower()
-        if "create pr" in prev_msg or "merge" in prev_msg or "pull request" in prev_msg:
+        if any(phrase in prev_msg for phrase in ["create pr", "merge", "pull request"]):
             if msg_clean in APPROVAL_KEYWORDS:
                 return "execute_pr"
 
