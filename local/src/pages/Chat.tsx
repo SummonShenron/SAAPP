@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import sonicImg from '../assets/sonicandshadow.jpg';
 import { Filters } from '../components/Filters';
 import { getDynamicExampleQuestions } from '../utils/Example_List';
-import { api } from '../api'; 
+import { api, BASE_URL} from '../api'; 
 import ReactMarkdown from 'react-markdown';
 import sonicSpinImg from '../assets/sonic-rolling.gif';
 import shadowSpinImg from '../assets/shadow.gif';
@@ -12,6 +12,7 @@ interface Message {
   id: string;
   sender: 'user' | 'ai' | 'system';
   text: string;
+  feedback?: 'like' | 'dislike' | null;
 }
 
 interface ChatPageProps {
@@ -53,7 +54,13 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [agentStatus, setAgentStatus] = useState<string>('');
   const [agentPath, setAgentPath] = useState<string[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
-  const BASE_URL = "https://saapp.onrender.com/";
+  // const BASE_URL = "https://saapp.onrender.com/";
+  const [feedbackModal, setFeedbackModal] = useState<{ isOpen: boolean; messageId: string | null }>({
+    isOpen: false,
+    messageId: null,
+  });
+  const [feedbackReason, setFeedbackReason] = useState<string>('');
+  const [feedbackTag, setFeedbackTag] = useState<string>('hallucination');
   const [isMobileTraceOpen, setIsMobileTraceOpen] = useState(false);
   const [latestStepTitle, setLatestStepTitle] = useState("");
   const nodeQueueRef = useRef<{ node: string; detail?: string }[]>([]);
@@ -424,6 +431,83 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     if (!input.trim()) return;
     handleSendMessage(input, attachmentsRef.current);
   };
+
+ const handleFeedback = async (messageId: string, choice: 'like' | 'dislike') => {
+  if (choice === 'dislike') {
+    // Open modal to capture reason and tag instead of immediately submitting
+    setFeedbackModal({ isOpen: true, messageId });
+    return;
+  }
+
+  // Handle positive feedback immediately
+  await sendFeedbackPayload(messageId, 'like', 'Positive feedback', 'positive');
+};
+
+const sendFeedbackPayload = async (
+  messageId: string,
+  choice: 'like' | 'dislike',
+  reason: string,
+  tag: string
+) => {
+  let token: string | null = null;
+  const isGuest = localStorage.getItem('principal') === 'guest';
+  if (isGuest) {
+    token = localStorage.getItem('guest_token');
+  } else if (getToken) {
+    token = await getToken();
+  }
+
+  const msgIndex = messages.findIndex(m => m.id === messageId);
+  const targetMsg = messages[msgIndex];
+  const userPromptMsg = messages.slice(0, msgIndex).reverse().find(m => m.sender === 'user');
+
+  // Update local UI feedback state
+  setMessages(prev =>
+    prev.map(m => (m.id === messageId ? { ...m, feedback: choice } : m))
+  );
+
+  // 4. Send the complete payload matching app.py's FeedbackPayload schema
+  try {
+    await fetch(`${BASE_URL}/api/chat/feedback`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({
+        username: principal,
+        session_id: sessionId,
+        message_id: messageId,
+        feedback: choice,
+        rating: choice,
+        choice: choice,
+        user_prompt: userPromptMsg ? userPromptMsg.text : "",
+        bad_response: targetMsg ? targetMsg.text : "",
+        reason: reason,
+        tag: tag
+      }),
+    });
+  } catch (err) {
+    console.error("Feedback submission failed:", err);
+  }
+};
+
+const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
+  e.preventDefault();
+  if (!feedbackModal.messageId) return;
+
+  await sendFeedbackPayload(
+    feedbackModal.messageId,
+    'dislike',
+    feedbackReason || 'No specific reason provided.',
+    feedbackTag
+  );
+
+  // Reset modal state
+  setFeedbackModal({ isOpen: false, messageId: null });
+  setFeedbackReason('');
+  setFeedbackTag('hallucination');
+};
   
   return (
     <div>
@@ -524,6 +608,33 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
                       {msg.text}
                     </ReactMarkdown>
                   </div>
+                  {msg.sender === 'ai' && !loading && msg.text && (
+                    <div className="feedback-actions" style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
+                      <button 
+                        type="button"
+                        onClick={() => handleFeedback(msg.id, 'like')}
+                        className={`circle-icon-button ${msg.feedback === 'like' ? 'active' : ''}`}
+                        title="Helpful"
+                        style={msg.feedback === 'like' ? { color: '#22c55e', borderColor: '#22c55e', background: '22c55e' } : {}}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
+                        </svg>
+                      </button>
+
+                      <button 
+                        type="button"
+                        onClick={() => handleFeedback(msg.id, 'dislike')}
+                        className={`circle-icon-button ${msg.feedback === 'dislike' ? 'active' : ''}`}
+                        title="Not helpful"
+                        style={msg.feedback === 'dislike' ? { color: '#ef4444', borderColor: '#ef4444' } : {}}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
 
@@ -912,6 +1023,120 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
               ))}
             </div>
           </aside>
+        )}
+        {feedbackModal.isOpen && (
+          <div style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.75)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            backdropFilter: 'blur(4px)'
+          }}>
+            <div style={{
+              background: '#1e293b',
+              border: '1px solid rgba(148, 163, 184, 0.2)',
+              borderRadius: '12px',
+              padding: '1.5rem',
+              width: '100%',
+              maxWidth: '450px',
+              color: '#f8fafc',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)'
+            }}>
+              <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.1rem', fontWeight: 600 }}>
+                Specify Negative Feedback
+              </h3>
+              <p style={{ margin: '0 0 1rem 0', fontSize: '0.85rem', color: '#94a3b8' }}>
+                Help improve future responses by categorizing and explaining the issue.
+              </p>
+
+              <form onSubmit={handleSubmitNegativeFeedback}>
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem', color: '#cbd5e1' }}>
+                    Category Tag
+                  </label>
+                  <select
+                    value={feedbackTag}
+                    onChange={(e) => setFeedbackTag(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '0.5rem',
+                      borderRadius: '6px',
+                      background: '#0f172a',
+                      border: '1px solid #334155',
+                      color: '#f8fafc',
+                      fontSize: '0.875rem'
+                    }}
+                  >
+                    <option value="hallucination">Hallucination / Inaccurate Fact</option>
+                    <option value="incorrect_filter">Incorrect Document/Affiliate Filter</option>
+                    <option value="formatting">Formatting / Markdown Issue</option>
+                    <option value="incomplete">Incomplete or Truncated Output</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+
+                <div style={{ marginBottom: '1.25rem' }}>
+                  <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem', color: '#cbd5e1' }}>
+                    Reason / Details
+                  </label>
+                  <textarea
+                    value={feedbackReason}
+                    onChange={(e) => setFeedbackReason(e.target.value)}
+                    placeholder="Explain what was wrong with the response..."
+                    rows={4}
+                    required
+                    style={{
+                      width: '100%',
+                      padding: '0.5rem',
+                      borderRadius: '6px',
+                      background: '#0f172a',
+                      border: '1px solid #334155',
+                      color: '#f8fafc',
+                      fontSize: '0.875rem',
+                      resize: 'vertical',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => setFeedbackModal({ isOpen: false, messageId: null })}
+                    style={{
+                      padding: '0.4rem 0.8rem',
+                      borderRadius: '6px',
+                      background: 'transparent',
+                      border: '1px solid #475569',
+                      color: '#cbd5e1',
+                      cursor: 'pointer',
+                      fontSize: '0.85rem'
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    style={{
+                      padding: '0.4rem 0.8rem',
+                      borderRadius: '6px',
+                      background: '#ef4444',
+                      border: 'none',
+                      color: '#ffffff',
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                      fontSize: '0.85rem'
+                    }}
+                  >
+                    Submit Feedback
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
         )}
       </main>
     </div>  

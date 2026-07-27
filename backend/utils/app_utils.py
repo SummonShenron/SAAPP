@@ -1,4 +1,5 @@
 import os
+import re
 import datetime
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
 import logging
@@ -178,4 +179,59 @@ def format_history_as_text(messages) -> str:
             formatted.append(f"Assistant: {msg.content}")
     return "\n".join(formatted)
 
+def fetch_relevant_corrections(username: str, question: str) -> str:
+    db = get_db()
+    if db is None or not question:
+        return ""
 
+    try:
+        # 1. Take a clean slice of the user prompt
+        clean_prompt = question.strip()[:30]
+        if not clean_prompt:
+            return ""
+
+        # 2. Use re.compile so PyMongo handles BSON regex encoding natively
+        pattern = re.compile(re.escape(clean_prompt), re.IGNORECASE)
+
+        # 3. Fetch BOTH from the single 'corrections' collection
+        past_negatives = list(db["corrections"].find({
+            "username": username,
+            "rating": {"$ne": "positive"},
+            "user_prompt": pattern
+        }).limit(2))
+
+        past_positives = list(db["corrections"].find({
+            "username": username,
+            "rating": "positive",
+            "user_prompt": pattern
+        }).limit(1)) # Limit 1 to avoid bloating the prompt
+
+        # If nothing is found, return empty string
+        if not past_negatives and not past_positives:
+            return ""
+
+        context_string = ""
+
+        # 4. Inject Negative Guardrails
+        if past_negatives:
+            context_string += "\n\nCRITICAL GUARDRAILS (Avoid past errors for this prompt):\n"
+            for idx, corr in enumerate(past_negatives, 1):
+                tag = corr.get("tag", "general")
+                reason = corr.get("reason", "Inaccurate output")
+                bad_response = corr.get("bad_response", "")[:150]
+                context_string += f"- Rule {idx} [{tag}]: Do NOT generate responses like: '{bad_response}'. Reason: {reason}\n"
+
+        # 5. Inject Positive Examples (Golden Q&A)
+        if past_positives:
+            context_string += "\n\nPREFERRED EXAMPLES (Replicate this style/content):\n"
+            for idx, corr in enumerate(past_positives, 1):
+                # Note: The good text is stored under the 'bad_response' key based on the frontend payload
+                good_response = corr.get("bad_response", "")[:250] 
+                context_string += f"- Example {idx}: Aim for a response like: '{good_response}'\n"
+
+        return context_string
+
+    except Exception as e:
+        # Gracefully log and fallback so a DB lookup error NEVER breaks chat streaming
+        logger.warning(f"[GUARDRAIL WARNING] Could not fetch corrections: {e}")
+        return ""

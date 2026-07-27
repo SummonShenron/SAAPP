@@ -714,8 +714,8 @@ div:has(.portal-body) {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: var(--bg-surface);
-  border: 1px solid var(--ai-border-color);
+  background: none;
+  border: 1px solid var(--bg-surface);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -723,6 +723,9 @@ div:has(.portal-body) {
   transition: all 0.2s ease;
 }
 
+.theme-shadow .circle-icon-button {
+  border: none;
+}
 .circle-icon-button:hover:not(:disabled) {
   transform: translateY(-2px);
   box-shadow: var(--shadow-hover);
@@ -1144,7 +1147,7 @@ div:has(.portal-body) {
     cursor: pointer;
   }
 
-}
+
 
 @keyframes slideDown {
   from {
