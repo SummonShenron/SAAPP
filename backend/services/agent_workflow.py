@@ -2382,7 +2382,7 @@ def draft_pr_node(state: GraphState) -> GraphState:
 
     # 4. SET STRUCTURED PENDING ACTION (Matches execute_pr_node schema)
     new_pending_action = {
-        "action_type": "create_pr",
+        "action_type": "execute_pr",
         "details": {
             "title": title,
             "body": body,
