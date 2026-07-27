@@ -136,10 +136,11 @@ def classify_intent(message: str, attachments=None, state: dict = None) -> str:
     msg = message.lower().strip()
     msg_clean = msg.strip("!.,")
     state = state or {}
-
+    last_intent = state.get("last_intent")
     APPROVAL_KEYWORDS = {"approve", "approved", "confirm", "yes", "lgtm", "do it", "sure", "yep", "go ahead"}
     REJECTION_KEYWORDS = {"reject", "cancel", "no", "stop", "nah", "don't"}
-
+    if msg_clean in APPROVAL_KEYWORDS and last_intent == "create_pr":
+        return "execute_pr"
     pending_action = state.get("pending_action") or {}
     status = pending_action.get("status")
 
