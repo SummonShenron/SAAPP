@@ -172,29 +172,39 @@ def build_agent_plan(intent, state):
     user_words = user_message.lower().split()
 
     APPROVAL_KEYWORDS = [
-        "approve",
-        "approved",
-        "confirm",
-        "yes",
-        "lgtm",
-        "do it",
-        "reject",
-        "cancel",
+        "approve", "approved", "confirm", "yes", "lgtm", "do it",
+        "sure", "yeah", "yep", "ok"
     ]
-    is_approval_action = (
-        any(w in user_words for w in APPROVAL_KEYWORDS)
-        or intent == "execute_pr"
-    )
+    REJECT_KEYWORDS = ["reject", "cancel", "no", "stop", "abort"]
 
-    # 2. Priority 1: Immediate Approval / Rejection Routing
-    if is_approval_action:
-        logger.info(
-            "[Coordinator] Approval/Rejection action detected. Routing to execute_pr."
-        )
-        state["last_intent"] = "execute_pr"
-        return {"agents": ["execute_pr", "formatter"], "skip": []}
+    pending_action = state.get("pending_action") or state.get("pending_pr_action") or {}
+    action_type = pending_action.get("action_type") if isinstance(pending_action, dict) else None
 
-    # 3. Priority 2: Standard Follow-up Override
+    is_approval = any(w in user_words for w in APPROVAL_KEYWORDS) or intent in ["execute_pr", "web_search"]
+    is_rejection = any(w in user_words for w in REJECT_KEYWORDS)
+
+    # Priority 1: Immediate Approval / Rejection Routing
+    if action_type and is_approval:
+        logger.info(f"[Coordinator] Active approval action detected: {action_type}")
+        # Clear the pending flags immediately so a second "yes" later won't re-trigger it
+        state["pending_pr_action"] = None
+        state["pending_action"] = None
+        
+        if action_type == "create_pr":
+            state["last_intent"] = "execute_pr"
+            return {"agents": ["execute_pr", "formatter"], "skip": []}
+            
+        elif action_type == "web_search_approval":
+            state["last_intent"] = "web_search"
+            return {"agents": ["web_search", "formatter"], "skip": []}
+
+    if action_type and is_rejection:
+        logger.info(f"[Coordinator] Active action rejected: {action_type}")
+        state["pending_pr_action"] = None
+        state["pending_action"] = None
+        return {"agents": ["conversational", "formatter"], "skip": []}
+
+    # Priority 2: Standard Follow-up Override
     if flags.get("follow_up_intent"):
         intent = state.get("last_intent", intent)
         logger.info(
@@ -2362,6 +2372,7 @@ def draft_pr_node(state: GraphState) -> GraphState:
     return {
         **state,
         "pending_action": new_pending_action,
+        "pending_pr_action": new_pending_action,
         "relevance_grade": "hitl_approval_required",
         "generation": card_msg,
         "messages": new_messages,

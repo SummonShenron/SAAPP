@@ -62,13 +62,25 @@ async def rewrite_fallback(
 
     # If re-retrieval/rewrite still fails relevance grading:
     if state.get("relevance_grade") != "yes":
+        pending_data = {
+            "action_type": "web_search_approval",
+            "query": rewritten_question
+        }
+        
+        # 1. Set on in-memory state
+        state["pending_action"] = pending_data
+        
+        # 2. PERSIST TO CHAT SESSION (Survives HTTP request boundaries)
+        if isinstance(chat_sessions, dict):
+            chat_sessions[f"{username}_pending_action"] = pending_data
+
         ask_web_search_msg = (
             "I couldn't find an answer to your question in the knowledge base. "
             "Would you like me to break RAG restrictions and search the web to answer this?"
         )
         yield f"data: {json.dumps({'event': 'final_generation', 'text': ask_web_search_msg})}\n\n"
         return
-
+    
     # Prepare prompt pieces defensively
     formatted_docs = ensure_str(format_docs(state.get("documents", [])))
     history_transcript = ensure_str(format_history_as_text(chat_sessions.get(username, [])))

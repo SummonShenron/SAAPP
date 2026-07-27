@@ -3,14 +3,14 @@ const AFFILIATE_QUESTION_POOLS: Record<string, string[]> = {
   'Affiliate_A': [
     "Who is Sonic?",
     "Tell me about Sonic Adventure 2.",
-    "Is there any data regarding Shadow?",
+    "Who does Shadow care about?",
     "What are the Chaos Emeralds?",
     "Who is Dr. Eggman?"
   ],
   'Affiliate_B': [
     "Who is Goku?",
     "What are the Dragon Balls?",
-    "Tell me about the Saiyan race.",
+    "Who is Frieza.",
     "Who is Vegeta?",
     "What is a Senzu Bean?"
   ],

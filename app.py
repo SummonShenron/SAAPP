@@ -342,7 +342,10 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
 
     messages_state = chat_sessions[username]
     messages_state.append(HumanMessage(content=question))
-
+    saved_pending_action = chat_sessions.get(f"{username}_pending_action")
+    effective_question = question
+    if saved_pending_action and isinstance(saved_pending_action, dict) and saved_pending_action.get("query"):
+        effective_question = saved_pending_action["query"]
     initial_state: GraphState = {
         "messages": messages_state,
         "username": username,
@@ -350,8 +353,9 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
         "documents": [],
         "relevance_grade": "web_search" if force_web_search else "", 
         "loop_count": 0,
-        "original_question": question,
-        "force_web_search": force_web_search
+        "original_question": effective_question,
+        "force_web_search": force_web_search,
+        "pending_action": saved_pending_action
     }
 
     # ---------- Early Attachments Processing ----------
@@ -407,9 +411,10 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                     # Catch Final State when the graph finishes (Look for the final dictionary output)
                     if kind == "on_chain_end":
                         output = event.get("data", {}).get("output")
-                        # Ensure we grab the actual state dict and not a sub-node return
                         if output and isinstance(output, dict) and "relevance_grade" in output:
                             final_state = output
+                            # Clean up pending action after completion
+                            chat_sessions.pop(f"{username}_pending_action", None)
 
             # Fallback just in case event streaming missed the final state dict
             if not final_state:
@@ -454,7 +459,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
             if guardrail_context:
                 prompt = prompt + guardrail_context
                 # Emit trace event to frontend execution trace drawer!
-                yield f"data: {json.dumps({'event': 'node_progress', 'node': 'self_correction_guardrail', 'title': 'Applying Lessons Learned Guardrail', 'detail': f'Injected past failure constraint into Gemini context prompt.'})}\n\n"
+                yield f"data: {json.dumps({'event': 'node_progress', 'node': 'self_correction_guardrail', 'title': 'Applying Lessons Learned Guardrail', 'detail': f'Injected past failure constraint into context prompt.'})}\n\n"
             # 3. STREAM RESPONSE TOKENS FROM LLM
             async for chunk in stream_llm.astream(prompt):
                 if first_token:
