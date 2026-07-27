@@ -238,7 +238,7 @@ def build_agent_plan(intent: str, state: dict) -> dict:
         return {"agents": ["execute_pr", "formatter"], "skip": []}
 
     # 2. Direct PR creation request
-    if intent == "create_pr" or flags.get("needs_create_pr"):
+    if intent == "create_pr":
         state["last_intent"] = "create_pr"
         return {"agents": ["draft_pr", "formatter"], "skip": []}
 
