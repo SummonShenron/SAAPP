@@ -12,7 +12,7 @@ import re
 from gridfs import GridFSBucket
 from bson import ObjectId, errors
 from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Query, Form, Request, Depends, BackgroundTasks
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import uuid
 import traceback
 from gridfs import GridFS
@@ -37,7 +37,7 @@ from backend.services.search import discover_workspace_documents
 from local_function_app.function_app import run_ingestion_pipeline, HOT_FOLDER_DIR
 from backend.state.graph_state import GraphState
 from backend.services.insights_workflow import create_insight_workflow
-from backend.utils.app_utils import save_conversation, list_saved_conversations, load_saved_conversations, load_saved_conversation, save_chat_history, format_history_as_text, chat_sessions, get_db_dependency, serialize_doc, load_chat_history
+from backend.utils.app_utils import save_conversation, list_saved_conversations, load_saved_conversations, load_saved_conversation, save_chat_history, format_history_as_text, chat_sessions, get_db_dependency, serialize_doc, load_chat_history, fetch_relevant_corrections
 from backend.utils.attachment_utils import process_user_attachment, ingest_doc_to_session
 from backend.utils.fallback_utils import rewrite_fallback
 from backend.logging.sass_logger import setup_logging
@@ -114,6 +114,14 @@ class EventCreate(BaseModel):
 class SaveConversationRequest(BaseModel):
     title: str
     messages: List[Dict[str, Any]] 
+
+class FeedbackPayload(BaseModel):
+    user_prompt: str
+    bad_response: str
+    reason: str
+    tag: str  # e.g., "hallucination", "incorrect_filter", "formatting"
+    rating: Optional[str] = "negative" # "positive" or "negative"
+
 
 @app.get("/api/me")
 def get_me(current_user: dict = Depends(get_current_user)):
@@ -440,7 +448,12 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
 
             # Announce LLM generation start
             yield f"data: {json.dumps({'event': 'node_progress', 'node': 'formatter_node', 'title': 'Formatting output structure...', 'detail': f'Synthesizing final answer for {question[:30]}...'})}\n\n"
+            guardrail_context = fetch_relevant_corrections(username, question)
 
+            if guardrail_context:
+                prompt = prompt + guardrail_context
+                # Emit trace event to frontend execution trace drawer!
+                yield f"data: {json.dumps({'event': 'node_progress', 'node': 'self_correction_guardrail', 'title': 'Applying Lessons Learned Guardrail', 'detail': f'Injected past failure constraint into context prompt.'})}\n\n"
             # 3. STREAM RESPONSE TOKENS FROM LLM
             async for chunk in stream_llm.astream(prompt):
                 if first_token:
@@ -956,6 +969,31 @@ def get_insights(current_user = Depends(get_current_user)):
     
     logger.info(f"Final graph result dictionary:{result}")    
     return result.get("insights", [])
+
+@app.post("/api/chat/feedback")
+async def store_feedback(
+    payload: FeedbackPayload, 
+    current_user = Depends(get_current_user)
+):
+    db = get_db()
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database connection unavailable")
+
+    username = current_user.get("sub")
+
+    correction_doc = {
+        "id": str(uuid.uuid4()),
+        "username": username,
+        "user_prompt": payload.user_prompt,
+        "bad_response": payload.bad_response[:400],
+        "reason": payload.reason,
+        "tag": payload.tag,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+
+    db["corrections"].insert_one(correction_doc)
+    logger.info(f"[+] Correction stored for {username} (Tag: {payload.tag}): {payload.reason}")
+    return {"status": "success", "message": "Feedback indexed for dynamic self-correction."}
 
 @app.post("/webhooks/github")
 async def github_webhook(request: Request, background_tasks: BackgroundTasks):
