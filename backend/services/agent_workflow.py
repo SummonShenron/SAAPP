@@ -4,7 +4,7 @@ import base64
 import os
 import re
 import json
-from typing import List, Any, Dict
+from typing import List, Any, Dict, Optional
 import logging
 import requests
 import urllib.parse
@@ -2382,7 +2382,7 @@ def draft_pr_node(state: GraphState) -> GraphState:
 
     # 4. SET STRUCTURED PENDING ACTION (Matches execute_pr_node schema)
     new_pending_action = {
-        "action_type": "execute_pr",
+        "action_type": "create_pr",
         "details": {
             "title": title,
             "body": body,
