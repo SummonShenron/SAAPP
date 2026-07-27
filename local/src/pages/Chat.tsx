@@ -466,8 +466,9 @@ const sendFeedbackPayload = async (
     prev.map(m => (m.id === messageId ? { ...m, feedback: choice } : m))
   );
 
+  // 4. Send the complete payload matching app.py's FeedbackPayload schema
   try {
-    await fetch(`${BASE_URL}api/chat/feedback`, {
+    await fetch(`${BASE_URL}/api/chat/feedback`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
