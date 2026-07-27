@@ -44,6 +44,7 @@ class GraphState(TypedDict):
     pending_action: Optional[Dict[str, Any]]  # Stores original draft payload
     user_decision: Optional[str]              # "approve" | "modify" | "reject"
     modified_details: Optional[Dict[str, Any]] # Overrides if user modified title/body/branches
+    last_intent: Optional[str]
 
 # def route_user_query(state: GraphState) -> str:
 #     """

@@ -4,7 +4,7 @@ import base64
 import os
 import re
 import json
-from typing import List, Any, Dict
+from typing import List, Any, Dict, Optional
 import logging
 import requests
 import urllib.parse
@@ -61,24 +61,23 @@ async def safe_emit_event(name: str, data: dict):
 async def coordinator_node(state: GraphState) -> GraphState:
     last_msg = state["messages"][-1].content.lower().strip()
     logger.info("--- COORDINATOR NODE START ---")
-    await safe_emit_event(
-        "trace_detail", 
-        {
-            "node": "coordinator_node", 
-            "title": "Analyzing intent and planning route...", 
-            "detail": "Evaluating user query to determine the best tools to use."
-        }
-    )
-    logger.info(f"User message: {last_msg}")
-    # Run reasoner first
+    logger.debug(f"Incoming state pending_action: {state.get('pending_action')}")
+    # 1. Fast deterministic classification FIRST (Passing state=state!)
     state = await reasoner_node(state)
-    intent = classify_intent(last_msg, state.get("attachment_summaries", []))
-    logger.info(f"Intent classified as: {intent}")
+
+    # NOW classify intent with the updated state
+    intent = classify_intent(
+        last_msg,
+        state.get("messages", []) + state.get("attachment_summaries", []),
+        state=state
+    )
+
     plan = build_agent_plan(intent, state)
-    logger.info(f"Agent plan created: {plan}")
+    
     state["coordinator_intent"] = intent
     state["coordinator_plan"] = plan["agents"]
-    logger.info(f"Stored plan list: {state['coordinator_plan']}")
+    logger.info(f"Final stored plan: {state['coordinator_plan']}")
+    logger.info("--- COORDINATOR NODE END ---")
     return state
 
 def coordinator_router(state: GraphState) -> str:
@@ -120,22 +119,82 @@ def coordinator_router(state: GraphState) -> str:
     logger.info("--- COORDINATOR NODE END ---")
     return mapping.get(next_agent, "conversational_node")
 
+def is_valid_pending_pr(pending_action: Optional[dict]) -> bool:
+    """Verifies that pending_action exists AND holds complete PR parameters."""
+    if not pending_action or not isinstance(pending_action, dict):
+        return False
+    
+    if pending_action.get("status") != "awaiting_approval":
+        return False
+        
+    params = pending_action.get("params", {})
+    # Check for required PR fields
+    required_keys = {"repo", "title", "head_branch"}
+    return all(k in params and params[k] for k in required_keys)
 
-def classify_intent(message: str, attachments) -> str:
-    msg = message.lower()
-    words = msg.split()
-    APPROVAL_KEYWORDS = ["approve", "approved", "confirm", "yes", "lgtm", "do it", "reject", "cancel"]
-    # 1. Prioritize specific technical tools first
-    if any(w in msg for w in ["github", "repo", "repository", "commit history", "code search"]):
+def classify_intent(message: str, attachments=None, state: dict = None) -> str:
+    msg = message.lower().strip()
+    msg_clean = msg.strip("!.,")
+    state = state or {}
+    logger.debug(f"State keys: {list(state.keys())}")
+    logger.debug(f"pending_action: {state.get('pending_action')}")
+    logger.debug(f"last_intent: {state.get('last_intent')}")
+    APPROVAL_KEYWORDS = {"approve", "approved", "confirm", "yes", "lgtm", "do it", "sure", "yep", "go ahead"}
+    REJECTION_KEYWORDS = {"reject", "cancel", "no", "stop", "nah", "don't"}
+
+    messages = state.get("messages", []) or []
+
+    user_messages = [m for m in messages if getattr(m, "type", None) == "human"]
+
+    logger.debug(f"User messages count: {len(user_messages)}")
+    for i, um in enumerate(user_messages):
+        logger.debug(f"user_messages[{i}]: {um.content}")
+
+    if len(user_messages) >= 2:
+        prev_user_msg = user_messages[-2].content.lower()
+        logger.debug(f"Previous user message: {prev_user_msg}")
+
+        if any(phrase in prev_user_msg for phrase in ["create pr", "merge", "pull request"]):
+            logger.debug("Detected PR creation in previous user message")
+            if msg_clean in APPROVAL_KEYWORDS:
+                logger.debug("Approval keyword detected — returning execute_pr")
+                return "execute_pr"
+
+    # existing pending_action logic can stay if you want
+    pending_action = state.get("pending_action") or {}
+    status = pending_action.get("status")
+    logger.debug(f"pending_action.status: {status}")
+    if status == "awaiting_approval":
+        action_type = pending_action.get("action_type")
+        if msg_clean in APPROVAL_KEYWORDS and action_type == "create_pr":
+            return "execute_pr"
+        if msg_clean in REJECTION_KEYWORDS:
+            return "cancel_action"
+
+    # 1. Handle Active HITL Approvals (PRs, Web Search, etc.)
+    if status in {"awaiting_approval", "hitl_approval_required"}:
+        action_type = pending_action.get("action_type") or pending_action.get("type")
+        
+        if msg_clean in APPROVAL_KEYWORDS:
+            if action_type in {"web_search", "web_search_fallback"}:
+                return "web_search"
+            elif action_type in {"create_pr", "execute_pr"}:
+                return "execute_pr"
+            return action_type or "web_search"
+
+        if msg_clean in REJECTION_KEYWORDS:
+            return "conversational"
+    # 2. Strict Tool Matching (Using regex word boundaries for short terms like 'pr')
+    if any(w in msg for w in ["github", "repository", "commit history", "code search"]):
         return "github_search"
-    if any(w in msg for w in ["run code", "execute", "query db", "database query", "mongodb", "script", "analyze data", "search mongo"]):
+    if any(w in msg for w in ["run code", "execute", "query db", "mongodb", "script"]):
         return "code_interpreter"
-    if any(w in msg for w in ["review pr", "pull request", "pr", "repo changes"]):
+        
+    # Use word boundary so 'process' or 'provide' won't match 'pr'
+    if re.search(r'\b(review pr|pull request|pr summary)\b', msg):
         return "pr_summary"
-    if any(w in msg for w in ["create pr", "create a pr", "merge pull request", "merge pr", "merge repos", "create new pr", "create new pull request"]):
+    if re.search(r'\b(create pr|merge pr|create pull request)\b', msg):
         return "create_pr"
-    if any(w in words for w in APPROVAL_KEYWORDS) or any(phrase in msg for phrase in ["do it", "lgtm", "looks good"]):
-        return "execute_pr"
     # 2. General operational intents
     if "plan my day" in msg or "schedule" in msg:
         return "task_paapp"
@@ -159,49 +218,47 @@ def classify_intent(message: str, attachments) -> str:
         "insight", "analyze", "review my week", "review my day", "review my month"
     ]):
         return "insight"
-        
+    
+    # 3. Operational & Fallbacks
+    if "plan my day" in msg or "schedule" in msg:
+        return "task_paapp"
+    if "summarize" in msg or "tl;dr" in msg:
+        return "summarize"
+    if any(w in msg for w in ["find", "lookup", "policy", "docs", "search"]):
+        return "retrieve"
     return "conversational"
-
-def build_agent_plan(intent, state):
+    
+def build_agent_plan(intent: str, state: dict) -> dict:
     flags = state.get("reasoner_flags", {})
+    logger.debug(f"Incoming intent: {intent}")
+    logger.debug(f"State.last_intent: {state.get('last_intent')}")
+    logger.debug(f"Reasoner flags: {state.get('reasoner_flags')}")
     agents = []
 
-    # 1. Safely extract last user message from state
-    messages = state.get("messages", [])
-    user_message = messages[-1].content if messages else ""
-    user_words = user_message.lower().split()
-
-    APPROVAL_KEYWORDS = [
-        "approve",
-        "approved",
-        "confirm",
-        "yes",
-        "lgtm",
-        "do it",
-        "reject",
-        "cancel",
-    ]
-    is_approval_action = (
-        any(w in user_words for w in APPROVAL_KEYWORDS)
-        or intent == "execute_pr"
-    )
-
-    # 2. Priority 1: Immediate Approval / Rejection Routing
-    if is_approval_action:
-        logger.info(
-            "[Coordinator] Approval/Rejection action detected. Routing to execute_pr."
-        )
+    # 1. Approval execution takes absolute precedence
+    if intent == "execute_pr":
+        logger.info("[Coordinator] Direct routing to execute_pr.")
         state["last_intent"] = "execute_pr"
         return {"agents": ["execute_pr", "formatter"], "skip": []}
 
-    # 3. Priority 2: Standard Follow-up Override
+    # 2. Direct PR creation request
+    if intent == "create_pr":
+        state["last_intent"] = "create_pr"
+        return {"agents": ["draft_pr", "formatter"], "skip": []}
+
+    # 3. Prevent Mutating Actions from standard follow-up sticky logic
+    # Follow-up messages MUST re-classify intent so approvals work
     if flags.get("follow_up_intent"):
-        intent = state.get("last_intent", intent)
-        logger.info(
-            f"[Coordinator] Follow-up detected. Reusing last intent: {intent}"
+        logger.debug("[Coordinator] follow_up_intent=True — reclassifying intent")
+        intent = classify_intent(
+            state["messages"][-1].content,
+            state.get("attachment_summaries", []),
+            state=state
         )
-    # 4. Operational Flag & Intent Mapping
+        logger.debug(f"[Coordinator] Reclassified follow-up intent: {intent}")
+    # 4. Standard Operational Flag Mapping
     is_pr_request = flags.get("needs_pr_summary") or intent == "pr_summary"
+    
     if flags.get("needs_memory"):
         agents.append("memory")
     if flags.get("needs_retrieval"):
@@ -210,36 +267,23 @@ def build_agent_plan(intent, state):
         agents.append("rewriter")
     if flags.get("needs_summary"):
         agents.append("summarizer")
-    if flags.get("needs_formatting"):
-        agents.append("formatter")
     if flags.get("needs_paapp"):
         agents.append("paapp")
-    if flags.get("needs_conversation"):
-        agents.append("conversational")
     if flags.get("needs_web_search"):
         agents.append("web_search")
     if flags.get("needs_code_interpreter"):
         agents.append("code_interpreter")
-    if flags.get("needs_create_pr") or intent == "create_pr":
-        agents.append("draft_pr")
     if is_pr_request:
         agents.append("pr_summary")
     elif flags.get("needs_github_search"):
         agents.append("github_search")
-    # Always end with formatter (unless code interpreter handles its own formatting)
+
+    if not agents:
+        agents.append("conversational")
+
     if "formatter" not in agents and "code_interpreter" not in agents:
         agents.append("formatter")
-    # Override for Code Interpreter
-    if flags.get("needs_code_interpreter"):
-        state["last_intent"] = "code_interpreter"
-        return {"agents": ["code_interpreter"], "skip": ["retriever"]}
-    # Fallback to intent only if no specific operational flags were raised
-    if not agents or agents == ["formatter"]:
-        if intent == "insight":
-            state["last_intent"] = intent
-            return {"agents": ["insight"], "skip": []}
 
-    # Store last intent for future follow-ups
     state["last_intent"] = intent
     return {"agents": agents, "skip": []}
 
@@ -1707,6 +1751,32 @@ def insight_query_node(state: dict) -> dict:
 # ============================================================
 # WEB SEARCH NODE
 # ============================================================
+def extract_real_query(state: dict) -> str:
+    APPROVAL_WORDS = {"yes", "sure", "yep", "do it", "approve", "confirm", "go ahead", "ok", "okay"}
+    
+    # 1. First priority: Check explicit pending_action payload
+    pending_action = state.get("pending_action") or {}
+    if isinstance(pending_action, dict) and pending_action.get("original_query"):
+        return pending_action["original_query"]
+
+    # 2. Second priority: Filter messages to find the last true Human topic
+    messages = state.get("messages", [])
+    human_contents = []
+    
+    for m in messages:
+        # Check for LangChain HumanMessage or dict role=='user'
+        is_human = getattr(m, "type", "") in ("human", "user") or m.__class__.__name__ == "HumanMessage"
+        if is_human:
+            text = (m.content if hasattr(m, "content") else str(m)).strip()
+            human_contents.append(text)
+
+    # Walk backward through human messages and find one that isn't just an approval keyword
+    for text in reversed(human_contents):
+        clean_text = text.lower().strip("!., ")
+        if clean_text not in APPROVAL_WORDS:
+            return text
+
+    return state.get("question", "")
 
 async def web_search_node(state: GraphState) -> dict:
     logger.info("--- EXECUTING WEB SEARCH ESCALATION ---")
@@ -1722,9 +1792,9 @@ async def web_search_node(state: GraphState) -> dict:
     )
     
     # Safe question extraction
-    question = state.get("original_question")
-    if not question and state.get("messages"):
-        question = state["messages"][-1].content
+    # question = state.get("original_question")
+    # if not question and state.get("messages"):
+    question = extract_real_query(state)#state["messages"][-3].content
     
     web_docs = []
     
