@@ -342,7 +342,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
 
     messages_state = chat_sessions[username]
     messages_state.append(HumanMessage(content=question))
-    saved_pending_action = chat_sessions.get(f"{username}_pending_action")
+    saved_pending_action = chat_sessions.pop(f"{username}_pending_action", None)
     effective_question = question
     if saved_pending_action and isinstance(saved_pending_action, dict) and saved_pending_action.get("query"):
         effective_question = saved_pending_action["query"]
@@ -414,7 +414,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                         if output and isinstance(output, dict) and "relevance_grade" in output:
                             final_state = output
                             # Clean up pending action after completion
-                            chat_sessions.pop(f"{username}_pending_action", None)
+                           
 
             # Fallback just in case event streaming missed the final state dict
             if not final_state:
