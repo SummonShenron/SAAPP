@@ -63,7 +63,12 @@ async def coordinator_node(state: GraphState) -> GraphState:
     logger.info("--- COORDINATOR NODE START ---")
     logger.debug(f"Incoming state pending_action: {state.get('pending_action')}")
     # 1. Fast deterministic classification FIRST (Passing state=state!)
-    intent = classify_intent(last_msg, state.get("attachment_summaries", []), state=state)
+    intent = classify_intent(
+        last_msg,
+        state.get("messages", []) + state.get("attachment_summaries", []),
+        state=state
+    )
+
     logger.info(f"Deterministic intent classified as: {intent}")
 
     # 2. Skip LLM reasoner for clear, unambiguous actions (Eliminates latency)
