@@ -57,17 +57,13 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const hashSearch = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
   const searchParams = new URLSearchParams(window.location.search || hashSearch);
   const isEmbedded = searchParams.get('mode') === 'embed';
-  const embedAffiliate = searchParams.get('affiliate') || 'Afilliate_D';
+  const embedAffiliate = 'Affiliate_D';
 
-  // 1. Force affiliate lock and principal set for embedded session
   useEffect(() => {
     if (isEmbedded) {
       setSelectedAffiliate(embedAffiliate);
-      if (!localStorage.getItem('principal')) {
-        localStorage.setItem('principal', 'guest');
-      }
     }
-  }, [isEmbedded, embedAffiliate]);
+  }, [isEmbedded]);
   // const BASE_URL = "https://saapp.onrender.com/";
   const [feedbackModal, setFeedbackModal] = useState<{ isOpen: boolean; messageId: string | null }>({
     isOpen: false,
@@ -524,50 +520,17 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
 };
   
   return (
-    <div>
-      {/* HERO BANNER */}
-      {isEmbedded ? (
-        <div 
-          className="hero-banner bty-embedded-header" 
-          style={{ 
-            background: '#16171b', 
-            borderBottom: '1px solid rgba(56, 194, 222, 0.2)', 
-            padding: '1rem 1.25rem',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between'
-          }}
-        >
-          <div>
-            <h3 style={{ color: '#38C2DE', margin: 0, fontSize: '1rem', fontWeight: 900, letterSpacing: '0.05em' }}>
-              BTY ATHLETIC ASSISTANT
-            </h3>
-            <p style={{ color: '#A0A5AA', margin: '2px 0 0 0', fontSize: '0.75rem' }}>
-              Index Context: <strong style={{ color: '#FFFFFF' }}>{embedAffiliate}</strong>
-            </p>
-          </div>
-          <span style={{ 
-            background: 'rgba(56, 194, 222, 0.1)', 
-            color: '#38C2DE', 
-            border: '1px solid rgba(56, 194, 222, 0.3)', 
-            fontSize: '0.65rem', 
-            fontWeight: 800, 
-            padding: '0.25rem 0.6rem', 
-            borderRadius: '20px' 
-          }}>
-            LIVE
-          </span>
+  <div>
+    {/* HERO BANNER (hidden entirely in embed mode) */}
+    {!isEmbedded && (
+      <div className="hero-banner" style={{ backgroundImage: `linear-gradient(rgba(18, 24, 36, 0.7), rgba(18, 24, 36, 0.95)), url(${sonicImg})` }}>
+        <div className="banner-context">
+          <h3>{theme === 'sonic' ? 'Sonic Assistant' : 'Shadow Engine'}</h3>
+          <h4>{theme === 'sonic' ? 'Rolling around at the speed of sound.' : 'Behold the Ultimate Power.'}</h4>
+          {userEmail && <p className="badge">Principal Account Identity: {userEmail}</p>}
         </div>
-      ) : (
-        <div className="hero-banner" style={{ backgroundImage: `linear-gradient(rgba(18, 24, 36, 0.7), rgba(18, 24, 36, 0.95)), url(${sonicImg})` }}>
-          <div className="banner-context">
-            <h3>{theme === 'sonic' ? 'Sonic Assistant' : 'Shadow Engine'}</h3>
-            <h4>{theme === 'sonic' ? 'Rolling around at the speed of sound.' : 'Behold the Ultimate Power.'}</h4>
-            {userEmail && <p className="badge">Principal Account Identity: {userEmail}</p>}
-          </div>
-        </div>
-      )}
-
+      </div>
+    )}
       {/* PORTAL BODY */}
       <main className={`portal-body ${!hasChatted ? 'initial-state-view' : ''}`}>
 
@@ -591,7 +554,11 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
 
         {/* 2. CHAT MESSAGES WINDOW */}
         {hasChatted && (
-          <div className="chat-window" ref={chatWindowRef} style={{ maxHeight: 'calc(100vh - 380px)', overflowY: 'auto' }}>
+          <div
+              className="chat-window"
+              ref={chatWindowRef}
+              style={isEmbedded ? undefined : { maxHeight: 'calc(100vh - 380px)', overflowY: 'auto' }}
+            >
             {messages
               .filter(msg => !(hasChatted && msg.sender === 'system'))
               .map(msg => (
@@ -687,16 +654,29 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               ))}
 
             {loading && (
-              <div className="sonic-loader-container">
-                <img
-                  src={theme === 'sonic' ? sonicSpinImg : shadowSpinImg}
-                  alt="loading"
-                  style={{ width: '48px', height: '48px' }}
-                />
-                <div className="loading-text">
-                  {getNodeLabel(agentStatus) || "Collecting rings and tokens..."}
+              isEmbedded ? (
+                <div className="bty-loader-container">
+                  <div className="bty-loader-dots">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </div>
+                  <div className="loading-text">
+                    {getNodeLabel(agentStatus) || "Thinking..."}
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="sonic-loader-container">
+                  <img
+                    src={theme === 'sonic' ? sonicSpinImg : shadowSpinImg}
+                    alt="loading"
+                    style={{ width: '48px', height: '48px' }}
+                  />
+                  <div className="loading-text">
+                    {getNodeLabel(agentStatus) || "Collecting rings and tokens..."}
+                  </div>
+                </div>
+              )
             )}
             <div ref={messagesEndRef} />
           </div>

@@ -38,8 +38,11 @@ async def get_current_user(request: Request):
     # 1. GUEST BYPASS: Check for your sandbox token first
     if token == "guest-sandbox-token":
         logger.info("Guest session detected. Bypassing JWT verification.")
-        # Return a dictionary that mimics the Clerk payload structure
         return {"sub": "guest-recruiter@example.com", "email": "guest@example.com"}
+
+    if token == "guest-bty-token":
+        logger.info("BTY embedded guest session detected. Bypassing JWT verification.")
+        return {"sub": "guest_bty", "email": "guest_bty@bty.local"}
 
     # 2. Existing JWT verification logic
     try:

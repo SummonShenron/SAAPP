@@ -22,7 +22,12 @@ const AFFILIATE_QUESTION_POOLS: Record<string, string[]> = {
     "What was changed in the last pull request?",
     "What are the different routing strategies leveraged by the Sonic Assistant?",
     "How does the Sonic Assistant enforce data isolation?"
-  ]
+  ],
+  'Affiliate_D': [
+    "What is the proper deadlift form?",
+    "How soon should I eat after a workout?",
+    "What should I eat before and after my workouts?"
+  ],
 };
 
 /**

@@ -20,21 +20,16 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // --- EMBED MODE DETECTION ---
-  const hashSearch = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
-  const searchParams = new URLSearchParams(window.location.search || hashSearch);
-  const isEmbedded = searchParams.get('mode') === 'embed' || window.location.href.includes("mode=embed");
+const hashSearch = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
+const searchParams = new URLSearchParams(window.location.search || hashSearch);
+const isEmbedded = searchParams.get('mode') === 'embed' || window.location.href.includes("mode=embed");
 
-  // 1. AUTO-INJECT GUEST CREDENTIALS FOR EMBED MODE
-  useEffect(() => {
-    if (isEmbedded) {
-      if (localStorage.getItem('guest_token') !== 'guest-sandbox-token') {
-        localStorage.setItem('guest_token', 'guest-sandbox-token');
-        localStorage.setItem('principal', 'guest');
-        localStorage.setItem('x-user-id', 'guest');
-      }
-    }
-  }, [isEmbedded]);
-
+// Bootstrap BTY guest identity synchronously so children see it on first render
+if (isEmbedded && localStorage.getItem('principal') !== 'guest_bty') {
+  localStorage.setItem('guest_token', 'guest-bty-token');
+  localStorage.setItem('principal', 'guest_bty');
+  localStorage.setItem('x-user-id', 'guest_bty');
+}
   const toggleHelp = () => {
     setShowHelp(!showHelp);
     setMobileMenuOpen(false);
@@ -55,7 +50,7 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
     const hasAuth = isSignedIn || !!localStorage.getItem('guest_token') || isEmbedded;
     if (!hasAuth) return;
 
-    const username = localStorage.getItem("principal") || (isEmbedded ? "guest" : "");
+    const username = localStorage.getItem("principal") || (isEmbedded ? "guest_bty" : "");
     if (username) {
       api.isPaappAdmin(username)
         .then(setIsAdmin)

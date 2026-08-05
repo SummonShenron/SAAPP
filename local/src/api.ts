@@ -171,7 +171,8 @@ export async function uploadDocuments(username: string, affiliate: string, files
   Array.from(files).forEach((file) => formData.append("files", file));
 
   const authHeaders = await getAuthHeaders();
-  // Note: We omit "Content-Type" so the browser can calculate its multipart boundaries
+  delete authHeaders["Content-Type"]; // must let the browser set the multipart boundary
+
   const res = await fetch(
     `${BASE_URL}/api/upload?affiliate=${encodeURIComponent(affiliate)}`,
     {
