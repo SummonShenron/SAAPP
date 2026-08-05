@@ -20,10 +20,20 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // --- EMBED MODE DETECTION ---
-  // Checks both query string and HashRouter search params
   const hashSearch = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
   const searchParams = new URLSearchParams(window.location.search || hashSearch);
-  const isEmbedded = searchParams.get('mode') === 'embed';
+  const isEmbedded = searchParams.get('mode') === 'embed' || window.location.href.includes("mode=embed");
+
+  // 1. AUTO-INJECT GUEST CREDENTIALS FOR EMBED MODE
+  useEffect(() => {
+    if (isEmbedded) {
+      if (localStorage.getItem('guest_token') !== 'guest-sandbox-token') {
+        localStorage.setItem('guest_token', 'guest-sandbox-token');
+        localStorage.setItem('principal', 'guest');
+        localStorage.setItem('x-user-id', 'guest');
+      }
+    }
+  }, [isEmbedded]);
 
   const toggleHelp = () => {
     setShowHelp(!showHelp);
@@ -38,6 +48,7 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
     }
   };
 
+  // 2. RUN BACKEND CHECKS AFTER GUEST SESSION IS INJECTED
   useEffect(() => {
     if (!isLoaded) return;
     
@@ -46,7 +57,9 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
 
     const username = localStorage.getItem("principal") || (isEmbedded ? "guest" : "");
     if (username) {
-      api.isPaappAdmin(username).then(setIsAdmin);
+      api.isPaappAdmin(username)
+        .then(setIsAdmin)
+        .catch((err) => console.warn("Admin check skipped for guest:", err));
     }
   }, [isLoaded, isSignedIn, isEmbedded]);
 

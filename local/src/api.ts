@@ -1,8 +1,13 @@
 // src/api.ts
-
-// 1. Automatically adapt the backend URL based on development or production hosting
-// src/api.ts
-// src/api.ts
+declare global {
+  interface Window {
+    Clerk?: {
+      session?: {
+        getToken: () => Promise<string | null>;
+      };
+    };
+  }
+}
 const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
 
 export const BASE_URL = import.meta.env.VITE_API_BASE || 
@@ -26,33 +31,30 @@ export interface MeResponse {
  * Security Helper: Generates authorization headers.
  * It checks if they are logged in as a guest, or requests a fresh JWT from Clerk's global instance.
  */
-async function getAuthHeaders(): Promise<Record<string, string>> {
-  const headers: Record<string, string> = {};
+const getAuthHeaders = async (): Promise<Record<string, string>> => {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
 
-  // 1. Check for Guest Token first
-  const guestToken = localStorage.getItem('guest_token');
-  if (guestToken) {
-    headers["Authorization"] = `Bearer ${guestToken}`;
-    return headers;
+  // Check for active Clerk JWT session
+  let token: string | null | undefined = await window.Clerk?.session?.getToken();
+
+  // If no Clerk token, fallback to localStorage guest token ("guest-sandbox-token")
+  if (!token) {
+    token = localStorage.getItem("guest_token");
   }
 
-  // 2. Check for Clerk Token (Non-blocking)
-  const clerk = (window as any).Clerk;
-  if (clerk?.loaded && clerk?.session) {
-    try {
-      // Use standard session token (or pass template name ONLY if configured in Clerk Dashboard)
-      const clerkToken = await clerk.session.getToken();
-      if (clerkToken) {
-        headers["Authorization"] = `Bearer ${clerkToken}`;
-      }
-    } catch (err) {
-      console.error("Failed to retrieve Clerk JWT:", err);
-    }
+  // Attach Bearer token header
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
   }
+
+  // Attach principal/identity header
+  const principal = localStorage.getItem("principal") || "guest";
+  headers["X-Principal"] = principal;
 
   return headers;
-}
-
+};
 /**
  * Fetch current principal from backend.
  */
