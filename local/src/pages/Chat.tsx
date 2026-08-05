@@ -54,6 +54,16 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [agentStatus, setAgentStatus] = useState<string>('');
   const [agentPath, setAgentPath] = useState<string[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const hashSearch = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
+  const searchParams = new URLSearchParams(window.location.search || hashSearch);
+  const isEmbedded = searchParams.get('mode') === 'embed';
+  const embedAffiliate = 'Affiliate_D';
+
+  useEffect(() => {
+    if (isEmbedded) {
+      setSelectedAffiliate(embedAffiliate);
+    }
+  }, [isEmbedded]);
   // const BASE_URL = "https://saapp.onrender.com/";
   const [feedbackModal, setFeedbackModal] = useState<{ isOpen: boolean; messageId: string | null }>({
     isOpen: false,
@@ -510,8 +520,9 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
 };
   
   return (
-    <div>
-      {/* HERO BANNER */}
+  <div>
+    {/* HERO BANNER (hidden entirely in embed mode) */}
+    {!isEmbedded && (
       <div className="hero-banner" style={{ backgroundImage: `linear-gradient(rgba(18, 24, 36, 0.7), rgba(18, 24, 36, 0.95)), url(${sonicImg})` }}>
         <div className="banner-context">
           <h3>{theme === 'sonic' ? 'Sonic Assistant' : 'Shadow Engine'}</h3>
@@ -519,7 +530,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           {userEmail && <p className="badge">Principal Account Identity: {userEmail}</p>}
         </div>
       </div>
-
+    )}
       {/* PORTAL BODY */}
       <main className={`portal-body ${!hasChatted ? 'initial-state-view' : ''}`}>
 
@@ -543,7 +554,11 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
 
         {/* 2. CHAT MESSAGES WINDOW */}
         {hasChatted && (
-          <div className="chat-window" ref={chatWindowRef} style={{ maxHeight: 'calc(100vh - 380px)', overflowY: 'auto' }}>
+          <div
+              className="chat-window"
+              ref={chatWindowRef}
+              style={isEmbedded ? undefined : { maxHeight: 'calc(100vh - 380px)', overflowY: 'auto' }}
+            >
             {messages
               .filter(msg => !(hasChatted && msg.sender === 'system'))
               .map(msg => (
@@ -639,16 +654,29 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               ))}
 
             {loading && (
-              <div className="sonic-loader-container">
-                <img
-                  src={theme === 'sonic' ? sonicSpinImg : shadowSpinImg}
-                  alt="loading"
-                  style={{ width: '48px', height: '48px' }}
-                />
-                <div className="loading-text">
-                  {getNodeLabel(agentStatus) || "Collecting rings and tokens..."}
+              isEmbedded ? (
+                <div className="bty-loader-container">
+                  <div className="bty-loader-dots">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </div>
+                  <div className="loading-text">
+                    {getNodeLabel(agentStatus) || "Thinking..."}
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="sonic-loader-container">
+                  <img
+                    src={theme === 'sonic' ? sonicSpinImg : shadowSpinImg}
+                    alt="loading"
+                    style={{ width: '48px', height: '48px' }}
+                  />
+                  <div className="loading-text">
+                    {getNodeLabel(agentStatus) || "Collecting rings and tokens..."}
+                  </div>
+                </div>
+              )
             )}
             <div ref={messagesEndRef} />
           </div>
@@ -856,14 +884,15 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               </div>
             </div>
           </form>
-
-          <Filters 
-            selectedAffiliate={selectedAffiliate}
-            setSelectedAffiliate={setSelectedAffiliate}
-            loadingChat={loading}
-            allowedAffiliates={allowedAffiliates}
-            setAllowedAffiliates={setAllowedAffiliates}
-          />
+          {!isEmbedded && (
+            <Filters 
+              selectedAffiliate={selectedAffiliate}
+              setSelectedAffiliate={setSelectedAffiliate}
+              loadingChat={loading}
+              allowedAffiliates={allowedAffiliates}
+              setAllowedAffiliates={setAllowedAffiliates}
+            />
+          )}
         </footer>
 
         {/* --- MOBILE TRACE MODAL DRAWER (Root Level) --- */}

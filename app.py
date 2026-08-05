@@ -206,7 +206,7 @@ async def log_user_login(request: Request, current_user: dict = Depends(get_curr
     email = current_user.get("email") or sub
     
     # Detect if the current principal is a guest session
-    is_guest = (sub == "guest-recruiter@example.com") or (token := request.headers.get("Authorization", "") == "Bearer guest-sandbox-token")
+    is_guest = sub in ("guest-recruiter@example.com", "guest_bty") or request.headers.get("Authorization", "") in ("Bearer guest-sandbox-token", "Bearer guest-bty-token")
 
     record_login_event(
         user_id=sub,
@@ -602,7 +602,7 @@ def sync_run_script(script_path):
 
 @app.post("/api/upload")
 async def upload_and_ingest_documents(
-    affiliate: str,
+    affiliate: str = Query(...),
     files: List[UploadFile] = File(...),
     current_user = Depends(get_current_user)
 ):

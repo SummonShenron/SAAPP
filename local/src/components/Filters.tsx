@@ -22,53 +22,52 @@ export const Filters: React.FC<FiltersProps> = ({
   const principal = localStorage.getItem('principal') ?? "";
 
   useEffect(() => {
-    // 1. Block until Clerk is fully loaded
-    if (!isLoaded) return;
-    
-    const isGuest = principal === 'guest';
-    const hasAuth = isSignedIn || isGuest;
-    
-    if (!hasAuth || !principal) {
-        setFetchingFilters(false);
-        return;
+  const isGuest = principal === 'guest' || principal === 'guest_bty';
+  const guestScope = principal === 'guest_bty' ? 'Affiliate_D' : 'Affiliate_C';
+
+  // Handle guest flows first; do not wait on Clerk
+  if (isGuest) {
+    setAllowedAffiliates([guestScope]);
+    if (selectedAffiliate === 'All' || selectedAffiliate !== guestScope) {
+      setSelectedAffiliate(guestScope);
     }
+    setFetchingFilters(false);
+    return;
+  }
 
-    const fetchUserPermissions = async () => {
-      setFetchingFilters(true);
-      try {
-        // 2. Prevent Guests from hitting the secure database endpoint
-        if (isGuest) {
-          setAllowedAffiliates(['Guest Sandbox']); // Set a default scope for guests
-          if (selectedAffiliate === 'All') {
-            setSelectedAffiliate('Guest Sandbox');
-          }
-          return; // Stop execution here!
-        }
+  // Non-guest users can wait for Clerk
+  if (!isLoaded) {
+    setFetchingFilters(true);
+    return;
+  }
 
-        console.log("Fetching affiliates for:", principal);
-        const affiliates = await api.getAffiliates(principal);
-        console.log("Affiliates received:", affiliates);
-        
-        setAllowedAffiliates(affiliates);
+  if (!isSignedIn || !principal) {
+    setFetchingFilters(false);
+    return;
+  }
 
-        // Safely update parent state
-        if (affiliates.length > 0) {
-          if (selectedAffiliate !== 'All' && !affiliates.includes(selectedAffiliate)) {
-            setSelectedAffiliate(affiliates[0]);
-          }
-        }
-      } catch (err) {
-        console.error("Filter fetch error:", err);
-      } finally {
-        setFetchingFilters(false);
+  const fetchUserPermissions = async () => {
+    setFetchingFilters(true);
+    try {
+      const affiliates = await api.getAffiliates(principal);
+      setAllowedAffiliates(affiliates);
+
+      if (affiliates.length > 0 && selectedAffiliate !== 'All' && !affiliates.includes(selectedAffiliate)) {
+        setSelectedAffiliate(affiliates[0]);
       }
-    };
+    } catch (err) {
+      console.error("Filter fetch error:", err);
+    } finally {
+      setFetchingFilters(false);
+    }
+  };
 
-    fetchUserPermissions();
+  fetchUserPermissions();
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [principal, isLoaded, isSignedIn, setAllowedAffiliates, setSelectedAffiliate]);
     
   // 3. REMOVE `selectedAffiliate` from this array to prevent infinite fetch loops
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [principal, isLoaded, isSignedIn, setAllowedAffiliates, setSelectedAffiliate]);
 
   if (fetchingFilters) {
     return <div className="filter-row"><span>Loading security scope...</span></div>;
