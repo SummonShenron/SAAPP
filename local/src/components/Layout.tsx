@@ -1,3 +1,4 @@
+// src/components/Layout.tsx
 import { Outlet, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { api } from "../api";
@@ -18,6 +19,12 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
   const [closing, setClosing] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  // --- EMBED MODE DETECTION ---
+  // Checks both query string and HashRouter search params
+  const hashSearch = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
+  const searchParams = new URLSearchParams(window.location.search || hashSearch);
+  const isEmbedded = searchParams.get('mode') === 'embed';
+
   const toggleHelp = () => {
     setShowHelp(!showHelp);
     setMobileMenuOpen(false);
@@ -32,22 +39,32 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
   };
 
   useEffect(() => {
-    // Block execution until Clerk script has fully loaded
     if (!isLoaded) return;
     
-    const hasAuth = isSignedIn || !!localStorage.getItem('guest_token');
+    const hasAuth = isSignedIn || !!localStorage.getItem('guest_token') || isEmbedded;
     if (!hasAuth) return;
 
-    const username = localStorage.getItem("principal");
+    const username = localStorage.getItem("principal") || (isEmbedded ? "guest" : "");
     if (username) {
       api.isPaappAdmin(username).then(setIsAdmin);
     }
-  }, [isLoaded, isSignedIn]);
+  }, [isLoaded, isSignedIn, isEmbedded]);
+
   const handleNavClick = (path: string) => {
     navigate(path);
     setMobileMenuOpen(false);
   };
 
+  // If in Embed Mode, return ONLY the page content without top menus/sidebars
+  if (isEmbedded) {
+    return (
+      <div className="portal-container bty-embed-container" style={{ minHeight: '100vh', background: '#121316', padding: 0 }}>
+        <Outlet />
+      </div>
+    );
+  }
+
+  // Regular Standalone Mode Layout
   return (
     <div className={`portal-container ${theme === "shadow" ? "theme-shadow" : ""}`}>
       <nav className="menu-navigator">
@@ -106,10 +123,10 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
         </div>
       )}
 
-      {/* 1. Main page content */}
+      {/* Main page content */}
       <Outlet />
 
-      {/* 2. Sidebar panel */}
+      {/* Sidebar panel */}
       {showHelp && (
         <div className={`help-panel-container ${closing ? "closing" : ""}`}>
           <HelpPanel />

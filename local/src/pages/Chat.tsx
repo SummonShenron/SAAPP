@@ -54,6 +54,20 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [agentStatus, setAgentStatus] = useState<string>('');
   const [agentPath, setAgentPath] = useState<string[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const hashSearch = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
+  const searchParams = new URLSearchParams(window.location.search || hashSearch);
+  const isEmbedded = searchParams.get('mode') === 'embed';
+  const embedAffiliate = searchParams.get('affiliate') || 'Afilliate_D';
+
+  // 1. Force affiliate lock and principal set for embedded session
+  useEffect(() => {
+    if (isEmbedded) {
+      setSelectedAffiliate(embedAffiliate);
+      if (!localStorage.getItem('principal')) {
+        localStorage.setItem('principal', 'guest');
+      }
+    }
+  }, [isEmbedded, embedAffiliate]);
   // const BASE_URL = "https://saapp.onrender.com/";
   const [feedbackModal, setFeedbackModal] = useState<{ isOpen: boolean; messageId: string | null }>({
     isOpen: false,
@@ -512,13 +526,47 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
   return (
     <div>
       {/* HERO BANNER */}
-      <div className="hero-banner" style={{ backgroundImage: `linear-gradient(rgba(18, 24, 36, 0.7), rgba(18, 24, 36, 0.95)), url(${sonicImg})` }}>
-        <div className="banner-context">
-          <h3>{theme === 'sonic' ? 'Sonic Assistant' : 'Shadow Engine'}</h3>
-          <h4>{theme === 'sonic' ? 'Rolling around at the speed of sound.' : 'Behold the Ultimate Power.'}</h4>
-          {userEmail && <p className="badge">Principal Account Identity: {userEmail}</p>}
+      {isEmbedded ? (
+        <div 
+          className="hero-banner bty-embedded-header" 
+          style={{ 
+            background: '#16171b', 
+            borderBottom: '1px solid rgba(56, 194, 222, 0.2)', 
+            padding: '1rem 1.25rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between'
+          }}
+        >
+          <div>
+            <h3 style={{ color: '#38C2DE', margin: 0, fontSize: '1rem', fontWeight: 900, letterSpacing: '0.05em' }}>
+              BTY ATHLETIC ASSISTANT
+            </h3>
+            <p style={{ color: '#A0A5AA', margin: '2px 0 0 0', fontSize: '0.75rem' }}>
+              Index Context: <strong style={{ color: '#FFFFFF' }}>{embedAffiliate}</strong>
+            </p>
+          </div>
+          <span style={{ 
+            background: 'rgba(56, 194, 222, 0.1)', 
+            color: '#38C2DE', 
+            border: '1px solid rgba(56, 194, 222, 0.3)', 
+            fontSize: '0.65rem', 
+            fontWeight: 800, 
+            padding: '0.25rem 0.6rem', 
+            borderRadius: '20px' 
+          }}>
+            LIVE
+          </span>
         </div>
-      </div>
+      ) : (
+        <div className="hero-banner" style={{ backgroundImage: `linear-gradient(rgba(18, 24, 36, 0.7), rgba(18, 24, 36, 0.95)), url(${sonicImg})` }}>
+          <div className="banner-context">
+            <h3>{theme === 'sonic' ? 'Sonic Assistant' : 'Shadow Engine'}</h3>
+            <h4>{theme === 'sonic' ? 'Rolling around at the speed of sound.' : 'Behold the Ultimate Power.'}</h4>
+            {userEmail && <p className="badge">Principal Account Identity: {userEmail}</p>}
+          </div>
+        </div>
+      )}
 
       {/* PORTAL BODY */}
       <main className={`portal-body ${!hasChatted ? 'initial-state-view' : ''}`}>
@@ -856,14 +904,15 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               </div>
             </div>
           </form>
-
-          <Filters 
-            selectedAffiliate={selectedAffiliate}
-            setSelectedAffiliate={setSelectedAffiliate}
-            loadingChat={loading}
-            allowedAffiliates={allowedAffiliates}
-            setAllowedAffiliates={setAllowedAffiliates}
-          />
+          {!isEmbedded && (
+            <Filters 
+              selectedAffiliate={selectedAffiliate}
+              setSelectedAffiliate={setSelectedAffiliate}
+              loadingChat={loading}
+              allowedAffiliates={allowedAffiliates}
+              setAllowedAffiliates={setAllowedAffiliates}
+            />
+          )}
         </footer>
 
         {/* --- MOBILE TRACE MODAL DRAWER (Root Level) --- */}
