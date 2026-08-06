@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { api } from '../api';
+import { api, getScopedStorageValue, isEmbedMode } from '../api';
 import { useAuth } from '@clerk/clerk-react';
 
 interface FiltersProps {
@@ -19,11 +19,11 @@ export const Filters: React.FC<FiltersProps> = ({
 }) => {
   const { isLoaded, isSignedIn } = useAuth();
   const [fetchingFilters, setFetchingFilters] = useState<boolean>(true);
-  const principal = localStorage.getItem('principal') ?? "";
+  const principal = getScopedStorageValue('principal', '') ?? "";
 
   useEffect(() => {
   const isGuest = principal === 'guest' || principal === 'guest_bty';
-  const guestScope = principal === 'guest_bty' ? 'Affiliate_D' : 'Affiliate_C';
+  const guestScope = principal === 'guest_bty' || isEmbedMode() ? 'Affiliate_D' : 'Affiliate_C';
 
   // Handle guest flows first; do not wait on Clerk
   if (isGuest) {

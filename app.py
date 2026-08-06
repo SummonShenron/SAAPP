@@ -42,7 +42,7 @@ from backend.utils.attachment_utils import process_user_attachment, ingest_doc_t
 from backend.utils.fallback_utils import rewrite_fallback
 from backend.logging.sass_logger import setup_logging
 from backend.services.orchestrator import startup_services
-from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, verify_paapp_access, load_directory, seed_guest_tasks
+from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, verify_paapp_access, load_directory, seed_guest_tasks, resolve_effective_affiliate_scope
 from backend.utils.db_utils import get_db
 from backend.auth.isolation_auth import get_current_user, record_login_event
 from contextlib import asynccontextmanager
@@ -319,7 +319,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
     # ---------- Auth Authorization Boundary ----------
     web_triggers = ["search the web", "search online", "search google", "web search", "look up online"]
     force_web_search = any(kw in question.lower() for kw in web_triggers)
-    requested_affiliate = request.affiliate.strip()
+    requested_affiliate = (request.affiliate or "All").strip() or "All"
     directory = load_directory()
     user_claims = directory.get(username, {})
     
@@ -327,13 +327,14 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
     
     if username not in directory:
         raise HTTPException(status_code=401, detail="Unauthorized: User not found.")
-    
-    accessible_affiliates = get_accessible_affiliates(username, directory)
-    
-    if requested_affiliate != "All" and requested_affiliate not in accessible_affiliates["accessible_affiliates"]:
-        raise HTTPException(status_code=403, detail="Security Breach: Unauthorized affiliate scope requested.")
 
-    target_scope = accessible_affiliates["accessible_affiliates"] if requested_affiliate == "All" else [requested_affiliate]
+    try:
+        target_scope, resolved_affiliate = resolve_effective_affiliate_scope(username, requested_affiliate, directory)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    if resolved_affiliate != requested_affiliate:
+        logger.warning("Overriding affiliate scope for %s from %s to %s", username, requested_affiliate, resolved_affiliate)
 
     # ---------- Conversation Memory State Init ----------
     if username not in chat_sessions:

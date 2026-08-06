@@ -61,6 +61,26 @@ def get_accessible_affiliates(username: str, user_directory: dict) -> dict:
         accessible_affiliates.append("Affiliate_D")
     return {"accessible_affiliates": accessible_affiliates}
 
+
+def resolve_effective_affiliate_scope(username: str, requested_affiliate: str, user_directory: dict):
+    """Pin privileged embed identities to Affiliate_D and otherwise enforce the requested scope."""
+    normalized_requested = (requested_affiliate or "All").strip()
+
+    if username == "guest_bty":
+        return ["Affiliate_D"], "Affiliate_D"
+
+    accessible_affiliates = get_accessible_affiliates(username, user_directory)
+    allowed_affiliates = accessible_affiliates.get("accessible_affiliates", [])
+
+    if normalized_requested == "All":
+        return allowed_affiliates, "All"
+
+    if normalized_requested in allowed_affiliates:
+        return [normalized_requested], normalized_requested
+
+    raise ValueError(f"Unauthorized affiliate scope requested: {normalized_requested}")
+
+
 def verify_user_ingest_access(username: str, affiliate: str) -> bool:
     """Validates if the user's groups contain the designated administrative Ingesters role."""
     user_groups = load_user_directory_groups(username) 

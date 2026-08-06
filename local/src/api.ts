@@ -15,6 +15,44 @@ export const BASE_URL = import.meta.env.VITE_API_BASE ||
     ? "http://localhost:8000" 
     : "https://saapp.onrender.com");
 
+export const isEmbedMode = (): boolean => {
+  if (typeof window === 'undefined') return false;
+
+  const hashSearch = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
+  const searchParams = new URLSearchParams(window.location.search || hashSearch);
+  const rawMode = `${searchParams.get('mode') || searchParams.get('embed') || ''}`.toLowerCase();
+  const embedFlags = ['embed', 'embedded', 'true', '1', 'yes', 'widget', 'iframe'];
+  const hasEmbedQuery = embedFlags.includes(rawMode);
+  const isFrame = !!window.frameElement || window.self !== window.top;
+
+  return hasEmbedQuery || isFrame;
+};
+
+export const getScopedStorageValue = (key: string, fallback: string | null = null): string | null => {
+  if (typeof window === 'undefined') return fallback;
+
+  const storageKey = isEmbedMode() ? `saapp_embed_${key}` : key;
+  const value = window.localStorage.getItem(storageKey);
+
+  if (value !== null) return value;
+
+  if (isEmbedMode() && key === 'principal') return 'guest_bty';
+  if (isEmbedMode() && key === 'guest_token') return 'guest-bty-token';
+  if (isEmbedMode() && key === 'x-user-id') return 'guest_bty';
+
+  return fallback ?? window.localStorage.getItem(key);
+};
+
+export const setScopedStorageValue = (key: string, value: string): void => {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(isEmbedMode() ? `saapp_embed_${key}` : key, value);
+};
+
+export const removeScopedStorageValue = (key: string): void => {
+  if (typeof window === 'undefined') return;
+  window.localStorage.removeItem(isEmbedMode() ? `saapp_embed_${key}` : key);
+};
+
 export interface ChatResponse {
   user: string;
   email: string;
@@ -39,9 +77,9 @@ const getAuthHeaders = async (): Promise<Record<string, string>> => {
   // Check for active Clerk JWT session
   let token: string | null | undefined = await window.Clerk?.session?.getToken();
 
-  // If no Clerk token, fallback to localStorage guest token ("guest-sandbox-token")
+  // If no Clerk token, fallback to the scoped guest token
   if (!token) {
-    token = localStorage.getItem("guest_token");
+    token = getScopedStorageValue("guest_token");
   }
 
   // Attach Bearer token header
@@ -50,7 +88,7 @@ const getAuthHeaders = async (): Promise<Record<string, string>> => {
   }
 
   // Attach principal/identity header
-  const principal = localStorage.getItem("principal") || "guest";
+  const principal = getScopedStorageValue("principal", "guest") || "guest";
   headers["X-Principal"] = principal;
 
   return headers;
@@ -370,8 +408,8 @@ export const api = {
     return response.json();
   },
   logout: async () => {
-  // 1. Clear guest token
-  localStorage.removeItem('guest_token');
+  // 1. Clear guest token from the active scope
+  removeScopedStorageValue('guest_token');
 
   // 2. Clear Clerk session
   const clerk = (window as any).Clerk;

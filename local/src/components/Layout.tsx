@@ -1,7 +1,7 @@
 // src/components/Layout.tsx
 import { Outlet, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
-import { api } from "../api";
+import { api, getScopedStorageValue, isEmbedMode, setScopedStorageValue } from "../api";
 import HelpPanel from "../components/HelpPanel";
 import { useAuth } from '@clerk/clerk-react';
 
@@ -20,16 +20,14 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // --- EMBED MODE DETECTION ---
-const hashSearch = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
-const searchParams = new URLSearchParams(window.location.search || hashSearch);
-const isEmbedded = searchParams.get('mode') === 'embed' || window.location.href.includes("mode=embed");
+  const isEmbedded = isEmbedMode();
 
-// Bootstrap BTY guest identity synchronously so children see it on first render
-if (isEmbedded && localStorage.getItem('principal') !== 'guest_bty') {
-  localStorage.setItem('guest_token', 'guest-bty-token');
-  localStorage.setItem('principal', 'guest_bty');
-  localStorage.setItem('x-user-id', 'guest_bty');
-}
+  // Bootstrap BTY guest identity in a scoped storage namespace so it cannot inherit the parent app's identity.
+  if (isEmbedded && getScopedStorageValue('principal', '') !== 'guest_bty') {
+    setScopedStorageValue('guest_token', 'guest-bty-token');
+    setScopedStorageValue('principal', 'guest_bty');
+    setScopedStorageValue('x-user-id', 'guest_bty');
+  }
   const toggleHelp = () => {
     setShowHelp(!showHelp);
     setMobileMenuOpen(false);
@@ -47,10 +45,10 @@ if (isEmbedded && localStorage.getItem('principal') !== 'guest_bty') {
   useEffect(() => {
     if (!isLoaded) return;
     
-    const hasAuth = isSignedIn || !!localStorage.getItem('guest_token') || isEmbedded;
+    const hasAuth = isSignedIn || !!getScopedStorageValue('guest_token') || isEmbedded;
     if (!hasAuth) return;
 
-    const username = localStorage.getItem("principal") || (isEmbedded ? "guest_bty" : "");
+    const username = getScopedStorageValue("principal", isEmbedded ? "guest_bty" : "") || "";
     if (username) {
       api.isPaappAdmin(username)
         .then(setIsAdmin)

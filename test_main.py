@@ -14,11 +14,26 @@ from backend.state.graph_state import GraphState, route_user_query
 from backend.services.agent_workflow import retrieve_node, grading_node, rewrite_query_node
 from backend.services.search import _detect_routing_strategy
 from app import rewrite_fallback
+from backend.utils.isolation_kb_utils import resolve_effective_affiliate_scope
 
 class MockLLM:
     def invoke(self, prompt):
         return AIMessage(content="Rewritten: facts about Goku in DBZ")
     
+class TestEmbedAffiliateSecurity(unittest.TestCase):
+    def test_guest_bty_scope_is_forced_to_affiliate_d(self):
+        directory = {"guest_bty": {"groups": ["Affiliate_A", "Affiliate_B", "Affiliate_C", "Affiliate_D"]}}
+        scope, resolved_affiliate = resolve_effective_affiliate_scope("guest_bty", "All", directory)
+        self.assertEqual(scope, ["Affiliate_D"])
+        self.assertEqual(resolved_affiliate, "Affiliate_D")
+
+    def test_guest_bty_scope_rejects_other_affiliates(self):
+        directory = {"guest_bty": {"groups": ["Affiliate_A", "Affiliate_B", "Affiliate_C", "Affiliate_D"]}}
+        scope, resolved_affiliate = resolve_effective_affiliate_scope("guest_bty", "Affiliate_A", directory)
+        self.assertEqual(scope, ["Affiliate_D"])
+        self.assertEqual(resolved_affiliate, "Affiliate_D")
+
+
 class TestGraphState(unittest.TestCase):
 
     def setUp(self):

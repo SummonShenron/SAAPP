@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import sonicImg from '../assets/sonicandshadow.jpg';
 import { Filters } from '../components/Filters';
 import { getDynamicExampleQuestions } from '../utils/Example_List';
-import { api, BASE_URL} from '../api'; 
+import { api, BASE_URL, getScopedStorageValue, isEmbedMode, setScopedStorageValue } from '../api'; 
 import ReactMarkdown from 'react-markdown';
 import sonicSpinImg from '../assets/sonic-rolling.gif';
 import shadowSpinImg from '../assets/shadow.gif';
@@ -46,7 +46,8 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   };
   const [traceSteps, setTraceSteps] = useState<TraceStep[]>([]);
   const { isLoaded, isSignedIn, getToken } = useAuth();
-  const principal = localStorage.getItem("principal") ?? "";
+  const isEmbedded = isEmbedMode();
+  const principal = getScopedStorageValue("principal", "") ?? "";
   const [selectedAffiliate, setSelectedAffiliate] = useState<string>('All');
   const [allowedAffiliates, setAllowedAffiliates] = useState<string[]>([]);
   const [userEmail, setUserEmail] = useState<string>('');
@@ -54,9 +55,6 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [agentStatus, setAgentStatus] = useState<string>('');
   const [agentPath, setAgentPath] = useState<string[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
-  const hashSearch = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
-  const searchParams = new URLSearchParams(window.location.search || hashSearch);
-  const isEmbedded = searchParams.get('mode') === 'embed';
   const embedAffiliate = 'Affiliate_D';
 
   useEffect(() => {
@@ -141,7 +139,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   
   useEffect(() => {
     if (!isLoaded) return;
-    const isGuest = localStorage.getItem('principal') === 'guest';
+    const isGuest = principal === 'guest' || principal === 'guest_bty';
     if (!isGuest && !isSignedIn) return;
   }, [isLoaded, isSignedIn]);
 
@@ -165,7 +163,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     setMessages([
       { id: genId(), sender: 'system', text: `What would you like to find out about, ${principal}?` }
     ]);
-    setSelectedAffiliate('All');
+    setSelectedAffiliate(isEmbedded ? embedAffiliate : 'All');
     setAgentStatus('');
     setAgentPath([]);
     setHasChatted(false);
@@ -460,9 +458,9 @@ const sendFeedbackPayload = async (
   tag: string
 ) => {
   let token: string | null = null;
-  const isGuest = localStorage.getItem('principal') === 'guest';
+  const isGuest = principal === 'guest' || principal === 'guest_bty';
   if (isGuest) {
-    token = localStorage.getItem('guest_token');
+    token = getScopedStorageValue('guest_token');
   } else if (getToken) {
     token = await getToken();
   }
@@ -582,9 +580,9 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                               }
                               try {
                                 let token = null;
-                                const isGuest = localStorage.getItem('principal') === 'guest';
+                                const isGuest = principal === 'guest' || principal === 'guest_bty';
                                 if (isGuest) {
-                                  token = localStorage.getItem('guest_token');
+                                  token = getScopedStorageValue('guest_token');
                                 } else if (getToken) {
                                   token = await getToken();
                                 }
