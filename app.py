@@ -512,16 +512,23 @@ async def clear_chat(request: Request, user = Depends(get_current_user)):
     db = get_db()
     data = await request.json()
     session_id = data.get("session_id")
+    username = data.get("username") or user.get("sub") or user.get("email")
 
-    # Wipe by session_id OR user_id (covers all bases)
-    await db.chat_history.delete_many({
-        "$or": [
-            {"session_id": session_id},
-            {"user_id": user.id},
-            {"username": data.get("username")}
-        ]
+    filters = [{"username": username}] if username else []
+    if session_id:
+        filters.append({"session_id": session_id})
+
+    if user.get("sub"):
+        filters.append({"user_id": user.get("sub")})
+
+    if not filters:
+        return {"status": "cleared", "count": 0}
+
+    # Wipe by session_id OR user id/username (covers all bases)
+    result = await db.chat_history.delete_many({
+        "$or": filters
     })
-    return {"status": "cleared"}
+    return {"status": "cleared", "count": result.deleted_count}
 
 @app.post("/api/upload-attachment")
 async def upload_attachment(

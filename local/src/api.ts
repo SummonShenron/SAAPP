@@ -15,6 +15,32 @@ export const BASE_URL = import.meta.env.VITE_API_BASE ||
     ? "http://localhost:8000" 
     : "https://saapp.onrender.com");
 
+function getEmbeddedMode(): boolean {
+  const hash = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
+  const searchParams = new URLSearchParams(window.location.search || hash);
+  return searchParams.get('mode') === 'embed' || window.location.href.includes('mode=embed');
+}
+
+function isGuestPrincipal(principal: string | null | undefined): boolean {
+  return principal === 'guest' || principal === 'guest_bty';
+}
+
+export function getEffectivePrincipal(): string {
+  const embeddedMode = getEmbeddedMode();
+  const storedPrincipal = localStorage.getItem('principal');
+  const candidatePrincipal = embeddedMode ? 'guest_bty' : (storedPrincipal || 'guest');
+
+  if (isGuestPrincipal(candidatePrincipal)) {
+    const guestToken = candidatePrincipal === 'guest_bty' ? 'guest-bty-token' : 'guest-sandbox-token';
+    localStorage.setItem('guest_token', guestToken);
+    localStorage.setItem('principal', candidatePrincipal);
+    localStorage.setItem('x-user-id', candidatePrincipal);
+    return candidatePrincipal;
+  }
+
+  return storedPrincipal || candidatePrincipal;
+}
+
 export interface ChatResponse {
   user: string;
   email: string;
@@ -31,27 +57,30 @@ export interface MeResponse {
  * Security Helper: Generates authorization headers.
  * It checks if they are logged in as a guest, or requests a fresh JWT from Clerk's global instance.
  */
-const getAuthHeaders = async (): Promise<Record<string, string>> => {
+export const getAuthHeaders = async (): Promise<Record<string, string>> => {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
 
-  // Check for active Clerk JWT session
-  let token: string | null | undefined = await window.Clerk?.session?.getToken();
+  const principal = getEffectivePrincipal();
 
-  // If no Clerk token, fallback to localStorage guest token ("guest-sandbox-token")
+  let token: string | null | undefined = null;
+  if (isGuestPrincipal(principal)) {
+    token = principal === 'guest_bty' ? 'guest-bty-token' : 'guest-sandbox-token';
+  } else {
+    token = await window.Clerk?.session?.getToken();
+  }
+
   if (!token) {
     token = localStorage.getItem("guest_token");
   }
 
-  // Attach Bearer token header
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  // Attach principal/identity header
-  const principal = localStorage.getItem("principal") || "guest";
   headers["X-Principal"] = principal;
+  headers["x-user-id"] = principal;
 
   return headers;
 };

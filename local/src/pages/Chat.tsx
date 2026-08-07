@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import sonicImg from '../assets/sonicandshadow.jpg';
 import { Filters } from '../components/Filters';
 import { getDynamicExampleQuestions } from '../utils/Example_List';
-import { api, BASE_URL} from '../api'; 
+import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal } from '../api'; 
 import ReactMarkdown from 'react-markdown';
 import sonicSpinImg from '../assets/sonic-rolling.gif';
 import shadowSpinImg from '../assets/shadow.gif';
@@ -46,7 +46,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   };
   const [traceSteps, setTraceSteps] = useState<TraceStep[]>([]);
   const { isLoaded, isSignedIn, getToken } = useAuth();
-  const principal = localStorage.getItem("principal") ?? "";
+  const principal = getEffectivePrincipal();
   const [selectedAffiliate, setSelectedAffiliate] = useState<string>('All');
   const [allowedAffiliates, setAllowedAffiliates] = useState<string[]>([]);
   const [userEmail, setUserEmail] = useState<string>('');
@@ -141,7 +141,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   
   useEffect(() => {
     if (!isLoaded) return;
-    const isGuest = localStorage.getItem('principal') === 'guest';
+    const isGuest = ['guest', 'guest_bty'].includes(localStorage.getItem('principal') || '');
     if (!isGuest && !isSignedIn) return;
   }, [isLoaded, isSignedIn]);
 
@@ -171,9 +171,13 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     setHasChatted(false);
     localStorage.removeItem(`chat-messages-${principal}`);
     try {
-      await fetch('https://saapp.onrender.com/api/chat/clear', {
+      const authHeaders = await getAuthHeaders();
+      await fetch(`${BASE_URL}/api/chat/clear`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders
+        },
         body: JSON.stringify({ username: principal })
       });
     } catch (e) {
@@ -460,7 +464,7 @@ const sendFeedbackPayload = async (
   tag: string
 ) => {
   let token: string | null = null;
-  const isGuest = localStorage.getItem('principal') === 'guest';
+  const isGuest = ['guest', 'guest_bty'].includes(localStorage.getItem('principal') || '');
   if (isGuest) {
     token = localStorage.getItem('guest_token');
   } else if (getToken) {
@@ -582,7 +586,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                               }
                               try {
                                 let token = null;
-                                const isGuest = localStorage.getItem('principal') === 'guest';
+                                const isGuest = ['guest', 'guest_bty'].includes(localStorage.getItem('principal') || '');
                                 if (isGuest) {
                                   token = localStorage.getItem('guest_token');
                                 } else if (getToken) {

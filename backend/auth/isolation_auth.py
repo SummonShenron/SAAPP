@@ -30,6 +30,17 @@ def get_clerk_public_key():
 
 async def get_current_user(request: Request):
     auth_header = request.headers.get("Authorization")
+    principal_hint = request.headers.get("x-principal") or request.headers.get("X-Principal") or request.headers.get("x-user-id")
+    normalized_principal = (principal_hint or "").strip()
+
+    if normalized_principal == "guest":
+        logger.info("Guest principal override detected. Bypassing JWT verification.")
+        return {"sub": "guest-recruiter@example.com", "email": "guest@example.com"}
+
+    if normalized_principal == "guest_bty":
+        logger.info("BTY embedded guest principal override detected. Bypassing JWT verification.")
+        return {"sub": "guest_bty", "email": "guest_bty@bty.local"}
+
     if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
     
