@@ -1,7 +1,7 @@
 // src/components/Layout.tsx
 import { Outlet, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
-import { api } from "../api";
+import { api, getEffectivePrincipal } from "../api";
 import HelpPanel from "../components/HelpPanel";
 import { useAuth } from '@clerk/clerk-react';
 
@@ -24,11 +24,9 @@ const hashSearch = window.location.hash.includes('?') ? window.location.hash.spl
 const searchParams = new URLSearchParams(window.location.search || hashSearch);
 const isEmbedded = searchParams.get('mode') === 'embed' || window.location.href.includes("mode=embed");
 
-// Bootstrap BTY guest identity synchronously so children see it on first render
-if (isEmbedded && localStorage.getItem('principal') !== 'guest_bty') {
-  localStorage.setItem('guest_token', 'guest-bty-token');
-  localStorage.setItem('principal', 'guest_bty');
-  localStorage.setItem('x-user-id', 'guest_bty');
+// Bootstrap guest identity synchronously so children see it on first render
+if (typeof window !== 'undefined') {
+  getEffectivePrincipal();
 }
   const toggleHelp = () => {
     setShowHelp(!showHelp);
