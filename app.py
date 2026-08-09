@@ -76,6 +76,7 @@ sentry_sdk.init(
     dsn="https://b861248133e1119dfab9cf667d678cb7@o4511878195314688.ingest.us.sentry.io/4511878257573888", # Free Sentry DSN
     traces_sample_rate=1.0, # Tracing
 )
+sentry_sdk.set_tag("repository", "SummonShenron/SAAPP")
 # 3. Pass the lifespan to the app
 app = FastAPI(title="Secure RAG Engine API", lifespan=lifespan)
 app.add_middleware(
