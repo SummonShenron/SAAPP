@@ -1035,6 +1035,12 @@ async def health_check():
     logger.info("Checking health")
     return {"status": "healthy", "database_connected": os.path.exists(DB_DIR)}
 
-@app.get("/sentry-debug")
+@app.get("/api/sentry-debug")
 async def trigger_error():
-    division_by_zero = 1 / 0
+    logger.info("--> /sentry-debug endpoint was successfully hit!")
+    try:
+        division_by_zero = 1 / 0
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        logger.info("--> Manually sent exception to Sentry SDK")
+        raise e
