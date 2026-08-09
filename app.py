@@ -51,6 +51,7 @@ from backend.components.time_storage import TimeEntryCreate, add_time_entry, loa
 import aiohttp
 import aiohttp.resolver
 import settings
+import sentry_sdk
 
 def is_local_dev():
     return os.getenv("LOCAL_DEV", "false").lower() == "true"
@@ -71,7 +72,10 @@ async def lifespan(app: FastAPI):
     yield
     # Cleanup tasks would go here
     chat_sessions = {}
-
+sentry_sdk.init(
+    dsn="https://b861248133e1119dfab9cf667d678cb7@o4511878195314688.ingest.us.sentry.io/4511878257573888", # Free Sentry DSN
+    traces_sample_rate=1.0, # Tracing
+)
 # 3. Pass the lifespan to the app
 app = FastAPI(title="Secure RAG Engine API", lifespan=lifespan)
 app.add_middleware(
@@ -1031,3 +1035,6 @@ async def health_check():
     logger.info("Checking health")
     return {"status": "healthy", "database_connected": os.path.exists(DB_DIR)}
 
+@app.get("/sentry-debug")
+async def trigger_error():
+    division_by_zero = 1 / 0
