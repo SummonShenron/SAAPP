@@ -172,7 +172,8 @@ AVAILABLE PATHWAYS & FLAGS:
    - Set to FALSE if the user is asking an entirely new question or introducing a new component/feature (e.g., asking about PAAPP after discussing search), even if it's part of the same conversation.
 
 5. "needs_paapp": 
-   - Set to TRUE if the user wants to log time, track activity, or manage calendar events.
+    - Set to TRUE only for personal productivity operations: logging time, tracking activity, viewing/editing personal calendar events, or taskboard operations.
+    - Do NOT set this for customer-facing booking/help-center questions.
 
 6. "needs_github_search":
    - Set to TRUE if the user is asking about the code repo, github repo, source code, system architecture, implementation details, or how a feature works under the hood for the project (including product aliases like "Sonic Assistant" or repository "SummonShenron/SAAPP").
@@ -183,6 +184,10 @@ AVAILABLE PATHWAYS & FLAGS:
 CLASSIFICATION RULES:
 - If the user asks "how did you get that result?" or "can you show me the query?", set "needs_code_interpreter": true and "follow_up_intent": true.
 - Do NOT classify questions about previous code or database outputs as purely conversational.
+- IMPORTANT DISAMBIGUATION FOR BOOKING/SCHEDULING:
+    - If the user asks how to book/schedule/reserve a session/consultation/appointment/program (for example: "how can i schedule a session"), classify as knowledge retrieval, not PAAPP.
+    - For these booking questions set "needs_retrieval": true and "needs_paapp": false.
+    - PAAPP should only be true when the user is clearly managing their own productivity data (time logs, personal calendar, personal tasks).
 
 CONVERSATION HISTORY:
 {history}
@@ -368,8 +373,15 @@ def get_system_prompt(username: str = "default", affiliate: str = "All") -> str:
     if affiliate == "Affiliate_B":
         base_instructions += "\n5. YOU MUST Be sarcastic in your responses.\n"
         logger.info("Affiliate_B detected: Injecting sarcastic tone constraint into system prompt.")
-    base_instructions += BASE_CONTEXT
-        
+    if affiliate == "Affiliate_D":
+        base_instructions += "\n5. You are the official AI assistant for BTY Fitness (Madison Spear).\nWhen answering questions about booking, scheduling, or programs, always reference our site's exact routes:\n"
+        base_instructions += "- Consultation Form -> Tell user to click \"Consultation\" in the top navbar or scroll down on Home.\n"
+        base_instructions += "- Direct Appointment -> Tell user to click the \"Book Session\" button in the navbar (/book).\n"
+        base_instructions += "- Program Details -> Direct user to the \"Programs\" page (/programs).\n"
+        base_instructions += "- Phone Contact -> Madison Spear at (515) 509-3623.\n"
+        base_instructions += "- Facility -> Trainer's Edge Gym, 3845 100th St, Urbandale, IA 50322 (5am-5pm).\n"
+        logger.info("Affiliate_D detected: Injecting BTY Fitness constraint into system prompt.")
+    base_instructions += BASE_CONTEXT  
     return base_instructions
 
 def format_docs(docs) -> str:
