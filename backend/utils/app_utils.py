@@ -2,6 +2,7 @@ import asyncio
 import os
 import re
 import datetime
+import traceback
 from typing import Dict, Any, Optional
 from urllib import request as urllib_request, error as urllib_error
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
@@ -312,11 +313,11 @@ def build_erragent_ingest_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     return normalized_payload
 
+
 def pick_repo_from_metadata(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
     if not isinstance(metadata, dict):
         return None
 
-    # Direct common keys
     for key in ("repository", "repo", "target_repo"):
         value = metadata.get(key)
         if isinstance(value, str) and value.strip():
@@ -352,13 +353,11 @@ def resolve_target_repo(service_name: str, payload_repo: Optional[str], metadata
     if metadata_repo:
         return metadata_repo, "metadata"
 
-    registry_repo = resolve_service_registry_repo(service_name)
-    if registry_repo:
-        return registry_repo, "service_registry"
-
     default_repo = os.getenv("DEFAULT_TARGET_REPO", DEFAULT_TARGET_REPO_FALLBACK).strip() or DEFAULT_TARGET_REPO_FALLBACK
     return default_repo, "default"
 
+
+# --- HTTP DISPATCH ---
 def post_erragent_ingest(payload: Dict[str, Any]) -> Dict[str, Any]:
     ingest_url = os.getenv("ERRAGENT_INGEST_URL", DEFAULT_ERRAGENT_INGEST_URL).strip()
     ingest_secret = os.getenv("ERRAGENT_INGEST_SECRET")
@@ -380,18 +379,64 @@ def post_erragent_ingest(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         with urllib_request.urlopen(req, timeout=60) as response:
-            response_body = response.read().decode("utf-8")
             return {
                 "status_code": response.getcode(),
-                "body": response_body,
+                "body": response.read().decode("utf-8"),
             }
     except urllib_error.HTTPError as exc:
-        error_body = exc.read().decode("utf-8", errors="replace")
         return {
             "status_code": exc.code,
-            "body": error_body,
+            "body": exc.read().decode("utf-8", errors="replace"),
         }
 
 
 async def send_erragent_ingest(payload: Dict[str, Any]) -> Dict[str, Any]:
     return await asyncio.to_thread(post_erragent_ingest, payload)
+
+
+# --- NON-BLOCKING BACKGROUND DISPATCH & PAYLOAD BUILDER ---
+async def safe_send_erragent_ingest(payload: Dict[str, Any]) -> None:
+    """Executes send_erragent_ingest safely in the background."""
+    try:
+        result = await send_erragent_ingest(payload)
+        logger.info(
+            "--> [errAgent] Background dispatch status=%s body=%s",
+            result.get("status_code"),
+            result.get("body"),
+        )
+    except Exception as exc:
+        logger.error("--> [errAgent] Background dispatch failed: %s", str(exc))
+
+
+_background_tasks = set()
+
+def dispatch_erragent_ingest(payload: Dict[str, Any]) -> None:
+    """Fire-and-forget task scheduled on the running async event loop."""
+    task = asyncio.create_task(safe_send_erragent_ingest(payload))
+    
+    # Store strong reference
+    _background_tasks.add(task)
+    
+    # Remove from set once completed
+    task.add_done_callback(_background_tasks.discard)
+
+
+def build_error_payload(
+    exc: Exception,
+    service_default: str = "saapp",
+    source: str = "unknown",
+    method: str = "N/A",
+) -> Dict[str, Any]:
+    """Helper to consistently format exception payloads for errAgent."""
+    stack_trace = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    return {
+        "service_name": os.getenv("ERRAGENT_SERVICE_NAME", service_default),
+        "error_message": str(exc),
+        "stack_trace": stack_trace,
+        "environment": os.getenv("APP_ENV", os.getenv("ENVIRONMENT", "production")),
+        "metadata": {
+            "source": source,
+            "method": method,
+            "exception_type": exc.__class__.__name__,
+        },
+    }

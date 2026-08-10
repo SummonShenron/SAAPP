@@ -11,7 +11,7 @@ import urllib.parse
 import re
 from gridfs import GridFSBucket
 from bson import ObjectId, errors
-from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Query, Form, Request, Depends, BackgroundTasks
+from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Query, Form, Request, Depends, BackgroundTasks, status
 from typing import List, Dict, Any, Optional
 import uuid
 import traceback
@@ -19,7 +19,7 @@ from gridfs import GridFS
 from bson.objectid import ObjectId
 from datetime import datetime, timezone
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from backend.components import taskboard
@@ -54,14 +54,17 @@ from backend.utils.app_utils import (
     validate_app_ingest_identity,
     build_erragent_ingest_payload,
     pick_repo_from_metadata,
-    send_erragent_ingest
+    send_erragent_ingest,
+    dispatch_erragent_ingest,
+    build_error_payload,
+    resolve_target_repo,
 )
 from backend.utils.attachment_utils import process_user_attachment, ingest_doc_to_session
 from backend.utils.fallback_utils import rewrite_fallback
 from backend.logging.sass_logger import setup_logging
 from backend.services.orchestrator import startup_services
 from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, verify_paapp_access, load_directory, seed_guest_tasks
-from backend.utils.db_utils import get_db
+from backend.utils.db_utils import get_db, save_error_event
 from backend.auth.isolation_auth import get_current_user, record_login_event
 from contextlib import asynccontextmanager
 from settings import DB_DIR
@@ -143,6 +146,41 @@ class FeedbackPayload(BaseModel):
     tag: str  # e.g., "hallucination", "incorrect_filter", "formatting"
     rating: Optional[str] = "negative" # "positive" or "negative"
 
+class IngestPayload(BaseModel):
+    service_name: str
+    error_message: str
+    stack_trace: str
+    environment: Optional[str] = None
+    repository: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+class StatusUpdate(BaseModel):
+    status: str
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    # Re-raise standard FastAPI HTTP exceptions so they return their intended status code (e.g. 401, 404)
+    if isinstance(exc, HTTPException):
+        raise exc
+
+    logger.error("--> [SAAPP] Caught unhandled exception on %s [%s]: %s", request.url.path, request.method, str(exc))
+
+    # 1. Build standardized error payload
+    payload = build_error_payload(
+        exc=exc,
+        service_default="btyapp",
+        source=request.url.path,
+        method=request.method,
+    )
+
+    # 2. Fire-and-forget in background
+    dispatch_erragent_ingest(payload)
+
+    # 3. Return clean 500
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error"},
+    )
 
 @app.get("/api/me")
 def get_me(current_user: dict = Depends(get_current_user)):
@@ -1035,85 +1073,64 @@ async def store_feedback(
     return {"status": "success", "message": "Feedback indexed for dynamic self-correction."}
 
 
-@app.post("/webhooks/app-ingest")
-async def app_to_app_ingest(request: Request):
-    """Receives app-to-app incidents/events using either app-scoped or legacy shared-secret auth."""
-    db = get_db()
-    if db is None:
-        raise HTTPException(status_code=500, detail="Database connection unavailable")
+@app.post("/api/v1/webhooks/ingest", status_code=status.HTTP_200_OK)
+async def ingest_error_webhook(
+    payload: IngestPayload,
+    x_ingest_secret: Optional[str] = Header(default=None, alias="X-Ingest-Secret"),
+):
+    configured_secret = os.getenv("INGEST_WEBHOOK_SECRET")
+    if not configured_secret:
+        logger.error("INGEST_WEBHOOK_SECRET is not configured")
+        raise HTTPException(status_code=503, detail="Ingest is not configured")
 
-    app_id = (request.headers.get("X-App-Id") or request.headers.get("x-app-id") or "").strip() or None
-    ingest_secret = (request.headers.get("X-Ingest-Secret") or request.headers.get("x-ingest-secret") or "").strip()
+    if x_ingest_secret != configured_secret:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"accepted": False, "error": "invalid_ingest_secret"},
+        )
 
-    if not ingest_secret:
-        raise HTTPException(status_code=401, detail="Missing ingest secret.")
+    resolved_repo, resolved_via = resolve_target_repo(
+        service_name=payload.service_name,
+        payload_repo=payload.repository,
+        metadata=payload.metadata,
+    )
 
-    client_doc = await validate_app_ingest_identity(db, app_id, ingest_secret)
+    event_doc = {
+        "service_name": payload.service_name.strip(),
+        "error_message": payload.error_message,
+        "stack_trace": payload.stack_trace,
+        "environment": payload.environment or "unknown",
+        "repository": resolved_repo,
+        "resolved_via": resolved_via,
+        "metadata": payload.metadata or {},
+        "source": "direct_ingest",
+    }
 
     try:
-        payload = await request.json()
-    except Exception:
-        payload = {}
-
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="Invalid JSON payload.")
-
-    app_default_repo = client_doc.get("default_repo") if client_doc else None
-    resolved_repo = await resolve_app_ingest_repo(db, payload, app_id, app_default_repo)
-
-    incident_doc = {
-        "id": str(uuid.uuid4()),
-        "payload": payload,
-        "metadata": {
-            "service_name": payload.get("service_name") or payload.get("service") or payload.get("source_service") or "unknown",
-            "resolved_repo": resolved_repo,
-            "ingested_at": datetime.now(timezone.utc).isoformat(),
-        },
-    }
-
-    if app_id:
-        incident_doc["metadata"]["app_id"] = app_id
-
-    await db["ingest_events"].insert_one(incident_doc)
-    logger.info("[+] App ingest accepted for app_id=%s -> repo=%s", app_id or "legacy", resolved_repo)
+        event_id = save_error_event(event_doc)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("Failed to persist ingest event: %s", str(exc))
+        raise HTTPException(status_code=500, detail="Failed to store ingest event") from exc
 
     return {
-        "status": "accepted",
-        "app_id": app_id,
-        "resolved_repo": resolved_repo,
-        "metadata": incident_doc["metadata"],
+        "accepted": True,
+        "status": "stored",
+        "event_id": event_id,
+        "service_name": payload.service_name,
+        "resolved_repository": resolved_repo,
+        "resolved_via": resolved_via,
     }
 
-
+# -------------------------------------------------------------
+# 5. TEST ROUTES
+# -------------------------------------------------------------
 @app.get("/api/erragent-debug")
 async def trigger_error():
     logger.info("--> /api/erragent-debug endpoint hit!")
-    try:
-        division_by_zero = 1 / 0
-    except Exception as e:
-        stack_trace = traceback.format_exc()
-        ingest_payload = {
-            "service_name": os.getenv("ERRAGENT_SERVICE_NAME", "saapp"),
-            "error_message": str(e),
-            "stack_trace": stack_trace,
-            "environment": os.getenv("APP_ENV", os.getenv("ENVIRONMENT", "production")),
-            "metadata": {
-                "source": "api/erragent-debug",
-                "exception_type": e.__class__.__name__,
-            },
-        }
-
-        try:
-            ingest_result = await send_erragent_ingest(ingest_payload)
-            logger.info(
-                "--> ErrAgent response: status=%s body=%s",
-                ingest_result.get("status_code"),
-                ingest_result.get("body"),
-            )
-        except Exception as ingest_exc:
-            logger.error("--> Failed posting debug exception to ErrAgent: %s", str(ingest_exc))
-
-        raise e
+    # Intentionally trigger zero division; caught automatically by global_exception_handler!
+    return 1 / 0
     
 @app.post("/webhooks/github")
 async def github_webhook(request: Request, background_tasks: BackgroundTasks):
