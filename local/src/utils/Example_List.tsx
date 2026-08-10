@@ -24,6 +24,8 @@ const AFFILIATE_QUESTION_POOLS: Record<string, string[]> = {
     "How does the Sonic Assistant enforce data isolation?"
   ],
   'Affiliate_D': [
+    "How do I book a session?",
+    "Where is Trainer's Edge, and how can I get in contact with Madison?",
     "What is the proper deadlift form?",
     "How soon should I eat after a workout?",
     "What should I eat before and after my workouts?"
