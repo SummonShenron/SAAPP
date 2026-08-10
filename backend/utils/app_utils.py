@@ -379,7 +379,7 @@ def post_erragent_ingest(payload: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     try:
-        with urllib_request.urlopen(req, timeout=10) as response:
+        with urllib_request.urlopen(req, timeout=60) as response:
             response_body = response.read().decode("utf-8")
             return {
                 "status_code": response.getcode(),
