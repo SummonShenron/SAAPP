@@ -37,7 +37,7 @@ from backend.services.search import discover_workspace_documents
 from local_function_app.function_app import run_ingestion_pipeline, HOT_FOLDER_DIR
 from backend.state.graph_state import GraphState
 from backend.services.insights_workflow import create_insight_workflow
-from backend.utils.app_utils import save_conversation, list_saved_conversations, load_saved_conversations, load_saved_conversation, save_chat_history, format_history_as_text, chat_sessions, get_db_dependency, serialize_doc, load_chat_history, fetch_relevant_corrections
+from backend.utils.app_utils import save_conversation, list_saved_conversations, load_saved_conversations, load_saved_conversation, save_chat_history, format_history_as_text, chat_sessions, get_db_dependency, serialize_doc, load_chat_history, fetch_relevant_corrections, extract_target_repo, resolve_app_ingest_repo, validate_app_ingest_identity 
 from backend.utils.attachment_utils import process_user_attachment, ingest_doc_to_session
 from backend.utils.fallback_utils import rewrite_fallback
 from backend.logging.sass_logger import setup_logging
@@ -51,7 +51,9 @@ from backend.components.time_storage import TimeEntryCreate, add_time_entry, loa
 import aiohttp
 import aiohttp.resolver
 import settings
-import sentry_sdk
+
+DEFAULT_TARGET_REPO = os.getenv("DEFAULT_TARGET_REPO", "SummonShenron/SAAPP")
+LEGACY_INGEST_SECRET = os.getenv("ERRAGENT_INGEST_SECRET", "")
 
 def is_local_dev():
     return os.getenv("LOCAL_DEV", "false").lower() == "true"
@@ -72,11 +74,6 @@ async def lifespan(app: FastAPI):
     yield
     # Cleanup tasks would go here
     chat_sessions = {}
-sentry_sdk.init(
-    dsn="https://b861248133e1119dfab9cf667d678cb7@o4511878195314688.ingest.us.sentry.io/4511878257573888", # Free Sentry DSN
-    traces_sample_rate=1.0, # Tracing
-)
-sentry_sdk.set_tag("repository", "SummonShenron/SAAPP")
 # 3. Pass the lifespan to the app
 app = FastAPI(title="Secure RAG Engine API", lifespan=lifespan)
 app.add_middleware(
@@ -99,6 +96,7 @@ logger.info("--- BOOTING SECURE KNOWLEDGE ASSISTANT ---")
 services = startup_services()
 insight_workflow = services["insight_workflow"]
 chat_sessions = {}
+
 
 class LoginRequest(BaseModel):
     username: str
@@ -1018,6 +1016,118 @@ async def store_feedback(
     logger.info(f"[+] Correction stored for {username} (Tag: {payload.tag}): {payload.reason}")
     return {"status": "success", "message": "Feedback indexed for dynamic self-correction."}
 
+
+@app.post("/webhooks/app-ingest")
+async def app_to_app_ingest(request: Request):
+    """Receives app-to-app incidents/events using either app-scoped or legacy shared-secret auth."""
+    db = get_db()
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database connection unavailable")
+
+    app_id = (request.headers.get("X-App-Id") or request.headers.get("x-app-id") or "").strip() or None
+    ingest_secret = (request.headers.get("X-Ingest-Secret") or request.headers.get("x-ingest-secret") or "").strip()
+
+    if not ingest_secret:
+        raise HTTPException(status_code=401, detail="Missing ingest secret.")
+
+    client_doc = await validate_app_ingest_identity(db, app_id, ingest_secret)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON payload.")
+
+    app_default_repo = client_doc.get("default_repo") if client_doc else None
+    resolved_repo = await resolve_app_ingest_repo(db, payload, app_id, app_default_repo)
+
+    incident_doc = {
+        "id": str(uuid.uuid4()),
+        "payload": payload,
+        "metadata": {
+            "service_name": payload.get("service_name") or payload.get("service") or payload.get("source_service") or "unknown",
+            "resolved_repo": resolved_repo,
+            "ingested_at": datetime.now(timezone.utc).isoformat(),
+        },
+    }
+
+    if app_id:
+        incident_doc["metadata"]["app_id"] = app_id
+
+    await db["ingest_events"].insert_one(incident_doc)
+    logger.info("[+] App ingest accepted for app_id=%s -> repo=%s", app_id or "legacy", resolved_repo)
+
+    return {
+        "status": "accepted",
+        "app_id": app_id,
+        "resolved_repo": resolved_repo,
+        "metadata": incident_doc["metadata"],
+    }
+
+
+@app.post("/webhooks/app-ingest/test-error")
+async def app_ingest_test_error(request: Request):
+    """Authenticated test hook for forcing a backend error event through the new app connection."""
+    db = get_db()
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database connection unavailable")
+
+    app_id = (request.headers.get("X-App-Id") or request.headers.get("x-app-id") or "").strip() or None
+    ingest_secret = (request.headers.get("X-Ingest-Secret") or request.headers.get("x-ingest-secret") or "").strip()
+
+    if not ingest_secret:
+        raise HTTPException(status_code=401, detail="Missing ingest secret.")
+
+    client_doc = await validate_app_ingest_identity(db, app_id, ingest_secret)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
+    if not isinstance(payload, dict):
+        payload = {}
+
+    resolved_repo = await resolve_app_ingest_repo(db, payload, app_id, client_doc.get("default_repo") if client_doc else None)
+
+    try:
+        raise RuntimeError(payload.get("message") or "Forced backend error for Erragent test")
+    except Exception as e:
+        stack_trace = traceback.format_exc()
+        ingest_payload = {
+            "service_name": os.getenv("ERRAGENT_SERVICE_NAME", "saapp"),
+            "error_message": str(e),
+            "stack_trace": stack_trace,
+            "environment": os.getenv("APP_ENV", os.getenv("ENVIRONMENT", "production")),
+            "metadata": {
+                "source": "webhooks/app-ingest/test-error",
+                "exception_type": e.__class__.__name__,
+            },
+        }
+
+        if app_id:
+            ingest_payload["metadata"]["app_id"] = app_id
+
+        error_doc = {
+            "id": str(uuid.uuid4()),
+            "event_type": "error",
+            "payload": ingest_payload,
+            "metadata": {
+                "app_id": app_id,
+                "resolved_repo": resolved_repo,
+                "severity": "error",
+                "message": ingest_payload["error_message"],
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+        }
+
+        await db["ingest_events"].insert_one(error_doc)
+        logger.warning("[+] Forced backend error event stored for app_id=%s", app_id or "legacy")
+
+        raise HTTPException(status_code=500, detail=ingest_payload["error_message"])
+
 @app.post("/webhooks/github")
 async def github_webhook(request: Request, background_tasks: BackgroundTasks):
     """
@@ -1046,13 +1156,3 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
 async def health_check():
     logger.info("Checking health")
     return {"status": "healthy", "database_connected": os.path.exists(DB_DIR)}
-
-@app.get("/api/sentry-debug")
-async def trigger_error():
-    logger.info("--> /sentry-debug endpoint was successfully hit!")
-    try:
-        division_by_zero = 1 / 0
-    except Exception as e:
-        sentry_sdk.capture_exception(e)
-        logger.info("--> Manually sent exception to Sentry SDK")
-        raise e

@@ -11,7 +11,10 @@ from backend.utils.db_utils import get_db # Ensure this is imported
 from fastapi import HTTPException
 import subprocess
 import sys
+
 logger = logging.getLogger("SASS Logger")
+DEFAULT_TARGET_REPO = os.getenv("DEFAULT_TARGET_REPO", "SummonShenron/SAAPP")
+LEGACY_INGEST_SECRET = os.getenv("ERRAGENT_INGEST_SECRET", "")
 
 # def sync_run_script(script_path):
 #     """Synchronous function to run the script via subprocess."""
@@ -235,3 +238,51 @@ def fetch_relevant_corrections(username: str, question: str) -> str:
         # Gracefully log and fallback so a DB lookup error NEVER breaks chat streaming
         logger.warning(f"[GUARDRAIL WARNING] Could not fetch corrections: {e}")
         return ""
+
+def extract_target_repo(payload: dict) -> str | None:
+    repo_value = payload.get("repository") or payload.get("repo") or payload.get("target_repo") or payload.get("tag")
+    if isinstance(repo_value, dict):
+        return repo_value.get("full_name") or repo_value.get("name") or repo_value.get("repo")
+    if repo_value:
+        return str(repo_value).strip() or None
+    return None
+
+
+async def resolve_app_ingest_repo(db, payload: dict, app_id: str | None, app_default_repo: str | None) -> str:
+    explicit_repo = extract_target_repo(payload)
+    if explicit_repo:
+        return explicit_repo
+
+    service_name = (payload.get("service_name") or payload.get("service") or payload.get("source_service") or "").strip()
+    if service_name:
+        if app_id:
+            scoped = await db["service_registry"].find_one({"service_name": service_name, "app_id": app_id})
+            if scoped and scoped.get("repo"):
+                return scoped["repo"]
+
+        global_entry = await db["service_registry"].find_one({"service_name": service_name})
+        if global_entry and global_entry.get("repo"):
+            return global_entry["repo"]
+
+    if app_default_repo:
+        return app_default_repo
+
+    return DEFAULT_TARGET_REPO
+
+
+async def validate_app_ingest_identity(db, app_id: str | None, ingest_secret: str) -> dict:
+    if app_id:
+        client = await db["ingest_clients"].find_one({"app_id": app_id, "enabled": True})
+        if not client:
+            raise HTTPException(status_code=401, detail="Unknown or disabled app client.")
+        if client.get("secret") != ingest_secret:
+            raise HTTPException(status_code=401, detail="Invalid app secret.")
+        return client
+
+    if not LEGACY_INGEST_SECRET:
+        raise HTTPException(status_code=401, detail="Legacy ingest secret is not configured.")
+
+    if ingest_secret != LEGACY_INGEST_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid ingest secret.")
+
+    return {}
