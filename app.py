@@ -37,7 +37,25 @@ from backend.services.search import discover_workspace_documents
 from local_function_app.function_app import run_ingestion_pipeline, HOT_FOLDER_DIR
 from backend.state.graph_state import GraphState
 from backend.services.insights_workflow import create_insight_workflow
-from backend.utils.app_utils import save_conversation, list_saved_conversations, load_saved_conversations, load_saved_conversation, save_chat_history, format_history_as_text, chat_sessions, get_db_dependency, serialize_doc, load_chat_history, fetch_relevant_corrections, extract_target_repo, resolve_app_ingest_repo, validate_app_ingest_identity 
+from backend.utils.app_utils import ( 
+    save_conversation, 
+    list_saved_conversations, 
+    load_saved_conversations, 
+    load_saved_conversation, 
+    save_chat_history, 
+    format_history_as_text, 
+    chat_sessions, 
+    get_db_dependency, 
+    serialize_doc, 
+    load_chat_history, 
+    fetch_relevant_corrections, 
+    extract_target_repo, 
+    resolve_app_ingest_repo, 
+    validate_app_ingest_identity,
+    build_erragent_ingest_payload,
+    pick_repo_from_metadata,
+    send_erragent_ingest
+)
 from backend.utils.attachment_utils import process_user_attachment, ingest_doc_to_session
 from backend.utils.fallback_utils import rewrite_fallback
 from backend.logging.sass_logger import setup_logging
@@ -1067,33 +1085,11 @@ async def app_to_app_ingest(request: Request):
     }
 
 
-@app.post("/webhooks/app-ingest/test-error")
-async def app_ingest_test_error(request: Request):
-    """Authenticated test hook for forcing a backend error event through the new app connection."""
-    db = get_db()
-    if db is None:
-        raise HTTPException(status_code=500, detail="Database connection unavailable")
-
-    app_id = (request.headers.get("X-App-Id") or request.headers.get("x-app-id") or "").strip() or None
-    ingest_secret = (request.headers.get("X-Ingest-Secret") or request.headers.get("x-ingest-secret") or "").strip()
-
-    if not ingest_secret:
-        raise HTTPException(status_code=401, detail="Missing ingest secret.")
-
-    client_doc = await validate_app_ingest_identity(db, app_id, ingest_secret)
-
+@app.get("/api/erragent-debug")
+async def trigger_error():
+    logger.info("--> /api/erragent-debug endpoint hit!")
     try:
-        payload = await request.json()
-    except Exception:
-        payload = {}
-
-    if not isinstance(payload, dict):
-        payload = {}
-
-    resolved_repo = await resolve_app_ingest_repo(db, payload, app_id, client_doc.get("default_repo") if client_doc else None)
-
-    try:
-        raise RuntimeError(payload.get("message") or "Forced backend error for Erragent test")
+        division_by_zero = 1 / 0
     except Exception as e:
         stack_trace = traceback.format_exc()
         ingest_payload = {
@@ -1102,32 +1098,23 @@ async def app_ingest_test_error(request: Request):
             "stack_trace": stack_trace,
             "environment": os.getenv("APP_ENV", os.getenv("ENVIRONMENT", "production")),
             "metadata": {
-                "source": "webhooks/app-ingest/test-error",
+                "source": "api/erragent-debug",
                 "exception_type": e.__class__.__name__,
             },
         }
 
-        if app_id:
-            ingest_payload["metadata"]["app_id"] = app_id
+        try:
+            ingest_result = await send_erragent_ingest(ingest_payload)
+            logger.info(
+                "--> ErrAgent response: status=%s body=%s",
+                ingest_result.get("status_code"),
+                ingest_result.get("body"),
+            )
+        except Exception as ingest_exc:
+            logger.error("--> Failed posting debug exception to ErrAgent: %s", str(ingest_exc))
 
-        error_doc = {
-            "id": str(uuid.uuid4()),
-            "event_type": "error",
-            "payload": ingest_payload,
-            "metadata": {
-                "app_id": app_id,
-                "resolved_repo": resolved_repo,
-                "severity": "error",
-                "message": ingest_payload["error_message"],
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            },
-        }
-
-        await db["ingest_events"].insert_one(error_doc)
-        logger.warning("[+] Forced backend error event stored for app_id=%s", app_id or "legacy")
-
-        raise HTTPException(status_code=500, detail=ingest_payload["error_message"])
-
+        raise e
+    
 @app.post("/webhooks/github")
 async def github_webhook(request: Request, background_tasks: BackgroundTasks):
     """

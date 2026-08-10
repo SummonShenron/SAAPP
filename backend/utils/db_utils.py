@@ -2,6 +2,8 @@ import os
 from pymongo import MongoClient
 from dotenv import load_dotenv
 import logging
+from datetime import datetime, timezone
+from typing import Optional, Any
 # Load your .env file
 load_dotenv()
 logger = logging.getLogger("SASS Logger")
@@ -39,3 +41,46 @@ def test_connection():
     except Exception as e:
         print(f"Connection failed: {e}")
         return False
+
+def resolve_service_registry_repo(service_name: str) -> Optional[str]:
+    """
+    Looks up service_name -> target_repo from service_registry.
+    Expected doc shape:
+      {
+        "service_name": "payment-gateway",
+        "target_repo": "owner/repo",
+        "active": true
+      }
+    """
+    db = get_db()
+    if db is None:
+        return None
+
+    doc = db["service_registry"].find_one(
+        {"service_name": service_name, "active": {"$ne": False}},
+        {"target_repo": 1},
+    )
+    if not doc:
+        return None
+
+    target_repo = doc.get("target_repo")
+    if isinstance(target_repo, str) and target_repo.strip():
+        return target_repo.strip()
+
+    return None
+
+
+def save_error_event(event: dict[str, Any]) -> str:
+    """
+    Persists normalized ingest events to error_events.
+    Returns inserted event ID as string.
+    """
+    db = get_db()
+    if db is None:
+        raise RuntimeError("Database is not enabled.")
+
+    payload = dict(event)
+    payload["created_at"] = datetime.now(timezone.utc)
+
+    result = db["error_events"].insert_one(payload)
+    return str(result.inserted_id)
