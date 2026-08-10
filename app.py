@@ -264,6 +264,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
     username = current_user.get("sub")
     question = request.question.strip()
     session_id = request.session_id.strip() if request.session_id else f"{username}_session"
+    history_key = f"{username}::{session_id}"
     t_auth_start = time.perf_counter()
     
     if not verify_paapp_access(username):
@@ -295,7 +296,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
     if question.lower().startswith("save conversation"):
         parts = question.split("save conversation", 1)
         title = parts[1].strip() or f"Conversation_{datetime.now().isoformat()}"
-        save_conversation(username, title, chat_sessions.get(username, []))
+        save_conversation(username, title, chat_sessions.get(history_key, []))
         return await streamThinkingThen(f"Conversation '{title}' saved successfully.")
 
     if question.lower().startswith("load conversation"):
@@ -309,8 +310,8 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
             if msg["type"] == "human": reconstructed.append(HumanMessage(content=msg["content"]))
             elif msg["type"] == "ai": reconstructed.append(AIMessage(content=msg["content"]))
             elif msg["type"] == "system": reconstructed.append(SystemMessage(content=msg["content"]))
-        chat_sessions[username] = reconstructed
-        chat_sessions[username].insert(0, SystemMessage(content="Loaded conversation context."))
+        chat_sessions[history_key] = reconstructed
+        chat_sessions[history_key].insert(0, SystemMessage(content="Loaded conversation context."))
         save_chat_history()
         return await streamThinkingThen(f"Conversation '{title}' loaded successfully.")
 
@@ -341,12 +342,12 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
     target_scope = accessible_affiliates["accessible_affiliates"] if requested_affiliate == "All" else [requested_affiliate]
 
     # ---------- Conversation Memory State Init ----------
-    if username not in chat_sessions:
-        chat_sessions[username] = []
-    if len(chat_sessions[username]) > 10:
-        chat_sessions[username] = chat_sessions[username][-10:]
+    if history_key not in chat_sessions:
+        chat_sessions[history_key] = []
+    if len(chat_sessions[history_key]) > 10:
+        chat_sessions[history_key] = chat_sessions[history_key][-10:]
 
-    messages_state = chat_sessions[username]
+    messages_state = chat_sessions[history_key]
     messages_state.append(HumanMessage(content=question))
 
     initial_state: GraphState = {
@@ -441,15 +442,15 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
             elif relevance_grade == "pr_summary":
                 prompt = PR_FORMAT_PROMPT.format(content=final_state.get("content_to_format", ""), question=question)
             elif insight_answer:
-                prompt = CONVERSATIONAL_PROMPT.format(username=username, question=question, history=format_history_as_text(chat_sessions[username]), insight=insight_answer)
+                prompt = CONVERSATIONAL_PROMPT.format(username=username, question=question, history=format_history_as_text(chat_sessions[history_key]), insight=insight_answer)
             elif relevance_grade == "conversational":
-                prompt = CONVERSATIONAL_PROMPT.format(username=username, question=question, history=format_history_as_text(chat_sessions[username]), insight="")
+                prompt = CONVERSATIONAL_PROMPT.format(username=username, question=question, history=format_history_as_text(chat_sessions[history_key]), insight="")
             else:
                 final_question = final_state.get("original_question", question)
                 accessible_affiliates_str = ", ".join(final_state.get("target_scope", target_scope))
                 instructions = get_system_prompt(username, accessible_affiliates_str)
                 documents_sorted = sorted(documents, key=lambda d: d.metadata.get("priority", False), reverse=True)
-                prompt = instructions.format(context=format_docs(documents_sorted), history=format_history_as_text(chat_sessions[username]), question=final_question)
+                prompt = instructions.format(context=format_docs(documents_sorted), history=format_history_as_text(chat_sessions[history_key]), question=final_question)
 
             # Announce LLM generation start
             yield f"data: {json.dumps({'event': 'node_progress', 'node': 'formatter_node', 'title': 'Formatting output structure...', 'detail': f'Synthesizing final answer for {question[:30]}...'})}\n\n"
@@ -493,7 +494,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                 return
 
             yield f"data: {json.dumps({'event': 'final_generation', 'text': full_response})}\n\n"
-            chat_sessions[username].append(AIMessage(content=full_response))
+            chat_sessions[history_key].append(AIMessage(content=full_response))
             save_chat_history()
             logger.info("--- End of token stream ---")
 
@@ -528,6 +529,16 @@ async def clear_chat(request: Request, user = Depends(get_current_user)):
 
     if not filters:
         return {"status": "cleared", "count": 0}
+
+    # Remove live in-memory chat context used by the runtime session store.
+    keys_to_remove = []
+    if username and session_id:
+        keys_to_remove.append(f"{username}::{session_id}")
+    elif username:
+        keys_to_remove.extend([k for k in list(chat_sessions.keys()) if k == username or k.startswith(f"{username}::")])
+
+    for key in keys_to_remove:
+        chat_sessions.pop(key, None)
 
     # Wipe by session_id OR user id/username (covers all bases)
     result = await db.chat_history.delete_many({

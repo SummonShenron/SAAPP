@@ -472,6 +472,48 @@ div:has(.portal-body) {
   box-shadow: none;
 }
 
+.message-text {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.message-text p {
+  margin: 0.35rem 0;
+}
+
+.message-text p:first-child {
+  margin-top: 0;
+}
+
+.message-text p:last-child {
+  margin-bottom: 0;
+}
+
+.citation-link {
+  color: var(--accent-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.citation-link-document {
+  display: inline-flex;
+  max-width: 100%;
+  margin-top: 0.4rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: 10px;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  background: rgba(59, 130, 246, 0.08);
+  line-height: 1.35;
+  text-decoration: none;
+}
+
+.citation-link-document:hover {
+  background: rgba(59, 130, 246, 0.16);
+  border-color: rgba(59, 130, 246, 0.55);
+}
+
 .theme-shadow .message-bubble.user {
   align-self: flex-end;
   background: #910000;       /* Very soft, clean light blue bubble */
@@ -1134,6 +1176,12 @@ div:has(.portal-body) {
   .message-bubble {
     max-width: 97% !important;
   }
+
+  .citation-link-document {
+    display: block;
+    width: 100%;
+    font-size: 0.84rem;
+  }
 }
 
   .mobile-quick-disconnect {
@@ -1224,6 +1272,15 @@ div:has(.portal-body) {
   background: var(--bg-surface);
   border-color: var(--border-color);
   color: var(--text-main);
+}
+
+.bty-embed-container .citation-link {
+  color: var(--accent-primary);
+}
+
+.bty-embed-container .citation-link-document {
+  border-color: var(--border-color);
+  background: rgba(56, 194, 222, 0.08);
 }
 
 .bty-loader-container {

@@ -57,7 +57,27 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const hashSearch = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
   const searchParams = new URLSearchParams(window.location.search || hashSearch);
   const isEmbedded = searchParams.get('mode') === 'embed';
+  const embedVisitorParam = searchParams.get('visitor_id') || searchParams.get('user_id') || searchParams.get('uid');
+  const shouldResetEmbedChat = ['1', 'true', 'yes'].includes(
+    (searchParams.get('new_user') || searchParams.get('fresh') || searchParams.get('reset') || '').toLowerCase()
+  );
   const embedAffiliate = 'Affiliate_D';
+  const [embedVisitorId] = useState<string>(() => {
+    if (!isEmbedded) return '';
+    const explicitVisitor = (embedVisitorParam || '').trim();
+    if (explicitVisitor) {
+      sessionStorage.setItem('bty-embed-visitor-id', explicitVisitor);
+      return explicitVisitor;
+    }
+    const existingVisitor = sessionStorage.getItem('bty-embed-visitor-id');
+    if (existingVisitor) return existingVisitor;
+    const generatedVisitor = crypto.randomUUID();
+    sessionStorage.setItem('bty-embed-visitor-id', generatedVisitor);
+    return generatedVisitor;
+  });
+  const chatStorageKey = isEmbedded
+    ? `chat-messages-${principal}-${embedVisitorId}`
+    : `chat-messages-${principal}`;
 
   useEffect(() => {
     if (isEmbedded) {
@@ -89,12 +109,27 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const [sessionId, setSessionId] = useState<string>(() => crypto.randomUUID());
+  const [sessionId] = useState<string>(() => {
+    if (!isEmbedded) return crypto.randomUUID();
+    const explicitSession = (searchParams.get('session_id') || '').trim();
+    if (explicitSession) {
+      sessionStorage.setItem('bty-embed-session-id', explicitSession);
+      return explicitSession;
+    }
+    const existingSession = sessionStorage.getItem('bty-embed-session-id');
+    if (existingSession) return existingSession;
+    const generatedSession = crypto.randomUUID();
+    sessionStorage.setItem('bty-embed-session-id', generatedSession);
+    return generatedSession;
+  });
   const genId = () => crypto.randomUUID();
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
   
   const [messages, setMessages] = useState<Message[]>(() => {
-    const persistedHistory = localStorage.getItem(`chat-messages-${principal}`);
+    if (isEmbedded && shouldResetEmbedChat) {
+      localStorage.removeItem(chatStorageKey);
+    }
+    const persistedHistory = localStorage.getItem(chatStorageKey);
     if (persistedHistory) {
       try {
         return JSON.parse(persistedHistory);
@@ -109,7 +144,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
 
   const [hasChatted, setHasChatted] = useState<boolean>(() => {
     try {
-      const persisted = localStorage.getItem(`chat-messages-${principal}`);
+      const persisted = localStorage.getItem(chatStorageKey);
       if (persisted) {
         const parsed: Message[] = JSON.parse(persisted);
         return parsed.some(m => m.sender === 'user');
@@ -165,11 +200,11 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     setMessages([
       { id: genId(), sender: 'system', text: `What would you like to find out about, ${principal}?` }
     ]);
-    setSelectedAffiliate('All');
+    setSelectedAffiliate(isEmbedded ? embedAffiliate : 'All');
     setAgentStatus('');
     setAgentPath([]);
     setHasChatted(false);
-    localStorage.removeItem(`chat-messages-${principal}`);
+    localStorage.removeItem(chatStorageKey);
     try {
       const authHeaders = await getAuthHeaders();
       await fetch(`${BASE_URL}/api/chat/clear`, {
@@ -178,7 +213,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
           'Content-Type': 'application/json',
           ...authHeaders
         },
-        body: JSON.stringify({ username: principal })
+        body: JSON.stringify({ username: principal, session_id: sessionId })
       });
     } catch (e) {
       console.warn("Backend persistent clearance was skipped (server offline).");
@@ -237,8 +272,8 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   };
 
   useEffect(() => {
-    localStorage.setItem(`chat-messages-${principal}`, JSON.stringify(messages));
-  }, [messages, principal]);
+    localStorage.setItem(chatStorageKey, JSON.stringify(messages));
+  }, [messages, chatStorageKey]);
 
   useEffect(() => {
     if (allowedAffiliates.length === 0) return;
@@ -576,6 +611,11 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                             ? `${BASE_URL.replace(/\/$/, '')}${href}`
                             : href;
                           const isDownloadLink = finalHref?.includes('/api/documents/download/');
+                          const normalizedLabel = React.Children.toArray(children)
+                            .map((child) => (typeof child === 'string' ? child : ''))
+                            .join(' ')
+                            .replace(/\s+/g, ' ')
+                            .trim();
 
                           const handleClick = async (e: React.MouseEvent) => {
                             if (isDownloadLink && finalHref) {
@@ -615,10 +655,10 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                               onClick={handleClick}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="citation-link"
-                              style={{ color: '#3b82f6', textDecoration: 'underline', fontWeight: 500, cursor: 'pointer' }}
+                              className={isDownloadLink ? 'citation-link citation-link-document' : 'citation-link'}
+                              style={{ cursor: 'pointer' }}
                             >
-                              {children}
+                              {normalizedLabel || children}
                             </a>
                           );
                         },
