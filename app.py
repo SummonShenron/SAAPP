@@ -595,7 +595,7 @@ async def clear_chat(request: Request, user = Depends(get_current_user)):
         chat_sessions.pop(key, None)
 
     # Wipe by session_id OR user id/username (covers all bases)
-    result = await db.chat_history.delete_many({
+    result = db.chat_history.delete_many({
         "$or": filters
     })
     return {"status": "cleared", "count": result.deleted_count}
