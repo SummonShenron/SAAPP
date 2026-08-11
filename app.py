@@ -1129,8 +1129,11 @@ async def ingest_error_webhook(
 @app.get("/api/erragent-debug")
 async def trigger_error():
     logger.info("--> /api/erragent-debug endpoint hit!")
-    # Intentionally trigger zero division; caught automatically by global_exception_handler!
-    return 1 / 0
+    # Intentionally trigger zero division; caught and handled via HTTPException to prevent unhandled crash
+    try:
+        return 1 / 0
+    except ZeroDivisionError as e:
+        raise HTTPException(status_code=500, detail="ZeroDivisionError: division by zero")
     
 @app.post("/webhooks/github")
 async def github_webhook(request: Request, background_tasks: BackgroundTasks):
