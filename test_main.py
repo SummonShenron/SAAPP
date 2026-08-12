@@ -13,12 +13,40 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'backend
 from backend.state.graph_state import GraphState, route_user_query
 from backend.services.agent_workflow import retrieve_node, grading_node, rewrite_query_node
 from backend.services.search import _detect_routing_strategy
+from backend.services.github_service import process_pr_summary
 from app import rewrite_fallback
 
 class MockLLM:
     def invoke(self, prompt):
         return AIMessage(content="Rewritten: facts about Goku in DBZ")
     
+class TestGitHubRepoBehavior(unittest.TestCase):
+
+    @patch.dict(os.environ, {"GITHUB_TOKEN": "fake-token"})
+    @patch("backend.services.github_service.requests.post")
+    @patch("backend.services.github_service.requests.get")
+    def test_process_pr_summary_posts_to_target_repo(self, mock_get, mock_post):
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = [
+            {
+                "filename": "app.py",
+                "status": "modified",
+                "patch": "+ print('hi')"
+            }
+        ]
+
+        mock_post.return_value.status_code = 201
+        mock_post.return_value.json.return_value = {"html_url": "https://github.com/Acme/OtherRepo/pull/7"}
+
+        process_pr_summary("Acme/OtherRepo", 7)
+
+        get_call = mock_get.call_args_list[0]
+        self.assertIn("/repos/Acme/OtherRepo/pulls/7/files", get_call.args[0])
+
+        post_call = mock_post.call_args_list[0]
+        self.assertIn("/repos/Acme/OtherRepo/issues/7/comments", post_call.args[0])
+
+
 class TestGraphState(unittest.TestCase):
 
     def setUp(self):

@@ -2028,9 +2028,74 @@ def code_interpreter_node(state: GraphState) -> Dict[str, Any]:
         "relevance_grade": "code_interpreter"
     }
 
+
+
+
 # ============================================================
 # REPO SEARCH NODES
 # ============================================================
+
+def extract_github_repo(text: str | None, fallback: str = "SummonShenron/SAAPP") -> str:
+    """Extract an owner/repo from a prompt or state, falling back to SAAPP only when needed."""
+    if not text:
+        return fallback
+
+    patterns = [
+        r"(?:for|in|repo(?:sitory)?|target(?:\s+repo)?)[\s:`]*([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)",
+        r"`([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)`",
+        r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+
+    return fallback
+
+
+def extract_pr_request_details(text: str | None, fallback_repo: str = "SummonShenron/SAAPP") -> dict:
+    """Parse repo + merge branch info from a natural-language PR request."""
+    details = {
+        "repo": fallback_repo,
+        "head_branch": None,
+        "base_branch": None,
+    }
+
+    if not text:
+        return details
+
+    repo = extract_github_repo(text, fallback_repo)
+    details["repo"] = repo
+
+    merge_match = re.search(
+        r"merge\s+([\w\-/\.]+)\s+into\s+([\w\-/\.]+)",
+        text,
+        re.IGNORECASE,
+    )
+    if merge_match:
+        details["head_branch"] = merge_match.group(1).strip()
+        details["base_branch"] = merge_match.group(2).strip()
+        return details
+
+    repo_match = re.search(
+        r"(?:for|in|repo(?:sitory)?)[\s:`]*([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)",
+        text,
+        re.IGNORECASE,
+    )
+    if repo_match:
+        details["repo"] = repo_match.group(1).strip()
+
+    branch_match = re.search(
+        r"(?:from|head(?:\s+branch)?|branch)\s+([\w\-/\.]+)\s+(?:to|into|against)\s+([\w\-/\.]+)",
+        text,
+        re.IGNORECASE,
+    )
+    if branch_match:
+        details["head_branch"] = branch_match.group(1).strip()
+        details["base_branch"] = branch_match.group(2).strip()
+
+    return details
 
 async def github_search_node(state: dict) -> dict:
     print("--- GITHUB SEARCH NODE (DYNAMIC TREE ROUTER) CALLED ---")
@@ -2048,7 +2113,7 @@ async def github_search_node(state: dict) -> dict:
     
     msg = state.get("messages", [])[-1].content.strip()
     
-    repo = "SummonShenron/SAAPP"
+    repo = state.get("repo") or extract_github_repo(msg)
     token = os.getenv("GITHUB_TOKEN")
     headers = {
         "Authorization": f"Bearer {token}",
@@ -2207,7 +2272,13 @@ async def pr_summarizer_node(state: GraphState) -> dict:
         }
     )
     
-    repo = state.get("repo", "SummonShenron/SAAPP")
+    repo = state.get("repo") or extract_github_repo(
+        "\n".join(
+            getattr(m, "content", "") if hasattr(m, "content") else str(m)
+            for m in state.get("messages", [])
+        ),
+        "SummonShenron/SAAPP",
+    )
     token = os.getenv("GITHUB_TOKEN")
     headers = {
         "Authorization": f"Bearer {token}",
@@ -2330,6 +2401,9 @@ def draft_pr_node(state: GraphState) -> GraphState:
     pending_action = state.get("pending_action") or {}
     existing_details = pending_action.get("details", {})
 
+    parsed = extract_pr_request_details(last_msg, existing_details.get("repo") or state.get("repo") or "SummonShenron/SAAPP")
+    repo = existing_details.get("repo") or state.get("repo") or parsed["repo"]
+
     # 1. BRANCH RESOLUTION & STATE PRESERVATION
     match = re.search(
         r"merge\s+([\w\/\-\.]+)\s+into\s+([\w\/\-\.]+)",
@@ -2343,13 +2417,20 @@ def draft_pr_node(state: GraphState) -> GraphState:
     elif existing_details.get("head_branch"):
         head_branch = existing_details["head_branch"]
         base_branch = existing_details["base_branch"]
+    elif parsed.get("head_branch") and parsed.get("base_branch"):
+        head_branch = parsed["head_branch"]
+        base_branch = parsed["base_branch"]
     else:
         head_branch = state.get("head_branch", "feature-branch")
         base_branch = state.get("base_branch", "main")
 
-    repo = existing_details.get("repo") or state.get(
-        "repo", "SummonShenron/SAAPP"
+    repo_match = re.search(
+        r"(?:for|in|repo(?:sitory)?)[\s:`]*([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)",
+        last_msg,
+        re.IGNORECASE,
     )
+    if repo_match:
+        repo = repo_match.group(1).strip()
 
     # 2. FETCH REAL GIT DIFF CONTEXT FROM GITHUB API
     logger.info(
@@ -2500,7 +2581,34 @@ def execute_pr_node(state: dict) -> dict:
     body = pending.get("body")
     head_branch = pending.get("head_branch") or pending.get("head")
     base_branch = pending.get("base_branch") or pending.get("base")
-    repo = pending.get("repo") or state.get("repo", "SummonShenron/SAAPP")
+    repo = pending.get("repo") or state.get("repo")
+    if not repo:
+        repo = extract_github_repo(
+            "\n".join(
+                getattr(m, "content", "") if hasattr(m, "content") else str(m)
+                for m in state.get("messages", [])
+            )
+        )
+
+    for msg in reversed(state.get("messages", [])):
+        content = (
+            getattr(msg, "content", "")
+            if hasattr(msg, "content")
+            else (
+                msg.get("content", "")
+                if isinstance(msg, dict)
+                else str(msg)
+            )
+        )
+        if "merge" in content.lower() and "into" in content.lower():
+            parsed = extract_pr_request_details(content, repo)
+            if parsed["repo"] and parsed["repo"] != "SummonShenron/SAAPP":
+                repo = parsed["repo"]
+            if parsed.get("head_branch"):
+                head_branch = parsed["head_branch"]
+            if parsed.get("base_branch"):
+                base_branch = parsed["base_branch"]
+            break
 
     # 4. RECOVERY LAYER: Extract from history if state was wiped
     if not (title and head_branch and base_branch):
@@ -2518,6 +2626,10 @@ def execute_pr_node(state: dict) -> dict:
                     else str(msg)
                 )
             )
+
+            repo_from_content = extract_github_repo(content, repo)
+            if repo_from_content and repo_from_content != "SummonShenron/SAAPP":
+                repo = repo_from_content
 
             # Option A: Parse from Assistant Action Card (if persisted)
             if "Ready to create a Pull Request" in content:
@@ -2594,16 +2706,16 @@ def execute_pr_node(state: dict) -> dict:
         pr_data = res.json()
         pr_url = pr_data.get("html_url")
         pr_num = pr_data.get("number")
-        
+
         # 6. OPTIONAL: AUTOMATICALLY MERGE THE PR
         merge_url = f"https://api.github.com/repos/{repo}/pulls/{pr_num}/merge"
         merge_payload = {
             "commit_title": f"Merge pull request #{pr_num} from {head_branch}",
             "merge_method": "squash"  # Or "merge" / "rebase"
         }
-        
+
         merge_res = requests.put(merge_url, headers=headers, json=merge_payload)
-        
+
         if merge_res.status_code == 200:
             output_text = f"**Pull Request Created and Merged Successfully!** \n\n[View Merged PR #{pr_num} on GitHub]({pr_url})"
         else:

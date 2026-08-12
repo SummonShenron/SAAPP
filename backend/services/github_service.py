@@ -21,9 +21,9 @@ def _call_llm_with_retry(prompt: str):
 
 
 def process_pr_summary(repo: str, pr_number: int):
-    """Fetches PR diffs, generates an LLM review, and posts it to GitHub."""
+    """Fetches PR diffs, generates an LLM review, and posts it to the target repo's PR."""
     logger.info(f"--- PROCESSING PR SUMMARY FOR {repo} #{pr_number} ---")
-    
+
     token = os.getenv("GITHUB_TOKEN")
     if not token:
         logger.error("GITHUB_TOKEN environment variable is not set!")
@@ -34,12 +34,12 @@ def process_pr_summary(repo: str, pr_number: int):
         "Accept": "application/vnd.github+json"
     }
     api_base = "https://api.github.com"
-    
+
     # 1. Fetch changed files
     files_url = f"{api_base}/repos/{repo}/pulls/{pr_number}/files"
     logger.info(f"Requesting PR files from GitHub: {files_url}")
     files_res = requests.get(files_url, headers=headers)
-    
+
     if files_res.status_code != 200:
         logger.error(f"Failed to fetch PR files (HTTP {files_res.status_code}): {files_res.text}")
         return
@@ -65,8 +65,7 @@ def process_pr_summary(repo: str, pr_number: int):
     try:
         logger.info("Invoking LLM for PR analysis...")
         review_response = _call_llm_with_retry(review_prompt)
-        
-        # Safe content parsing
+
         raw_content = getattr(review_response, "content", review_response)
         if isinstance(raw_content, list):
             text_blocks = []
@@ -84,15 +83,22 @@ def process_pr_summary(repo: str, pr_number: int):
         logger.error(f"LLM generation failed after retries: {str(e)}")
         comment_body = f"Could not generate automated PR summary due to upstream API limits: {str(e)}"
 
-    # 3. Post comment to GitHub PR
+    # 3. Post comment to the target repo's PR
     comment_url = f"{api_base}/repos/{repo}/issues/{pr_number}/comments"
     payload = {"body": f"**Sonic Assistant PR Overview**\n\n{comment_body}"}
-    
-    logger.info(f"Posting review comment to GitHub PR #{pr_number}...")
+
+    logger.info(f"Posting review comment to GitHub repository {repo} PR #{pr_number}...")
     post_res = requests.post(comment_url, headers=headers, json=payload)
-    
+
     if post_res.status_code == 201:
         comment_url_posted = post_res.json().get("html_url")
-        logger.info(f"SUCCESS! PR comment posted: {comment_url_posted}")
+        logger.info(f"SUCCESS! PR comment posted to {repo}: {comment_url_posted}")
     else:
-        logger.error(f"Failed to post comment (HTTP {post_res.status_code}): {post_res.text}")
+        logger.error(f"Failed to post comment to {repo} (HTTP {post_res.status_code}): {post_res.text}")
+
+    return {
+        "repo": repo,
+        "pr_number": pr_number,
+        "status": "comment_posted" if post_res.status_code == 201 else "comment_failed",
+        "comment_url": post_res.json().get("html_url") if post_res.status_code == 201 else None,
+    }
