@@ -847,7 +847,7 @@ def saapp_list_time(current_user = Depends(get_current_user)):
 
 @app.delete("/api/time/clear")
 def saapp_clear_time(current_user = Depends(get_current_user)):
-    clear_user_time(current_user.sub)
+    clear_user_time(current_user.get("sub"))
     return {"status": "cleared"}
 
 @app.post("/api/time/log")
