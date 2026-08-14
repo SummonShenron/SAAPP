@@ -64,7 +64,7 @@ from backend.utils.fallback_utils import rewrite_fallback
 from backend.logging.sass_logger import setup_logging
 from backend.services.orchestrator import startup_services
 from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, verify_paapp_access, load_directory, seed_guest_tasks
-from backend.utils.db_utils import get_db, save_error_event
+from backend.utils.db_utils import get_db, save_error_event, test_connection
 from backend.auth.isolation_auth import get_current_user, record_login_event
 from contextlib import asynccontextmanager
 from settings import DB_DIR
@@ -1159,7 +1159,18 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
 
     return {"status": "ignored_event"}
 
-@app.get("/api/health")
-async def health_check():
-    logger.info("Checking health")
-    return {"status": "healthy", "database_connected": os.path.exists(DB_DIR)}
+@app.get("/api/health", tags=["Health"])
+def saapp_health_check():
+    """
+    Lightweight health endpoint for SAAPP.
+    Used by errAgent to monitor uptime and latency.
+    """
+    db_status = "connected" if test_connection() else "disabled_or_failed"
+
+    return {
+        "status": "ok" if db_status == "connected" else "degraded",
+        "db": db_status,
+        "service": "SAAPP Widget",
+        "version": "1.0.0",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
