@@ -162,6 +162,15 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [attachments, setAttachments] = useState<{ filename: string; content: string }[]>([]);
   const attachmentsRef = useRef<{ filename: string; content: string }[]>([]);
 
+  const principalKey = (localStorage.getItem('principal') || '').toLowerCase();
+  const guestBtyDetected = principalKey === 'guest_bty' || !!localStorage.getItem('guest_token');
+  const affiliateDActive = selectedAffiliate === 'Affiliate_D' || embedAffiliate === 'Affiliate_D';
+  const chatPlaceholder = guestBtyDetected
+    ? 'Ask Madison\'s Assistant...'
+    : affiliateDActive
+      ? 'Ask a question against the BTY knowledge base...'
+      : 'Ask a question against your isolated data index...';
+
   const handleRemoveAttachment = (idx: number) => {
     setUploadedFiles(prev => prev.filter((_, i) => i !== idx));
     setAttachments(prev => prev.filter((_, i) => i !== idx));
@@ -792,7 +801,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
             <div className="chat-input-wrapper">
               <textarea
                 className="chat-textarea"
-                placeholder="Ask a question against your isolated data index..."
+                placeholder={chatPlaceholder}
                 value={input}
                 onChange={(e) => {
                   setInput(e.target.value);
