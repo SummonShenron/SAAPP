@@ -441,7 +441,25 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
         full_response = ""
         first_token = True
         t_stream_start = time.perf_counter()
+        t_graph_end = None
+        t_first_token = None
         final_state = {}
+
+        def log_timings(grade: str, outcome: str):
+            now = time.perf_counter()
+            logger.info(
+                "[TIMING] user=%s affiliate=%s grade=%s outcome=%s docs=%d "
+                "preflight=%.2fs graph=%.2fs ttft=%.2fs total=%.2fs",
+                username,
+                requested_affiliate,
+                grade,
+                outcome,
+                len(final_state.get("documents", []) or []),
+                t_stream_start - t_auth_start,
+                (t_graph_end - t_stream_start) if t_graph_end else -1,
+                (t_first_token - t_auth_start) if t_first_token else -1,
+                now - t_auth_start,
+            )
 
         try:
             if settings.LOCAL_DEV:
@@ -479,6 +497,8 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
             if not final_state:
                 final_state = await workflow.ainvoke(initial_state)
 
+            t_graph_end = time.perf_counter()
+
             # 2. EVALUATE FINAL STATE & BUILD PROMPT
             relevance_grade = final_state.get("relevance_grade")
             insight_answer = final_state.get("insight_answer")
@@ -488,6 +508,8 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                 card_text = final_state.get("generation") or final_state.get("content_to_format") or (final_state.get("messages")[-1].content if final_state.get("messages") else "Action complete.")
                 yield f"data: {json.dumps({'event': 'token', 'text': card_text})}\n\n"
                 yield f"data: {json.dumps({'event': 'final_generation', 'text': card_text})}\n\n"
+                t_first_token = time.perf_counter()
+                log_timings(relevance_grade, "card")
                 return
 
             if relevance_grade == "web_search":
@@ -521,7 +543,8 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
             async for chunk in response_llm.astream(prompt):
                 if first_token:
                     first_token = False
-                
+                    t_first_token = time.perf_counter()
+
                 content = getattr(chunk, "content", "")
                 if isinstance(content, list):
                     token = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
@@ -548,15 +571,18 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                 }
                 async for fallback_chunk in rewrite_fallback(services.get("vector_store"), fallback_state, username, messages_state, chat_sessions, save_chat_history):
                     yield fallback_chunk
+                log_timings(relevance_grade, "rewrite_fallback")
                 return
 
             yield f"data: {json.dumps({'event': 'final_generation', 'text': full_response})}\n\n"
             chat_sessions[history_key].append(AIMessage(content=full_response))
             save_chat_history()
+            log_timings(relevance_grade, "ok")
             logger.info("--- End of token stream ---")
 
         except Exception as e:
             logger.error(f"[x] Error in token_streamer loop context: {e}", exc_info=True)
+            log_timings(final_state.get("relevance_grade", "unknown"), "error")
             yield f"data: {json.dumps({'event': 'trace', 'title': 'Execution error', 'detail': str(e), 'status': 'active'})}\n\n"
 
     logger.info(f"Initializing secured token stream for {username}")
