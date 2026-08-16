@@ -62,6 +62,7 @@ from backend.utils.app_utils import (
 from backend.utils.attachment_utils import process_user_attachment, ingest_doc_to_session
 from backend.utils.fallback_utils import rewrite_fallback
 from backend.logging.sass_logger import setup_logging
+from backend.logging.erragent_handler import install_erragent_logging
 from backend.services.orchestrator import startup_services
 from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, verify_paapp_access, load_directory, seed_guest_tasks
 from backend.utils.db_utils import get_db, save_error_event, test_connection
@@ -113,6 +114,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 logger = setup_logging()  # Initialize the logger from backend/logging/sass_logger.py
+install_erragent_logging(logger)
 logger.info("--- BOOTING SECURE KNOWLEDGE ASSISTANT ---")
 services = startup_services()
 insight_workflow = services["insight_workflow"]

@@ -161,7 +161,6 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [loadingCards, setLoadingCards] = useState<boolean>(false);
   const [attachments, setAttachments] = useState<{ filename: string; content: string }[]>([]);
   const attachmentsRef = useRef<{ filename: string; content: string }[]>([]);
-
   const principalKey = (localStorage.getItem('principal') || '').toLowerCase();
   const guestBtyDetected = principalKey === 'guest_bty' || !!localStorage.getItem('guest_token');
   const affiliateDActive = selectedAffiliate === 'Affiliate_D' || embedAffiliate === 'Affiliate_D';
