@@ -28,8 +28,13 @@ interface TraceStep {
 }
 
 export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
-  // 1. Trace panel ON by default everywhere (desktop & mobile)[cite: 2]
+  const hashSearch = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
+  const searchParams = new URLSearchParams(window.location.search || hashSearch);
+  const isEmbedded = searchParams.get('mode') === 'embed';
+
+  // Trace is available by default in standalone mode, but starts hidden when embedded.
   const [showTracePanel, setShowTracePanel] = useState(() => {
+    if (isEmbedded) return false;
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('showTracePanel');
       if (saved !== null) return JSON.parse(saved);
@@ -54,9 +59,6 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [agentStatus, setAgentStatus] = useState<string>('');
   const [agentPath, setAgentPath] = useState<string[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
-  const hashSearch = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
-  const searchParams = new URLSearchParams(window.location.search || hashSearch);
-  const isEmbedded = searchParams.get('mode') === 'embed';
   const embedVisitorParam = searchParams.get('visitor_id') || searchParams.get('user_id') || searchParams.get('uid');
   const shouldResetEmbedChat = ['1', 'true', 'yes'].includes(
     (searchParams.get('new_user') || searchParams.get('fresh') || searchParams.get('reset') || '').toLowerCase()
@@ -228,6 +230,15 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     }
     setAttachments([]);
     setAttachedFiles([]);
+    try {
+      const questions = await getDynamicExampleQuestions(
+      allowedAffiliates,
+      isEmbedded ? embedAffiliate : 'All'
+    );
+    setCurrentExampleQuestions(questions);
+    } catch (error) {
+      console.error("Failed to fetch dynamic example questions:", error);
+    }
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {

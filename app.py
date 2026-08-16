@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from backend.components import taskboard
 from backend.utils.taskboard_utils import require_taskboard_admin, is_taskboard_admin_for_user
-from backend.models.models import llm, stream_llm
+from backend.models.models import llm, get_stream_llm
 from backend.models.attachment import Attachment
 from backend.services.github_service import process_pr_summary
 # Modernized LangChain Imports
@@ -318,6 +318,7 @@ async def discover_documents(affiliate: str = "All", current_user = Depends(get_
 @app.post("/api/chat")
 async def secure_chat(request: ChatRequest, current_user = Depends(get_current_user)):
     username = current_user.get("sub")
+    response_llm = get_stream_llm(username)
     question = request.question.strip()
     session_id = request.session_id.strip() if request.session_id else f"{username}_session"
     history_key = f"{username}::{session_id}"
@@ -517,7 +518,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                 # Emit trace event to frontend execution trace drawer!
                 yield f"data: {json.dumps({'event': 'node_progress', 'node': 'self_correction_guardrail', 'title': 'Applying Lessons Learned Guardrail', 'detail': f'Injected past failure constraint into context prompt.'})}\n\n"
             # 3. STREAM RESPONSE TOKENS FROM LLM
-            async for chunk in stream_llm.astream(prompt):
+            async for chunk in response_llm.astream(prompt):
                 if first_token:
                     first_token = False
                 

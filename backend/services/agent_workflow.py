@@ -21,7 +21,7 @@ from langchain_core.documents import Document
 from langchain_core.callbacks.manager import adispatch_custom_event
 from settings import PAAPP_BASE_URL
 from backend.services.search import get_secure_retriever
-from backend.models.models import llm, lite_llm
+from backend.models.models import get_chat_llm, lite_llm
 from backend.state import graph_db
 from backend.utils.attachment_utils import retrieve_from_session
 from backend.utils.isolation_kb_utils import load_directory, load_user_directory_groups
@@ -559,7 +559,7 @@ def summarizer_node(state: GraphState) -> GraphState:
     prompt = SUMMARIZER_PROMPT
     logger.info("Sending summarization prompt to LLM.")
     # Assuming you have a `llm` or `model` in scope
-    summary = llm.invoke(prompt)  # adjust to your LLM interface
+    summary = get_chat_llm(state.get("username", "")).invoke(prompt)
     # If your LLM returns an object, extract `.content` or similar
     if hasattr(summary, "content"):
         summary_text = summary.content
@@ -610,7 +610,7 @@ def formatter_node(state: GraphState) -> dict:
         content_to_format=content_to_format
     )
     # 4. Save formatted output
-    formatted = llm.invoke(prompt)
+    formatted = get_chat_llm(state.get("username", "")).invoke(prompt)
     formatted_text = formatted.content if hasattr(formatted, "content") else str(formatted)
     state["formatted_output"] = formatted_text
     return state
@@ -2449,7 +2449,7 @@ def draft_pr_node(state: GraphState) -> GraphState:
             context=f"Repository: {repo}\nBase Branch: {base_branch}\nHead Branch: {head_branch}\n\n{diff_context}",
         )
 
-        llm_response = llm.invoke(formatted_prompt)
+        llm_response = get_chat_llm(state.get("username", "")).invoke(formatted_prompt)
 
         # Safely convert list or string content to text
         raw_content = getattr(llm_response, "content", "")

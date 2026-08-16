@@ -120,3 +120,18 @@ stream_llm = LazyLLM(
     temperature=0.7,
     thinking_level="minimal",  # <--- Drops TTFT from ~31s to ~1-2s while retaining quality
 )
+
+# 4. Embedded Streaming LLM (BTY iframe traffic prioritizes minimum latency)
+embedded_llm = LazyLLM(
+    model_name="gemini-3.1-flash-lite",
+    temperature=0.7,
+    max_retries=1,
+)
+
+
+def get_chat_llm(username: str):
+    return embedded_llm if username == "guest_bty" else llm
+
+
+def get_stream_llm(username: str):
+    return embedded_llm if username == "guest_bty" else stream_llm

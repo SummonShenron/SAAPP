@@ -32,6 +32,15 @@ const AFFILIATE_QUESTION_POOLS: Record<string, string[]> = {
   ],
 };
 
+function shuffledCopy<T>(items: readonly T[]): T[] {
+  const shuffled = [...items];
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const randomIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[randomIndex]] = [shuffled[randomIndex], shuffled[index]];
+  }
+  return shuffled;
+}
+
 /**
  * Dynamically fetches example questions strictly scoped to the user's authorized affiliates.
  */
@@ -51,13 +60,12 @@ export async function getDynamicExampleQuestions(
       const authorizedPool = allowedAffiliates
         .flatMap(aff => AFFILIATE_QUESTION_POOLS[aff] || []);
 
-      const shuffled = [...authorizedPool].sort(() => 0.5 - Math.random());
-      return shuffled.slice(0, 3); 
+      return shuffledCopy(authorizedPool).slice(0, 3);
     }
 
     // Scenario 2: Target Isolated Tenant Scope
     const targetedPool = AFFILIATE_QUESTION_POOLS[affiliate] || [];
-    return targetedPool.slice(0, 3);
+    return shuffledCopy(targetedPool).slice(0, 3);
 
   } catch (error) {
     console.error("Failed to map affiliate directory vectors to question pools:", error);

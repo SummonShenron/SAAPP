@@ -1,5 +1,5 @@
 from backend.services.agent_workflow import rewrite_query_node, retrieve_node, grading_node
-from backend.models.models import llm
+from backend.models.models import get_stream_llm
 import json
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from backend.models.attachment import Attachment
@@ -94,7 +94,7 @@ async def rewrite_fallback(
 
     full_response = ""
     try:
-        async for chunk in llm.astream(prompt):
+        async for chunk in get_stream_llm(username).astream(prompt):
             token = ensure_str(chunk if isinstance(chunk, str) else getattr(chunk, "content", None) or chunk)
             if not token:
                 continue
