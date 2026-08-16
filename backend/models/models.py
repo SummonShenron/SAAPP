@@ -123,9 +123,11 @@ stream_llm = LazyLLM(
 
 # 4. Embedded Streaming LLM (BTY iframe traffic prioritizes minimum latency)
 embedded_llm = LazyLLM(
-    model_name="gemini-3.1-flash-lite",
+    model_name="gemini-3.5-flash",
+    fallback_model="gemini-3.1-flash-lite",
     temperature=0.7,
-    max_retries=1,
+    thinking_level="minimal",
+    # retries=1,  # <--- Avoids retries to reduce latency for embedded users
 )
 
 
