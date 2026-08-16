@@ -1035,6 +1035,17 @@ div:has(.portal-body) {
   50% { opacity: 1; }
 }
 
+.composing-text {
+  margin-top: 0.35rem;
+  color: #64748b;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  animation: text-pulse 1.5s ease-in-out infinite;
+}
+.bty-embed-container .composing-text {
+  color: var(--text-muted);
+}
+
 /* --- Mobile Responsive Overrides --- */
 @media (max-width: 768px) {
   /* Stack the landing page split screen into a single column */

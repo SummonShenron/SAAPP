@@ -392,6 +392,27 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     }, 700);
   };
 
+  // The formatter phase is a single multi-second model wait, so it gets a live
+  // counter instead of a queued step that would sit frozen.
+  const lastMessage = messages[messages.length - 1];
+  const awaitingFirstToken = loading && !!lastMessage && lastMessage.sender === 'ai' && !lastMessage.text;
+  const [waitSeconds, setWaitSeconds] = useState(0);
+
+  useEffect(() => {
+    if (!awaitingFirstToken) {
+      setWaitSeconds(0);
+      return;
+    }
+    const id = setInterval(() => setWaitSeconds(s => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [awaitingFirstToken]);
+
+  const composingLabel = waitSeconds >= 8
+    ? 'Still composing — almost there'
+    : waitSeconds >= 4
+      ? 'Working through the details'
+      : 'Composing the response';
+
   const handleSendMessage = async (
     textToSend: string,
     currentAttachments: { filename: string; content: string }[]
@@ -727,6 +748,11 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                   <div className="loading-text">
                     {getNodeLabel(agentStatus) || "Thinking..."}
                   </div>
+                  {awaitingFirstToken && (
+                    <div className="composing-text">
+                      {composingLabel} · {waitSeconds}s
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="sonic-loader-container">
@@ -738,6 +764,11 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                   <div className="loading-text">
                     {getNodeLabel(agentStatus) || "Collecting rings and tokens..."}
                   </div>
+                  {awaitingFirstToken && (
+                    <div className="composing-text">
+                      {composingLabel} · {waitSeconds}s
+                    </div>
+                  )}
                 </div>
               )
             )}

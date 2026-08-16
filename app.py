@@ -442,14 +442,20 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
         first_token = True
         t_stream_start = time.perf_counter()
         t_graph_end = None
+        t_prompt_ready = None
         t_first_token = None
         final_state = {}
+
+        # Only needs username+question, so run it alongside the graph instead of after it.
+        corrections_task = asyncio.create_task(
+            asyncio.to_thread(fetch_relevant_corrections, username, question)
+        )
 
         def log_timings(grade: str, outcome: str):
             now = time.perf_counter()
             logger.info(
                 "[TIMING] user=%s affiliate=%s grade=%s outcome=%s docs=%d "
-                "preflight=%.2fs graph=%.2fs ttft=%.2fs total=%.2fs",
+                "preflight=%.2fs graph=%.2fs prompt=%.2fs llm_ttft=%.2fs ttft=%.2fs total=%.2fs",
                 username,
                 requested_affiliate,
                 grade,
@@ -457,6 +463,8 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                 len(final_state.get("documents", []) or []),
                 t_stream_start - t_auth_start,
                 (t_graph_end - t_stream_start) if t_graph_end else -1,
+                (t_prompt_ready - t_graph_end) if (t_prompt_ready and t_graph_end) else -1,
+                (t_first_token - t_prompt_ready) if (t_first_token and t_prompt_ready) else -1,
                 (t_first_token - t_auth_start) if t_first_token else -1,
                 now - t_auth_start,
             )
@@ -508,6 +516,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                 card_text = final_state.get("generation") or final_state.get("content_to_format") or (final_state.get("messages")[-1].content if final_state.get("messages") else "Action complete.")
                 yield f"data: {json.dumps({'event': 'token', 'text': card_text})}\n\n"
                 yield f"data: {json.dumps({'event': 'final_generation', 'text': card_text})}\n\n"
+                corrections_task.cancel()
                 t_first_token = time.perf_counter()
                 log_timings(relevance_grade, "card")
                 return
@@ -533,12 +542,14 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
 
             # Announce LLM generation start
             yield f"data: {json.dumps({'event': 'node_progress', 'node': 'formatter_node', 'title': 'Formatting output structure...', 'detail': f'Synthesizing final answer for {question[:30]}...'})}\n\n"
-            guardrail_context = fetch_relevant_corrections(username, question)
+            guardrail_context = await corrections_task
 
             if guardrail_context:
                 prompt = prompt + guardrail_context
                 # Emit trace event to frontend execution trace drawer!
                 yield f"data: {json.dumps({'event': 'node_progress', 'node': 'self_correction_guardrail', 'title': 'Applying Lessons Learned Guardrail', 'detail': f'Injected past failure constraint into context prompt.'})}\n\n"
+
+            t_prompt_ready = time.perf_counter()
             # 3. STREAM RESPONSE TOKENS FROM LLM
             async for chunk in response_llm.astream(prompt):
                 if first_token:
