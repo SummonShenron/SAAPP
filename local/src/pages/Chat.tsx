@@ -167,9 +167,9 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const guestBtyDetected = principalKey === 'guest_bty' || !!localStorage.getItem('guest_token');
   const affiliateDActive = selectedAffiliate === 'Affiliate_D' || embedAffiliate === 'Affiliate_D';
   const chatPlaceholder = guestBtyDetected
-    ? 'Ask Madison\'s Assistant...'
+    ? 'what would you like to learn about today?...'
     : affiliateDActive
-      ? 'Ask a question against the BTY knowledge base...'
+      ? 'Ask a question...'
       : 'Ask a question against your isolated data index...';
 
   const handleRemoveAttachment = (idx: number) => {
