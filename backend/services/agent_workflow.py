@@ -93,6 +93,11 @@ async def coordinator_node(state: GraphState) -> GraphState:
     logger.info(
         "node executed",
         extra={
+            "service": "SAAPP",
+            "service": "SAAPP",
+            "service": "SAAPP",
+            "service": "SAAPP",
+            "service": "SAAPP",
             "erragent_context": {
                 "workflowName": workflow_name,
                 "requestId": request_id,
@@ -335,6 +340,10 @@ def apply_conditional_skips(plan: Dict[str, Any], state: Dict[str, Any]) -> Dict
 
 async def reasoner_node(state: GraphState) -> GraphState:
     state = ensure_workflow_keys(state)
+    workflow_name = state["workflowName"]
+    request_id = state["requestId"]
+    node_name = "reasoner_node"
+    node_input = state.copy()
     msg = state["messages"][-1].content.strip()
     history = state.get("messages", [])
     
@@ -395,6 +404,20 @@ async def reasoner_node(state: GraphState) -> GraphState:
     logger.info(f"[Reasoner] Flags: {flags}")
     state["reasoner_flags"] = flags
     logger.info("--- REASONER NODE END ---")
+    node_output = state.copy()
+    logger.info(
+        "node executed",
+        extra={
+            "service": "SAAPP",
+            "erragent_context": {
+                "workflowName": workflow_name,
+                "requestId": request_id,
+                "node": node_name,
+                "input": node_input,
+                "output": node_output,
+            }
+        }
+    )
     return state
 # ============================================================
 # MEMORY NODE
@@ -450,6 +473,7 @@ def memory_node(state: GraphState) -> dict:
     logger.info(
         "node executed",
         extra={
+            "service": "SAAPP",
             "erragent_context": {
                 "workflowName": workflow_name,
                 "requestId": request_id,
@@ -583,6 +607,7 @@ async def retrieve_node(state: GraphState, vector_store) -> dict:
     logger.info(
         "node executed",
         extra={
+            "service": "SAAPP",
             "erragent_context": {
                 "workflowName": workflow_name,
                 "requestId": request_id,
@@ -685,6 +710,7 @@ def formatter_node(state: GraphState) -> dict:
     logger.info(
         "node executed",
         extra={
+            "service": "SAAPP",
             "erragent_context": {
                 "workflowName": workflow_name,
                 "requestId": request_id,
@@ -803,6 +829,7 @@ async def grading_node(state: GraphState) -> dict:
         logger.info(
             "node executed",
             extra={
+            "service": "SAAPP",
                 "erragent_context": {
                     "workflowName": workflow_name,
                     "requestId": request_id,
@@ -819,6 +846,7 @@ async def grading_node(state: GraphState) -> dict:
         logger.info(
             "node executed",
             extra={
+            "service": "SAAPP",
                 "erragent_context": {
                     "workflowName": workflow_name,
                     "requestId": request_id,
@@ -867,6 +895,7 @@ def rewrite_query_node(state: GraphState) -> dict:
         logger.info(
             "node executed",
             extra={
+            "service": "SAAPP",
                 "erragent_context": {
                     "workflowName": workflow_name,
                     "requestId": request_id,
@@ -887,6 +916,7 @@ def rewrite_query_node(state: GraphState) -> dict:
         logger.info(
             "node executed",
             extra={
+            "service": "SAAPP",
                 "erragent_context": {
                     "workflowName": workflow_name,
                     "requestId": request_id,
@@ -989,6 +1019,7 @@ def paapp_node(state: GraphState) -> GraphState:
     logger.info(
         "node executed",
         extra={
+            "service": "SAAPP",
             "erragent_context": {
                 "workflowName": workflow_name,
                 "requestId": request_id,
@@ -1987,6 +2018,7 @@ async def web_search_node(state: GraphState) -> dict:
     logger.info(
         "node executed",
         extra={
+            "service": "SAAPP",
             "erragent_context": {
                 "workflowName": workflow_name,
                 "requestId": request_id,
@@ -2198,6 +2230,7 @@ def code_interpreter_node(state: GraphState) -> Dict[str, Any]:
     logger.info(
         "node executed",
         extra={
+            "service": "SAAPP",
             "erragent_context": {
                 "workflowName": workflow_name,
                 "requestId": request_id,
@@ -2386,6 +2419,7 @@ async def github_search_node(state: dict) -> dict:
     logger.info(
         "node executed",
         extra={
+            "service": "SAAPP",
             "erragent_context": {
                 "workflowName": workflow_name,
                 "requestId": request_id,
@@ -2567,6 +2601,7 @@ async def pr_summarizer_node(state: GraphState) -> dict:
     logger.info(
         "node executed",
         extra={
+            "service": "SAAPP",
             "erragent_context": {
                 "workflowName": workflow_name,
                 "requestId": request_id,
@@ -2736,6 +2771,7 @@ def draft_pr_node(state: GraphState) -> GraphState:
     logger.info(
         "node executed",
         extra={
+            "service": "SAAPP",
             "erragent_context": {
                 "workflowName": workflow_name,
                 "requestId": request_id,
@@ -2969,6 +3005,7 @@ def execute_pr_node(state: dict) -> dict:
     logger.info(
         "node executed",
         extra={
+            "service": "SAAPP",
             "erragent_context": {
                 "workflowName": workflow_name,
                 "requestId": request_id,

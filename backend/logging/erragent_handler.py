@@ -109,17 +109,20 @@ def install_erragent_logging(logger: logging.Logger | None = None) -> bool:
     if not erragent_url or not ingest_secret or not service:
         return False
 
-    target_logger = logger or logging.getLogger()
-    if any(isinstance(handler, ErrAgentHandler) for handler in target_logger.handlers):
+    # Always attach to the root logger
+    root = logging.getLogger()
+    if any(isinstance(handler, ErrAgentHandler) for handler in root.handlers):
         return True
 
-    target_logger.addHandler(
-        ErrAgentHandler(
-            erragent_url=erragent_url,
-            ingest_secret=ingest_secret,
-            service=service,
-        )
+    handler = ErrAgentHandler(
+        erragent_url=erragent_url,
+        ingest_secret=ingest_secret,
+        service=service,
     )
-    if target_logger.level == logging.NOTSET or target_logger.level > logging.INFO:
-        target_logger.setLevel(logging.INFO)
+
+    root.addHandler(handler)
+
+    if root.level == logging.NOTSET or root.level > logging.INFO:
+        root.setLevel(logging.INFO)
+
     return True
