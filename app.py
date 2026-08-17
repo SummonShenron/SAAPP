@@ -962,7 +962,7 @@ async def saapp_log_event(
 ):
     new_entry = {
         "id": str(uuid.uuid4()), 
-        "username": current_user.sub, # Override with verified session
+        "username": current_user.get("sub"), # Override with verified session
         "activity": entry.activity,
         "duration_hours": entry.duration_hours,
         "duration_minutes": entry.duration_minutes,
