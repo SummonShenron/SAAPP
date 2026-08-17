@@ -417,7 +417,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
         "original_question": question,
         "force_web_search": force_web_search,
         "workflowName": "sonic_assistant",
-        "request_id" : uuid.uuid4().hex
+        "requestId" : uuid.uuid4().hex
     }
 
     # ---------- Early Attachments Processing ----------
@@ -474,7 +474,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                     "messages": initial_state["messages"],
                     "original_question": question,
                     "workflowName": "sonic_assistant",
-                    "request_id" : uuid.uuid4().hex
+                    "requestId" : uuid.uuid4().hex
                 }
             else:
                 # 1. LIVE GRAPH EXECUTION & EVENT STREAMING

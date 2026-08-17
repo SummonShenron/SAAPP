@@ -3,6 +3,7 @@ import asyncio
 import base64
 import os
 import re
+import uuid
 import json
 from typing import List, Any, Dict, Optional
 import logging
@@ -54,15 +55,20 @@ async def safe_emit_event(name: str, data: dict):
     except RuntimeError:
         # Safely ignored when called from fallback utilities or standalone scripts
         pass
-# ============================================================
-# COORDINATOR_NODE (sync)
-# ============================================================
+
+def ensure_workflow_keys(state):
+    if "workflowName" not in state:
+        state["workflowName"] = "sonic_assistant"
+    if "requestId" not in state:
+        state["requestId"] = uuid.uuid4().hex
+    return state
 
 # ============================================================
 # COORDINATOR_NODE (sync)
 # ============================================================
 
 async def coordinator_node(state: GraphState) -> GraphState:
+    state = ensure_workflow_keys(state)
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "coordinator_node"
@@ -96,6 +102,8 @@ async def coordinator_node(state: GraphState) -> GraphState:
             }
         }
     )
+    if "workflowName" not in state:
+        logger.error("STATE LOST workflowName HERE: %s", state)
     return state
 
 
@@ -326,6 +334,7 @@ def apply_conditional_skips(plan: Dict[str, Any], state: Dict[str, Any]) -> Dict
 # ============================================================
 
 async def reasoner_node(state: GraphState) -> GraphState:
+    state = ensure_workflow_keys(state)
     msg = state["messages"][-1].content.strip()
     history = state.get("messages", [])
     
@@ -392,6 +401,7 @@ async def reasoner_node(state: GraphState) -> GraphState:
 # ============================================================
 
 def memory_node(state: GraphState) -> dict:
+    state = ensure_workflow_keys(state)
     logger.info("--- MEMORY NODE CALLED ---")
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
@@ -453,6 +463,7 @@ def memory_node(state: GraphState) -> dict:
 
 async def retrieve_node(state: GraphState, vector_store) -> dict:
     logger.info("--- PARALLEL RETRIEVING DOCUMENTS & GRAPH CONTEXT ---")
+    state = ensure_workflow_keys(state)
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "retrieve_node"
@@ -628,6 +639,7 @@ def summarizer_node(state: GraphState) -> GraphState:
 
 def formatter_node(state: GraphState) -> dict:
     logger.info("--- FORMATTER NODE CALLED ---")
+    state = ensure_workflow_keys(state)
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "formatter_node"
@@ -720,6 +732,7 @@ def generate_node(state: GraphState) -> dict:
 
 async def grading_node(state: GraphState) -> dict:
     logger.info("--- GRADING RETRIEVED CONTENT ---")
+    state = ensure_workflow_keys(state)
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "grading_node"
@@ -824,6 +837,7 @@ async def grading_node(state: GraphState) -> dict:
 
 def rewrite_query_node(state: GraphState) -> dict:
     logger.info("--- REWRITING QUERY FOR BETTER RETRIEVAL ---")
+    state = ensure_workflow_keys(state)
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "formatter_node"
@@ -891,6 +905,7 @@ def rewrite_query_node(state: GraphState) -> dict:
 def paapp_node(state: GraphState) -> GraphState:
     msg = state["messages"][-1].content
     username = state.get("username", "default_user")
+    state = ensure_workflow_keys(state)
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "paapp_node"
@@ -1921,6 +1936,7 @@ def extract_real_query(state: dict) -> str:
 
 async def web_search_node(state: GraphState) -> dict:
     logger.info("--- EXECUTING WEB SEARCH ESCALATION ---")
+    state = ensure_workflow_keys(state)
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "web_search_node"
@@ -1990,6 +2006,7 @@ async def web_search_node(state: GraphState) -> dict:
 # CODE INTERPRETOR NODE
 # ============================================================
 def code_interpreter_node(state: GraphState) -> Dict[str, Any]:
+    state = ensure_workflow_keys(state)
     username = state.get("username")
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
@@ -2269,6 +2286,7 @@ def extract_pr_request_details(text: str | None, fallback_repo: str = "SummonShe
     return details
 
 async def github_search_node(state: dict) -> dict:
+    state = ensure_workflow_keys(state)
     logger.info("--- GITHUB SEARCH NODE (DYNAMIC TREE ROUTER) CALLED ---")
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
@@ -2446,6 +2464,7 @@ def resolve_pr_number(user_msg: str, repo: str, headers: dict, api_base: str) ->
 
 async def pr_summarizer_node(state: GraphState) -> dict:
     logger.info("--- PR SUMMARIZER NODE CALLED ---")
+    state = ensure_workflow_keys(state)
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "github_search_node"
@@ -2590,6 +2609,7 @@ def fetch_branch_diff_summary(repo: str, base: str, head: str) -> str:
 
 def draft_pr_node(state: GraphState) -> GraphState:
     logger.info("--- DRAFT PR NODE (HITL) CALLED ---")
+    state = ensure_workflow_keys(state)
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "draft_pr_node"
@@ -2736,6 +2756,7 @@ def draft_pr_node(state: GraphState) -> GraphState:
 def execute_pr_node(state: dict) -> dict:
     """Executes PR creation after human approval with prompt-fallback parameter recovery."""
     logger.info("--- EXECUTE PR NODE CALLED ---")
+    state = ensure_workflow_keys(state)
     username = state.get("username")
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
