@@ -687,11 +687,12 @@ def download_document(
     # 4. Stream from GridFS bucket using matched document ID
     grid_out = gridfs_bucket.open_download_stream(file_doc["_id"])
     
+    safe_filename = urllib.parse.quote(clean_basename)
     return StreamingResponse(
         grid_out,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f'inline; filename="{clean_basename}"'
+            "Content-Disposition": f"inline; filename*=utf-8''{safe_filename}"
         }
     )
 
