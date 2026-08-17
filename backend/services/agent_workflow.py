@@ -58,27 +58,46 @@ async def safe_emit_event(name: str, data: dict):
 # COORDINATOR_NODE (sync)
 # ============================================================
 
+# ============================================================
+# COORDINATOR_NODE (sync)
+# ============================================================
+
 async def coordinator_node(state: GraphState) -> GraphState:
+    workflow_name = state["workflowName"]
+    request_id = state["requestId"]
+    node_name = "coordinator_node"
+    node_input = state.copy()
     last_msg = state["messages"][-1].content.lower().strip()
     logger.info("--- COORDINATOR NODE START ---")
     logger.debug(f"Incoming state pending_action: {state.get('pending_action')}")
-    # 1. Fast deterministic classification FIRST (Passing state=state!)
+    # 1. Fast deterministic classification FIRST
     state = await reasoner_node(state)
-
     # NOW classify intent with the updated state
     intent = classify_intent(
         last_msg,
         state.get("messages", []) + state.get("attachment_summaries", []),
         state=state
     )
-
     plan = build_agent_plan(intent, state)
-    
     state["coordinator_intent"] = intent
     state["coordinator_plan"] = plan["agents"]
     logger.info(f"Final stored plan: {state['coordinator_plan']}")
     logger.info("--- COORDINATOR NODE END ---")
+    node_output = state.copy()
+    logger.info(
+        "node executed",
+        extra={
+            "erragent_context": {
+                "workflowName": workflow_name,
+                "requestId": request_id,
+                "node": node_name,
+                "input": node_input,
+                "output": node_output,
+            }
+        }
+    )
     return state
+
 
 def coordinator_router(state: GraphState) -> str:
     logger.info("Preparing next step.")
@@ -374,6 +393,10 @@ async def reasoner_node(state: GraphState) -> GraphState:
 
 def memory_node(state: GraphState) -> dict:
     logger.info("--- MEMORY NODE CALLED ---")
+    workflow_name = state["workflowName"]
+    request_id = state["requestId"]
+    node_name = "memory_node"
+    node_input = state.copy()
     user_msg = state["messages"][-1].content.strip()
     # Extract the memory content
     lower_msg = user_msg.lower()
@@ -413,10 +436,27 @@ def memory_node(state: GraphState) -> dict:
     # Pass to formatter
     state["raw_generation"] = confirmation
     state["content_to_format"] = confirmation
+    node_output = state.copy()
+    logger.info(
+        "node executed",
+        extra={
+            "erragent_context": {
+                "workflowName": workflow_name,
+                "requestId": request_id,
+                "node": node_name,
+                "input": node_input,
+                "output": node_output,
+            }
+        }
+    )
     return state
 
 async def retrieve_node(state: GraphState, vector_store) -> dict:
     logger.info("--- PARALLEL RETRIEVING DOCUMENTS & GRAPH CONTEXT ---")
+    workflow_name = state["workflowName"]
+    request_id = state["requestId"]
+    node_name = "retrieve_node"
+    node_input = state.copy()
     question = state["messages"][-1].content
     username = state.get("username")
     target_scope = state.get("target_scope")
@@ -528,7 +568,19 @@ async def retrieve_node(state: GraphState, vector_store) -> dict:
             page_content=summary,
             metadata={"source": "user_attachment_summary", "priority": True}
         ))
-
+    node_output = state.copy()
+    logger.info(
+        "node executed",
+        extra={
+            "erragent_context": {
+                "workflowName": workflow_name,
+                "requestId": request_id,
+                "node": node_name,
+                "input": node_input,
+                "output": node_output,
+            }
+        }
+    )
     return {
         **state,
         "documents": docs,
@@ -576,6 +628,10 @@ def summarizer_node(state: GraphState) -> GraphState:
 
 def formatter_node(state: GraphState) -> dict:
     logger.info("--- FORMATTER NODE CALLED ---")
+    workflow_name = state["workflowName"]
+    request_id = state["requestId"]
+    node_name = "formatter_node"
+    node_input = state.copy()
     # 1. Choose the correct content source
     messages = state.get("messages")
     if messages:
@@ -613,6 +669,19 @@ def formatter_node(state: GraphState) -> dict:
     formatted = get_chat_llm(state.get("username", "")).invoke(prompt)
     formatted_text = formatted.content if hasattr(formatted, "content") else str(formatted)
     state["formatted_output"] = formatted_text
+    node_output = state.copy()
+    logger.info(
+        "node executed",
+        extra={
+            "erragent_context": {
+                "workflowName": workflow_name,
+                "requestId": request_id,
+                "node": node_name,
+                "input": node_input,
+                "output": node_output,
+            }
+        }
+    )
     return state
 
 def insight_formatter_node(state: dict) -> dict:
@@ -651,7 +720,10 @@ def generate_node(state: GraphState) -> dict:
 
 async def grading_node(state: GraphState) -> dict:
     logger.info("--- GRADING RETRIEVED CONTENT ---")
-    
+    workflow_name = state["workflowName"]
+    request_id = state["requestId"]
+    node_name = "grading_node"
+    node_input = state.copy()
     # 1. EMIT THE LIVE THOUGHT: Start grading
     await safe_emit_event(
         "trace_detail", 
@@ -714,10 +786,35 @@ async def grading_node(state: GraphState) -> dict:
                 "detail": f"Evaluation complete. Context marked as: {grade_text}"
             }
         )
-
+        node_output = state.copy()
+        logger.info(
+            "node executed",
+            extra={
+                "erragent_context": {
+                    "workflowName": workflow_name,
+                    "requestId": request_id,
+                    "node": node_name,
+                    "input": node_input,
+                    "output": node_output,
+                }
+            }
+        )
         return {**state, "relevance_grade": grade}
     except Exception as e:
         logger.exception(f"Grading failed: {e}. Defaulting to no.")
+        node_output = state.copy()
+        logger.info(
+            "node executed",
+            extra={
+                "erragent_context": {
+                    "workflowName": workflow_name,
+                    "requestId": request_id,
+                    "node": node_name,
+                    "input": node_input,
+                    "output": node_output,
+                }
+            }
+        )
         return {**state, "relevance_grade": "no"}
 
 
@@ -727,6 +824,10 @@ async def grading_node(state: GraphState) -> dict:
 
 def rewrite_query_node(state: GraphState) -> dict:
     logger.info("--- REWRITING QUERY FOR BETTER RETRIEVAL ---")
+    workflow_name = state["workflowName"]
+    request_id = state["requestId"]
+    node_name = "formatter_node"
+    node_input = state.copy()
     # Defensive extraction of original question
     try:
         raw_original = state.get("messages", [])[-1].content
@@ -748,7 +849,19 @@ def rewrite_query_node(state: GraphState) -> dict:
             new_messages[-1] = HumanMessage(content=rewrite_clean)
         else:
             new_messages = [HumanMessage(content=rewrite_clean)]
-
+        node_output = state.copy()
+        logger.info(
+            "node executed",
+            extra={
+                "erragent_context": {
+                    "workflowName": workflow_name,
+                    "requestId": request_id,
+                    "node": node_name,
+                    "input": node_input,
+                    "output": node_output,
+                }
+            }
+        )
         return {
             **state,
             "messages": new_messages,
@@ -756,6 +869,19 @@ def rewrite_query_node(state: GraphState) -> dict:
         }
     except Exception as e:
         logger.exception(f"Query rewrite node failed: {e}")
+        node_output = state.copy()
+        logger.info(
+            "node executed",
+            extra={
+                "erragent_context": {
+                    "workflowName": workflow_name,
+                    "requestId": request_id,
+                    "node": node_name,
+                    "input": node_input,
+                    "output": node_output,
+                }
+            }
+        )
         return state
 
 # ============================================================
@@ -765,7 +891,10 @@ def rewrite_query_node(state: GraphState) -> dict:
 def paapp_node(state: GraphState) -> GraphState:
     msg = state["messages"][-1].content
     username = state.get("username", "default_user")
-
+    workflow_name = state["workflowName"]
+    request_id = state["requestId"]
+    node_name = "paapp_node"
+    node_input = state.copy()
     try:
         response = call_paapp_chat(username, msg)
     except Exception as e:
@@ -841,7 +970,19 @@ def paapp_node(state: GraphState) -> GraphState:
             response = json.loads(response)
         except:
             pass
-
+    node_output = state.copy()
+    logger.info(
+        "node executed",
+        extra={
+            "erragent_context": {
+                "workflowName": workflow_name,
+                "requestId": request_id,
+                "node": node_name,
+                "input": node_input,
+                "output": node_output,
+            }
+        }
+    )
     message = response.get("message", "PAAPP returned no message.")
     state["raw_generation"] = message
     state["content_to_format"] = message
@@ -1780,7 +1921,10 @@ def extract_real_query(state: dict) -> str:
 
 async def web_search_node(state: GraphState) -> dict:
     logger.info("--- EXECUTING WEB SEARCH ESCALATION ---")
-    
+    workflow_name = state["workflowName"]
+    request_id = state["requestId"]
+    node_name = "web_search_node"
+    node_input = state.copy()
     # 1. Emit the live thought to the UI
     await safe_emit_event(
         "trace_detail", 
@@ -1823,7 +1967,19 @@ async def web_search_node(state: GraphState) -> dict:
                 metadata={"source": "web_search", "type": "web_search"}
             )
         ]
-
+    node_output = state.copy()
+    logger.info(
+        "node executed",
+        extra={
+            "erragent_context": {
+                "workflowName": workflow_name,
+                "requestId": request_id,
+                "node": node_name,
+                "input": node_input,
+                "output": node_output,
+            }
+        }
+    )
     # Return ONLY modified state keys — do NOT spread **state
     return {
         "documents": web_docs,
@@ -1835,7 +1991,10 @@ async def web_search_node(state: GraphState) -> dict:
 # ============================================================
 def code_interpreter_node(state: GraphState) -> Dict[str, Any]:
     username = state.get("username")
-    
+    workflow_name = state["workflowName"]
+    request_id = state["requestId"]
+    node_name = "code_interpreter_node"
+    node_input = state.copy()
     # 1. Verify Global Admin access
     user_groups = load_user_directory_groups(username)
     if "Global_Admins" not in user_groups:
@@ -2018,7 +2177,19 @@ def code_interpreter_node(state: GraphState) -> Dict[str, Any]:
     )
     current_docs = state.get("documents", [])
     current_docs.append(doc)
-    
+    node_output = state.copy()
+    logger.info(
+        "node executed",
+        extra={
+            "erragent_context": {
+                "workflowName": workflow_name,
+                "requestId": request_id,
+                "node": node_name,
+                "input": node_input,
+                "output": node_output,
+            }
+        }
+    )
     return {
         "documents": current_docs,
         "drafted_code": None,
@@ -2098,9 +2269,11 @@ def extract_pr_request_details(text: str | None, fallback_repo: str = "SummonShe
     return details
 
 async def github_search_node(state: dict) -> dict:
-    print("--- GITHUB SEARCH NODE (DYNAMIC TREE ROUTER) CALLED ---")
     logger.info("--- GITHUB SEARCH NODE (DYNAMIC TREE ROUTER) CALLED ---")
-    
+    workflow_name = state["workflowName"]
+    request_id = state["requestId"]
+    node_name = "github_search_node"
+    node_input = state.copy()
     # 1. Emit live thought to the UI
     await safe_emit_event(
         "trace_detail", 
@@ -2191,7 +2364,19 @@ async def github_search_node(state: dict) -> dict:
 
     results = await asyncio.to_thread(_fetch_file_contents)
     formatted_results = "\n\n---\n\n".join(results) if results else "No matching files retrieved."
-
+    node_output = state.copy()
+    logger.info(
+        "node executed",
+        extra={
+            "erragent_context": {
+                "workflowName": workflow_name,
+                "requestId": request_id,
+                "node": node_name,
+                "input": node_input,
+                "output": node_output,
+            }
+        }
+    )
     return {
         **state,
         "github_results": formatted_results,
@@ -2261,7 +2446,10 @@ def resolve_pr_number(user_msg: str, repo: str, headers: dict, api_base: str) ->
 
 async def pr_summarizer_node(state: GraphState) -> dict:
     logger.info("--- PR SUMMARIZER NODE CALLED ---")
-    
+    workflow_name = state["workflowName"]
+    request_id = state["requestId"]
+    node_name = "github_search_node"
+    node_input = state.copy()
     # 1. Emit live thought to the UI
     await safe_emit_event(
         "trace_detail", 
@@ -2356,7 +2544,19 @@ async def pr_summarizer_node(state: GraphState) -> dict:
         comment_body = f"Could not generate automated PR summary: {str(e)}"
 
     output_text = f"### PR Review Summary for {repo} #{pr_number}\n\n{comment_body}"
-
+    node_output = state.copy()
+    logger.info(
+        "node executed",
+        extra={
+            "erragent_context": {
+                "workflowName": workflow_name,
+                "requestId": request_id,
+                "node": node_name,
+                "input": node_input,
+                "output": node_output,
+            }
+        }
+    )
     return {
         **state,
         "pr_summary": comment_body,
@@ -2390,7 +2590,10 @@ def fetch_branch_diff_summary(repo: str, base: str, head: str) -> str:
 
 def draft_pr_node(state: GraphState) -> GraphState:
     logger.info("--- DRAFT PR NODE (HITL) CALLED ---")
-
+    workflow_name = state["workflowName"]
+    request_id = state["requestId"]
+    node_name = "draft_pr_node"
+    node_input = state.copy()
     messages = state.get("messages", [])
     if not messages:
         return state
@@ -2509,7 +2712,19 @@ def draft_pr_node(state: GraphState) -> GraphState:
 
     # Clean message list update (Single append)
     new_messages = list(state.get("messages", [])) + [AIMessage(content=card_msg)]
-
+    node_output = state.copy()
+    logger.info(
+        "node executed",
+        extra={
+            "erragent_context": {
+                "workflowName": workflow_name,
+                "requestId": request_id,
+                "node": node_name,
+                "input": node_input,
+                "output": node_output,
+            }
+        }
+    )
     return {
         **state,
         "pending_action": new_pending_action,
@@ -2522,7 +2737,10 @@ def execute_pr_node(state: dict) -> dict:
     """Executes PR creation after human approval with prompt-fallback parameter recovery."""
     logger.info("--- EXECUTE PR NODE CALLED ---")
     username = state.get("username")
-
+    workflow_name = state["workflowName"]
+    request_id = state["requestId"]
+    node_name = "execute_pr_node"
+    node_input = state.copy()
     # 1. RBAC Check
     user_groups = load_user_directory_groups(username)
     if "Global_Admins" not in user_groups:
@@ -2726,7 +2944,19 @@ def execute_pr_node(state: dict) -> dict:
             )
     else:
         output_text = f"**Failed to create Pull Request** (HTTP {res.status_code}):\n```json\n{res.text}\n```"
-
+    node_output = state.copy()
+    logger.info(
+        "node executed",
+        extra={
+            "erragent_context": {
+                "workflowName": workflow_name,
+                "requestId": request_id,
+                "node": node_name,
+                "input": node_input,
+                "output": node_output,
+            }
+        }
+    )
     return {
         **state,
         "content_to_format": output_text,
