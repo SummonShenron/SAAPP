@@ -550,6 +550,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                 yield f"data: {json.dumps({'event': 'node_progress', 'node': 'self_correction_guardrail', 'title': 'Applying Lessons Learned Guardrail', 'detail': f'Injected past failure constraint into context prompt.'})}\n\n"
 
             t_prompt_ready = time.perf_counter()
+            yield f"data: {json.dumps({'event': 'node_progress', 'node': 'formatter_node', 'title': 'Thinking through the answer...', 'detail': 'Gemini is composing the final response.'})}\n\n"
             # 3. STREAM RESPONSE TOKENS FROM LLM
             async for chunk in response_llm.astream(prompt):
                 if first_token:

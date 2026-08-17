@@ -407,11 +407,11 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     return () => clearInterval(id);
   }, [awaitingFirstToken]);
 
-  const composingLabel = waitSeconds >= 8
-    ? 'Still composing — almost there'
-    : waitSeconds >= 4
-      ? 'Working through the details'
-      : 'Composing the response';
+  const composingLabel = waitSeconds >= 20
+    ? 'Still thinking...'
+    : waitSeconds >= 8
+      ? 'Still thinking through the answer — almost there'
+      : 'Thinking through the answer';
 
   const handleSendMessage = async (
     textToSend: string,
