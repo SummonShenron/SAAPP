@@ -33,7 +33,7 @@ class ErrAgentHandler(logging.Handler):
         erragent_url: str,
         ingest_secret: str,
         service: str,
-        timeout_seconds: float = 3.0,
+        timeout_seconds: float = 40.0,
         queue_size: int = 1000,
         max_delivery_attempts: int = 4,
         retry_delay_seconds: float = 0.5,
