@@ -3,14 +3,12 @@ import requests
 from fastapi import Request, HTTPException, Security
 from fastapi.security import HTTPBearer
 import os
-from clerk_backend_api import Clerk
 from datetime import datetime, timezone
 import logging
 from backend.utils.db_utils import get_db
 
 logger = logging.getLogger("SASS Logger")
 security = HTTPBearer()
-# clerk_client = Clerk(bearer_auth=os.environ.get("CLERK_SECRET_KEY"))
 _cached_jwks = None
 
 class MockUser:
@@ -21,9 +19,6 @@ class MockUser:
 def get_clerk_public_key():
     global _cached_jwks
     if _cached_jwks is None:
-        # Replace <YOUR_CLERK_FRONTEND_API> with your Clerk Issuer URL
-        # You can find this in your Clerk Dashboard under "JWT Templates" 
-        # or "API Keys" -> "Issuer"
         jwks_url = f"{os.environ.get('CLERK_ISSUER')}/.well-known/jwks.json"
         _cached_jwks = requests.get(jwks_url).json()
     return _cached_jwks
@@ -37,7 +32,7 @@ async def get_current_user(request: Request):
     )
     normalized_principal = (principal_hint or "").strip()
 
-    # 1. Guest Principal Overrides
+    # 1. Guest Principal Overrides (Legacy/Other Integrations)
     if normalized_principal == "guest":
         logger.info("Guest principal override detected. Bypassing JWT verification.")
         return {"sub": "guest-recruiter@example.com", "email": "guest@example.com"}
@@ -46,43 +41,29 @@ async def get_current_user(request: Request):
         logger.info("BTY embedded guest principal override detected. Bypassing JWT verification.")
         return {"sub": "guest_bty", "email": "guest_bty@bty.local"}
 
-    if normalized_principal in {"guest_erragent", "guest-erragent"}:
-        logger.info("Erragent embedded guest principal override detected. Bypassing JWT verification.")
-        return {"sub": "guest_erragent", "email": "guest_erragent@erragent.local"}
-
-    # 2. Dynamic Erragent Email Principal Override
+    # 2. Dynamic Email Principal Override (Primary path for Erragent signed-in users)
     if "@" in normalized_principal:
-        logger.info(f"Erragent authenticated user email detected: {normalized_principal}. Bypassing JWT verification.")
+        logger.info(f"Authenticated email principal detected: {normalized_principal}. Bypassing JWT verification.")
         return {"sub": normalized_principal, "email": normalized_principal}
 
+    # 3. Require Authorization header if no valid email principal was supplied
     if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
     
     token = auth_header.split(" ")[1]
     
-    # 3. Fallback Sandbox Tokens
-    if token in {"guest-sandbox-token", "guest-bty-token", "guest-erragent-token"}:
+    # 4. Fallback Sandbox Tokens (Non-email testing)
+    if token in {"guest-sandbox-token", "guest-bty-token"}:
         return {"sub": normalized_principal or "guest", "email": normalized_principal or "guest@example.com"}
 
-    if token == "guest-bty-token":
-        logger.info("BTY embedded guest session detected. Bypassing JWT verification.")
-        return {"sub": "guest_bty", "email": "guest_bty@bty.local"}
-
-    if token == "guest-erragent-token":
-        logger.info("Erragent embedded guest session detected. Bypassing JWT verification.")
-        return {"sub": "guest_erragent", "email": "guest_erragent@erragent.local"}
-
-    # 2. Existing JWT verification logic
+    # 5. Standard JWT verification logic
     try:
-        # Get header to find the 'kid' (Key ID)
         header = jwt.get_unverified_header(token)
         jwks = get_clerk_public_key()
         
-        # Find matching key
         key_data = next(k for k in jwks['keys'] if k['kid'] == header['kid'])
         public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key_data)
         
-        # Verify
         payload = jwt.decode(token, public_key, algorithms=["RS256"])
         return payload 
         
@@ -91,9 +72,7 @@ async def get_current_user(request: Request):
         raise HTTPException(status_code=401, detail="Authentication failed")
     
 def record_login_event(user_id: str, email: str, is_guest: bool = False, ip_address: str = None):
-    """
-    Writes a single login document to MongoDB.
-    """
+    """Writes a single login document to MongoDB."""
     try:
         db = get_db()
         if db is None:
