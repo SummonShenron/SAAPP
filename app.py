@@ -11,7 +11,7 @@ import urllib.parse
 import re
 from gridfs import GridFSBucket
 from bson import ObjectId, errors
-from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Query, Form, Request, Depends, BackgroundTasks, status
+from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Query, Form, Request, Depends, BackgroundTasks, status, Response
 from typing import List, Dict, Any, Optional
 import uuid
 import traceback
@@ -92,7 +92,7 @@ async def lifespan(app: FastAPI):
         logger.info("Loading chat history from database...")
         chat_sessions = load_chat_history()
     except Exception as e:
-        print(f"Error loading chat history: {e}")
+        logger.exception("Error loading chat history: %s", e)
     yield
     # Cleanup tasks would go here
     chat_sessions = {}
@@ -158,6 +158,43 @@ class IngestPayload(BaseModel):
 
 class StatusUpdate(BaseModel):
     status: str
+
+@app.middleware("http")
+async def capture_unhandled_errors(request: Request, call_next) -> Response:
+    started_at = time.perf_counter()
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception(
+            "Unhandled request failure",
+            extra={
+                "erragent_context": {
+                    "method": request.method,
+                    "path": request.url.path,
+                    "environment": os.getenv("ENVIRONMENT", "production"),
+                }
+            },
+        )
+        raise
+
+    duration_ms = round((time.perf_counter() - started_at) * 1000)
+
+    if response.status_code >= 500:
+        logger.error(
+            "Request returned server error",
+            extra={
+                "erragent_context": {
+                    "method": request.method,
+                    "path": request.url.path,
+                    "statusCode": response.status_code,
+                    "durationMs": duration_ms,
+                    "environment": os.getenv("ENVIRONMENT", "production"),
+                }
+            },
+        )
+
+    return response
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -312,7 +349,7 @@ async def discover_documents(affiliate: str = "All", current_user = Depends(get_
         files = discover_workspace_documents(affiliate)
         return {"accessible_documents": files}
     except Exception as e:
-        logger.error(f"[-] Catalog discovery anomaly: {str(e)}")
+        logger.exception(f"[-] Catalog discovery anomaly: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/chat")
@@ -737,7 +774,7 @@ async def upload_and_ingest_documents(
         return {"status": "success", "message": "Uploaded and started ingestion."}
         
     except Exception as e:
-        logger.error(f"Failed to spawn ingestion process: {str(e)}")
+        logger.exception(f"Failed to spawn ingestion process: {str(e)}")
         raise HTTPException(status_code=500, detail="Trigger failed.")
 
 # --- ELEVATED ENDPOINT: FETCH INDEXED MANIFEST (MongoDB GridFS) ---
@@ -843,7 +880,7 @@ async def delete_document(
         return {"status": "success", "detail": f"Expelled {raw_filename} and cleared {result.deleted_count} vector fragments."}
 
     except Exception as e:
-        logger.error(f"Deletion failed: {e}")
+        logger.exception(f"Deletion failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/saved-conversations")

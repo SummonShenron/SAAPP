@@ -382,8 +382,8 @@ async def reasoner_node(state: GraphState) -> GraphState:
         clean_json = raw_text.replace("```json", "").replace("```", "").strip()
         flags = json.loads(clean_json)
 
-    except Exception as e:
-        logger.error(f"[Reasoner] LLM classification failed ({e}), using fallback rules.")
+    except Exception:
+        logger.exception("[Reasoner] LLM classification failed, using fallback rules.")
         # Fallback to standard false flags if JSON parsing fails
         flags = {
             "needs_retrieval": False,
@@ -550,8 +550,8 @@ async def retrieve_node(state: GraphState, vector_store) -> dict:
                 top_k=3
             )
             return retriever.invoke(question) or []
-        except Exception as e:
-            logger.error(f"Vector search failed: {e}")
+        except Exception:
+            logger.exception("Vector search failed.")
             return []
 
     # Parallel Task 2: Session Search
@@ -563,8 +563,8 @@ async def retrieve_node(state: GraphState, vector_store) -> dict:
                     page_content=f"[Session Document: {hit['filename']}]\nScore: {hit['score']}",
                     metadata={"source": "session_vector_store", "priority": True, "filename": hit["filename"]}
                 ) for hit in session_hits]
-        except Exception as e:
-            logger.error(f"Session retrieval failed: {e}")
+        except Exception:
+            logger.exception("Session retrieval failed.")
         return []
 
     # Parallel Task 3: Knowledge Graph Search
@@ -580,8 +580,8 @@ async def retrieve_node(state: GraphState, vector_store) -> dict:
                             page_content=f"Connection: {fact}",
                             metadata={"source": "knowledge_graph_db", "type": "relationship"}
                         ))
-        except Exception as e:
-            logger.error(f"GraphRAG Entity scanner failed: {e}")
+        except Exception:
+            logger.exception("GraphRAG Entity scanner failed.")
         return graph_docs
 
     # Execute all 3 fetches concurrently
@@ -840,8 +840,8 @@ async def grading_node(state: GraphState) -> dict:
             }
         )
         return {**state, "relevance_grade": grade}
-    except Exception as e:
-        logger.exception(f"Grading failed: {e}. Defaulting to no.")
+    except Exception:
+        logger.exception("Grading failed. Defaulting to no.")
         node_output = state.copy()
         logger.info(
             "node executed",
@@ -910,8 +910,8 @@ def rewrite_query_node(state: GraphState) -> dict:
             "messages": new_messages,
             "question": rewrite_clean
         }
-    except Exception as e:
-        logger.exception(f"Query rewrite node failed: {e}")
+    except Exception:
+        logger.exception("Query rewrite node failed.")
         node_output = state.copy()
         logger.info(
             "node executed",
@@ -942,8 +942,9 @@ def paapp_node(state: GraphState) -> GraphState:
     node_input = state.copy()
     try:
         response = call_paapp_chat(username, msg)
-    except Exception as e:
-        fallback = f"PAAPP communication error: {str(e)}"
+    except Exception:
+        logger.exception("PAAPP communication error.")
+        fallback = "PAAPP communication error: see logs for traceback"
         state["raw_generation"] = fallback
         state["content_to_format"] = fallback
         return state
@@ -977,8 +978,8 @@ def paapp_node(state: GraphState) -> GraphState:
                 json={"username": username, "question": f"sync event {entry_payload.activity}"}
             )
             logger.info(f"[PAAPP] Sync trigger request sent to headless API.")
-        except Exception as e:
-            logger.error(f"[PAAPP] Sync trigger failed: {e}")
+        except Exception:
+            logger.exception("[PAAPP] Sync trigger failed.")
 
         # FIX: Update state['snapshot'] so the UI updates without a refresh
         if "snapshot" in state:
@@ -1004,9 +1005,9 @@ def paapp_node(state: GraphState) -> GraphState:
             if "snapshot" in state:
                 state["snapshot"]["logs"] = load_user_time(username)
 
-        except Exception as e:
-            logger.error(f"[PAAPP] Time log failed: {e}")
-            state["raw_generation"] = f"Time log failed: {str(e)}"
+        except Exception:
+            logger.exception("[PAAPP] Time log failed.")
+            state["raw_generation"] = "Time log failed: see logs for traceback"
             return state
 
     # --- 3. RETURN RESPONSE ---
@@ -2003,8 +2004,8 @@ async def web_search_node(state: GraphState) -> dict:
                 )
                 for r in results if isinstance(r, dict)
             ]
-    except Exception as e:
-        logger.error(f"Web search execution error: {str(e)}", exc_info=True)
+    except Exception:
+        logger.exception("Web search execution error.")
 
     # Fallback document if search returned empty or threw an error
     if not web_docs:
@@ -2086,9 +2087,9 @@ def code_interpreter_node(state: GraphState) -> Dict[str, Any]:
                 "content_to_format": output_msg,
                 "relevance_grade": "code_interpreter"
             }
-        except Exception as e:
-            logger.error(f"Write operation execution failed: {e}")
-            error_msg = f"**Write Operation Execution Failed:**\n```error\n{str(e)}\n```"
+        except Exception:
+            logger.exception("Write operation execution failed.")
+            error_msg = "**Write Operation Execution Failed:**\n```error\nSee logs for traceback.\n```"
             return {
                 **state,
                 "drafted_code": None,
@@ -2162,8 +2163,8 @@ def code_interpreter_node(state: GraphState) -> Dict[str, Any]:
                 code_match = re.search(r"```(?:python)?\s*(.*?)\s*```", raw_text, re.DOTALL)
                 drafted_code = code_match.group(1).strip() if code_match else clean_text
                 
-        except Exception as e:
-            logger.error(f"Code drafting failed on attempt {attempt+1}: {e}")
+        except Exception:
+            logger.exception("Code drafting failed on attempt %s.", attempt + 1)
             continue
 
         logger.info(f"Attempt {attempt+1} - Extracted Code to Execute: {drafted_code}")
@@ -2190,10 +2191,10 @@ def code_interpreter_node(state: GraphState) -> Dict[str, Any]:
                     break
                 else:
                     logger.warning(f"Attempt {attempt+1} returned empty/null results. Retrying with broader instructions...")
-            except Exception as e:
-                logger.error(f"Execution runtime error on attempt {attempt+1}: {e}")
+            except Exception:
+                logger.exception("Execution runtime error on attempt %s.", attempt + 1)
                 if attempt == max_retries - 1:
-                    error_msg = f"Execution Error: {str(e)}"
+                    error_msg = "Execution Error: see logs for traceback"
                     return {
                         **state,
                         "drafted_code": None,
@@ -2736,10 +2737,8 @@ def draft_pr_node(state: GraphState) -> GraphState:
             "[Draft PR Node] Successfully generated dynamic PR summary!"
         )
 
-    except Exception as e:
-        logger.warning(
-            f"Failed to parse LLM PR generation, using fallback: {e}"
-        )
+    except Exception:
+        logger.exception("Failed to parse LLM PR generation, using fallback.")
         title = f"feat: merge {head_branch} into {base_branch}"
         body = f"### Summary\n- Automated pull request draft created for `{head_branch}` -> `{base_branch}`."
 
