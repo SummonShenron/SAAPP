@@ -64,7 +64,7 @@ from backend.utils.fallback_utils import rewrite_fallback
 from backend.logging.sass_logger import setup_logging
 from backend.logging.erragent_handler import install_erragent_logging
 from backend.services.orchestrator import startup_services
-from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, verify_paapp_access, load_directory, seed_guest_tasks
+from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, verify_paapp_access, load_directory, seed_guest_tasks, ensure_guest_user_record
 from backend.utils.db_utils import get_db, save_error_event, test_connection
 from backend.auth.isolation_auth import get_current_user, record_login_event
 from contextlib import asynccontextmanager
@@ -229,10 +229,21 @@ def get_me(current_user: dict = Depends(get_current_user)):
     db = get_db() #[cite: 1]
     
     if db is not None:
-        users_col = db["directory"] 
+        users_col = db["directory"]
+
+        if clerk_id in {"guest_erragent", "guest-erragent"}:
+            logger.info("Provisioning erragent guest user record in MongoDB.")
+            user_doc = ensure_guest_user_record(
+                username=clerk_id,
+                email=email or f"{clerk_id}@erragent.local",
+                groups=["PAAPP_Admins", "Global_Admins"],
+            )
+        else:
+            user_doc = None
         
         # 1. Look for the user by clerk_id
-        user_doc = users_col.find_one({"clerk_id": clerk_id})
+        if not user_doc:
+            user_doc = users_col.find_one({"clerk_id": clerk_id})
         
         # 2. LAZY MIGRATION: If not found, look for them by email
         if not user_doc and email:

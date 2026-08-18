@@ -14,12 +14,32 @@ from backend.state.graph_state import GraphState, route_user_query
 from backend.services.agent_workflow import retrieve_node, grading_node, rewrite_query_node
 from backend.services.search import _detect_routing_strategy
 from backend.services.github_service import process_pr_summary
+from backend.utils.isolation_kb_utils import verify_paapp_access, ensure_guest_user_record
 from app import rewrite_fallback
 
 class MockLLM:
     def invoke(self, prompt):
         return AIMessage(content="Rewritten: facts about Goku in DBZ")
     
+class TestGuestAccessBehavior(unittest.TestCase):
+
+    @patch("backend.utils.isolation_kb_utils.get_db")
+    def test_verify_paapp_access_allows_guest_erragent(self, mock_get_db):
+        mock_get_db.return_value = None
+        self.assertTrue(verify_paapp_access("guest_erragent"))
+
+    @patch("backend.utils.isolation_kb_utils.get_db")
+    def test_ensure_guest_user_record_assigns_paapp_admins(self, mock_get_db):
+        db = MagicMock()
+        db["directory"].find_one.return_value = None
+        mock_get_db.return_value = db
+
+        record = ensure_guest_user_record("guest_erragent", "guest_erragent@erragent.local")
+
+        self.assertIn("PAAPP_Admins", record["groups"])
+        db["directory"].insert_one.assert_called_once()
+
+
 class TestGitHubRepoBehavior(unittest.TestCase):
 
     @patch.dict(os.environ, {"GITHUB_TOKEN": "fake-token"})

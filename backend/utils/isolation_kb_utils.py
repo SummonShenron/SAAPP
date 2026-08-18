@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+from datetime import datetime, timezone
 from typing import List, Dict, Any
 from settings import DIRECTORY_JSON_PATH
 from backend.utils.db_utils import get_db
@@ -75,8 +76,44 @@ def verify_paapp_access(username: str) -> bool:
     # Global Admins always have access
     if "Global_Admins" in user_groups:
         return True
+    # Embedded guest erragent traffic should be allowed to use the ops workflow.
+    if username in {"guest_erragent", "guest-erragent", "guest_erragent@erragent.local"}:
+        return True
     # PAAPP-specific admin group
     return "PAAPP_Admins" in user_groups
+
+
+def ensure_guest_user_record(username: str, email: str | None = None, groups: List[str] | None = None) -> Dict[str, Any]:
+    """Ensures an embedded guest principal exists in MongoDB with the right access groups."""
+    db = get_db()
+    if db is None:
+        return {}
+
+    normalized_username = (username or "").strip()
+    normalized_email = (email or "").strip()
+    if not normalized_username:
+        return {}
+
+    directory = db["directory"]
+    record = directory.find_one({"$or": [{"clerk_id": normalized_username}, {"email": normalized_email}, {"username": normalized_username}]})
+    if record is not None:
+        missing_groups = [group for group in (groups or []) if group not in record.get("groups", [])]
+        if missing_groups:
+            directory.update_one({"_id": record["_id"]}, {"$addToSet": {"groups": {"$each": missing_groups}}})
+        return {**record, "groups": record.get("groups", []) + [g for g in missing_groups if g not in record.get("groups", [])]}
+
+    default_groups = list(groups or ["PAAPP_Admins"])
+    new_record = {
+        "clerk_id": normalized_username,
+        "email": normalized_email or f"{normalized_username}@erragent.local",
+        "username": normalized_username,
+        "groups": default_groups,
+        "is_guest": True,
+        "created_at": datetime.now(timezone.utc),
+    }
+    directory.insert_one(new_record)
+    return new_record
+
 
 def seed_guest_tasks(db, username: str):
     """
