@@ -74,29 +74,30 @@ async def coordinator_node(state: GraphState) -> GraphState:
     node_name = "coordinator_node"
     node_input = state.copy()
     last_msg = state["messages"][-1].content.lower().strip()
+
     logger.info("--- COORDINATOR NODE START ---")
     logger.debug(f"Incoming state pending_action: {state.get('pending_action')}")
-    # 1. Fast deterministic classification FIRST
+
     state = await reasoner_node(state)
-    # NOW classify intent with the updated state
+
     intent = classify_intent(
         last_msg,
         state.get("messages", []) + state.get("attachment_summaries", []),
         state=state
     )
     plan = build_agent_plan(intent, state)
+
     state["coordinator_intent"] = intent
     state["coordinator_plan"] = plan["agents"]
+
     logger.info(f"Final stored plan: {state['coordinator_plan']}")
     logger.info("--- COORDINATOR NODE END ---")
+
     node_output = state.copy()
+
     logger.info(
         "node executed",
         extra={
-            "service": "SAAPP",
-            "service": "SAAPP",
-            "service": "SAAPP",
-            "service": "SAAPP",
             "service": "SAAPP",
             "erragent_context": {
                 "workflowName": workflow_name,
@@ -107,10 +108,11 @@ async def coordinator_node(state: GraphState) -> GraphState:
             }
         }
     )
+
     if "workflowName" not in state:
         logger.error("STATE LOST workflowName HERE: %s", state)
-    return state
 
+    return state
 
 def coordinator_router(state: GraphState) -> str:
     logger.info("Preparing next step.")
