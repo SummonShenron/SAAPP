@@ -30,9 +30,14 @@ def get_clerk_public_key():
 
 async def get_current_user(request: Request):
     auth_header = request.headers.get("Authorization")
-    principal_hint = request.headers.get("x-principal") or request.headers.get("X-Principal") or request.headers.get("x-user-id")
+    principal_hint = (
+        request.headers.get("x-principal") 
+        or request.headers.get("X-Principal") 
+        or request.headers.get("x-user-id")
+    )
     normalized_principal = (principal_hint or "").strip()
 
+    # 1. Guest Principal Overrides
     if normalized_principal == "guest":
         logger.info("Guest principal override detected. Bypassing JWT verification.")
         return {"sub": "guest-recruiter@example.com", "email": "guest@example.com"}
@@ -45,15 +50,19 @@ async def get_current_user(request: Request):
         logger.info("Erragent embedded guest principal override detected. Bypassing JWT verification.")
         return {"sub": "guest_erragent", "email": "guest_erragent@erragent.local"}
 
+    # 2. Dynamic Erragent Email Principal Override
+    if "@" in normalized_principal:
+        logger.info(f"Erragent authenticated user email detected: {normalized_principal}. Bypassing JWT verification.")
+        return {"sub": normalized_principal, "email": normalized_principal}
+
     if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
     
     token = auth_header.split(" ")[1]
     
-    # 1. GUEST BYPASS: Check for your sandbox token first
-    if token == "guest-sandbox-token":
-        logger.info("Guest session detected. Bypassing JWT verification.")
-        return {"sub": "guest-recruiter@example.com", "email": "guest@example.com"}
+    # 3. Fallback Sandbox Tokens
+    if token in {"guest-sandbox-token", "guest-bty-token", "guest-erragent-token"}:
+        return {"sub": normalized_principal or "guest", "email": normalized_principal or "guest@example.com"}
 
     if token == "guest-bty-token":
         logger.info("BTY embedded guest session detected. Bypassing JWT verification.")
