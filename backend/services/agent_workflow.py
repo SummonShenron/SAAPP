@@ -79,14 +79,15 @@ async def coordinator_node(state: GraphState) -> GraphState:
 
     state = await reasoner_node(state)
 
-    if intent == "ops":
-        state["ops_context"] = await ops_context_tool()
-
     intent = classify_intent(
         last_msg,
         state.get("messages", []) + state.get("attachment_summaries", []),
         state=state
     )
+
+    if intent == "ops":
+        state["ops_context"] = await ops_context_tool()
+
     plan = build_agent_plan(intent, state)
 
     state["coordinator_intent"] = intent
