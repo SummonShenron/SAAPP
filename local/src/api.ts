@@ -21,17 +21,37 @@ function getEmbeddedMode(): boolean {
   return searchParams.get('mode') === 'embed' || window.location.href.includes('mode=embed');
 }
 
+function resolveGuestPrincipalFromUrl(): string | null {
+  const hash = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
+  const searchParams = new URLSearchParams(window.location.search || hash);
+
+  const principal = searchParams.get('principal') || searchParams.get('user') || searchParams.get('username');
+  if (principal && ['guest', 'guest_bty', 'guest_erragent', 'guest-erragent'].includes(principal.trim())) {
+    return principal.trim();
+  }
+
+  const appHint = (searchParams.get('app') || window.location.pathname || '').toLowerCase();
+  if (appHint.includes('erragent')) return 'guest_erragent';
+  if (appHint.includes('bty')) return 'guest_bty';
+  return null;
+}
+
 function isGuestPrincipal(principal: string | null | undefined): boolean {
-  return principal === 'guest' || principal === 'guest_bty';
+  return ['guest', 'guest_bty', 'guest_erragent', 'guest-erragent'].includes(principal || '');
 }
 
 export function getEffectivePrincipal(): string {
   const embeddedMode = getEmbeddedMode();
   const storedPrincipal = localStorage.getItem('principal');
-  const candidatePrincipal = embeddedMode ? 'guest_bty' : (storedPrincipal || 'guest');
+  const urlPrincipal = resolveGuestPrincipalFromUrl();
+  const candidatePrincipal = (urlPrincipal || storedPrincipal || (embeddedMode ? 'guest_bty' : 'guest')).trim();
 
   if (isGuestPrincipal(candidatePrincipal)) {
-    const guestToken = candidatePrincipal === 'guest_bty' ? 'guest-bty-token' : 'guest-sandbox-token';
+    const guestToken = candidatePrincipal === 'guest_bty'
+      ? 'guest-bty-token'
+      : candidatePrincipal === 'guest_erragent' || candidatePrincipal === 'guest-erragent'
+        ? 'guest-erragent-token'
+        : 'guest-sandbox-token';
     localStorage.setItem('guest_token', guestToken);
     localStorage.setItem('principal', candidatePrincipal);
     localStorage.setItem('x-user-id', candidatePrincipal);
@@ -66,7 +86,11 @@ export const getAuthHeaders = async (): Promise<Record<string, string>> => {
 
   let token: string | null | undefined = null;
   if (isGuestPrincipal(principal)) {
-    token = principal === 'guest_bty' ? 'guest-bty-token' : 'guest-sandbox-token';
+    token = principal === 'guest_bty'
+      ? 'guest-bty-token'
+      : principal === 'guest_erragent' || principal === 'guest-erragent'
+        ? 'guest-erragent-token'
+        : 'guest-sandbox-token';
   } else {
     token = await window.Clerk?.session?.getToken();
   }

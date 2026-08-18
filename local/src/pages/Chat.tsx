@@ -164,7 +164,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [attachments, setAttachments] = useState<{ filename: string; content: string }[]>([]);
   const attachmentsRef = useRef<{ filename: string; content: string }[]>([]);
   const principalKey = (localStorage.getItem('principal') || '').toLowerCase();
-  const guestBtyDetected = principalKey === 'guest_bty' || !!localStorage.getItem('guest_token');
+  const guestBtyDetected = ['guest_bty', 'guest_erragent', 'guest-erragent'].includes(principalKey) || !!localStorage.getItem('guest_token');
   const affiliateDActive = selectedAffiliate === 'Affiliate_D' || embedAffiliate === 'Affiliate_D';
   const chatPlaceholder = guestBtyDetected
     ? 'what would you like to learn about today?...'
@@ -186,7 +186,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   
   useEffect(() => {
     if (!isLoaded) return;
-    const isGuest = ['guest', 'guest_bty'].includes(localStorage.getItem('principal') || '');
+    const isGuest = ['guest', 'guest_bty', 'guest_erragent', 'guest-erragent'].includes(localStorage.getItem('principal') || '');
     if (!isGuest && !isSignedIn) return;
   }, [isLoaded, isSignedIn]);
 
@@ -645,7 +645,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                               }
                               try {
                                 let token = null;
-                                const isGuest = ['guest', 'guest_bty'].includes(localStorage.getItem('principal') || '');
+                                const isGuest = ['guest', 'guest_bty', 'guest_erragent', 'guest-erragent'].includes(localStorage.getItem('principal') || '');
                                 if (isGuest) {
                                   token = localStorage.getItem('guest_token');
                                 } else if (getToken) {

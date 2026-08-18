@@ -41,7 +41,7 @@ async def get_current_user(request: Request):
         logger.info("BTY embedded guest principal override detected. Bypassing JWT verification.")
         return {"sub": "guest_bty", "email": "guest_bty@bty.local"}
 
-    if normalized_principal == "guest_erragent":
+    if normalized_principal in {"guest_erragent", "guest-erragent"}:
         logger.info("Erragent embedded guest principal override detected. Bypassing JWT verification.")
         return {"sub": "guest_erragent", "email": "guest_erragent@erragent.local"}
 

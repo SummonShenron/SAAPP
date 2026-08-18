@@ -48,9 +48,9 @@ if (typeof window !== 'undefined') {
     const hasAuth = isSignedIn || !!localStorage.getItem('guest_token') || isEmbedded;
     if (!hasAuth) return;
 
-    const username = localStorage.getItem("principal") || (isEmbedded ? "guest_bty" : "");
-    if (username) {
-      api.isPaappAdmin(username)
+    const effectivePrincipal = localStorage.getItem("principal") || new URLSearchParams(window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '')).get('principal') || (isEmbedded ? 'guest_bty' : '');
+    if (effectivePrincipal) {
+      api.isPaappAdmin(effectivePrincipal)
         .then(setIsAdmin)
         .catch((err) => console.warn("Admin check skipped for guest:", err));
     }
