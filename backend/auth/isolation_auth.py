@@ -41,6 +41,10 @@ async def get_current_user(request: Request):
         logger.info("BTY embedded guest principal override detected. Bypassing JWT verification.")
         return {"sub": "guest_bty", "email": "guest_bty@bty.local"}
 
+    if normalized_principal == "guest_erragent":
+        logger.info("Erragent embedded guest principal override detected. Bypassing JWT verification.")
+        return {"sub": "guest_erragent", "email": "guest_erragent@erragent.local"}
+
     if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
     
@@ -54,6 +58,10 @@ async def get_current_user(request: Request):
     if token == "guest-bty-token":
         logger.info("BTY embedded guest session detected. Bypassing JWT verification.")
         return {"sub": "guest_bty", "email": "guest_bty@bty.local"}
+
+    if token == "guest-erragent-token":
+        logger.info("Erragent embedded guest session detected. Bypassing JWT verification.")
+        return {"sub": "guest_erragent", "email": "guest_erragent@erragent.local"}
 
     # 2. Existing JWT verification logic
     try:

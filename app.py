@@ -304,7 +304,7 @@ async def log_user_login(request: Request, current_user: dict = Depends(get_curr
     email = current_user.get("email") or sub
     
     # Detect if the current principal is a guest session
-    is_guest = sub in ("guest-recruiter@example.com", "guest_bty") or request.headers.get("Authorization", "") in ("Bearer guest-sandbox-token", "Bearer guest-bty-token")
+    is_guest = sub in ("guest-recruiter@example.com", "guest_bty", "guest_erragent") or request.headers.get("Authorization", "") in ("Bearer guest-sandbox-token", "Bearer guest-bty-token", "Bearer guest-erragent-token")
 
     record_login_event(
         user_id=sub,
