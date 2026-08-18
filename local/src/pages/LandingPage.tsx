@@ -16,7 +16,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
   const navigate = useNavigate();
   const [showNotice, setShowNotice] = useState(true);
   const [serverStarting, setServerStarting] = useState(false);
-  const [consolePrincipal, setConsolePrincipal] = useState('guest_erragent');
   const isErragentConsole = (window.location.href.toLowerCase().includes('erragent') || new URLSearchParams(window.location.search).get('app') === 'erragent');
 
   // 1. Unified Clerk Auth Initialization & Single Logging Call
@@ -88,30 +87,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
     navigate("/chat");
   };
 
-  const handleConsoleLogin = async (principal: string) => {
-    const normalizedPrincipal = principal.trim();
-    if (!normalizedPrincipal) return;
-
-    setServerStarting(true);
-
-    const tokenMap: Record<string, string> = {
-      guest: 'guest-sandbox-token',
-      guest_bty: 'guest-bty-token',
-      guest_erragent: 'guest-erragent-token',
-      'guest-erragent': 'guest-erragent-token',
-    };
-
-    const guestToken = tokenMap[normalizedPrincipal] || `${normalizedPrincipal}-token`;
-    localStorage.setItem('guest_token', guestToken);
-    localStorage.setItem('principal', normalizedPrincipal);
-    localStorage.setItem('x-user-id', normalizedPrincipal);
-
-    await logLogin();
-    onEnter(normalizedPrincipal);
-    navigate('/chat');
-  };
-
-  // 4. Iframe-Aware Login Handler (Points 1 & 2)
+  // 4. Iframe-Aware Login Handler (Normal app auth path)
   const handleLogin = () => {
     // If embedded inside an iframe, break out to top window for hosted auth to avoid frame blocks
     if (window.self !== window.top) {
@@ -202,45 +178,21 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
           </div>
 
           {isErragentConsole ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%' }}>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <select
-                  value={consolePrincipal}
-                  onChange={(e) => setConsolePrincipal(e.target.value)}
-                  style={{
-                    flex: 1,
-                    padding: '0.8rem',
-                    borderRadius: '6px',
-                    border: '1px solid #334155',
-                    background: '#0f172a',
-                    color: '#f8fafc',
-                  }}
-                >
-                  <option value="guest_erragent">guest_erragent</option>
-                  <option value="guest-erragent">guest-erragent</option>
-                  <option value="guest">guest</option>
-                </select>
-
-                <button
-                  onClick={() => handleConsoleLogin(consolePrincipal)}
-                  style={{
-                    backgroundColor: '#2563eb',
-                    color: 'white',
-                    border: 'none',
-                    padding: '0.85rem 1rem',
-                    borderRadius: '6px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                  }}
-                >
-                  Login to Erragent
-                </button>
-              </div>
-
-              <p style={{ color: '#64748b', fontSize: '0.8rem', textAlign: 'center', lineHeight: '1.4' }}>
-                Erragent uses an explicit console identity so access permissions are intentional and predictable.
-              </p>
-            </div>
+            <button 
+              className="enter-btn login-btn" 
+              onClick={handleLogin}
+              style={{
+                backgroundColor: '#4285F4',
+                color: 'white',
+                border: 'none',
+                padding: '0.85rem',
+                borderRadius: '6px',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              Sign In to Erragent
+            </button>
           ) : (
             <button 
               className="enter-btn guest-btn" 
