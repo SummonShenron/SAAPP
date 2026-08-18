@@ -286,10 +286,13 @@ def build_agent_plan(intent: str, state: dict) -> dict:
         state["last_intent"] = "create_pr"
         return {"agents": ["draft_pr", "formatter"], "skip": []}
 
-    # if intent == "ops":
-    #     state["ops_context"] = ops_context_tool()
+    # 3. Explicit ops path: preserve the intent so router sends it to the generate node
+    if intent == "ops":
+        logger.info("[Coordinator] Direct routing to ops/generate path.")
+        state["last_intent"] = "ops"
+        return {"agents": ["ops", "formatter"], "skip": []}
 
-    # 3. Prevent Mutating Actions from standard follow-up sticky logic
+    # 4. Prevent Mutating Actions from standard follow-up sticky logic
     # Follow-up messages MUST re-classify intent so approvals work
     if flags.get("follow_up_intent"):
         logger.debug("[Coordinator] follow_up_intent=True — reclassifying intent")
@@ -299,7 +302,7 @@ def build_agent_plan(intent: str, state: dict) -> dict:
             state=state
         )
         logger.debug(f"[Coordinator] Reclassified follow-up intent: {intent}")
-    # 4. Standard Operational Flag Mapping
+    # 5. Standard Operational Flag Mapping
     is_pr_request = flags.get("needs_pr_summary") or intent == "pr_summary"
     
     if flags.get("needs_memory"):
