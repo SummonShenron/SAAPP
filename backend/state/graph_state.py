@@ -13,6 +13,8 @@ class GraphState(TypedDict):
     Message-based state for LangGraph streaming.
     Every node receives this state, modifies it, and passes it forward.
     """
+    workflowName: str               # single workflow instance identifier
+    requestId: str                 # single replay correlation ID for the entire workflow
     messages: Annotated[List[BaseMessage], add_messages]    # Full conversation history (Human + AI)
     username: str                   # Authenticated user identity
     target_scope: List[str]         # Allowed tenant affiliates

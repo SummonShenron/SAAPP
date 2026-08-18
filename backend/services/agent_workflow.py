@@ -56,11 +56,9 @@ async def safe_emit_event(name: str, data: dict):
         # Safely ignored when called from fallback utilities or standalone scripts
         pass
 
-def ensure_workflow_keys(state):
-    if "workflowName" not in state:
-        state["workflowName"] = "sonic_assistant"
-    if "requestId" not in state:
-        state["requestId"] = uuid.uuid4().hex
+def ensure_workflow_keys(state: GraphState) -> GraphState:
+    state.setdefault("workflowName", "sonic_assistant")
+    state.setdefault("requestId", uuid.uuid4().hex)
     return state
 
 # ============================================================

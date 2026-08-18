@@ -407,6 +407,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
     messages_state = chat_sessions[history_key]
     messages_state.append(HumanMessage(content=question))
 
+    request_id = uuid.uuid4().hex
     initial_state: GraphState = {
         "messages": messages_state,
         "username": username,
@@ -417,7 +418,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
         "original_question": question,
         "force_web_search": force_web_search,
         "workflowName": "sonic_assistant",
-        "requestId" : uuid.uuid4().hex
+        "requestId": request_id,
     }
 
     # ---------- Early Attachments Processing ----------
@@ -473,8 +474,8 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                     "documents": [],
                     "messages": initial_state["messages"],
                     "original_question": question,
-                    "workflowName": "sonic_assistant",
-                    "requestId" : uuid.uuid4().hex
+                    "workflowName": initial_state["workflowName"],
+                    "requestId": initial_state["requestId"],
                 }
             else:
                 # 1. LIVE GRAPH EXECUTION & EVENT STREAMING
