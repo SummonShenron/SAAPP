@@ -26,6 +26,7 @@ from backend.models.models import get_chat_llm, lite_llm
 from backend.state import graph_db
 from backend.utils.attachment_utils import retrieve_from_session
 from backend.utils.isolation_kb_utils import load_directory, load_user_directory_groups
+from backend.tools.ops_context_tool import ops_context_tool
 from backend.components.constraints import (
     format_docs,
     SUMMARIZER_PROMPT,
@@ -77,6 +78,9 @@ async def coordinator_node(state: GraphState) -> GraphState:
     logger.debug(f"Incoming state pending_action: {state.get('pending_action')}")
 
     state = await reasoner_node(state)
+
+    if intent == "ops":
+        state["ops_context"] = await ops_context_tool()
 
     intent = classify_intent(
         last_msg,
@@ -142,7 +146,8 @@ def coordinator_router(state: GraphState) -> str:
         "github_search": "github_search",
         "pr_summary": "pr_summary",
         "draft_pr": "draft_pr_node",      
-        "execute_pr": "execute_pr_node"
+        "execute_pr": "execute_pr_node",
+        "ops": "generate_node"
     }
     destination = mapping.get(next_agent, "conversational_node")
     logger.debug(f"Next agent from plan: '{next_agent}'")
@@ -228,6 +233,8 @@ def classify_intent(message: str, attachments=None, state: dict = None) -> str:
     if re.search(r'\b(create pr|merge pr|create pull request)\b', msg):
         return "create_pr"
     # 2. General operational intents
+    if any(w in msg for w in ["incident", "error", "health", "warming", "latency", "ops", "status", "saapp", "bty"]):
+        return "ops"
     if "plan my day" in msg or "schedule" in msg:
         return "task_paapp"
     if "summarize" in msg or "tl;dr" in msg:
@@ -277,6 +284,9 @@ def build_agent_plan(intent: str, state: dict) -> dict:
     if intent == "create_pr":
         state["last_intent"] = "create_pr"
         return {"agents": ["draft_pr", "formatter"], "skip": []}
+
+    # if intent == "ops":
+    #     state["ops_context"] = ops_context_tool()
 
     # 3. Prevent Mutating Actions from standard follow-up sticky logic
     # Follow-up messages MUST re-classify intent so approvals work

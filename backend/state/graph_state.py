@@ -47,6 +47,7 @@ class GraphState(TypedDict):
     user_decision: Optional[str]              # "approve" | "modify" | "reject"
     modified_details: Optional[Dict[str, Any]] # Overrides if user modified title/body/branches
     last_intent: Optional[str]
+    ops_context: Optional[Dict[str, Any]]
 
 # def route_user_query(state: GraphState) -> str:
 #     """
