@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import queue
+import sys
 import threading
 import urllib.request
 from typing import Any
@@ -12,6 +13,18 @@ _LEVELS = {
     logging.ERROR: "error",
     logging.CRITICAL: "error",
 }
+
+
+def _json_fallback(value: Any) -> Any:
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        return model_dump(mode="json")
+
+    isoformat = getattr(value, "isoformat", None)
+    if callable(isoformat):
+        return isoformat()
+
+    return str(value)
 
 
 class ErrAgentHandler(logging.Handler):
@@ -58,7 +71,7 @@ class ErrAgentHandler(logging.Handler):
                 message = f"{message}\n{traceback}"
 
             payload = {
-                "service": self.service,
+                "service": getattr(record, "service", None) or self.service,
                 "level": _LEVELS.get(record.levelno, "info"),
                 "message": message,
                 "timestamp": int(record.created * 1000),
@@ -79,11 +92,12 @@ class ErrAgentHandler(logging.Handler):
                 self._queue.task_done()
 
     def _deliver_with_retries(self, payload: dict[str, Any]) -> None:
+        last_error: Exception | None = None
         for attempt in range(self.max_delivery_attempts):
             try:
                 request = urllib.request.Request(
                     self.endpoint,
-                    data=json.dumps(payload).encode("utf-8"),
+                    data=json.dumps(payload, default=_json_fallback).encode("utf-8"),
                     headers={
                         "Content-Type": "application/json",
                         "x-ingest-secret": self.ingest_secret,
@@ -92,11 +106,17 @@ class ErrAgentHandler(logging.Handler):
                 )
                 with urllib.request.urlopen(request, timeout=self.timeout_seconds):
                     return
-            except Exception:
+            except Exception as exc:
+                last_error = exc
                 if attempt + 1 < self.max_delivery_attempts:
                     delay = self.retry_delay_seconds * (2**attempt)
                     if delay:
                         threading.Event().wait(delay)
+
+        print(
+            f"errAgent log delivery failed after {self.max_delivery_attempts} attempts: {last_error}",
+            file=sys.stderr,
+        )
 
     def handleError(self, record: logging.LogRecord) -> None:
         pass
@@ -109,20 +129,17 @@ def install_erragent_logging(logger: logging.Logger | None = None) -> bool:
     if not erragent_url or not ingest_secret or not service:
         return False
 
-    # Always attach to the root logger
-    root = logging.getLogger()
-    if any(isinstance(handler, ErrAgentHandler) for handler in root.handlers):
+    target_logger = logger or logging.getLogger()
+    if any(isinstance(handler, ErrAgentHandler) for handler in target_logger.handlers):
         return True
 
-    handler = ErrAgentHandler(
-        erragent_url=erragent_url,
-        ingest_secret=ingest_secret,
-        service=service,
+    target_logger.addHandler(
+        ErrAgentHandler(
+            erragent_url=erragent_url,
+            ingest_secret=ingest_secret,
+            service=service,
+        )
     )
-
-    root.addHandler(handler)
-
-    if root.level == logging.NOTSET or root.level > logging.INFO:
-        root.setLevel(logging.INFO)
-
+    if target_logger.level == logging.NOTSET or target_logger.level > logging.INFO:
+        target_logger.setLevel(logging.INFO)
     return True
