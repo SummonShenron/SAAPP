@@ -26,7 +26,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
         try {
           console.log("Fetching user profile for:", userId);
           
-          // Give Clerk a split-second to ensure the session token is fully loaded and attached
           await new Promise((resolve) => setTimeout(resolve, 300));
 
           const userProfile = await getMe(userId); 
@@ -50,7 +49,33 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
     initializeUser();
   }, [isAuthLoaded, isSignedIn, userId, onEnter, navigate]);
 
-  // 2. Guest Sandbox Entry (Awaited)
+  // 2. Window PostMessage Listener for Token Synchronization (Point 4)
+  useEffect(() => {
+    const handleAuthMessage = async (event: MessageEvent) => {
+      if (event.data?.type === 'ERRAGENT_AUTH_TOKEN' && event.data?.token) {
+        const token = event.data.token;
+        const principal = event.data.principal || 'guest_erragent';
+
+        localStorage.setItem('guest_token', token);
+        localStorage.setItem('principal', principal);
+        localStorage.setItem('x-user-id', principal);
+
+        try {
+          await logLogin();
+        } catch (err) {
+          console.error("Error logging iframe token auth:", err);
+        }
+
+        onEnter(principal);
+        navigate('/chat');
+      }
+    };
+
+    window.addEventListener('message', handleAuthMessage);
+    return () => window.removeEventListener('message', handleAuthMessage);
+  }, [onEnter, navigate]);
+
+  // 3. Guest Sandbox Entry
   const handleGuestEntry = async () => {
     setServerStarting(true);
     localStorage.setItem('guest_token', 'guest-bty-token');
@@ -86,7 +111,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
     navigate('/chat');
   };
 
+  // 4. Iframe-Aware Login Handler (Points 1 & 2)
   const handleLogin = () => {
+    // If embedded inside an iframe, break out to top window for hosted auth to avoid frame blocks
+    if (window.self !== window.top) {
+      window.top!.location.href = window.location.origin;
+      return;
+    }
+
     openSignIn({ fallbackRedirectUrl: window.location.origin });
   };
 
