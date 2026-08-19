@@ -10,6 +10,45 @@ declare global {
 }
 const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
 
+let clerkTokenCache: { value: string | null; expiresAt: number; pending: Promise<string | null> | null } = {
+  value: null,
+  expiresAt: 0,
+  pending: null,
+};
+
+export async function getCachedClerkToken(): Promise<string | null> {
+  const now = Date.now();
+  if (clerkTokenCache.value && now < clerkTokenCache.expiresAt) {
+    return clerkTokenCache.value;
+  }
+
+  if (clerkTokenCache.pending) {
+    return clerkTokenCache.pending;
+  }
+
+  clerkTokenCache.pending = (async () => {
+    try {
+      const session = (window as any)?.Clerk?.session;
+      const token = session ? await session.getToken({ template: 'email' }) : null;
+      if (token) {
+        clerkTokenCache.value = token;
+        clerkTokenCache.expiresAt = Date.now() + 60_000;
+      } else {
+        clerkTokenCache.value = null;
+        clerkTokenCache.expiresAt = 0;
+      }
+      return token ?? null;
+    } catch (err) {
+      console.warn('Clerk token request was rate-limited; falling back to cached token or guest state.', err);
+      return clerkTokenCache.value ?? null;
+    } finally {
+      clerkTokenCache.pending = null;
+    }
+  })();
+
+  return clerkTokenCache.pending;
+}
+
 export const BASE_URL = import.meta.env.VITE_API_BASE || 
   (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
     ? "http://localhost:8000" 
@@ -83,7 +122,7 @@ export const getAuthHeaders = async (): Promise<Record<string, string>> => {
   if (isGuestPrincipal(principal)) {
     token = principal === 'guest_bty' ? 'guest-bty-token' : 'guest-sandbox-token';
   } else {
-    token = await window.Clerk?.session?.getToken();
+    token = await getCachedClerkToken();
   }
 
   if (!token) {

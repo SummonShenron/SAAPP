@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import sonicImg from '../assets/sonicandshadow.jpg';
 import { Filters } from '../components/Filters';
 import { getDynamicExampleQuestions } from '../utils/Example_List';
-import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal } from '../api'; 
+import { api, BASE_URL, getAuthHeaders, getCachedClerkToken, getEffectivePrincipal } from '../api'; 
 import ReactMarkdown from 'react-markdown';
 import sonicSpinImg from '../assets/sonic-rolling.gif';
 import shadowSpinImg from '../assets/shadow.gif';
@@ -50,7 +50,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     });
   };
   const [traceSteps, setTraceSteps] = useState<TraceStep[]>([]);
-  const { isLoaded, isSignedIn, getToken } = useAuth();
+  const { isLoaded, isSignedIn } = useAuth();
   const principal = getEffectivePrincipal();
   const [selectedAffiliate, setSelectedAffiliate] = useState<string>('All');
   const [allowedAffiliates, setAllowedAffiliates] = useState<string[]>([]);
@@ -521,8 +521,8 @@ const sendFeedbackPayload = async (
   const isGuest = ['guest', 'guest_bty'].includes(localStorage.getItem('principal') || '');
   if (isGuest) {
     token = localStorage.getItem('guest_token');
-  } else if (getToken) {
-    token = await getToken();
+  } else {
+    token = await getCachedClerkToken();
   }
 
   const msgIndex = messages.findIndex(m => m.id === messageId);
@@ -648,8 +648,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                                 const isGuest = ['guest', 'guest_bty'].includes(localStorage.getItem('principal') || '');
                                 if (isGuest) {
                                   token = localStorage.getItem('guest_token');
-                                } else if (getToken) {
-                                  token = await getToken();
+                                } else {
+                                  token = await getCachedClerkToken();
                                 }
                                 const response = await fetch(finalHref, {
                                   headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },

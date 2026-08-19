@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from '@clerk/clerk-react';
+import { getCachedClerkToken } from '../api';
 import "./__styles__/time.css"
 import { SimpleCalendar } from "../components/calendar/Calendar";
 import "../components/__styles__/Calendar.css";
@@ -207,7 +208,7 @@ export function TimeWorkspace() {
     const PAAPP_BASE_URL = import.meta.env.VITE_PAAPP_BASE || "https://paapp-u2l9.onrender.com";
 
     const authenticatedFetch = async (url: string, options: RequestInit = {}) => {
-        const token = await getToken();
+        const token = await getCachedClerkToken();
         return fetch(url, {
             ...options,
             headers: {

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import './__styles__/SavedConversations.css';
 import { useAuth } from '@clerk/clerk-react';
+import { getCachedClerkToken } from '../api';
 
 interface SavedMessage {
   type: "human" | "ai" | "system";
@@ -19,7 +20,7 @@ export const SavedConversationsPage: React.FC<SavedConversationsPageProps> = () 
   const BASE_URL = "https://saapp.onrender.com/";
 
   const fetchWithAuth = async (url: string) => {
-    const token = await getToken(); 
+    const token = await getCachedClerkToken(); 
     return fetch(url, {
       headers: { 
         "Authorization": `Bearer ${token}`, 

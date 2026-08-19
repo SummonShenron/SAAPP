@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { api } from '../api';
+import { api, getCachedClerkToken } from '../api';
 import './__styles__/SelfService.css';
 import { useAuth } from '@clerk/clerk-react';
 
@@ -11,7 +11,7 @@ interface DocumentRecord {
 }
 
 export const SelfServicePage: React.FC = () => {
-  const { getToken } = useAuth(); // <-- 2. ADD THIS
+  const { getToken } = useAuth();
   const [principal, setPrincipal] = useState<string>('');
   
   // --- STATE LAYER ---
