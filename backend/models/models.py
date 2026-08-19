@@ -132,12 +132,14 @@ embedded_llm = LazyLLM(
 
 
 def get_chat_llm(username: str):
-    if username in {"guest_bty", "guest_erragent"}:
+    normalized = str(username or "").strip().lower()
+    if normalized in {"guest_bty", "guest_erragent", "guest-erragent"}:
         return embedded_llm
     return llm
 
 
 def get_stream_llm(username: str):
-    if username in {"guest_bty", "guest_erragent"}:
+    normalized = str(username or "").strip().lower()
+    if normalized in {"guest_bty", "guest_erragent", "guest-erragent"}:
         return embedded_llm
     return stream_llm

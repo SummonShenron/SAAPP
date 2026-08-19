@@ -22,29 +22,49 @@ def get_user_record(clerk_id: str):
 def load_directory() -> Dict[str, Any]:
     db = get_db()
     directory = {}
-    
+
     try:
         cursor = db["directory"].find({})
         for user in cursor:
-            # Use clerk_id, fallback to email if clerk_id is missing
-            key = user.get("clerk_id") or user.get("email")
-            
-            if key:
+            keys = []
+            for field in ("clerk_id", "email", "username"):
+                value = user.get(field)
+                if isinstance(value, str) and value.strip():
+                    keys.append(value.strip())
+
+            for key in keys:
                 directory[key] = user
-            else:
+                directory[key.lower()] = user
+                if "@" in key:
+                    directory[key.split("@", 1)[0]] = user
+                    directory[key.split("@", 1)[0].lower()] = user
+
+            if not keys:
                 logger.warning(f"Skipping directory entry with no ID or email: {user.get('_id')}")
-        
+
         return directory
     except Exception as e:
         logger.error(f"Failed to fetch directory from MongoDB: {e}")
         return {}
-    
+
+
 def load_user_directory_groups(username: str) -> List[str]:
     """Now uses the centralized load_directory() function."""
-    directory_data = load_directory() # Centralized call
-    user_record = directory_data.get(username)
-    if user_record and "groups" in user_record:
-        return user_record["groups"]
+    if not username:
+        return []
+
+    directory_data = load_directory()
+    candidates = []
+    value = str(username).strip()
+    if value:
+        candidates.extend([value, value.lower()])
+        if "@" in value:
+            candidates.extend([value.split("@", 1)[0], value.split("@", 1)[0].lower()])
+
+    for candidate in candidates:
+        user_record = directory_data.get(candidate)
+        if user_record and "groups" in user_record:
+            return user_record["groups"]
     return []
 
 def get_accessible_affiliates(username: str, user_directory: dict) -> dict:
@@ -72,15 +92,31 @@ def verify_user_ingest_access(username: str, affiliate: str) -> bool:
     return required_ingester_group in user_groups
 
 def verify_paapp_access(username: str) -> bool:
-    user_groups = load_user_directory_groups(username)
-    # Global Admins always have access
-    if "Global_Admins" in user_groups:
-        return True
-    # Embedded guest erragent traffic should be allowed to use the ops workflow.
-    if username in {"guest_erragent", "guest-erragent", "guest_erragent@erragent.local"}:
-        return True
-    # PAAPP-specific admin group
-    return "PAAPP_Admins" in user_groups
+    if not username:
+        return False
+
+    normalized = str(username).strip().lower()
+    candidates = {normalized}
+    if "@" in normalized:
+        candidates.add(normalized.split("@", 1)[0])
+    candidates.update({
+        "guest_erragent",
+        "guest-erragent",
+        "guest_erragent@erragent.local",
+        "guest-ops",
+        "guest_ops",
+    })
+
+    for candidate in candidates:
+        user_groups = load_user_directory_groups(candidate)
+        if "Global_Admins" in user_groups:
+            return True
+        if "PAAPP_Admins" in user_groups:
+            return True
+        if candidate in {"guest_erragent", "guest-erragent", "guest_erragent@erragent.local"}:
+            return True
+
+    return False
 
 
 def ensure_guest_user_record(username: str, email: str | None = None, groups: List[str] | None = None) -> Dict[str, Any]:

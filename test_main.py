@@ -39,6 +39,17 @@ class TestGuestAccessBehavior(unittest.TestCase):
         self.assertIn("PAAPP_Admins", record["groups"])
         db["directory"].insert_one.assert_called_once()
 
+    @patch("backend.utils.isolation_kb_utils.load_directory")
+    def test_verify_paapp_access_accepts_email_and_alias_variants(self, mock_load_directory):
+        mock_load_directory.return_value = {
+            "jack_admin": {
+                "groups": ["Global_Admins", "PAAPP_Admins"]
+            }
+        }
+
+        self.assertTrue(verify_paapp_access("jack_admin@entra.local"))
+        self.assertTrue(verify_paapp_access("jack_admin"))
+
 
 class TestGitHubRepoBehavior(unittest.TestCase):
 

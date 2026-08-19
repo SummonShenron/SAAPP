@@ -43,7 +43,7 @@ async def get_current_user(request: Request):
 
     # 2. Dynamic Email Principal Override (Primary path for Erragent signed-in users)
     if "@" in normalized_principal:
-        logger.info(f"Authenticated email principal detected: {normalized_principal}. Bypassing JWT verification.")
+        logger.info(f"Authenticated email principal detected: {normalized_principal}. Using authenticated email identity.")
         return {"sub": normalized_principal, "email": normalized_principal}
 
     # 3. Require Authorization header if no valid email principal was supplied
