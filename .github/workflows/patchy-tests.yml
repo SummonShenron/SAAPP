@@ -1,0 +1,49 @@
+name: Patchy Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_commands:
+        description: "Validated pytest commands"
+        required: true
+        type: string
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out requested branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Validate and run Patchy tests
+        env:
+          TEST_COMMANDS: ${{ inputs.test_commands }}
+        run: |
+          while IFS= read -r command; do
+            [ -z "$command" ] && continue
+
+            if [[ ! "$command" =~ ^pytest\ [a-zA-Z0-9_./-]+(::[a-zA-Z_][a-zA-Z0-9_]*)*$ ]]; then
+              echo "Rejected test command: $command"
+              exit 1
+            fi
+
+            if [[ "$command" == *".."* || "$command" == *";"* || "$command" == *"|"* || "$command" == *">"* || "$command" == *"<"* ]]; then
+              echo "Rejected unsafe test command: $command"
+              exit 1
+            fi
+
+            eval "$command"
+          done <<< "$TEST_COMMANDS"
