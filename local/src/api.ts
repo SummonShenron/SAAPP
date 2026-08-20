@@ -15,6 +15,12 @@ export const BASE_URL = import.meta.env.VITE_API_BASE ||
     ? "http://localhost:8000" 
     : "https://saapp.onrender.com");
 
+function getClerkPrimaryEmail(): string | null {
+  const clerkUser = (window as any)?.Clerk?.user;
+  const email = clerkUser?.primaryEmailAddress?.emailAddress || clerkUser?.emailAddresses?.[0]?.emailAddress;
+  return typeof email === 'string' && email.trim() ? email.trim() : null;
+}
+
 function getEmbeddedMode(): boolean {
   const hash = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
   const searchParams = new URLSearchParams(window.location.search || hash);
@@ -28,7 +34,9 @@ function isGuestPrincipal(principal: string | null | undefined): boolean {
 export function getEffectivePrincipal(): string {
   const embeddedMode = getEmbeddedMode();
   const storedPrincipal = localStorage.getItem('principal');
-  const candidatePrincipal = embeddedMode ? 'guest_bty' : (storedPrincipal || 'guest');
+  const clerkEmail = getClerkPrimaryEmail();
+  const preferredPrincipal = clerkEmail || storedPrincipal || (embeddedMode ? 'guest_bty' : 'guest');
+  const candidatePrincipal = embeddedMode ? 'guest_bty' : preferredPrincipal;
 
   if (isGuestPrincipal(candidatePrincipal)) {
     const guestToken = candidatePrincipal === 'guest_bty' ? 'guest-bty-token' : 'guest-sandbox-token';
@@ -38,7 +46,12 @@ export function getEffectivePrincipal(): string {
     return candidatePrincipal;
   }
 
-  return storedPrincipal || candidatePrincipal;
+  if (clerkEmail && localStorage.getItem('principal') !== clerkEmail) {
+    localStorage.setItem('principal', clerkEmail);
+    localStorage.setItem('x-user-id', clerkEmail);
+  }
+
+  return (localStorage.getItem('principal') || candidatePrincipal).trim();
 }
 
 export interface ChatResponse {
@@ -89,10 +102,16 @@ export const getAuthHeaders = async (): Promise<Record<string, string>> => {
  */
 export async function getMe(usernameHint?: string): Promise<MeResponse> {
   const authHeaders = await getAuthHeaders();
-  
-  // Backwards compatibility for dev fallback logic
-  const hint = usernameHint || (typeof window !== "undefined" ? (window as any).CURRENT_USER : undefined);
-  if (hint) authHeaders["x-user-id"] = hint;
+  const clerkEmail = getClerkPrimaryEmail();
+  const hint = usernameHint || clerkEmail || (typeof window !== "undefined" ? (window as any).CURRENT_USER : undefined);
+  if (hint) {
+    authHeaders["x-user-id"] = hint;
+    authHeaders["X-Principal"] = hint;
+    if (hint.includes('@')) {
+      localStorage.setItem('principal', hint);
+      localStorage.setItem('x-user-id', hint);
+    }
+  }
 
   const res = await fetch(`${BASE_URL}/api/me`, { headers: authHeaders });
   if (!res.ok) {

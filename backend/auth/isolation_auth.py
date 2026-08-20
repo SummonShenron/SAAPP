@@ -41,6 +41,10 @@ async def get_current_user(request: Request):
         logger.info("BTY embedded guest principal override detected. Bypassing JWT verification.")
         return {"sub": "guest_bty", "email": "guest_bty@bty.local"}
 
+    if normalized_principal and "@" in normalized_principal:
+        logger.info(f"Authenticated email principal detected: {normalized_principal}. Using authenticated email identity.")
+        return {"sub": normalized_principal, "email": normalized_principal}
+
     if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
     
@@ -67,6 +71,8 @@ async def get_current_user(request: Request):
         
         # Verify
         payload = jwt.decode(token, public_key, algorithms=["RS256"])
+        if "email" not in payload and normalized_principal and "@" in normalized_principal:
+            payload["email"] = normalized_principal
         return payload 
         
     except Exception as e:

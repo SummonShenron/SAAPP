@@ -222,38 +222,45 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 @app.get("/api/me")
-def get_me(current_user: dict = Depends(get_current_user)):
+def get_me(request: Request, current_user: dict = Depends(get_current_user)):
     clerk_id = current_user.get("sub")
-    email = current_user.get("email")
+    email = current_user.get("email") or (request.headers.get("x-principal") or request.headers.get("X-Principal") or request.headers.get("x-user-id") or "").strip()
+
+    if email and "@" not in email:
+        email = None
     
-    db = get_db() #[cite: 1]
+    db = get_db()
     
     if db is not None:
         users_col = db["directory"] 
         
-        # 1. Look for the user by clerk_id
-        user_doc = users_col.find_one({"clerk_id": clerk_id})
-        
-        # 2. LAZY MIGRATION: If not found, look for them by email
+        user_doc = None
+        if clerk_id:
+            user_doc = users_col.find_one({"clerk_id": clerk_id})
         if not user_doc and email:
             user_doc = users_col.find_one({"email": email})
             if user_doc:
                 logger.info(f"Lazy migrating user record for: {email}")
-                # Add the missing clerk_id to the existing record
                 users_col.update_one(
-                    {"_id": user_doc["_id"]}, 
+                    {"_id": user_doc["_id"]},
                     {"$set": {"clerk_id": clerk_id}}
                 )
-                # Refresh user_doc with the new id
                 user_doc["clerk_id"] = clerk_id
         
-        # 3. If still not found, provision new user
         if not user_doc:
-            logger.info(f"[+] Provisioning new database user: {email or clerk_id}")
+            if not email:
+                logger.warning("No email claim was available for this user; preserving the Clerk subject as the username instead of creating a synthetic new_user identity.")
+                safe_username = clerk_id or "new_user"
+                safe_email = None
+            else:
+                safe_username = email.split("@")[0]
+                safe_email = email
+
+            logger.info(f"[+] Provisioning user record for: {safe_email or safe_username}")
             new_user = {
                 "clerk_id": clerk_id,
-                "email": email,
-                "username": email.split("@")[0] if email else "new_user",
+                "email": safe_email,
+                "username": safe_username,
                 "groups": ["Affiliate_A", "Affiliate_B", "Affiliate_C", "PAAPP_Admins", "Taskboard_Admins"],
                 "created_at": datetime.utcnow()
             }
@@ -261,8 +268,8 @@ def get_me(current_user: dict = Depends(get_current_user)):
             user_doc = new_user
             
         return {
-            "username": user_doc.get("username"),
-            "email": user_doc.get("email"),
+            "username": user_doc.get("username") or (email.split("@")[0] if email else clerk_id),
+            "email": user_doc.get("email") or email,
             "groups": user_doc.get("groups", [])
         }
         

@@ -27,10 +27,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
           // Give Clerk a split-second to ensure the session token is fully loaded and attached
           await new Promise((resolve) => setTimeout(resolve, 300));
 
-          const userProfile = await getMe(userId); 
-          
-          localStorage.setItem('principal', userProfile.username);
-          localStorage.setItem('x-user-id', userProfile.username);
+          const clerkEmail = (window as any)?.Clerk?.user?.primaryEmailAddress?.emailAddress || (window as any)?.Clerk?.user?.emailAddresses?.[0]?.emailAddress || userId;
+          const userProfile = await getMe(clerkEmail);
+
+          const canonicalPrincipal = (userProfile.email || userProfile.username || clerkEmail || userId).trim();
+          localStorage.setItem('principal', canonicalPrincipal);
+          localStorage.setItem('x-user-id', canonicalPrincipal);
 
           if (!sessionStorage.getItem('login_logged')) {
             await logLogin();
