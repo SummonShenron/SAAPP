@@ -20,7 +20,7 @@ from bson.objectid import ObjectId
 from datetime import datetime, timezone
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from backend.components import taskboard
 from backend.utils.taskboard_utils import require_taskboard_admin, is_taskboard_admin_for_user
@@ -58,6 +58,7 @@ from backend.utils.app_utils import (
     dispatch_erragent_ingest,
     build_error_payload,
     resolve_target_repo,
+    run_synthetic_read_only_question
 )
 from backend.utils.attachment_utils import process_user_attachment, ingest_doc_to_session
 from backend.utils.fallback_utils import rewrite_fallback
@@ -158,6 +159,10 @@ class IngestPayload(BaseModel):
 
 class StatusUpdate(BaseModel):
     status: str
+
+
+class SyntheticAskRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=2000)
 
 @app.middleware("http")
 async def capture_unhandled_errors(request: Request, call_next) -> Response:
@@ -1252,4 +1257,23 @@ def saapp_health_check():
         "service": "SAAPP Widget",
         "version": "1.0.0",
         "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+@app.post("/api/synthetic/ask")
+async def synthetic_ask(
+    request: SyntheticAskRequest,
+    current_user=Depends(get_current_user),
+):
+    workflow = services.get("compiled_workflow")
+
+    answer = await run_synthetic_read_only_question(
+        workflow=workflow,
+        question=request.question,
+        username=current_user.get("sub", "synthetic-check"),
+    )
+
+    return {
+        "status": "ok",
+        "answer": answer,
+        "request_id": uuid.uuid4().hex,
     }

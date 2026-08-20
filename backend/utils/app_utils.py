@@ -1,6 +1,7 @@
 import asyncio
 import os
 import re
+import uuid
 import datetime
 import traceback
 from typing import Dict, Any, Optional
@@ -440,3 +441,46 @@ def build_error_payload(
             "exception_type": exc.__class__.__name__,
         },
     }
+
+async def run_synthetic_read_only_question(
+    workflow,
+    question: str,
+    username: str,
+) -> str:
+    question = question.strip()
+
+    if not question:
+        raise HTTPException(status_code=400, detail="Question is required.")
+    if len(question) > 2000:
+        raise HTTPException(status_code=400, detail="Question is too long.")
+    if workflow is None:
+        raise HTTPException(status_code=503, detail="Synthetic workflow unavailable.")
+
+    initial_state = {
+        "messages": [HumanMessage(content=question)],
+        "username": username,
+        "target_scope": [],
+        "documents": [],
+        "relevance_grade": "conversational",
+        "loop_count": 0,
+        "original_question": question,
+        "force_web_search": False,
+        "workflowName": "synthetic_read_only",
+        "requestId": uuid.uuid4().hex,
+    }
+
+    final_state = await workflow.ainvoke(initial_state)
+
+    answer = (
+        final_state.get("insight_answer")
+        or final_state.get("generation")
+        or final_state.get("content_to_format")
+    )
+
+    if not answer:
+        raise HTTPException(
+            status_code=502,
+            detail="Synthetic workflow returned no answer.",
+        )
+
+    return str(answer)
