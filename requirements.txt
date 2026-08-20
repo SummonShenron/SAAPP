@@ -27,3 +27,4 @@ motor>=3.3.0
 duckduckgo-search
 ddgs
 sentry-sdk[fastapi]
+pytest
