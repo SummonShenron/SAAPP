@@ -471,11 +471,39 @@ async def run_synthetic_read_only_question(
 
     final_state = await workflow.ainvoke(initial_state)
 
+    logger.info(
+        "Synthetic workflow final_state keys: %s",
+        sorted(final_state.keys()) if isinstance(final_state, dict) else type(final_state).__name__,
+    )
+
     answer = (
         final_state.get("insight_answer")
         or final_state.get("generation")
         or final_state.get("content_to_format")
     )
+
+    if not answer and isinstance(final_state, dict):
+        messages = final_state.get("messages") or []
+        if messages:
+            last_message = messages[-1]
+            if hasattr(last_message, "content"):
+                embedded_content = getattr(last_message, "content")
+                if isinstance(embedded_content, str) and embedded_content.strip():
+                    answer = embedded_content.strip()
+                elif isinstance(embedded_content, list):
+                    answer = "".join(
+                        part.get("text", "") if isinstance(part, dict) else str(part)
+                        for part in embedded_content
+                    ).strip()
+            elif isinstance(last_message, dict):
+                content = last_message.get("content")
+                if isinstance(content, str) and content.strip():
+                    answer = content.strip()
+                elif isinstance(content, list):
+                    answer = "".join(
+                        part.get("text", "") if isinstance(part, dict) else str(part)
+                        for part in content
+                    ).strip()
 
     if not answer:
         raise HTTPException(
