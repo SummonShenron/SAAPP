@@ -161,6 +161,15 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [loading, setLoading] = useState<boolean>(false);
   const [currentExampleQuestions, setCurrentExampleQuestions] = useState<string[]>([]);
   const [loadingCards, setLoadingCards] = useState<boolean>(false);
+
+  // Notify the parent window (BTY SonicWidget) so mini Patchy can animate.
+  // No-ops when not embedded in an iframe. '*' target is fine here because the
+  // payload carries no sensitive data; the parent origin-checks on receipt.
+  const hasStreamedRef = useRef<boolean>(false);
+  const postPatchyStatus = (status: 'idle' | 'thinking' | 'streaming' | 'done' | 'error') => {
+    if (window.parent === window) return;
+    window.parent.postMessage({ source: 'sonic-assistant', patchyStatus: status }, '*');
+  };
   const [attachments, setAttachments] = useState<{ filename: string; content: string }[]>([]);
   const attachmentsRef = useRef<{ filename: string; content: string }[]>([]);
   const principalKey = (localStorage.getItem('principal') || '').toLowerCase();
@@ -410,6 +419,8 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     setLoading(true);
     setAgentStatus('Running at the speed of sound');
     setAgentPath([]);
+    hasStreamedRef.current = false;
+    postPatchyStatus('thinking');
 
     try {
       await api.sendChatMessage(
@@ -440,6 +451,10 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
                 }
               }
               if (payload.event === 'token') {
+                if (!hasStreamedRef.current) {
+                  hasStreamedRef.current = true;
+                  postPatchyStatus('streaming');
+                }
                 setMessages(prev => {
                   const updated = [...prev];
                   const lastIndex = updated.length - 1;
@@ -453,6 +468,10 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
                 });
               }
               if (payload.event === 'final_generation') {
+                if (!hasStreamedRef.current) {
+                  hasStreamedRef.current = true;
+                  postPatchyStatus('streaming');
+                }
                 setMessages(prev => {
                   const updated = [...prev];
                   const lastIndex = updated.length - 1;
@@ -473,6 +492,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
                   return updated;
                 });
                 setAgentStatus('');
+                postPatchyStatus('error');
                 addTraceStep({ title: "Execution error", detail: payload.message, status: "active" });
                 markTraceComplete();
               }
@@ -484,6 +504,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
       );
     } catch (err) {
       console.error("Chat send failed:", err);
+      postPatchyStatus('error');
       setMessages(prev => [
         ...prev,
         { id: genId(), sender: 'ai', text: "Vector assertion timed out. Check local engine allocations." }
@@ -491,6 +512,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     } finally {
       setLoading(false);
       setAgentStatus('');
+      postPatchyStatus('done');
     }
   };
 
