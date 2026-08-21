@@ -35,7 +35,7 @@ jobs:
           while IFS= read -r command; do
             [ -z "$command" ] && continue
 
-            if [[ ! "$command" =~ ^pytest\ [a-zA-Z0-9_./-]+(::[a-zA-Z_][a-zA-Z0-9_]*)*$ ]]; then
+            if [[ ! "$command" =~ ^(python\ -m\ )?pytest\ [a-zA-Z0-9_./-]+(::[a-zA-Z_][a-zA-Z0-9_]*)*$ ]]; then
               echo "Rejected test command: $command"
               exit 1
             fi
