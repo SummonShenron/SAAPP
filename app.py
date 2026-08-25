@@ -358,7 +358,11 @@ async def discover_documents(affiliate: str = "All", current_user = Depends(get_
     """
     try:
         # Calls the dynamic metadata extraction layer inside search.py
-        files = await discover_workspace_documents(affiliate)
+        res = discover_workspace_documents(affiliate)
+        if hasattr(res, "__await__"):
+            files = await res
+        else:
+            files = res
         return {"accessible_documents": files}
     except Exception as e:
         logger.exception(f"[-] Catalog discovery anomaly: {str(e)}")
