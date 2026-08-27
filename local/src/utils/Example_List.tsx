@@ -27,8 +27,8 @@ const AFFILIATE_QUESTION_POOLS: Record<string, string[]> = {
     "How do I book a session?",
     "Where is Trainer's Edge, and how can I get in contact with Madison?",
     "What is the proper deadlift form?",
-    "How soon should I eat after a workout?",
-    "What should I eat before and after my workouts?"
+    "How can I get in contact with Coach Madison?",
+    "Can you explain why it is worth investing in personal training?"
   ],
 };
 
