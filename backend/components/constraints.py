@@ -366,6 +366,13 @@ Your job is to analyze the user's request and context to generate a professional
 }}
 ```"""
 
+FOLLOW_UP_CONSTRAINT = """
+---
+CRITICAL RESPONSE FORMATTING RULE:
+At the very end of your response, output a single relevant follow-up question inside these exact tags:
+<<<FOLLOW_UP: Insert one natural follow-up question here >>>
+"""
+
 def get_system_prompt(username: str = "default", affiliate: str = "All") -> str:
     """Dynamically fetches base RAG instructions and layers custom adjustments if needed."""
     base_instructions = BASE_RAG_CONSTRAINTS
@@ -382,7 +389,7 @@ def get_system_prompt(username: str = "default", affiliate: str = "All") -> str:
         base_instructions += "- Facility -> Trainer's Edge Gym, 3845 100th St, Urbandale, IA 50322 (5am-5pm).\n"
         logger.info("Affiliate_D detected: Injecting BTY Fitness constraint into system prompt.")
     base_instructions += BASE_CONTEXT  
-    return base_instructions
+    return base_instructions + FOLLOW_UP_CONSTRAINT
 
 def format_docs(docs) -> str:
     cleaned_blocks = []

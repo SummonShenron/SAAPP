@@ -27,6 +27,15 @@ interface TraceStep {
   status: "active" | "complete";
 }
 
+const parseFollowUp = (content: string) => {
+  const match = content.match(/<<<FOLLOW_UP:\s*(.*?)>>>/s);
+  if (!match) return { cleanContent: content, followUp: null };
+
+  const cleanContent = content.replace(/<<<FOLLOW_UP:\s*.*?>>>/s, '').trim();
+  const followUp = match[1].trim();
+  return { cleanContent, followUp };
+};
+
 export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const hashSearch = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
   const searchParams = new URLSearchParams(window.location.search || hashSearch);
@@ -635,109 +644,145 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
         {/* 2. CHAT MESSAGES WINDOW */}
         {hasChatted && (
           <div
-              className="chat-window"
-              ref={chatWindowRef}
-              style={isEmbedded ? undefined : { maxHeight: 'calc(100vh - 380px)', overflowY: 'auto' }}
-            >
+            className="chat-window"
+            ref={chatWindowRef}
+            style={isEmbedded ? undefined : { maxHeight: 'calc(100vh - 380px)', overflowY: 'auto' }}
+          >
             {messages
               .filter(msg => !(hasChatted && msg.sender === 'system'))
-              .map(msg => (
-                <div key={msg.id} className={`message-bubble ${msg.sender}`}>
-                  <div className="message-sender">{msg.sender.toUpperCase()}</div>
-                  <div className="message-text">
-                    <ReactMarkdown
-                      components={{
-                        a: ({ href, children, node, ...rest }: any) => {
-                          const finalHref = href?.startsWith('/')
-                            ? `${BASE_URL.replace(/\/$/, '')}${href}`
-                            : href;
-                          const isDownloadLink = finalHref?.includes('/api/documents/download/');
-                          const normalizedLabel = React.Children.toArray(children)
-                            .map((child) => (typeof child === 'string' ? child : ''))
-                            .join(' ')
-                            .replace(/\s+/g, ' ')
-                            .trim();
+              .map(msg => {
+                // Extract follow-up tag and strip it from the displayed message text
+                const { cleanContent, followUp } = msg.sender === 'ai' 
+                  ? parseFollowUp(msg.text) 
+                  : { cleanContent: msg.text, followUp: null };
 
-                          const handleClick = async (e: React.MouseEvent) => {
-                            if (isDownloadLink && finalHref) {
-                              e.preventDefault();
-                              const newTab = window.open('', '_blank');
-                              if (newTab) {
-                                newTab.document.write('<html><body style="background: #121824; color: #fff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;"><h3>Loading secure document preview...</h3></body></html>');
-                              }
-                              try {
-                                let token = null;
-                                const isGuest = ['guest', 'guest_bty'].includes(localStorage.getItem('principal') || '');
-                                if (isGuest) {
-                                  token = localStorage.getItem('guest_token');
-                                } else if (getToken) {
-                                  token = await getToken();
+                return (
+                  <div key={msg.id} className={`message-bubble ${msg.sender}`}>
+                    <div className="message-sender">{msg.sender.toUpperCase()}</div>
+                    <div className="message-text">
+                      <ReactMarkdown
+                        components={{
+                          a: ({ href, children, node, ...rest }: any) => {
+                            const finalHref = href?.startsWith('/')
+                              ? `${BASE_URL.replace(/\/$/, '')}${href}`
+                              : href;
+                            const isDownloadLink = finalHref?.includes('/api/documents/download/');
+                            const normalizedLabel = React.Children.toArray(children)
+                              .map((child) => (typeof child === 'string' ? child : ''))
+                              .join(' ')
+                              .replace(/\s+/g, ' ')
+                              .trim();
+
+                            const handleClick = async (e: React.MouseEvent) => {
+                              if (isDownloadLink && finalHref) {
+                                e.preventDefault();
+                                const newTab = window.open('', '_blank');
+                                if (newTab) {
+                                  newTab.document.write('<html><body style="background: #121824; color: #fff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;"><h3>Loading secure document preview...</h3></body></html>');
                                 }
-                                const response = await fetch(finalHref, {
-                                  headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-                                });
-                                if (!response.ok) throw new Error(`Server responded with status ${response.status}`);
-                                const blob = await response.blob();
-                                const blobUrl = window.URL.createObjectURL(blob);
-                                if (newTab) newTab.location.href = blobUrl;
-                                else window.open(blobUrl, '_blank');
-                              } catch (err) {
-                                console.error("Document preview failed:", err);
-                                if (newTab) newTab.close();
-                                alert("Failed to load document. Please check your session.");
+                                try {
+                                  let token = null;
+                                  const isGuest = ['guest', 'guest_bty'].includes(localStorage.getItem('principal') || '');
+                                  if (isGuest) {
+                                    token = localStorage.getItem('guest_token');
+                                  } else if (getToken) {
+                                    token = await getToken();
+                                  }
+                                  const response = await fetch(finalHref, {
+                                    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                                  });
+                                  if (!response.ok) throw new Error(`Server responded with status ${response.status}`);
+                                  const blob = await response.blob();
+                                  const blobUrl = window.URL.createObjectURL(blob);
+                                  if (newTab) newTab.location.href = blobUrl;
+                                  else window.open(blobUrl, '_blank');
+                                } catch (err) {
+                                  console.error("Document preview failed:", err);
+                                  if (newTab) newTab.close();
+                                  alert("Failed to load document. Please check your session.");
+                                }
                               }
-                            }
-                          };
+                            };
 
-                          return (
-                            <a
-                              {...rest}
-                              href={finalHref}
-                              onClick={handleClick}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className={isDownloadLink ? 'citation-link citation-link-document' : 'citation-link'}
-                              style={{ cursor: 'pointer' }}
-                            >
-                              {normalizedLabel || children}
-                            </a>
-                          );
-                        },
-                      }}
-                    >
-                      {msg.text}
-                    </ReactMarkdown>
-                  </div>
-                  {msg.sender === 'ai' && !loading && msg.text && (
-                    <div className="feedback-actions" style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
-                      <button 
-                        type="button"
-                        onClick={() => handleFeedback(msg.id, 'like')}
-                        className={`circle-icon-button ${msg.feedback === 'like' ? 'active' : ''}`}
-                        title="Helpful"
-                        style={msg.feedback === 'like' ? { color: '#22c55e', borderColor: '#22c55e', background: '22c55e' } : {}}
+                            return (
+                              <a
+                                {...rest}
+                                href={finalHref}
+                                onClick={handleClick}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className={isDownloadLink ? 'citation-link citation-link-document' : 'citation-link'}
+                                style={{ cursor: 'pointer' }}
+                              >
+                                {normalizedLabel || children}
+                              </a>
+                            );
+                          },
+                        }}
                       >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
-                        </svg>
-                      </button>
-
-                      <button 
-                        type="button"
-                        onClick={() => handleFeedback(msg.id, 'dislike')}
-                        className={`circle-icon-button ${msg.feedback === 'dislike' ? 'active' : ''}`}
-                        title="Not helpful"
-                        style={msg.feedback === 'dislike' ? { color: '#ef4444', borderColor: '#ef4444' } : {}}
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3" />
-                        </svg>
-                      </button>
+                        {cleanContent}
+                      </ReactMarkdown>
                     </div>
-                  )}
-                </div>
-              ))}
 
+                    {/* Clickable Follow-Up Suggestion Button */}
+                    {msg.sender === 'ai' && followUp && !loading && (
+                      <div className="follow-up-container" style={{ marginTop: '10px' }}>
+                        <button
+                          type="button"
+                          onClick={() => handleSendMessage(followUp, attachmentsRef.current)}
+                          className="follow-up-btn"
+                          style={{
+                            background: 'rgba(6, 182, 212, 0.1)',
+                            border: '1px solid rgba(6, 182, 212, 0.4)',
+                            color: '#22d3ee',
+                            borderRadius: '16px',
+                            padding: '6px 14px',
+                            fontSize: '0.85rem',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            transition: 'all 0.2s ease',
+                          }}
+                        >
+                          <span>✨ {followUp}</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Feedback Buttons */}
+                    {msg.sender === 'ai' && !loading && msg.text && (
+                      <div className="feedback-actions" style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
+                        <button 
+                          type="button"
+                          onClick={() => handleFeedback(msg.id, 'like')}
+                          className={`circle-icon-button ${msg.feedback === 'like' ? 'active' : ''}`}
+                          title="Helpful"
+                          style={msg.feedback === 'like' ? { color: '#22c55e', borderColor: '#22c55e', background: '#22c55e' } : {}}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
+                          </svg>
+                        </button>
+
+                        <button 
+                          type="button"
+                          onClick={() => handleFeedback(msg.id, 'dislike')}
+                          className={`circle-icon-button ${msg.feedback === 'dislike' ? 'active' : ''}`}
+                          title="Not helpful"
+                          style={msg.feedback === 'dislike' ? { color: '#ef4444', borderColor: '#ef4444' } : {}}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3" />
+                          </svg>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+            {/* Live Node Steps & Spinning Animation Container */}
             {loading && (
               isEmbedded ? (
                 <div className="bty-loader-container">
