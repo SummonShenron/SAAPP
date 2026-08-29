@@ -910,31 +910,39 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                     </svg>
                   </button>
 
+                  {/* FIXED HELP/INFO TOOLTIP POPOVER */}
                   {showTooltip && (
-                    <div className="chat-tooltip-popover" style={{
-                      position: "absolute",
-                      bottom: "45px",
-                      right: "0",
-                      width: "220px",
-                      background: "var(--card-bg, #ffffff)",
-                      border: "1px solid var(--border-color, #e2e8f0)",
-                      padding: "10px 14px",
-                      borderRadius: "8px",
-                      boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-                      zIndex: 100,
-                      fontSize: "13px",
-                      color: "var(--text-main, #1e293b)",
-                      lineHeight: "1.4"
-                    }}>
-                      <strong>Secure Index Tip:</strong>
-                      <p style={{ margin: "8px 8px 8px" }}>
-                        <ul>
-                          <li>Please only begin your queries once you see the example questions and the green (or yellow in dark mode) username in the top left indicating your session permissions are set.[cite: 2]</li>
-                          <li>If the example questions have not loaded yet, it means the backend is still spinning up due to inactivity. please wait for the app to be fully loaded before using.[cite: 2]</li>
-                          <li>Due to operating on cost-sensitive infrastructure, response times may vary or be unavailable due to model demand.[cite: 2]</li>
-                          <li>If you encounter any bugs, issues, or would like your permissions changed, please reach out to jackharper0517@outlook.com.[cite: 2]</li>
-                        </ul>
-                      </p>
+                    <div 
+                      className="chat-tooltip-popover" 
+                      style={{
+                        position: "absolute",
+                        bottom: "45px",
+                        left: "0",
+                        width: "260px",
+                        maxWidth: "80vw",
+                        background: isEmbedded ? "#121316" : "#121824",
+                        border: isEmbedded ? "1px solid rgba(0, 242, 254, 0.4)" : "1px solid #334155",
+                        textDecoration: "none",
+                        padding: "12px 14px",
+                        borderRadius: "12px",
+                        boxShadow: isEmbedded 
+                          ? "0 10px 25px -5px rgba(0, 0, 0, 0.7), 0 0 12px rgba(0, 242, 254, 0.15)"
+                          : "0 10px 25px -5px rgba(0, 0, 0, 0.5)",
+                        zIndex: 100,
+                        fontSize: "12px",
+                        color: "#f8fafc",
+                        lineHeight: "1.4"
+                      }}
+                    >
+                      <strong style={{ color: "#38bdf8", display: "block", marginBottom: "6px", fontSize: "13px" }}>
+                        Secure Index Tip:
+                      </strong>
+                      <ul style={{ margin: 0, paddingLeft: "16px", display: "flex", flexDirection: "column", gap: "6px", color: "#cbd5e1" }}>
+                        <li>Please be as specific as possible when asking questions to get the most accurate responses.</li>
+                        <li>Due to operating on cost-sensitive infrastructure, response times may vary or be unavailable due to model demand.</li>
+                        <li>Powered by the <a href="https://www.sonicassistant.com" target="_blank" rel="noopener noreferrer">Sonic Assistant</a></li>
+                        <li>If you encounter any bugs, issues, or would like request access , please reach out to <a href="mailto:jackharper0517@outlook.com">jackharper0517@outlook.com</a>.</li>
+                      </ul>
                     </div>
                   )}
                 </div>

@@ -845,6 +845,16 @@ div:has(.portal-body) {
   transition: all 0.2s;
 }
 
+.chat-tooltip-popover a,
+.chat-tooltip-popover a:visited {
+  color: #00f2fe !important;
+  text-decoration: underline;
+}
+
+.chat-tooltip-popover a:hover {
+  color: #38bdf8 !important;
+}
+
 .theme-shadow .chat-textarea {
   border: 1px solid var(--bubble-user-border)
 }
