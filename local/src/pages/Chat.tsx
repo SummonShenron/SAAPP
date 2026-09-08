@@ -185,7 +185,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const guestBtyDetected = principalKey === 'guest_bty' || !!localStorage.getItem('guest_token');
   const affiliateDActive = selectedAffiliate === 'Affiliate_D' || embedAffiliate === 'Affiliate_D';
   const chatPlaceholder = guestBtyDetected
-    ? "Ask Madi's Assistant..."
+    ? "Ask a Question..."
     : affiliateDActive
       ? 'Ask a question...'
       : 'Ask a question against your isolated data index...';
