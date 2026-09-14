@@ -93,14 +93,19 @@ export const Filters: React.FC<FiltersProps> = ({
       </select>
 
       <label htmlFor="rag-mode-toggle" className="rag-mode-toggle-label" title="Open mode lets the assistant also use its own general knowledge, not just the knowledge base.">
-        <input
-          id="rag-mode-toggle"
-          type="checkbox"
-          checked={ragMode === 'open'}
-          disabled={loadingChat || principal === 'guest_bty'}
-          onChange={(e) => onRagModeChange(e.target.checked ? 'open' : 'strict')}
-        />
-        Open-ended answers
+        <span>Open-ended answers</span>
+        <span className="switch">
+          <input
+            id="rag-mode-toggle"
+            type="checkbox"
+            checked={ragMode === 'open'}
+            disabled={loadingChat || principal === 'guest_bty'}
+            onChange={(e) => onRagModeChange(e.target.checked ? 'open' : 'strict')}
+          />
+          <span className="switch-track">
+            <span className="switch-thumb" />
+          </span>
+        </span>
       </label>
     </div>
   );

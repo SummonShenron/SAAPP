@@ -4,12 +4,11 @@ import logging
 from datetime import datetime, timezone
 from typing import List, Optional
 
-import numpy as np
-
 from backend.models.models import lite_llm
 from backend.components.constraints import MEMORY_COMPACTION_PROMPT
 from backend.services.memory_search import USER_MEMORY_COLLECTION, embed_and_store_memory_chunk
 from backend.utils.memory_utils import save_user_fact
+from backend.utils.embedding_utils import cosine_similarity
 
 logger = logging.getLogger("SASS Logger")
 
@@ -62,14 +61,6 @@ def _fetch_chunks(db, username: str, source_type_filter: dict) -> List[dict]:
     return list(cursor)
 
 
-def _cosine_similarity(a: List[float], b: List[float]) -> float:
-    va, vb = np.array(a, dtype=float), np.array(b, dtype=float)
-    denom = np.linalg.norm(va) * np.linalg.norm(vb)
-    if denom == 0:
-        return 0.0
-    return float(np.dot(va, vb) / denom)
-
-
 def _cluster_chunks(chunks: List[dict], threshold: float = DEFAULT_SIMILARITY_THRESHOLD) -> List[List[dict]]:
     """
     Pure greedy cosine-similarity clustering: no DB/LLM calls, safe to unit test directly.
@@ -93,7 +84,7 @@ def _cluster_chunks(chunks: List[dict], threshold: float = DEFAULT_SIMILARITY_TH
                 other_embedding = chunks[j].get("embedding")
                 if not other_embedding:
                     continue
-                if _cosine_similarity(anchor_embedding, other_embedding) >= threshold:
+                if cosine_similarity(anchor_embedding, other_embedding) >= threshold:
                     cluster.append(chunks[j])
                     assigned[j] = True
 

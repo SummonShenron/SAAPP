@@ -271,6 +271,27 @@ Return ONLY a JSON object matching this schema, with no preamble or markdown:
 }}
 """
 
+FACT_CONFLICT_PROMPT = """
+You maintain a user's long-term memory facts. Decide how a NEW statement relates to an
+EXISTING stored fact that was found to be semantically similar to it.
+
+EXISTING FACT:
+{existing_fact}
+
+NEW STATEMENT:
+{new_fact}
+
+Return ONLY a JSON object matching this schema, with no preamble or markdown:
+{{
+  "action": "duplicate" | "supersede" | "distinct"
+}}
+
+- "duplicate": the new statement says the same thing as the existing fact (near-identical meaning).
+- "supersede": the new statement contradicts or updates the existing fact (e.g. a changed preference).
+- "distinct": the new statement is actually a different, independent fact that happens to be topically
+  similar, and the existing fact should be kept alongside it, not replaced.
+"""
+
 MEMORY_TURN_SUMMARY_PROMPT = """
 Summarize the key fact, decision, or takeaway from this exchange in ONE short third-person
 sentence about the user, suitable for long-term semantic memory (e.g. "Asked about deploying
