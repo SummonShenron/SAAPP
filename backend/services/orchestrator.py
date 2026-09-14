@@ -5,6 +5,7 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 from backend.services.agent_workflow import create_workflow
 from backend.services.insights_workflow import create_insight_workflow
+from backend.services.memory_search import get_user_memory_vector_store
 from backend.utils.db_utils import get_db
 from fastapi import HTTPException
 from langchain_mongodb import MongoDBAtlasVectorSearch
@@ -35,7 +36,11 @@ def startup_services():
         embedding=embeddings,
         index_name="vector_index"
     )
-    
+
+    # 3B. INITIALIZE PERSONAL MEMORY VECTOR STORE (isolated from the shared KB above)
+    logger.info("Connecting to personal memory vector search (user_memory_chunks)...")
+    user_memory_vector_store = get_user_memory_vector_store(db, embeddings)
+
     # Verification Log
     logger.info("="*30)
     logger.info(f"VECTOR ENGINE INITIALIZED: {type(vector_store).__name__}")
@@ -48,7 +53,7 @@ def startup_services():
     # 4. COMPILE WORKFLOWS
     logger.info("Importing and compiling LangGraph workflow execution engine...")
     try:
-        compiled_workflow = create_workflow(vector_store)
+        compiled_workflow = create_workflow(vector_store, user_memory_vector_store)
         logger.info("Compiled LangGraph Workflow successfully loaded.")
     except Exception as e:
         logger.critical(f"Failed to compile LangGraph workflow: {e}")
@@ -64,6 +69,7 @@ def startup_services():
     return {
         "user_directory": user_directory,
         "vector_store": vector_store,
+        "user_memory_vector_store": user_memory_vector_store,
         "compiled_workflow": compiled_workflow,
         "insight_workflow": insight_workflow
     }

@@ -254,21 +254,76 @@ export async function deleteDocument(username: string, affiliate: string, docId:
 }
 
 /**
- * Save the current conversation state
+ * Get / set the current user's RAG strictness mode ("strict" | "open")
  */
-export async function saveConversation(title: string, messages: any[]): Promise<any> {
+export async function getRagMode(): Promise<{ rag_mode: string }> {
   const authHeaders = await getAuthHeaders();
-  const res = await fetch(`${BASE_URL}/api/saved-conversations`, {
-    method: "POST",
-    headers: { 
-      "Content-Type": "application/json",
-      ...authHeaders 
-    },
-    body: JSON.stringify({ title, messages })
+  const res = await fetch(`${BASE_URL}/api/settings/rag-mode`, {
+    headers: { ...authHeaders }
   });
+  if (!res.ok) throw new Error("Failed to fetch RAG mode setting.");
+  return res.json();
+}
 
+export async function updateRagMode(ragMode: string): Promise<{ rag_mode: string }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/rag-mode`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders
+    },
+    body: JSON.stringify({ rag_mode: ragMode })
+  });
+  if (!res.ok) throw new Error("Failed to update RAG mode setting.");
+  return res.json();
+}
+
+/**
+ * List the current user's conversation threads
+ */
+export interface ConversationSummary {
+  session_id: string;
+  title: string;
+  updated_at: string;
+}
+
+export async function listConversations(): Promise<ConversationSummary[]> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/conversations`, {
+    headers: { ...authHeaders }
+  });
   if (!res.ok) {
-    throw new Error("Failed to save conversation.");
+    throw new Error("Failed to list conversations.");
+  }
+  return res.json();
+}
+
+/**
+ * Fetch one conversation thread's full message history
+ */
+export async function getConversation(sessionId: string): Promise<{ session_id: string; title: string; messages: any[] }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/conversations/${encodeURIComponent(sessionId)}`, {
+    headers: { ...authHeaders }
+  });
+  if (!res.ok) {
+    throw new Error("Failed to load conversation.");
+  }
+  return res.json();
+}
+
+/**
+ * Delete one conversation thread
+ */
+export async function deleteConversation(sessionId: string): Promise<any> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/conversations/${encodeURIComponent(sessionId)}`, {
+    method: "DELETE",
+    headers: { ...authHeaders }
+  });
+  if (!res.ok) {
+    throw new Error("Failed to delete conversation.");
   }
   return res.json();
 }
@@ -497,5 +552,9 @@ export const api = {
   isPaappAdmin,
   uploadAttachment,
   sendChatMessage,
-  saveConversation
+  listConversations,
+  getConversation,
+  deleteConversation,
+  getRagMode,
+  updateRagMode
 };

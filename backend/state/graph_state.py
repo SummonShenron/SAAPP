@@ -17,6 +17,7 @@ class GraphState(TypedDict):
     requestId: str                 # single replay correlation ID for the entire workflow
     messages: Annotated[List[BaseMessage], add_messages]    # Full conversation history (Human + AI)
     username: str                   # Authenticated user identity
+    session_id: Optional[str]       # Stable per-conversation identifier
     target_scope: List[str]         # Allowed tenant affiliates
     documents: List[Any]            # Retrieved vector + GraphRAG docs
     relevance_grade: str            # yes/no relevance evaluation
@@ -47,6 +48,9 @@ class GraphState(TypedDict):
     user_decision: Optional[str]              # "approve" | "modify" | "reject"
     modified_details: Optional[Dict[str, Any]] # Overrides if user modified title/body/branches
     last_intent: Optional[str]
+    memory_facts: Optional[List[Dict[str, Any]]]  # Persistent facts loaded/saved this turn
+    memory_hits: Optional[List[Any]]              # Semantic memory documents retrieved this turn
+    rag_mode: Optional[str]                       # "strict" (default) or "open"
 
 # def route_user_query(state: GraphState) -> str:
 #     """
@@ -85,6 +89,10 @@ def route_after_grading(state: GraphState) -> str:
     """
     if state.get("attachment_summaries"):
         logger.info("Priority attachment detected — skipping rewrite and routing directly to Generation.")
+        return "generate_node"
+
+    if state.get("rag_mode") == "open":
+        logger.info("Open RAG mode — skipping strict relevance gate, routing directly to Generation.")
         return "generate_node"
 
     grade = state.get("relevance_grade")

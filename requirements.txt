@@ -19,6 +19,7 @@ pypdf
 pdfplumber
 networkx
 pandas
+numpy
 python-docx
 clerk_backend_api
 pyjwt

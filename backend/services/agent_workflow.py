@@ -37,8 +37,11 @@ from backend.components.constraints import (
     REASONER_PROMPT,
     GITHUB_SEARCH_PROMPT,
     PR_REVIEW_PROMPT,
-    DRAFT_PR_PROMPT
+    DRAFT_PR_PROMPT,
+    MEMORY_EXTRACTION_PROMPT
 )
+from backend.utils.memory_utils import save_user_fact, load_user_facts
+from backend.services.memory_search import embed_and_store_memory_chunk, retrieve_user_memory
 from backend.components.time_storage import add_time_entry, TimeEntryCreate
 from backend.components import taskboard
 from backend.state.graph_state import GraphState, route_after_grading
@@ -135,7 +138,8 @@ def coordinator_router(state: GraphState) -> str:
         "paapp": "paapp_node",
         "workflow": "conversational_node",
         "tool": "conversational_node",
-        "memory": "memory_node",
+        "memory_save": "memory_save_node",
+        "memory_recall": "memory_recall_node",
         "insight": "snapshot_node",
         "web_search": "web_search_node",
         "code_interpreter": "code_interpreter_node",
@@ -291,8 +295,10 @@ def build_agent_plan(intent: str, state: dict) -> dict:
     # 4. Standard Operational Flag Mapping
     is_pr_request = flags.get("needs_pr_summary") or intent == "pr_summary"
     
-    if flags.get("needs_memory"):
-        agents.append("memory")
+    if flags.get("needs_memory_save"):
+        agents.append("memory_save")
+    elif flags.get("needs_memory_recall") or intent == "memory":
+        agents.append("memory_recall")
     if flags.get("needs_retrieval"):
         agents.append("retriever")
     if flags.get("needs_rewrite"):
@@ -391,7 +397,8 @@ async def reasoner_node(state: GraphState) -> GraphState:
             "needs_summary": False,
             "needs_formatting": False,
             "needs_conversation": True,  # Safe default to avoid triggering unintended actions
-            "needs_memory": False,
+            "needs_memory_save": False,
+            "needs_memory_recall": False,
             "needs_paapp": False,
             "follow_up_intent": False,
             "needs_web_search": False,
@@ -420,55 +427,56 @@ async def reasoner_node(state: GraphState) -> GraphState:
     )
     return state
 # ============================================================
-# MEMORY NODE
+# MEMORY NODES (persistent structured memory: save + recall)
 # ============================================================
 
-def memory_node(state: GraphState) -> dict:
+async def memory_save_node(state: GraphState, memory_vector_store=None) -> dict:
     state = ensure_workflow_keys(state)
-    logger.info("--- MEMORY NODE CALLED ---")
+    logger.info("--- MEMORY SAVE NODE CALLED ---")
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
-    node_name = "memory_node"
+    node_name = "memory_save_node"
     node_input = state.copy()
+    username = state.get("username", "default_user")
     user_msg = state["messages"][-1].content.strip()
-    # Extract the memory content
-    lower_msg = user_msg.lower()
-    # Detect explicit memory commands
-    triggers = [
-           "remember that",
-            "remember this",
-            "remember me",
-            "remember my",
-            "can you remember",
-            "save this",
-            "store this",
-            "keep this",
-            "don't forget",
-            "my preference is",
-            "i prefer",
-            "track this",
-            "log this",
-            "add to memory"
-    ]
-    extracted = user_msg
-    for t in triggers:
-        if t in lower_msg:
-            extracted = user_msg.lower().split(t, 1)[-1].strip()
-            break
-    # If extraction fails, fallback to full message
-    if not extracted:
-        extracted = user_msg
-    logger.info(f"Extracted memory content: {extracted}")
-    # Store memory in state (later you can move this to a DB)
-    memory_store = state.get("memory_store", [])
-    memory_store.append(extracted)
-    state["memory_store"] = memory_store
-    logger.info(f"Updated memory store: {memory_store}")
-    # Build confirmation message
-    confirmation = f"I’ve saved that preference: {extracted}"
-    # Pass to formatter
+
+    await safe_emit_event(
+        "trace_detail",
+        {
+            "node": "memory_save_node",
+            "title": "Saving to memory...",
+            "detail": "Extracting a durable fact from your message."
+        }
+    )
+
+    category = "preference"
+    fact_text = user_msg
+    try:
+        response = await lite_llm.ainvoke(MEMORY_EXTRACTION_PROMPT.format(message=user_msg))
+        resp_content = response.content if hasattr(response, "content") else str(response)
+        if isinstance(resp_content, list):
+            raw_text = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in resp_content])
+        else:
+            raw_text = str(resp_content)
+        clean_json = raw_text.replace("```json", "").replace("```", "").strip()
+        parsed = json.loads(clean_json)
+        category = parsed.get("category") or "preference"
+        fact_text = parsed.get("fact") or user_msg
+    except Exception:
+        logger.exception("[MemorySave] Fact extraction failed, storing raw message.")
+
+    saved = save_user_fact(username, fact_text, category=category, source="explicit")
+    embed_and_store_memory_chunk(
+        memory_vector_store, username, saved.fact,
+        source_type="manual", source_ref=state.get("session_id")
+    )
+
+    confirmation = f"Got it — I'll remember that: {saved.fact}"
+    state["memory_facts"] = [saved.dict()]
     state["raw_generation"] = confirmation
     state["content_to_format"] = confirmation
+    state["relevance_grade"] = "memory_action"
+
     node_output = state.copy()
     logger.info(
         "node executed",
@@ -484,6 +492,62 @@ def memory_node(state: GraphState) -> dict:
         }
     )
     return state
+
+
+def memory_recall_node(state: GraphState, memory_vector_store=None) -> dict:
+    state = ensure_workflow_keys(state)
+    logger.info("--- MEMORY RECALL NODE CALLED ---")
+    workflow_name = state["workflowName"]
+    request_id = state["requestId"]
+    node_name = "memory_recall_node"
+    node_input = state.copy()
+    username = state.get("username", "default_user")
+    question = state["messages"][-1].content.strip() if state.get("messages") else ""
+
+    facts = load_user_facts(username)
+    state["memory_facts"] = [f.dict() for f in facts]
+
+    semantic_hits = retrieve_user_memory(memory_vector_store, username, question, top_k=4)
+    state["memory_hits"] = [h.page_content for h in semantic_hits]
+
+    if not facts and not semantic_hits:
+        report = "No saved facts or preferences are on record for this user yet."
+    else:
+        report_parts = []
+        if facts:
+            fact_lines = "\n".join(f"- [{f.category}] {f.fact}" for f in facts)
+            report_parts.append(f"Saved facts/preferences:\n{fact_lines}")
+        if semantic_hits:
+            semantic_lines = "\n".join(f"- {h.page_content}" for h in semantic_hits)
+            report_parts.append(f"Relevant past context:\n{semantic_lines}")
+        report = "\n\n".join(report_parts)
+
+    doc = Document(
+        page_content=f"SYSTEM MEMORY REPORT:\n{report}",
+        metadata={"source": "user_memory", "priority": True}
+    )
+    current_docs = state.get("documents", [])
+    current_docs.append(doc)
+
+    node_output = state.copy()
+    logger.info(
+        "node executed",
+        extra={
+            "service": "SAAPP",
+            "erragent_context": {
+                "workflowName": workflow_name,
+                "requestId": request_id,
+                "node": node_name,
+                "input": node_input,
+                "output": node_output,
+            }
+        }
+    )
+    return {
+        **state,
+        "documents": current_docs,
+        "relevance_grade": "yes"
+    }
 
 async def retrieve_node(state: GraphState, vector_store) -> dict:
     logger.info("--- PARALLEL RETRIEVING DOCUMENTS & GRAPH CONTEXT ---")
@@ -704,7 +768,11 @@ def formatter_node(state: GraphState) -> dict:
     )
     # 4. Save formatted output
     formatted = get_chat_llm(state.get("username", "")).invoke(prompt)
-    formatted_text = formatted.content if hasattr(formatted, "content") else str(formatted)
+    formatted_content = formatted.content if hasattr(formatted, "content") else str(formatted)
+    if isinstance(formatted_content, list):
+        formatted_text = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in formatted_content])
+    else:
+        formatted_text = str(formatted_content)
     state["formatted_output"] = formatted_text
     node_output = state.copy()
     logger.info(
@@ -1727,7 +1795,11 @@ def llm_json_call(prompt: str) -> dict:
     """
 
     raw = lite_llm.invoke(prompt)
-    text = raw.content if hasattr(raw, "content") else str(raw)
+    raw_content = raw.content if hasattr(raw, "content") else str(raw)
+    if isinstance(raw_content, list):
+        text = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in raw_content])
+    else:
+        text = str(raw_content)
 
     # Extract JSON block
     match = re.search(r"\{.*\}", text, re.DOTALL)
@@ -2384,7 +2456,12 @@ async def github_search_node(state: dict) -> dict:
 
     try:
         router_response = await lite_llm.ainvoke(router_prompt)
-        raw_output = (router_response.content if hasattr(router_response, "content") else str(router_response)).replace("```", "").strip()
+        router_content = router_response.content if hasattr(router_response, "content") else str(router_response)
+        if isinstance(router_content, list):
+            raw_output = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in router_content])
+        else:
+            raw_output = str(router_content)
+        raw_output = raw_output.replace("```", "").strip()
         selected_paths = [p.strip() for p in raw_output.split(",") if p.strip() in valid_paths]
     except Exception:
         selected_paths = []
@@ -3025,12 +3102,19 @@ def execute_pr_node(state: dict) -> dict:
 # WORKFLOW ASSEMBLY & COMPILATION
 # ============================================================
 
-def create_workflow(vector_store):
+def create_workflow(vector_store, user_memory_vector_store=None):
     workflow = StateGraph(GraphState)
     async def retrieve_node_with_store(state):
         return await retrieve_node(state, vector_store)
-        
-    workflow.add_node("memory_node", memory_node)
+
+    async def memory_save_node_with_store(state):
+        return await memory_save_node(state, user_memory_vector_store)
+
+    def memory_recall_node_with_store(state):
+        return memory_recall_node(state, user_memory_vector_store)
+
+    workflow.add_node("memory_save_node", memory_save_node_with_store)
+    workflow.add_node("memory_recall_node", memory_recall_node_with_store)
     workflow.add_node("retrieve_node", retrieve_node_with_store)
     workflow.add_node("grade_documents_node", grading_node)
     workflow.add_node("rewrite_query_node", rewrite_query_node)
@@ -3057,7 +3141,8 @@ def create_workflow(vector_store):
         "coordinator_node",
         coordinator_router,  
         {
-            "memory_node": "memory_node",
+            "memory_save_node": "memory_save_node",
+            "memory_recall_node": "memory_recall_node",
             "retrieve_node": "retrieve_node",
             "rewrite_query_node": "rewrite_query_node",
             "conversational_node": "conversational_node",
@@ -3081,7 +3166,8 @@ def create_workflow(vector_store):
     )
     
     workflow.add_edge("paapp_node", "formatter_node")
-    workflow.add_edge("memory_node", "formatter_node")
+    workflow.add_edge("memory_save_node", "formatter_node")
+    workflow.add_edge("memory_recall_node", "formatter_node")
     workflow.add_edge("summarizer_node", "formatter_node")
     workflow.add_edge("formatter_node", "generate_node")
     workflow.add_edge("retrieve_node", "grade_documents_node")

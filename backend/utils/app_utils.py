@@ -10,8 +10,10 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, Base
 import logging
 import json
 from backend.state.graph_state import GraphState
-from backend.models.models import llm
-from settings import CHAT_HISTORY_FILE, SAVED_CONVERSATIONS_FILE
+from backend.models.models import llm, lite_llm
+from backend.components.constraints import MEMORY_TURN_SUMMARY_PROMPT
+from backend.services.memory_search import embed_and_store_memory_chunk
+from backend.services.memory_compaction import maybe_trigger_compaction
 from backend.utils.db_utils import get_db, resolve_service_registry_repo
 from fastapi import HTTPException
 import subprocess
@@ -40,143 +42,140 @@ def get_db_dependency():
         raise HTTPException(status_code=500, detail="Database connection unavailable")
     return db
 
-def get_user_file_path(username: str):
-    # Ensure this directory exists
-    os.makedirs("saapp_data/saved_conversations", exist_ok=True)
-    return os.path.join("saapp_data/saved_conversations", f"{username}.json")
+CONVERSATIONS_DIR = os.path.join("saapp_data", "conversations")
 
-def load_saved_conversations(username: str) -> list:
-    """Loads saved conversations from MongoDB, falling back to JSON file."""
-    db = get_db()
-    
-    # 1. Try MongoDB
-    if db is not None:
-        doc = db['saved_conversations'].find_one({"username": username})
-        if doc and "conversations" in doc:
-            return doc["conversations"]
-            
-    # 2. Fallback to Local JSON
-    user_file = get_user_file_path(username)
-    if not os.path.exists(user_file):
-        return []
-    with open(user_file, "r") as f:
-        return json.load(f)
-   
-def save_conversation(username: str, title: str, messages: list):
-    """Saves conversation messages to MongoDB and local JSON after serializing LangChain objects."""
-    
-    # 1. Convert LangChain message objects into plain dictionaries
-    serialized_messages = []
+
+def _get_conversations_file_path(username: str) -> str:
+    os.makedirs(CONVERSATIONS_DIR, exist_ok=True)
+    return os.path.join(CONVERSATIONS_DIR, f"{username}.json")
+
+
+def _serialize_messages(messages: list) -> list:
+    """Converts LangChain message objects (or already-plain dicts) into plain {type, content} dicts."""
+    serialized = []
     for msg in messages:
-        if hasattr(msg, "content"):
+        if isinstance(msg, dict):
+            serialized.append(msg)
+        elif hasattr(msg, "content"):
             msg_type = "human"
             if isinstance(msg, AIMessage) or getattr(msg, "type", "") == "ai":
                 msg_type = "ai"
             elif isinstance(msg, SystemMessage) or getattr(msg, "type", "") == "system":
                 msg_type = "system"
-                
-            serialized_messages.append({
-                "type": msg_type,
-                "content": msg.content
-            })
-        elif isinstance(msg, dict):
-            serialized_messages.append(msg)
+            serialized.append({"type": msg_type, "content": msg.content})
+    return serialized
 
-    new_entry = {
-        "title": title.strip(),
-        "timestamp": datetime.datetime.now().isoformat(),
-        "messages": serialized_messages  # Now populated with real serialized data!
+
+def load_user_conversations(username: str) -> list:
+    """Loads all of a user's conversation threads from MongoDB, falling back to JSON."""
+    db = get_db()
+    if db is not None:
+        return list(db["conversations"].find({"username": username}, {"_id": 0}))
+
+    path = _get_conversations_file_path(username)
+    if not os.path.exists(path):
+        return []
+    with open(path, "r") as f:
+        try:
+            return json.load(f)
+        except Exception:
+            return []
+
+
+def save_user_conversations(username: str, conversations: list) -> None:
+    """Mirrors a user's full conversation list to the local JSON fallback."""
+    with open(_get_conversations_file_path(username), "w") as f:
+        json.dump(conversations, f, indent=2)
+
+
+def save_conversation_turn(username: str, session_id: str, messages: list) -> dict:
+    """
+    Upserts ONE conversation thread's message list, auto-titling it from the first human
+    message. Replaces the old save_chat_history(), which rewrote every session for every
+    user on every single turn.
+    """
+    serialized_messages = _serialize_messages(messages)
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    all_conversations = load_user_conversations(username)
+    existing = next((c for c in all_conversations if c.get("session_id") == session_id), None)
+
+    title = existing.get("title") if existing else None
+    if not title:
+        first_human = next((m for m in serialized_messages if m.get("type") == "human"), None)
+        title = (first_human["content"].strip()[:40] if first_human else "") or "New conversation"
+
+    doc = {
+        "username": username,
+        "session_id": session_id,
+        "title": title,
+        "created_at": existing.get("created_at") if existing else now,
+        "updated_at": now,
+        "messages": serialized_messages,
     }
-    
-    # 2. Update MongoDB
+
     db = get_db()
     if db is not None:
-        db['saved_conversations'].update_one(
-            {"username": username},
-            {"$push": {"conversations": new_entry}},
-            upsert=True
+        db["conversations"].update_one(
+            {"username": username, "session_id": session_id},
+            {"$set": doc},
+            upsert=True,
         )
-        logger.info(f"Saved conversation '{title}' for {username} to MongoDB with {len(serialized_messages)} messages.")
-    
-    # 3. Update Local JSON safety net
-    user_conversations = load_saved_conversations(username) 
-    user_conversations.append(new_entry) 
-    with open(get_user_file_path(username), "w") as f:
-        json.dump(user_conversations, f, indent=4)
 
-def list_saved_conversations(username: str):
-    # Load the specific file for this user
-    conversations = load_saved_conversations(username)
-    # Extract titles from the list
-    return [c["title"] for c in conversations]
-
-def load_saved_conversation(username: str, title: str):
-    # Load the specific file for this user
-    conversations = load_saved_conversations(username)
-    # Search the list
-    for conversation in conversations:
-        if conversation["title"].lower() == title.lower():
-            return conversation
-    return None   
+    remaining = [c for c in all_conversations if c.get("session_id") != session_id]
+    remaining.append(doc)
+    save_user_conversations(username, remaining)
+    return doc
 
 
-def save_chat_history():
-    """Saves to MongoDB first, falls back to JSON."""
+def delete_user_conversation(username: str, session_id: str) -> bool:
     db = get_db()
-    # Serialize data first
-    serialized = {}
-    for user, messages in chat_sessions.items():
-        serialized[user] = [
-            {"type": "human" if isinstance(msg, HumanMessage) else "ai" if isinstance(msg, AIMessage) else "system", 
-             "content": msg.content} 
-            for msg in messages
-        ]
-
     if db is not None:
-        # Save each user session to MongoDB
-        for username, messages in serialized.items():
-            db['chat_history'].update_one(
-                {"username": username},
-                {"$set": {"messages": messages}},
-                upsert=True
-            )
-        logger.debug("Chat history saved to MongoDB.")
-    else:
-        # Fallback to local file
-        with open(CHAT_HISTORY_FILE, "w") as f:
-            json.dump(serialized, f, indent=4)
-        logger.debug("Chat history saved to local JSON.")
+        db["conversations"].delete_one({"username": username, "session_id": session_id})
+
+    all_conversations = load_user_conversations(username)
+    remaining = [c for c in all_conversations if c.get("session_id") != session_id]
+    if len(remaining) == len(all_conversations):
+        return False
+    save_user_conversations(username, remaining)
+    return True
+
 
 def load_chat_history() -> dict:
-    """Loads from MongoDB first, falls back to JSON."""
+    """Warm-starts the in-memory chat_sessions dict (keyed 'username::session_id') at boot."""
     db = get_db()
-    raw_data = {}
+    raw_docs = []
 
     if db is not None:
-        # Load from MongoDB
-        cursor = db['chat_history'].find({}, {'_id': 0})
-        raw_data = {doc['username']: doc['messages'] for doc in cursor}
-        logger.info("Restored chat sessions from MongoDB.")
-    else:
-        # Fallback to local file
-        if os.path.exists(CHAT_HISTORY_FILE):
-            with open(CHAT_HISTORY_FILE, "r") as f:
-                raw_data = json.load(f)
-            logger.info("Restored chat sessions from local JSON.")
+        raw_docs = list(db["conversations"].find({}, {"_id": 0, "username": 1, "session_id": 1, "messages": 1}))
+    elif os.path.isdir(CONVERSATIONS_DIR):
+        for filename in os.listdir(CONVERSATIONS_DIR):
+            if not filename.endswith(".json"):
+                continue
+            with open(os.path.join(CONVERSATIONS_DIR, filename), "r") as f:
+                try:
+                    raw_docs.extend(json.load(f))
+                except Exception:
+                    continue
 
-    # Reconstruct LangChain objects (this part remains largely the same)
     sessions = {}
-    for user, msg_list in raw_data.items():
+    for doc in raw_docs:
+        username = doc.get("username")
+        session_id = doc.get("session_id")
+        if not username or not session_id:
+            continue
         messages = []
-        for msg in msg_list:
+        for msg in doc.get("messages", []):
             m_type = msg.get("type")
             content = msg.get("content", "")
             if m_type == "human": messages.append(HumanMessage(content=content))
             elif m_type == "ai": messages.append(AIMessage(content=content))
             elif m_type == "system": messages.append(SystemMessage(content=content))
-        sessions[user] = messages
+        sessions[f"{username}::{session_id}"] = messages
+
+    logger.info("Restored %d chat sessions from the conversations store.", len(sessions))
     return sessions
-    
+
 def format_history_as_text(messages) -> str:
     """Formats the LangChain history array into a clean text transcript block for the prompt."""
     formatted = []
@@ -243,6 +242,32 @@ def fetch_relevant_corrections(username: str, question: str) -> str:
         # Gracefully log and fallback so a DB lookup error NEVER breaks chat streaming
         logger.warning(f"[GUARDRAIL WARNING] Could not fetch corrections: {e}")
         return ""
+
+async def index_conversation_turn(vector_store, username: str, question: str, answer: str, session_id: Optional[str] = None):
+    """Fire-and-forget: summarizes a completed turn and embeds it into the user's semantic memory.
+    Meant to be called via asyncio.create_task off the response-streaming critical path;
+    failures are logged, never raised, so they can never break chat streaming."""
+    if vector_store is None or not answer:
+        logger.debug("[MemoryIndex] Skipping turn index for %s: no vector store or empty answer.", username)
+        return
+    try:
+        summary_resp = await lite_llm.ainvoke(
+            MEMORY_TURN_SUMMARY_PROMPT.format(question=question[:500], answer=answer[:1000])
+        )
+        raw_content = summary_resp.content if hasattr(summary_resp, "content") else str(summary_resp)
+        if isinstance(raw_content, list):
+            summary_text = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in raw_content])
+        else:
+            summary_text = str(raw_content)
+        summary_text = summary_text.strip()
+        if not summary_text or summary_text.upper() == "NONE":
+            logger.info("[MemoryIndex] Turn for %s judged not worth remembering; no chunk stored.", username)
+            return
+        embed_and_store_memory_chunk(vector_store, username, summary_text, source_type="conversation_turn", source_ref=session_id)
+        logger.info("[MemoryIndex] Embedded memory chunk for %s: %s", username, summary_text)
+        await maybe_trigger_compaction(get_db(), vector_store, username)
+    except Exception:
+        logger.exception("[MemoryIndex] Failed to index conversation turn for %s", username)
 
 def extract_target_repo(payload: dict) -> str | None:
     repo_value = payload.get("repository") or payload.get("repo") or payload.get("target_repo") or payload.get("tag")

@@ -34,17 +34,11 @@ const HelpPanel: React.FC = () => {
 
       {/* Conversations */}
       <HelpSection title="Conversations">
-        <p>SAAPP supports saving, loading, and listing conversations.</p>
-        <pre className="help-code">
-        {`save conversation <title>
-        load conversation <title>
-        list conversations`}
-        </pre>
-        <p>Examples:</p>
+        <p>Click the conversations icon in the chat toolbar to open the conversation switcher.</p>
         <ul>
-          <li>save conversation Project Alpha</li>
-          <li>load conversation Yesterday Notes</li>
-          <li>list conversations</li>
+          <li>Use the "+" button to start a new conversation</li>
+          <li>Click any conversation in the list to switch to it</li>
+          <li>Each conversation keeps its own full message history</li>
         </ul>
         <p>Conversations are stored per-user and isolated by identity.</p>
       </HelpSection>
@@ -173,7 +167,6 @@ const HelpPanel: React.FC = () => {
       <HelpSection title="Current Known Issues">
         <p>Current issues the team is aware of:</p>
         <ul>
-          <li>Save conversations currently saves additional chat history due to a bug with the api/chat/clear endpoint.</li>
           <li>Currently cannot remove deleted calendar events from Google Calendar if integrated</li>
           <li>Dark mode does not persist after refresh</li>
           <li>Some effects in dark mode are inverted</li>
