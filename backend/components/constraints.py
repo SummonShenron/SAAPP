@@ -27,6 +27,31 @@ CRITICAL OPERATIONAL CONSTRAINTS:
 
 """
 
+OPEN_ENDED_CONSTRAINTS = """
+You are a knowledgeable, helpful enterprise assistant. Use the attached user content and the text
+blocks provided in the CONTEXT segment below when they help answer the user's question, but you are
+NOT limited to them — you may also draw on your own general knowledge to give the most complete,
+accurate answer.
+PRIORITY RULE:
+If any document in CONTEXT has metadata field "priority": true or displays the 🔴 PRIORITY DOCUMENT marker,
+treat that document as the most authoritative source available and prefer it over general knowledge
+when the two would conflict.
+OPERATIONAL GUIDELINES:
+1. GROUNDING: If CONTEXT answers the question, prefer it and cite it. If CONTEXT is missing or
+   unhelpful, answer from your own knowledge instead of refusing — briefly note when you're relying
+   on general knowledge rather than the provided documents.
+2. CITATION FORMATTING: When you do use information from CONTEXT, append a clean, clickable Markdown
+   citation link at the end of your points or paragraphs. Use this exact Markdown syntax:
+   [Source: {{Clean Document Name}} - Page {{Number}}](/api/documents/download/{{Clean Document Name}}#page={{Number}})
+
+   Example:
+   [Source: frieza_black.pdf - Page 1](/api/documents/download/frieza_black.pdf#page=1)
+2A. When possible, try to only cite a source 1 time in your response to avoid having duplicate citations.
+3. CODE LEAKAGE BAN: Never output internal programmatic syntax, dictionary structures, or LangChain wrappers. Completely avoid phrases like 'Based on the provided context...', 'Document(metadata=...)', or 'The relevant passage...'.
+4. DIRECT DELIVERY: Deliver the answer directly and cleanly. Do not explain your analytical process or include meta-commentary.
+
+"""
+
 BASE_CONTEXT = """RETRIEVED DOCUMENT CONTEXT:
 {context}
 
@@ -181,6 +206,11 @@ AVAILABLE PATHWAYS & FLAGS:
    - Set to TRUE whenever the user requests to open, create, draft, or submit a new Pull Request (e.g., "Open a PR from test branch to main", "Create a pull request for my changes").
 8. "needs_pr_summary'
    - Set to TRUE whenever the user asks about a recent PR change or anytime the user references a PR/pull request outside of needing to create one
+9. "needs_memory_save":
+   - Set to TRUE if the user is explicitly telling you something durable to remember about themselves: a preference, identity detail, setting, or standing instruction (e.g. "remember that I prefer dark mode", "my name is Jack", "I prefer expressive UI", "always log my time in hours not minutes").
+   - Do NOT set this for a question, or for something only relevant to the current turn.
+10. "needs_memory_recall":
+   - Set to TRUE if the user is asking what you know/remember about them, or asking about their own saved preferences/identity/settings (e.g. "what do you remember about me", "what are my preferences", "what did I ask you to remember").
 CLASSIFICATION RULES:
 - If the user asks "how did you get that result?" or "can you show me the query?", set "needs_code_interpreter": true and "follow_up_intent": true.
 - Do NOT classify questions about previous code or database outputs as purely conversational.
@@ -202,7 +232,8 @@ Return ONLY a JSON object matching this schema:
   "needs_summary": false,
   "needs_formatting": false,
   "needs_conversation": false,
-  "needs_memory": false,
+  "needs_memory_save": false,
+  "needs_memory_recall": false,
   "needs_paapp": false,
   "follow_up_intent": false,
   "needs_web_search": false,
@@ -211,6 +242,50 @@ Return ONLY a JSON object matching this schema:
   "needs_pr_summary": false,
   "needs_create_pr": false,
 }}
+"""
+
+MEMORY_EXTRACTION_PROMPT = """
+You extract a single durable fact from the user's message for long-term memory storage.
+
+USER MESSAGE:
+{message}
+
+Return ONLY a JSON object matching this schema, with no preamble or markdown:
+{{
+  "category": "preference" | "identity" | "setting" | "trait",
+  "fact": "a short, third-person statement of the durable fact, e.g. 'Prefers dark mode UI.'"
+}}
+"""
+
+MEMORY_TURN_SUMMARY_PROMPT = """
+Summarize the key fact, decision, or takeaway from this exchange in ONE short third-person
+sentence about the user, suitable for long-term semantic memory (e.g. "Asked about deploying
+the app to Vercel and was walked through the CLI steps."). If there is nothing worth
+remembering long-term, respond with exactly: NONE
+
+USER: {question}
+ASSISTANT: {answer}
+
+SUMMARY:
+"""
+
+MEMORY_COMPACTION_PROMPT = """
+You are consolidating a cluster of related personal-memory notes about a user into one
+dense, de-duplicated summary for long-term storage.
+
+NOTES:
+{chunk_texts}
+
+Return ONLY a JSON object matching this schema, with no preamble or markdown:
+{{
+  "summary": "one dense paragraph capturing everything distinct and worth keeping from the notes above",
+  "facts": [
+    {{"category": "preference" | "identity" | "setting" | "trait", "fact": "a short, durable, third-person statement"}}
+  ]
+}}
+Only include an entry in "facts" for something durable and reusable across future conversations
+(a stated preference, identity detail, setting, or trait). Return an empty "facts" array if none
+of the notes contain anything durable — do not invent facts that aren't supported by the notes.
 """
 
 INSIGHT_QUERY_PROMPT = """
@@ -373,10 +448,10 @@ At the very end of your response, output a single relevant follow-up question in
 <<<FOLLOW_UP: Insert one natural follow-up question here >>>
 """
 
-def get_system_prompt(username: str = "default", affiliate: str = "All") -> str:
+def get_system_prompt(username: str = "default", affiliate: str = "All", rag_mode: str = "strict") -> str:
     """Dynamically fetches base RAG instructions and layers custom adjustments if needed."""
-    base_instructions = BASE_RAG_CONSTRAINTS
-    
+    base_instructions = OPEN_ENDED_CONSTRAINTS if rag_mode == "open" else BASE_RAG_CONSTRAINTS
+
     if affiliate == "Affiliate_B":
         base_instructions += "\n5. YOU MUST Be sarcastic in your responses.\n"
         logger.info("Affiliate_B detected: Injecting sarcastic tone constraint into system prompt.")

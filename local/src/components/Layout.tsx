@@ -84,7 +84,6 @@ if (typeof window !== 'undefined') {
             {theme === "sonic" ? "Hero" : "Dark"}
           </span>
           <span onClick={() => navigate("/chat")}>Chat</span>
-          <span onClick={() => navigate("/saved")}>Saved</span>
           <span onClick={() => navigate("/self-service")}>Self Service</span>
           {isAdmin && <span onClick={() => navigate("/time-tracking")}>Time Tracking</span>}
           <span onClick={() => navigate("/taskboard")}>Taskboard</span>
@@ -119,7 +118,6 @@ if (typeof window !== 'undefined') {
           </div>
           <div className="mobile-drawer-links">
             <span onClick={() => handleNavClick("/chat")}>Chat Workspace</span>
-            <span onClick={() => handleNavClick("/saved")}>Saved Conversations</span>
             <span onClick={() => handleNavClick("/self-service")}>Self Service</span>
             {isAdmin && <span onClick={() => handleNavClick("/time-tracking")}>⏱ Time Tracking</span>}
             <span onClick={() => handleNavClick("/taskboard")}>Taskboard</span>

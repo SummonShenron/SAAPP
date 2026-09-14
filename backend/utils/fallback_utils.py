@@ -14,13 +14,14 @@ async def rewrite_fallback(
     vector_store,
     state,
     username,
-    messages_state,
+    session_id,
     chat_sessions,
-    save_chat_history
+    save_conversation_turn
 ):
     logger.info("Executing rewrite fallback...")
 
-    preserved_messages = list(messages_state)
+    history_key = f"{username}::{session_id}"
+    preserved_messages = list(chat_sessions.get(history_key, []))
 
     if not preserved_messages:
         logger.warning("rewrite_fallback: no preserved messages; aborting fallback.")
@@ -62,8 +63,8 @@ async def rewrite_fallback(
         )
 
         # 1. Update session state & pending action FIRST
-        chat_sessions.setdefault(username, [])
-        chat_sessions[username].append(AIMessage(content=ask_web_search_msg))
+        chat_sessions.setdefault(history_key, [])
+        chat_sessions[history_key].append(AIMessage(content=ask_web_search_msg))
 
         state["pending_action"] = {
             "type": "web_search",
@@ -73,9 +74,9 @@ async def rewrite_fallback(
 
         # 2. Persist state to DB BEFORE streaming the prompt to the user
         try:
-            save_chat_history()
+            save_conversation_turn(username, session_id, chat_sessions[history_key])
         except Exception:
-            logger.exception("save_chat_history failed during fallback HITL prompt")
+            logger.exception("save_conversation_turn failed during fallback HITL prompt")
 
         # 3. Stream to user after DB persist is guaranteed
         yield f"data: {json.dumps({'event': 'final_generation', 'text': ask_web_search_msg})}\n\n"
@@ -83,7 +84,7 @@ async def rewrite_fallback(
 
     # Prepare prompt pieces for successful generation
     formatted_docs = ensure_str(format_docs(state.get("documents", [])))
-    history_transcript = ensure_str(format_history_as_text(chat_sessions.get(username, [])))
+    history_transcript = ensure_str(format_history_as_text(chat_sessions.get(history_key, [])[-10:]))
     instructions = ensure_str(get_system_prompt(username, ", ".join(state.get("target_scope", []) or [])))
 
     prompt = instructions.format(
@@ -110,14 +111,14 @@ async def rewrite_fallback(
     yield f"data: {json.dumps({'event': 'final_generation', 'text': full_response})}\n\n"
 
     # Append to session history and persist
-    chat_sessions.setdefault(username, [])
-    chat_sessions[username].append(HumanMessage(content=rewritten_question))
-    chat_sessions[username].append(AIMessage(content=full_response))
+    chat_sessions.setdefault(history_key, [])
+    chat_sessions[history_key].append(HumanMessage(content=rewritten_question))
+    chat_sessions[history_key].append(AIMessage(content=full_response))
 
     # Clear pending_action on success
     state["pending_action"] = None
 
     try:
-        save_chat_history()
+        save_conversation_turn(username, session_id, chat_sessions[history_key])
     except Exception:
-        logger.exception("save_chat_history failed")
+        logger.exception("save_conversation_turn failed")

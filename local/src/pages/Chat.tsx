@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import sonicImg from '../assets/sonicandshadow.jpg';
 import { Filters } from '../components/Filters';
+import ConversationsBlade from '../components/ConversationsBlade';
 import { getDynamicExampleQuestions } from '../utils/Example_List';
 import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal } from '../api'; 
 import ReactMarkdown from 'react-markdown';
@@ -62,9 +63,9 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const principal = getEffectivePrincipal();
   const [selectedAffiliate, setSelectedAffiliate] = useState<string>('All');
+  const [ragMode, setRagMode] = useState<string>('strict');
   const [allowedAffiliates, setAllowedAffiliates] = useState<string[]>([]);
   const [userEmail, setUserEmail] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<'chat' | 'self-service' | 'saved-conversations'>('chat');
   const [agentStatus, setAgentStatus] = useState<string>('');
   const [agentPath, setAgentPath] = useState<string[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
@@ -86,9 +87,32 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     sessionStorage.setItem('bty-embed-visitor-id', generatedVisitor);
     return generatedVisitor;
   });
+  const [sessionId, setSessionId] = useState<string>(() => {
+    if (isEmbedded) {
+      const explicitSession = (searchParams.get('session_id') || '').trim();
+      if (explicitSession) {
+        sessionStorage.setItem('bty-embed-session-id', explicitSession);
+        return explicitSession;
+      }
+      const existingSession = sessionStorage.getItem('bty-embed-session-id');
+      if (existingSession) return existingSession;
+      const generatedSession = crypto.randomUUID();
+      sessionStorage.setItem('bty-embed-session-id', generatedSession);
+      return generatedSession;
+    }
+    // Non-embedded: persist the active conversation id across reloads instead of
+    // minting a fresh throwaway one on every page load.
+    const conversationKey = `conversation-id-${principal}`;
+    const existingConversation = localStorage.getItem(conversationKey);
+    if (existingConversation) return existingConversation;
+    const generatedConversation = crypto.randomUUID();
+    localStorage.setItem(conversationKey, generatedConversation);
+    return generatedConversation;
+  });
+
   const chatStorageKey = isEmbedded
     ? `chat-messages-${principal}-${embedVisitorId}`
-    : `chat-messages-${principal}`;
+    : `chat-messages-${principal}-${sessionId}`;
 
   useEffect(() => {
     if (isEmbedded) {
@@ -110,6 +134,21 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [showTooltip, setShowTooltip] = useState(false);
   const tooltipRef = useRef<HTMLDivElement>(null);
 
+  const [showConversations, setShowConversations] = useState(false);
+  const [conversationsClosing, setConversationsClosing] = useState(false);
+
+  const toggleConversationsBlade = () => {
+    if (showConversations) {
+      setConversationsClosing(true);
+      setTimeout(() => {
+        setShowConversations(false);
+        setConversationsClosing(false);
+      }, 250);
+    } else {
+      setShowConversations(true);
+    }
+  };
+
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (tooltipRef.current && !tooltipRef.current.contains(event.target as Node)) {
@@ -120,19 +159,6 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const [sessionId] = useState<string>(() => {
-    if (!isEmbedded) return crypto.randomUUID();
-    const explicitSession = (searchParams.get('session_id') || '').trim();
-    if (explicitSession) {
-      sessionStorage.setItem('bty-embed-session-id', explicitSession);
-      return explicitSession;
-    }
-    const existingSession = sessionStorage.getItem('bty-embed-session-id');
-    if (existingSession) return existingSession;
-    const generatedSession = crypto.randomUUID();
-    sessionStorage.setItem('bty-embed-session-id', generatedSession);
-    return generatedSession;
-  });
   const genId = () => crypto.randomUUID();
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
   
@@ -224,6 +250,23 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     syncUserClaims();
   }, [principal]);
 
+  useEffect(() => {
+    if (!principal) return;
+    api.getRagMode()
+      .then(data => setRagMode(data.rag_mode))
+      .catch(err => console.error("Failed to fetch RAG mode setting:", err));
+  }, [principal]);
+
+  const handleRagModeChange = async (mode: string) => {
+    setRagMode(mode);
+    try {
+      const result = await api.updateRagMode(mode);
+      setRagMode(result.rag_mode);
+    } catch (err) {
+      console.error("Failed to update RAG mode setting:", err);
+    }
+  };
+
   const handleClearChat = async () => {
     setMessages([
       { id: genId(), sender: 'system', text: `What would you like to find out about, ${principal}?` }
@@ -256,6 +299,48 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     setCurrentExampleQuestions(questions);
     } catch (error) {
       console.error("Failed to fetch dynamic example questions:", error);
+    }
+  };
+
+  const startNewConversation = () => {
+    const newId = crypto.randomUUID();
+    localStorage.setItem(`conversation-id-${principal}`, newId);
+    setSessionId(newId);
+    setMessages([
+      { id: genId(), sender: 'system', text: `What would you like to find out about, ${principal}?` }
+    ]);
+    setHasChatted(false);
+    setAttachments([]);
+    setAttachedFiles([]);
+    setShowConversations(false);
+  };
+
+  const switchConversation = async (newSessionId: string) => {
+    if (newSessionId === sessionId) {
+      setShowConversations(false);
+      return;
+    }
+    try {
+      const conversation = await api.getConversation(newSessionId);
+      const restored: Message[] = (conversation.messages || [])
+        .filter((m: any) => m.type !== 'system')
+        .map((m: any) => ({
+          id: genId(),
+          sender: m.type === 'human' ? 'user' : 'ai',
+          text: m.content,
+        }));
+      localStorage.setItem(`conversation-id-${principal}`, newSessionId);
+      setSessionId(newSessionId);
+      setMessages(restored.length ? restored : [
+        { id: genId(), sender: 'system', text: `What would you like to find out about, ${principal}?` }
+      ]);
+      setHasChatted(restored.some(m => m.sender === 'user'));
+      setAttachments([]);
+      setAttachedFiles([]);
+    } catch (e) {
+      console.error("Failed to load conversation:", e);
+    } finally {
+      setShowConversations(false);
     }
   };
 
@@ -949,6 +1034,22 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
 
                 <button
                   type="button"
+                  className={`circle-icon-button ${showConversations ? 'trace-active' : ''}`}
+                  onClick={toggleConversationsBlade}
+                  title="Conversations"
+                  style={showConversations ? {
+                    background: '#3b82f6',
+                    border: '1px solid #3b82f6',
+                    boxShadow: '0 0 8px rgba(99, 102, 241, 0.5)'
+                  } : {}}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                  </svg>
+                </button>
+
+                <button
+                  type="button"
                   className={`circle-icon-button ${showTracePanel ? 'trace-active' : ''}`}
                   onClick={toggleTracePanel}
                   title="Toggle execution trace"
@@ -1023,15 +1124,28 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
             </div>
           </form>
           {!isEmbedded && (
-            <Filters 
+            <Filters
               selectedAffiliate={selectedAffiliate}
               setSelectedAffiliate={setSelectedAffiliate}
               loadingChat={loading}
               allowedAffiliates={allowedAffiliates}
               setAllowedAffiliates={setAllowedAffiliates}
+              ragMode={ragMode}
+              onRagModeChange={handleRagModeChange}
             />
           )}
         </footer>
+
+        {/* --- CONVERSATIONS BLADE (Root Level, mirrors Help panel's slide-in) --- */}
+        {showConversations && (
+          <div className={`conversations-panel-container ${conversationsClosing ? "closing" : ""}`}>
+            <ConversationsBlade
+              activeSessionId={sessionId}
+              onSelect={switchConversation}
+              onNew={startNewConversation}
+            />
+          </div>
+        )}
 
         {/* --- MOBILE TRACE MODAL DRAWER (Root Level) --- */}
         {isMobileTraceOpen && (

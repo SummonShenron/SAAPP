@@ -3,7 +3,6 @@ import { useState } from "react";
 import { LandingPage } from "./pages/LandingPage";
 import { ChatPage } from "./pages/Chat";
 import { SelfServicePage } from "./pages/SelfService";
-import { SavedConversationsPage } from "./pages/SavedConversations";
 import { Layout } from "../src/components/Layout";
 import { api } from "./api";
 import { TimeWorkspace } from "./pages/Time"
@@ -15,7 +14,6 @@ function App() {
   // LIFT THEME STATE HERE
   const [theme, setTheme] = useState<"sonic" | "shadow">("sonic");
   const toggleTheme = () => setTheme(theme === "sonic" ? "shadow" : "sonic");
-  const username = localStorage.getItem("x-user-id") || "";
 
   return (
     <Routes>
@@ -62,7 +60,6 @@ function App() {
         path="/chat"
         element={<ChatPage theme={theme} toggleTheme={toggleTheme} />}
       />
-        <Route path="/saved" element={<SavedConversationsPage username={username} />} />
         <Route path="/time-tracking" element={<TimeWorkspace />} />
         <Route path="/self-service" element={<SelfServicePage />} />
         <Route path="/taskboard" element={<Taskboard />} />

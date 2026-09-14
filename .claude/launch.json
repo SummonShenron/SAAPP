@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "local-frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "local", "run", "dev", "--", "--host"],
+      "port": 5173
+    }
+  ]
+}

@@ -1,0 +1,137 @@
+.conversations-panel-container {
+  position: fixed;
+  left: 0;
+  top: 0;
+  height: 100%;
+  width: 350px;
+  background: var(--bg-main);
+  border-right: 1px solid var(--border-color);
+  overflow-y: auto;
+  z-index: 999;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
+  animation: conversationsSlideInLeft 0.25s ease-out;
+}
+
+@keyframes conversationsSlideInLeft {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+.conversations-panel-container.closing {
+  animation: conversationsSlideOutLeft 0.25s ease-in forwards;
+}
+
+@keyframes conversationsSlideOutLeft {
+  from { transform: translateX(0); }
+  to { transform: translateX(-100%); }
+}
+
+.conversations-panel {
+  padding: 20px;
+  background: var(--bg-main);
+  height: 100%;
+}
+
+.conversations-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.conversations-title {
+  font-size: 1.2rem;
+  font-weight: bold;
+  margin: 0;
+  color: var(--text-main);
+}
+
+.conversations-new-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  padding: 6px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all 0.2s ease;
+}
+
+.conversations-new-btn:hover {
+  box-shadow: var(--shadow-hover);
+  transform: translateY(-1px);
+}
+
+.conversations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.conversations-empty {
+  color: var(--text-main);
+  opacity: 0.6;
+  font-size: 0.9rem;
+  padding: 12px 4px;
+}
+
+.conversation-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
+
+.conversation-row:hover {
+  background: rgba(128, 128, 128, 0.08);
+}
+
+.conversation-row.active {
+  border-color: #4a6fa5;
+  background: rgba(74, 111, 165, 0.1);
+}
+
+.conversation-row-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.conversation-row-title {
+  font-size: 0.9rem;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conversation-row-time {
+  font-size: 0.75rem;
+  color: var(--text-main);
+  opacity: 0.55;
+  margin-top: 2px;
+}
+
+.conversation-delete-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-main);
+  opacity: 0.5;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.conversation-delete-btn:hover {
+  opacity: 1;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}

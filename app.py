@@ -37,17 +37,15 @@ from backend.services.search import discover_workspace_documents
 from local_function_app.function_app import run_ingestion_pipeline, HOT_FOLDER_DIR
 from backend.state.graph_state import GraphState
 from backend.services.insights_workflow import create_insight_workflow
-from backend.utils.app_utils import ( 
-    save_conversation, 
-    list_saved_conversations, 
-    load_saved_conversations, 
-    load_saved_conversation, 
-    save_chat_history, 
-    format_history_as_text, 
-    chat_sessions, 
-    get_db_dependency, 
-    serialize_doc, 
-    load_chat_history, 
+from backend.utils.app_utils import (
+    save_conversation_turn,
+    load_user_conversations,
+    delete_user_conversation,
+    format_history_as_text,
+    chat_sessions,
+    get_db_dependency,
+    serialize_doc,
+    load_chat_history,
     fetch_relevant_corrections, 
     extract_target_repo, 
     resolve_app_ingest_repo, 
@@ -58,9 +56,18 @@ from backend.utils.app_utils import (
     dispatch_erragent_ingest,
     build_error_payload,
     resolve_target_repo,
-    run_synthetic_read_only_question
+    run_synthetic_read_only_question,
+    index_conversation_turn
 )
 from backend.utils.attachment_utils import process_user_attachment, ingest_doc_to_session
+from backend.utils.memory_utils import (
+    fetch_relevant_user_facts,
+    load_user_facts,
+    delete_user_fact,
+    delete_all_user_facts,
+)
+from backend.services.memory_compaction import compact_user_memory, compact_meta_memory
+from backend.utils.user_settings_utils import get_user_rag_mode, set_user_rag_mode, VALID_RAG_MODES
 from backend.utils.fallback_utils import rewrite_fallback
 from backend.logging.sass_logger import setup_logging
 from backend.logging.erragent_handler import install_erragent_logging
@@ -121,6 +128,18 @@ services = startup_services()
 insight_workflow = services["insight_workflow"]
 chat_sessions = {}
 
+# Holds strong references to fire-and-forget background tasks (e.g. index_conversation_turn).
+# asyncio only weakly references tasks internally; an unreferenced task can be garbage-collected
+# mid-execution with no error, so every asyncio.create_task(...) call must be added here.
+_background_tasks: set = set()
+
+
+def spawn_background_task(coro):
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
 
 class LoginRequest(BaseModel):
     username: str
@@ -136,7 +155,10 @@ class EventCreate(BaseModel):
     start_time: str
     date: str
     notes: str = ""
-    type: str = "event"   
+    type: str = "event"
+
+class RagModeUpdate(BaseModel):
+    rag_mode: str
 
 class SaveConversationRequest(BaseModel):
     title: str
@@ -376,58 +398,6 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
     if not verify_paapp_access(username):
         return {"message": "Access denied: You are not authorized to use PAAPP integrations."}
 
-    async def stream_simple_message(text: str):
-        async def generator():
-            yield f"data: {json.dumps({'event': 'token', 'text': text})}\n\n"
-            yield f"data: {json.dumps({'event': 'final_generation', 'text': text})}\n\n"
-        return StreamingResponse(
-            generator(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
-        )
-
-    async def streamThinkingThen(text: str):
-        async def generator():
-            yield f"data: {json.dumps({'event': 'token', 'text': '…'})}\n\n"
-            await asyncio.sleep(0.2)
-            yield f"data: {json.dumps({'event': 'token', 'text': text})}\n\n"
-            yield f"data: {json.dumps({'event': 'final_generation', 'text': text})}\n\n"
-        return StreamingResponse(
-            generator(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
-        )
-
-    # ---------- Command Overrides ----------
-    if question.lower().startswith("save conversation"):
-        parts = question.split("save conversation", 1)
-        title = parts[1].strip() or f"Conversation_{datetime.now().isoformat()}"
-        save_conversation(username, title, chat_sessions.get(history_key, []))
-        return await streamThinkingThen(f"Conversation '{title}' saved successfully.")
-
-    if question.lower().startswith("load conversation"):
-        title = question.split("load conversation", 1)[1].strip()
-        conversation = load_saved_conversation(username, title)
-        if not conversation:
-            return await streamThinkingThen("Conversation not found.")
-        
-        reconstructed = []
-        for msg in conversation["messages"]:
-            if msg["type"] == "human": reconstructed.append(HumanMessage(content=msg["content"]))
-            elif msg["type"] == "ai": reconstructed.append(AIMessage(content=msg["content"]))
-            elif msg["type"] == "system": reconstructed.append(SystemMessage(content=msg["content"]))
-        chat_sessions[history_key] = reconstructed
-        chat_sessions[history_key].insert(0, SystemMessage(content="Loaded conversation context."))
-        save_chat_history()
-        return await streamThinkingThen(f"Conversation '{title}' loaded successfully.")
-
-    if question.lower().startswith("list conversations"):
-        titles = list_saved_conversations(username)
-        if not titles:
-            return await streamThinkingThen("You have no saved conversations.")
-        formatted = "\n".join(f"• {t}" for t in titles)
-        return await streamThinkingThen(f"Saved conversations:\n{formatted}")
-
     # ---------- Auth Authorization Boundary ----------
     web_triggers = ["search the web", "search online", "search google", "web search", "look up online"]
     force_web_search = any(kw in question.lower() for kw in web_triggers)
@@ -446,23 +416,26 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
         raise HTTPException(status_code=403, detail="Security Breach: Unauthorized affiliate scope requested.")
 
     target_scope = accessible_affiliates["accessible_affiliates"] if requested_affiliate == "All" else [requested_affiliate]
+    effective_rag_mode = get_user_rag_mode(username)  # already forced to "strict" for locked identities like guest_bty
 
     # ---------- Conversation Memory State Init ----------
+    # The full transcript in chat_sessions[history_key] is kept durable (it's what gets
+    # persisted per-conversation); only a bounded recent window is fed to the LLM/graph.
     if history_key not in chat_sessions:
         chat_sessions[history_key] = []
-    if len(chat_sessions[history_key]) > 10:
-        chat_sessions[history_key] = chat_sessions[history_key][-10:]
+    chat_sessions[history_key].append(HumanMessage(content=question))
 
-    messages_state = chat_sessions[history_key]
-    messages_state.append(HumanMessage(content=question))
+    messages_state = chat_sessions[history_key][-10:]
 
     request_id = uuid.uuid4().hex
     initial_state: GraphState = {
         "messages": messages_state,
         "username": username,
+        "session_id": session_id,
         "target_scope": target_scope,
+        "rag_mode": effective_rag_mode,
         "documents": [],
-        "relevance_grade": "web_search" if force_web_search else "", 
+        "relevance_grade": "web_search" if force_web_search else "",
         "loop_count": 0,
         "original_question": question,
         "force_web_search": force_web_search,
@@ -558,7 +531,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
             insight_answer = final_state.get("insight_answer")
             documents = final_state.get("documents", [])
 
-            if relevance_grade in ["hitl_approval_required", "action_complete"]:
+            if relevance_grade in ["hitl_approval_required", "action_complete", "memory_action"]:
                 card_text = final_state.get("generation") or final_state.get("content_to_format") or (final_state.get("messages")[-1].content if final_state.get("messages") else "Action complete.")
                 yield f"data: {json.dumps({'event': 'token', 'text': card_text})}\n\n"
                 yield f"data: {json.dumps({'event': 'final_generation', 'text': card_text})}\n\n"
@@ -575,24 +548,29 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
             elif relevance_grade == "pr_summary":
                 prompt = PR_FORMAT_PROMPT.format(content=final_state.get("content_to_format", ""), question=question)
             elif insight_answer:
-                prompt = CONVERSATIONAL_PROMPT.format(username=username, question=question, history=format_history_as_text(chat_sessions[history_key]), insight=insight_answer)
+                prompt = CONVERSATIONAL_PROMPT.format(username=username, question=question, history=format_history_as_text(messages_state), insight=insight_answer)
             elif relevance_grade == "conversational":
-                prompt = CONVERSATIONAL_PROMPT.format(username=username, question=question, history=format_history_as_text(chat_sessions[history_key]), insight="")
+                prompt = CONVERSATIONAL_PROMPT.format(username=username, question=question, history=format_history_as_text(messages_state), insight="")
             else:
                 final_question = final_state.get("original_question", question)
                 accessible_affiliates_str = ", ".join(final_state.get("target_scope", target_scope))
-                instructions = get_system_prompt(username, accessible_affiliates_str)
+                instructions = get_system_prompt(username, accessible_affiliates_str, effective_rag_mode)
                 documents_sorted = sorted(documents, key=lambda d: d.metadata.get("priority", False), reverse=True)
-                prompt = instructions.format(context=format_docs(documents_sorted), history=format_history_as_text(chat_sessions[history_key]), question=final_question)
+                prompt = instructions.format(context=format_docs(documents_sorted), history=format_history_as_text(messages_state), question=final_question)
 
             # Announce LLM generation start
             yield f"data: {json.dumps({'event': 'node_progress', 'node': 'formatter_node', 'title': 'Formatting output structure...', 'detail': f'Synthesizing final answer for {question[:30]}...'})}\n\n"
             guardrail_context = fetch_relevant_corrections(username, question)
+            memory_context = fetch_relevant_user_facts(username, question)
 
             if guardrail_context:
                 prompt = prompt + guardrail_context
                 # Emit trace event to frontend execution trace drawer!
                 yield f"data: {json.dumps({'event': 'node_progress', 'node': 'self_correction_guardrail', 'title': 'Applying Lessons Learned Guardrail', 'detail': f'Injected past failure constraint into context prompt.'})}\n\n"
+
+            if memory_context:
+                prompt = prompt + memory_context
+                yield f"data: {json.dumps({'event': 'node_progress', 'node': 'user_memory', 'title': 'Applying known user context', 'detail': 'Injected saved preferences/facts into context prompt.'})}\n\n"
             # 3. STREAM RESPONSE TOKENS FROM LLM
             async for chunk in response_llm.astream(prompt):
                 if first_token:
@@ -623,14 +601,15 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                     "documents": final_state.get("documents", []),
                     "original_question": final_state.get("original_question", initial_state["original_question"]),
                 }
-                async for fallback_chunk in rewrite_fallback(services.get("vector_store"), fallback_state, username, messages_state, chat_sessions, save_chat_history):
+                async for fallback_chunk in rewrite_fallback(services.get("vector_store"), fallback_state, username, session_id, chat_sessions, save_conversation_turn):
                     yield fallback_chunk
                 log_timings(relevance_grade, "rewrite_fallback")
                 return
 
             yield f"data: {json.dumps({'event': 'final_generation', 'text': full_response})}\n\n"
             chat_sessions[history_key].append(AIMessage(content=full_response))
-            save_chat_history()
+            save_conversation_turn(username, session_id, chat_sessions[history_key])
+            spawn_background_task(index_conversation_turn(services.get("user_memory_vector_store"), username, question, full_response, session_id))
             log_timings(relevance_grade, "ok")
             logger.info("--- End of token stream ---")
 
@@ -652,36 +631,33 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
 
 @app.post("/api/chat/clear")
 async def clear_chat(request: Request, user = Depends(get_current_user)):
-    db = get_db()
     data = await request.json()
     session_id = data.get("session_id")
     username = data.get("username") or user.get("sub") or user.get("email")
 
-    filters = [{"username": username}] if username else []
-    if session_id:
-        filters.append({"session_id": session_id})
-
-    if user.get("sub"):
-        filters.append({"user_id": user.get("sub")})
-
-    if not filters:
+    if not username:
         return {"status": "cleared", "count": 0}
 
     # Remove live in-memory chat context used by the runtime session store.
     keys_to_remove = []
-    if username and session_id:
+    if session_id:
         keys_to_remove.append(f"{username}::{session_id}")
-    elif username:
+    else:
         keys_to_remove.extend([k for k in list(chat_sessions.keys()) if k == username or k.startswith(f"{username}::")])
 
     for key in keys_to_remove:
         chat_sessions.pop(key, None)
 
-    # Wipe by session_id OR user id/username (covers all bases)
-    result = db.chat_history.delete_many({
-        "$or": filters
-    })
-    return {"status": "cleared", "count": result.deleted_count}
+    if session_id:
+        # Empty this one conversation in place — keeps its id/title/slot in the conversation list.
+        save_conversation_turn(username, session_id, [])
+        return {"status": "cleared", "count": 1}
+
+    # No specific conversation given: wipe every conversation this user has.
+    conversations = load_user_conversations(username)
+    for convo in conversations:
+        delete_user_conversation(username, convo["session_id"])
+    return {"status": "cleared", "count": len(conversations)}
 
 @app.post("/api/upload-attachment")
 async def upload_attachment(
@@ -895,21 +871,32 @@ async def delete_document(
         logger.exception(f"Deletion failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/saved-conversations")
-async def get_saved_conversations(current_user = Depends(get_current_user)):
-    # Use the 'sub' claim from the verified JWT
-    username = current_user.get("sub") 
-    conversations = load_saved_conversations(username)
-    return {"titles": [c["title"] for c in conversations]}
-
-@app.get("/api/saved-conversations/{title}")
-async def get_saved_conversation(title: str, current_user = Depends(get_current_user)):
+@app.get("/api/conversations")
+async def list_conversations(current_user = Depends(get_current_user)):
     username = current_user.get("sub")
-    conversations = load_saved_conversations(username)
+    conversations = load_user_conversations(username)
+    conversations.sort(key=lambda c: c.get("updated_at", ""), reverse=True)
+    return [
+        {"session_id": c["session_id"], "title": c["title"], "updated_at": c["updated_at"]}
+        for c in conversations
+    ]
+
+@app.get("/api/conversations/{session_id}")
+async def get_conversation(session_id: str, current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    conversations = load_user_conversations(username)
     for convo in conversations:
-        if convo["title"] == title:
-            return {"title": convo["title"], "messages": convo["messages"]}
+        if convo["session_id"] == session_id:
+            return {"session_id": convo["session_id"], "title": convo["title"], "messages": convo["messages"]}
     raise HTTPException(status_code=404, detail="Conversation not found")
+
+@app.delete("/api/conversations/{session_id}")
+async def remove_conversation(session_id: str, current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    chat_sessions.pop(f"{username}::{session_id}", None)
+    if not delete_user_conversation(username, session_id):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"status": "deleted", "session_id": session_id}
 
 @app.get("/admin/paapp")
 def access_paapp_data(current_user = Depends(get_current_user)):
@@ -1155,6 +1142,58 @@ async def store_feedback(
     db["corrections"].insert_one(correction_doc)
     logger.info(f"[+] Correction stored for {username} (Tag: {payload.tag}): {payload.reason}")
     return {"status": "success", "message": "Feedback indexed for dynamic self-correction."}
+
+
+@app.get("/api/memory")
+async def list_memory(current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    facts = load_user_facts(username)
+    return [f.dict() for f in facts]
+
+
+@app.delete("/api/memory/{fact_id}")
+async def delete_memory_fact(fact_id: str, current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    deleted = delete_user_fact(username, fact_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Memory fact not found")
+    return {"status": "deleted", "id": fact_id}
+
+
+@app.delete("/api/memory")
+async def clear_memory(current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    delete_all_user_facts(username)
+    return {"status": "cleared"}
+
+
+@app.post("/api/memory/compact")
+async def compact_memory(current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    result = await compact_user_memory(get_db(), services.get("user_memory_vector_store"), username)
+    return result
+
+
+@app.post("/api/memory/compact-meta")
+async def compact_meta_memory_endpoint(current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    result = await compact_meta_memory(get_db(), services.get("user_memory_vector_store"), username)
+    return result
+
+
+@app.get("/api/settings/rag-mode")
+async def get_rag_mode_setting(current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    return {"rag_mode": get_user_rag_mode(username)}
+
+
+@app.put("/api/settings/rag-mode")
+async def update_rag_mode_setting(payload: RagModeUpdate, current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    if payload.rag_mode not in VALID_RAG_MODES:
+        raise HTTPException(status_code=400, detail="rag_mode must be 'strict' or 'open'")
+    saved = set_user_rag_mode(username, payload.rag_mode)
+    return {"rag_mode": saved}
 
 
 @app.post("/api/v1/webhooks/ingest", status_code=status.HTTP_200_OK)

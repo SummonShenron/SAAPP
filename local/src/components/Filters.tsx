@@ -8,14 +8,18 @@ interface FiltersProps {
   loadingChat: boolean;
   allowedAffiliates: string[];
   setAllowedAffiliates: (affs: string[]) => void;
+  ragMode: string;
+  onRagModeChange: (mode: string) => void;
 }
 
-export const Filters: React.FC<FiltersProps> = ({ 
-  selectedAffiliate, 
-  setSelectedAffiliate, 
-  loadingChat, 
-  allowedAffiliates, 
-  setAllowedAffiliates 
+export const Filters: React.FC<FiltersProps> = ({
+  selectedAffiliate,
+  setSelectedAffiliate,
+  loadingChat,
+  allowedAffiliates,
+  setAllowedAffiliates,
+  ragMode,
+  onRagModeChange
 }) => {
   const { isLoaded, isSignedIn } = useAuth();
   const [fetchingFilters, setFetchingFilters] = useState<boolean>(true);
@@ -87,6 +91,17 @@ export const Filters: React.FC<FiltersProps> = ({
           <option key={aff} value={aff}>{aff}</option>
         ))}
       </select>
+
+      <label htmlFor="rag-mode-toggle" className="rag-mode-toggle-label" title="Open mode lets the assistant also use its own general knowledge, not just the knowledge base.">
+        <input
+          id="rag-mode-toggle"
+          type="checkbox"
+          checked={ragMode === 'open'}
+          disabled={loadingChat || principal === 'guest_bty'}
+          onChange={(e) => onRagModeChange(e.target.checked ? 'open' : 'strict')}
+        />
+        Open-ended answers
+      </label>
     </div>
   );
 };
