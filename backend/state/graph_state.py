@@ -51,6 +51,7 @@ class GraphState(TypedDict):
     memory_facts: Optional[List[Dict[str, Any]]]  # Persistent facts loaded/saved this turn
     memory_hits: Optional[List[Any]]              # Semantic memory documents retrieved this turn
     rag_mode: Optional[str]                       # "strict" (default) or "open"
+    insight_answer: Optional[str]                 # Woven into CONVERSATIONAL_PROMPT's {insight} slot
 
 # def route_user_query(state: GraphState) -> str:
 #     """

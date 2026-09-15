@@ -88,6 +88,39 @@ def test_delete_user_conversation():
     assert app_utils.delete_user_conversation("jack", "conv-1") is False
 
 
+class _FakeMongoCollection:
+    def __init__(self, docs):
+        self.docs = docs
+
+    def find(self, filt, projection=None):
+        return [d for d in self.docs if d.get("username") == filt.get("username")]
+
+    def delete_one(self, filt):
+        self.docs[:] = [
+            d for d in self.docs
+            if not (d.get("username") == filt.get("username") and d.get("session_id") == filt.get("session_id"))
+        ]
+
+
+class _FakeMongoDB:
+    def __init__(self, docs):
+        self._collections = {"conversations": _FakeMongoCollection(docs)}
+
+    def __getitem__(self, name):
+        return self._collections[name]
+
+
+def test_delete_user_conversation_reports_success_when_backed_by_mongo(monkeypatch):
+    # Regression test: delete_user_conversation used to delete from Mongo FIRST, then
+    # re-read Mongo to decide whether anything changed — which always looked like "nothing
+    # changed" since the row was already gone, so it always reported 404 even on success.
+    fake_db = _FakeMongoDB([{"username": "jack", "session_id": "conv-1", "title": "Hi", "messages": []}])
+    monkeypatch.setattr(app_utils, "get_db", lambda: fake_db)
+
+    assert app_utils.delete_user_conversation("jack", "conv-1") is True
+    assert app_utils.delete_user_conversation("jack", "conv-1") is False
+
+
 def test_load_chat_history_reconstructs_langchain_messages():
     app_utils.save_conversation_turn(
         "jack", "conv-1",

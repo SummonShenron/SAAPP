@@ -192,6 +192,36 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     return messages.some(msg => msg.sender === 'user');
   });
 
+  // The localStorage-hydrated state above is per-device and can go stale the moment another
+  // device sends a message into the same conversation. Reconcile with the server's canonical
+  // copy once we know which conversation we're on, so switching devices doesn't show an
+  // outdated transcript. A 404 here just means this conversation hasn't been saved server-side
+  // yet (e.g. brand new) — keep whatever's already showing locally in that case.
+  useEffect(() => {
+    if (!principal || !sessionId) return;
+    let cancelled = false;
+    api.getConversation(sessionId)
+      .then((conversation) => {
+        if (cancelled) return;
+        const serverMessages: Message[] = (conversation.messages || [])
+          .filter((m: any) => m.type !== 'system')
+          .map((m: any) => ({
+            id: genId(),
+            sender: m.type === 'human' ? 'user' : 'ai',
+            text: m.content,
+          }));
+        if (serverMessages.length > 0) {
+          setMessages(serverMessages);
+          setHasChatted(serverMessages.some(m => m.sender === 'user'));
+        }
+      })
+      .catch(() => {
+        // Not saved server-side yet — nothing to reconcile.
+      });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, principal]);
+
   const [input, setInput] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   const [currentExampleQuestions, setCurrentExampleQuestions] = useState<string[]>([]);
