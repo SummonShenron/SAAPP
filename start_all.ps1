@@ -40,7 +40,7 @@ Start-Process powershell -ArgumentList "-NoExit", "-Command", "`$Host.UI.RawUI.W
 
 # 2. Start SAAPP FastAPI Backend Engine (Port 8000)
 Write-Host "[*] Launching SAAPP Security Backend..." -ForegroundColor Yellow
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "`$env:PYTHONUNBUFFERED=1; `$Host.UI.RawUI.WindowTitle = 'SAAPP Backend'; cd '$ProjectDir'; .\.venv\Scripts\uvicorn app:app --reload --reload-exclude 'chat_history.json' --reload-exclude 'directory.json' --reload-exclude 'chroma_db' --reload-exclude 'index-db'"
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "`$env:PYTHONUNBUFFERED=1; `$Host.UI.RawUI.WindowTitle = 'SAAPP Backend'; cd '$ProjectDir'; .\.venv\Scripts\erragent dev --root . -- .\.venv\Scripts\uvicorn app:app --reload --reload-exclude 'chat_history.json' --reload-exclude 'directory.json' --reload-exclude 'chroma_db' --reload-exclude 'index-db'"
 
 # Small delay to let the backend bind ports cleanly before hitting the frontend
 Start-Sleep -Seconds 2
