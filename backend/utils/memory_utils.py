@@ -219,7 +219,11 @@ def fetch_relevant_user_facts(username: str, question: str, limit: int = 5) -> s
             scored.sort(key=lambda item: item[0], reverse=True)
             ranked_other = [f for _, f in scored]
         else:
-            ranked_other = sorted(other_facts, key=lambda f: f.updated_at, reverse=True)
+            # Reverse before the stable sort so that facts with an identical updated_at
+            # timestamp (e.g. two saved within the same tick) still break ties in favor of
+            # whichever was appended most recently, rather than falling back to insertion
+            # (oldest-first) order.
+            ranked_other = sorted(reversed(other_facts), key=lambda f: f.updated_at, reverse=True)
 
         top_facts = identity_facts + ranked_other[:remaining_slots]
         if not top_facts:

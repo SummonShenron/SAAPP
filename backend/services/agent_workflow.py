@@ -83,11 +83,7 @@ async def coordinator_node(state: GraphState) -> GraphState:
 
         state = await reasoner_node(state)
 
-        intent = classify_intent(
-            last_msg,
-            state.get("messages", []) + state.get("attachment_summaries", []),
-            state=state
-        )
+        intent = classify_intent(last_msg, state=state)
         plan = build_agent_plan(intent, state)
 
         state["coordinator_intent"] = intent
@@ -167,15 +163,28 @@ def is_valid_pending_pr(pending_action: Optional[dict]) -> bool:
     required_keys = {"repo", "title", "head_branch"}
     return all(k in params and params[k] for k in required_keys)
 
-def classify_intent(message: str, attachments=None, state: dict = None) -> str:
+
+# Tolerant approval/rejection matching: word-boundary regex instead of exact-whole-message
+# equality, so natural phrasing ("yes let's do it", "nah don't bother") is recognized instead
+# of only bare canned replies. Only consulted while a HITL approval is actually pending, so
+# the broader vocabulary doesn't risk misfiring during normal conversation.
+APPROVAL_PATTERN = re.compile(
+    r"\b(approve[d]?|confirm(?:ed)?|yes|yeah|yep|yup|lgtm|sure|do it|go ahead|sounds good|let'?s do it)\b",
+    re.IGNORECASE,
+)
+REJECTION_PATTERN = re.compile(
+    r"\b(reject(?:ed)?|cancel(?:led|ed)?|no|nah|nope|stop|don'?t|never ?mind|hold off)\b",
+    re.IGNORECASE,
+)
+
+
+def classify_intent(message: str, state: dict = None) -> str:
     msg = message.lower().strip()
     msg_clean = msg.strip("!.,")
     state = state or {}
     logger.debug(f"State keys: {list(state.keys())}")
     logger.debug(f"pending_action: {state.get('pending_action')}")
     logger.debug(f"last_intent: {state.get('last_intent')}")
-    APPROVAL_KEYWORDS = {"approve", "approved", "confirm", "yes", "lgtm", "do it", "sure", "yep", "go ahead"}
-    REJECTION_KEYWORDS = {"reject", "cancel", "no", "stop", "nah", "don't"}
 
     messages = state.get("messages", []) or []
 
@@ -191,7 +200,7 @@ def classify_intent(message: str, attachments=None, state: dict = None) -> str:
 
         if any(phrase in prev_user_msg for phrase in ["create pr", "merge", "pull request"]):
             logger.debug("Detected PR creation in previous user message")
-            if msg_clean in APPROVAL_KEYWORDS:
+            if APPROVAL_PATTERN.search(msg_clean):
                 logger.debug("Approval keyword detected — returning execute_pr")
                 return "execute_pr"
 
@@ -201,43 +210,44 @@ def classify_intent(message: str, attachments=None, state: dict = None) -> str:
     logger.debug(f"pending_action.status: {status}")
     if status == "awaiting_approval":
         action_type = pending_action.get("action_type")
-        if msg_clean in APPROVAL_KEYWORDS and action_type == "create_pr":
+        if APPROVAL_PATTERN.search(msg_clean) and action_type == "create_pr":
             return "execute_pr"
-        if msg_clean in REJECTION_KEYWORDS:
+        if REJECTION_PATTERN.search(msg_clean):
             return "cancel_action"
 
     # 1. Handle Active HITL Approvals (PRs, Web Search, etc.)
     if status in {"awaiting_approval", "hitl_approval_required"}:
         action_type = pending_action.get("action_type") or pending_action.get("type")
-        
-        if msg_clean in APPROVAL_KEYWORDS:
+
+        if APPROVAL_PATTERN.search(msg_clean):
             if action_type in {"web_search", "web_search_fallback"}:
                 return "web_search"
             elif action_type in {"create_pr", "execute_pr"}:
                 return "execute_pr"
             return action_type or "web_search"
 
-        if msg_clean in REJECTION_KEYWORDS:
-            return "conversational"
+        if REJECTION_PATTERN.search(msg_clean):
+            return "cancel_action"
     # 2. Strict Tool Matching (Using regex word boundaries for short terms like 'pr')
     if any(w in msg for w in ["github", "repository", "commit history", "code search"]):
         return "github_search"
     if any(w in msg for w in ["run code", "execute", "query db", "mongodb", "script"]):
         return "code_interpreter"
-        
+
     # Use word boundary so 'process' or 'provide' won't match 'pr'
     if re.search(r'\b(review pr|pull request|pr summary)\b', msg):
         return "pr_summary"
     if re.search(r'\b(create pr|merge pr|create pull request)\b', msg):
         return "create_pr"
-    # 2. General operational intents
+    # 3. General operational intents
     if "plan my day" in msg or "schedule" in msg:
         return "task_paapp"
     if "summarize" in msg or "tl;dr" in msg:
         return "summarize"
     if any(w in msg for w in ["find", "lookup", "policy", "docs", "search"]):
         return "retrieve"
-    if any(w in msg for w in ["calculate", "web search", "google", "api"]):
+    # Word boundary on "api" so substrings like "tapioca"/"apiary" don't misfire.
+    if any(w in msg for w in ["calculate", "web search", "google"]) or re.search(r'\bapi\b', msg):
         return "tool"
     if any(w in msg for w in ["workflow", "ticket", "request form"]):
         return "workflow"
@@ -245,7 +255,7 @@ def classify_intent(message: str, attachments=None, state: dict = None) -> str:
         return "memory"
     if any(w in msg for w in ["bullet", "report", "format this"]):
         return "format"
-      
+
     if any(phrase in msg for phrase in [
         "what did i do", "what was my", "how much time", "how many",
         "most", "least", "trend", "trends", "pattern", "patterns",
@@ -253,16 +263,9 @@ def classify_intent(message: str, attachments=None, state: dict = None) -> str:
         "insight", "analyze", "review my week", "review my day", "review my month"
     ]):
         return "insight"
-    
-    # 3. Operational & Fallbacks
-    if "plan my day" in msg or "schedule" in msg:
-        return "task_paapp"
-    if "summarize" in msg or "tl;dr" in msg:
-        return "summarize"
-    if any(w in msg for w in ["find", "lookup", "policy", "docs", "search"]):
-        return "retrieve"
+
     return "conversational"
-    
+
 def build_agent_plan(intent: str, state: dict) -> dict:
     flags = state.get("reasoner_flags", {})
     logger.debug(f"Incoming intent: {intent}")
@@ -281,15 +284,27 @@ def build_agent_plan(intent: str, state: dict) -> dict:
         state["last_intent"] = "create_pr"
         return {"agents": ["draft_pr", "formatter"], "skip": []}
 
+    # 2b. Continuation of a non-PR HITL approval (e.g. approving a pending web search) —
+    # these used to be classified correctly but silently dropped here, falling back to
+    # whatever the reasoner's flags guessed for a bare "yes"/"no" reply.
+    if intent == "web_search":
+        state["last_intent"] = "web_search"
+        return {"agents": ["web_search", "formatter"], "skip": []}
+
+    if intent == "cancel_action":
+        state["pending_action"] = None
+        state["insight_answer"] = (
+            "The user's pending action was just cancelled/rejected. Acknowledge this briefly "
+            "and naturally, then continue the conversation normally."
+        )
+        state["last_intent"] = "cancel_action"
+        return {"agents": ["conversational"], "skip": []}
+
     # 3. Prevent Mutating Actions from standard follow-up sticky logic
     # Follow-up messages MUST re-classify intent so approvals work
     if flags.get("follow_up_intent"):
         logger.debug("[Coordinator] follow_up_intent=True — reclassifying intent")
-        intent = classify_intent(
-            state["messages"][-1].content,
-            state.get("attachment_summaries", []),
-            state=state
-        )
+        intent = classify_intent(state["messages"][-1].content, state=state)
         logger.debug(f"[Coordinator] Reclassified follow-up intent: {intent}")
     # 4. Standard Operational Flag Mapping
     is_pr_request = flags.get("needs_pr_summary") or intent == "pr_summary"
