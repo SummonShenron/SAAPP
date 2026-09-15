@@ -15,6 +15,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Query, For
 from typing import List, Dict, Any, Optional
 import uuid
 import traceback
+import erragent
 from gridfs import GridFS
 from bson.objectid import ObjectId
 from datetime import datetime, timezone
@@ -46,14 +47,11 @@ from backend.utils.app_utils import (
     get_db_dependency,
     serialize_doc,
     load_chat_history,
-    fetch_relevant_corrections, 
-    extract_target_repo, 
-    resolve_app_ingest_repo, 
+    fetch_relevant_corrections,
+    extract_target_repo,
+    resolve_app_ingest_repo,
     validate_app_ingest_identity,
-    build_erragent_ingest_payload,
     pick_repo_from_metadata,
-    send_erragent_ingest,
-    dispatch_erragent_ingest,
     build_error_payload,
     resolve_target_repo,
     run_synthetic_read_only_question,
@@ -70,7 +68,6 @@ from backend.services.memory_compaction import compact_user_memory, compact_meta
 from backend.utils.user_settings_utils import get_user_rag_mode, set_user_rag_mode, VALID_RAG_MODES
 from backend.utils.fallback_utils import rewrite_fallback
 from backend.logging.sass_logger import setup_logging
-from backend.logging.erragent_handler import install_erragent_logging
 from backend.services.orchestrator import startup_services
 from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, verify_paapp_access, load_directory, seed_guest_tasks
 from backend.utils.db_utils import get_db, save_error_event, test_connection
@@ -122,7 +119,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 logger = setup_logging()  # Initialize the logger from backend/logging/sass_logger.py
-install_erragent_logging(logger)
+erragent.install(logger)
 logger.info("--- BOOTING SECURE KNOWLEDGE ASSISTANT ---")
 services = startup_services()
 insight_workflow = services["insight_workflow"]
@@ -240,7 +237,13 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
     # 2. Fire-and-forget in background
-    dispatch_erragent_ingest(payload)
+    erragent.report_incident_nowait(
+        error_message=payload["error_message"],
+        stack_trace=payload["stack_trace"],
+        service=payload["service_name"],
+        environment=payload["environment"],
+        metadata=payload["metadata"],
+    )
 
     # 3. Return clean 500
     return JSONResponse(
@@ -531,7 +534,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
             insight_answer = final_state.get("insight_answer")
             documents = final_state.get("documents", [])
 
-            if relevance_grade in ["hitl_approval_required", "action_complete", "memory_action"]:
+            if relevance_grade in ["hitl_approval_required", "action_complete"]:
                 card_text = final_state.get("generation") or final_state.get("content_to_format") or (final_state.get("messages")[-1].content if final_state.get("messages") else "Action complete.")
                 yield f"data: {json.dumps({'event': 'token', 'text': card_text})}\n\n"
                 yield f"data: {json.dumps({'event': 'final_generation', 'text': card_text})}\n\n"

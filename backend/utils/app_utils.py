@@ -1,11 +1,9 @@
-import asyncio
 import os
 import re
 import uuid
 import datetime
 import traceback
 from typing import Dict, Any, Optional
-from urllib import request as urllib_request, error as urllib_error
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
 import logging
 import json
@@ -129,14 +127,20 @@ def save_conversation_turn(username: str, session_id: str, messages: list) -> di
 
 
 def delete_user_conversation(username: str, session_id: str) -> bool:
+    # Determine whether the conversation exists BEFORE deleting it — if we delete from Mongo
+    # first, the very next load_user_conversations() call re-reads Mongo and would never see
+    # the (now-gone) row, making this always report "not found" even on a successful delete.
+    all_conversations = load_user_conversations(username)
+    remaining = [c for c in all_conversations if c.get("session_id") != session_id]
+    existed = len(remaining) != len(all_conversations)
+
     db = get_db()
     if db is not None:
         db["conversations"].delete_one({"username": username, "session_id": session_id})
 
-    all_conversations = load_user_conversations(username)
-    remaining = [c for c in all_conversations if c.get("session_id") != session_id]
-    if len(remaining) == len(all_conversations):
+    if not existed:
         return False
+
     save_user_conversations(username, remaining)
     return True
 
@@ -318,26 +322,6 @@ async def validate_app_ingest_identity(db, app_id: str | None, ingest_secret: st
     return {}
 
 DEFAULT_TARGET_REPO_FALLBACK = "summonshenron/SAAPP"
-DEFAULT_ERRAGENT_INGEST_URL = "https://erragent.onrender.com/api/v1/webhooks/ingest"
-
-
-def build_erragent_ingest_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
-    normalized_payload = dict(payload)
-    repository = normalized_payload.get("repository")
-    if isinstance(repository, str) and repository.strip():
-        normalized_payload["repository"] = repository.strip()
-        return normalized_payload
-
-    configured_repository = os.getenv("ERRAGENT_TARGET_REPO", "").strip()
-    if configured_repository:
-        normalized_payload["repository"] = configured_repository
-        return normalized_payload
-
-    default_repository = os.getenv("DEFAULT_TARGET_REPO", DEFAULT_TARGET_REPO_FALLBACK).strip()
-    if default_repository:
-        normalized_payload["repository"] = default_repository
-
-    return normalized_payload
 
 
 def pick_repo_from_metadata(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -381,70 +365,6 @@ def resolve_target_repo(service_name: str, payload_repo: Optional[str], metadata
 
     default_repo = os.getenv("DEFAULT_TARGET_REPO", DEFAULT_TARGET_REPO_FALLBACK).strip() or DEFAULT_TARGET_REPO_FALLBACK
     return default_repo, "default"
-
-
-# --- HTTP DISPATCH ---
-def post_erragent_ingest(payload: Dict[str, Any]) -> Dict[str, Any]:
-    ingest_url = os.getenv("ERRAGENT_INGEST_URL", DEFAULT_ERRAGENT_INGEST_URL).strip()
-    ingest_secret = os.getenv("ERRAGENT_INGEST_SECRET")
-
-    if not ingest_secret:
-        raise RuntimeError("ERRAGENT_INGEST_SECRET is not configured")
-
-    normalized_payload = build_erragent_ingest_payload(payload)
-    body = json.dumps(normalized_payload).encode("utf-8")
-    req = urllib_request.Request(
-        ingest_url,
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-Ingest-Secret": ingest_secret,
-        },
-        method="POST",
-    )
-
-    try:
-        with urllib_request.urlopen(req, timeout=60) as response:
-            return {
-                "status_code": response.getcode(),
-                "body": response.read().decode("utf-8"),
-            }
-    except urllib_error.HTTPError as exc:
-        return {
-            "status_code": exc.code,
-            "body": exc.read().decode("utf-8", errors="replace"),
-        }
-
-
-async def send_erragent_ingest(payload: Dict[str, Any]) -> Dict[str, Any]:
-    return await asyncio.to_thread(post_erragent_ingest, payload)
-
-
-# --- NON-BLOCKING BACKGROUND DISPATCH & PAYLOAD BUILDER ---
-async def safe_send_erragent_ingest(payload: Dict[str, Any]) -> None:
-    """Executes send_erragent_ingest safely in the background."""
-    try:
-        result = await send_erragent_ingest(payload)
-        logger.info(
-            "--> [errAgent] Background dispatch status=%s body=%s",
-            result.get("status_code"),
-            result.get("body"),
-        )
-    except Exception as exc:
-        logger.error("--> [errAgent] Background dispatch failed: %s", str(exc))
-
-
-_background_tasks = set()
-
-def dispatch_erragent_ingest(payload: Dict[str, Any]) -> None:
-    """Fire-and-forget task scheduled on the running async event loop."""
-    task = asyncio.create_task(safe_send_erragent_ingest(payload))
-    
-    # Store strong reference
-    _background_tasks.add(task)
-    
-    # Remove from set once completed
-    task.add_done_callback(_background_tasks.discard)
 
 
 def build_error_payload(

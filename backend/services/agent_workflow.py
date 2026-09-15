@@ -8,6 +8,7 @@ import json
 from typing import List, Any, Dict, Optional
 import logging
 import requests
+import erragent
 import urllib.parse
 from functools import partial
 from dotenv import load_dotenv
@@ -73,47 +74,45 @@ async def coordinator_node(state: GraphState) -> GraphState:
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "coordinator_node"
-    node_input = state.copy()
-    last_msg = state["messages"][-1].content.lower().strip()
+    with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
+        node_input = state.copy()
+        last_msg = state["messages"][-1].content.lower().strip()
 
-    logger.info("--- COORDINATOR NODE START ---")
-    logger.debug(f"Incoming state pending_action: {state.get('pending_action')}")
+        logger.info("--- COORDINATOR NODE START ---")
+        logger.debug(f"Incoming state pending_action: {state.get('pending_action')}")
 
-    state = await reasoner_node(state)
+        state = await reasoner_node(state)
 
-    intent = classify_intent(
-        last_msg,
-        state.get("messages", []) + state.get("attachment_summaries", []),
-        state=state
-    )
-    plan = build_agent_plan(intent, state)
+        intent = classify_intent(
+            last_msg,
+            state.get("messages", []) + state.get("attachment_summaries", []),
+            state=state
+        )
+        plan = build_agent_plan(intent, state)
 
-    state["coordinator_intent"] = intent
-    state["coordinator_plan"] = plan["agents"]
+        state["coordinator_intent"] = intent
+        state["coordinator_plan"] = plan["agents"]
 
-    logger.info(f"Final stored plan: {state['coordinator_plan']}")
-    logger.info("--- COORDINATOR NODE END ---")
+        logger.info(f"Final stored plan: {state['coordinator_plan']}")
+        logger.info("--- COORDINATOR NODE END ---")
 
-    node_output = state.copy()
+        node_output = state.copy()
 
-    logger.info(
-        "node executed",
-        extra={
-            "service": "SAAPP",
-            "erragent_context": {
-                "workflowName": workflow_name,
-                "requestId": request_id,
-                "node": node_name,
-                "input": node_input,
-                "output": node_output,
+        logger.info(
+            "node executed",
+            extra={
+                "service": "SAAPP",
+                "erragent_context": {
+                    "input": node_input,
+                    "output": node_output,
+                }
             }
-        }
-    )
+        )
 
-    if "workflowName" not in state:
-        logger.error("STATE LOST workflowName HERE: %s", state)
+        if "workflowName" not in state:
+            logger.error("STATE LOST workflowName HERE: %s", state)
 
-    return state
+        return state
 
 def coordinator_router(state: GraphState) -> str:
     logger.info("Preparing next step.")
@@ -349,83 +348,81 @@ async def reasoner_node(state: GraphState) -> GraphState:
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "reasoner_node"
-    node_input = state.copy()
-    msg = state["messages"][-1].content.strip()
-    history = state.get("messages", [])
-    
-    # Format message history into a clean string for the LLM
-    formatted_history = "\n".join([f"{getattr(m, 'type', 'user')}: {getattr(m, 'content', '')}" for m in history[:-1]])
+    with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
+        node_input = state.copy()
+        msg = state["messages"][-1].content.strip()
+        history = state.get("messages", [])
 
-    formatted_prompt = REASONER_PROMPT.format(
-        history=formatted_history, 
-        question=msg
-    )
-    
-    logger.info("--- REASONER NODE START ---")
-    
-    # 1. EMIT THE LIVE THOUGHT (This brings the trace back to the UI!)
-    await safe_emit_event(
-        "trace_detail", 
-        {
-            "node": "reasoner_node", 
-            "title": "Analyzing intent and planning route...", 
-            "detail": f"Classifying workflow intent for: '{msg[:30]}...'"
-        }
-    )
+        # Format message history into a clean string for the LLM
+        formatted_history = "\n".join([f"{getattr(m, 'type', 'user')}: {getattr(m, 'content', '')}" for m in history[:-1]])
 
-    try:
-        # 2. USE AINVOKE FOR NON-BLOCKING LLAMA CALL
-        response = await lite_llm.ainvoke(formatted_prompt)
-        resp_content = response.content if hasattr(response, "content") else str(response)
-        
-        # Safely handle list vs string response types
-        if isinstance(resp_content, list):
-            raw_text = "".join([block.get("text", "") if isinstance(block, dict) else str(block) for block in resp_content])
-        else:
-            raw_text = str(resp_content)
-        
-        # Clean response string if wrapped in markdown codeblocks
-        clean_json = raw_text.replace("```json", "").replace("```", "").strip()
-        flags = json.loads(clean_json)
+        formatted_prompt = REASONER_PROMPT.format(
+            history=formatted_history,
+            question=msg
+        )
 
-    except Exception:
-        logger.exception("[Reasoner] LLM classification failed, using fallback rules.")
-        # Fallback to standard false flags if JSON parsing fails
-        flags = {
-            "needs_retrieval": False,
-            "needs_rewrite": False,
-            "needs_summary": False,
-            "needs_formatting": False,
-            "needs_conversation": True,  # Safe default to avoid triggering unintended actions
-            "needs_memory_save": False,
-            "needs_memory_recall": False,
-            "needs_paapp": False,
-            "follow_up_intent": False,
-            "needs_web_search": False,
-            "needs_code_interpreter": False,
-            "needs_github_search": False,
-            "needs_pr_summary": False,
-            "needs_create_pr": False,
-        }
+        logger.info("--- REASONER NODE START ---")
 
-    logger.info(f"[Reasoner] Flags: {flags}")
-    state["reasoner_flags"] = flags
-    logger.info("--- REASONER NODE END ---")
-    node_output = state.copy()
-    logger.info(
-        "node executed",
-        extra={
-            "service": "SAAPP",
-            "erragent_context": {
-                "workflowName": workflow_name,
-                "requestId": request_id,
-                "node": node_name,
-                "input": node_input,
-                "output": node_output,
+        # 1. EMIT THE LIVE THOUGHT (This brings the trace back to the UI!)
+        await safe_emit_event(
+            "trace_detail",
+            {
+                "node": "reasoner_node",
+                "title": "Analyzing intent and planning route...",
+                "detail": f"Classifying workflow intent for: '{msg[:30]}...'"
             }
-        }
-    )
-    return state
+        )
+
+        try:
+            # 2. USE AINVOKE FOR NON-BLOCKING LLAMA CALL
+            response = await lite_llm.ainvoke(formatted_prompt)
+            resp_content = response.content if hasattr(response, "content") else str(response)
+
+            # Safely handle list vs string response types
+            if isinstance(resp_content, list):
+                raw_text = "".join([block.get("text", "") if isinstance(block, dict) else str(block) for block in resp_content])
+            else:
+                raw_text = str(resp_content)
+
+            # Clean response string if wrapped in markdown codeblocks
+            clean_json = raw_text.replace("```json", "").replace("```", "").strip()
+            flags = json.loads(clean_json)
+
+        except Exception:
+            logger.exception("[Reasoner] LLM classification failed, using fallback rules.")
+            # Fallback to standard false flags if JSON parsing fails
+            flags = {
+                "needs_retrieval": False,
+                "needs_rewrite": False,
+                "needs_summary": False,
+                "needs_formatting": False,
+                "needs_conversation": True,  # Safe default to avoid triggering unintended actions
+                "needs_memory_save": False,
+                "needs_memory_recall": False,
+                "needs_paapp": False,
+                "follow_up_intent": False,
+                "needs_web_search": False,
+                "needs_code_interpreter": False,
+                "needs_github_search": False,
+                "needs_pr_summary": False,
+                "needs_create_pr": False,
+            }
+
+        logger.info(f"[Reasoner] Flags: {flags}")
+        state["reasoner_flags"] = flags
+        logger.info("--- REASONER NODE END ---")
+        node_output = state.copy()
+        logger.info(
+            "node executed",
+            extra={
+                "service": "SAAPP",
+                "erragent_context": {
+                    "input": node_input,
+                    "output": node_output,
+                }
+            }
+        )
+        return state
 # ============================================================
 # MEMORY NODES (persistent structured memory: save + recall)
 # ============================================================
@@ -436,62 +433,66 @@ async def memory_save_node(state: GraphState, memory_vector_store=None) -> dict:
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "memory_save_node"
-    node_input = state.copy()
-    username = state.get("username", "default_user")
-    user_msg = state["messages"][-1].content.strip()
+    with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
+        node_input = state.copy()
+        username = state.get("username", "default_user")
+        user_msg = state["messages"][-1].content.strip()
 
-    await safe_emit_event(
-        "trace_detail",
-        {
-            "node": "memory_save_node",
-            "title": "Saving to memory...",
-            "detail": "Extracting a durable fact from your message."
-        }
-    )
-
-    category = "preference"
-    fact_text = user_msg
-    try:
-        response = await lite_llm.ainvoke(MEMORY_EXTRACTION_PROMPT.format(message=user_msg))
-        resp_content = response.content if hasattr(response, "content") else str(response)
-        if isinstance(resp_content, list):
-            raw_text = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in resp_content])
-        else:
-            raw_text = str(resp_content)
-        clean_json = raw_text.replace("```json", "").replace("```", "").strip()
-        parsed = json.loads(clean_json)
-        category = parsed.get("category") or "preference"
-        fact_text = parsed.get("fact") or user_msg
-    except Exception:
-        logger.exception("[MemorySave] Fact extraction failed, storing raw message.")
-
-    saved = save_user_fact(username, fact_text, category=category, source="explicit")
-    embed_and_store_memory_chunk(
-        memory_vector_store, username, saved.fact,
-        source_type="manual", source_ref=state.get("session_id")
-    )
-
-    confirmation = f"Got it — I'll remember that: {saved.fact}"
-    state["memory_facts"] = [saved.dict()]
-    state["raw_generation"] = confirmation
-    state["content_to_format"] = confirmation
-    state["relevance_grade"] = "memory_action"
-
-    node_output = state.copy()
-    logger.info(
-        "node executed",
-        extra={
-            "service": "SAAPP",
-            "erragent_context": {
-                "workflowName": workflow_name,
-                "requestId": request_id,
-                "node": node_name,
-                "input": node_input,
-                "output": node_output,
+        await safe_emit_event(
+            "trace_detail",
+            {
+                "node": "memory_save_node",
+                "title": "Saving to memory...",
+                "detail": "Extracting a durable fact from your message."
             }
-        }
-    )
-    return state
+        )
+
+        category = "preference"
+        fact_text = user_msg
+        try:
+            response = await lite_llm.ainvoke(MEMORY_EXTRACTION_PROMPT.format(message=user_msg))
+            resp_content = response.content if hasattr(response, "content") else str(response)
+            if isinstance(resp_content, list):
+                raw_text = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in resp_content])
+            else:
+                raw_text = str(resp_content)
+            clean_json = raw_text.replace("```json", "").replace("```", "").strip()
+            parsed = json.loads(clean_json)
+            category = parsed.get("category") or "preference"
+            fact_text = parsed.get("fact") or user_msg
+        except Exception:
+            logger.exception("[MemorySave] Fact extraction failed, storing raw message.")
+
+        saved = save_user_fact(username, fact_text, category=category, source="explicit")
+        embed_and_store_memory_chunk(
+            memory_vector_store, username, saved.fact,
+            source_type="manual", source_ref=state.get("session_id")
+        )
+
+        # Feed the confirmation through as an "insight" rather than short-circuiting the
+        # response entirely — app.py's prompt-selection weaves insight_answer into
+        # CONVERSATIONAL_PROMPT ahead of the plain "conversational" branch, so the LLM can
+        # acknowledge the save AND still respond to the rest of the user's message, instead
+        # of the reply being nothing but a canned confirmation line.
+        confirmation = f"A new fact was just saved to memory: \"{saved.fact}\". Acknowledge this naturally and briefly, then respond to the rest of the user's message normally."
+        state["memory_facts"] = [saved.dict()]
+        state["raw_generation"] = confirmation
+        state["content_to_format"] = confirmation
+        state["insight_answer"] = confirmation
+        state["relevance_grade"] = "conversational"
+
+        node_output = state.copy()
+        logger.info(
+            "node executed",
+            extra={
+                "service": "SAAPP",
+                "erragent_context": {
+                    "input": node_input,
+                    "output": node_output,
+                }
+            }
+        )
+        return state
 
 
 def memory_recall_node(state: GraphState, memory_vector_store=None) -> dict:
@@ -500,54 +501,52 @@ def memory_recall_node(state: GraphState, memory_vector_store=None) -> dict:
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "memory_recall_node"
-    node_input = state.copy()
-    username = state.get("username", "default_user")
-    question = state["messages"][-1].content.strip() if state.get("messages") else ""
+    with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
+        node_input = state.copy()
+        username = state.get("username", "default_user")
+        question = state["messages"][-1].content.strip() if state.get("messages") else ""
 
-    facts = load_user_facts(username)
-    state["memory_facts"] = [f.dict() for f in facts]
+        facts = load_user_facts(username)
+        state["memory_facts"] = [f.dict() for f in facts]
 
-    semantic_hits = retrieve_user_memory(memory_vector_store, username, question, top_k=4)
-    state["memory_hits"] = [h.page_content for h in semantic_hits]
+        semantic_hits = retrieve_user_memory(memory_vector_store, username, question, top_k=4)
+        state["memory_hits"] = [h.page_content for h in semantic_hits]
 
-    if not facts and not semantic_hits:
-        report = "No saved facts or preferences are on record for this user yet."
-    else:
-        report_parts = []
-        if facts:
-            fact_lines = "\n".join(f"- [{f.category}] {f.fact}" for f in facts)
-            report_parts.append(f"Saved facts/preferences:\n{fact_lines}")
-        if semantic_hits:
-            semantic_lines = "\n".join(f"- {h.page_content}" for h in semantic_hits)
-            report_parts.append(f"Relevant past context:\n{semantic_lines}")
-        report = "\n\n".join(report_parts)
+        if not facts and not semantic_hits:
+            report = "No saved facts or preferences are on record for this user yet."
+        else:
+            report_parts = []
+            if facts:
+                fact_lines = "\n".join(f"- [{f.category}] {f.fact}" for f in facts)
+                report_parts.append(f"Saved facts/preferences:\n{fact_lines}")
+            if semantic_hits:
+                semantic_lines = "\n".join(f"- {h.page_content}" for h in semantic_hits)
+                report_parts.append(f"Relevant past context:\n{semantic_lines}")
+            report = "\n\n".join(report_parts)
 
-    doc = Document(
-        page_content=f"SYSTEM MEMORY REPORT:\n{report}",
-        metadata={"source": "user_memory", "priority": True}
-    )
-    current_docs = state.get("documents", [])
-    current_docs.append(doc)
+        doc = Document(
+            page_content=f"SYSTEM MEMORY REPORT:\n{report}",
+            metadata={"source": "user_memory", "priority": True}
+        )
+        current_docs = state.get("documents", [])
+        current_docs.append(doc)
 
-    node_output = state.copy()
-    logger.info(
-        "node executed",
-        extra={
-            "service": "SAAPP",
-            "erragent_context": {
-                "workflowName": workflow_name,
-                "requestId": request_id,
-                "node": node_name,
-                "input": node_input,
-                "output": node_output,
+        node_output = state.copy()
+        logger.info(
+            "node executed",
+            extra={
+                "service": "SAAPP",
+                "erragent_context": {
+                    "input": node_input,
+                    "output": node_output,
+                }
             }
+        )
+        return {
+            **state,
+            "documents": current_docs,
+            "relevance_grade": "yes"
         }
-    )
-    return {
-        **state,
-        "documents": current_docs,
-        "relevance_grade": "yes"
-    }
 
 async def retrieve_node(state: GraphState, vector_store) -> dict:
     logger.info("--- PARALLEL RETRIEVING DOCUMENTS & GRAPH CONTEXT ---")
@@ -555,138 +554,136 @@ async def retrieve_node(state: GraphState, vector_store) -> dict:
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "retrieve_node"
-    node_input = state.copy()
-    question = state["messages"][-1].content
-    username = state.get("username")
-    target_scope = state.get("target_scope")
-    current_loops = state.get("loop_count", 0) or 0
-    original_question = state.get("original_question") or question
-    session_id = state.get("session_id") or f"{username}_session"
-    
-    # 1. First thought line: Starting the search
-    await safe_emit_event(
-        "trace_detail", 
-        {
-            "node": "retrieve_node", 
-            "title": "GraphRAG Retrieval in progress...", 
-            "detail": f"Querying vector index for '{original_question[:30]}...'"
-        }
-    )
-    
-    # 2. EARLY EXIT: Priority attachments
-    if state.get("attachment_summaries"):
-        logger.info("Attachment detected — skipping vector search and using only priority docs.")
-        docs = [Document(page_content=s, metadata={"source": "user_attachment_summary", "priority": True}) 
-                for s in state.get("attachment_summaries", [])]
-    else:
-        # Your actual vector retrieval / search execution here
-        docs = vector_store.similarity_search(original_question, k=4)
-        
-        # 3. Second thought line: Dynamic result update! 
-        if docs:
-            sources = list(set([d.metadata.get("source", "knowledge base") for d in docs]))
-            await safe_emit_event(
-                "trace_detail", 
-                {
-                    "node": "retrieve_node", 
-                    "title": "GraphRAG Retrieval in progress...", 
-                    "detail": f"Extracted {len(docs)} chunks from {sources[0]}."
-                }
-            )
-    
-    # 1. EARLY EXIT: Priority attachments (Only returns early IF attachments exist)
-    if state.get("attachment_summaries"):
-        logger.info("Attachment detected — skipping vector search and using only priority docs.")
-        return {
-            **state,
-            "documents": [Document(page_content=s, metadata={"source": "user_attachment_summary", "priority": True}) 
-                         for s in state.get("attachment_summaries", [])],
-            "loop_count": current_loops + 1
-        }
+    with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
+        node_input = state.copy()
+        question = state["messages"][-1].content
+        username = state.get("username")
+        target_scope = state.get("target_scope")
+        current_loops = state.get("loop_count", 0) or 0
+        original_question = state.get("original_question") or question
+        session_id = state.get("session_id") or f"{username}_session"
 
-    # Parallel Task 1: Vector Search
-    def fetch_vector_docs():
-        try:
-            retriever = get_secure_retriever(
-                vector_store=vector_store,
-                target_scope=target_scope,
-                query_text=question,
-                top_k=3
-            )
-            return retriever.invoke(question) or []
-        except Exception:
-            logger.exception("Vector search failed.")
+        # 1. First thought line: Starting the search
+        await safe_emit_event(
+            "trace_detail",
+            {
+                "node": "retrieve_node",
+                "title": "GraphRAG Retrieval in progress...",
+                "detail": f"Querying vector index for '{original_question[:30]}...'"
+            }
+        )
+
+        # 2. EARLY EXIT: Priority attachments
+        if state.get("attachment_summaries"):
+            logger.info("Attachment detected — skipping vector search and using only priority docs.")
+            docs = [Document(page_content=s, metadata={"source": "user_attachment_summary", "priority": True})
+                    for s in state.get("attachment_summaries", [])]
+        else:
+            # Your actual vector retrieval / search execution here
+            docs = vector_store.similarity_search(original_question, k=4)
+
+            # 3. Second thought line: Dynamic result update!
+            if docs:
+                sources = list(set([d.metadata.get("source", "knowledge base") for d in docs]))
+                await safe_emit_event(
+                    "trace_detail",
+                    {
+                        "node": "retrieve_node",
+                        "title": "GraphRAG Retrieval in progress...",
+                        "detail": f"Extracted {len(docs)} chunks from {sources[0]}."
+                    }
+                )
+
+        # 1. EARLY EXIT: Priority attachments (Only returns early IF attachments exist)
+        if state.get("attachment_summaries"):
+            logger.info("Attachment detected — skipping vector search and using only priority docs.")
+            return {
+                **state,
+                "documents": [Document(page_content=s, metadata={"source": "user_attachment_summary", "priority": True})
+                             for s in state.get("attachment_summaries", [])],
+                "loop_count": current_loops + 1
+            }
+
+        # Parallel Task 1: Vector Search
+        def fetch_vector_docs():
+            try:
+                retriever = get_secure_retriever(
+                    vector_store=vector_store,
+                    target_scope=target_scope,
+                    query_text=question,
+                    top_k=3
+                )
+                return retriever.invoke(question) or []
+            except Exception:
+                logger.exception("Vector search failed.")
+                return []
+
+        # Parallel Task 2: Session Search
+        def fetch_session_docs():
+            try:
+                session_hits = retrieve_from_session(username, session_id, question)
+                if session_hits:
+                    return [Document(
+                        page_content=f"[Session Document: {hit['filename']}]\nScore: {hit['score']}",
+                        metadata={"source": "session_vector_store", "priority": True, "filename": hit["filename"]}
+                    ) for hit in session_hits]
+            except Exception:
+                logger.exception("Session retrieval failed.")
             return []
 
-    # Parallel Task 2: Session Search
-    def fetch_session_docs():
-        try:
-            session_hits = retrieve_from_session(username, session_id, question)
-            if session_hits:
-                return [Document(
-                    page_content=f"[Session Document: {hit['filename']}]\nScore: {hit['score']}",
-                    metadata={"source": "session_vector_store", "priority": True, "filename": hit["filename"]}
-                ) for hit in session_hits]
-        except Exception:
-            logger.exception("Session retrieval failed.")
-        return []
+        # Parallel Task 3: Knowledge Graph Search
+        def fetch_graph_docs():
+            graph_docs = []
+            try:
+                question_lower = question.lower()
+                for entity in graph_db.knowledge_graph.nodes:
+                    if str(entity).lower() in question_lower:
+                        relations = graph_db.get_dynamic_context(entity, hops=2)
+                        for fact in relations:
+                            graph_docs.append(Document(
+                                page_content=f"Connection: {fact}",
+                                metadata={"source": "knowledge_graph_db", "type": "relationship"}
+                            ))
+            except Exception:
+                logger.exception("GraphRAG Entity scanner failed.")
+            return graph_docs
 
-    # Parallel Task 3: Knowledge Graph Search
-    def fetch_graph_docs():
-        graph_docs = []
-        try:
-            question_lower = question.lower()
-            for entity in graph_db.knowledge_graph.nodes:
-                if str(entity).lower() in question_lower:
-                    relations = graph_db.get_dynamic_context(entity, hops=2)
-                    for fact in relations:
-                        graph_docs.append(Document(
-                            page_content=f"Connection: {fact}",
-                            metadata={"source": "knowledge_graph_db", "type": "relationship"}
-                        ))
-        except Exception:
-            logger.exception("GraphRAG Entity scanner failed.")
-        return graph_docs
+        # Execute all 3 fetches concurrently
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            future_vec = executor.submit(fetch_vector_docs)
+            future_sess = executor.submit(fetch_session_docs)
+            future_graph = executor.submit(fetch_graph_docs)
 
-    # Execute all 3 fetches concurrently
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        future_vec = executor.submit(fetch_vector_docs)
-        future_sess = executor.submit(fetch_session_docs)
-        future_graph = executor.submit(fetch_graph_docs)
+            vector_docs = future_vec.result()
+            session_docs = future_sess.result()
+            graph_docs = future_graph.result()
 
-        vector_docs = future_vec.result()
-        session_docs = future_sess.result()
-        graph_docs = future_graph.result()
+        # Combine prioritized results
+        docs = session_docs + vector_docs + graph_docs
 
-    # Combine prioritized results
-    docs = session_docs + vector_docs + graph_docs
-
-    summaries = state.get("attachment_summaries", [])
-    for summary in summaries:
-        docs.append(Document(
-            page_content=summary,
-            metadata={"source": "user_attachment_summary", "priority": True}
-        ))
-    node_output = state.copy()
-    logger.info(
-        "node executed",
-        extra={
-            "service": "SAAPP",
-            "erragent_context": {
-                "workflowName": workflow_name,
-                "requestId": request_id,
-                "node": node_name,
-                "input": node_input,
-                "output": node_output,
+        summaries = state.get("attachment_summaries", [])
+        for summary in summaries:
+            docs.append(Document(
+                page_content=summary,
+                metadata={"source": "user_attachment_summary", "priority": True}
+            ))
+        node_output = state.copy()
+        logger.info(
+            "node executed",
+            extra={
+                "service": "SAAPP",
+                "erragent_context": {
+                    "input": node_input,
+                    "output": node_output,
+                }
             }
+        )
+        return {
+            **state,
+            "documents": docs,
+            "loop_count": current_loops + 1,
+            "original_question": original_question
         }
-    )
-    return {
-        **state,
-        "documents": docs,
-        "loop_count": current_loops + 1,
-        "original_question": original_question
-    }
 
 # ============================================================
 # SUMMARIZER NODE
@@ -732,63 +729,61 @@ def formatter_node(state: GraphState) -> dict:
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "formatter_node"
-    node_input = state.copy()
-    # 1. Choose the correct content source
-    messages = state.get("messages")
-    if messages:
-        user_msg = state["messages"][-1].content
-    else:
-        user_msg = "Generate system insights"
-    content_to_format = state.get("content_to_format")
-    lower_msg = user_msg.lower()
-    # Fallback if memory/summarizer/generator didn't set content
-    if not content_to_format:
-        content_to_format = user_msg
-    logger.info(f"Reformatting content: {content_to_format}")
-    # 2. Implicit formatting signals
-    is_long = len(content_to_format.split()) > 120
-    is_multi_section = any(word in lower_msg for word in ["explain", "tell me about", "overview", "details"])
-    is_list_like = any(word in lower_msg for word in ["types", "kinds", "examples", "steps"])
-    is_policy_like = any(word in lower_msg for word in ["policy", "rules", "requirements"])
-    is_character_lore = any(word in lower_msg for word in ["race", "lore", "history", "origin"])
-    if is_policy_like or is_multi_section:
-        format_style = "sections"
-    elif is_list_like:
-        format_style = "bullets"
-    elif is_character_lore:
-        format_style = "sections"
-    elif is_long:
-        format_style = "summary"
-    else:
-        format_style = "clean"
-    # 3. Build the prompt
-    prompt = FORMATTER_PROMPT.format(
-        format_style=format_style,
-        content_to_format=content_to_format
-    )
-    # 4. Save formatted output
-    formatted = get_chat_llm(state.get("username", "")).invoke(prompt)
-    formatted_content = formatted.content if hasattr(formatted, "content") else str(formatted)
-    if isinstance(formatted_content, list):
-        formatted_text = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in formatted_content])
-    else:
-        formatted_text = str(formatted_content)
-    state["formatted_output"] = formatted_text
-    node_output = state.copy()
-    logger.info(
-        "node executed",
-        extra={
-            "service": "SAAPP",
-            "erragent_context": {
-                "workflowName": workflow_name,
-                "requestId": request_id,
-                "node": node_name,
-                "input": node_input,
-                "output": node_output,
+    with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
+        node_input = state.copy()
+        # 1. Choose the correct content source
+        messages = state.get("messages")
+        if messages:
+            user_msg = state["messages"][-1].content
+        else:
+            user_msg = "Generate system insights"
+        content_to_format = state.get("content_to_format")
+        lower_msg = user_msg.lower()
+        # Fallback if memory/summarizer/generator didn't set content
+        if not content_to_format:
+            content_to_format = user_msg
+        logger.info(f"Reformatting content: {content_to_format}")
+        # 2. Implicit formatting signals
+        is_long = len(content_to_format.split()) > 120
+        is_multi_section = any(word in lower_msg for word in ["explain", "tell me about", "overview", "details"])
+        is_list_like = any(word in lower_msg for word in ["types", "kinds", "examples", "steps"])
+        is_policy_like = any(word in lower_msg for word in ["policy", "rules", "requirements"])
+        is_character_lore = any(word in lower_msg for word in ["race", "lore", "history", "origin"])
+        if is_policy_like or is_multi_section:
+            format_style = "sections"
+        elif is_list_like:
+            format_style = "bullets"
+        elif is_character_lore:
+            format_style = "sections"
+        elif is_long:
+            format_style = "summary"
+        else:
+            format_style = "clean"
+        # 3. Build the prompt
+        prompt = FORMATTER_PROMPT.format(
+            format_style=format_style,
+            content_to_format=content_to_format
+        )
+        # 4. Save formatted output
+        formatted = get_chat_llm(state.get("username", "")).invoke(prompt)
+        formatted_content = formatted.content if hasattr(formatted, "content") else str(formatted)
+        if isinstance(formatted_content, list):
+            formatted_text = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in formatted_content])
+        else:
+            formatted_text = str(formatted_content)
+        state["formatted_output"] = formatted_text
+        node_output = state.copy()
+        logger.info(
+            "node executed",
+            extra={
+                "service": "SAAPP",
+                "erragent_context": {
+                    "input": node_input,
+                    "output": node_output,
+                }
             }
-        }
-    )
-    return state
+        )
+        return state
 
 def insight_formatter_node(state: dict) -> dict:
     """
@@ -830,101 +825,96 @@ async def grading_node(state: GraphState) -> dict:
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "grading_node"
-    node_input = state.copy()
-    # 1. EMIT THE LIVE THOUGHT: Start grading
-    await safe_emit_event(
-        "trace_detail", 
-        {
-            "node": "grading_node", 
-            "title": "Evaluating document relevance...", 
-            "detail": "Checking if the retrieved context contains the answer."
-        }
-    )
-
-    # Defensive extraction of question
-    try:
-        raw_question = state.get("messages", [])[-1].content
-    except Exception:
-        raw_question = state.get("question", "")
-    question = ensure_str(raw_question)
-
-    documents = state.get("documents", []) or []
-    if not documents:
-        logger.info("No documents found; preserving state with relevance_grade=no")
-        return {**state, "relevance_grade": "no"}
-
-    # Ensure format_docs returns a string; if it returns list, join it
-    combined_docs = format_docs(documents)
-    combined_docs = ensure_str(combined_docs)
-
-    formatted_prompt = GRADING_PROMPT.format(
-        context=combined_docs,
-        question=question,
-        history=state.get("history", "") or ""
-    )
-
-    try:
-        logger.info("Grading response")
-        
-        # 2. USE AINVOKE FOR NON-BLOCKING LLM CALL
-        response = await lite_llm.ainvoke(formatted_prompt)
-        
-        response_text = response.content if hasattr(response, "content") else str(response)
-        response_clean = ensure_str(response_text).lower().strip()
-        grade = "yes" if "yes" in response_clean else "no"
-        logger.info(f"Document grading complete. Grade: {grade}")
-
-        for idx, doc in enumerate(documents, start=1):
-            try:
-                src = doc.metadata.get("source", "Unknown")
-                page = doc.metadata.get("page", doc.metadata.get("page_label", "N/A"))
-            except Exception:
-                src = "Unknown"
-                page = "N/A"
-            logger.info(f"    - Doc {idx}: {src} (Page {page}) → Grade: {grade}")
-
-        # 3. DYNAMIC TRACE: Announce the result to the UI!
-        grade_text = "Relevant" if grade == "yes" else "Irrelevant (Triggering fallback...)"
+    with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
+        node_input = state.copy()
+        # 1. EMIT THE LIVE THOUGHT: Start grading
         await safe_emit_event(
-            "trace_detail", 
+            "trace_detail",
             {
-                "node": "grading_node", 
-                "title": "Evaluating document relevance...", 
-                "detail": f"Evaluation complete. Context marked as: {grade_text}"
+                "node": "grading_node",
+                "title": "Evaluating document relevance...",
+                "detail": "Checking if the retrieved context contains the answer."
             }
         )
-        node_output = state.copy()
-        logger.info(
-            "node executed",
-            extra={
-            "service": "SAAPP",
-                "erragent_context": {
-                    "workflowName": workflow_name,
-                    "requestId": request_id,
-                    "node": node_name,
-                    "input": node_input,
-                    "output": node_output,
+
+        # Defensive extraction of question
+        try:
+            raw_question = state.get("messages", [])[-1].content
+        except Exception:
+            raw_question = state.get("question", "")
+        question = ensure_str(raw_question)
+
+        documents = state.get("documents", []) or []
+        if not documents:
+            logger.info("No documents found; preserving state with relevance_grade=no")
+            return {**state, "relevance_grade": "no"}
+
+        # Ensure format_docs returns a string; if it returns list, join it
+        combined_docs = format_docs(documents)
+        combined_docs = ensure_str(combined_docs)
+
+        formatted_prompt = GRADING_PROMPT.format(
+            context=combined_docs,
+            question=question,
+            history=state.get("history", "") or ""
+        )
+
+        try:
+            logger.info("Grading response")
+
+            # 2. USE AINVOKE FOR NON-BLOCKING LLM CALL
+            response = await lite_llm.ainvoke(formatted_prompt)
+
+            response_text = response.content if hasattr(response, "content") else str(response)
+            response_clean = ensure_str(response_text).lower().strip()
+            grade = "yes" if "yes" in response_clean else "no"
+            logger.info(f"Document grading complete. Grade: {grade}")
+
+            for idx, doc in enumerate(documents, start=1):
+                try:
+                    src = doc.metadata.get("source", "Unknown")
+                    page = doc.metadata.get("page", doc.metadata.get("page_label", "N/A"))
+                except Exception:
+                    src = "Unknown"
+                    page = "N/A"
+                logger.info(f"    - Doc {idx}: {src} (Page {page}) → Grade: {grade}")
+
+            # 3. DYNAMIC TRACE: Announce the result to the UI!
+            grade_text = "Relevant" if grade == "yes" else "Irrelevant (Triggering fallback...)"
+            await safe_emit_event(
+                "trace_detail",
+                {
+                    "node": "grading_node",
+                    "title": "Evaluating document relevance...",
+                    "detail": f"Evaluation complete. Context marked as: {grade_text}"
                 }
-            }
-        )
-        return {**state, "relevance_grade": grade}
-    except Exception:
-        logger.exception("Grading failed. Defaulting to no.")
-        node_output = state.copy()
-        logger.info(
-            "node executed",
-            extra={
-            "service": "SAAPP",
-                "erragent_context": {
-                    "workflowName": workflow_name,
-                    "requestId": request_id,
-                    "node": node_name,
-                    "input": node_input,
-                    "output": node_output,
+            )
+            node_output = state.copy()
+            logger.info(
+                "node executed",
+                extra={
+                "service": "SAAPP",
+                    "erragent_context": {
+                        "input": node_input,
+                        "output": node_output,
+                    }
                 }
-            }
-        )
-        return {**state, "relevance_grade": "no"}
+            )
+            return {**state, "relevance_grade": grade}
+        except Exception:
+            logger.exception("Grading failed. Defaulting to no.")
+            node_output = state.copy()
+            logger.info(
+                "node executed",
+                extra={
+                "service": "SAAPP",
+                    "erragent_context": {
+                        "input": node_input,
+                        "output": node_output,
+                    }
+                }
+            )
+            return {**state, "relevance_grade": "no"}
 
 
 # ============================================================
@@ -937,64 +927,59 @@ def rewrite_query_node(state: GraphState) -> dict:
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "formatter_node"
-    node_input = state.copy()
-    # Defensive extraction of original question
-    try:
-        raw_original = state.get("messages", [])[-1].content
-    except Exception:
-        raw_original = state.get("question", "")
-    original_question = ensure_str(raw_original)
+    with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
+        node_input = state.copy()
+        # Defensive extraction of original question
+        try:
+            raw_original = state.get("messages", [])[-1].content
+        except Exception:
+            raw_original = state.get("question", "")
+        original_question = ensure_str(raw_original)
 
-    formatted_prompt = REWRITING_PROMPT.format(question=original_question)
+        formatted_prompt = REWRITING_PROMPT.format(question=original_question)
 
-    try:
-        response = lite_llm.invoke(formatted_prompt)
-        rewrite_text = response.content if hasattr(response, "content") else str(response)
-        rewrite_clean = ensure_str(rewrite_text).strip()
-        logger.info(f"Query rewritten: '{original_question}' -> '{rewrite_clean}'")
+        try:
+            response = lite_llm.invoke(formatted_prompt)
+            rewrite_text = response.content if hasattr(response, "content") else str(response)
+            rewrite_clean = ensure_str(rewrite_text).strip()
+            logger.info(f"Query rewritten: '{original_question}' -> '{rewrite_clean}'")
 
-        # Replace the last HumanMessage safely
-        new_messages = list(state.get("messages", []))
-        if new_messages:
-            new_messages[-1] = HumanMessage(content=rewrite_clean)
-        else:
-            new_messages = [HumanMessage(content=rewrite_clean)]
-        node_output = state.copy()
-        logger.info(
-            "node executed",
-            extra={
-            "service": "SAAPP",
-                "erragent_context": {
-                    "workflowName": workflow_name,
-                    "requestId": request_id,
-                    "node": node_name,
-                    "input": node_input,
-                    "output": node_output,
+            # Replace the last HumanMessage safely
+            new_messages = list(state.get("messages", []))
+            if new_messages:
+                new_messages[-1] = HumanMessage(content=rewrite_clean)
+            else:
+                new_messages = [HumanMessage(content=rewrite_clean)]
+            node_output = state.copy()
+            logger.info(
+                "node executed",
+                extra={
+                "service": "SAAPP",
+                    "erragent_context": {
+                        "input": node_input,
+                        "output": node_output,
+                    }
                 }
+            )
+            return {
+                **state,
+                "messages": new_messages,
+                "question": rewrite_clean
             }
-        )
-        return {
-            **state,
-            "messages": new_messages,
-            "question": rewrite_clean
-        }
-    except Exception:
-        logger.exception("Query rewrite node failed.")
-        node_output = state.copy()
-        logger.info(
-            "node executed",
-            extra={
-            "service": "SAAPP",
-                "erragent_context": {
-                    "workflowName": workflow_name,
-                    "requestId": request_id,
-                    "node": node_name,
-                    "input": node_input,
-                    "output": node_output,
+        except Exception:
+            logger.exception("Query rewrite node failed.")
+            node_output = state.copy()
+            logger.info(
+                "node executed",
+                extra={
+                "service": "SAAPP",
+                    "erragent_context": {
+                        "input": node_input,
+                        "output": node_output,
+                    }
                 }
-            }
-        )
-        return state
+            )
+            return state
 
 # ============================================================
 # PAAPP NODE (sync)
@@ -1007,101 +992,99 @@ def paapp_node(state: GraphState) -> GraphState:
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "paapp_node"
-    node_input = state.copy()
-    try:
-        response = call_paapp_chat(username, msg)
-    except Exception:
-        logger.exception("PAAPP communication error.")
-        fallback = "PAAPP communication error: see logs for traceback"
-        state["raw_generation"] = fallback
-        state["content_to_format"] = fallback
-        return state
-
-    intent = response.get("intent")
-    
-    # DEBUG: Always log what the API sends so we can see if the tool name matches
-    logger.info(f"DEBUG: PAAPP intent received: {intent}")
-
-    # --- 1. HANDLE CALENDAR EVENT ---
-    if intent and intent.get("tool") == "create_google_calendar_event":
-        entry_payload = TimeEntryCreate(
-            username=username,
-            activity=str(intent.get("summary", "Untitled Event")),
-            duration_hours=float(intent.get("duration_minutes", 0)) / 60,
-            duration_minutes=int(intent.get("duration_minutes", 0)),
-            date=str(intent.get("start_time_iso", "").split("T")[0]),
-            notes="",
-            type="event"
-        )
-        
-        # Save locally (MongoDB + Mirror)
-        add_time_entry(entry_payload)
-        logger.info(f"[PAAPP] Successfully mirrored calendar event locally for {username}")
-
-        # FIX: Restore Sync by re-pinging the headless API (The "Zero-Import" Handshake)
+    with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
+        node_input = state.copy()
         try:
-            requests.post(
-                f"{PAAPP_BASE_URL}/api/headless-chat",
-                headers={"x-saapp": "true"},
-                json={"username": username, "question": f"sync event {entry_payload.activity}"}
-            )
-            logger.info(f"[PAAPP] Sync trigger request sent to headless API.")
+            response = call_paapp_chat(username, msg)
         except Exception:
-            logger.exception("[PAAPP] Sync trigger failed.")
-
-        # FIX: Update state['snapshot'] so the UI updates without a refresh
-        if "snapshot" in state:
-            state["snapshot"]["calendar"] = load_user_calendar_events(username)
-
-    # --- 2. HANDLE LOG TIME ---
-    if intent and intent.get("tool") == "log_time":
-        try:
-            entry_payload = TimeEntryCreate(
-                username=username,
-                activity=str(intent.get("activity", "Unknown Activity")),
-                duration_hours=float(intent.get("minutes", 0)) / 60,
-                duration_minutes=int(intent.get("minutes", 0)),
-                date=str(intent.get("date_iso")),
-                notes=str(intent.get("notes", "No description provided")),
-                type="log"
-            )
-            
-            add_time_entry(entry_payload)
-            logger.info(f"[PAAPP] Successfully logged time locally for {username}")
-            
-            # FIX: Update state['snapshot'] for logs too
-            if "snapshot" in state:
-                state["snapshot"]["logs"] = load_user_time(username)
-
-        except Exception:
-            logger.exception("[PAAPP] Time log failed.")
-            state["raw_generation"] = "Time log failed: see logs for traceback"
+            logger.exception("PAAPP communication error.")
+            fallback = "PAAPP communication error: see logs for traceback"
+            state["raw_generation"] = fallback
+            state["content_to_format"] = fallback
             return state
 
-    # --- 3. RETURN RESPONSE ---
-    if isinstance(response, str):
-        try:
-            response = json.loads(response)
-        except:
-            pass
-    node_output = state.copy()
-    logger.info(
-        "node executed",
-        extra={
-            "service": "SAAPP",
-            "erragent_context": {
-                "workflowName": workflow_name,
-                "requestId": request_id,
-                "node": node_name,
-                "input": node_input,
-                "output": node_output,
+        intent = response.get("intent")
+
+        # DEBUG: Always log what the API sends so we can see if the tool name matches
+        logger.info(f"DEBUG: PAAPP intent received: {intent}")
+
+        # --- 1. HANDLE CALENDAR EVENT ---
+        if intent and intent.get("tool") == "create_google_calendar_event":
+            entry_payload = TimeEntryCreate(
+                username=username,
+                activity=str(intent.get("summary", "Untitled Event")),
+                duration_hours=float(intent.get("duration_minutes", 0)) / 60,
+                duration_minutes=int(intent.get("duration_minutes", 0)),
+                date=str(intent.get("start_time_iso", "").split("T")[0]),
+                notes="",
+                type="event"
+            )
+
+            # Save locally (MongoDB + Mirror)
+            add_time_entry(entry_payload)
+            logger.info(f"[PAAPP] Successfully mirrored calendar event locally for {username}")
+
+            # FIX: Restore Sync by re-pinging the headless API (The "Zero-Import" Handshake)
+            try:
+                requests.post(
+                    f"{PAAPP_BASE_URL}/api/headless-chat",
+                    headers={"x-saapp": "true"},
+                    json={"username": username, "question": f"sync event {entry_payload.activity}"}
+                )
+                logger.info(f"[PAAPP] Sync trigger request sent to headless API.")
+            except Exception:
+                logger.exception("[PAAPP] Sync trigger failed.")
+
+            # FIX: Update state['snapshot'] so the UI updates without a refresh
+            if "snapshot" in state:
+                state["snapshot"]["calendar"] = load_user_calendar_events(username)
+
+        # --- 2. HANDLE LOG TIME ---
+        if intent and intent.get("tool") == "log_time":
+            try:
+                entry_payload = TimeEntryCreate(
+                    username=username,
+                    activity=str(intent.get("activity", "Unknown Activity")),
+                    duration_hours=float(intent.get("minutes", 0)) / 60,
+                    duration_minutes=int(intent.get("minutes", 0)),
+                    date=str(intent.get("date_iso")),
+                    notes=str(intent.get("notes", "No description provided")),
+                    type="log"
+                )
+
+                add_time_entry(entry_payload)
+                logger.info(f"[PAAPP] Successfully logged time locally for {username}")
+
+                # FIX: Update state['snapshot'] for logs too
+                if "snapshot" in state:
+                    state["snapshot"]["logs"] = load_user_time(username)
+
+            except Exception:
+                logger.exception("[PAAPP] Time log failed.")
+                state["raw_generation"] = "Time log failed: see logs for traceback"
+                return state
+
+        # --- 3. RETURN RESPONSE ---
+        if isinstance(response, str):
+            try:
+                response = json.loads(response)
+            except:
+                pass
+        node_output = state.copy()
+        logger.info(
+            "node executed",
+            extra={
+                "service": "SAAPP",
+                "erragent_context": {
+                    "input": node_input,
+                    "output": node_output,
+                }
             }
-        }
-    )
-    message = response.get("message", "PAAPP returned no message.")
-    state["raw_generation"] = message
-    state["content_to_format"] = message
-    return state
+        )
+        message = response.get("message", "PAAPP returned no message.")
+        state["raw_generation"] = message
+        state["content_to_format"] = message
+        return state
 
 
 def call_paapp_chat(username: str, question: str) -> dict:
@@ -2044,68 +2027,66 @@ async def web_search_node(state: GraphState) -> dict:
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "web_search_node"
-    node_input = state.copy()
-    # 1. Emit the live thought to the UI
-    await safe_emit_event(
-        "trace_detail", 
-        {
-            "node": "web_search_node", 
-            "title": "Searching the web...", 
-            "detail": "Querying DuckDuckGo for live context..."
-        }
-    )
-    
-    # Safe question extraction
-    # question = state.get("original_question")
-    # if not question and state.get("messages"):
-    question = extract_real_query(state)#state["messages"][-3].content
-    
-    web_docs = []
-    
-    try:
-        search = DuckDuckGoSearchAPIWrapper()
-        
-        # 2. Offload the blocking DuckDuckGo search to a background thread
-        results = await asyncio.to_thread(search.results, question, max_results=3)
-        
-        if results:
+    with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
+        node_input = state.copy()
+        # 1. Emit the live thought to the UI
+        await safe_emit_event(
+            "trace_detail",
+            {
+                "node": "web_search_node",
+                "title": "Searching the web...",
+                "detail": "Querying DuckDuckGo for live context..."
+            }
+        )
+
+        # Safe question extraction
+        # question = state.get("original_question")
+        # if not question and state.get("messages"):
+        question = extract_real_query(state)#state["messages"][-3].content
+
+        web_docs = []
+
+        try:
+            search = DuckDuckGoSearchAPIWrapper()
+
+            # 2. Offload the blocking DuckDuckGo search to a background thread
+            results = await asyncio.to_thread(search.results, question, max_results=3)
+
+            if results:
+                web_docs = [
+                    Document(
+                        page_content=f"Title: {r.get('title', 'N/A')}\nSnippet: {r.get('snippet', 'N/A')}",
+                        metadata={"source": r.get("link", "web_search"), "type": "web_search"}
+                    )
+                    for r in results if isinstance(r, dict)
+                ]
+        except Exception:
+            logger.exception("Web search execution error.")
+
+        # Fallback document if search returned empty or threw an error
+        if not web_docs:
             web_docs = [
                 Document(
-                    page_content=f"Title: {r.get('title', 'N/A')}\nSnippet: {r.get('snippet', 'N/A')}",
-                    metadata={"source": r.get("link", "web_search"), "type": "web_search"}
+                    page_content="No direct web search results were found for this query.",
+                    metadata={"source": "web_search", "type": "web_search"}
                 )
-                for r in results if isinstance(r, dict)
             ]
-    except Exception:
-        logger.exception("Web search execution error.")
-
-    # Fallback document if search returned empty or threw an error
-    if not web_docs:
-        web_docs = [
-            Document(
-                page_content="No direct web search results were found for this query.",
-                metadata={"source": "web_search", "type": "web_search"}
-            )
-        ]
-    node_output = state.copy()
-    logger.info(
-        "node executed",
-        extra={
-            "service": "SAAPP",
-            "erragent_context": {
-                "workflowName": workflow_name,
-                "requestId": request_id,
-                "node": node_name,
-                "input": node_input,
-                "output": node_output,
+        node_output = state.copy()
+        logger.info(
+            "node executed",
+            extra={
+                "service": "SAAPP",
+                "erragent_context": {
+                    "input": node_input,
+                    "output": node_output,
+                }
             }
+        )
+        # Return ONLY modified state keys — do NOT spread **state
+        return {
+            "documents": web_docs,
+            "relevance_grade": "web_search"
         }
-    )
-    # Return ONLY modified state keys — do NOT spread **state
-    return {
-        "documents": web_docs,
-        "relevance_grade": "web_search"
-    }
 
 # ============================================================
 # CODE INTERPRETOR NODE
@@ -2116,211 +2097,209 @@ def code_interpreter_node(state: GraphState) -> Dict[str, Any]:
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "code_interpreter_node"
-    node_input = state.copy()
-    # 1. Verify Global Admin access
-    user_groups = load_user_directory_groups(username)
-    if "Global_Admins" not in user_groups:
-        logger.warning(f"Unauthorized code interpreter attempt by non-admin user: {username}")
-        return {
-            "content_to_format": "Access denied: The code interpreter tool is restricted to Global Administrators.",
-            "relevance_grade": "code_interpreter",
-            "code_approval_status": "rejected"
-        }
-        
-    approval_status = state.get("code_approval_status")
-    existing_draft = state.get("drafted_code")
-
-    # =========================================================================
-    # BRANCH 1: Handle User Approvals for Write Operations
-    # =========================================================================
-    if approval_status == "approved" and existing_draft:
-        logger.info(f"Executing approved write operation for user {username}...")
-        try:
-            db = get_db()
-            if hasattr(db, "list_collection_names") is False and hasattr(db, "list_database_names"):
-                db = db.get_default_database() or db[list(db.list_database_names())[0]]
-
-            local_scope = {"db": db, "username": username, "result": None}
-            
-            exec(existing_draft, {"__builtins__": {
-                "range": range, "len": len, "str": str, "int": int, 
-                "float": float, "list": list, "dict": dict, "set": set, 
-                "tuple": tuple, "min": min, "max": max, "sum": sum, "round": round
-            }}, local_scope)
-            
-            execution_result = local_scope.get("result", "Write operation executed successfully.")
-            output_msg = f"**Write Operation Executed Successfully:**\n```json\n{json.dumps(execution_result, default=str, indent=2)}\n```"
-            
+    with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
+        node_input = state.copy()
+        # 1. Verify Global Admin access
+        user_groups = load_user_directory_groups(username)
+        if "Global_Admins" not in user_groups:
+            logger.warning(f"Unauthorized code interpreter attempt by non-admin user: {username}")
             return {
-                **state,
-                "drafted_code": None,
-                "code_approval_status": "completed",
-                "raw_generation": output_msg,
-                "content_to_format": output_msg,
-                "relevance_grade": "code_interpreter"
-            }
-        except Exception:
-            logger.exception("Write operation execution failed.")
-            error_msg = "**Write Operation Execution Failed:**\n```error\nSee logs for traceback.\n```"
-            return {
-                **state,
-                "drafted_code": None,
-                "code_approval_status": "error",
-                "raw_generation": error_msg,
-                "content_to_format": error_msg,
-                "relevance_grade": "code_interpreter"
+                "content_to_format": "Access denied: The code interpreter tool is restricted to Global Administrators.",
+                "relevance_grade": "code_interpreter",
+                "code_approval_status": "rejected"
             }
 
-    # =========================================================================
-    # BRANCH 2 & 3: Draft, Safety Check, Execute, and Auto-Retry on Empty Results
-    # =========================================================================
-    msg = state.get("messages", [])[-1].content.strip()
-    max_retries = 2
-    execution_result = None
-    drafted_code = ""
-    purpose = "Database query"
-    
-    db = get_db()
-    if hasattr(db, "list_collection_names") is False and hasattr(db, "list_database_names"):
-        db = db.get_default_database() or db[list(db.list_database_names())[0]]
+        approval_status = state.get("code_approval_status")
+        existing_draft = state.get("drafted_code")
 
-    for attempt in range(max_retries):
-        current_msg = msg
-        if attempt > 0:
-            # Force a completely different query structure on retry
-            current_msg = (
-                f"{msg} (CRITICAL ERROR: The exact match query returned 0 results "
-                f"due to potential hidden whitespace or formatting. You MUST use a MongoDB "
-                f"regular expression like: result = list(db['tasks'].find({{'lane': {{'$regex': 'backlog', '$options': 'i'}}}}))"
-            )
-        # Format drafting prompt safely without triggering curly brace KeyErrors
-        if "{msg}" in CODE_DRAFTING_PROMPT:
-            prompt = CODE_DRAFTING_PROMPT.replace("{msg}", current_msg)
-        else:
-            prompt = f"{CODE_DRAFTING_PROMPT}\n\nUser Request: {current_msg}"
-
-        try:
-            response = lite_llm.invoke(prompt)
-            resp_content = response.content if hasattr(response, "content") else str(response)
-            raw_text = "".join([block.get("text", "") if isinstance(block, dict) else str(block) for block in resp_content]) if isinstance(resp_content, list) else str(resp_content)
-            
-            # Clean markdown code fences if the LLM wrapped it
-            clean_text = raw_text.strip()
-            clean_text = re.sub(r"^```(?:json|python)?\s*", "", clean_text, flags=re.IGNORECASE)
-            clean_text = re.sub(r"\s*```$", "", clean_text)
-            
-            drafted_code = ""
-            purpose = "Database query"
-
-            # 1. Try direct JSON parsing
+        # =========================================================================
+        # BRANCH 1: Handle User Approvals for Write Operations
+        # =========================================================================
+        if approval_status == "approved" and existing_draft:
+            logger.info(f"Executing approved write operation for user {username}...")
             try:
-                parsed = json.loads(clean_text)
-                if isinstance(parsed, dict):
-                    drafted_code = parsed.get("code", "")
-                    purpose = parsed.get("purpose", "Database query")
-            except Exception:
-                # 2. Fallback: Search for any JSON object inside the text using regex
-                json_match = re.search(r"(\{.*?\})", clean_text, re.DOTALL)
-                if json_match:
-                    try:
-                        parsed = json.loads(json_match.group(1))
-                        if isinstance(parsed, dict):
-                            drafted_code = parsed.get("code", "")
-                            purpose = parsed.get("purpose", "Database query")
-                    except Exception:
-                        pass
+                db = get_db()
+                if hasattr(db, "list_collection_names") is False and hasattr(db, "list_database_names"):
+                    db = db.get_default_database() or db[list(db.list_database_names())[0]]
 
-            # 3. Final fallback if JSON parsing completely failed
-            if not drafted_code:
-                code_match = re.search(r"```(?:python)?\s*(.*?)\s*```", raw_text, re.DOTALL)
-                drafted_code = code_match.group(1).strip() if code_match else clean_text
-                
-        except Exception:
-            logger.exception("Code drafting failed on attempt %s.", attempt + 1)
-            continue
-
-        logger.info(f"Attempt {attempt+1} - Extracted Code to Execute: {drafted_code}")
-
-        # Safety Check
-        unsafe_keywords = ["insert", "update", "delete", "drop", "remove", "replace", "write"]
-        is_safe_read = not any(kw in drafted_code.lower() for kw in unsafe_keywords)
-
-        if is_safe_read:
-            try:
                 local_scope = {"db": db, "username": username, "result": None}
-                exec(drafted_code, {"__builtins__": {
-                    "range": range, "len": len, "str": str, "int": int, 
-                    "float": float, "list": list, "dict": dict, "set": set, 
-                    "tuple": tuple, "min": min, "max": max, "sum": sum, "round": round,
-                    "enumerate": enumerate, "zip": zip
-                }}, local_scope)
-                
-                execution_result = local_scope.get("result", None)
-                
-                # Check if results came back valid and non-empty
-                if execution_result is not None and (not isinstance(execution_result, list) or len(execution_result) > 0):
-                    logger.info(f"Query succeeded on attempt {attempt+1}.")
-                    break
-                else:
-                    logger.warning(f"Attempt {attempt+1} returned empty/null results. Retrying with broader instructions...")
-            except Exception:
-                logger.exception("Execution runtime error on attempt %s.", attempt + 1)
-                if attempt == max_retries - 1:
-                    error_msg = "Execution Error: see logs for traceback"
-                    return {
-                        **state,
-                        "drafted_code": None,
-                        "code_approval_status": "error",
-                        "raw_generation": error_msg,
-                        "content_to_format": error_msg,
-                        "relevance_grade": "code_interpreter"
-                    }
-        else:
-            approval_message = f"**Destructive Operation Requires Approval:**\n\n**Purpose:** {purpose}\n```python\n{drafted_code}\n```"
-            return {
-                **state,
-                "drafted_code": drafted_code,
-                "code_approval_status": "pending",
-                "raw_generation": approval_message,
-                "content_to_format": approval_message,
-                "relevance_grade": "code_interpreter"
-            }
 
-    # Format final successful results with code transparency
-    output_msg = (
-        f"**Query Purpose:** {purpose}\n\n"
-        f"**Executed Code:**\n```python\n{drafted_code}\n```\n\n"
-        f"**MongoDB Results:**\n```json\n{json.dumps(execution_result, default=str, indent=2)}\n```"
-    )
-    
-    doc = Document(
-        page_content=f"DATABASE QUERY RESULTS:\n{output_msg}",
-        metadata={"source": "mongodb_code_interpreter", "priority": True}
-    )
-    current_docs = state.get("documents", [])
-    current_docs.append(doc)
-    node_output = state.copy()
-    logger.info(
-        "node executed",
-        extra={
-            "service": "SAAPP",
-            "erragent_context": {
-                "workflowName": workflow_name,
-                "requestId": request_id,
-                "node": node_name,
-                "input": node_input,
-                "output": node_output,
+                exec(existing_draft, {"__builtins__": {
+                    "range": range, "len": len, "str": str, "int": int,
+                    "float": float, "list": list, "dict": dict, "set": set,
+                    "tuple": tuple, "min": min, "max": max, "sum": sum, "round": round
+                }}, local_scope)
+
+                execution_result = local_scope.get("result", "Write operation executed successfully.")
+                output_msg = f"**Write Operation Executed Successfully:**\n```json\n{json.dumps(execution_result, default=str, indent=2)}\n```"
+
+                return {
+                    **state,
+                    "drafted_code": None,
+                    "code_approval_status": "completed",
+                    "raw_generation": output_msg,
+                    "content_to_format": output_msg,
+                    "relevance_grade": "code_interpreter"
+                }
+            except Exception:
+                logger.exception("Write operation execution failed.")
+                error_msg = "**Write Operation Execution Failed:**\n```error\nSee logs for traceback.\n```"
+                return {
+                    **state,
+                    "drafted_code": None,
+                    "code_approval_status": "error",
+                    "raw_generation": error_msg,
+                    "content_to_format": error_msg,
+                    "relevance_grade": "code_interpreter"
+                }
+
+        # =========================================================================
+        # BRANCH 2 & 3: Draft, Safety Check, Execute, and Auto-Retry on Empty Results
+        # =========================================================================
+        msg = state.get("messages", [])[-1].content.strip()
+        max_retries = 2
+        execution_result = None
+        drafted_code = ""
+        purpose = "Database query"
+
+        db = get_db()
+        if hasattr(db, "list_collection_names") is False and hasattr(db, "list_database_names"):
+            db = db.get_default_database() or db[list(db.list_database_names())[0]]
+
+        for attempt in range(max_retries):
+            current_msg = msg
+            if attempt > 0:
+                # Force a completely different query structure on retry
+                current_msg = (
+                    f"{msg} (CRITICAL ERROR: The exact match query returned 0 results "
+                    f"due to potential hidden whitespace or formatting. You MUST use a MongoDB "
+                    f"regular expression like: result = list(db['tasks'].find({{'lane': {{'$regex': 'backlog', '$options': 'i'}}}}))"
+                )
+            # Format drafting prompt safely without triggering curly brace KeyErrors
+            if "{msg}" in CODE_DRAFTING_PROMPT:
+                prompt = CODE_DRAFTING_PROMPT.replace("{msg}", current_msg)
+            else:
+                prompt = f"{CODE_DRAFTING_PROMPT}\n\nUser Request: {current_msg}"
+
+            try:
+                response = lite_llm.invoke(prompt)
+                resp_content = response.content if hasattr(response, "content") else str(response)
+                raw_text = "".join([block.get("text", "") if isinstance(block, dict) else str(block) for block in resp_content]) if isinstance(resp_content, list) else str(resp_content)
+
+                # Clean markdown code fences if the LLM wrapped it
+                clean_text = raw_text.strip()
+                clean_text = re.sub(r"^```(?:json|python)?\s*", "", clean_text, flags=re.IGNORECASE)
+                clean_text = re.sub(r"\s*```$", "", clean_text)
+
+                drafted_code = ""
+                purpose = "Database query"
+
+                # 1. Try direct JSON parsing
+                try:
+                    parsed = json.loads(clean_text)
+                    if isinstance(parsed, dict):
+                        drafted_code = parsed.get("code", "")
+                        purpose = parsed.get("purpose", "Database query")
+                except Exception:
+                    # 2. Fallback: Search for any JSON object inside the text using regex
+                    json_match = re.search(r"(\{.*?\})", clean_text, re.DOTALL)
+                    if json_match:
+                        try:
+                            parsed = json.loads(json_match.group(1))
+                            if isinstance(parsed, dict):
+                                drafted_code = parsed.get("code", "")
+                                purpose = parsed.get("purpose", "Database query")
+                        except Exception:
+                            pass
+
+                # 3. Final fallback if JSON parsing completely failed
+                if not drafted_code:
+                    code_match = re.search(r"```(?:python)?\s*(.*?)\s*```", raw_text, re.DOTALL)
+                    drafted_code = code_match.group(1).strip() if code_match else clean_text
+
+            except Exception:
+                logger.exception("Code drafting failed on attempt %s.", attempt + 1)
+                continue
+
+            logger.info(f"Attempt {attempt+1} - Extracted Code to Execute: {drafted_code}")
+
+            # Safety Check
+            unsafe_keywords = ["insert", "update", "delete", "drop", "remove", "replace", "write"]
+            is_safe_read = not any(kw in drafted_code.lower() for kw in unsafe_keywords)
+
+            if is_safe_read:
+                try:
+                    local_scope = {"db": db, "username": username, "result": None}
+                    exec(drafted_code, {"__builtins__": {
+                        "range": range, "len": len, "str": str, "int": int,
+                        "float": float, "list": list, "dict": dict, "set": set,
+                        "tuple": tuple, "min": min, "max": max, "sum": sum, "round": round,
+                        "enumerate": enumerate, "zip": zip
+                    }}, local_scope)
+
+                    execution_result = local_scope.get("result", None)
+
+                    # Check if results came back valid and non-empty
+                    if execution_result is not None and (not isinstance(execution_result, list) or len(execution_result) > 0):
+                        logger.info(f"Query succeeded on attempt {attempt+1}.")
+                        break
+                    else:
+                        logger.warning(f"Attempt {attempt+1} returned empty/null results. Retrying with broader instructions...")
+                except Exception:
+                    logger.exception("Execution runtime error on attempt %s.", attempt + 1)
+                    if attempt == max_retries - 1:
+                        error_msg = "Execution Error: see logs for traceback"
+                        return {
+                            **state,
+                            "drafted_code": None,
+                            "code_approval_status": "error",
+                            "raw_generation": error_msg,
+                            "content_to_format": error_msg,
+                            "relevance_grade": "code_interpreter"
+                        }
+            else:
+                approval_message = f"**Destructive Operation Requires Approval:**\n\n**Purpose:** {purpose}\n```python\n{drafted_code}\n```"
+                return {
+                    **state,
+                    "drafted_code": drafted_code,
+                    "code_approval_status": "pending",
+                    "raw_generation": approval_message,
+                    "content_to_format": approval_message,
+                    "relevance_grade": "code_interpreter"
+                }
+
+        # Format final successful results with code transparency
+        output_msg = (
+            f"**Query Purpose:** {purpose}\n\n"
+            f"**Executed Code:**\n```python\n{drafted_code}\n```\n\n"
+            f"**MongoDB Results:**\n```json\n{json.dumps(execution_result, default=str, indent=2)}\n```"
+        )
+
+        doc = Document(
+            page_content=f"DATABASE QUERY RESULTS:\n{output_msg}",
+            metadata={"source": "mongodb_code_interpreter", "priority": True}
+        )
+        current_docs = state.get("documents", [])
+        current_docs.append(doc)
+        node_output = state.copy()
+        logger.info(
+            "node executed",
+            extra={
+                "service": "SAAPP",
+                "erragent_context": {
+                    "input": node_input,
+                    "output": node_output,
+                }
             }
+        )
+        return {
+            "documents": current_docs,
+            "drafted_code": None,
+            "code_approval_status": "completed",
+            "raw_generation": output_msg,
+            "content_to_format": output_msg,
+            "relevance_grade": "code_interpreter"
         }
-    )
-    return {
-        "documents": current_docs,
-        "drafted_code": None,
-        "code_approval_status": "completed",
-        "raw_generation": output_msg,
-        "content_to_format": output_msg,
-        "relevance_grade": "code_interpreter"
-    }
 
 
 
@@ -2397,122 +2376,120 @@ async def github_search_node(state: dict) -> dict:
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "github_search_node"
-    node_input = state.copy()
-    # 1. Emit live thought to the UI
-    await safe_emit_event(
-        "trace_detail", 
-        {
-            "node": "github_search_node", 
-            "title": "Searching GitHub repository...", 
-            "detail": "Fetching repository tree and querying code structure..."
-        }
-    )
-    
-    msg = state.get("messages", [])[-1].content.strip()
-    
-    repo = state.get("repo") or extract_github_repo(msg)
-    token = os.getenv("GITHUB_TOKEN")
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "vnd.github+json"
-    }
-    
-    api_parts = ["https", "api.github.com"]
-    api_base = f"{api_parts[0]}://{api_parts[1]}"
-    
-    def _fetch_github_data():
-        # 1. Fetch the actual file tree from GitHub
-        repo_res = requests.get(f"{api_base}/repos/{repo}", headers=headers)
-        default_branch = repo_res.json().get("default_branch", "main") if repo_res.status_code == 200 else "main"
-        
-        tree_url = f"{api_base}/repos/{repo}/git/trees/{default_branch}?recursive=1"
-        response = requests.get(tree_url, headers=headers)
-        return response, default_branch
+    with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
+        node_input = state.copy()
+        # 1. Emit live thought to the UI
+        await safe_emit_event(
+            "trace_detail",
+            {
+                "node": "github_search_node",
+                "title": "Searching GitHub repository...",
+                "detail": "Fetching repository tree and querying code structure..."
+            }
+        )
 
-    # Offload the blocking requests network calls to a background thread
-    response, default_branch = await asyncio.to_thread(_fetch_github_data)
-    
-    if response.status_code != 200:
+        msg = state.get("messages", [])[-1].content.strip()
+
+        repo = state.get("repo") or extract_github_repo(msg)
+        token = os.getenv("GITHUB_TOKEN")
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "vnd.github+json"
+        }
+
+        api_parts = ["https", "api.github.com"]
+        api_base = f"{api_parts[0]}://{api_parts[1]}"
+
+        def _fetch_github_data():
+            # 1. Fetch the actual file tree from GitHub
+            repo_res = requests.get(f"{api_base}/repos/{repo}", headers=headers)
+            default_branch = repo_res.json().get("default_branch", "main") if repo_res.status_code == 200 else "main"
+
+            tree_url = f"{api_base}/repos/{repo}/git/trees/{default_branch}?recursive=1"
+            response = requests.get(tree_url, headers=headers)
+            return response, default_branch
+
+        # Offload the blocking requests network calls to a background thread
+        response, default_branch = await asyncio.to_thread(_fetch_github_data)
+
+        if response.status_code != 200:
+            return {
+                **state,
+                "github_results": f"GitHub API tree error: {response.status_code} - {response.text}",
+                "content_to_format": "Error fetching tree",
+                "relevance_grade": "github_search"
+            }
+
+        tree_items = response.json().get("tree", [])
+
+        # Filter for source code files
+        valid_paths = [
+            item.get("path") for item in tree_items
+            if item.get("type") == "blob"
+            and item.get("path", "").endswith(".py")
+            and not any(exclude in item.get("path", "") for exclude in ["Example_List", "node_modules", "dist", "tests", "__pycache__"])
+        ]
+
+        # 2. Let the LLM select from the actual repository tree dynamically (USING AINVOKE)
+        file_list_str = "\n".join(f"- {p}" for p in valid_paths)
+        router_prompt = GITHUB_SEARCH_PROMPT
+
+        try:
+            router_response = await lite_llm.ainvoke(router_prompt)
+            router_content = router_response.content if hasattr(router_response, "content") else str(router_response)
+            if isinstance(router_content, list):
+                raw_output = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in router_content])
+            else:
+                raw_output = str(router_content)
+            raw_output = raw_output.replace("```", "").strip()
+            selected_paths = [p.strip() for p in raw_output.split(",") if p.strip() in valid_paths]
+        except Exception:
+            selected_paths = []
+
+        # Fallback to a reasonable default if LLM selection missed
+        if not selected_paths and valid_paths:
+            selected_paths = [valid_paths[0]]
+
+        # 3. Fetch contents of only the dynamically chosen files (Offloaded to background thread)
+        def _fetch_file_contents():
+            results = []
+            gh_parts = ["https", "github.com"]
+            gh_base = f"{gh_parts[0]}://{gh_parts[1]}"
+
+            for path in selected_paths:
+                file_url = f"{api_base}/repos/{repo}/contents/{path}"
+                file_res = requests.get(file_url, headers=headers)
+                if file_res.status_code == 200:
+                    try:
+                        file_data = file_res.json()
+                        content_encoded = file_data.get("content", "")
+                        decoded = base64.b64decode(content_encoded).decode("utf-8")
+                        html_url = f"{gh_base}/{repo}/blob/{default_branch}/{path}"
+                        snippet = decoded[:3500] + ("\n... [Code truncated]" if len(decoded) > 3500 else "")
+                        results.append(f"File: {path}\nURL: {html_url}\nCode Snippet:\n```python\n{snippet}\n```")
+                    except Exception:
+                        pass
+            return results
+
+        results = await asyncio.to_thread(_fetch_file_contents)
+        formatted_results = "\n\n---\n\n".join(results) if results else "No matching files retrieved."
+        node_output = state.copy()
+        logger.info(
+            "node executed",
+            extra={
+                "service": "SAAPP",
+                "erragent_context": {
+                    "input": node_input,
+                    "output": node_output,
+                }
+            }
+        )
         return {
             **state,
-            "github_results": f"GitHub API tree error: {response.status_code} - {response.text}",
-            "content_to_format": "Error fetching tree",
+            "github_results": formatted_results,
+            "content_to_format": formatted_results,
             "relevance_grade": "github_search"
         }
-
-    tree_items = response.json().get("tree", [])
-    
-    # Filter for source code files
-    valid_paths = [
-        item.get("path") for item in tree_items 
-        if item.get("type") == "blob" 
-        and item.get("path", "").endswith(".py")
-        and not any(exclude in item.get("path", "") for exclude in ["Example_List", "node_modules", "dist", "tests", "__pycache__"])
-    ]
-
-    # 2. Let the LLM select from the actual repository tree dynamically (USING AINVOKE)
-    file_list_str = "\n".join(f"- {p}" for p in valid_paths)
-    router_prompt = GITHUB_SEARCH_PROMPT
-
-    try:
-        router_response = await lite_llm.ainvoke(router_prompt)
-        router_content = router_response.content if hasattr(router_response, "content") else str(router_response)
-        if isinstance(router_content, list):
-            raw_output = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in router_content])
-        else:
-            raw_output = str(router_content)
-        raw_output = raw_output.replace("```", "").strip()
-        selected_paths = [p.strip() for p in raw_output.split(",") if p.strip() in valid_paths]
-    except Exception:
-        selected_paths = []
-
-    # Fallback to a reasonable default if LLM selection missed
-    if not selected_paths and valid_paths:
-        selected_paths = [valid_paths[0]]
-
-    # 3. Fetch contents of only the dynamically chosen files (Offloaded to background thread)
-    def _fetch_file_contents():
-        results = []
-        gh_parts = ["https", "github.com"]
-        gh_base = f"{gh_parts[0]}://{gh_parts[1]}"
-        
-        for path in selected_paths:
-            file_url = f"{api_base}/repos/{repo}/contents/{path}"
-            file_res = requests.get(file_url, headers=headers)
-            if file_res.status_code == 200:
-                try:
-                    file_data = file_res.json()
-                    content_encoded = file_data.get("content", "")
-                    decoded = base64.b64decode(content_encoded).decode("utf-8")
-                    html_url = f"{gh_base}/{repo}/blob/{default_branch}/{path}"
-                    snippet = decoded[:3500] + ("\n... [Code truncated]" if len(decoded) > 3500 else "")
-                    results.append(f"File: {path}\nURL: {html_url}\nCode Snippet:\n```python\n{snippet}\n```")
-                except Exception:
-                    pass
-        return results
-
-    results = await asyncio.to_thread(_fetch_file_contents)
-    formatted_results = "\n\n---\n\n".join(results) if results else "No matching files retrieved."
-    node_output = state.copy()
-    logger.info(
-        "node executed",
-        extra={
-            "service": "SAAPP",
-            "erragent_context": {
-                "workflowName": workflow_name,
-                "requestId": request_id,
-                "node": node_name,
-                "input": node_input,
-                "output": node_output,
-            }
-        }
-    )
-    return {
-        **state,
-        "github_results": formatted_results,
-        "content_to_format": formatted_results,
-        "relevance_grade": "github_search"
-    }
 
 def resolve_pr_number(user_msg: str, repo: str, headers: dict, api_base: str) -> int | None:
     """Parses natural language (first, last, 5th, PR #2) and resolves the target PR number."""
@@ -2580,121 +2557,119 @@ async def pr_summarizer_node(state: GraphState) -> dict:
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "github_search_node"
-    node_input = state.copy()
-    # 1. Emit live thought to the UI
-    await safe_emit_event(
-        "trace_detail", 
-        {
-            "node": "pr_summarizer_node", 
-            "title": "Analyzing Pull Request...", 
-            "detail": "Fetching PR details and code diffs from GitHub..."
+    with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
+        node_input = state.copy()
+        # 1. Emit live thought to the UI
+        await safe_emit_event(
+            "trace_detail",
+            {
+                "node": "pr_summarizer_node",
+                "title": "Analyzing Pull Request...",
+                "detail": "Fetching PR details and code diffs from GitHub..."
+            }
+        )
+
+        repo = state.get("repo") or extract_github_repo(
+            "\n".join(
+                getattr(m, "content", "") if hasattr(m, "content") else str(m)
+                for m in state.get("messages", [])
+            ),
+            "SummonShenron/SAAPP",
+        )
+        token = os.getenv("GITHUB_TOKEN")
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json"
         }
-    )
-    
-    repo = state.get("repo") or extract_github_repo(
-        "\n".join(
-            getattr(m, "content", "") if hasattr(m, "content") else str(m)
-            for m in state.get("messages", [])
-        ),
-        "SummonShenron/SAAPP",
-    )
-    token = os.getenv("GITHUB_TOKEN")
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json"
-    }
-    api_base = "https://api.github.com"
+        api_base = "https://api.github.com"
 
-    # Extract user message to resolve target PR
-    user_msg = ""
-    if state.get("messages"):
-        user_msg = state["messages"][-1].content
+        # Extract user message to resolve target PR
+        user_msg = ""
+        if state.get("messages"):
+            user_msg = state["messages"][-1].content
 
-    # 2. Offload blocking PR resolution and file fetches to a background thread
-    def _fetch_pr_data():
-        pr_num = state.get("pr_number") or resolve_pr_number(user_msg, repo, headers, api_base)
-        if not pr_num:
-            return None, None
-        
-        files_url = f"{api_base}/repos/{repo}/pulls/{pr_num}/files"
-        files_res = requests.get(files_url, headers=headers)
-        return pr_num, files_res
+        # 2. Offload blocking PR resolution and file fetches to a background thread
+        def _fetch_pr_data():
+            pr_num = state.get("pr_number") or resolve_pr_number(user_msg, repo, headers, api_base)
+            if not pr_num:
+                return None, None
 
-    pr_number, files_res = await asyncio.to_thread(_fetch_pr_data)
+            files_url = f"{api_base}/repos/{repo}/pulls/{pr_num}/files"
+            files_res = requests.get(files_url, headers=headers)
+            return pr_num, files_res
 
-    if not pr_number:
-        output_text = f"Could not locate the requested Pull Request for `{repo}`. Please specify a PR number (e.g., 'Review PR #2')."
+        pr_number, files_res = await asyncio.to_thread(_fetch_pr_data)
+
+        if not pr_number:
+            output_text = f"Could not locate the requested Pull Request for `{repo}`. Please specify a PR number (e.g., 'Review PR #2')."
+            return {
+                **state,
+                "content_to_format": output_text,
+                "pr_summary": output_text,
+                "relevance_grade": "pr_summary"
+            }
+
+        if files_res.status_code != 200:
+            output_text = f"Failed to fetch PR #{pr_number} files: {files_res.text}"
+            return {
+                **state,
+                "content_to_format": output_text,
+                "pr_summary": output_text,
+                "relevance_grade": "pr_summary"
+            }
+
+        changed_files = files_res.json()
+        diff_context = []
+        for f in changed_files[:10]:
+            filename = f.get("filename")
+            status = f.get("status")
+            patch = f.get("patch", "No patch available")
+            diff_context.append(f"File: {filename} ({status})\nPatch:\n```diff\n{patch}\n```")
+
+        formatted_diffs = "\n\n".join(diff_context)
+
+        # Generate LLM summary
+        if "{diffs}" in PR_REVIEW_PROMPT:
+            review_prompt = PR_REVIEW_PROMPT.format(diffs=formatted_diffs)
+        else:
+            review_prompt = f"{PR_REVIEW_PROMPT}\n\nPull Request Diffs:\n{formatted_diffs}"
+
+        try:
+            # 3. Use ainvoke for non-blocking LLM review generation
+            review_response = await lite_llm.ainvoke(review_prompt)
+            raw_content = getattr(review_response, "content", review_response)
+
+            if isinstance(raw_content, list):
+                text_blocks = []
+                for block in raw_content:
+                    if isinstance(block, str):
+                        text_blocks.append(block)
+                    elif isinstance(block, dict) and "text" in block:
+                        text_blocks.append(block["text"])
+                comment_body = "\n".join(text_blocks).strip()
+            else:
+                comment_body = str(raw_content).strip()
+        except Exception as e:
+            comment_body = f"Could not generate automated PR summary: {str(e)}"
+
+        output_text = f"### PR Review Summary for {repo} #{pr_number}\n\n{comment_body}"
+        node_output = state.copy()
+        logger.info(
+            "node executed",
+            extra={
+                "service": "SAAPP",
+                "erragent_context": {
+                    "input": node_input,
+                    "output": node_output,
+                }
+            }
+        )
         return {
             **state,
+            "pr_summary": comment_body,
             "content_to_format": output_text,
-            "pr_summary": output_text,
             "relevance_grade": "pr_summary"
         }
-
-    if files_res.status_code != 200:
-        output_text = f"Failed to fetch PR #{pr_number} files: {files_res.text}"
-        return {
-            **state, 
-            "content_to_format": output_text, 
-            "pr_summary": output_text,
-            "relevance_grade": "pr_summary"
-        }
-        
-    changed_files = files_res.json()
-    diff_context = []
-    for f in changed_files[:10]:
-        filename = f.get("filename")
-        status = f.get("status")
-        patch = f.get("patch", "No patch available")
-        diff_context.append(f"File: {filename} ({status})\nPatch:\n```diff\n{patch}\n```")
-        
-    formatted_diffs = "\n\n".join(diff_context)
-    
-    # Generate LLM summary
-    if "{diffs}" in PR_REVIEW_PROMPT:
-        review_prompt = PR_REVIEW_PROMPT.format(diffs=formatted_diffs)
-    else:
-        review_prompt = f"{PR_REVIEW_PROMPT}\n\nPull Request Diffs:\n{formatted_diffs}"
-
-    try:
-        # 3. Use ainvoke for non-blocking LLM review generation
-        review_response = await lite_llm.ainvoke(review_prompt)
-        raw_content = getattr(review_response, "content", review_response)
-        
-        if isinstance(raw_content, list):
-            text_blocks = []
-            for block in raw_content:
-                if isinstance(block, str):
-                    text_blocks.append(block)
-                elif isinstance(block, dict) and "text" in block:
-                    text_blocks.append(block["text"])
-            comment_body = "\n".join(text_blocks).strip()
-        else:
-            comment_body = str(raw_content).strip()
-    except Exception as e:
-        comment_body = f"Could not generate automated PR summary: {str(e)}"
-
-    output_text = f"### PR Review Summary for {repo} #{pr_number}\n\n{comment_body}"
-    node_output = state.copy()
-    logger.info(
-        "node executed",
-        extra={
-            "service": "SAAPP",
-            "erragent_context": {
-                "workflowName": workflow_name,
-                "requestId": request_id,
-                "node": node_name,
-                "input": node_input,
-                "output": node_output,
-            }
-        }
-    )
-    return {
-        **state,
-        "pr_summary": comment_body,
-        "content_to_format": output_text,
-        "relevance_grade": "pr_summary"
-    }
 
 def fetch_branch_diff_summary(repo: str, base: str, head: str) -> str:
     """Fetches recent commit messages and changed files between two branches."""
@@ -2726,144 +2701,142 @@ def draft_pr_node(state: GraphState) -> GraphState:
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "draft_pr_node"
-    node_input = state.copy()
-    messages = state.get("messages", [])
-    if not messages:
-        return state
+    with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
+        node_input = state.copy()
+        messages = state.get("messages", [])
+        if not messages:
+            return state
 
-    last_msg = messages[-1].content.strip()
+        last_msg = messages[-1].content.strip()
 
-    # Extract existing pending action details if refining an existing draft
-    pending_action = state.get("pending_action") or {}
-    existing_details = pending_action.get("details", {})
+        # Extract existing pending action details if refining an existing draft
+        pending_action = state.get("pending_action") or {}
+        existing_details = pending_action.get("details", {})
 
-    parsed = extract_pr_request_details(last_msg, existing_details.get("repo") or state.get("repo") or "SummonShenron/SAAPP")
-    repo = existing_details.get("repo") or state.get("repo") or parsed["repo"]
+        parsed = extract_pr_request_details(last_msg, existing_details.get("repo") or state.get("repo") or "SummonShenron/SAAPP")
+        repo = existing_details.get("repo") or state.get("repo") or parsed["repo"]
 
-    # 1. BRANCH RESOLUTION & STATE PRESERVATION
-    match = re.search(
-        r"merge\s+([\w\/\-\.]+)\s+into\s+([\w\/\-\.]+)",
-        last_msg,
-        re.IGNORECASE,
-    )
-
-    if match:
-        head_branch = match.group(1)
-        base_branch = match.group(2)
-    elif existing_details.get("head_branch"):
-        head_branch = existing_details["head_branch"]
-        base_branch = existing_details["base_branch"]
-    elif parsed.get("head_branch") and parsed.get("base_branch"):
-        head_branch = parsed["head_branch"]
-        base_branch = parsed["base_branch"]
-    else:
-        head_branch = state.get("head_branch", "feature-branch")
-        base_branch = state.get("base_branch", "main")
-
-    repo_match = re.search(
-        r"(?:for|in|repo(?:sitory)?)[\s:`]*([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)",
-        last_msg,
-        re.IGNORECASE,
-    )
-    if repo_match:
-        repo = repo_match.group(1).strip()
-
-    # 2. FETCH REAL GIT DIFF CONTEXT FROM GITHUB API
-    logger.info(
-        f"[Draft PR Node] Fetching real branch diff for {repo}: {base_branch} <- {head_branch}"
-    )
-    diff_context = fetch_branch_diff_summary(repo, base_branch, head_branch)
-
-    # 3. DYNAMIC TITLE & SUMMARY GENERATION
-    logger.info(
-        "[Draft PR Node] Invoking LLM for title and body generation..."
-    )
-    try:
-        # Pass the REAL diff_context into the prompt context parameter!
-        formatted_prompt = DRAFT_PR_PROMPT.format(
-            user_message=last_msg,
-            context=f"Repository: {repo}\nBase Branch: {base_branch}\nHead Branch: {head_branch}\n\n{diff_context}",
+        # 1. BRANCH RESOLUTION & STATE PRESERVATION
+        match = re.search(
+            r"merge\s+([\w\/\-\.]+)\s+into\s+([\w\/\-\.]+)",
+            last_msg,
+            re.IGNORECASE,
         )
 
-        llm_response = get_chat_llm(state.get("username", "")).invoke(formatted_prompt)
-
-        # Safely convert list or string content to text
-        raw_content = getattr(llm_response, "content", "")
-        if isinstance(raw_content, list):
-            text_content = "".join(
-                [
-                    c.get("text", "") if isinstance(c, dict) else str(c)
-                    for c in raw_content
-                ]
-            )
+        if match:
+            head_branch = match.group(1)
+            base_branch = match.group(2)
+        elif existing_details.get("head_branch"):
+            head_branch = existing_details["head_branch"]
+            base_branch = existing_details["base_branch"]
+        elif parsed.get("head_branch") and parsed.get("base_branch"):
+            head_branch = parsed["head_branch"]
+            base_branch = parsed["base_branch"]
         else:
-            text_content = str(raw_content)
+            head_branch = state.get("head_branch", "feature-branch")
+            base_branch = state.get("base_branch", "main")
 
-        clean_json = (
-            text_content.strip().strip("```json").strip("```").strip()
+        repo_match = re.search(
+            r"(?:for|in|repo(?:sitory)?)[\s:`]*([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)",
+            last_msg,
+            re.IGNORECASE,
         )
-        parsed = json.loads(clean_json)
+        if repo_match:
+            repo = repo_match.group(1).strip()
 
-        title = parsed.get(
-            "title", f"feat: merge {head_branch} into {base_branch}"
-        )
-        body = parsed.get(
-            "body", "### Summary\n- Automated pull request draft."
-        )
+        # 2. FETCH REAL GIT DIFF CONTEXT FROM GITHUB API
         logger.info(
-            "[Draft PR Node] Successfully generated dynamic PR summary!"
+            f"[Draft PR Node] Fetching real branch diff for {repo}: {base_branch} <- {head_branch}"
+        )
+        diff_context = fetch_branch_diff_summary(repo, base_branch, head_branch)
+
+        # 3. DYNAMIC TITLE & SUMMARY GENERATION
+        logger.info(
+            "[Draft PR Node] Invoking LLM for title and body generation..."
+        )
+        try:
+            # Pass the REAL diff_context into the prompt context parameter!
+            formatted_prompt = DRAFT_PR_PROMPT.format(
+                user_message=last_msg,
+                context=f"Repository: {repo}\nBase Branch: {base_branch}\nHead Branch: {head_branch}\n\n{diff_context}",
+            )
+
+            llm_response = get_chat_llm(state.get("username", "")).invoke(formatted_prompt)
+
+            # Safely convert list or string content to text
+            raw_content = getattr(llm_response, "content", "")
+            if isinstance(raw_content, list):
+                text_content = "".join(
+                    [
+                        c.get("text", "") if isinstance(c, dict) else str(c)
+                        for c in raw_content
+                    ]
+                )
+            else:
+                text_content = str(raw_content)
+
+            clean_json = (
+                text_content.strip().strip("```json").strip("```").strip()
+            )
+            parsed = json.loads(clean_json)
+
+            title = parsed.get(
+                "title", f"feat: merge {head_branch} into {base_branch}"
+            )
+            body = parsed.get(
+                "body", "### Summary\n- Automated pull request draft."
+            )
+            logger.info(
+                "[Draft PR Node] Successfully generated dynamic PR summary!"
+            )
+
+        except Exception:
+            logger.exception("Failed to parse LLM PR generation, using fallback.")
+            title = f"feat: merge {head_branch} into {base_branch}"
+            body = f"### Summary\n- Automated pull request draft created for `{head_branch}` -> `{base_branch}`."
+
+        # 4. SET STRUCTURED PENDING ACTION (Matches execute_pr_node schema)
+        new_pending_action = {
+            "action_type": "create_pr",
+            "details": {
+                "title": title,
+                "body": body,
+                "head_branch": head_branch,
+                "base_branch": base_branch,
+                "repo": repo,
+            },
+        }
+
+        # 5. FORMAT HITL ACTION CARD
+        card_msg = (
+            "**Approval Required**\n\n"
+            f"Ready to create a Pull Request for `{repo}`:\n"
+            f"- **Title:** {title}\n"
+            f"- **Base Branch:** `{base_branch}` <- `{head_branch}`\n\n"
+            f"**Proposed Body:**\n{body}\n\n"
+            "*Please Approve, Modify parameters, or Reject this action.*"
         )
 
-    except Exception:
-        logger.exception("Failed to parse LLM PR generation, using fallback.")
-        title = f"feat: merge {head_branch} into {base_branch}"
-        body = f"### Summary\n- Automated pull request draft created for `{head_branch}` -> `{base_branch}`."
-
-    # 4. SET STRUCTURED PENDING ACTION (Matches execute_pr_node schema)
-    new_pending_action = {
-        "action_type": "create_pr",
-        "details": {
-            "title": title,
-            "body": body,
-            "head_branch": head_branch,
-            "base_branch": base_branch,
-            "repo": repo,
-        },
-    }
-
-    # 5. FORMAT HITL ACTION CARD
-    card_msg = (
-        "**Approval Required**\n\n"
-        f"Ready to create a Pull Request for `{repo}`:\n"
-        f"- **Title:** {title}\n"
-        f"- **Base Branch:** `{base_branch}` <- `{head_branch}`\n\n"
-        f"**Proposed Body:**\n{body}\n\n"
-        "*Please Approve, Modify parameters, or Reject this action.*"
-    )
-
-    # Clean message list update (Single append)
-    new_messages = list(state.get("messages", [])) + [AIMessage(content=card_msg)]
-    node_output = state.copy()
-    logger.info(
-        "node executed",
-        extra={
-            "service": "SAAPP",
-            "erragent_context": {
-                "workflowName": workflow_name,
-                "requestId": request_id,
-                "node": node_name,
-                "input": node_input,
-                "output": node_output,
+        # Clean message list update (Single append)
+        new_messages = list(state.get("messages", [])) + [AIMessage(content=card_msg)]
+        node_output = state.copy()
+        logger.info(
+            "node executed",
+            extra={
+                "service": "SAAPP",
+                "erragent_context": {
+                    "input": node_input,
+                    "output": node_output,
+                }
             }
+        )
+        return {
+            **state,
+            "pending_action": new_pending_action,
+            "relevance_grade": "hitl_approval_required",
+            "generation": card_msg,
+            "messages": new_messages,
         }
-    )
-    return {
-        **state,
-        "pending_action": new_pending_action,
-        "relevance_grade": "hitl_approval_required",
-        "generation": card_msg,
-        "messages": new_messages,
-    }
 
 def execute_pr_node(state: dict) -> dict:
     """Executes PR creation after human approval with prompt-fallback parameter recovery."""
@@ -2873,99 +2846,74 @@ def execute_pr_node(state: dict) -> dict:
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
     node_name = "execute_pr_node"
-    node_input = state.copy()
-    # 1. RBAC Check
-    user_groups = load_user_directory_groups(username)
-    if "Global_Admins" not in user_groups:
-        return {
-            **state,
-            "content_to_format": "Access denied: Creating Pull Requests is restricted to Global Administrators.",
-            "relevance_grade": "conversational",
-            "pending_action": None,
-        }
+    with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
+        node_input = state.copy()
+        # 1. RBAC Check
+        user_groups = load_user_directory_groups(username)
+        if "Global_Admins" not in user_groups:
+            return {
+                **state,
+                "content_to_format": "Access denied: Creating Pull Requests is restricted to Global Administrators.",
+                "relevance_grade": "conversational",
+                "pending_action": None,
+            }
 
-    # 2. Extract user decision
-    decision = state.get("user_decision", "").lower()
-    if not decision and state.get("messages"):
-        last_msg_obj = state["messages"][-1]
-        last_msg = (
-            getattr(last_msg_obj, "content", "")
-            if hasattr(last_msg_obj, "content")
-            else str(last_msg_obj)
-        ).strip().lower()
+        # 2. Extract user decision
+        decision = state.get("user_decision", "").lower()
+        if not decision and state.get("messages"):
+            last_msg_obj = state["messages"][-1]
+            last_msg = (
+                getattr(last_msg_obj, "content", "")
+                if hasattr(last_msg_obj, "content")
+                else str(last_msg_obj)
+            ).strip().lower()
 
-        if any(
-            w in last_msg
-            for w in ["approve", "approved", "confirm", "yes", "lgtm", "do it"]
-        ):
-            decision = "approve"
-        elif any(
-            w in last_msg
-            for w in [
-                "reject",
-                "cancel",
-                "nevermind",
-                "abort",
-                "stop",
-                "no",
-            ]
-        ):
-            decision = "reject"
+            if any(
+                w in last_msg
+                for w in ["approve", "approved", "confirm", "yes", "lgtm", "do it"]
+            ):
+                decision = "approve"
+            elif any(
+                w in last_msg
+                for w in [
+                    "reject",
+                    "cancel",
+                    "nevermind",
+                    "abort",
+                    "stop",
+                    "no",
+                ]
+            ):
+                decision = "reject"
 
-    if decision in ["reject", "cancel"]:
-        return {
-            **state,
-            "content_to_format": "**Action Cancelled**: The Pull Request draft was discarded.",
-            "relevance_grade": "conversational",
-            "pending_action": None,
-        }
+        if decision in ["reject", "cancel"]:
+            return {
+                **state,
+                "content_to_format": "**Action Cancelled**: The Pull Request draft was discarded.",
+                "relevance_grade": "conversational",
+                "pending_action": None,
+            }
 
-    # 3. Try reading pending_action from State
-    pending_raw = state.get("pending_action") or {}
-    pending = (
-        pending_raw.get("details", pending_raw)
-        if isinstance(pending_raw, dict)
-        else {}
-    )
+        # 3. Try reading pending_action from State
+        pending_raw = state.get("pending_action") or {}
+        pending = (
+            pending_raw.get("details", pending_raw)
+            if isinstance(pending_raw, dict)
+            else {}
+        )
 
-    title = pending.get("title")
-    body = pending.get("body")
-    head_branch = pending.get("head_branch") or pending.get("head")
-    base_branch = pending.get("base_branch") or pending.get("base")
-    repo = pending.get("repo") or state.get("repo")
-    if not repo:
-        repo = extract_github_repo(
-            "\n".join(
-                getattr(m, "content", "") if hasattr(m, "content") else str(m)
-                for m in state.get("messages", [])
+        title = pending.get("title")
+        body = pending.get("body")
+        head_branch = pending.get("head_branch") or pending.get("head")
+        base_branch = pending.get("base_branch") or pending.get("base")
+        repo = pending.get("repo") or state.get("repo")
+        if not repo:
+            repo = extract_github_repo(
+                "\n".join(
+                    getattr(m, "content", "") if hasattr(m, "content") else str(m)
+                    for m in state.get("messages", [])
+                )
             )
-        )
-
-    for msg in reversed(state.get("messages", [])):
-        content = (
-            getattr(msg, "content", "")
-            if hasattr(msg, "content")
-            else (
-                msg.get("content", "")
-                if isinstance(msg, dict)
-                else str(msg)
-            )
-        )
-        if "merge" in content.lower() and "into" in content.lower():
-            parsed = extract_pr_request_details(content, repo)
-            if parsed["repo"] and parsed["repo"] != "SummonShenron/SAAPP":
-                repo = parsed["repo"]
-            if parsed.get("head_branch"):
-                head_branch = parsed["head_branch"]
-            if parsed.get("base_branch"):
-                base_branch = parsed["base_branch"]
-            break
-
-    # 4. RECOVERY LAYER: Extract from history if state was wiped
-    if not (title and head_branch and base_branch):
-        logger.warning(
-            "[Execute PR Node] pending_action missing! Searching message history..."
-        )
 
         for msg in reversed(state.get("messages", [])):
             content = (
@@ -2977,126 +2925,149 @@ def execute_pr_node(state: dict) -> dict:
                     else str(msg)
                 )
             )
-
-            repo_from_content = extract_github_repo(content, repo)
-            if repo_from_content and repo_from_content != "SummonShenron/SAAPP":
-                repo = repo_from_content
-
-            # Option A: Parse from Assistant Action Card (if persisted)
-            if "Ready to create a Pull Request" in content:
-                repo_match = re.search(r"for `([^`]+)`", content)
-                if repo_match:
-                    repo = repo_match.group(1)
-
-                title_match = re.search(
-                    r"-\s*\*\*Title:\*\*\s*(.+)", content, re.IGNORECASE
-                )
-                if title_match:
-                    title = title_match.group(1).strip()
-
-                branch_match = re.search(
-                    r"`([^`]+)`\s*<-\s*`([^`]+)`", content
-                )
-                if branch_match:
-                    base_branch = branch_match.group(1).strip()
-                    head_branch = branch_match.group(2).strip()
-
-                body_match = re.search(
-                    r"\*\*Proposed Body:\*\*\n([\s\S]*?)(?=\*Please|\Z)", content
-                )
-                if body_match:
-                    body = body_match.group(1).strip()
-
-            # Option B: Parse directly from User's prompt ("merge X into Y")
-            elif "merge" in content.lower() and "into" in content.lower():
-                prompt_match = re.search(
-                    r"merge\s+([\w\/\-\.]+)\s+into\s+([\w\/\-\.]+)",
-                    content,
-                    re.IGNORECASE,
-                )
-                if prompt_match:
-                    head_branch = prompt_match.group(1).strip()
-                    base_branch = prompt_match.group(2).strip()
-                    title = f"feat: merge {head_branch} into {base_branch}"
-                    body = f"### Summary\n- Merged `{head_branch}` into `{base_branch}` per user approval."
-                    logger.info(
-                        f"[Execute PR Node] Recovered parameters from user prompt: {head_branch} -> {base_branch}"
-                    )
-
-            if title and head_branch and base_branch:
+            if "merge" in content.lower() and "into" in content.lower():
+                parsed = extract_pr_request_details(content, repo)
+                if parsed["repo"] and parsed["repo"] != "SummonShenron/SAAPP":
+                    repo = parsed["repo"]
+                if parsed.get("head_branch"):
+                    head_branch = parsed["head_branch"]
+                if parsed.get("base_branch"):
+                    base_branch = parsed["base_branch"]
                 break
 
-    # Final Guardrail
-    if not (title and head_branch and base_branch):
+        # 4. RECOVERY LAYER: Extract from history if state was wiped
+        if not (title and head_branch and base_branch):
+            logger.warning(
+                "[Execute PR Node] pending_action missing! Searching message history..."
+            )
+
+            for msg in reversed(state.get("messages", [])):
+                content = (
+                    getattr(msg, "content", "")
+                    if hasattr(msg, "content")
+                    else (
+                        msg.get("content", "")
+                        if isinstance(msg, dict)
+                        else str(msg)
+                    )
+                )
+
+                repo_from_content = extract_github_repo(content, repo)
+                if repo_from_content and repo_from_content != "SummonShenron/SAAPP":
+                    repo = repo_from_content
+
+                # Option A: Parse from Assistant Action Card (if persisted)
+                if "Ready to create a Pull Request" in content:
+                    repo_match = re.search(r"for `([^`]+)`", content)
+                    if repo_match:
+                        repo = repo_match.group(1)
+
+                    title_match = re.search(
+                        r"-\s*\*\*Title:\*\*\s*(.+)", content, re.IGNORECASE
+                    )
+                    if title_match:
+                        title = title_match.group(1).strip()
+
+                    branch_match = re.search(
+                        r"`([^`]+)`\s*<-\s*`([^`]+)`", content
+                    )
+                    if branch_match:
+                        base_branch = branch_match.group(1).strip()
+                        head_branch = branch_match.group(2).strip()
+
+                    body_match = re.search(
+                        r"\*\*Proposed Body:\*\*\n([\s\S]*?)(?=\*Please|\Z)", content
+                    )
+                    if body_match:
+                        body = body_match.group(1).strip()
+
+                # Option B: Parse directly from User's prompt ("merge X into Y")
+                elif "merge" in content.lower() and "into" in content.lower():
+                    prompt_match = re.search(
+                        r"merge\s+([\w\/\-\.]+)\s+into\s+([\w\/\-\.]+)",
+                        content,
+                        re.IGNORECASE,
+                    )
+                    if prompt_match:
+                        head_branch = prompt_match.group(1).strip()
+                        base_branch = prompt_match.group(2).strip()
+                        title = f"feat: merge {head_branch} into {base_branch}"
+                        body = f"### Summary\n- Merged `{head_branch}` into `{base_branch}` per user approval."
+                        logger.info(
+                            f"[Execute PR Node] Recovered parameters from user prompt: {head_branch} -> {base_branch}"
+                        )
+
+                if title and head_branch and base_branch:
+                    break
+
+        # Final Guardrail
+        if not (title and head_branch and base_branch):
+            return {
+                **state,
+                "content_to_format": "Unable to execute PR creation: Pull request parameters were lost between turns. Please re-issue the request.",
+                "relevance_grade": "conversational",
+                "pending_action": None,
+            }
+
+        # 5. POST to GitHub API to CREATE the PR
+        token = os.getenv("GITHUB_TOKEN")
+        api_url = f"https://api.github.com/repos/{repo}/pulls"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+        }
+
+        payload = {
+            "title": title,
+            "body": body or "Automated Pull Request",
+            "head": head_branch,
+            "base": base_branch,
+        }
+
+        logger.info(f"[Execute PR Node] Firing GitHub API POST to {api_url}")
+        res = requests.post(api_url, headers=headers, json=payload)
+
+        if res.status_code == 201:
+            pr_data = res.json()
+            pr_url = pr_data.get("html_url")
+            pr_num = pr_data.get("number")
+
+            # 6. OPTIONAL: AUTOMATICALLY MERGE THE PR
+            merge_url = f"https://api.github.com/repos/{repo}/pulls/{pr_num}/merge"
+            merge_payload = {
+                "commit_title": f"Merge pull request #{pr_num} from {head_branch}",
+                "merge_method": "squash"  # Or "merge" / "rebase"
+            }
+
+            merge_res = requests.put(merge_url, headers=headers, json=merge_payload)
+
+            if merge_res.status_code == 200:
+                output_text = f"**Pull Request Created and Merged Successfully!** \n\n[View Merged PR #{pr_num} on GitHub]({pr_url})"
+            else:
+                output_text = (
+                    f"**Pull Request #{pr_num} Created**, but merge failed (HTTP {merge_res.status_code}):\n"
+                    f"```json\n{merge_res.text}\n```\n"
+                    f"[View PR #{pr_num} on GitHub]({pr_url})"
+                )
+        else:
+            output_text = f"**Failed to create Pull Request** (HTTP {res.status_code}):\n```json\n{res.text}\n```"
+        node_output = state.copy()
+        logger.info(
+            "node executed",
+            extra={
+                "service": "SAAPP",
+                "erragent_context": {
+                    "input": node_input,
+                    "output": node_output,
+                }
+            }
+        )
         return {
             **state,
-            "content_to_format": "Unable to execute PR creation: Pull request parameters were lost between turns. Please re-issue the request.",
-            "relevance_grade": "conversational",
+            "content_to_format": output_text,
+            "relevance_grade": "action_complete",
             "pending_action": None,
         }
-
-    # 5. POST to GitHub API to CREATE the PR
-    token = os.getenv("GITHUB_TOKEN")
-    api_url = f"https://api.github.com/repos/{repo}/pulls"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-    }
-
-    payload = {
-        "title": title,
-        "body": body or "Automated Pull Request",
-        "head": head_branch,
-        "base": base_branch,
-    }
-
-    logger.info(f"[Execute PR Node] Firing GitHub API POST to {api_url}")
-    res = requests.post(api_url, headers=headers, json=payload)
-
-    if res.status_code == 201:
-        pr_data = res.json()
-        pr_url = pr_data.get("html_url")
-        pr_num = pr_data.get("number")
-
-        # 6. OPTIONAL: AUTOMATICALLY MERGE THE PR
-        merge_url = f"https://api.github.com/repos/{repo}/pulls/{pr_num}/merge"
-        merge_payload = {
-            "commit_title": f"Merge pull request #{pr_num} from {head_branch}",
-            "merge_method": "squash"  # Or "merge" / "rebase"
-        }
-
-        merge_res = requests.put(merge_url, headers=headers, json=merge_payload)
-
-        if merge_res.status_code == 200:
-            output_text = f"**Pull Request Created and Merged Successfully!** \n\n[View Merged PR #{pr_num} on GitHub]({pr_url})"
-        else:
-            output_text = (
-                f"**Pull Request #{pr_num} Created**, but merge failed (HTTP {merge_res.status_code}):\n"
-                f"```json\n{merge_res.text}\n```\n"
-                f"[View PR #{pr_num} on GitHub]({pr_url})"
-            )
-    else:
-        output_text = f"**Failed to create Pull Request** (HTTP {res.status_code}):\n```json\n{res.text}\n```"
-    node_output = state.copy()
-    logger.info(
-        "node executed",
-        extra={
-            "service": "SAAPP",
-            "erragent_context": {
-                "workflowName": workflow_name,
-                "requestId": request_id,
-                "node": node_name,
-                "input": node_input,
-                "output": node_output,
-            }
-        }
-    )
-    return {
-        **state,
-        "content_to_format": output_text,
-        "relevance_grade": "action_complete",
-        "pending_action": None,
-    }
 
 # ============================================================
 # WORKFLOW ASSEMBLY & COMPILATION

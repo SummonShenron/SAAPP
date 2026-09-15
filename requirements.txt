@@ -29,3 +29,9 @@ duckduckgo-search
 ddgs
 sentry-sdk[fastapi]
 pytest
+# errAgent client SDK (replaces the old hand-copied backend/logging/erragent_handler.py).
+# Installed from GitHub, not a local path — a relative "-e ../errAgent/sdk" only resolves on
+# a machine where errAgent happens to be checked out as a sibling directory; it would fail
+# during a Render (or any CI) build, which checks out this repo in isolation. Once erragent-sdk
+# is published to PyPI, switch this to a plain "erragent-sdk" version pin instead.
+git+https://github.com/SummonShenron/errAgent.git@sdk-v0.1.0#subdirectory=sdk
