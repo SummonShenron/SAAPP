@@ -51,6 +51,31 @@ def test_github_and_pr_summary_classification_unaffected():
     assert classify_intent("create pr for my branch") == "create_pr"
 
 
+def test_natural_pr_creation_phrasing_is_not_swallowed_by_pr_summary():
+    # Regression: "create a pull request..." contains the bare bigram "pull request", which
+    # used to match the pr_summary/review pattern before create_pr ever got a chance, making
+    # the assistant respond as if the user were asking to review an existing PR by number.
+    assert classify_intent(
+        "can you create a pull request to merge feat/teams into main in the summonshenron/errAgent repo?"
+    ) == "create_pr"
+    assert classify_intent(
+        "create a pr to merge feat/teams into main in repo summonshenron/erragent"
+    ) == "create_pr"
+
+
+def test_review_pr_phrasing_still_classifies_as_pr_summary():
+    assert classify_intent("review pr #2") == "pr_summary"
+    assert classify_intent("can you review this pull request") == "pr_summary"
+
+
+def test_build_agent_plan_routes_create_pr_via_reasoner_flag_alone():
+    # Regression: needs_create_pr was set by the reasoner LLM but never actually consulted
+    # by build_agent_plan, so PR-creation intent the regex failed to catch was silently
+    # dropped even when the LLM correctly identified it.
+    plan = build_agent_plan("conversational", {"reasoner_flags": {"needs_create_pr": True}})
+    assert plan["agents"] == ["draft_pr", "formatter"]
+
+
 def test_build_agent_plan_routes_web_search_intent():
     plan = build_agent_plan("web_search", {"reasoner_flags": {}})
     assert plan["agents"][0] == "web_search"

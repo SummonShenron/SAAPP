@@ -234,11 +234,14 @@ def classify_intent(message: str, state: dict = None) -> str:
     if any(w in msg for w in ["run code", "execute", "query db", "mongodb", "script"]):
         return "code_interpreter"
 
+    # Checked BEFORE the generic "pull request" pattern below, so natural creation phrasing
+    # like "create a pull request to merge X into Y" isn't swallowed by the broader
+    # review/summary match just because it also contains the words "pull request".
+    if re.search(r'\b(?:create|open|submit|draft)\s+(?:an?\s+)?(?:pr|pull request)\b', msg) or re.search(r'\bmerge\s+(?:an?\s+)?pr\b', msg):
+        return "create_pr"
     # Use word boundary so 'process' or 'provide' won't match 'pr'
     if re.search(r'\b(review pr|pull request|pr summary)\b', msg):
         return "pr_summary"
-    if re.search(r'\b(create pr|merge pr|create pull request)\b', msg):
-        return "create_pr"
     # 3. General operational intents
     if "plan my day" in msg or "schedule" in msg:
         return "task_paapp"
@@ -279,8 +282,10 @@ def build_agent_plan(intent: str, state: dict) -> dict:
         state["last_intent"] = "execute_pr"
         return {"agents": ["execute_pr", "formatter"], "skip": []}
 
-    # 2. Direct PR creation request
-    if intent == "create_pr":
+    # 2. Direct PR creation request — the reasoner's needs_create_pr flag is included here
+    # (not just the classify_intent regex) since natural phrasing the regex doesn't catch
+    # should still be able to reach this path via the LLM's own semantic classification.
+    if intent == "create_pr" or flags.get("needs_create_pr"):
         state["last_intent"] = "create_pr"
         return {"agents": ["draft_pr", "formatter"], "skip": []}
 
