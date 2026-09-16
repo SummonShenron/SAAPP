@@ -64,6 +64,7 @@ from backend.utils.memory_utils import (
     delete_all_user_facts,
 )
 from backend.services.memory_compaction import compact_user_memory, compact_meta_memory
+from backend.services.memory_search import retrieve_relevant_memory_context
 from backend.utils.user_settings_utils import get_user_rag_mode, set_user_rag_mode, VALID_RAG_MODES
 from backend.utils.fallback_utils import rewrite_fallback
 from backend.logging.sass_logger import setup_logging
@@ -529,6 +530,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                 log_timings(relevance_grade, "card")
                 return
 
+            is_conversational_recall_path = False
             if relevance_grade == "web_search":
                 prompt = WEB_SEARCH_PROMPT.format(context=format_docs(documents), question=question)
             elif relevance_grade == "code_interpreter":
@@ -539,8 +541,10 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                 prompt = PR_FORMAT_PROMPT.format(content=final_state.get("content_to_format", ""), question=question)
             elif insight_answer:
                 prompt = CONVERSATIONAL_PROMPT.format(username=username, question=question, history=format_history_as_text(messages_state), insight=insight_answer)
+                is_conversational_recall_path = True
             elif relevance_grade == "conversational":
                 prompt = CONVERSATIONAL_PROMPT.format(username=username, question=question, history=format_history_as_text(messages_state), insight="")
+                is_conversational_recall_path = True
             else:
                 final_question = final_state.get("original_question", question)
                 accessible_affiliates_str = ", ".join(final_state.get("target_scope", target_scope))
@@ -561,6 +565,14 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
             if memory_context:
                 prompt = prompt + memory_context
                 yield f"data: {json.dumps({'event': 'node_progress', 'node': 'user_memory', 'title': 'Applying known user context', 'detail': 'Injected saved preferences/facts into context prompt.'})}\n\n"
+
+            if is_conversational_recall_path:
+                semantic_memory_context = retrieve_relevant_memory_context(
+                    services.get("user_memory_vector_store"), username, question
+                )
+                if semantic_memory_context:
+                    prompt = prompt + semantic_memory_context
+                    yield f"data: {json.dumps({'event': 'node_progress', 'node': 'user_memory_recall', 'title': 'Recalling relevant memory', 'detail': 'Found semantically relevant past context.'})}\n\n"
             # 3. STREAM RESPONSE TOKENS FROM LLM
             async for chunk in response_llm.astream(prompt):
                 if first_token:
