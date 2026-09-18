@@ -16,13 +16,15 @@ def test_api_as_a_whole_word_still_matches_tool():
 
 
 def test_approval_with_natural_phrasing_executes_pending_pr():
+    # Phase 2: every registered write action (PR, issue, Mongo write) shares one generic
+    # "execute_write" destination instead of a per-action intent string.
     state = {"pending_action": {"status": "awaiting_approval", "action_type": "create_pr"}}
-    assert classify_intent("yes let's do it", state=state) == "execute_pr"
+    assert classify_intent("yes let's do it", state=state) == "execute_write"
 
 
 def test_bare_yes_still_approves_pending_pr():
     state = {"pending_action": {"status": "awaiting_approval", "action_type": "create_pr"}}
-    assert classify_intent("yes", state=state) == "execute_pr"
+    assert classify_intent("yes", state=state) == "execute_write"
 
 
 def test_approval_with_natural_phrasing_continues_pending_web_search():
@@ -46,7 +48,8 @@ def test_no_pending_action_ignores_approval_words():
 
 
 def test_github_and_pr_summary_classification_unaffected():
-    assert classify_intent("show me the github repository") == "github_search"
+    # Mongo/GitHub/web keyword matches all route to the unified multi-tool agent now.
+    assert classify_intent("show me the github repository") == "tool_agent"
     assert classify_intent("can you give me a pr summary") == "pr_summary"
     assert classify_intent("create pr for my branch") == "create_pr"
 
@@ -71,14 +74,19 @@ def test_review_pr_phrasing_still_classifies_as_pr_summary():
 def test_build_agent_plan_routes_create_pr_via_reasoner_flag_alone():
     # Regression: needs_create_pr was set by the reasoner LLM but never actually consulted
     # by build_agent_plan, so PR-creation intent the regex failed to catch was silently
-    # dropped even when the LLM correctly identified it.
-    plan = build_agent_plan("conversational", {"reasoner_flags": {"needs_create_pr": True}})
-    assert plan["agents"] == ["draft_pr", "formatter"]
+    # dropped even when the LLM correctly identified it. Phase 2: routes to the generic
+    # propose_write node, with state["write_action"] telling it which registry entry to draft.
+    state = {"reasoner_flags": {"needs_create_pr": True}}
+    plan = build_agent_plan("conversational", state)
+    assert plan["agents"] == ["propose_write", "formatter"]
+    assert state["write_action"] == "create_pr"
 
 
 def test_build_agent_plan_routes_web_search_intent():
+    # Continuing a pending web-search approval now routes into the unified tool agent,
+    # where web_search is one of the available actions rather than its own destination.
     plan = build_agent_plan("web_search", {"reasoner_flags": {}})
-    assert plan["agents"][0] == "web_search"
+    assert plan["agents"][0] == "tool_agent"
 
 
 def test_build_agent_plan_cancel_action_clears_pending_and_sets_insight():

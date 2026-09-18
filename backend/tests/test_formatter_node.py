@@ -26,7 +26,7 @@ def test_source_type_mapping_web_search():
 
 
 def test_source_type_mapping_tool_output_grades():
-    for grade in ("code_interpreter", "github_search", "pr_summary"):
+    for grade in ("code_interpreter", "github_search", "pr_summary", "tool_agent"):
         state = aw.formatter_node(_state(relevance_grade=grade, content_to_format="some tool output"))
         assert state["voice_payload"]["source_type"] == "tool_output", grade
         assert state["voice_payload"]["data"] == "some tool output"
