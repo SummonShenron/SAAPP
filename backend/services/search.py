@@ -100,6 +100,10 @@ def _mongo_vector_search(
                     "affiliate": 1,
                     "priority": 1,
                     "metadata": 1,
+                    "gridfs_id": 1,
+                    "content_type": 1,
+                    "doc_type": 1,
+                    "embedded_images": 1,
                     "score": {"$meta": "searchScore"}
                 }
             }
@@ -119,6 +123,10 @@ def _mongo_vector_search(
                 "page_label": r.get("page_label") or raw_meta.get("page_label"),
                 "affiliate": r.get("affiliate") or raw_meta.get("affiliate"),
                 "priority": r.get("priority") or raw_meta.get("priority") or False,
+                "gridfs_id": r.get("gridfs_id") or raw_meta.get("gridfs_id"),
+                "content_type": r.get("content_type") or raw_meta.get("content_type"),
+                "doc_type": r.get("doc_type") or raw_meta.get("doc_type"),
+                "embedded_images": r.get("embedded_images") or raw_meta.get("embedded_images") or [],
                 "score": r.get("score", 0.0)
             }
             docs.append(Document(page_content=page_content, metadata=metadata))

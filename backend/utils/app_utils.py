@@ -60,8 +60,37 @@ def _serialize_messages(messages: list) -> list:
                 msg_type = "ai"
             elif isinstance(msg, SystemMessage) or getattr(msg, "type", "") == "system":
                 msg_type = "system"
-            serialized.append({"type": msg_type, "content": msg.content})
+            entry = {"type": msg_type, "content": msg.content}
+            additional_kwargs = getattr(msg, "additional_kwargs", {})
+            attachments = additional_kwargs.get("attachments")
+            if attachments:
+                entry["attachments"] = attachments
+            kb_images = additional_kwargs.get("kb_images")
+            if kb_images:
+                entry["kb_images"] = kb_images
+            serialized.append(entry)
     return serialized
+
+
+def collect_kb_images(docs) -> list:
+    """Extracts renderable image references from retrieved KB documents (either a whole
+    document that IS an image, or images embedded within a PDF page), deduped by gridfs id —
+    used to surface a 'kb_images' SSE event so the frontend can render them alongside the
+    answer, reusing the same GridFS-backed rendering path built for chat attachments."""
+    seen_ids = set()
+    images = []
+    for d in docs:
+        meta = d.metadata or {}
+        gridfs_id = meta.get("gridfs_id")
+        if meta.get("doc_type") == "standalone_image" and gridfs_id and gridfs_id not in seen_ids:
+            seen_ids.add(gridfs_id)
+            images.append({"filename": meta.get("source", "image"), "fileId": gridfs_id})
+        for embedded in meta.get("embedded_images") or []:
+            embedded_id = embedded.get("gridfs_id")
+            if embedded_id and embedded_id not in seen_ids:
+                seen_ids.add(embedded_id)
+                images.append({"filename": embedded.get("filename", "image"), "fileId": embedded_id})
+    return images
 
 
 def load_user_conversations(username: str) -> list:
@@ -189,6 +218,25 @@ def format_history_as_text(messages) -> str:
         elif isinstance(msg, AIMessage):
             formatted.append(f"Assistant: {msg.content}")
     return "\n".join(formatted)
+
+def save_correction(username: str, user_prompt: str, bad_response: str, reason: str, tag: str, rating: str = "negative") -> None:
+    """Writes a correction/feedback record, shared by the manual feedback endpoint and the
+    reward evaluator's self-correction path. `rating` must actually be persisted for
+    fetch_relevant_corrections' "positive"/"negative" split to work."""
+    db = get_db()
+    if db is None:
+        return
+    db["corrections"].insert_one({
+        "id": str(uuid.uuid4()),
+        "username": username,
+        "user_prompt": user_prompt,
+        "bad_response": bad_response[:400],
+        "reason": reason,
+        "tag": tag,
+        "rating": rating,
+        "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    })
+
 
 def fetch_relevant_corrections(username: str, question: str) -> str:
     db = get_db()

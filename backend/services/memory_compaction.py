@@ -5,9 +5,9 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from backend.models.models import lite_llm
-from backend.components.constraints import MEMORY_COMPACTION_PROMPT
+from backend.components.constraints import MEMORY_COMPACTION_PROMPT, PATTERN_EXTRACTION_PROMPT
 from backend.services.memory_search import USER_MEMORY_COLLECTION, embed_and_store_memory_chunk
-from backend.utils.memory_utils import save_user_fact
+from backend.utils.memory_utils import save_user_fact, load_user_facts
 from backend.utils.embedding_utils import cosine_similarity
 
 logger = logging.getLogger("SASS Logger")
@@ -16,6 +16,7 @@ DEFAULT_COMPACTION_THRESHOLD = int(os.getenv("MEMORY_COMPACTION_THRESHOLD", "100
 DEFAULT_SIMILARITY_THRESHOLD = float(os.getenv("MEMORY_COMPACTION_SIMILARITY", "0.85"))
 DEFAULT_META_COMPACTION_THRESHOLD = int(os.getenv("MEMORY_META_COMPACTION_THRESHOLD", "500"))
 DEFAULT_META_SIMILARITY_THRESHOLD = float(os.getenv("MEMORY_META_COMPACTION_SIMILARITY", "0.90"))
+MIN_FACTS_FOR_PATTERN_EXTRACTION = int(os.getenv("MIN_FACTS_FOR_PATTERN_EXTRACTION", "8"))
 
 TIER1_SOURCE_TYPE = "compacted_summary"
 TIER2_SOURCE_TYPE = "compacted_meta_summary"
@@ -115,6 +116,43 @@ async def _summarize_cluster(cluster: List[dict]) -> dict:
     except Exception:
         logger.exception("[MemoryCompaction] Cluster summarization failed; falling back to raw concatenation.")
         return fallback
+
+
+async def extract_user_patterns(db, username: str) -> dict:
+    """Analyzes a user's accumulated facts as a whole to find recurring higher-level patterns
+    (e.g. "consistently gravitates toward agent systems, workflow engines, operational
+    tooling") — an observation that only emerges by looking across several distinct facts
+    together, not something any single fact-extraction call would produce. Each pattern is
+    saved via save_user_fact with category="pattern", which gets deduplication against
+    previously-saved patterns for free via that function's existing conflict-detection."""
+    facts = load_user_facts(username)
+    if len(facts) < MIN_FACTS_FOR_PATTERN_EXTRACTION:
+        return {"status": "skipped", "reason": "not_enough_facts", "fact_count": len(facts)}
+
+    facts_text = "\n".join(f"- [{f.category}] {f.fact}" for f in facts)
+
+    try:
+        response = await lite_llm.ainvoke(PATTERN_EXTRACTION_PROMPT.format(facts_text=facts_text))
+        raw_content = response.content if hasattr(response, "content") else str(response)
+        if isinstance(raw_content, list):
+            raw_text = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in raw_content])
+        else:
+            raw_text = str(raw_content)
+        clean_json = raw_text.replace("```json", "").replace("```", "").strip()
+        patterns = json.loads(clean_json).get("patterns") or []
+    except Exception:
+        logger.exception("[MemoryCompaction] Pattern extraction failed for %s", username)
+        return {"status": "error", "fact_count": len(facts)}
+
+    patterns_saved = 0
+    for pattern_text in patterns:
+        if isinstance(pattern_text, str) and pattern_text.strip():
+            save_user_fact(username, pattern_text, category="pattern", source="pattern")
+            patterns_saved += 1
+
+    result = {"status": "completed", "fact_count": len(facts), "patterns_saved": patterns_saved}
+    log_compaction_event(db, username, {**result, "type": "pattern_extraction"})
+    return result
 
 
 def log_compaction_event(db, username: str, result: dict) -> None:
@@ -244,6 +282,9 @@ async def maybe_trigger_meta_compaction(db, vector_store, username: str, thresho
         logger.info("[MemoryCompaction] Tier 2 check for %s: pool=%d threshold=%d", username, pool_size, effective_threshold)
         if pool_size > effective_threshold:
             await compact_meta_memory(db, vector_store, username)
+            # Reuse this same "enough has accumulated to warrant a deeper pass" checkpoint to
+            # also look for recurring patterns across the user's accumulated facts.
+            await extract_user_patterns(db, username)
     except Exception:
         logger.exception("[MemoryCompaction] Failed to check/trigger meta-compaction for %s", username)
 

@@ -9,12 +9,293 @@ import sonicSpinImg from '../assets/sonic-rolling.gif';
 import shadowSpinImg from '../assets/shadow.gif';
 import { useAuth } from '@clerk/clerk-react';
 
+interface MessageImage {
+  filename: string;
+  dataUrl?: string; // instant local preview for the message just sent (no round-trip needed)
+  fileId?: string;  // durable GridFS reference, used to fetch the image on reload / another device
+}
+
 interface Message {
   id: string;
   sender: 'user' | 'ai' | 'system';
   text: string;
   feedback?: 'like' | 'dislike' | null;
+  images?: MessageImage[];
 }
+
+const IMAGE_EXTENSION_MIME: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+};
+
+function isImageFilename(filename: string): boolean {
+  const ext = filename.toLowerCase().split('.').pop() || '';
+  return ext in IMAGE_EXTENSION_MIME;
+}
+
+function AttachmentImage({ fileId, filename }: { fileId: string; filename: string }) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl: string | null = null;
+
+    (async () => {
+      try {
+        const headers = await getAuthHeaders();
+        const response = await fetch(`${BASE_URL}/api/attachments/image/${fileId}`, { headers });
+        if (!response.ok) throw new Error(`status ${response.status}`);
+        const blob = await response.blob();
+        objectUrl = URL.createObjectURL(blob);
+        if (!cancelled) setBlobUrl(objectUrl);
+      } catch (e) {
+        console.error(`Failed to load attachment image ${filename}:`, e);
+        if (!cancelled) setFailed(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [fileId]);
+
+  if (failed) return null;
+  if (!blobUrl) return <div className="message-attachment-image-loading">Loading image…</div>;
+  return <img src={blobUrl} alt={filename} className="message-attachment-image" />;
+}
+
+function mapServerMessage(m: any): Message {
+  const attachmentImages: MessageImage[] = Array.isArray(m.attachments)
+    ? m.attachments.map((a: any) => ({ filename: a.filename, fileId: a.gridfs_id }))
+    : [];
+  // kb_images (persisted on the AI message when a retrieved KB doc had a renderable image)
+  // already uses the {filename, fileId} shape directly — see collect_kb_images in app_utils.py.
+  const kbImages: MessageImage[] = Array.isArray(m.kb_images) ? m.kb_images : [];
+  const images = [...attachmentImages, ...kbImages];
+
+  return {
+    id: crypto.randomUUID(),
+    sender: m.type === 'human' ? 'user' : 'ai',
+    text: m.content,
+    images: images.length > 0 ? images : undefined,
+  };
+}
+
+interface ChatMessageListProps {
+  messages: Message[];
+  hasChatted: boolean;
+  loading: boolean;
+  agentStatus: string;
+  theme: "sonic" | "shadow";
+  isEmbedded: boolean;
+  chatWindowRef: React.RefObject<HTMLDivElement | null>;
+  messagesEndRef: React.RefObject<HTMLDivElement | null>;
+  attachmentsRef: React.MutableRefObject<{ filename: string; content: string }[]>;
+  handleSendMessageRef: React.MutableRefObject<(text: string, attachments: { filename: string; content: string }[]) => void>;
+  handleFeedbackRef: React.MutableRefObject<(messageId: string, choice: 'like' | 'dislike') => void>;
+  getTokenRef: React.MutableRefObject<(() => Promise<string | null>) | undefined>;
+}
+
+// Memoized so typing in the message input (which only changes unrelated `input` state in the
+// parent) doesn't force every past message to re-render and re-parse through ReactMarkdown on
+// every keystroke — that cost scales with conversation length and was the actual cause of chat
+// lag getting worse over a long conversation. Handlers are taken as refs (kept fresh by the
+// parent every render — see the useEffect next to handleFeedback's definition) rather than as
+// direct function props, so a skipped re-render here never risks calling a stale closure over
+// sessionId/principal/etc — the same class of bug fixed earlier for attachmentsRef.
+const ChatMessageList = React.memo(function ChatMessageList({
+  messages, hasChatted, loading, agentStatus, theme, isEmbedded,
+  chatWindowRef, messagesEndRef, attachmentsRef, handleSendMessageRef, handleFeedbackRef, getTokenRef,
+}: ChatMessageListProps) {
+  if (!hasChatted) return null;
+
+  return (
+    <div
+      className="chat-window"
+      ref={chatWindowRef}
+      style={isEmbedded ? undefined : { maxHeight: 'calc(100vh - 380px)', overflowY: 'auto' }}
+    >
+      {messages
+        .filter(msg => !(hasChatted && msg.sender === 'system'))
+        .map(msg => {
+          // Extract follow-up tag and strip it from the displayed message text
+          const { cleanContent, followUp } = msg.sender === 'ai'
+            ? parseFollowUp(msg.text)
+            : { cleanContent: msg.text, followUp: null };
+
+          return (
+            <div key={msg.id} className={`message-bubble ${msg.sender}`}>
+              <div className="message-sender">{msg.sender.toUpperCase()}</div>
+              {msg.images && msg.images.length > 0 && (
+                <div className="message-attachment-images">
+                  {msg.images.map((img, idx) =>
+                    img.dataUrl ? (
+                      <img key={idx} src={img.dataUrl} alt={img.filename} className="message-attachment-image" />
+                    ) : img.fileId ? (
+                      <AttachmentImage key={idx} fileId={img.fileId} filename={img.filename} />
+                    ) : null
+                  )}
+                </div>
+              )}
+              <div className="message-text">
+                <ReactMarkdown
+                  components={{
+                    a: ({ href, children, node, ...rest }: any) => {
+                      const finalHref = href?.startsWith('/')
+                        ? `${BASE_URL.replace(/\/$/, '')}${href}`
+                        : href;
+                      const isDownloadLink = finalHref?.includes('/api/documents/download/');
+                      const normalizedLabel = React.Children.toArray(children)
+                        .map((child) => (typeof child === 'string' ? child : ''))
+                        .join(' ')
+                        .replace(/\s+/g, ' ')
+                        .trim();
+
+                      const handleClick = async (e: React.MouseEvent) => {
+                        if (isDownloadLink && finalHref) {
+                          e.preventDefault();
+                          const newTab = window.open('', '_blank');
+                          if (newTab) {
+                            newTab.document.write('<html><body style="background: #121824; color: #fff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;"><h3>Loading secure document preview...</h3></body></html>');
+                          }
+                          try {
+                            let token = null;
+                            const isGuest = ['guest', 'guest_bty'].includes(localStorage.getItem('principal') || '');
+                            if (isGuest) {
+                              token = localStorage.getItem('guest_token');
+                            } else if (getTokenRef.current) {
+                              token = await getTokenRef.current();
+                            }
+                            const response = await fetch(finalHref, {
+                              headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                            });
+                            if (!response.ok) throw new Error(`Server responded with status ${response.status}`);
+                            const blob = await response.blob();
+                            const blobUrl = window.URL.createObjectURL(blob);
+                            if (newTab) newTab.location.href = blobUrl;
+                            else window.open(blobUrl, '_blank');
+                          } catch (err) {
+                            console.error("Document preview failed:", err);
+                            if (newTab) newTab.close();
+                            alert("Failed to load document. Please check your session.");
+                          }
+                        }
+                      };
+
+                      return (
+                        <a
+                          {...rest}
+                          href={finalHref}
+                          onClick={handleClick}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={isDownloadLink ? 'citation-link citation-link-document' : 'citation-link'}
+                          style={{ cursor: 'pointer' }}
+                        >
+                          {normalizedLabel || children}
+                        </a>
+                      );
+                    },
+                  }}
+                >
+                  {cleanContent}
+                </ReactMarkdown>
+              </div>
+
+              {/* Clickable Follow-Up Suggestion Button */}
+              {msg.sender === 'ai' && followUp && !loading && (
+                <div className="follow-up-container" style={{ marginTop: '10px' }}>
+                  <button
+                    type="button"
+                    onClick={() => handleSendMessageRef.current(followUp, attachmentsRef.current)}
+                    className="follow-up-btn"
+                    style={{
+                      background: 'rgba(6, 182, 212, 0.1)',
+                      border: '1px solid rgba(6, 182, 212, 0.4)',
+                      color: '#22d3ee',
+                      borderRadius: '16px',
+                      padding: '6px 14px',
+                      fontSize: '0.85rem',
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      transition: 'all 0.2s ease',
+                    }}
+                  >
+                    <span>✨ {followUp}</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Feedback Buttons */}
+              {msg.sender === 'ai' && !loading && msg.text && (
+                <div className="feedback-actions" style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => handleFeedbackRef.current(msg.id, 'like')}
+                    className={`circle-icon-button ${msg.feedback === 'like' ? 'active' : ''}`}
+                    title="Helpful"
+                    style={msg.feedback === 'like' ? { color: '#22c55e', borderColor: '#22c55e', background: '#22c55e' } : {}}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
+                    </svg>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleFeedbackRef.current(msg.id, 'dislike')}
+                    className={`circle-icon-button ${msg.feedback === 'dislike' ? 'active' : ''}`}
+                    title="Not helpful"
+                    style={msg.feedback === 'dislike' ? { color: '#ef4444', borderColor: '#ef4444' } : {}}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3" />
+                    </svg>
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+      {/* Live Node Steps & Spinning Animation Container */}
+      {loading && (
+        isEmbedded ? (
+          <div className="bty-loader-container">
+            <div className="bty-loader-dots">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            <div className="loading-text">
+              {getNodeLabel(agentStatus) || "Thinking..."}
+            </div>
+          </div>
+        ) : (
+          <div className="sonic-loader-container">
+            <img
+              src={theme === 'sonic' ? sonicSpinImg : shadowSpinImg}
+              alt="loading"
+              style={{ width: '48px', height: '48px' }}
+            />
+            <div className="loading-text">
+              {getNodeLabel(agentStatus) || "Collecting rings and tokens..."}
+            </div>
+          </div>
+        )
+      )}
+      <div ref={messagesEndRef} />
+    </div>
+  );
+});
 
 interface ChatPageProps {
   theme: "sonic" | "shadow";
@@ -35,6 +316,35 @@ const parseFollowUp = (content: string) => {
   const cleanContent = content.replace(/<<<FOLLOW_UP:\s*.*?>>>/s, '').trim();
   const followUp = match[1].trim();
   return { cleanContent, followUp };
+};
+
+const getNodeLabel = (nodeName: string): string => {
+  switch (nodeName) {
+    case 'coordinator_node': return 'Analyzing intent and planning route...';
+    case 'reasoner_node': return 'Evaluating request context...';
+    case 'memory_node': return 'Updating memory and preferences...';
+    case 'retrieve_node': return 'GraphRAG Retrieval in progress...';
+    case 'grade_documents_node': return 'Evaluating document relevance...';
+    case 'rewrite_query_node': return 'Refining search parameters...';
+    case 'summarizer_node': return 'Summarizing retrieved documents...';
+    case 'formatter_node': return 'Formatting output structure...';
+    case 'conversational_node': return 'Generating response...';
+    case 'generate_node': return 'Collecting rings and generating tokens...';
+    case 'paapp_node': return 'Processing schedule and task data...';
+    case 'web_search_node': return 'Searching the web for real-time info...';
+    case 'code_interpreter_node': return 'Executing query in code interpreter...';
+    case 'github_search': return 'Searching GitHub repositories...';
+    case 'pr_summary': return 'Analyzing pull request changes...';
+    case 'draft_pr_node': return 'Drafting pull request...';
+    case 'execute_pr_node': return 'Executing pull request action...';
+    case 'snapshot_node': return 'Taking analytical data snapshot...';
+    case 'classifier_node': return 'Classifying activity patterns...';
+    case 'pattern_node': return 'Detecting behavioral patterns...';
+    case 'trend_node': return 'Analyzing metrics and trends...';
+    case 'insight_query_node': return 'Synthesizing data insights...';
+    case 'reward_evaluator': return 'Reconsidering that answer...';
+    default: return nodeName ? `Processing step: ${nodeName}` : 'Collecting rings and tokens...';
+  }
 };
 
 export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
@@ -205,11 +515,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
         if (cancelled) return;
         const serverMessages: Message[] = (conversation.messages || [])
           .filter((m: any) => m.type !== 'system')
-          .map((m: any) => ({
-            id: genId(),
-            sender: m.type === 'human' ? 'user' : 'ai',
-            text: m.content,
-          }));
+          .map(mapServerMessage);
         if (serverMessages.length > 0) {
           setMessages(serverMessages);
           setHasChatted(serverMessages.some(m => m.sender === 'user'));
@@ -354,11 +660,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
       const conversation = await api.getConversation(newSessionId);
       const restored: Message[] = (conversation.messages || [])
         .filter((m: any) => m.type !== 'system')
-        .map((m: any) => ({
-          id: genId(),
-          sender: m.type === 'human' ? 'user' : 'ai',
-          text: m.content,
-        }));
+        .map(mapServerMessage);
       localStorage.setItem(`conversation-id-${principal}`, newSessionId);
       setSessionId(newSessionId);
       setMessages(restored.length ? restored : [
@@ -374,15 +676,8 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     }
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-
-    const fileArray = Array.from(files);
-    setUploadedFiles(prev => [...prev, ...fileArray]);
-
-    const file = fileArray[0];
-    if (!file) return;
+  const addAttachmentFile = (file: File) => {
+    setUploadedFiles(prev => [...prev, file]);
 
     const reader = new FileReader();
     reader.onload = async () => {
@@ -392,7 +687,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
       setAttachments(prev => [...prev, { filename: file.name, content: base64 }]);
       setAttachedFiles(prev => [...prev, file]);
 
-      await fetch(`${BASE_URL}api/upload-attachment`, {
+      await fetch(`${BASE_URL}/api/upload-attachment`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -404,6 +699,30 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
       });
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    Array.from(files).forEach(addAttachmentFile);
+  };
+
+  const handlePastedImage = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    Array.from(items).forEach((item) => {
+      if (!item.type.startsWith("image/")) return;
+      const file = item.getAsFile();
+      if (!file) return;
+
+      // Clipboard image files typically come back with a generic/blank name (e.g. "image.png")
+      // regardless of actual format, so synthesize one from the MIME type instead of trusting
+      // file.name — the backend's is_image_attachment() check keys off the file extension.
+      const ext = item.type.split("/")[1] || "png";
+      const pastedFile = new File([file], `pasted-image-${Date.now()}.${ext}`, { type: file.type });
+      addAttachmentFile(pastedFile);
+    });
   };
 
   const handleExportChat = () => {
@@ -451,34 +770,6 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     const timer = setTimeout(scrollToBottom, 50);
     return () => clearTimeout(timer);
   }, [messages, loading]);
-
-  const getNodeLabel = (nodeName: string): string => {
-    switch (nodeName) {
-      case 'coordinator_node': return 'Analyzing intent and planning route...';
-      case 'reasoner_node': return 'Evaluating request context...';
-      case 'memory_node': return 'Updating memory and preferences...';
-      case 'retrieve_node': return 'GraphRAG Retrieval in progress...';
-      case 'grade_documents_node': return 'Evaluating document relevance...';
-      case 'rewrite_query_node': return 'Refining search parameters...';
-      case 'summarizer_node': return 'Summarizing retrieved documents...';
-      case 'formatter_node': return 'Formatting output structure...';
-      case 'conversational_node': return 'Generating response...';
-      case 'generate_node': return 'Collecting rings and generating tokens...';
-      case 'paapp_node': return 'Processing schedule and task data...';
-      case 'web_search_node': return 'Searching the web for real-time info...';
-      case 'code_interpreter_node': return 'Executing query in code interpreter...';
-      case 'github_search': return 'Searching GitHub repositories...';
-      case 'pr_summary': return 'Analyzing pull request changes...';
-      case 'draft_pr_node': return 'Drafting pull request...';
-      case 'execute_pr_node': return 'Executing pull request action...';
-      case 'snapshot_node': return 'Taking analytical data snapshot...';
-      case 'classifier_node': return 'Classifying activity patterns...';
-      case 'pattern_node': return 'Detecting behavioral patterns...';
-      case 'trend_node': return 'Analyzing metrics and trends...';
-      case 'insight_query_node': return 'Synthesizing data insights...';
-      default: return nodeName ? `Processing step: ${nodeName}` : 'Collecting rings and tokens...';
-    }
-  };
 
   const addTraceStep = (payload: any) => {
     const title = payload?.title || payload?.message || "Agent step";
@@ -532,9 +823,19 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     setTraceSteps([]);
     if (!textToSend.trim() || loading) return;
 
+    // Instant local preview from the base64 content already in hand — no round-trip needed.
+    // The durable, cross-device version comes back later via mapServerMessage's fileId path.
+    const imageAttachments: MessageImage[] = currentAttachments
+      .filter(a => isImageFilename(a.filename))
+      .map(a => {
+        const ext = a.filename.toLowerCase().split('.').pop() || '';
+        const mime = IMAGE_EXTENSION_MIME[ext] || 'application/octet-stream';
+        return { filename: a.filename, dataUrl: `data:${mime};base64,${a.content}` };
+      });
+
     setMessages(prev => [
       ...prev,
-      { id: genId(), sender: 'user', text: textToSend },
+      { id: genId(), sender: 'user', text: textToSend, images: imageAttachments.length ? imageAttachments : undefined },
       { id: genId(), sender: 'ai', text: '' }
     ]);
 
@@ -550,7 +851,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
       await api.sendChatMessage(
         principal,
         textToSend,
-        attachments,
+        currentAttachments,
         selectedAffiliate,
         sessionId,
         (rawChunk) => {
@@ -591,6 +892,35 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
                   return updated;
                 });
               }
+              if (payload.event === 'regenerate_reset') {
+                // A retry (self-correction or rewrite fallback) is about to stream a fresh
+                // response — clear the in-progress bubble so its tokens don't concatenate
+                // onto the previous (discarded) attempt's text.
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const lastIndex = updated.length - 1;
+                  if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
+                    updated[lastIndex] = { ...updated[lastIndex], text: '' };
+                  }
+                  return updated;
+                });
+              }
+              if (payload.event === 'kb_images') {
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const lastIndex = updated.length - 1;
+                  if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
+                    const existing = updated[lastIndex].images || [];
+                    const incoming: MessageImage[] = payload.images || [];
+                    const merged = [
+                      ...existing,
+                      ...incoming.filter(img => !existing.some(e => e.fileId === img.fileId))
+                    ];
+                    updated[lastIndex] = { ...updated[lastIndex], images: merged };
+                  }
+                  return updated;
+                });
+              }
               if (payload.event === 'final_generation') {
                 if (!hasStreamedRef.current) {
                   hasStreamedRef.current = true;
@@ -626,6 +956,15 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
           }
         }
       );
+
+      // Attachments are scoped to the turn that sent them (already durably stored server-side
+      // via ingest_doc_to_session) — clear them so they aren't silently re-sent and reprocessed
+      // on every subsequent message in this conversation.
+      if (currentAttachments.length > 0) {
+        setAttachments([]);
+        setAttachedFiles([]);
+        setUploadedFiles([]);
+      }
     } catch (err) {
       console.error("Chat send failed:", err);
       postPatchyStatus('error');
@@ -656,6 +995,18 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   // Handle positive feedback immediately
   await sendFeedbackPayload(messageId, 'like', 'Positive feedback', 'positive');
 };
+
+// Refs kept in sync with the latest closures on every render, so the memoized ChatMessageList
+// below can skip re-rendering on unrelated state changes (e.g. typing) without ever calling a
+// stale version of these handlers — the same stale-closure fix applied earlier to attachmentsRef.
+const handleSendMessageRef = useRef(handleSendMessage);
+const handleFeedbackRef = useRef(handleFeedback);
+const getTokenRef = useRef(getToken);
+useEffect(() => {
+  handleSendMessageRef.current = handleSendMessage;
+  handleFeedbackRef.current = handleFeedback;
+  getTokenRef.current = getToken;
+});
 
 const sendFeedbackPayload = async (
   messageId: string,
@@ -757,175 +1108,20 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
         )}
 
         {/* 2. CHAT MESSAGES WINDOW */}
-        {hasChatted && (
-          <div
-            className="chat-window"
-            ref={chatWindowRef}
-            style={isEmbedded ? undefined : { maxHeight: 'calc(100vh - 380px)', overflowY: 'auto' }}
-          >
-            {messages
-              .filter(msg => !(hasChatted && msg.sender === 'system'))
-              .map(msg => {
-                // Extract follow-up tag and strip it from the displayed message text
-                const { cleanContent, followUp } = msg.sender === 'ai' 
-                  ? parseFollowUp(msg.text) 
-                  : { cleanContent: msg.text, followUp: null };
-
-                return (
-                  <div key={msg.id} className={`message-bubble ${msg.sender}`}>
-                    <div className="message-sender">{msg.sender.toUpperCase()}</div>
-                    <div className="message-text">
-                      <ReactMarkdown
-                        components={{
-                          a: ({ href, children, node, ...rest }: any) => {
-                            const finalHref = href?.startsWith('/')
-                              ? `${BASE_URL.replace(/\/$/, '')}${href}`
-                              : href;
-                            const isDownloadLink = finalHref?.includes('/api/documents/download/');
-                            const normalizedLabel = React.Children.toArray(children)
-                              .map((child) => (typeof child === 'string' ? child : ''))
-                              .join(' ')
-                              .replace(/\s+/g, ' ')
-                              .trim();
-
-                            const handleClick = async (e: React.MouseEvent) => {
-                              if (isDownloadLink && finalHref) {
-                                e.preventDefault();
-                                const newTab = window.open('', '_blank');
-                                if (newTab) {
-                                  newTab.document.write('<html><body style="background: #121824; color: #fff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;"><h3>Loading secure document preview...</h3></body></html>');
-                                }
-                                try {
-                                  let token = null;
-                                  const isGuest = ['guest', 'guest_bty'].includes(localStorage.getItem('principal') || '');
-                                  if (isGuest) {
-                                    token = localStorage.getItem('guest_token');
-                                  } else if (getToken) {
-                                    token = await getToken();
-                                  }
-                                  const response = await fetch(finalHref, {
-                                    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-                                  });
-                                  if (!response.ok) throw new Error(`Server responded with status ${response.status}`);
-                                  const blob = await response.blob();
-                                  const blobUrl = window.URL.createObjectURL(blob);
-                                  if (newTab) newTab.location.href = blobUrl;
-                                  else window.open(blobUrl, '_blank');
-                                } catch (err) {
-                                  console.error("Document preview failed:", err);
-                                  if (newTab) newTab.close();
-                                  alert("Failed to load document. Please check your session.");
-                                }
-                              }
-                            };
-
-                            return (
-                              <a
-                                {...rest}
-                                href={finalHref}
-                                onClick={handleClick}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className={isDownloadLink ? 'citation-link citation-link-document' : 'citation-link'}
-                                style={{ cursor: 'pointer' }}
-                              >
-                                {normalizedLabel || children}
-                              </a>
-                            );
-                          },
-                        }}
-                      >
-                        {cleanContent}
-                      </ReactMarkdown>
-                    </div>
-
-                    {/* Clickable Follow-Up Suggestion Button */}
-                    {msg.sender === 'ai' && followUp && !loading && (
-                      <div className="follow-up-container" style={{ marginTop: '10px' }}>
-                        <button
-                          type="button"
-                          onClick={() => handleSendMessage(followUp, attachmentsRef.current)}
-                          className="follow-up-btn"
-                          style={{
-                            background: 'rgba(6, 182, 212, 0.1)',
-                            border: '1px solid rgba(6, 182, 212, 0.4)',
-                            color: '#22d3ee',
-                            borderRadius: '16px',
-                            padding: '6px 14px',
-                            fontSize: '0.85rem',
-                            cursor: 'pointer',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            transition: 'all 0.2s ease',
-                          }}
-                        >
-                          <span>✨ {followUp}</span>
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Feedback Buttons */}
-                    {msg.sender === 'ai' && !loading && msg.text && (
-                      <div className="feedback-actions" style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
-                        <button 
-                          type="button"
-                          onClick={() => handleFeedback(msg.id, 'like')}
-                          className={`circle-icon-button ${msg.feedback === 'like' ? 'active' : ''}`}
-                          title="Helpful"
-                          style={msg.feedback === 'like' ? { color: '#22c55e', borderColor: '#22c55e', background: '#22c55e' } : {}}
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
-                          </svg>
-                        </button>
-
-                        <button 
-                          type="button"
-                          onClick={() => handleFeedback(msg.id, 'dislike')}
-                          className={`circle-icon-button ${msg.feedback === 'dislike' ? 'active' : ''}`}
-                          title="Not helpful"
-                          style={msg.feedback === 'dislike' ? { color: '#ef4444', borderColor: '#ef4444' } : {}}
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3" />
-                          </svg>
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-
-            {/* Live Node Steps & Spinning Animation Container */}
-            {loading && (
-              isEmbedded ? (
-                <div className="bty-loader-container">
-                  <div className="bty-loader-dots">
-                    <span></span>
-                    <span></span>
-                    <span></span>
-                  </div>
-                  <div className="loading-text">
-                    {getNodeLabel(agentStatus) || "Thinking..."}
-                  </div>
-                </div>
-              ) : (
-                <div className="sonic-loader-container">
-                  <img
-                    src={theme === 'sonic' ? sonicSpinImg : shadowSpinImg}
-                    alt="loading"
-                    style={{ width: '48px', height: '48px' }}
-                  />
-                  <div className="loading-text">
-                    {getNodeLabel(agentStatus) || "Collecting rings and tokens..."}
-                  </div>
-                </div>
-              )
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-        )}
+        <ChatMessageList
+          messages={messages}
+          hasChatted={hasChatted}
+          loading={loading}
+          agentStatus={agentStatus}
+          theme={theme}
+          isEmbedded={isEmbedded}
+          chatWindowRef={chatWindowRef}
+          messagesEndRef={messagesEndRef}
+          attachmentsRef={attachmentsRef}
+          handleSendMessageRef={handleSendMessageRef}
+          handleFeedbackRef={handleFeedbackRef}
+          getTokenRef={getTokenRef}
+        />
 
         {/* 3. INPUT AREA & FOOTER */}
         <footer className="controls-footer" style={{ position: 'relative' }}>
@@ -1006,6 +1202,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                     onSubmitForm(e);
                   }
                 }}
+                onPaste={handlePastedImage}
                 disabled={loading}
                 rows={2}
               />
