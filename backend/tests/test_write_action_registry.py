@@ -289,13 +289,16 @@ async def test_mongo_write_proposal_to_execution_end_to_end(monkeypatch):
 
     assert proposal["pending_action"]["action_type"] == "run_mongo_write"
 
-    # Step 2: user approves — this exact continuation could not work before Phase 2, since
-    # nothing ever transitioned the old code_approval_status field to "approved".
-    followup_state = {
-        **state,
-        "messages": state["messages"] + [AIMessage(content=proposal["content_to_format"]), HumanMessage(content="yes, approved")],
-        "pending_action": proposal["pending_action"],
-    }
+    # Step 2: user approves, as a TRULY independent turn — no pending_action carried over
+    # (it never survives between real chat turns; see app.py's initial_state, rebuilt fresh
+    # from stored messages every request). Only the card text the assistant actually sent
+    # persists. classify_intent must resolve write_action from that card text alone, the same
+    # way a real second HTTP request would.
+    followup_messages = state["messages"] + [AIMessage(content=proposal["content_to_format"]), HumanMessage(content="yes, approved")]
+    followup_state = {"username": "jack", "messages": followup_messages, "documents": []}
+    assert aw.classify_intent("yes, approved", state=followup_state) == "execute_write"
+    assert followup_state["write_action"] == "run_mongo_write"
+
     result = aw.execute_write_node(followup_state)
 
     assert fake_db.tasks.deleted is True

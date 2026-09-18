@@ -193,18 +193,26 @@ def classify_intent(message: str, state: dict = None) -> str:
         logger.debug(f"user_messages[{i}]: {um.content}")
 
     # Any registered write action (PR, issue, Mongo write, and whatever gets registered next)
-    # is detected generically here instead of one hardcoded block per action name.
-    if len(user_messages) >= 2:
-        prev_user_msg = user_messages[-2].content.lower()
-        logger.debug(f"Previous user message: {prev_user_msg}")
-
-        for action_name, action in WRITE_ACTIONS.items():
-            if any(phrase in prev_user_msg for phrase in action.get("trigger_phrases", [])):
-                logger.debug(f"Detected '{action_name}' creation in previous user message")
-                if APPROVAL_PATTERN.search(msg_clean):
-                    logger.debug("Approval keyword detected — returning execute_write")
-                    return "execute_write"
-                break
+    # is detected from the ASSISTANT'S OWN prior card text, not the user's original phrasing —
+    # more reliable (exact text we generated ourselves) and the only signal that generalizes to
+    # actions like Mongo writes with no fixed user-typed trigger phrase. pending_action never
+    # survives between chat turns in this app (every turn rebuilds state fresh from stored
+    # messages — see app.py's initial_state), so this is the only reliable way to know what a
+    # bare "approve" two turns later is actually approving.
+    if len(messages) >= 2:
+        prev_content = _content_of(messages[-2])
+        matched_action = next(
+            (name for name, action in WRITE_ACTIONS.items() if action.get("card_marker") and action["card_marker"] in prev_content),
+            None,
+        )
+        if matched_action:
+            logger.debug(f"Detected pending '{matched_action}' approval card in previous message")
+            if APPROVAL_PATTERN.search(msg_clean):
+                state["write_action"] = matched_action
+                logger.debug("Approval keyword detected — returning execute_write")
+                return "execute_write"
+            if REJECTION_PATTERN.search(msg_clean):
+                return "cancel_action"
 
     pending_action = state.get("pending_action") or {}
     status = pending_action.get("status")
@@ -2927,6 +2935,25 @@ def _is_complete_run_mongo_write(details: dict) -> bool:
     return bool(details.get("code"))
 
 
+def _recover_run_mongo_write(messages: list, repo_hint: str) -> dict | None:
+    """Unlike a title or branch name, drafted code can't be reliably reconstructed from a
+    user's *rephrasing* of what they asked for — but it doesn't need to be: the exact code is
+    already sitting verbatim in the assistant's own prior approval card, in message history,
+    the same way the PR/issue cards carry their own exact title/branches. Re-reading our own
+    generated text is reliable in a way re-deriving from new user text never would be."""
+    for msg in reversed(messages or []):
+        content = _content_of(msg)
+        if "Ready to run this database operation" in content:
+            code_match = re.search(r"```python\n([\s\S]*?)\n```", content)
+            purpose_match = re.search(r"\*\*Purpose:\*\*\s*(.+)", content)
+            if code_match:
+                return {
+                    "code": code_match.group(1).strip(),
+                    "purpose": purpose_match.group(1).strip() if purpose_match else "Database operation",
+                }
+    return None
+
+
 WRITE_ACTIONS = {
     "create_pr": {
         "required_role": "Global_Admins",
@@ -2934,7 +2961,12 @@ WRITE_ACTIONS = {
         "execute": _execute_create_pr,
         "is_complete": _is_complete_create_pr,
         "recover_from_history": _recover_create_pr,
-        "trigger_phrases": ["create pr", "merge", "pull request"],
+        # card_marker is the load-bearing signal for cross-turn approval detection: pending_action
+        # never survives between chat turns in this app (each turn rebuilds state fresh from
+        # stored messages — see app.py's initial_state), so recognizing "the assistant's last
+        # message was proposing this action" from its own card text is the only reliable way to
+        # know what a bare "approve" reply two turns later is actually approving.
+        "card_marker": "Ready to create a Pull Request",
     },
     "create_issue": {
         "required_role": "Global_Admins",
@@ -2942,7 +2974,7 @@ WRITE_ACTIONS = {
         "execute": _execute_create_issue,
         "is_complete": _is_complete_create_issue,
         "recover_from_history": _recover_create_issue,
-        "trigger_phrases": ["create issue", "open issue", "file a bug", "file an issue"],
+        "card_marker": "Ready to open a GitHub Issue",
     },
     "run_mongo_write": {
         "required_role": "Global_Admins",
@@ -2951,8 +2983,8 @@ WRITE_ACTIONS = {
         "draft": None,
         "execute": _execute_run_mongo_write,
         "is_complete": _is_complete_run_mongo_write,
-        "recover_from_history": None,  # a DB write can't be honestly reconstructed from chat text
-        "trigger_phrases": [],
+        "recover_from_history": _recover_run_mongo_write,
+        "card_marker": "Ready to run this database operation",
     },
 }
 
@@ -3010,7 +3042,11 @@ def execute_write_node(state: dict) -> dict:
         node_input = state.copy()
 
         pending_raw = state.get("pending_action") or {}
-        action_name = pending_raw.get("action_type")
+        # pending_action is always empty here in real usage (it never survives between chat
+        # turns — see the comment above classify_intent's card-marker detection), so
+        # state["write_action"] — set from the assistant's own prior card text — is the
+        # fallback that actually makes this resolvable in practice, not an edge case.
+        action_name = pending_raw.get("action_type") or state.get("write_action")
         action = WRITE_ACTIONS.get(action_name)
         if not action:
             return {
