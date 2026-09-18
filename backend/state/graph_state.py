@@ -42,7 +42,7 @@ class GraphState(TypedDict):
     pr_number: Optional[int]
     pr_review_status: Optional[str]
     comment_url: Optional[str]
-    formatted_output: Optional[str]
+    voice_payload: Optional[Dict[str, Any]]  # Assembled by formatter_node; consumed by build_voice_prompt in app.py
     user_groups: List[str]
     pending_action: Optional[Dict[str, Any]]  # Stores original draft payload
     user_decision: Optional[str]              # "approve" | "modify" | "reject"

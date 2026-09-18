@@ -33,7 +33,14 @@ from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_community.vectorstores import Chroma
 from backend.components.time_storage import TimeEntry
-from backend.components.constraints import get_system_prompt, CONVERSATIONAL_PROMPT, WEB_SEARCH_PROMPT, CODE_INTERPRETER_PROMPT, GITHUB_FORMAT_PROMPT, PR_FORMAT_PROMPT, format_docs
+from backend.components.constraints import (
+    format_docs,
+    build_voice_prompt,
+    GROUNDING_BLOCKS,
+    KB_STRICT_GROUNDING,
+    get_affiliate_override,
+    IMAGE_RENDERING_NOTE_TEMPLATE,
+)
 from backend.services.search import discover_workspace_documents
 from local_function_app.function_app import run_ingestion_pipeline, HOT_FOLDER_DIR
 from backend.state.graph_state import GraphState
@@ -48,15 +55,23 @@ from backend.utils.app_utils import (
     serialize_doc,
     load_chat_history,
     fetch_relevant_corrections,
+    save_correction,
     extract_target_repo,
     resolve_app_ingest_repo,
     validate_app_ingest_identity,
     pick_repo_from_metadata,
     resolve_target_repo,
     run_synthetic_read_only_question,
-    index_conversation_turn
+    index_conversation_turn,
+    collect_kb_images
 )
-from backend.utils.attachment_utils import process_user_attachment, ingest_doc_to_session
+from backend.utils.attachment_utils import (
+    process_user_attachment,
+    ingest_doc_to_session,
+    is_image_attachment,
+    store_image_in_gridfs,
+    guess_image_mime_type,
+)
 from backend.utils.memory_utils import (
     fetch_relevant_user_facts,
     load_user_facts,
@@ -67,6 +82,7 @@ from backend.services.memory_compaction import compact_user_memory, compact_meta
 from backend.services.memory_search import retrieve_relevant_memory_context
 from backend.utils.user_settings_utils import get_user_rag_mode, set_user_rag_mode, VALID_RAG_MODES
 from backend.utils.fallback_utils import rewrite_fallback
+from backend.services.reward_evaluator import evaluate_response, build_correction_prompt, REWARD_EVAL_SOURCE_TYPES
 from backend.logging.sass_logger import setup_logging
 from backend.services.orchestrator import startup_services
 from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, verify_paapp_access, load_directory, seed_guest_tasks
@@ -87,6 +103,24 @@ def is_local_dev():
 aiohttp.resolver.DefaultResolver = aiohttp.resolver.ThreadedResolver
 os.environ["AIOHTTP_NO_EXTENSIONS"] = "1"
 sys.path.append(os.path.join(os.path.dirname(__file__), "local_function_app"))
+
+if sys.platform == "win32":
+    # ProactorEventLoop's pipe transport teardown raises ConnectionResetError when the remote
+    # side already reset the connection (WinError 10054) — a harmless artifact of closing an
+    # already-dead socket, not a real failure, but it surfaces as an unhandled asyncio exception
+    # and gets reported as one (e.g. by errAgent's asyncio exception hook). Swallow it at the
+    # source instead of letting every exception-reporting layer downstream treat it as real.
+    from asyncio.proactor_events import _ProactorBasePipeTransport
+
+    _original_call_connection_lost = _ProactorBasePipeTransport._call_connection_lost
+
+    def _call_connection_lost_quietly(self, exc):
+        try:
+            _original_call_connection_lost(self, exc)
+        except (ConnectionResetError, ConnectionAbortedError, OSError):
+            pass
+
+    _ProactorBasePipeTransport._call_connection_lost = _call_connection_lost_quietly
 
 # 2. Define the startup/shutdown logic
 @asynccontextmanager
@@ -436,14 +470,27 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
 
     # ---------- Early Attachments Processing ----------
     attachment_summaries = []
+    attachment_refs = []
     if request.attachments:
         logger.info(f"Processing {len(request.attachments)} attachments for {username}")
+        db = get_db()
         for att in request.attachments:
             ingest_doc_to_session(username, session_id, att)
             summary = process_user_attachment(att)
             if summary:
                 attachment_summaries.append(summary)
-                
+            if is_image_attachment(att.filename):
+                gridfs_id = store_image_in_gridfs(db, username, session_id, att)
+                if gridfs_id:
+                    attachment_refs.append({
+                        "filename": att.filename,
+                        "gridfs_id": gridfs_id,
+                        "content_type": guess_image_mime_type(att.filename),
+                    })
+
+    if attachment_refs:
+        chat_sessions[history_key][-1].additional_kwargs["attachments"] = attachment_refs
+
     initial_state["attachment_summaries"] = attachment_summaries
     if attachment_summaries:
         initial_state["documents"] = [Document(
@@ -530,27 +577,32 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                 log_timings(relevance_grade, "card")
                 return
 
-            is_conversational_recall_path = False
-            if relevance_grade == "web_search":
-                prompt = WEB_SEARCH_PROMPT.format(context=format_docs(documents), question=question)
-            elif relevance_grade == "code_interpreter":
-                prompt = CODE_INTERPRETER_PROMPT.format(content=final_state.get("content_to_format", ""), question=question)
-            elif relevance_grade == "github_search":
-                prompt = GITHUB_FORMAT_PROMPT.format(content=final_state.get("content_to_format", ""), question=question)
-            elif relevance_grade == "pr_summary":
-                prompt = PR_FORMAT_PROMPT.format(content=final_state.get("content_to_format", ""), question=question)
-            elif insight_answer:
-                prompt = CONVERSATIONAL_PROMPT.format(username=username, question=question, history=format_history_as_text(messages_state), insight=insight_answer)
-                is_conversational_recall_path = True
-            elif relevance_grade == "conversational":
-                prompt = CONVERSATIONAL_PROMPT.format(username=username, question=question, history=format_history_as_text(messages_state), insight="")
-                is_conversational_recall_path = True
-            else:
-                final_question = final_state.get("original_question", question)
-                accessible_affiliates_str = ", ".join(final_state.get("target_scope", target_scope))
-                instructions = get_system_prompt(username, accessible_affiliates_str, effective_rag_mode)
-                documents_sorted = sorted(documents, key=lambda d: d.metadata.get("priority", False), reverse=True)
-                prompt = instructions.format(context=format_docs(documents_sorted), history=format_history_as_text(messages_state), question=final_question)
+            # Single unified Voice Composer: one Sonic Assistant persona for every response
+            # path, with only the grounding rules varying by source_type (assembled by
+            # formatter_node into voice_payload — see backend/services/agent_workflow.py).
+            payload = final_state.get("voice_payload") or {}
+            source_type = payload.get("source_type", "kb_strict")
+            documents_sorted = sorted(documents, key=lambda d: d.metadata.get("priority", False), reverse=True)
+            data = payload.get("data") or format_docs(documents_sorted)
+            kb_images = collect_kb_images(documents_sorted) if source_type in ("kb_strict", "kb_open") else []
+
+            prompt = build_voice_prompt(
+                grounding_block=GROUNDING_BLOCKS.get(source_type, KB_STRICT_GROUNDING),
+                data=data,
+                history=format_history_as_text(messages_state),
+                question=final_state.get("original_question", question),
+                affiliate_override=get_affiliate_override(requested_affiliate),
+                insight=payload.get("insight") or "",
+            )
+            if kb_images:
+                # The composer has no innate way to know an image will actually be rendered
+                # alongside this response — without this, the model falls back on its default
+                # "I'm text-only" assumption and apologizes for a limitation that no longer applies.
+                image_names = ", ".join(img["filename"] for img in kb_images)
+                prompt = prompt + IMAGE_RENDERING_NOTE_TEMPLATE.format(image_names=image_names)
+
+            if kb_images:
+                yield f"data: {json.dumps({'event': 'kb_images', 'images': kb_images})}\n\n"
 
             # Announce LLM generation start
             yield f"data: {json.dumps({'event': 'node_progress', 'node': 'formatter_node', 'title': 'Formatting output structure...', 'detail': f'Synthesizing final answer for {question[:30]}...'})}\n\n"
@@ -566,7 +618,20 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                 prompt = prompt + memory_context
                 yield f"data: {json.dumps({'event': 'node_progress', 'node': 'user_memory', 'title': 'Applying known user context', 'detail': 'Injected saved preferences/facts into context prompt.'})}\n\n"
 
-            if is_conversational_recall_path:
+            # The unified voice prompt's {data} slot is populated from voice_payload/documents
+            # above, but attachment summaries are appended separately here (unchanged) since
+            # they're always relevant to this specific turn regardless of source_type.
+            attachment_docs = [d for d in documents if d.metadata.get("source") == "user_attachment_summary"]
+            if attachment_docs:
+                attachment_context = (
+                    "\n\nATTACHED FILE CONTENT (from this turn — you have already seen and "
+                    "processed this, never claim you cannot see it):\n"
+                    + "\n\n".join(d.page_content for d in attachment_docs) + "\n"
+                )
+                prompt = prompt + attachment_context
+                yield f"data: {json.dumps({'event': 'node_progress', 'node': 'attachment_context', 'title': 'Applying attached file content', 'detail': 'Injected description of the attached file into context prompt.'})}\n\n"
+
+            if source_type == "conversational":
                 semantic_memory_context = retrieve_relevant_memory_context(
                     services.get("user_memory_vector_store"), username, question
                 )
@@ -592,10 +657,13 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                 yield f"data: {json.dumps({'event': 'token', 'text': token})}\n\n"
                 await asyncio.sleep(0)
 
-            # 4. GROUNDING CHECK & FALLBACK
+            # 4. GROUNDING CHECK & FALLBACK — catches "no data to answer with" (a retrieval
+            # problem), fixed by re-retrieving. Distinct from the reward evaluator below, which
+            # catches a bad answer despite having good data (a generation problem).
             if full_response and "I cannot find the answer in the provided knowledge base." in full_response.strip():
                 logger.info("Grounding failure detected — triggering rewrite fallback...")
                 yield f"data: {json.dumps({'event': 'node_progress', 'node': 'rewrite_query_node', 'title': 'Refining search parameters...', 'detail': f'Expanding query parameters...'})}\n\n"
+                yield f"data: {json.dumps({'event': 'regenerate_reset'})}\n\n"
 
                 fallback_state = {
                     **initial_state,
@@ -608,8 +676,46 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                 log_timings(relevance_grade, "rewrite_fallback")
                 return
 
+            # 5. REWARD EVALUATOR & SELF-CORRECTION — judges the response itself (not the
+            # documents) and regenerates once, with feedback, if it fails. Capped at one retry;
+            # whatever comes out is what gets shown, and the failure is logged as a correction
+            # either way so future similar questions get a guardrail via fetch_relevant_corrections.
+            if source_type in REWARD_EVAL_SOURCE_TYPES:
+                verdict = await evaluate_response(prompt, full_response, source_type)
+                if verdict["verdict"] == "fail":
+                    logger.info(f"Reward evaluator flagged response ({verdict['tag']}): {verdict['reason']}")
+                    yield f"data: {json.dumps({'event': 'node_progress', 'node': 'reward_evaluator', 'title': 'Reconsidering that answer...', 'detail': verdict['reason']})}\n\n"
+                    yield f"data: {json.dumps({'event': 'regenerate_reset'})}\n\n"
+
+                    original_response = full_response
+                    corrected_prompt = build_correction_prompt(prompt, verdict["tag"], verdict["reason"])
+                    full_response = ""
+                    async for chunk in response_llm.astream(corrected_prompt):
+                        content = getattr(chunk, "content", "")
+                        if isinstance(content, list):
+                            token = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
+                        else:
+                            token = str(content) if content else ""
+                        if not token:
+                            continue
+                        full_response += token
+                        yield f"data: {json.dumps({'event': 'token', 'text': token})}\n\n"
+                        await asyncio.sleep(0)
+
+                    save_correction(
+                        username,
+                        user_prompt=question,
+                        bad_response=original_response,
+                        reason=verdict["reason"],
+                        tag=verdict["tag"],
+                        rating="negative",
+                    )
+
             yield f"data: {json.dumps({'event': 'final_generation', 'text': full_response})}\n\n"
-            chat_sessions[history_key].append(AIMessage(content=full_response))
+            ai_message = AIMessage(content=full_response)
+            if kb_images:
+                ai_message.additional_kwargs["kb_images"] = kb_images
+            chat_sessions[history_key].append(ai_message)
             save_conversation_turn(username, session_id, chat_sessions[history_key])
             spawn_background_task(index_conversation_turn(services.get("user_memory_vector_store"), username, question, full_response, session_id))
             log_timings(relevance_grade, "ok")
@@ -714,7 +820,7 @@ def download_document(
 
     # 4. Stream from GridFS bucket using matched document ID
     grid_out = gridfs_bucket.open_download_stream(file_doc["_id"])
-    
+
     safe_filename = urllib.parse.quote(clean_basename)
     return StreamingResponse(
         grid_out,
@@ -723,6 +829,35 @@ def download_document(
             "Content-Disposition": f"inline; filename*=utf-8''{safe_filename}"
         }
     )
+
+@app.get("/api/attachments/image/{file_id}")
+def get_attachment_image(
+    file_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Serves a chat-attached image's raw bytes back from GridFS by id — the durable,
+    auth-gated equivalent of the Knowledge Assistant's SAS-URL image rendering, without needing
+    time-limited signed URLs or a regeneration job since access is already gated by login."""
+    db = get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Database connection is disabled (USE_DB is not set to true)."
+        )
+
+    try:
+        object_id = ObjectId(file_id)
+    except (errors.InvalidId, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid attachment id.")
+
+    file_doc = db["fs.files"].find_one({"_id": object_id})
+    if not file_doc:
+        raise HTTPException(status_code=404, detail="Attachment image not found.")
+
+    content_type = file_doc.get("metadata", {}).get("content_type", "application/octet-stream")
+    grid_out = GridFSBucket(db).open_download_stream(object_id)
+
+    return StreamingResponse(grid_out, media_type=content_type)
 
 # --- ELEVATED ENDPOINT: SECURE MULTI-PART FILE UPLOAD (MongoDB GridFS) ---
 def sync_run_script(script_path):
@@ -1131,17 +1266,14 @@ async def store_feedback(
 
     username = current_user.get("sub")
 
-    correction_doc = {
-        "id": str(uuid.uuid4()),
-        "username": username,
-        "user_prompt": payload.user_prompt,
-        "bad_response": payload.bad_response[:400],
-        "reason": payload.reason,
-        "tag": payload.tag,
-        "created_at": datetime.now(timezone.utc).isoformat()
-    }
-
-    db["corrections"].insert_one(correction_doc)
+    save_correction(
+        username,
+        user_prompt=payload.user_prompt,
+        bad_response=payload.bad_response,
+        reason=payload.reason,
+        tag=payload.tag,
+        rating=payload.rating or "negative",
+    )
     logger.info(f"[+] Correction stored for {username} (Tag: {payload.tag}): {payload.reason}")
     return {"status": "success", "message": "Feedback indexed for dynamic self-correction."}
 

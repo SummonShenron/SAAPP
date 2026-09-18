@@ -487,6 +487,33 @@ div:has(.portal-body) {
   word-break: break-word;
 }
 
+.message-attachment-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.message-attachment-image {
+  max-width: 240px;
+  max-height: 240px;
+  border-radius: 8px;
+  object-fit: cover;
+  display: block;
+}
+
+.message-attachment-image-loading {
+  width: 120px;
+  height: 90px;
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
 .message-text p {
   margin: 0.35rem 0;
 }

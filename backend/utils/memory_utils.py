@@ -18,8 +18,14 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 DATA_DIR = os.path.join(PROJECT_ROOT, "saapp_data", "memory")
 os.makedirs(DATA_DIR, exist_ok=True)
 
-VALID_CATEGORIES = {"preference", "identity", "setting", "trait"}
+VALID_CATEGORIES = {
+    "preference", "identity", "setting", "trait",
+    "career", "project", "goal", "relationship",
+    "pattern",  # a synthesized observation across several facts, not an atomic fact itself
+}
 FACT_SIMILARITY_THRESHOLD = float(os.getenv("FACT_SIMILARITY_THRESHOLD", "0.80"))
+FACT_REINFORCEMENT_INCREMENT = float(os.getenv("FACT_REINFORCEMENT_INCREMENT", "0.15"))
+FACT_CONFIDENCE_HALF_LIFE_DAYS = float(os.getenv("FACT_CONFIDENCE_HALF_LIFE_DAYS", "90"))
 
 
 class UserFact(BaseModel):
@@ -123,6 +129,21 @@ def _judge_fact_relationship(existing_fact: str, new_fact: str) -> str:
         return "distinct"
 
 
+def _effective_confidence(fact: "UserFact", now: datetime) -> float:
+    """Read-time-only decay — never mutates stored confidence, always reflects current trust.
+    Identity facts are foundational rather than time-sensitive, so they never decay."""
+    if fact.category == "identity":
+        return fact.confidence
+    try:
+        updated = datetime.fromisoformat(fact.updated_at)
+        if updated.tzinfo is None:
+            updated = updated.replace(tzinfo=timezone.utc)
+        days_since_update = (now - updated).total_seconds() / 86400
+    except Exception:
+        return fact.confidence
+    return fact.confidence * (0.5 ** (days_since_update / FACT_CONFIDENCE_HALF_LIFE_DAYS))
+
+
 def save_user_fact(
     username: str,
     fact: str,
@@ -142,22 +163,30 @@ def save_user_fact(
     new_embedding = embed_text(fact_text)
 
     existing = None
+    relationship_action = None
     if new_embedding is not None:
         best_match, best_sim = _find_best_embedding_match(all_facts, category, new_embedding)
         if best_match is not None and best_sim >= FACT_SIMILARITY_THRESHOLD:
-            action = _judge_fact_relationship(best_match.fact, fact_text)
-            if action in ("duplicate", "supersede"):
+            relationship_action = _judge_fact_relationship(best_match.fact, fact_text)
+            if relationship_action in ("duplicate", "supersede"):
                 existing = best_match
     else:
         # Embeddings unavailable for some reason — fall back to the old naive substring check
-        # rather than always creating a new fact.
+        # rather than always creating a new fact. Treated as reinforcement (same fact restated),
+        # since there's no LLM judgment available to detect a genuine contradiction here.
         existing = find_similar_fact(all_facts, category, fact_text)
+        if existing is not None:
+            relationship_action = "duplicate"
 
     if existing:
+        if relationship_action == "duplicate":
+            # Independent re-observation of something already known — reinforce, don't reset.
+            existing.confidence = min(1.0, existing.confidence + FACT_REINFORCEMENT_INCREMENT)
+        else:  # "supersede" — a genuinely changed fact resets to the passed-in baseline
+            existing.confidence = confidence
         existing.fact = fact_text
         existing.embedding = new_embedding if new_embedding is not None else existing.embedding
         existing.source = source
-        existing.confidence = confidence
         existing.updated_at = now
         result = existing
     else:
@@ -199,13 +228,15 @@ def fetch_relevant_user_facts(username: str, question: str, limit: int = 5) -> s
     generation prompt, mirroring app_utils.fetch_relevant_corrections. Identity facts are
     always included (foundational context shouldn't disappear just because the current
     question isn't about it); remaining slots go to whichever facts are most relevant to the
-    current question by embedding similarity, falling back to recency if that's unavailable.
+    current question by embedding similarity weighted by confidence (reinforced/fresh facts
+    outrank decayed ones at equal similarity), falling back to recency if that's unavailable.
     """
     try:
         facts = load_user_facts(username)
         if not facts:
             return ""
 
+        now = datetime.now(timezone.utc)
         identity_facts = [f for f in facts if f.category == "identity"]
         other_facts = [f for f in facts if f.category != "identity"]
         remaining_slots = max(limit - len(identity_facts), 0)
@@ -213,7 +244,11 @@ def fetch_relevant_user_facts(username: str, question: str, limit: int = 5) -> s
         question_embedding = embed_text(question) if question else None
         if question_embedding is not None:
             scored = [
-                (cosine_similarity(question_embedding, f.embedding) if f.embedding else -1.0, f)
+                (
+                    (cosine_similarity(question_embedding, f.embedding) if f.embedding else -1.0)
+                    * _effective_confidence(f, now),
+                    f,
+                )
                 for f in other_facts
             ]
             scored.sort(key=lambda item: item[0], reverse=True)
@@ -222,8 +257,12 @@ def fetch_relevant_user_facts(username: str, question: str, limit: int = 5) -> s
             # Reverse before the stable sort so that facts with an identical updated_at
             # timestamp (e.g. two saved within the same tick) still break ties in favor of
             # whichever was appended most recently, rather than falling back to insertion
-            # (oldest-first) order.
-            ranked_other = sorted(reversed(other_facts), key=lambda f: f.updated_at, reverse=True)
+            # (oldest-first) order. Confidence is a secondary key after recency.
+            ranked_other = sorted(
+                reversed(other_facts),
+                key=lambda f: (f.updated_at, _effective_confidence(f, now)),
+                reverse=True,
+            )
 
         top_facts = identity_facts + ranked_other[:remaining_slots]
         if not top_facts:

@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -200,3 +201,95 @@ def test_facts_are_scoped_per_username():
 
     assert [f.fact for f in memory_utils.load_user_facts("jack")] == ["Jack's fact."]
     assert [f.fact for f in memory_utils.load_user_facts("alice")] == ["Alice's fact."]
+
+
+def _make_fact(category="trait", confidence=1.0, days_old=0, fact_id="test-id", embedding=None):
+    now = datetime.now(timezone.utc)
+    updated = (now - timedelta(days=days_old)).isoformat()
+    return memory_utils.UserFact(
+        id=fact_id, username="jack", category=category, fact="test fact", source="explicit",
+        confidence=confidence, created_at=updated, updated_at=updated, active=True, embedding=embedding,
+    )
+
+
+def test_effective_confidence_no_decay_at_zero_days():
+    fact = _make_fact(confidence=1.0, days_old=0)
+    assert memory_utils._effective_confidence(fact, datetime.now(timezone.utc)) == pytest.approx(1.0, abs=0.01)
+
+
+def test_effective_confidence_halves_at_one_half_life():
+    fact = _make_fact(confidence=1.0, days_old=memory_utils.FACT_CONFIDENCE_HALF_LIFE_DAYS)
+    assert memory_utils._effective_confidence(fact, datetime.now(timezone.utc)) == pytest.approx(0.5, rel=0.05)
+
+
+def test_effective_confidence_quarters_at_two_half_lives():
+    fact = _make_fact(confidence=1.0, days_old=2 * memory_utils.FACT_CONFIDENCE_HALF_LIFE_DAYS)
+    assert memory_utils._effective_confidence(fact, datetime.now(timezone.utc)) == pytest.approx(0.25, rel=0.05)
+
+
+def test_effective_confidence_identity_never_decays():
+    fact = _make_fact(category="identity", confidence=1.0, days_old=365)
+    assert memory_utils._effective_confidence(fact, datetime.now(timezone.utc)) == 1.0
+
+
+def test_save_user_fact_duplicate_reinforces_confidence():
+    seeded = _make_fact(confidence=0.5, fact_id="seed-id", embedding=memory_utils.embed_text("Prefers dark mode UI."))
+    seeded.fact = "Prefers dark mode UI."
+    memory_utils.save_user_facts("jack", [seeded])
+
+    reinforced = memory_utils.save_user_fact("jack", "prefers dark mode ui.", category="trait")
+    assert reinforced.id == "seed-id"
+    assert reinforced.confidence == pytest.approx(0.5 + memory_utils.FACT_REINFORCEMENT_INCREMENT)
+
+
+def test_save_user_fact_reinforcement_caps_at_one():
+    seeded = _make_fact(confidence=0.95, fact_id="seed-id", embedding=memory_utils.embed_text("Prefers dark mode UI."))
+    seeded.fact = "Prefers dark mode UI."
+    memory_utils.save_user_facts("jack", [seeded])
+
+    reinforced = memory_utils.save_user_fact("jack", "prefers dark mode ui.", category="trait")
+    assert reinforced.confidence == 1.0
+
+
+def test_save_user_fact_supersede_resets_confidence_to_baseline(monkeypatch):
+    seeded = _make_fact(confidence=0.9, fact_id="seed-id", embedding=memory_utils.embed_text("Prefers dark mode UI."))
+    seeded.fact = "Prefers dark mode UI."
+    memory_utils.save_user_facts("jack", [seeded])
+
+    monkeypatch.setattr(
+        memory_utils.lite_llm, "invoke",
+        Mock(return_value=SimpleNamespace(content=json.dumps({"action": "supersede"})))
+    )
+    # Same normalized bucket as a stand-in for "semantically similar, but contradicting" (see
+    # test_save_user_fact_contradicting_statement_supersedes_instead_of_duplicating) — the
+    # mocked LLM judgment above is what actually decides "supersede" here, not the wording.
+    superseded = memory_utils.save_user_fact("jack", "prefers dark mode ui.", category="trait", confidence=0.7)
+    assert superseded.id == "seed-id"
+    assert superseded.confidence == 0.7  # resets to the passed-in baseline, not accumulated
+
+
+def test_fetch_relevant_user_facts_prefers_fresh_over_decayed_at_equal_similarity(monkeypatch):
+    # Force equal similarity so the test isolates confidence/decay's effect on ranking.
+    monkeypatch.setattr(memory_utils, "cosine_similarity", lambda a, b: 0.9)
+    monkeypatch.setattr(memory_utils, "embed_text", lambda text: [1.0] if text else None)
+
+    old_fact = _make_fact(fact_id="old-id", confidence=1.0, days_old=2000, embedding=[1.0])
+    old_fact.fact = "Old but equally similar fact."
+    fresh_fact = _make_fact(fact_id="fresh-id", confidence=1.0, days_old=0, embedding=[1.0])
+    fresh_fact.fact = "Fresh equally similar fact."
+    memory_utils.save_user_facts("jack", [old_fact, fresh_fact])
+
+    context = memory_utils.fetch_relevant_user_facts("jack", "some question", limit=1)
+    assert "Fresh equally similar fact." in context
+    assert "Old but equally similar fact." not in context
+
+
+def test_category_expansion_new_categories_round_trip():
+    for category in ("career", "project", "goal", "relationship"):
+        saved = memory_utils.save_user_fact("jack", f"A {category} fact.", category=category)
+        assert saved.category == category
+
+
+def test_pattern_category_is_valid():
+    saved = memory_utils.save_user_fact("jack", "Consistently gravitates toward agent systems.", category="pattern")
+    assert saved.category == "pattern"

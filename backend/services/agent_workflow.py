@@ -32,7 +32,6 @@ from backend.components.constraints import (
     SUMMARIZER_PROMPT,
     GRADING_PROMPT,
     REWRITING_PROMPT,
-    FORMATTER_PROMPT,
     INSIGHT_QUERY_PROMPT,
     CODE_DRAFTING_PROMPT,
     REASONER_PROMPT,
@@ -644,8 +643,8 @@ async def retrieve_node(state: GraphState, vector_store) -> dict:
                 session_hits = retrieve_from_session(username, session_id, question)
                 if session_hits:
                     return [Document(
-                        page_content=f"[Session Document: {hit['filename']}]\nScore: {hit['score']}",
-                        metadata={"source": "session_vector_store", "priority": True, "filename": hit["filename"]}
+                        page_content=f"[Session Document: {hit['metadata']['filename']}]\n{hit['text']}",
+                        metadata={"source": "session_vector_store", "priority": True, "filename": hit["metadata"]["filename"]}
                     ) for hit in session_hits]
             except Exception:
                 logger.exception("Session retrieval failed.")
@@ -744,6 +743,10 @@ def summarizer_node(state: GraphState) -> GraphState:
 # ============================================================
 
 def formatter_node(state: GraphState) -> dict:
+    """Assembles a normalized voice_payload from whatever the upstream node produced — no LLM
+    call here. The single unified Voice Composer prompt (built in app.py via
+    constraints.build_voice_prompt) consumes this to generate the actual response, applying
+    one Sonic Assistant persona regardless of which path produced the underlying data."""
     logger.info("--- FORMATTER NODE CALLED ---")
     state = ensure_workflow_keys(state)
     workflow_name = state["workflowName"]
@@ -751,47 +754,27 @@ def formatter_node(state: GraphState) -> dict:
     node_name = "formatter_node"
     with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
         node_input = state.copy()
-        # 1. Choose the correct content source
-        messages = state.get("messages")
-        if messages:
-            user_msg = state["messages"][-1].content
+
+        relevance_grade = state.get("relevance_grade")
+        insight_answer = state.get("insight_answer")
+
+        if relevance_grade == "web_search":
+            source_type = "web"
+        elif relevance_grade in ("code_interpreter", "github_search", "pr_summary"):
+            source_type = "tool_output"
+        elif relevance_grade == "conversational" or insight_answer:
+            source_type = "conversational"
         else:
-            user_msg = "Generate system insights"
-        content_to_format = state.get("content_to_format")
-        lower_msg = user_msg.lower()
-        # Fallback if memory/summarizer/generator didn't set content
-        if not content_to_format:
-            content_to_format = user_msg
-        logger.info(f"Reformatting content: {content_to_format}")
-        # 2. Implicit formatting signals
-        is_long = len(content_to_format.split()) > 120
-        is_multi_section = any(word in lower_msg for word in ["explain", "tell me about", "overview", "details"])
-        is_list_like = any(word in lower_msg for word in ["types", "kinds", "examples", "steps"])
-        is_policy_like = any(word in lower_msg for word in ["policy", "rules", "requirements"])
-        is_character_lore = any(word in lower_msg for word in ["race", "lore", "history", "origin"])
-        if is_policy_like or is_multi_section:
-            format_style = "sections"
-        elif is_list_like:
-            format_style = "bullets"
-        elif is_character_lore:
-            format_style = "sections"
-        elif is_long:
-            format_style = "summary"
-        else:
-            format_style = "clean"
-        # 3. Build the prompt
-        prompt = FORMATTER_PROMPT.format(
-            format_style=format_style,
-            content_to_format=content_to_format
-        )
-        # 4. Save formatted output
-        formatted = get_chat_llm(state.get("username", "")).invoke(prompt)
-        formatted_content = formatted.content if hasattr(formatted, "content") else str(formatted)
-        if isinstance(formatted_content, list):
-            formatted_text = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in formatted_content])
-        else:
-            formatted_text = str(formatted_content)
-        state["formatted_output"] = formatted_text
+            source_type = "kb_open" if state.get("rag_mode") == "open" else "kb_strict"
+
+        state["voice_payload"] = {
+            "source_type": source_type,
+            "data": state.get("content_to_format"),
+            "insight": insight_answer,
+            "relevance_grade": relevance_grade,
+        }
+        logger.info(f"Voice payload source_type={source_type}")
+
         node_output = state.copy()
         logger.info(
             "node executed",
