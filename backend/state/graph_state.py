@@ -45,6 +45,7 @@ class GraphState(TypedDict):
     voice_payload: Optional[Dict[str, Any]]  # Assembled by formatter_node; consumed by build_voice_prompt in app.py
     user_groups: List[str]
     pending_action: Optional[Dict[str, Any]]  # Stores original draft payload
+    write_action: Optional[str]               # WRITE_ACTIONS key propose_write_node should draft
     user_decision: Optional[str]              # "approve" | "modify" | "reject"
     modified_details: Optional[Dict[str, Any]] # Overrides if user modified title/body/branches
     last_intent: Optional[str]
