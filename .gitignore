@@ -17,6 +17,11 @@ dist-ssr/
 # Local vector database storage
 chroma_db/
 
+# WASI CPython interpreter for the python_sandbox tool — a 26MB third-party binary with a
+# verifiable checksum (see backend/sandbox/README.md), not something to bloat repo history
+# with. Run backend/sandbox/fetch_sandbox.py to (re)download and verify it.
+backend/sandbox/*.wasm
+
 # Ignore live runtime ingestion data and history archives
 index-db/**/*_Pages/
 index-db/**/*.pdf

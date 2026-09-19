@@ -5,6 +5,9 @@ import ConversationsBlade from '../components/ConversationsBlade';
 import { getDynamicExampleQuestions } from '../utils/Example_List';
 import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal } from '../api'; 
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import sonicSpinImg from '../assets/sonic-rolling.gif';
 import shadowSpinImg from '../assets/shadow.gif';
 import { useAuth } from '@clerk/clerk-react';
@@ -102,6 +105,61 @@ interface ChatMessageListProps {
   getTokenRef: React.MutableRefObject<(() => Promise<string | null>) | undefined>;
 }
 
+// Fenced code blocks only (react-markdown routes inline `code` spans through a separate,
+// much simpler branch below) — syntax-highlighted, with a copy button, matching the app's
+// existing dark slate palette instead of the highlighter's own default background.
+function CodeBlock({ language, code }: { language: string; code: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (err) {
+      console.error('Copy failed:', err);
+    }
+  };
+
+  return (
+    <div style={{ position: 'relative', margin: '0.5rem 0' }}>
+      <button
+        type="button"
+        onClick={handleCopy}
+        style={{
+          position: 'absolute',
+          top: '6px',
+          right: '6px',
+          zIndex: 1,
+          padding: '2px 8px',
+          borderRadius: '6px',
+          background: 'rgba(51, 65, 85, 0.9)',
+          border: '1px solid #475569',
+          color: '#cbd5e1',
+          fontSize: '0.7rem',
+          cursor: 'pointer',
+        }}
+      >
+        {copied ? 'Copied!' : 'Copy'}
+      </button>
+      <SyntaxHighlighter
+        language={language || 'text'}
+        style={vscDarkPlus}
+        PreTag="div"
+        customStyle={{
+          margin: 0,
+          borderRadius: '8px',
+          fontSize: '0.85rem',
+          background: '#0f172a',
+          border: '1px solid #334155',
+        }}
+      >
+        {code}
+      </SyntaxHighlighter>
+    </div>
+  );
+}
+
 // Memoized so typing in the message input (which only changes unrelated `input` state in the
 // parent) doesn't force every past message to re-render and re-parse through ReactMarkdown on
 // every keystroke — that cost scales with conversation length and was the actual cause of chat
@@ -145,7 +203,35 @@ const ChatMessageList = React.memo(function ChatMessageList({
               )}
               <div className="message-text">
                 <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
                   components={{
+                    // A language-less fenced block (bare ```) gets no className at all —
+                    // identical to a true inline `code` span — so neither className nor
+                    // content (a single-line fenced block has no internal newline either)
+                    // reliably tells them apart from inside `code` itself. `pre`, though, is
+                    // structurally guaranteed by the CommonMark AST to appear only for a
+                    // fenced block and never for an inline span (verified directly), so it
+                    // does the block/inline split instead, reaching into the `code` element
+                    // it wraps (already rendered by the branch below) for the language + text.
+                    code: ({ children, ...rest }: any) => (
+                      <code
+                        {...rest}
+                        style={{
+                          background: 'rgba(51, 65, 85, 0.6)',
+                          padding: '0.1em 0.35em',
+                          borderRadius: '4px',
+                          fontSize: '0.9em',
+                        }}
+                      >
+                        {children}
+                      </code>
+                    ),
+                    pre: ({ children }: any) => {
+                      const codeEl = children as { props?: { className?: string; children?: React.ReactNode } };
+                      const match = /language-(\w+)/.exec(codeEl?.props?.className || '');
+                      const raw = String(codeEl?.props?.children ?? '').replace(/\n$/, '');
+                      return <CodeBlock language={match ? match[1] : 'text'} code={raw} />;
+                    },
                     a: ({ href, children, node, ...rest }: any) => {
                       const finalHref = href?.startsWith('/')
                         ? `${BASE_URL.replace(/\/$/, '')}${href}`
@@ -1239,11 +1325,9 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                       <line x1="12" y1="16" x2="12.01" y2="16" />
                     </svg>
                   </button>
-
-                  {/* FIXED HELP/INFO TOOLTIP POPOVER */}
                   {showTooltip && (
-                    <div 
-                      className="chat-tooltip-popover" 
+                    <div
+                      className="chat-tooltip-popover"
                       style={{
                         position: "absolute",
                         bottom: "45px",
@@ -1255,7 +1339,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                         textDecoration: "none",
                         padding: "12px 14px",
                         borderRadius: "12px",
-                        boxShadow: isEmbedded 
+                        boxShadow: isEmbedded
                           ? "0 10px 25px -5px rgba(0, 0, 0, 0.7), 0 0 12px rgba(0, 242, 254, 0.15)"
                           : "0 10px 25px -5px rgba(0, 0, 0, 0.5)",
                         zIndex: 100,
@@ -1270,7 +1354,9 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                       <ul style={{ margin: 0, paddingLeft: "16px", display: "flex", flexDirection: "column", gap: "6px", color: "#cbd5e1" }}>
                         <li>Please be as specific as possible when asking questions to get the most accurate responses.</li>
                         <li>Due to operating on cost-sensitive infrastructure, response times may vary or be unavailable due to model demand.</li>
-                        <li>Powered by the <a href="https://www.sonicassistant.com" target="_blank" rel="noopener noreferrer">Sonic Assistant</a></li>
+                        {isEmbedded && (
+                          <li>Powered by the <a href="https://www.sonicassistant.com" target="_blank" rel="noopener noreferrer">Sonic Assistant</a></li>
+                        )}
                         <li>If you encounter any bugs, issues, or would like request access , please reach out to <a href="mailto:jackharper0517@outlook.com">jackharper0517@outlook.com</a>.</li>
                       </ul>
                     </div>
@@ -1414,7 +1500,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                 zIndex: 999
               }}
             />
-            <div
+            <div className="mobile-trace-modal-content"
               style={{
                 position: 'fixed',
                 bottom: 0,
@@ -1460,7 +1546,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                 )}
 
                 {traceSteps.map(step => (
-                  <div
+                  <div className="trace-step"
                     key={step.id}
                     style={{
                       border: '1px solid rgba(148, 163, 184, 0.2)',
@@ -1534,7 +1620,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               )}
 
               {traceSteps.map(step => (
-                <div
+                <div className="trace-step"
                   key={step.id}
                   style={{
                     border: '1px solid rgba(148, 163, 184, 0.2)',

@@ -12,8 +12,15 @@ import InsightsPage from "./pages/InsightsPage";
 function App() {
   const navigate = useNavigate();
   // LIFT THEME STATE HERE
-  const [theme, setTheme] = useState<"sonic" | "shadow">("sonic");
-  const toggleTheme = () => setTheme(theme === "sonic" ? "shadow" : "sonic");
+  const [theme, setTheme] = useState<"sonic" | "shadow">(() => {
+    const saved = localStorage.getItem('theme');
+    return saved === "shadow" ? "shadow" : "sonic";
+  });
+  const toggleTheme = () => {
+    const newTheme = theme === "sonic" ? "shadow" : "sonic";
+    localStorage.setItem('theme', newTheme);
+    setTheme(newTheme);
+  };
 
   return (
     <Routes>
