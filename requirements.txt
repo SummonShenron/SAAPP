@@ -30,6 +30,7 @@ duckduckgo-search
 ddgs
 sentry-sdk[fastapi]
 pytest
+wasmtime>=27.0.0
 # errAgent client SDK (replaces the old hand-copied backend/logging/erragent_handler.py).
 # Installed from GitHub, not a local path — a relative "-e ../errAgent/sdk" only resolves on
 # a machine where errAgent happens to be checked out as a sibling directory; it would fail

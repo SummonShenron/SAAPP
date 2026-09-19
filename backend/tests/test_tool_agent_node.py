@@ -89,6 +89,71 @@ def _setup_github_repo(monkeypatch, tree_items=None):
 # ---------------------------------------------------------------------------
 
 @run_async
+async def test_run_python_available_to_everyone(monkeypatch):
+    """Unlike run_mongo_query, run_python is fully sandboxed and side-effect-free — it should
+    be offered to non-admins too, not gated behind is_admin."""
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    _setup_github_repo(monkeypatch)
+
+    captured_prompts = []
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return _llm_response(action="final", answer="No conclusive answer.")
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("what's 12 squared?"))
+
+    assert any("run_python" in p for p in captured_prompts)
+
+
+@run_async
+async def test_run_python_dispatches_to_sandbox_and_normalizes_errors(monkeypatch):
+    _setup_github_repo(monkeypatch)
+
+    async def fake_sandbox(code, timeout_seconds=5.0, fuel=400_000_000):
+        if "fail" in code:
+            return {"output": "", "error": "boom"}
+        return {"output": "42\n", "error": ""}
+
+    monkeypatch.setattr(aw, "run_python_sandboxed", fake_sandbox)
+
+    responses = [
+        _llm_response(action="query", purpose="Compute it", tool_action="run_python", args={"code": "print(6*7)"}),
+        _llm_response(action="final", answer="It's 42.", show_work=True),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("what's 6 times 7?"))
+
+    assert "42" in result["content_to_format"]
+    # The sandbox's structured {"output","error"} result is normalized into this loop's own
+    # "ERROR: ..." string convention for a failure so retry-nudge tracking picks it up.
+    assert "ERROR" not in result["content_to_format"].split("**Result:**")[1][:50]
+
+
+@run_async
+async def test_run_python_failure_uses_error_prefix_convention(monkeypatch):
+    _setup_github_repo(monkeypatch)
+
+    async def failing_sandbox(code, timeout_seconds=5.0, fuel=400_000_000):
+        return {"output": "", "error": "Rejected before running: import of 'os' is not on the safe list."}
+
+    monkeypatch.setattr(aw, "run_python_sandboxed", failing_sandbox)
+
+    responses = [
+        _llm_response(action="query", purpose="Try os", tool_action="run_python", args={"code": "import os"}),
+        _llm_response(action="final", answer="Couldn't use os for that.", show_work=True),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("check the os module for me"))
+
+    assert "ERROR: Rejected before running" in result["content_to_format"]
+
+
+@run_async
 async def test_non_admin_action_menu_never_includes_mongo(monkeypatch):
     """The actual security property: non-admins shouldn't even see run_mongo_query as an
     option, not just be rejected if they somehow ask for it."""

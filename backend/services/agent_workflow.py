@@ -47,6 +47,7 @@ from backend.components import taskboard
 from backend.state.graph_state import GraphState, route_after_grading
 from langgraph.graph import StateGraph, START, END
 from backend.utils.db_utils import get_db
+from backend.services.python_sandbox import run_python_sandboxed, SAFE_IMPORT_ALLOWLIST
 from backend.utils.normalize_utils import ensure_str
 
 load_dotenv()
@@ -2574,6 +2575,11 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             "- diff_branches — args: base (branch name), head (branch name)",
             "- list_commits — args: branch (branch name), limit (max number of commits, integer)",
             "- web_search — args: query (the exact search query string to run)",
+            "- run_python — args: code (a small, self-contained Python snippet; print(...) "
+            "whatever you need to see — no filesystem, network, or subprocess access is "
+            "available, and only these stdlib modules can be imported: "
+            f"{', '.join(sorted(SAFE_IMPORT_ALLOWLIST))}. Use this for calculations, data "
+            "shaping, or checking your own logic — not for anything requiring I/O.)",
         ])
         actions_menu = "\n".join(menu_lines)
         prompt_template = TOOL_AGENT_PROMPT.replace("{actions_menu}", actions_menu.replace("{", "{{").replace("}", "}}"))
@@ -2597,6 +2603,15 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 search = DuckDuckGoSearchAPIWrapper()
                 results = await asyncio.to_thread(search.results, query, max_results=3)
                 return [r for r in results if isinstance(r, dict)] if results else []
+            if tool_action == "run_python":
+                # run_python_sandboxed always returns {"output", "error"} and never raises —
+                # normalized to this loop's own "ERROR: ..." string convention (used by every
+                # other action) so a failed run gets picked up by the retry-nudge tracking in
+                # run_react_loop the same way a failed GitHub/Mongo call already does.
+                sandbox_result = await run_python_sandboxed(args.get("code", "") or "")
+                if sandbox_result.get("error"):
+                    return f"ERROR: {sandbox_result['error']}"
+                return sandbox_result.get("output", "")
 
             def _dispatch_github():
                 if tool_action == "list_repo_tree":

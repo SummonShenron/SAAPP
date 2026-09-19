@@ -53,7 +53,7 @@
 
 /* THEME OVERRIDE: SHADOW MODE (DARK CRIMSON) */
 .theme-shadow {
-  --bg-main: #353333;   
+  --bg-main: #1a1a1a;   
   --bg-alt: #910000;    
   --bg-surface: #ffffff;     
   --bg-surface-hover: #2e2e36;
@@ -567,6 +567,16 @@ div:has(.portal-body) {
   color: var(--text);
 }
 
+.theme-shadow .follow-up-container button {
+  background: #3b1e1e !important;
+  color: var(--text-main) !important;
+  border: 1px solid #910000 !important;
+  box-shadow: var(--shadow);
+}
+
+.theme-shadow .follow-up-container p{
+  color: var(--text);
+}
 /* ==========================================================================
    4. INTERACTIVE EXAMPLE CARDS
    ========================================================================== */
@@ -813,6 +823,22 @@ div:has(.portal-body) {
 
 .circle-icon-button:active:not(:disabled) {
   transform: translateY(2px);
+  
+}
+
+.theme-shadow .circle-icon-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  background: var(--accent-primary);
+  box-shadow: var(--shadow-hover);
+}
+
+.theme-shadow .circle-icon-buttonactive:not(:disabled) {
+  transform: translateY(2px);
+  background: var(--accent-primary);
+  box-shadow: var(--shadow-hover);
+}
+.theme-shadow .circle-icon-button:hover {
+  background: var(--accent-primary);
 }
 
 .circle-icon-button svg,
@@ -821,9 +847,36 @@ div:has(.portal-body) {
   fill: none !important;
 }
 
+.theme-shadow .circle-icon-button.trace-active {
+  border: 1px solid var(--border-color) !important;
+  background: var(--accent-primary) !important;
+  box-shadow: var(--shadow-hover);
+}
 
+.theme-shadow .desktop-trace-sidebar {
+  border: 1px solid var(--border-color) !important;
+  background: #3b1e1e !important;
+  box-shadow: var(--shadow);
+}
 
+.theme-shadow .trace-step {
+  border: 1px solid var(--border-color) !important;
+  background: var(--bg-secondary) !important;
+  box-shadow: var(--shadow-hover);
+}
 
+@media (max-width: 768px) {
+  .theme-shadow .mobile-trace-modal-content {
+    border: 1px solid var(--border-color) !important;
+    background: var(--bg-secondary) !important;
+    box-shadow: var(--shadow);
+  }
+  .theme-shadow .mobile-trace-pill-container button {
+    border: 1px solid var(--border-color) !important;
+    background: var(--bg-secondary) !important;
+    box-shadow: var(--shadow);
+  }
+}
 .icon-button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -871,6 +924,27 @@ div:has(.portal-body) {
   outline: none;
   transition: all 0.2s;
 }
+.theme-shadow .chat-tooltip-popover {
+  background: #3b1e1e !important;
+  border: 1px solid var(--border-color) !important;
+  box-shadow: var(--shadow);
+}
+
+.theme-shadow .chat-tooltip-popover s,
+.theme-shadow .chat-tooltip-popover strong,
+.theme-shadow .chat-tooltip-popover em {
+  color: #cbd5e1 !important;
+}
+.theme-shadow .chat-tooltip-popover a,
+.theme-shadow .chat-tooltip-popover a:visited {
+  color: var(--accent-primary) !important;
+  text-decoration: underline;
+}
+
+.theme-shadow .chat-tooltip-popover a:hover {
+  color: #38bdf8 !important;
+}
+
 
 .chat-tooltip-popover a,
 .chat-tooltip-popover a:visited {
@@ -1049,6 +1123,16 @@ div:has(.portal-body) {
   transition: all 0.2s ease;
 }
 
+@media (max-width: 768px) {
+  .filter-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .rag-mode-toggle-label {
+    margin-left: 0;
+  }
+}
+
 .filter-row select:focus {
   border-color: var(--accent-primary);
 }
@@ -1063,7 +1147,12 @@ div:has(.portal-body) {
   transform: translateY(-2px);
   box-shadow: var(--shadow-hover);
 }
-
+.theme-shadow .filter-row select { 
+  background: var(--bg-secondary) !important;
+  border: 1px solid var(--border-color) !important;
+  box-shadow: var(--shadow);
+  color: var(--text-main) !important;
+}
 .nav-clear:hover {
   color: #f8fafc !important;
   text-decoration: underline;
