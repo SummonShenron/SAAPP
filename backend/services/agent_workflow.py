@@ -2170,7 +2170,10 @@ async def run_react_loop(
     """Generic Reason -> Act -> Observe -> Decide loop shared by every iterative tool
     (MongoDB, GitHub search, ...). Each step asks the model for the next action given
     everything tried so far; the model decides for itself when it has enough to answer,
-    or is honest that it doesn't. Returns {"final_answer": str, "attempts": list[dict]}.
+    or is honest that it doesn't. Returns {"final_answer": str, "attempts": list[dict],
+    "show_work": bool} — show_work is the model's own call on whether its step-by-step trace
+    is worth repeating in the chat message itself, not just the live trace panel (see
+    show_work's schema entry in TOOL_AGENT_PROMPT); defaults true when a "final" doesn't set it.
     Raises _UnsafeActionRequested if is_unsafe() ever flags a proposed action, and
     _ClarificationNeeded if the model reports genuine uncertainty instead of guessing.
     `initial_attempts`, when given, seeds the loop with attempts already made in an earlier
@@ -2196,6 +2199,10 @@ async def run_react_loop(
     since been attempted again, regardless of what ran in between."""
     attempts: list = list(initial_attempts or [])
     final_answer = None
+    # Defaults true (show the receipt) whenever a "final" doesn't explicitly say otherwise —
+    # a missing/malformed field is more likely a parsing hiccup than a deliberate "hide this",
+    # so err toward the more transparent option rather than silently dropping useful context.
+    show_work = True
     retry_nudge_used = False
     unretried_error_tools: set = set()
 
@@ -2248,6 +2255,8 @@ async def run_react_loop(
             continue
         if action == "final":
             final_answer = decision.get("answer") or "I wasn't able to find a conclusive answer."
+            show_work = decision.get("show_work")
+            show_work = show_work if isinstance(show_work, bool) else True
             break
 
         if action == "clarify":
@@ -2317,7 +2326,7 @@ async def run_react_loop(
             logger.exception("[%s] final synthesis step failed.", node_name)
             final_answer = "I wasn't able to find a conclusive answer after several attempts."
 
-    return {"final_answer": final_answer, "attempts": attempts}
+    return {"final_answer": final_answer, "attempts": attempts, "show_work": show_work}
 
 
 # ============================================================
@@ -2649,7 +2658,12 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
         final_answer = loop_result["final_answer"]
         attempts = loop_result["attempts"]
 
-        steps_text = _format_attempts_steps(attempts)
+        # The live trace panel already shows every step in real time — repeating it in the chat
+        # message itself is only worth doing when the model says the receipt genuinely adds
+        # value (debugging, an inconclusive answer, verifying a specific claim), not on every
+        # tool_agent reply regardless of how casual the question was. See show_work's schema
+        # entry in TOOL_AGENT_PROMPT.
+        steps_text = _format_attempts_steps(attempts) if loop_result.get("show_work", True) else ""
         output_msg = f"{final_answer}\n\n{steps_text}" if steps_text else final_answer
 
         node_output = state.copy()

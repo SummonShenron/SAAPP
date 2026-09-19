@@ -174,6 +174,54 @@ async def test_mongo_action_correct_collection_first_try(monkeypatch):
 
 
 @run_async
+async def test_show_work_false_omits_the_steps_footer(monkeypatch):
+    """A casual question shouldn't come back looking like a technical report just because a
+    tool ran — the live trace panel already shows the steps in real time, so the model can
+    choose not to repeat them in the chat message itself."""
+    _setup_github_repo(monkeypatch)
+    responses = [
+        _llm_response(action="query", purpose="Peek at the repo structure", tool_action="list_repo_tree", args={}),
+        _llm_response(action="final", answer="Yeah, it's a LangGraph-based backend with a few core services.", show_work=False),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+    monkeypatch.setattr(
+        aw.requests, "get",
+        lambda url, headers=None, params=None: (
+            _http_response(200, {"default_branch": "main"}) if url.endswith("/repos/SummonShenron/SAAPP")
+            else _http_response(200, {"tree": [{"path": "app.py", "type": "blob"}]})
+        ),
+    )
+
+    result = await aw.tool_agent_node(_state("what kind of backend is this anyway?"))
+
+    assert result["content_to_format"] == "Yeah, it's a LangGraph-based backend with a few core services."
+    assert "Step 1" not in result["content_to_format"]
+
+
+@run_async
+async def test_show_work_true_includes_the_steps_footer(monkeypatch):
+    _setup_github_repo(monkeypatch)
+    responses = [
+        _llm_response(action="query", purpose="Check the tests directory", tool_action="list_repo_tree", args={}),
+        _llm_response(action="final", answer="Here's what I verified.", show_work=True),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+    monkeypatch.setattr(
+        aw.requests, "get",
+        lambda url, headers=None, params=None: (
+            _http_response(200, {"default_branch": "main"}) if url.endswith("/repos/SummonShenron/SAAPP")
+            else _http_response(200, {"tree": [{"path": "app.py", "type": "blob"}]})
+        ),
+    )
+
+    result = await aw.tool_agent_node(_state("can you verify the test suite covers this?"))
+
+    assert "Here's what I verified." in result["content_to_format"]
+    assert "Step 1" in result["content_to_format"]
+    assert "Check the tests directory" in result["content_to_format"]
+
+
+@run_async
 async def test_mongo_unsafe_write_triggers_approval(monkeypatch):
     monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])
     _setup_github_repo(monkeypatch)

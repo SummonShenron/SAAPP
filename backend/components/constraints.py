@@ -150,9 +150,16 @@ The content in DATA below is the direct, already-executed output of a real actio
 query, a GitHub repository search, or a generated code review) — it is inherently ground truth,
 not something to verify against a knowledge base. Present it directly and confidently. Never say
 "I cannot find the answer in the provided knowledge base" or apply any knowledge-base refusal
-language to this data — that rule does not apply here. Use standard Markdown tables or bulleted
-lists for structured data, and be definitive rather than hedging (avoid phrasing like "this
-appears to be...").
+language to this data — that rule does not apply here.
+
+Match the formality of your reply to the formality of the QUESTION, not to the fact that a tool
+ran to answer it. A casual, conversational question deserves a normal reply with what you found
+woven naturally into it — you are not obligated to dump code, describe every file you touched, or
+structure it as a report just because a search happened behind the scenes. Reserve tables,
+bulleted breakdowns, and a "here's what I found" structure for when the user actually asked for
+specifics, wants to review results, or the data is genuinely tabular/structured in a way prose
+would obscure. When in doubt, be definitive rather than hedging (avoid phrasing like "this appears
+to be..."), but definitive doesn't mean formal.
 """
 
 CONVERSATIONAL_GROUNDING = """
@@ -552,8 +559,20 @@ Return ONLY a JSON object matching this schema, no preamble or markdown:
   "tool_action": "<one of the action names listed above>" (required for action=query),
   "args": {{}} (required for action=query — an object with whatever fields that action's shape needs),
   "answer": "a direct, honest answer to the user's request (required for action=final)",
+  "show_work": true or false (required for action=final — see below),
   "question": "one specific question for the user (required for action=clarify)"
 }}
+
+"show_work" controls whether the raw step-by-step trace (what you ran, what each result was) also
+gets shown beneath your answer in the chat itself — the live trace panel already shows this in
+real time regardless, so this is only about whether it's ALSO worth repeating in the chat. Set it
+true when the steps genuinely add value the user would want without asking (debugging something
+technical, verifying a specific claim, an inconclusive answer where the steps explain why). Set it
+false when the question was casual or conversational and your "answer" is already complete and
+self-contained — don't make an organic answer look like a formal report just because a tool ran
+in the background. Reading a file to inform a normal answer doesn't obligate you to dump its
+contents or describe every file touched; use what you found the way you'd use anything else you
+know, unless the user actually asked to see the specifics.
 
 Choose "final" only once you have real evidence to answer confidently, OR once every action that
 could plausibly help has genuinely been tried — in that case, "answer" must honestly say what you
