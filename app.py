@@ -569,7 +569,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
             insight_answer = final_state.get("insight_answer")
             documents = final_state.get("documents", [])
 
-            if relevance_grade in ["hitl_approval_required", "action_complete"]:
+            if relevance_grade in ["hitl_approval_required", "action_complete", "needs_clarification"]:
                 card_text = final_state.get("generation") or final_state.get("content_to_format") or (final_state.get("messages")[-1].content if final_state.get("messages") else "Action complete.")
                 yield f"data: {json.dumps({'event': 'token', 'text': card_text})}\n\n"
                 yield f"data: {json.dumps({'event': 'final_generation', 'text': card_text})}\n\n"
