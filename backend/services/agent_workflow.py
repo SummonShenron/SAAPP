@@ -33,9 +33,9 @@ from backend.components.constraints import (
     GRADING_PROMPT,
     REWRITING_PROMPT,
     INSIGHT_QUERY_PROMPT,
-    CODE_DRAFTING_PROMPT,
+    TOOL_AGENT_PROMPT,
     REASONER_PROMPT,
-    GITHUB_SEARCH_PROMPT,
+    ISSUE_DRAFT_PROMPT,
     PR_REVIEW_PROMPT,
     DRAFT_PR_PROMPT,
     MEMORY_EXTRACTION_PROMPT
@@ -51,6 +51,7 @@ from backend.utils.normalize_utils import ensure_str
 
 load_dotenv()
 logger = logging.getLogger("SASS Logger")
+TOOL_AGENT_MAX_ITERATIONS = int(os.getenv("TOOL_AGENT_MAX_ITERATIONS", "5"))
 async def safe_emit_event(name: str, data: dict):
     """Safely emit a custom event, ignoring errors if called outside an active run context."""
     try:
@@ -135,12 +136,10 @@ def coordinator_router(state: GraphState) -> str:
         "memory_save": "memory_save_node",
         "memory_recall": "memory_recall_node",
         "insight": "snapshot_node",
-        "web_search": "web_search_node",
-        "code_interpreter": "code_interpreter_node",
-        "github_search": "github_search",
+        "tool_agent": "tool_agent_node",
         "pr_summary": "pr_summary",
-        "draft_pr": "draft_pr_node",      
-        "execute_pr": "execute_pr_node"
+        "propose_write": "propose_write_node",
+        "execute_write": "execute_write_node"
     }
     destination = mapping.get(next_agent, "conversational_node")
     logger.debug(f"Next agent from plan: '{next_agent}'")
@@ -193,51 +192,66 @@ def classify_intent(message: str, state: dict = None) -> str:
     for i, um in enumerate(user_messages):
         logger.debug(f"user_messages[{i}]: {um.content}")
 
-    if len(user_messages) >= 2:
-        prev_user_msg = user_messages[-2].content.lower()
-        logger.debug(f"Previous user message: {prev_user_msg}")
-
-        if any(phrase in prev_user_msg for phrase in ["create pr", "merge", "pull request"]):
-            logger.debug("Detected PR creation in previous user message")
+    # Any registered write action (PR, issue, Mongo write, and whatever gets registered next)
+    # is detected from the ASSISTANT'S OWN prior card text, not the user's original phrasing —
+    # more reliable (exact text we generated ourselves) and the only signal that generalizes to
+    # actions like Mongo writes with no fixed user-typed trigger phrase. pending_action never
+    # survives between chat turns in this app (every turn rebuilds state fresh from stored
+    # messages — see app.py's initial_state), so this is the only reliable way to know what a
+    # bare "approve" two turns later is actually approving.
+    if len(messages) >= 2:
+        prev_content = _content_of(messages[-2])
+        matched_action = next(
+            (name for name, action in WRITE_ACTIONS.items() if action.get("card_marker") and action["card_marker"] in prev_content),
+            None,
+        )
+        if matched_action:
+            logger.debug(f"Detected pending '{matched_action}' approval card in previous message")
             if APPROVAL_PATTERN.search(msg_clean):
-                logger.debug("Approval keyword detected — returning execute_pr")
-                return "execute_pr"
+                state["write_action"] = matched_action
+                logger.debug("Approval keyword detected — returning execute_write")
+                return "execute_write"
+            if REJECTION_PATTERN.search(msg_clean):
+                return "cancel_action"
 
-    # existing pending_action logic can stay if you want
     pending_action = state.get("pending_action") or {}
     status = pending_action.get("status")
     logger.debug(f"pending_action.status: {status}")
     if status == "awaiting_approval":
         action_type = pending_action.get("action_type")
-        if APPROVAL_PATTERN.search(msg_clean) and action_type == "create_pr":
-            return "execute_pr"
+        if APPROVAL_PATTERN.search(msg_clean) and action_type in WRITE_ACTIONS:
+            return "execute_write"
         if REJECTION_PATTERN.search(msg_clean):
             return "cancel_action"
 
-    # 1. Handle Active HITL Approvals (PRs, Web Search, etc.)
+    # 1. Handle Active HITL Approvals (writes, Web Search, etc.)
     if status in {"awaiting_approval", "hitl_approval_required"}:
         action_type = pending_action.get("action_type") or pending_action.get("type")
 
         if APPROVAL_PATTERN.search(msg_clean):
-            if action_type in {"web_search", "web_search_fallback"}:
+            if action_type in WRITE_ACTIONS:
+                return "execute_write"
+            elif action_type in {"web_search", "web_search_fallback"}:
                 return "web_search"
-            elif action_type in {"create_pr", "execute_pr"}:
-                return "execute_pr"
             return action_type or "web_search"
 
         if REJECTION_PATTERN.search(msg_clean):
             return "cancel_action"
-    # 2. Strict Tool Matching (Using regex word boundaries for short terms like 'pr')
+    # 2. Strict Tool Matching (Using regex word boundaries for short terms like 'pr'). Mongo,
+    # GitHub, and web all resolve to the same unified multi-tool agent now.
     if any(w in msg for w in ["github", "repository", "commit history", "code search"]):
-        return "github_search"
+        return "tool_agent"
     if any(w in msg for w in ["run code", "execute", "query db", "mongodb", "script"]):
-        return "code_interpreter"
+        return "tool_agent"
 
     # Checked BEFORE the generic "pull request" pattern below, so natural creation phrasing
     # like "create a pull request to merge X into Y" isn't swallowed by the broader
     # review/summary match just because it also contains the words "pull request".
     if re.search(r'\b(?:create|open|submit|draft)\s+(?:an?\s+)?(?:pr|pull request)\b', msg) or re.search(r'\bmerge\s+(?:an?\s+)?pr\b', msg):
         return "create_pr"
+    # Checked before "pull request"/"pr" matching below since "issue" is unambiguous on its own.
+    if re.search(r'\b(?:create|open|file|submit|draft)\s+(?:an?\s+)?(?:issue|bug report)\b', msg):
+        return "create_issue"
     # Use word boundary so 'process' or 'provide' won't match 'pr'
     if re.search(r'\b(review pr|pull request|pr summary)\b', msg):
         return "pr_summary"
@@ -275,25 +289,35 @@ def build_agent_plan(intent: str, state: dict) -> dict:
     logger.debug(f"Reasoner flags: {state.get('reasoner_flags')}")
     agents = []
 
-    # 1. Approval execution takes absolute precedence
-    if intent == "execute_pr":
-        logger.info("[Coordinator] Direct routing to execute_pr.")
-        state["last_intent"] = "execute_pr"
-        return {"agents": ["execute_pr", "formatter"], "skip": []}
+    # 1. Approval execution takes absolute precedence — one generic destination for every
+    # registered write action (PR, issue, Mongo write, ...).
+    if intent == "execute_write":
+        logger.info("[Coordinator] Direct routing to execute_write.")
+        state["last_intent"] = "execute_write"
+        return {"agents": ["execute_write", "formatter"], "skip": []}
 
-    # 2. Direct PR creation request — the reasoner's needs_create_pr flag is included here
-    # (not just the classify_intent regex) since natural phrasing the regex doesn't catch
-    # should still be able to reach this path via the LLM's own semantic classification.
+    # 2. Direct write-proposal requests — the reasoner's needs_create_pr/needs_create_issue
+    # flags are included here (not just the classify_intent regex) since natural phrasing the
+    # regex doesn't catch should still reach this path via the LLM's own semantic
+    # classification. Detecting *which* write action is wanted stays per-action (inherently
+    # semantic); state["write_action"] tells the shared propose_write_node which one to draft.
     if intent == "create_pr" or flags.get("needs_create_pr"):
-        state["last_intent"] = "create_pr"
-        return {"agents": ["draft_pr", "formatter"], "skip": []}
+        state["last_intent"] = "propose_write"
+        state["write_action"] = "create_pr"
+        return {"agents": ["propose_write", "formatter"], "skip": []}
+
+    if intent == "create_issue" or flags.get("needs_create_issue"):
+        state["last_intent"] = "propose_write"
+        state["write_action"] = "create_issue"
+        return {"agents": ["propose_write", "formatter"], "skip": []}
 
     # 2b. Continuation of a non-PR HITL approval (e.g. approving a pending web search) —
     # these used to be classified correctly but silently dropped here, falling back to
-    # whatever the reasoner's flags guessed for a bare "yes"/"no" reply.
+    # whatever the reasoner's flags guessed for a bare "yes"/"no" reply. Web search is now
+    # one of tool_agent_node's actions, not its own destination.
     if intent == "web_search":
-        state["last_intent"] = "web_search"
-        return {"agents": ["web_search", "formatter"], "skip": []}
+        state["last_intent"] = "tool_agent"
+        return {"agents": ["tool_agent", "formatter"], "skip": []}
 
     if intent == "cancel_action":
         state["pending_action"] = None
@@ -325,14 +349,12 @@ def build_agent_plan(intent: str, state: dict) -> dict:
         agents.append("summarizer")
     if flags.get("needs_paapp"):
         agents.append("paapp")
-    if flags.get("needs_web_search"):
-        agents.append("web_search")
-    if flags.get("needs_code_interpreter"):
-        agents.append("code_interpreter")
+    # Mongo/GitHub/web all fold into one multi-tool agent — any of the three flags routes
+    # there, and the model itself decides which tool(s) the question actually needs.
+    if flags.get("needs_web_search") or flags.get("needs_code_interpreter") or flags.get("needs_github_search"):
+        agents.append("tool_agent")
     if is_pr_request:
         agents.append("pr_summary")
-    elif flags.get("needs_github_search"):
-        agents.append("github_search")
 
     if not agents:
         agents.append("conversational")
@@ -425,6 +447,7 @@ async def reasoner_node(state: GraphState) -> GraphState:
                 "needs_github_search": False,
                 "needs_pr_summary": False,
                 "needs_create_pr": False,
+                "needs_create_issue": False,
             }
 
         logger.info(f"[Reasoner] Flags: {flags}")
@@ -760,7 +783,7 @@ def formatter_node(state: GraphState) -> dict:
 
         if relevance_grade == "web_search":
             source_type = "web"
-        elif relevance_grade in ("code_interpreter", "github_search", "pr_summary"):
+        elif relevance_grade in ("code_interpreter", "github_search", "pr_summary", "tool_agent"):
             source_type = "tool_output"
         elif relevance_grade == "conversational" or insight_answer:
             source_type = "conversational"
@@ -1995,320 +2018,165 @@ def insight_query_node(state: dict) -> dict:
     }
 
 # ============================================================
-# WEB SEARCH NODE
+# SHARED REACT-LOOP INFRASTRUCTURE (Mongo/GitHub/web all fold into tool_agent_node below)
 # ============================================================
-def extract_real_query(state: dict) -> str:
-    APPROVAL_WORDS = {"yes", "sure", "yep", "do it", "approve", "confirm", "go ahead", "ok", "okay"}
-    
-    # 1. First priority: Check explicit pending_action payload
-    pending_action = state.get("pending_action") or {}
-    if isinstance(pending_action, dict) and pending_action.get("original_query"):
-        return pending_action["original_query"]
+def resolve_recent_mention(messages: list, extractor, skip_predicate=None):
+    """Scans messages most-recent-first, applying `extractor` to each message's content and
+    returning the first (i.e. most recent) truthy result. `skip_predicate`, if given, skips
+    a message's content entirely without trying to extract from it (e.g. bare approval
+    replies like "yes"/"ok" that never carry the real topic). Returns None if nothing in
+    history matches — callers apply their own final fallback."""
+    for m in reversed(messages or []):
+        content = getattr(m, "content", "") if hasattr(m, "content") else (m.get("content", "") if isinstance(m, dict) else str(m))
+        if skip_predicate and skip_predicate(content):
+            continue
+        result = extractor(content)
+        if result:
+            return result
+    return None
 
-    # 2. Second priority: Filter messages to find the last true Human topic
-    messages = state.get("messages", [])
-    human_contents = []
-    
-    for m in messages:
-        # Check for LangChain HumanMessage or dict role=='user'
-        is_human = getattr(m, "type", "") in ("human", "user") or m.__class__.__name__ == "HumanMessage"
-        if is_human:
-            text = (m.content if hasattr(m, "content") else str(m)).strip()
-            human_contents.append(text)
 
-    # Walk backward through human messages and find one that isn't just an approval keyword
-    for text in reversed(human_contents):
-        clean_text = text.lower().strip("!., ")
-        if clean_text not in APPROVAL_WORDS:
-            return text
+def _parse_agent_json(raw_text: str) -> dict:
+    """Defensive JSON extraction shared by every ReAct-loop tool: tries direct parsing,
+    then a regex-located JSON object, then gives up and returns {} (the loop treats a
+    decision with no recognizable "action" as a failed step, not a crash)."""
+    clean_text = raw_text.strip()
+    clean_text = re.sub(r"^```(?:json|python)?\s*", "", clean_text, flags=re.IGNORECASE)
+    clean_text = re.sub(r"\s*```$", "", clean_text)
 
-    return state.get("question", "")
+    try:
+        parsed = json.loads(clean_text)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        json_match = re.search(r"(\{.*\})", clean_text, re.DOTALL)
+        if json_match:
+            try:
+                parsed = json.loads(json_match.group(1))
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                pass
+    return {}
 
-async def web_search_node(state: GraphState) -> dict:
-    logger.info("--- EXECUTING WEB SEARCH ESCALATION ---")
-    state = ensure_workflow_keys(state)
-    workflow_name = state["workflowName"]
-    request_id = state["requestId"]
-    node_name = "web_search_node"
-    with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
-        node_input = state.copy()
-        # 1. Emit the live thought to the UI
-        await safe_emit_event(
-            "trace_detail",
-            {
-                "node": "web_search_node",
-                "title": "Searching the web...",
-                "detail": "Querying DuckDuckGo for live context..."
-            }
+
+class _UnsafeActionRequested(Exception):
+    """Raised by run_react_loop when is_unsafe() flags a step, so the calling node can
+    build its own tool-specific approval-required response instead of the loop guessing."""
+    def __init__(self, decision: dict):
+        self.decision = decision
+
+
+def _format_react_attempts(attempts: list) -> str:
+    if not attempts:
+        return "(none yet — this is the first step)"
+    return "\n\n".join(
+        f"Attempt {i} — Purpose: {a['purpose']}\nAction: {a['action_desc']}\nObservation: {a['observation']}"
+        for i, a in enumerate(attempts, 1)
+    )
+
+
+async def run_react_loop(
+    *,
+    question: str,
+    schema: str,
+    prompt_template: str,
+    act,
+    is_unsafe=lambda decision: False,
+    max_iterations: int,
+    node_name: str,
+) -> dict:
+    """Generic Reason -> Act -> Observe -> Decide loop shared by every iterative tool
+    (MongoDB, GitHub search, ...). Each step asks the model for the next action given
+    everything tried so far; the model decides for itself when it has enough to answer,
+    or is honest that it doesn't. Returns {"final_answer": str, "attempts": list[dict]}.
+    Raises _UnsafeActionRequested if is_unsafe() ever flags a proposed action."""
+    attempts: list = []
+    final_answer = None
+
+    for step in range(max_iterations):
+        forced_final = step == max_iterations - 1
+        prompt = prompt_template.format(
+            question=question if not forced_final else (
+                f"{question}\n\n(You have used all your steps. You MUST return "
+                "action=\"final\" now, honestly summarizing what you tried and found.)"
+            ),
+            schema=schema,
+            attempts=_format_react_attempts(attempts),
         )
-
-        # Safe question extraction
-        # question = state.get("original_question")
-        # if not question and state.get("messages"):
-        question = extract_real_query(state)#state["messages"][-3].content
-
-        web_docs = []
 
         try:
-            search = DuckDuckGoSearchAPIWrapper()
-
-            # 2. Offload the blocking DuckDuckGo search to a background thread
-            results = await asyncio.to_thread(search.results, question, max_results=3)
-
-            if results:
-                web_docs = [
-                    Document(
-                        page_content=f"Title: {r.get('title', 'N/A')}\nSnippet: {r.get('snippet', 'N/A')}",
-                        metadata={"source": r.get("link", "web_search"), "type": "web_search"}
-                    )
-                    for r in results if isinstance(r, dict)
-                ]
+            response = await lite_llm.ainvoke(prompt)
+            resp_content = response.content if hasattr(response, "content") else str(response)
+            raw_text = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in resp_content]) if isinstance(resp_content, list) else str(resp_content)
+            decision = _parse_agent_json(raw_text)
         except Exception:
-            logger.exception("Web search execution error.")
+            logger.exception("[%s] step %s failed to produce a usable decision.", node_name, step + 1)
+            break
 
-        # Fallback document if search returned empty or threw an error
-        if not web_docs:
-            web_docs = [
-                Document(
-                    page_content="No direct web search results were found for this query.",
-                    metadata={"source": "web_search", "type": "web_search"}
-                )
-            ]
-        node_output = state.copy()
-        logger.info(
-            "node executed",
-            extra={
-                "service": "SAAPP",
-                "erragent_context": {
-                    "input": node_input,
-                    "output": node_output,
-                }
-            }
-        )
-        # Return ONLY modified state keys — do NOT spread **state
-        return {
-            "documents": web_docs,
-            "relevance_grade": "web_search"
-        }
+        action = decision.get("action")
+        if action == "final":
+            final_answer = decision.get("answer") or "I wasn't able to find a conclusive answer."
+            break
 
-# ============================================================
-# CODE INTERPRETOR NODE
-# ============================================================
-def code_interpreter_node(state: GraphState) -> Dict[str, Any]:
-    state = ensure_workflow_keys(state)
-    username = state.get("username")
-    workflow_name = state["workflowName"]
-    request_id = state["requestId"]
-    node_name = "code_interpreter_node"
-    with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
-        node_input = state.copy()
-        # 1. Verify Global Admin access
-        user_groups = load_user_directory_groups(username)
-        if "Global_Admins" not in user_groups:
-            logger.warning(f"Unauthorized code interpreter attempt by non-admin user: {username}")
-            return {
-                "content_to_format": "Access denied: The code interpreter tool is restricted to Global Administrators.",
-                "relevance_grade": "code_interpreter",
-                "code_approval_status": "rejected"
-            }
+        if action != "query":
+            attempts.append({
+                "purpose": decision.get("purpose", "(unclear)"),
+                "action_desc": "(no valid action returned)",
+                "observation": "ERROR: model did not return a recognized action",
+            })
+            continue
 
-        approval_status = state.get("code_approval_status")
-        existing_draft = state.get("drafted_code")
+        purpose = decision.get("purpose", "Working...")
+        logger.info(f"[{node_name}] Step {step+1}: {purpose}")
+        await safe_emit_event("trace_detail", {"node": node_name, "title": "Working...", "detail": purpose})
 
-        # =========================================================================
-        # BRANCH 1: Handle User Approvals for Write Operations
-        # =========================================================================
-        if approval_status == "approved" and existing_draft:
-            logger.info(f"Executing approved write operation for user {username}...")
-            try:
-                db = get_db()
-                if hasattr(db, "list_collection_names") is False and hasattr(db, "list_database_names"):
-                    db = db.get_default_database() or db[list(db.list_database_names())[0]]
+        if is_unsafe(decision):
+            raise _UnsafeActionRequested(decision)
 
-                local_scope = {"db": db, "username": username, "result": None}
+        try:
+            observation = act(decision)
+            if asyncio.iscoroutine(observation):
+                observation = await observation
+        except Exception as e:
+            observation = f"ERROR: {e}"
 
-                exec(existing_draft, {"__builtins__": {
-                    "range": range, "len": len, "str": str, "int": int,
-                    "float": float, "list": list, "dict": dict, "set": set,
-                    "tuple": tuple, "min": min, "max": max, "sum": sum, "round": round
-                }}, local_scope)
+        tool_action_name = decision.get("tool_action") or ""
+        args_summary = ", ".join(f"{k}={v}" for k, v in (decision.get("args") or {}).items())
+        action_desc = f"{tool_action_name}({args_summary})" if tool_action_name else (args_summary or "")
+        attempts.append({
+            "purpose": purpose,
+            "action_desc": action_desc,
+            "observation": observation,
+        })
 
-                execution_result = local_scope.get("result", "Write operation executed successfully.")
-                output_msg = f"**Write Operation Executed Successfully:**\n```json\n{json.dumps(execution_result, default=str, indent=2)}\n```"
+    if final_answer is None:
+        # Loop ran out of steps without an explicit final action — force one last honest
+        # synthesis instead of silently returning the last raw observation.
+        try:
+            prompt = prompt_template.format(
+                question=(
+                    f"{question}\n\n(You are out of steps. You MUST return action=\"final\" now, "
+                    "honestly summarizing what you tried and found — never invent an answer "
+                    "beyond what the attempts above actually show.)"
+                ),
+                schema=schema,
+                attempts=_format_react_attempts(attempts),
+            )
+            response = await lite_llm.ainvoke(prompt)
+            resp_content = response.content if hasattr(response, "content") else str(response)
+            raw_text = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in resp_content]) if isinstance(resp_content, list) else str(resp_content)
+            decision = _parse_agent_json(raw_text)
+            final_answer = decision.get("answer") or "I wasn't able to find a conclusive answer after several attempts."
+        except Exception:
+            logger.exception("[%s] final synthesis step failed.", node_name)
+            final_answer = "I wasn't able to find a conclusive answer after several attempts."
 
-                return {
-                    **state,
-                    "drafted_code": None,
-                    "code_approval_status": "completed",
-                    "raw_generation": output_msg,
-                    "content_to_format": output_msg,
-                    "relevance_grade": "code_interpreter"
-                }
-            except Exception:
-                logger.exception("Write operation execution failed.")
-                error_msg = "**Write Operation Execution Failed:**\n```error\nSee logs for traceback.\n```"
-                return {
-                    **state,
-                    "drafted_code": None,
-                    "code_approval_status": "error",
-                    "raw_generation": error_msg,
-                    "content_to_format": error_msg,
-                    "relevance_grade": "code_interpreter"
-                }
-
-        # =========================================================================
-        # BRANCH 2 & 3: Draft, Safety Check, Execute, and Auto-Retry on Empty Results
-        # =========================================================================
-        msg = state.get("messages", [])[-1].content.strip()
-        max_retries = 2
-        execution_result = None
-        drafted_code = ""
-        purpose = "Database query"
-
-        db = get_db()
-        if hasattr(db, "list_collection_names") is False and hasattr(db, "list_database_names"):
-            db = db.get_default_database() or db[list(db.list_database_names())[0]]
-
-        for attempt in range(max_retries):
-            current_msg = msg
-            if attempt > 0:
-                # Force a completely different query structure on retry
-                current_msg = (
-                    f"{msg} (CRITICAL ERROR: The exact match query returned 0 results "
-                    f"due to potential hidden whitespace or formatting. You MUST use a MongoDB "
-                    f"regular expression like: result = list(db['tasks'].find({{'lane': {{'$regex': 'backlog', '$options': 'i'}}}}))"
-                )
-            # Format drafting prompt safely without triggering curly brace KeyErrors
-            if "{msg}" in CODE_DRAFTING_PROMPT:
-                prompt = CODE_DRAFTING_PROMPT.replace("{msg}", current_msg)
-            else:
-                prompt = f"{CODE_DRAFTING_PROMPT}\n\nUser Request: {current_msg}"
-
-            try:
-                response = lite_llm.invoke(prompt)
-                resp_content = response.content if hasattr(response, "content") else str(response)
-                raw_text = "".join([block.get("text", "") if isinstance(block, dict) else str(block) for block in resp_content]) if isinstance(resp_content, list) else str(resp_content)
-
-                # Clean markdown code fences if the LLM wrapped it
-                clean_text = raw_text.strip()
-                clean_text = re.sub(r"^```(?:json|python)?\s*", "", clean_text, flags=re.IGNORECASE)
-                clean_text = re.sub(r"\s*```$", "", clean_text)
-
-                drafted_code = ""
-                purpose = "Database query"
-
-                # 1. Try direct JSON parsing
-                try:
-                    parsed = json.loads(clean_text)
-                    if isinstance(parsed, dict):
-                        drafted_code = parsed.get("code", "")
-                        purpose = parsed.get("purpose", "Database query")
-                except Exception:
-                    # 2. Fallback: Search for any JSON object inside the text using regex
-                    json_match = re.search(r"(\{.*?\})", clean_text, re.DOTALL)
-                    if json_match:
-                        try:
-                            parsed = json.loads(json_match.group(1))
-                            if isinstance(parsed, dict):
-                                drafted_code = parsed.get("code", "")
-                                purpose = parsed.get("purpose", "Database query")
-                        except Exception:
-                            pass
-
-                # 3. Final fallback if JSON parsing completely failed
-                if not drafted_code:
-                    code_match = re.search(r"```(?:python)?\s*(.*?)\s*```", raw_text, re.DOTALL)
-                    drafted_code = code_match.group(1).strip() if code_match else clean_text
-
-            except Exception:
-                logger.exception("Code drafting failed on attempt %s.", attempt + 1)
-                continue
-
-            logger.info(f"Attempt {attempt+1} - Extracted Code to Execute: {drafted_code}")
-
-            # Safety Check
-            unsafe_keywords = ["insert", "update", "delete", "drop", "remove", "replace", "write"]
-            is_safe_read = not any(kw in drafted_code.lower() for kw in unsafe_keywords)
-
-            if is_safe_read:
-                try:
-                    local_scope = {"db": db, "username": username, "result": None}
-                    exec(drafted_code, {"__builtins__": {
-                        "range": range, "len": len, "str": str, "int": int,
-                        "float": float, "list": list, "dict": dict, "set": set,
-                        "tuple": tuple, "min": min, "max": max, "sum": sum, "round": round,
-                        "enumerate": enumerate, "zip": zip
-                    }}, local_scope)
-
-                    execution_result = local_scope.get("result", None)
-
-                    # Check if results came back valid and non-empty
-                    if execution_result is not None and (not isinstance(execution_result, list) or len(execution_result) > 0):
-                        logger.info(f"Query succeeded on attempt {attempt+1}.")
-                        break
-                    else:
-                        logger.warning(f"Attempt {attempt+1} returned empty/null results. Retrying with broader instructions...")
-                except Exception:
-                    logger.exception("Execution runtime error on attempt %s.", attempt + 1)
-                    if attempt == max_retries - 1:
-                        error_msg = "Execution Error: see logs for traceback"
-                        return {
-                            **state,
-                            "drafted_code": None,
-                            "code_approval_status": "error",
-                            "raw_generation": error_msg,
-                            "content_to_format": error_msg,
-                            "relevance_grade": "code_interpreter"
-                        }
-            else:
-                approval_message = f"**Destructive Operation Requires Approval:**\n\n**Purpose:** {purpose}\n```python\n{drafted_code}\n```"
-                return {
-                    **state,
-                    "drafted_code": drafted_code,
-                    "code_approval_status": "pending",
-                    "raw_generation": approval_message,
-                    "content_to_format": approval_message,
-                    "relevance_grade": "code_interpreter"
-                }
-
-        # Format final successful results with code transparency
-        output_msg = (
-            f"**Query Purpose:** {purpose}\n\n"
-            f"**Executed Code:**\n```python\n{drafted_code}\n```\n\n"
-            f"**MongoDB Results:**\n```json\n{json.dumps(execution_result, default=str, indent=2)}\n```"
-        )
-
-        doc = Document(
-            page_content=f"DATABASE QUERY RESULTS:\n{output_msg}",
-            metadata={"source": "mongodb_code_interpreter", "priority": True}
-        )
-        current_docs = state.get("documents", [])
-        current_docs.append(doc)
-        node_output = state.copy()
-        logger.info(
-            "node executed",
-            extra={
-                "service": "SAAPP",
-                "erragent_context": {
-                    "input": node_input,
-                    "output": node_output,
-                }
-            }
-        )
-        return {
-            "documents": current_docs,
-            "drafted_code": None,
-            "code_approval_status": "completed",
-            "raw_generation": output_msg,
-            "content_to_format": output_msg,
-            "relevance_grade": "code_interpreter"
-        }
-
-
+    return {"final_answer": final_answer, "attempts": attempts}
 
 
 # ============================================================
-# REPO SEARCH NODES
+# TOOL AGENT — unified Mongo + GitHub + web research loop
 # ============================================================
 
 def extract_github_repo(text: str | None, fallback: str = "SummonShenron/SAAPP") -> str:
@@ -2373,125 +2241,251 @@ def extract_pr_request_details(text: str | None, fallback_repo: str = "SummonShe
 
     return details
 
-async def github_search_node(state: dict) -> dict:
+def _format_observation_for_footer(observation) -> str:
+    if isinstance(observation, str):
+        return observation
+    return json.dumps(observation, default=str, indent=2)
+
+
+async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
+    """Unified read-only research agent: Mongo (admin-only), GitHub, and web search all live
+    as actions in one ReAct loop, so the model can reach for whichever tool (or sequence of
+    tools) a question actually needs — e.g. check the repo, then search the web if the repo
+    alone wasn't conclusive — instead of being confined to one tool per turn.
+
+    Phase 1: read-only tools only. Phase 2 unified every write action (PR, issue, and Mongo
+    writes proposed by this loop) onto one WRITE_ACTIONS registry — a proposed Mongo write
+    here hands off to execute_write_node via the same pending_action mechanism PR/issue use,
+    rather than a bespoke approval path of its own."""
     state = ensure_workflow_keys(state)
-    logger.info("--- GITHUB SEARCH NODE (DYNAMIC TREE ROUTER) CALLED ---")
+    username = state.get("username")
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
-    node_name = "github_search_node"
+    node_name = "tool_agent_node"
     with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
         node_input = state.copy()
-        # 1. Emit live thought to the UI
+        user_groups = load_user_directory_groups(username)
+        is_admin = "Global_Admins" in user_groups
+
         await safe_emit_event(
             "trace_detail",
-            {
-                "node": "github_search_node",
-                "title": "Searching GitHub repository...",
-                "detail": "Fetching repository tree and querying code structure..."
-            }
+            {"node": "tool_agent_node", "title": "Investigating...", "detail": "Preparing available tools..."}
         )
 
         msg = state.get("messages", [])[-1].content.strip()
 
-        repo = state.get("repo") or extract_github_repo(msg)
+        # Resolve the repo BEFORE folding in attached/pasted code — arbitrary pasted content
+        # can contain its own "word/word"-shaped substrings that would otherwise hijack
+        # repo detection. Recency-first across turns, not just the single latest message.
+        repo = state.get("repo") or resolve_recent_mention(
+            state.get("messages", []), lambda c: extract_github_repo(c, fallback=None)
+        ) or "SummonShenron/SAAPP"
+
+        documents = state.get("documents", []) or []
+        attachment_docs = [d for d in documents if d.metadata.get("source") == "user_attachment_summary"]
+        if attachment_docs:
+            attached_text = "\n\n".join(d.page_content for d in attachment_docs)
+            msg = f"{msg}\n\nATTACHED CODE (from this turn):\n{attached_text}"
+
         token = os.getenv("GITHUB_TOKEN")
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "vnd.github+json"
+        headers = {"Authorization": f"Bearer {token}", "Accept": "vnd.github+json"}
+        api_base = "https://api.github.com"
+        gh_base = "https://github.com"
+
+        def _get_default_branch():
+            repo_res = requests.get(f"{api_base}/repos/{repo}", headers=headers)
+            return repo_res.json().get("default_branch", "main") if repo_res.status_code == 200 else "main"
+
+        default_branch = await asyncio.to_thread(_get_default_branch)
+
+        # Mongo collection names are only resolved (and only ever offered as an action) for
+        # admins — skips a needless DB round-trip for everyone else, and means non-admins
+        # never see run_mongo_query mentioned in their action menu at all.
+        mongo_schema = None
+        db = None
+        if is_admin:
+            db = get_db()
+            if hasattr(db, "list_collection_names") is False and hasattr(db, "list_database_names"):
+                db = db.get_default_database() or db[list(db.list_database_names())[0]]
+            try:
+                mongo_schema = ", ".join(db.list_collection_names())
+            except Exception:
+                logger.exception("Failed to list collections; proceeding without Mongo schema.")
+                mongo_schema = "(unable to list collections)"
+
+        schema_parts = [f"repo={repo}", f"default_branch={default_branch}"]
+        if is_admin:
+            schema_parts.append(f"mongodb_collections={mongo_schema}")
+        schema = ", ".join(schema_parts)
+
+        # --- action implementations (reused as-is from the single-tool nodes they replace) ---
+        unsafe_keywords = ["insert", "update", "delete", "drop", "remove", "replace", "write"]
+        exec_builtins = {
+            "range": range, "len": len, "str": str, "int": int,
+            "float": float, "list": list, "dict": dict, "set": set,
+            "tuple": tuple, "min": min, "max": max, "sum": sum, "round": round,
+            "enumerate": enumerate, "zip": zip
         }
 
-        api_parts = ["https", "api.github.com"]
-        api_base = f"{api_parts[0]}://{api_parts[1]}"
+        def _run_mongo_code(code: str):
+            local_scope = {"db": db, "username": username, "result": None}
+            exec(code, {"__builtins__": exec_builtins}, local_scope)
+            return local_scope.get("result", None)
 
-        def _fetch_github_data():
-            # 1. Fetch the actual file tree from GitHub
-            repo_res = requests.get(f"{api_base}/repos/{repo}", headers=headers)
-            default_branch = repo_res.json().get("default_branch", "main") if repo_res.status_code == 200 else "main"
-
+        def _list_tree():
             tree_url = f"{api_base}/repos/{repo}/git/trees/{default_branch}?recursive=1"
-            response = requests.get(tree_url, headers=headers)
-            return response, default_branch
+            res = requests.get(tree_url, headers=headers)
+            if res.status_code != 200:
+                return f"ERROR: could not fetch tree ({res.status_code})"
+            tree_items = res.json().get("tree", [])
+            paths = [
+                item.get("path") for item in tree_items
+                if item.get("type") == "blob"
+                and not any(exclude in item.get("path", "") for exclude in ["node_modules", "dist", "__pycache__"])
+            ]
+            return "\n".join(paths[:400])
 
-        # Offload the blocking requests network calls to a background thread
-        response, default_branch = await asyncio.to_thread(_fetch_github_data)
+        def _read_file(path: str):
+            if not path:
+                return "ERROR: no path given"
+            file_url = f"{api_base}/repos/{repo}/contents/{path}"
+            res = requests.get(file_url, headers=headers)
+            if res.status_code != 200:
+                return f"ERROR: could not fetch {path} ({res.status_code})"
+            file_data = res.json()
+            try:
+                decoded = base64.b64decode(file_data.get("content", "")).decode("utf-8", errors="replace")
+            except Exception:
+                return f"ERROR: could not decode {path}"
+            html_url = f"{gh_base}/{repo}/blob/{default_branch}/{path}"
+            snippet = decoded[:3500] + ("\n... [truncated]" if len(decoded) > 3500 else "")
+            return f"URL: {html_url}\n{snippet}"
 
-        if response.status_code != 200:
-            return {
-                **state,
-                "github_results": f"GitHub API tree error: {response.status_code} - {response.text}",
-                "content_to_format": "Error fetching tree",
-                "relevance_grade": "github_search"
-            }
+        def _diff_branches(base: str, head: str):
+            if not base or not head:
+                return "ERROR: base and head branches are required"
+            return fetch_branch_diff_summary(repo, base, head)
 
-        tree_items = response.json().get("tree", [])
+        def _list_commits(branch: str, limit):
+            branch = branch or default_branch
+            try:
+                limit = min(int(limit or 10), 30)
+            except (TypeError, ValueError):
+                limit = 10
+            res = requests.get(
+                f"{api_base}/repos/{repo}/commits", headers=headers,
+                params={"sha": branch, "per_page": limit},
+            )
+            if res.status_code != 200:
+                return f"ERROR: could not fetch commits ({res.status_code})"
+            commits = res.json()
+            return "\n".join(f"{c['sha'][:7]} — {c['commit']['message'].splitlines()[0]}" for c in commits)
 
-        # Filter for source code files
-        valid_paths = [
-            item.get("path") for item in tree_items
-            if item.get("type") == "blob"
-            and item.get("path", "").endswith(".py")
-            and not any(exclude in item.get("path", "") for exclude in ["Example_List", "node_modules", "dist", "tests", "__pycache__"])
-        ]
+        # --- dynamic, per-user action menu — non-admins never even see run_mongo_query ---
+        menu_lines = []
+        if is_admin:
+            menu_lines.append(
+                "- run_mongo_query — args: code (a string of executable PyMongo code that assigns "
+                "its output to a variable named result; wrap cursor operations like find()/aggregate() "
+                "in list(...); for text-field matching prefer a MongoDB regex with case-insensitive "
+                "options over strict equality)"
+            )
+        menu_lines.extend([
+            "- list_repo_tree — no args; lists every file path in the repo",
+            "- read_repo_file — args: path (relative file path within the repo)",
+            "- diff_branches — args: base (branch name), head (branch name)",
+            "- list_commits — args: branch (branch name), limit (max number of commits, integer)",
+            "- web_search — args: query (the exact search query string to run)",
+        ])
+        actions_menu = "\n".join(menu_lines)
+        prompt_template = TOOL_AGENT_PROMPT.replace("{actions_menu}", actions_menu.replace("{", "{{").replace("}", "}}"))
 
-        # 2. Let the LLM select from the actual repository tree dynamically (USING AINVOKE)
-        file_list_str = "\n".join(f"- {p}" for p in valid_paths)
-        router_prompt = GITHUB_SEARCH_PROMPT
+        def _is_unsafe(decision: dict) -> bool:
+            if decision.get("tool_action") != "run_mongo_query":
+                return False
+            code = ((decision.get("args") or {}).get("code") or "").lower()
+            return any(kw in code for kw in unsafe_keywords)
+
+        async def _act(decision: dict):
+            tool_action = decision.get("tool_action")
+            args = decision.get("args") or {}
+
+            if tool_action == "run_mongo_query":
+                if not is_admin:
+                    return "ERROR: not authorized for this action"
+                return await asyncio.to_thread(_run_mongo_code, args.get("code", "") or "")
+            if tool_action == "web_search":
+                query = args.get("query") or msg
+                search = DuckDuckGoSearchAPIWrapper()
+                results = await asyncio.to_thread(search.results, query, max_results=3)
+                return [r for r in results if isinstance(r, dict)] if results else []
+
+            def _dispatch_github():
+                if tool_action == "list_repo_tree":
+                    return _list_tree()
+                if tool_action == "read_repo_file":
+                    return _read_file(args.get("path"))
+                if tool_action == "diff_branches":
+                    return _diff_branches(args.get("base"), args.get("head"))
+                if tool_action == "list_commits":
+                    return _list_commits(args.get("branch"), args.get("limit"))
+                return f"ERROR: unrecognized tool_action '{tool_action}'"
+
+            return await asyncio.to_thread(_dispatch_github)
 
         try:
-            router_response = await lite_llm.ainvoke(router_prompt)
-            router_content = router_response.content if hasattr(router_response, "content") else str(router_response)
-            if isinstance(router_content, list):
-                raw_output = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in router_content])
-            else:
-                raw_output = str(router_content)
-            raw_output = raw_output.replace("```", "").strip()
-            selected_paths = [p.strip() for p in raw_output.split(",") if p.strip() in valid_paths]
-        except Exception:
-            selected_paths = []
+            loop_result = await run_react_loop(
+                question=msg,
+                schema=schema,
+                prompt_template=prompt_template,
+                act=_act,
+                is_unsafe=_is_unsafe,
+                max_iterations=TOOL_AGENT_MAX_ITERATIONS,
+                node_name="tool_agent_node",
+            )
+        except _UnsafeActionRequested as e:
+            drafted_code = (e.decision.get("args") or {}).get("code", "") or ""
+            purpose = e.decision.get("purpose", "Database query")
+            summary_line = f"Ready to run this database operation:\n```python\n{drafted_code}\n```\n**Purpose:** {purpose}"
+            approval_message = (
+                "**Approval Required**\n\n"
+                f"{summary_line}\n\n"
+                "*Please Approve, Modify parameters, or Reject this action.*"
+            )
+            new_messages = list(state.get("messages", [])) + [AIMessage(content=approval_message)]
+            return {
+                **state,
+                "pending_action": {"action_type": "run_mongo_write", "details": {"code": drafted_code, "purpose": purpose}},
+                "relevance_grade": "hitl_approval_required",
+                "generation": approval_message,
+                "content_to_format": approval_message,
+                "messages": new_messages,
+            }
 
-        # Fallback to a reasonable default if LLM selection missed
-        if not selected_paths and valid_paths:
-            selected_paths = [valid_paths[0]]
+        final_answer = loop_result["final_answer"]
+        attempts = loop_result["attempts"]
 
-        # 3. Fetch contents of only the dynamically chosen files (Offloaded to background thread)
-        def _fetch_file_contents():
-            results = []
-            gh_parts = ["https", "github.com"]
-            gh_base = f"{gh_parts[0]}://{gh_parts[1]}"
+        steps_text = "\n\n".join(
+            f"**Step {i} — {a['purpose']}:**\n```\n{a['action_desc']}\n```\n"
+            f"**Result:**\n```\n{_format_observation_for_footer(a['observation'])}\n```"
+            for i, a in enumerate(attempts, 1)
+        )
+        output_msg = f"{final_answer}\n\n{steps_text}" if steps_text else final_answer
 
-            for path in selected_paths:
-                file_url = f"{api_base}/repos/{repo}/contents/{path}"
-                file_res = requests.get(file_url, headers=headers)
-                if file_res.status_code == 200:
-                    try:
-                        file_data = file_res.json()
-                        content_encoded = file_data.get("content", "")
-                        decoded = base64.b64decode(content_encoded).decode("utf-8")
-                        html_url = f"{gh_base}/{repo}/blob/{default_branch}/{path}"
-                        snippet = decoded[:3500] + ("\n... [Code truncated]" if len(decoded) > 3500 else "")
-                        results.append(f"File: {path}\nURL: {html_url}\nCode Snippet:\n```python\n{snippet}\n```")
-                    except Exception:
-                        pass
-            return results
-
-        results = await asyncio.to_thread(_fetch_file_contents)
-        formatted_results = "\n\n---\n\n".join(results) if results else "No matching files retrieved."
         node_output = state.copy()
         logger.info(
             "node executed",
             extra={
                 "service": "SAAPP",
-                "erragent_context": {
-                    "input": node_input,
-                    "output": node_output,
-                }
+                "erragent_context": {"input": node_input, "output": node_output}
             }
         )
         return {
             **state,
-            "github_results": formatted_results,
-            "content_to_format": formatted_results,
-            "relevance_grade": "github_search"
+            "drafted_code": None,
+            "code_approval_status": "completed",
+            "content_to_format": output_msg,
+            "relevance_grade": "tool_agent"
         }
 
 def resolve_pr_number(user_msg: str, repo: str, headers: dict, api_base: str) -> int | None:
@@ -2572,13 +2566,13 @@ async def pr_summarizer_node(state: GraphState) -> dict:
             }
         )
 
-        repo = state.get("repo") or extract_github_repo(
-            "\n".join(
-                getattr(m, "content", "") if hasattr(m, "content") else str(m)
-                for m in state.get("messages", [])
-            ),
-            "SummonShenron/SAAPP",
-        )
+        # Recency-first: a correction turn ("no, I meant a different repo") must win over
+        # whatever was mentioned earlier — joining all history into one string and searching
+        # once (the old approach) returns the *first* match in reading order, i.e. the
+        # earliest-mentioned repo, which is backwards for exactly this pattern.
+        repo = state.get("repo") or resolve_recent_mention(
+            state.get("messages", []), lambda c: extract_github_repo(c, fallback=None)
+        ) or "SummonShenron/SAAPP"
         token = os.getenv("GITHUB_TOKEN")
         headers = {
             "Authorization": f"Bearer {token}",
@@ -2586,14 +2580,17 @@ async def pr_summarizer_node(state: GraphState) -> dict:
         }
         api_base = "https://api.github.com"
 
-        # Extract user message to resolve target PR
-        user_msg = ""
-        if state.get("messages"):
-            user_msg = state["messages"][-1].content
+        messages = state.get("messages", [])
 
-        # 2. Offload blocking PR resolution and file fetches to a background thread
+        # 2. Offload blocking PR resolution and file fetches to a background thread. PR
+        # resolution is resolved the same recency-first way as repo — a PR referenced two
+        # turns ago ("review PR #4" ... "any concerns with it?") shouldn't be lost just
+        # because only the single latest message used to be checked, and resolve_pr_number
+        # itself makes blocking HTTP calls, so the scan has to stay inside this thread.
         def _fetch_pr_data():
-            pr_num = state.get("pr_number") or resolve_pr_number(user_msg, repo, headers, api_base)
+            pr_num = state.get("pr_number") or resolve_recent_mention(
+                messages, lambda c: resolve_pr_number(c, repo, headers, api_base)
+            )
             if not pr_num:
                 return None, None
 
@@ -2698,140 +2695,329 @@ def fetch_branch_diff_summary(repo: str, base: str, head: str) -> str:
     summary += f"\n\nFiles Changed ({len(files)}):\n- " + "\n- ".join(files[:15])
     return summary
 
-def draft_pr_node(state: GraphState) -> GraphState:
-    logger.info("--- DRAFT PR NODE (HITL) CALLED ---")
+def _content_of(msg) -> str:
+    return getattr(msg, "content", "") if hasattr(msg, "content") else (msg.get("content", "") if isinstance(msg, dict) else str(msg))
+
+
+# =========================================================================
+# WRITE_ACTIONS registry — Phase 2: every write-capable tool (PR, issue,
+# Mongo writes, and whatever comes next) registers its draft/execute/recovery
+# logic here instead of getting its own draft/execute node pair. The actual
+# per-action logic below is reused verbatim from the original draft_pr_node/
+# execute_pr_node/draft_issue_node/execute_issue_node — only the boilerplate
+# around it (RBAC check, approval parsing, history recovery, card envelope)
+# is now shared, in propose_write_node/execute_write_node further down.
+# =========================================================================
+
+def _draft_create_pr(state: GraphState) -> tuple[dict, str]:
+    messages = state.get("messages", [])
+    last_msg = messages[-1].content.strip() if messages else ""
+    pending_action = state.get("pending_action") or {}
+    existing_details = pending_action.get("details", {})
+
+    repo_fallback = (
+        existing_details.get("repo")
+        or state.get("repo")
+        or resolve_recent_mention(messages, lambda c: extract_github_repo(c, fallback=None))
+        or "SummonShenron/SAAPP"
+    )
+    parsed = extract_pr_request_details(last_msg, repo_fallback)
+    repo = existing_details.get("repo") or state.get("repo") or parsed["repo"]
+
+    match = re.search(r"merge\s+([\w\/\-\.]+)\s+into\s+([\w\/\-\.]+)", last_msg, re.IGNORECASE)
+    if match:
+        head_branch, base_branch = match.group(1), match.group(2)
+    elif existing_details.get("head_branch"):
+        head_branch, base_branch = existing_details["head_branch"], existing_details["base_branch"]
+    elif parsed.get("head_branch") and parsed.get("base_branch"):
+        head_branch, base_branch = parsed["head_branch"], parsed["base_branch"]
+    else:
+        head_branch = state.get("head_branch", "feature-branch")
+        base_branch = state.get("base_branch", "main")
+
+    repo_match = re.search(r"(?:for|in|repo(?:sitory)?)[\s:`]*([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)", last_msg, re.IGNORECASE)
+    if repo_match:
+        repo = repo_match.group(1).strip()
+
+    logger.info(f"[propose_write_node:create_pr] Fetching real branch diff for {repo}: {base_branch} <- {head_branch}")
+    diff_context = fetch_branch_diff_summary(repo, base_branch, head_branch)
+
+    try:
+        formatted_prompt = DRAFT_PR_PROMPT.format(
+            user_message=last_msg,
+            context=f"Repository: {repo}\nBase Branch: {base_branch}\nHead Branch: {head_branch}\n\n{diff_context}",
+        )
+        llm_response = get_chat_llm(state.get("username", "")).invoke(formatted_prompt)
+        raw_content = getattr(llm_response, "content", "")
+        text_content = "".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in raw_content) if isinstance(raw_content, list) else str(raw_content)
+        clean_json = text_content.strip().strip("```json").strip("```").strip()
+        parsed_json = json.loads(clean_json)
+        title = parsed_json.get("title", f"feat: merge {head_branch} into {base_branch}")
+        body = parsed_json.get("body", "### Summary\n- Automated pull request draft.")
+    except Exception:
+        logger.exception("Failed to parse LLM PR generation, using fallback.")
+        title = f"feat: merge {head_branch} into {base_branch}"
+        body = f"### Summary\n- Automated pull request draft created for `{head_branch}` -> `{base_branch}`."
+
+    details = {"title": title, "body": body, "head_branch": head_branch, "base_branch": base_branch, "repo": repo}
+    summary_line = (
+        f"Ready to create a Pull Request for `{repo}`:\n"
+        f"- **Title:** {title}\n"
+        f"- **Base Branch:** `{base_branch}` <- `{head_branch}`\n\n"
+        f"**Proposed Body:**\n{body}"
+    )
+    return details, summary_line
+
+
+def _execute_create_pr(username: str, details: dict) -> str:
+    repo, title, body = details.get("repo"), details.get("title"), details.get("body")
+    head_branch, base_branch = details.get("head_branch"), details.get("base_branch")
+
+    token = os.getenv("GITHUB_TOKEN")
+    api_url = f"https://api.github.com/repos/{repo}/pulls"
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+    payload = {"title": title, "body": body or "Automated Pull Request", "head": head_branch, "base": base_branch}
+
+    logger.info(f"[execute_write_node:create_pr] Firing GitHub API POST to {api_url}")
+    res = requests.post(api_url, headers=headers, json=payload)
+
+    if res.status_code == 201:
+        pr_data = res.json()
+        pr_url, pr_num = pr_data.get("html_url"), pr_data.get("number")
+        merge_url = f"https://api.github.com/repos/{repo}/pulls/{pr_num}/merge"
+        merge_payload = {"commit_title": f"Merge pull request #{pr_num} from {head_branch}", "merge_method": "squash"}
+        merge_res = requests.put(merge_url, headers=headers, json=merge_payload)
+        if merge_res.status_code == 200:
+            return f"**Pull Request Created and Merged Successfully!** \n\n[View Merged PR #{pr_num} on GitHub]({pr_url})"
+        return (
+            f"**Pull Request #{pr_num} Created**, but merge failed (HTTP {merge_res.status_code}):\n"
+            f"```json\n{merge_res.text}\n```\n[View PR #{pr_num} on GitHub]({pr_url})"
+        )
+    return f"**Failed to create Pull Request** (HTTP {res.status_code}):\n```json\n{res.text}\n```"
+
+
+def _is_complete_create_pr(details: dict) -> bool:
+    return bool(details.get("title") and details.get("head_branch") and details.get("base_branch"))
+
+
+def _recover_create_pr(messages: list, repo_hint: str) -> dict | None:
+    title = body = head_branch = base_branch = None
+    repo = repo_hint
+    for msg in reversed(messages or []):
+        content = _content_of(msg)
+        repo_from_content = extract_github_repo(content, repo)
+        if repo_from_content and repo_from_content != "SummonShenron/SAAPP":
+            repo = repo_from_content
+        if "Ready to create a Pull Request" in content:
+            repo_match = re.search(r"for `([^`]+)`", content)
+            if repo_match:
+                repo = repo_match.group(1)
+            title_match = re.search(r"-\s*\*\*Title:\*\*\s*(.+)", content, re.IGNORECASE)
+            if title_match:
+                title = title_match.group(1).strip()
+            branch_match = re.search(r"`([^`]+)`\s*<-\s*`([^`]+)`", content)
+            if branch_match:
+                base_branch, head_branch = branch_match.group(1).strip(), branch_match.group(2).strip()
+            body_match = re.search(r"\*\*Proposed Body:\*\*\n([\s\S]*?)(?=\*Please|\Z)", content)
+            if body_match:
+                body = body_match.group(1).strip()
+        elif "merge" in content.lower() and "into" in content.lower():
+            prompt_match = re.search(r"merge\s+([\w\/\-\.]+)\s+into\s+([\w\/\-\.]+)", content, re.IGNORECASE)
+            if prompt_match:
+                head_branch, base_branch = prompt_match.group(1).strip(), prompt_match.group(2).strip()
+                title = f"feat: merge {head_branch} into {base_branch}"
+                body = f"### Summary\n- Merged `{head_branch}` into `{base_branch}` per user approval."
+        if title and head_branch and base_branch:
+            break
+    if not (title and head_branch and base_branch):
+        return None
+    return {"title": title, "body": body, "head_branch": head_branch, "base_branch": base_branch, "repo": repo}
+
+
+def _draft_create_issue(state: GraphState) -> tuple[dict, str]:
+    messages = state.get("messages", [])
+    last_msg = messages[-1].content.strip() if messages else ""
+    pending_action = state.get("pending_action") or {}
+    existing_details = pending_action.get("details", {})
+    repo = (
+        existing_details.get("repo")
+        or state.get("repo")
+        or extract_github_repo(last_msg, fallback=None)
+        or resolve_recent_mention(messages, lambda c: extract_github_repo(c, fallback=None))
+        or "SummonShenron/SAAPP"
+    )
+
+    try:
+        formatted_prompt = ISSUE_DRAFT_PROMPT.format(user_message=last_msg)
+        llm_response = get_chat_llm(state.get("username", "")).invoke(formatted_prompt)
+        raw_content = getattr(llm_response, "content", "")
+        text_content = "".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in raw_content) if isinstance(raw_content, list) else str(raw_content)
+        clean_json = text_content.strip().strip("```json").strip("```").strip()
+        parsed = json.loads(clean_json)
+        title = parsed.get("title", "New issue")
+        body = parsed.get("body", "### Description\n- Automated issue draft.")
+    except Exception:
+        logger.exception("Failed to parse LLM issue generation, using fallback.")
+        title = "New issue"
+        body = f"### Description\n- {last_msg}"
+
+    details = {"title": title, "body": body, "repo": repo}
+    summary_line = f"Ready to open a GitHub Issue on `{repo}`:\n- **Title:** {title}\n\n**Proposed Body:**\n{body}"
+    return details, summary_line
+
+
+def _execute_create_issue(username: str, details: dict) -> str:
+    repo, title, body = details.get("repo"), details.get("title"), details.get("body")
+    token = os.getenv("GITHUB_TOKEN")
+    api_url = f"https://api.github.com/repos/{repo}/issues"
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+    payload = {"title": title, "body": body or "Automated issue"}
+
+    logger.info(f"[execute_write_node:create_issue] Firing GitHub API POST to {api_url}")
+    res = requests.post(api_url, headers=headers, json=payload)
+
+    if res.status_code == 201:
+        issue_data = res.json()
+        return f"**Issue Created Successfully!**\n\n[View Issue #{issue_data.get('number')} on GitHub]({issue_data.get('html_url')})"
+    return f"**Failed to create Issue** (HTTP {res.status_code}):\n```json\n{res.text}\n```"
+
+
+def _is_complete_create_issue(details: dict) -> bool:
+    return bool(details.get("title"))
+
+
+def _recover_create_issue(messages: list, repo_hint: str) -> dict | None:
+    title = body = None
+    repo = repo_hint
+    for msg in reversed(messages or []):
+        content = _content_of(msg)
+        repo_from_content = extract_github_repo(content, repo)
+        if repo_from_content and repo_from_content != "SummonShenron/SAAPP":
+            repo = repo_from_content
+        if "Ready to open a GitHub Issue" in content:
+            repo_match = re.search(r"on `([^`]+)`", content)
+            if repo_match:
+                repo = repo_match.group(1)
+            title_match = re.search(r"-\s*\*\*Title:\*\*\s*(.+)", content, re.IGNORECASE)
+            if title_match:
+                title = title_match.group(1).strip()
+            body_match = re.search(r"\*\*Proposed Body:\*\*\n([\s\S]*?)(?=\*Please|\Z)", content)
+            if body_match:
+                body = body_match.group(1).strip()
+        if title:
+            break
+    if not title:
+        return None
+    return {"title": title, "body": body, "repo": repo}
+
+
+def _execute_run_mongo_write(username: str, details: dict) -> str:
+    code = details.get("code", "") or ""
+    exec_builtins = {
+        "range": range, "len": len, "str": str, "int": int,
+        "float": float, "list": list, "dict": dict, "set": set,
+        "tuple": tuple, "min": min, "max": max, "sum": sum, "round": round
+    }
+    try:
+        db = get_db()
+        if hasattr(db, "list_collection_names") is False and hasattr(db, "list_database_names"):
+            db = db.get_default_database() or db[list(db.list_database_names())[0]]
+        local_scope = {"db": db, "username": username, "result": None}
+        exec(code, {"__builtins__": exec_builtins}, local_scope)
+        execution_result = local_scope.get("result", "Write operation executed successfully.")
+        return f"**Write Operation Executed Successfully:**\n```json\n{json.dumps(execution_result, default=str, indent=2)}\n```"
+    except Exception:
+        logger.exception("Mongo write execution failed.")
+        return "**Write Operation Execution Failed:**\n```error\nSee logs for traceback.\n```"
+
+
+def _is_complete_run_mongo_write(details: dict) -> bool:
+    return bool(details.get("code"))
+
+
+def _recover_run_mongo_write(messages: list, repo_hint: str) -> dict | None:
+    """Unlike a title or branch name, drafted code can't be reliably reconstructed from a
+    user's *rephrasing* of what they asked for — but it doesn't need to be: the exact code is
+    already sitting verbatim in the assistant's own prior approval card, in message history,
+    the same way the PR/issue cards carry their own exact title/branches. Re-reading our own
+    generated text is reliable in a way re-deriving from new user text never would be."""
+    for msg in reversed(messages or []):
+        content = _content_of(msg)
+        if "Ready to run this database operation" in content:
+            code_match = re.search(r"```python\n([\s\S]*?)\n```", content)
+            purpose_match = re.search(r"\*\*Purpose:\*\*\s*(.+)", content)
+            if code_match:
+                return {
+                    "code": code_match.group(1).strip(),
+                    "purpose": purpose_match.group(1).strip() if purpose_match else "Database operation",
+                }
+    return None
+
+
+WRITE_ACTIONS = {
+    "create_pr": {
+        "required_role": "Global_Admins",
+        "draft": _draft_create_pr,
+        "execute": _execute_create_pr,
+        "is_complete": _is_complete_create_pr,
+        "recover_from_history": _recover_create_pr,
+        # card_marker is the load-bearing signal for cross-turn approval detection: pending_action
+        # never survives between chat turns in this app (each turn rebuilds state fresh from
+        # stored messages — see app.py's initial_state), so recognizing "the assistant's last
+        # message was proposing this action" from its own card text is the only reliable way to
+        # know what a bare "approve" reply two turns later is actually approving.
+        "card_marker": "Ready to create a Pull Request",
+    },
+    "create_issue": {
+        "required_role": "Global_Admins",
+        "draft": _draft_create_issue,
+        "execute": _execute_create_issue,
+        "is_complete": _is_complete_create_issue,
+        "recover_from_history": _recover_create_issue,
+        "card_marker": "Ready to open a GitHub Issue",
+    },
+    "run_mongo_write": {
+        "required_role": "Global_Admins",
+        # No "draft": this action is proposed inline by tool_agent_node's own ReAct loop
+        # (discovered mid-reasoning, not via an upfront intent), never via propose_write_node.
+        "draft": None,
+        "execute": _execute_run_mongo_write,
+        "is_complete": _is_complete_run_mongo_write,
+        "recover_from_history": _recover_run_mongo_write,
+        "card_marker": "Ready to run this database operation",
+    },
+}
+
+
+def propose_write_node(state: GraphState) -> GraphState:
+    """Generic draft step for any intent-triggered write action (PR, issue, ...): looks up
+    state["write_action"] in WRITE_ACTIONS, drafts it, and renders one standard approval
+    card envelope. Mongo writes never reach this node — see WRITE_ACTIONS["run_mongo_write"]."""
+    action_name = state.get("write_action")
+    logger.info(f"--- PROPOSE WRITE NODE ({action_name}) CALLED ---")
     state = ensure_workflow_keys(state)
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
-    node_name = "draft_pr_node"
+    node_name = "propose_write_node"
     with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
         node_input = state.copy()
         messages = state.get("messages", [])
-        if not messages:
+        action = WRITE_ACTIONS.get(action_name)
+        if not messages or not action or not action.get("draft"):
             return state
 
-        last_msg = messages[-1].content.strip()
-
-        # Extract existing pending action details if refining an existing draft
-        pending_action = state.get("pending_action") or {}
-        existing_details = pending_action.get("details", {})
-
-        parsed = extract_pr_request_details(last_msg, existing_details.get("repo") or state.get("repo") or "SummonShenron/SAAPP")
-        repo = existing_details.get("repo") or state.get("repo") or parsed["repo"]
-
-        # 1. BRANCH RESOLUTION & STATE PRESERVATION
-        match = re.search(
-            r"merge\s+([\w\/\-\.]+)\s+into\s+([\w\/\-\.]+)",
-            last_msg,
-            re.IGNORECASE,
-        )
-
-        if match:
-            head_branch = match.group(1)
-            base_branch = match.group(2)
-        elif existing_details.get("head_branch"):
-            head_branch = existing_details["head_branch"]
-            base_branch = existing_details["base_branch"]
-        elif parsed.get("head_branch") and parsed.get("base_branch"):
-            head_branch = parsed["head_branch"]
-            base_branch = parsed["base_branch"]
-        else:
-            head_branch = state.get("head_branch", "feature-branch")
-            base_branch = state.get("base_branch", "main")
-
-        repo_match = re.search(
-            r"(?:for|in|repo(?:sitory)?)[\s:`]*([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)",
-            last_msg,
-            re.IGNORECASE,
-        )
-        if repo_match:
-            repo = repo_match.group(1).strip()
-
-        # 2. FETCH REAL GIT DIFF CONTEXT FROM GITHUB API
-        logger.info(
-            f"[Draft PR Node] Fetching real branch diff for {repo}: {base_branch} <- {head_branch}"
-        )
-        diff_context = fetch_branch_diff_summary(repo, base_branch, head_branch)
-
-        # 3. DYNAMIC TITLE & SUMMARY GENERATION
-        logger.info(
-            "[Draft PR Node] Invoking LLM for title and body generation..."
-        )
-        try:
-            # Pass the REAL diff_context into the prompt context parameter!
-            formatted_prompt = DRAFT_PR_PROMPT.format(
-                user_message=last_msg,
-                context=f"Repository: {repo}\nBase Branch: {base_branch}\nHead Branch: {head_branch}\n\n{diff_context}",
-            )
-
-            llm_response = get_chat_llm(state.get("username", "")).invoke(formatted_prompt)
-
-            # Safely convert list or string content to text
-            raw_content = getattr(llm_response, "content", "")
-            if isinstance(raw_content, list):
-                text_content = "".join(
-                    [
-                        c.get("text", "") if isinstance(c, dict) else str(c)
-                        for c in raw_content
-                    ]
-                )
-            else:
-                text_content = str(raw_content)
-
-            clean_json = (
-                text_content.strip().strip("```json").strip("```").strip()
-            )
-            parsed = json.loads(clean_json)
-
-            title = parsed.get(
-                "title", f"feat: merge {head_branch} into {base_branch}"
-            )
-            body = parsed.get(
-                "body", "### Summary\n- Automated pull request draft."
-            )
-            logger.info(
-                "[Draft PR Node] Successfully generated dynamic PR summary!"
-            )
-
-        except Exception:
-            logger.exception("Failed to parse LLM PR generation, using fallback.")
-            title = f"feat: merge {head_branch} into {base_branch}"
-            body = f"### Summary\n- Automated pull request draft created for `{head_branch}` -> `{base_branch}`."
-
-        # 4. SET STRUCTURED PENDING ACTION (Matches execute_pr_node schema)
-        new_pending_action = {
-            "action_type": "create_pr",
-            "details": {
-                "title": title,
-                "body": body,
-                "head_branch": head_branch,
-                "base_branch": base_branch,
-                "repo": repo,
-            },
-        }
-
-        # 5. FORMAT HITL ACTION CARD
+        details, summary_line = action["draft"](state)
+        new_pending_action = {"action_type": action_name, "details": details}
         card_msg = (
             "**Approval Required**\n\n"
-            f"Ready to create a Pull Request for `{repo}`:\n"
-            f"- **Title:** {title}\n"
-            f"- **Base Branch:** `{base_branch}` <- `{head_branch}`\n\n"
-            f"**Proposed Body:**\n{body}\n\n"
+            f"{summary_line}\n\n"
             "*Please Approve, Modify parameters, or Reject this action.*"
         )
-
-        # Clean message list update (Single append)
-        new_messages = list(state.get("messages", [])) + [AIMessage(content=card_msg)]
+        new_messages = list(messages) + [AIMessage(content=card_msg)]
         node_output = state.copy()
         logger.info(
             "node executed",
-            extra={
-                "service": "SAAPP",
-                "erragent_context": {
-                    "input": node_input,
-                    "output": node_output,
-                }
-            }
+            extra={"service": "SAAPP", "erragent_context": {"input": node_input, "output": node_output}}
         )
         return {
             **state,
@@ -2841,22 +3027,41 @@ def draft_pr_node(state: GraphState) -> GraphState:
             "messages": new_messages,
         }
 
-def execute_pr_node(state: dict) -> dict:
-    """Executes PR creation after human approval with prompt-fallback parameter recovery."""
-    logger.info("--- EXECUTE PR NODE CALLED ---")
+
+def execute_write_node(state: dict) -> dict:
+    """Generic execute step for every registered write action: one RBAC check site, one
+    approval/rejection parser, one recovery-from-history fallback, then dispatch to
+    whichever action['execute'] the pending_action names."""
+    logger.info("--- EXECUTE WRITE NODE CALLED ---")
     state = ensure_workflow_keys(state)
     username = state.get("username")
     workflow_name = state["workflowName"]
     request_id = state["requestId"]
-    node_name = "execute_pr_node"
+    node_name = "execute_write_node"
     with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
         node_input = state.copy()
-        # 1. RBAC Check
-        user_groups = load_user_directory_groups(username)
-        if "Global_Admins" not in user_groups:
+
+        pending_raw = state.get("pending_action") or {}
+        # pending_action is always empty here in real usage (it never survives between chat
+        # turns — see the comment above classify_intent's card-marker detection), so
+        # state["write_action"] — set from the assistant's own prior card text — is the
+        # fallback that actually makes this resolvable in practice, not an edge case.
+        action_name = pending_raw.get("action_type") or state.get("write_action")
+        action = WRITE_ACTIONS.get(action_name)
+        if not action:
             return {
                 **state,
-                "content_to_format": "Access denied: Creating Pull Requests is restricted to Global Administrators.",
+                "content_to_format": "No pending write action found. Please re-issue the request.",
+                "relevance_grade": "conversational",
+                "pending_action": None,
+            }
+
+        # 1. RBAC check — one site for every registered write action.
+        user_groups = load_user_directory_groups(username)
+        if action["required_role"] not in user_groups:
+            return {
+                **state,
+                "content_to_format": f"Access denied: this action is restricted to {action['required_role']}.",
                 "relevance_grade": "conversational",
                 "pending_action": None,
             }
@@ -2864,213 +3069,54 @@ def execute_pr_node(state: dict) -> dict:
         # 2. Extract user decision
         decision = state.get("user_decision", "").lower()
         if not decision and state.get("messages"):
-            last_msg_obj = state["messages"][-1]
-            last_msg = (
-                getattr(last_msg_obj, "content", "")
-                if hasattr(last_msg_obj, "content")
-                else str(last_msg_obj)
-            ).strip().lower()
-
-            if any(
-                w in last_msg
-                for w in ["approve", "approved", "confirm", "yes", "lgtm", "do it"]
-            ):
+            last_msg = _content_of(state["messages"][-1]).strip().lower()
+            if APPROVAL_PATTERN.search(last_msg):
                 decision = "approve"
-            elif any(
-                w in last_msg
-                for w in [
-                    "reject",
-                    "cancel",
-                    "nevermind",
-                    "abort",
-                    "stop",
-                    "no",
-                ]
-            ):
+            elif REJECTION_PATTERN.search(last_msg):
                 decision = "reject"
 
         if decision in ["reject", "cancel"]:
             return {
                 **state,
-                "content_to_format": "**Action Cancelled**: The Pull Request draft was discarded.",
+                "content_to_format": "**Action Cancelled**: The draft was discarded.",
                 "relevance_grade": "conversational",
                 "pending_action": None,
             }
 
-        # 3. Try reading pending_action from State
-        pending_raw = state.get("pending_action") or {}
-        pending = (
-            pending_raw.get("details", pending_raw)
-            if isinstance(pending_raw, dict)
-            else {}
-        )
-
-        title = pending.get("title")
-        body = pending.get("body")
-        head_branch = pending.get("head_branch") or pending.get("head")
-        base_branch = pending.get("base_branch") or pending.get("base")
-        repo = pending.get("repo") or state.get("repo")
-        if not repo:
-            repo = extract_github_repo(
-                "\n".join(
-                    getattr(m, "content", "") if hasattr(m, "content") else str(m)
-                    for m in state.get("messages", [])
-                )
-            )
-
-        for msg in reversed(state.get("messages", [])):
-            content = (
-                getattr(msg, "content", "")
-                if hasattr(msg, "content")
-                else (
-                    msg.get("content", "")
-                    if isinstance(msg, dict)
-                    else str(msg)
-                )
-            )
-            if "merge" in content.lower() and "into" in content.lower():
-                parsed = extract_pr_request_details(content, repo)
-                if parsed["repo"] and parsed["repo"] != "SummonShenron/SAAPP":
-                    repo = parsed["repo"]
-                if parsed.get("head_branch"):
-                    head_branch = parsed["head_branch"]
-                if parsed.get("base_branch"):
-                    base_branch = parsed["base_branch"]
-                break
-
-        # 4. RECOVERY LAYER: Extract from history if state was wiped
-        if not (title and head_branch and base_branch):
-            logger.warning(
-                "[Execute PR Node] pending_action missing! Searching message history..."
-            )
-
-            for msg in reversed(state.get("messages", [])):
-                content = (
-                    getattr(msg, "content", "")
-                    if hasattr(msg, "content")
-                    else (
-                        msg.get("content", "")
-                        if isinstance(msg, dict)
-                        else str(msg)
-                    )
-                )
-
-                repo_from_content = extract_github_repo(content, repo)
-                if repo_from_content and repo_from_content != "SummonShenron/SAAPP":
-                    repo = repo_from_content
-
-                # Option A: Parse from Assistant Action Card (if persisted)
-                if "Ready to create a Pull Request" in content:
-                    repo_match = re.search(r"for `([^`]+)`", content)
-                    if repo_match:
-                        repo = repo_match.group(1)
-
-                    title_match = re.search(
-                        r"-\s*\*\*Title:\*\*\s*(.+)", content, re.IGNORECASE
-                    )
-                    if title_match:
-                        title = title_match.group(1).strip()
-
-                    branch_match = re.search(
-                        r"`([^`]+)`\s*<-\s*`([^`]+)`", content
-                    )
-                    if branch_match:
-                        base_branch = branch_match.group(1).strip()
-                        head_branch = branch_match.group(2).strip()
-
-                    body_match = re.search(
-                        r"\*\*Proposed Body:\*\*\n([\s\S]*?)(?=\*Please|\Z)", content
-                    )
-                    if body_match:
-                        body = body_match.group(1).strip()
-
-                # Option B: Parse directly from User's prompt ("merge X into Y")
-                elif "merge" in content.lower() and "into" in content.lower():
-                    prompt_match = re.search(
-                        r"merge\s+([\w\/\-\.]+)\s+into\s+([\w\/\-\.]+)",
-                        content,
-                        re.IGNORECASE,
-                    )
-                    if prompt_match:
-                        head_branch = prompt_match.group(1).strip()
-                        base_branch = prompt_match.group(2).strip()
-                        title = f"feat: merge {head_branch} into {base_branch}"
-                        body = f"### Summary\n- Merged `{head_branch}` into `{base_branch}` per user approval."
-                        logger.info(
-                            f"[Execute PR Node] Recovered parameters from user prompt: {head_branch} -> {base_branch}"
-                        )
-
-                if title and head_branch and base_branch:
-                    break
-
-        # Final Guardrail
-        if not (title and head_branch and base_branch):
-            return {
-                **state,
-                "content_to_format": "Unable to execute PR creation: Pull request parameters were lost between turns. Please re-issue the request.",
-                "relevance_grade": "conversational",
-                "pending_action": None,
-            }
-
-        # 5. POST to GitHub API to CREATE the PR
-        token = os.getenv("GITHUB_TOKEN")
-        api_url = f"https://api.github.com/repos/{repo}/pulls"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-        }
-
-        payload = {
-            "title": title,
-            "body": body or "Automated Pull Request",
-            "head": head_branch,
-            "base": base_branch,
-        }
-
-        logger.info(f"[Execute PR Node] Firing GitHub API POST to {api_url}")
-        res = requests.post(api_url, headers=headers, json=payload)
-
-        if res.status_code == 201:
-            pr_data = res.json()
-            pr_url = pr_data.get("html_url")
-            pr_num = pr_data.get("number")
-
-            # 6. OPTIONAL: AUTOMATICALLY MERGE THE PR
-            merge_url = f"https://api.github.com/repos/{repo}/pulls/{pr_num}/merge"
-            merge_payload = {
-                "commit_title": f"Merge pull request #{pr_num} from {head_branch}",
-                "merge_method": "squash"  # Or "merge" / "rebase"
-            }
-
-            merge_res = requests.put(merge_url, headers=headers, json=merge_payload)
-
-            if merge_res.status_code == 200:
-                output_text = f"**Pull Request Created and Merged Successfully!** \n\n[View Merged PR #{pr_num} on GitHub]({pr_url})"
+        # 3. Read details, recovering from history if pending_action was wiped
+        details = pending_raw.get("details", pending_raw) if isinstance(pending_raw, dict) else {}
+        if not action["is_complete"](details):
+            logger.warning(f"[Execute Write Node] pending_action incomplete for '{action_name}'; attempting recovery...")
+            recovered = None
+            if action.get("recover_from_history"):
+                repo_hint = details.get("repo") or state.get("repo") or "SummonShenron/SAAPP"
+                recovered = action["recover_from_history"](state.get("messages", []), repo_hint)
+            if recovered:
+                details = recovered
             else:
-                output_text = (
-                    f"**Pull Request #{pr_num} Created**, but merge failed (HTTP {merge_res.status_code}):\n"
-                    f"```json\n{merge_res.text}\n```\n"
-                    f"[View PR #{pr_num} on GitHub]({pr_url})"
-                )
-        else:
-            output_text = f"**Failed to create Pull Request** (HTTP {res.status_code}):\n```json\n{res.text}\n```"
+                return {
+                    **state,
+                    "content_to_format": "Unable to execute this action: parameters were lost between turns. Please re-issue the request.",
+                    "relevance_grade": "conversational",
+                    "pending_action": None,
+                }
+
+        # 4. Dispatch
+        output_text = action["execute"](username, details)
         node_output = state.copy()
         logger.info(
             "node executed",
-            extra={
-                "service": "SAAPP",
-                "erragent_context": {
-                    "input": node_input,
-                    "output": node_output,
-                }
-            }
+            extra={"service": "SAAPP", "erragent_context": {"input": node_input, "output": node_output}}
         )
         return {
             **state,
             "content_to_format": output_text,
             "relevance_grade": "action_complete",
             "pending_action": None,
+            "drafted_code": None,
+            "code_approval_status": "completed",
         }
+
 
 # ============================================================
 # WORKFLOW ASSEMBLY & COMPILATION
@@ -3103,12 +3149,10 @@ def create_workflow(vector_store, user_memory_vector_store=None):
     workflow.add_node("pattern_node", pattern_detector_node)
     workflow.add_node("trend_node", trend_analyzer_node)
     workflow.add_node("insight_query_node", insight_query_node)
-    workflow.add_node("web_search_node", web_search_node)
-    workflow.add_node("code_interpreter_node", code_interpreter_node)
-    workflow.add_node("github_search", github_search_node)
+    workflow.add_node("tool_agent_node", tool_agent_node)
     workflow.add_node("pr_summary", pr_summarizer_node)
-    workflow.add_node("draft_pr_node", draft_pr_node)
-    workflow.add_node("execute_pr_node", execute_pr_node)
+    workflow.add_node("propose_write_node", propose_write_node)
+    workflow.add_node("execute_write_node", execute_write_node)
 
     workflow.add_edge(START, "coordinator_node")
     workflow.add_conditional_edges(
@@ -3125,17 +3169,15 @@ def create_workflow(vector_store, user_memory_vector_store=None):
             "formatter_node": "formatter_node",
             "paapp_node": "paapp_node",
             "insight": "snapshot_node",
-            "web_search_node": "web_search_node",
             "snapshot_node": "snapshot_node",
             "classifier_node": "classifier_node",
             "pattern_node": "pattern_node",
             "trend_node": "trend_node",
             "insight_query_node": "insight_query_node",
-            "code_interpreter_node": "code_interpreter_node",
-            "github_search": "github_search",
+            "tool_agent_node": "tool_agent_node",
             "pr_summary": "pr_summary",
-            "draft_pr_node": "draft_pr_node",
-            "execute_pr_node": "execute_pr_node"
+            "propose_write_node": "propose_write_node",
+            "execute_write_node": "execute_write_node"
         }
     )
     
@@ -3146,12 +3188,10 @@ def create_workflow(vector_store, user_memory_vector_store=None):
     workflow.add_edge("formatter_node", "generate_node")
     workflow.add_edge("retrieve_node", "grade_documents_node")
     workflow.add_edge("rewrite_query_node", "retrieve_node")
-    workflow.add_edge("web_search_node", "formatter_node")
-    workflow.add_edge("code_interpreter_node", "formatter_node")
-    workflow.add_edge("github_search", "formatter_node")
+    workflow.add_edge("tool_agent_node", "formatter_node")
     workflow.add_edge("pr_summary", "formatter_node")
-    workflow.add_edge("draft_pr_node", "formatter_node")
-    workflow.add_edge("execute_pr_node", "formatter_node")
+    workflow.add_edge("propose_write_node", "formatter_node")
+    workflow.add_edge("execute_write_node", "formatter_node")
     # --- PARALLEL FAN-OUT FOR ANALYTICS ---
     workflow.add_edge("snapshot_node", "classifier_node")
     # LangGraph runs pattern_node and trend_node concurrently

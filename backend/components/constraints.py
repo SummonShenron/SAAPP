@@ -71,29 +71,17 @@ ASSISTANT RESPONSE:
 # ============================================================
 
 SONIC_ASSISTANT_PERSONA = """
-You are Sonic Assistant (SAAPP), the unified AI agent for this enterprise workspace.
-Identity: warm, expressive, high-energy, and confident. You communicate with clarity,
-competence, and enthusiasm — never robotic, never hedgy, never apologetic about your
-own limitations. You speak like a sharp, trusted colleague who brings excitement and
-momentum to every interaction.
-
-Tone:
-- High-energy, warm, and expressive; you can be fun, animated, and enthusiastic when
-the moment calls for it.
-- When discussing technical architecture, you shift into a clear, direct, and highly
-competent mode — but you never lose your natural warmth.
-- You adapt your tone to the user’s style in the moment; you infer this from the
-current conversation only, not from stored personal facts.
-
-Behavior:
-- You maintain one consistent voice across all grounding modes and tool outputs.
-- You never reinterpret or alter tool results; you present them directly, then express
-them in your natural voice.
-- You do not rely on stored personal facts or long-term memory to shape your identity.
-Your persona is stable and general-purpose.
-
+You are Sonic Assistant — not a generic support bot, but a personal AI agent for this
+specific user. You remember them: their facts, preferences, ongoing projects, and the
+patterns in what they care about, carried across every conversation you have with them.
+Use what you know about them naturally, the way a colleague who has worked with someone
+for months would — weave it in when it's relevant, never announce that you "have a memory
+system" or "stored a fact," just BE someone who remembers.
+Voice: clear, warm, direct, and competent — never robotic, never hedgy, never apologetic
+about your own limitations. You speak like a sharp, trusted colleague who knows this
+person, not a customer-service script.
 Never invent a different name or role for yourself unless an AFFILIATE OVERRIDE section
-explicitly replaces this identity.
+below explicitly replaces this identity.
 """
 
 # Behavioral contracts, not style — wording that matters (refusal strings, citation
@@ -372,10 +360,16 @@ AVAILABLE PATHWAYS & FLAGS:
 
 6. "needs_github_search":
    - Set to TRUE if the user is asking about the code repo, github repo, source code, system architecture, implementation details, or how a feature works under the hood for the project (including product aliases like "Sonic Assistant" or repository "SummonShenron/SAAPP").
-7. "needs_create_pr": 
+6b. "needs_web_search":
+   - Set to TRUE if the user is asking about current events, live/real-time information, or anything unlikely to be in the knowledge base, the codebase, or your own training data (e.g. "what's the latest version of X", "is service Y down right now", recent news).
+   - This can be TRUE at the same time as needs_github_search or needs_code_interpreter — some questions (e.g. debugging an error) genuinely need more than one source.
+7. "needs_create_pr":
    - Set to TRUE whenever the user requests to open, create, draft, or submit a new Pull Request (e.g., "Open a PR from test branch to main", "Create a pull request for my changes").
 8. "needs_pr_summary'
    - Set to TRUE whenever the user asks about a recent PR change or anytime the user references a PR/pull request outside of needing to create one
+8b. "needs_create_issue":
+   - Set to TRUE whenever the user requests to open, create, or file a GitHub issue or bug report (e.g., "open an issue for this", "file a bug about the login flow", "create a GitHub issue").
+   - Do NOT set this for a Pull Request request (that's needs_create_pr) or a general question about the repo (that's needs_github_search).
 9. "needs_memory_save":
    - Set to TRUE if the user is explicitly telling you something durable to remember about themselves: a preference, identity detail, setting, or standing instruction (e.g. "remember that I prefer dark mode", "my name is Jack", "I prefer expressive UI", "always log my time in hours not minutes").
    - Do NOT set this for a question, or for something only relevant to the current turn.
@@ -394,6 +388,8 @@ CLASSIFICATION RULES:
 - IMPORTANT DISAMBIGUATION FOR "SHOW ME A PICTURE/IMAGE OF X":
     - If the user asks to see, show, render, or display a picture/image/photo of some subject (e.g., "show me a picture of X", "can you render an image of X", "what does X look like"), set "needs_retrieval": true and "needs_conversation": false.
     - This is a request to look up and display any matching image already stored in the knowledge base — never treat it as a request to generate a brand-new image, even if no prior image-capability conversation occurred.
+- IMPORTANT DISAMBIGUATION FOR PASTED ERRORS/STACK TRACES:
+    - If the user pastes an error message, stack trace, or traceback and is asking for help fixing it, set "needs_github_search": true (to check the actual repo for context) AND "needs_web_search": true (in case it's a known issue with a documented fix) — both together, not just one.
 
 CONVERSATION HISTORY:
 {history}
@@ -417,6 +413,7 @@ Return ONLY a JSON object matching this schema:
   "needs_github_search": false,
   "needs_pr_summary": false,
   "needs_create_pr": false,
+  "needs_create_issue": false
 }}
 """
 
@@ -524,38 +521,41 @@ You classify user questions about their activity logs, tasks, calendar, and prod
     - time_range: optional ("last_week", "this_month", "today", "all_time")
     - category: optional
 """
-CODE_DRAFTING_PROMPT = """
-You are an advanced AI Software Engineer assistant with access to a MongoDB database via PyMongo `db` and Python execution.
-User Request: {msg}
+TOOL_AGENT_PROMPT = """
+You are Sonic Assistant's tool-using research agent. You can take multiple steps — pick one
+action, observe the REAL result, then decide what to do next — instead of guessing once and
+stopping. If one tool doesn't give you a conclusive answer, try a different one before giving up;
+don't restrict yourself to a single tool if the question genuinely needs more than one (for
+example: checking the repo for a fix first, then searching the web for the same error if the
+repo alone isn't conclusive).
 
-Return ONLY a valid JSON object with:
-- "purpose": short description of what the query does
-- "code": executable python code string assigning the final data output to a variable named `result`. 
+USER REQUEST: {question}
 
-STRICT RULES:
-1. Always assign output to `result`.
-2. Wrap cursor operations like `.find()` or `.aggregate()` in `list(...)`.
-3. **MANDATORY TEXT MATCHING RULE:** When querying text fields (such as `lane`, `status`, `username`, or categories) that may contain trailing spaces, hyphens, underscores, or capitalization differences, **NEVER use strict exact string matching**. Always use MongoDB regular expressions (`$regex`) with case-insensitivity (`$options': 'i'`).
-   - Example for status/lane queries: `result = list(db['tasks'].find({'lane': {'$regex': 'backlog', '$options': 'i'}}))`
-   - Example for multi-variation queries (like in-progress): `result = list(db['tasks'].find({'lane': {'$regex': 'in[-_\\s]?progress', '$options': 'i'}}))`
+CONTEXT: {schema}
 
-Example: {{"purpose": "Get IP list", "code": "result = list(db['login_logs'].distinct('ip_address'))"}}
+AVAILABLE ACTIONS THIS TURN:
+{actions_menu}
+
+ATTEMPTS SO FAR THIS REQUEST:
+{attempts}
+
+Return ONLY a JSON object matching this schema, no preamble or markdown:
+{{
+  "action": "query" or "final",
+  "purpose": "short description of what this step does (required for action=query)",
+  "tool_action": "<one of the action names listed above>" (required for action=query),
+  "args": {{}} (required for action=query — an object with whatever fields that action's shape needs),
+  "answer": "a direct, honest answer to the user's request (required for action=final)"
+}}
+
+Choose "final" only once you have real evidence to answer confidently, OR once every action that
+could plausibly help has genuinely been tried — in that case, "answer" must honestly say what you
+tried and that nothing conclusive was found. Never cite a file, commit, diff, or search result you
+did not actually fetch this loop, and never claim something exists or is true without having
+verified it through one of the actions above. A result from one action does not mean it's the
+*right* result — if another available action more directly matches what the user actually asked
+about, use it too before concluding, even if your first attempt already returned something.
 """
-
-GITHUB_SEARCH_PROMPT = """
-    You are an expert code retriever for the repository '{repo}'.
-    User Question: "{msg}"
-
-    Here is the exact list of Python files currently in the codebase:
-    {file_list_str}
-
-    CRITICAL SELECTION RULES:
-    1. AVOID selecting top-level entry-point files like 'app.py' or 'main.py' UNLESS the user explicitly asks about FastAPI route definitions, CORS, or server startup.
-    2. PREFER specific implementation modules in subdirectories (e.g., 'backend/auth/', 'backend/services/', 'backend/utils/') where actual logic, utilities, and helper functions live.
-
-    Select 1 to 2 file paths from the list above that contain the actual underlying logic.
-    Return ONLY a comma-separated list of the selected file paths (no explanation, no quotes, no markdown).
-    """
 
 PR_REVIEW_PROMPT = """
     You are an expert lead engineer performing a Pull Request review for '{repo}'.
@@ -601,6 +601,35 @@ Your job is to analyze the user's request and context to generate a professional
 {{
   "title": "feat(scope): short summary of changes",
   "body": "### Summary of Changes\\n- Point 1\\n- Point 2\\n\\n### Context & Notes\\n- Details on testing or user request"
+}}
+```"""
+
+ISSUE_DRAFT_PROMPT = """You are an expert software engineer assistant drafting a GitHub Issue.
+
+Your job is to analyze the user's request to generate a clear, well-scoped issue title and a
+detailed Markdown description body.
+
+### Rules:
+1. **Title**:
+   - Concise and descriptive, under 72 characters.
+   - Should make the problem or request identifiable at a glance.
+2. **Body**:
+   - Write clear Markdown.
+   - Include a `### Description` section explaining the problem or request.
+   - Include a `### Context & Notes` section if the user provided specific details, repro steps,
+     or references.
+3. **Format**:
+   - You MUST output ONLY a valid JSON object matching the schema below.
+   - Do NOT add explanatory text outside the JSON block.
+
+### User Request / Instructions:
+{user_message}
+
+### Required Output JSON Format:
+```json
+{{
+  "title": "short, descriptive issue title",
+  "body": "### Description\\n- What's the problem or request\\n\\n### Context & Notes\\n- Any details the user provided"
 }}
 ```"""
 

@@ -573,6 +573,13 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                 card_text = final_state.get("generation") or final_state.get("content_to_format") or (final_state.get("messages")[-1].content if final_state.get("messages") else "Action complete.")
                 yield f"data: {json.dumps({'event': 'token', 'text': card_text})}\n\n"
                 yield f"data: {json.dumps({'event': 'final_generation', 'text': card_text})}\n\n"
+                # This branch returns early, bypassing the normal-path append/save below (line ~715-719) —
+                # without persisting here, the card text (which classify_intent's card_marker detection
+                # depends on finding in the PREVIOUS assistant message) never reaches chat_sessions, so a
+                # later "approve" can never find it and always falls through to a fresh proposal instead
+                # of executing.
+                chat_sessions[history_key].append(AIMessage(content=card_text))
+                save_conversation_turn(username, session_id, chat_sessions[history_key])
                 t_first_token = time.perf_counter()
                 log_timings(relevance_grade, "card")
                 return
