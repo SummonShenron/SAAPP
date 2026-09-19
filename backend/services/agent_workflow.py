@@ -214,6 +214,15 @@ def classify_intent(message: str, state: dict = None) -> str:
             if REJECTION_PATTERN.search(msg_clean):
                 return "cancel_action"
 
+        # Same reasoning as the write-action card_marker check above, for tool_agent_node's own
+        # clarification pause: a short reply like "the SAAPP one" won't reliably trip the
+        # reasoner's needs_github_search/needs_code_interpreter flags on its own, so without this
+        # explicit check it would fall through to a fresh, unrelated classification instead of
+        # resuming the paused search.
+        if CLARIFICATION_CARD_MARKER in prev_content:
+            logger.debug("Detected pending tool_agent clarification in previous message — resuming tool_agent")
+            return "resume_tool_agent"
+
     pending_action = state.get("pending_action") or {}
     status = pending_action.get("status")
     logger.debug(f"pending_action.status: {status}")
@@ -316,6 +325,15 @@ def build_agent_plan(intent: str, state: dict) -> dict:
     # whatever the reasoner's flags guessed for a bare "yes"/"no" reply. Web search is now
     # one of tool_agent_node's actions, not its own destination.
     if intent == "web_search":
+        state["last_intent"] = "tool_agent"
+        return {"agents": ["tool_agent", "formatter"], "skip": []}
+
+    # Continuation of a paused tool_agent_node clarification (see classify_intent's
+    # CLARIFICATION_CARD_MARKER check) — same reasoning as web_search just above: a short
+    # answer to "which repo did you mean?" won't reliably set the reasoner's own
+    # needs_github_search/needs_code_interpreter flags, so this routes deterministically
+    # instead of leaving it to flags that were never about this reply in the first place.
+    if intent == "resume_tool_agent":
         state["last_intent"] = "tool_agent"
         return {"agents": ["tool_agent", "formatter"], "skip": []}
 
@@ -2060,11 +2078,46 @@ def _parse_agent_json(raw_text: str) -> dict:
     return {}
 
 
+_MAX_OBSERVATION_CHARS = 4000
+
+
+def _truncate_observation(observation) -> str:
+    """Every other action in this loop self-limits its own output (_read_file caps at 3500
+    chars, _list_tree caps at 400 paths) — an unbounded PyMongo query was the one path with no
+    cap at all, and a raw find() over a collection that stores embedding vectors is easily
+    hundreds of documents with long float arrays each. That observation gets JSON-dumped
+    straight into both the next reasoning prompt (_format_react_attempts) and the final
+    footer (_format_observation_for_footer), so one huge result set is enough to blow past
+    Gemini's 1,048,576-token input limit on the final Voice Composer call. Truncating once,
+    right where every tool's observation is captured, protects all of them generically instead
+    of special-casing Mongo."""
+    text = observation if isinstance(observation, str) else json.dumps(observation, default=str, indent=2)
+    if len(text) <= _MAX_OBSERVATION_CHARS:
+        return text
+    return text[:_MAX_OBSERVATION_CHARS] + f"\n... [truncated — {len(text)} total characters]"
+
+
 class _UnsafeActionRequested(Exception):
     """Raised by run_react_loop when is_unsafe() flags a step, so the calling node can
     build its own tool-specific approval-required response instead of the loop guessing."""
     def __init__(self, decision: dict):
         self.decision = decision
+
+
+class _ClarificationNeeded(Exception):
+    """Raised by run_react_loop when the model reports genuine uncertainty (action="clarify")
+    instead of guessing — carries the question to ask and the attempts made so far, so the
+    calling node can pause for a real answer and resume the loop from where it left off
+    instead of starting over."""
+    def __init__(self, question: str, attempts: list):
+        self.question = question
+        self.attempts = attempts
+
+
+# Card-marker text used the same way WRITE_ACTIONS' card_marker is: classify_intent scans the
+# assistant's own previous message for this exact string to know a bare-looking reply is
+# actually the user answering a paused clarification, not a fresh, unrelated message.
+CLARIFICATION_CARD_MARKER = "Need a bit more information to continue"
 
 
 def _format_react_attempts(attempts: list) -> str:
@@ -2076,6 +2129,33 @@ def _format_react_attempts(attempts: list) -> str:
     )
 
 
+def _format_attempts_steps(attempts: list) -> str:
+    """Renders attempts as 'Step N — purpose / Result' blocks — used both in a completed
+    answer's footer and in a clarification pause message, so recovering attempts back out of
+    either one (see _recover_attempts_from_steps_text) works identically."""
+    return "\n\n".join(
+        f"**Step {i} — {a['purpose']}:**\n```\n{a['action_desc']}\n```\n"
+        f"**Result:**\n```\n{_format_observation_for_footer(a['observation'])}\n```"
+        for i, a in enumerate(attempts, 1)
+    )
+
+
+_ATTEMPT_STEP_RE = re.compile(
+    r"\*\*Step \d+ — (.+?):\*\*\n```\n(.*?)\n```\n\*\*Result:\*\*\n```\n(.*?)\n```",
+    re.DOTALL,
+)
+
+
+def _recover_attempts_from_steps_text(content: str) -> list:
+    """Parses 'Step N — purpose / Result' blocks (see _format_attempts_steps) back into the
+    {purpose, action_desc, observation} shape run_react_loop works with, so a clarification
+    pause's attempts-so-far can seed the loop on resume instead of it starting from zero."""
+    return [
+        {"purpose": purpose, "action_desc": action_desc, "observation": observation}
+        for purpose, action_desc, observation in _ATTEMPT_STEP_RE.findall(content)
+    ]
+
+
 async def run_react_loop(
     *,
     question: str,
@@ -2085,22 +2165,66 @@ async def run_react_loop(
     is_unsafe=lambda decision: False,
     max_iterations: int,
     node_name: str,
+    initial_attempts: list | None = None,
 ) -> dict:
     """Generic Reason -> Act -> Observe -> Decide loop shared by every iterative tool
     (MongoDB, GitHub search, ...). Each step asks the model for the next action given
     everything tried so far; the model decides for itself when it has enough to answer,
     or is honest that it doesn't. Returns {"final_answer": str, "attempts": list[dict]}.
-    Raises _UnsafeActionRequested if is_unsafe() ever flags a proposed action."""
-    attempts: list = []
+    Raises _UnsafeActionRequested if is_unsafe() ever flags a proposed action, and
+    _ClarificationNeeded if the model reports genuine uncertainty instead of guessing.
+    `initial_attempts`, when given, seeds the loop with attempts already made in an earlier
+    call — the resume side of a clarification pause, so the loop continues instead of
+    starting from zero.
+
+    A prompt-level instruction alone isn't enough to stop the model from giving up right after
+    a failed action even when steps remain — it already has evidence of that ("never claim
+    something exists without verifying it" was in the prompt and got broken anyway, in the
+    exact scenario this guards). retry_nudge_used enforces it mechanically instead of just
+    asking nicely: the first time the loop sees an outstanding failed action with steps still
+    available, it tells the model so and, if the model tries to conclude anyway, rejects that
+    "final" once and forces one more real step. It never fires twice in one call, so a
+    genuinely doomed action (a real 404, a real rate limit) still gets an honest "final" on the
+    next try rather than looping forever.
+
+    "Outstanding failed action" is tracked per tool_action name, not just "did the last step
+    fail" — a real failure mode this caught: read_repo_file 404s, list_repo_tree (a different
+    action, taken to diagnose the 404) then succeeds, and the model concludes right there
+    without ever actually retrying the read. Checking only the last observation would see the
+    successful list and never nudge, even though the thing the user actually asked for was
+    never retrieved. unretried_error_tools tracks every tool_action that has failed and not
+    since been attempted again, regardless of what ran in between."""
+    attempts: list = list(initial_attempts or [])
     final_answer = None
+    retry_nudge_used = False
+    unretried_error_tools: set = set()
 
     for step in range(max_iterations):
         forced_final = step == max_iterations - 1
-        prompt = prompt_template.format(
-            question=question if not forced_final else (
-                f"{question}\n\n(You have used all your steps. You MUST return "
+        # Shown on every step with an outstanding failure, not just once — only the actual
+        # rejection of a premature "final" below is one-shot (via retry_nudge_used), so the
+        # model still sees the reminder if it takes an unrelated detour (like listing the repo
+        # tree) before eventually trying to conclude.
+        needs_retry_nudge = not forced_final and bool(unretried_error_tools)
+
+        question_for_step = question
+        if forced_final:
+            question_for_step += (
+                "\n\n(You have used all your steps. You MUST return "
                 "action=\"final\" now, honestly summarizing what you tried and found.)"
-            ),
+            )
+        if needs_retry_nudge:
+            failed_tools = ", ".join(sorted(unretried_error_tools))
+            question_for_step += (
+                f"\n\n(One or more of your actions failed and was never successfully retried "
+                f"({failed_tools}), and you still have steps remaining — actually retry it with "
+                "corrected information (a different diagnostic action, like listing the repo "
+                "tree, does not count as retrying it) before concluding. Only choose "
+                "action=\"final\" now if you are certain nothing else could help.)"
+            )
+
+        prompt = prompt_template.format(
+            question=question_for_step,
             schema=schema,
             attempts=_format_react_attempts(attempts),
         )
@@ -2115,9 +2239,20 @@ async def run_react_loop(
             break
 
         action = decision.get("action")
+        if action == "final" and needs_retry_nudge and not retry_nudge_used:
+            # Told to retry and it tried to conclude anyway — force exactly one more real step
+            # instead of accepting a premature answer. retry_nudge_used flips here (at the
+            # actual rejection), not just when the nudge was shown, so a detour in between
+            # (e.g. it lists the repo tree first) doesn't burn the one-shot for free.
+            retry_nudge_used = True
+            continue
         if action == "final":
             final_answer = decision.get("answer") or "I wasn't able to find a conclusive answer."
             break
+
+        if action == "clarify":
+            question_text = decision.get("question") or "I need a bit more information to continue — could you clarify?"
+            raise _ClarificationNeeded(question_text, attempts)
 
         if action != "query":
             attempts.append({
@@ -2140,8 +2275,18 @@ async def run_react_loop(
                 observation = await observation
         except Exception as e:
             observation = f"ERROR: {e}"
+        observation = _truncate_observation(observation)
 
         tool_action_name = decision.get("tool_action") or ""
+        if tool_action_name:
+            if tool_action_name in unretried_error_tools:
+                # Attempting a previously-failed tool again satisfies "it was retried" even if
+                # this new attempt also errors — a genuinely doomed action (a real 404 that
+                # will never resolve) shouldn't force a second forced extra step on top of the
+                # honest retry it already got.
+                unretried_error_tools.discard(tool_action_name)
+            elif observation.startswith("ERROR"):
+                unretried_error_tools.add(tool_action_name)
         args_summary = ", ".join(f"{k}={v}" for k, v in (decision.get("args") or {}).items())
         action_desc = f"{tool_action_name}({args_summary})" if tool_action_name else (args_summary or "")
         attempts.append({
@@ -2179,21 +2324,36 @@ async def run_react_loop(
 # TOOL AGENT — unified Mongo + GitHub + web research loop
 # ============================================================
 
+_FILE_EXTENSION_RE = re.compile(r"\.[A-Za-z0-9]{1,5}$")
+
+
 def extract_github_repo(text: str | None, fallback: str = "SummonShenron/SAAPP") -> str:
-    """Extract an owner/repo from a prompt or state, falling back to SAAPP only when needed."""
+    """Extract an owner/repo from a prompt or state, falling back to SAAPP only when needed.
+
+    The trigger keywords ("for"/"in"/"repo"/...) are common English prepositions, not just
+    repo-mention markers — "its in backend/services/agent_workflow.py" was matching "in" +
+    "backend/services" (stopping at the second "/") and handing that back as a real repo,
+    which then 404'd on every GitHub API call built from it. The lookbehind/lookahead below
+    require the match to be a standalone two-segment token, not a slice out of a longer path
+    (blocked by a "/" immediately before or after), and the file-extension check rejects a
+    match whose second segment ends like a filename (agent_workflow.py) rather than a repo
+    name — belt-and-suspenders against the same class of false positive.
+    """
     if not text:
         return fallback
 
     patterns = [
-        r"(?:for|in|repo(?:sitory)?|target(?:\s+repo)?)[\s:`]*([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)",
-        r"`([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)`",
-        r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)",
+        r"(?:for|in|repo(?:sitory)?|target(?:\s+repo)?)[\s:`]*(?<![\w/.-])([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?![\w/.-])",
+        r"`(?<![\w/.-])([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?![\w/.-])`",
+        r"(?<![\w/.-])([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?![\w/.-])",
     ]
 
     for pattern in patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            return match.group(1).strip()
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            candidate = match.group(1).strip()
+            if _FILE_EXTENSION_RE.search(candidate):
+                continue
+            return candidate
 
     return fallback
 
@@ -2209,8 +2369,10 @@ def extract_pr_request_details(text: str | None, fallback_repo: str = "SummonShe
     if not text:
         return details
 
-    repo = extract_github_repo(text, fallback_repo)
-    details["repo"] = repo
+    # extract_github_repo already applies the anchored, file-path-safe matching — re-matching
+    # the same "for/in/repo X/Y" shape here with the old unanchored pattern would just overwrite
+    # a correct result with the same false-positive-on-file-paths bug fixed there.
+    details["repo"] = extract_github_repo(text, fallback_repo)
 
     merge_match = re.search(
         r"merge\s+([\w\-/\.]+)\s+into\s+([\w\-/\.]+)",
@@ -2221,14 +2383,6 @@ def extract_pr_request_details(text: str | None, fallback_repo: str = "SummonShe
         details["head_branch"] = merge_match.group(1).strip()
         details["base_branch"] = merge_match.group(2).strip()
         return details
-
-    repo_match = re.search(
-        r"(?:for|in|repo(?:sitory)?)[\s:`]*([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)",
-        text,
-        re.IGNORECASE,
-    )
-    if repo_match:
-        details["repo"] = repo_match.group(1).strip()
 
     branch_match = re.search(
         r"(?:from|head(?:\s+branch)?|branch)\s+([\w\-/\.]+)\s+(?:to|into|against)\s+([\w\-/\.]+)",
@@ -2273,6 +2427,21 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
         )
 
         msg = state.get("messages", [])[-1].content.strip()
+
+        # Resuming a paused clarification: the previous assistant message is the question it
+        # asked, and the one before that is the original request. Recombine them into one
+        # question for the loop and recover the attempts already made, so it continues instead
+        # of starting over — pending_action never survives between real turns (see classify_intent's
+        # card_marker comment above), so reconstructing from persisted messages is the only way.
+        all_messages = state.get("messages", [])
+        resumed_attempts: list = []
+        if len(all_messages) >= 2 and CLARIFICATION_CARD_MARKER in _content_of(all_messages[-2]):
+            resumed_attempts = _recover_attempts_from_steps_text(_content_of(all_messages[-2]))
+            original_question = _content_of(all_messages[-3]) if len(all_messages) >= 3 else msg
+            msg = (
+                f"{original_question}\n\n"
+                f"(You previously asked the user for clarification; they answered: \"{msg}\")"
+            )
 
         # Resolve the repo BEFORE folding in attached/pasted code — arbitrary pasted content
         # can contain its own "word/word"-shaped substrings that would otherwise hijack
@@ -2442,6 +2611,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 is_unsafe=_is_unsafe,
                 max_iterations=TOOL_AGENT_MAX_ITERATIONS,
                 node_name="tool_agent_node",
+                initial_attempts=resumed_attempts,
             )
         except _UnsafeActionRequested as e:
             drafted_code = (e.decision.get("args") or {}).get("code", "") or ""
@@ -2461,15 +2631,25 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 "content_to_format": approval_message,
                 "messages": new_messages,
             }
+        except _ClarificationNeeded as e:
+            steps_so_far = _format_attempts_steps(e.attempts)
+            clarification_message = (
+                f"**{CLARIFICATION_CARD_MARKER}:**\n\n{e.question}"
+                + (f"\n\n**What I've checked so far:**\n\n{steps_so_far}" if steps_so_far else "")
+            )
+            new_messages = list(state.get("messages", [])) + [AIMessage(content=clarification_message)]
+            return {
+                **state,
+                "relevance_grade": "needs_clarification",
+                "generation": clarification_message,
+                "content_to_format": clarification_message,
+                "messages": new_messages,
+            }
 
         final_answer = loop_result["final_answer"]
         attempts = loop_result["attempts"]
 
-        steps_text = "\n\n".join(
-            f"**Step {i} — {a['purpose']}:**\n```\n{a['action_desc']}\n```\n"
-            f"**Result:**\n```\n{_format_observation_for_footer(a['observation'])}\n```"
-            for i, a in enumerate(attempts, 1)
-        )
+        steps_text = _format_attempts_steps(attempts)
         output_msg = f"{final_answer}\n\n{steps_text}" if steps_text else final_answer
 
         node_output = state.copy()
@@ -2734,10 +2914,6 @@ def _draft_create_pr(state: GraphState) -> tuple[dict, str]:
     else:
         head_branch = state.get("head_branch", "feature-branch")
         base_branch = state.get("base_branch", "main")
-
-    repo_match = re.search(r"(?:for|in|repo(?:sitory)?)[\s:`]*([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)", last_msg, re.IGNORECASE)
-    if repo_match:
-        repo = repo_match.group(1).strip()
 
     logger.info(f"[propose_write_node:create_pr] Fetching real branch diff for {repo}: {base_branch} <- {head_branch}")
     diff_context = fetch_branch_diff_summary(repo, base_branch, head_branch)
