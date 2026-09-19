@@ -436,6 +436,8 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   });
   const [feedbackReason, setFeedbackReason] = useState<string>('');
   const [feedbackTag, setFeedbackTag] = useState<string>('hallucination');
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [conversationsRefreshKey, setConversationsRefreshKey] = useState(0);
   const [isMobileTraceOpen, setIsMobileTraceOpen] = useState(false);
   const [latestStepTitle, setLatestStepTitle] = useState("");
   const nodeQueueRef = useRef<{ node: string; detail?: string }[]>([]);
@@ -563,6 +565,8 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
 
   const chatWindowRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const prevMessageCountRef = useRef(0);
+  const prevLoadingRef = useRef(false);
   
   useEffect(() => {
     if (!isLoaded) return;
@@ -603,7 +607,23 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     }
   };
 
-  const handleClearChat = async () => {
+  // Clearing a conversation's messages and deleting it from the conversations panel were always
+  // the same operation as far as the backend transcript is concerned — there's no "clear but keep
+  // it around" state, so this now calls the real delete endpoint instead of a separate /chat/clear
+  // that just wiped the local view while leaving a dead entry behind in the conversations list.
+  const confirmClearChat = async () => {
+    setShowClearConfirm(false);
+    const clearedSessionId = sessionId;
+    try {
+      await api.deleteConversation(clearedSessionId);
+    } catch (e) {
+      console.warn("Backend conversation delete was skipped (server offline).", e);
+    }
+    localStorage.removeItem(chatStorageKey);
+
+    const newId = crypto.randomUUID();
+    localStorage.setItem(`conversation-id-${principal}`, newId);
+    setSessionId(newId);
     setMessages([
       { id: genId(), sender: 'system', text: `What would you like to find out about, ${principal}?` }
     ]);
@@ -611,22 +631,9 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     setAgentStatus('');
     setAgentPath([]);
     setHasChatted(false);
-    localStorage.removeItem(chatStorageKey);
-    try {
-      const authHeaders = await getAuthHeaders();
-      await fetch(`${BASE_URL}/api/chat/clear`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...authHeaders
-        },
-        body: JSON.stringify({ username: principal, session_id: sessionId })
-      });
-    } catch (e) {
-      console.warn("Backend persistent clearance was skipped (server offline).");
-    }
     setAttachments([]);
     setAttachedFiles([]);
+    setConversationsRefreshKey(k => k + 1);
     try {
       const questions = await getDynamicExampleQuestions(
       allowedAffiliates,
@@ -758,17 +765,28 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   }, [allowedAffiliates, selectedAffiliate]);
 
   useEffect(() => {
-    const scrollToBottom = () => {
-      if (messagesEndRef.current) {
-        messagesEndRef.current.scrollIntoView({
-          behavior: loading ? 'auto' : 'smooth',
-          block: 'end', 
-        });
-      }
-    };
-    scrollToBottom();
-    const timer = setTimeout(scrollToBottom, 50);
-    return () => clearTimeout(timer);
+    // A brand-new message (user sends, or the assistant's reply bubble first appears) gets one
+    // smooth scroll into view. Streaming tokens into that SAME last message only grows its height
+    // without adding a new entry — re-running scrollIntoView on every token there was what caused
+    // the "quick scroll through the messages" stutter (each call re-measures layout mid-animation
+    // and restarts it). While streaming, just pin the container to its bottom instantly instead.
+    const isNewMessage = messages.length !== prevMessageCountRef.current;
+    prevMessageCountRef.current = messages.length;
+    const justFinishedLoading = prevLoadingRef.current && !loading;
+    prevLoadingRef.current = loading;
+
+    if (isNewMessage) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    } else if (loading && chatWindowRef.current) {
+      chatWindowRef.current.scrollTop = chatWindowRef.current.scrollHeight;
+    } else if (justFinishedLoading && chatWindowRef.current) {
+      // The spinner/loader row between the messages and the bottom anchor unmounts the instant
+      // loading flips false, and that message's follow-up/feedback controls mount at the same
+      // moment — both change the container's scrollHeight right here. Without re-pinning, the
+      // browser just clamps the old (now too-large) scrollTop to the new max, which looks like
+      // an unwanted scroll-up right as each response finishes.
+      chatWindowRef.current.scrollTop = chatWindowRef.current.scrollHeight;
+    }
   }, [messages, loading]);
 
   const addTraceStep = (payload: any) => {
@@ -1337,8 +1355,9 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                 <button
                   type="button"
                   className="circle-icon-button"
-                  onClick={handleClearChat}
+                  onClick={() => setShowClearConfirm(true)}
                   disabled={loading}
+                  title="Delete this conversation"
                 >
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="3 6 5 6 21 6" />
@@ -1370,6 +1389,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               activeSessionId={sessionId}
               onSelect={switchConversation}
               onNew={startNewConversation}
+              refreshKey={conversationsRefreshKey}
             />
           </div>
         )}
@@ -1531,6 +1551,69 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               ))}
             </div>
           </aside>
+        )}
+        {showClearConfirm && (
+          <div style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.75)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            backdropFilter: 'blur(4px)'
+          }}>
+            <div style={{
+              background: '#1e293b',
+              border: '1px solid rgba(148, 163, 184, 0.2)',
+              borderRadius: '12px',
+              padding: '1.5rem',
+              width: '100%',
+              maxWidth: '400px',
+              color: '#f8fafc',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)'
+            }}>
+              <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.1rem', fontWeight: 600 }}>
+                Delete this conversation?
+              </h3>
+              <p style={{ margin: '0 0 1.25rem 0', fontSize: '0.85rem', color: '#94a3b8' }}>
+                This clears the chat and removes it from your conversations list. This can't be undone.
+              </p>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowClearConfirm(false)}
+                  style={{
+                    padding: '0.4rem 0.8rem',
+                    borderRadius: '6px',
+                    background: 'transparent',
+                    border: '1px solid #475569',
+                    color: '#cbd5e1',
+                    cursor: 'pointer',
+                    fontSize: '0.85rem'
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmClearChat}
+                  style={{
+                    padding: '0.4rem 0.8rem',
+                    borderRadius: '6px',
+                    background: '#ef4444',
+                    border: 'none',
+                    color: '#ffffff',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    fontSize: '0.85rem'
+                  }}
+                >
+                  Delete Conversation
+                </button>
+              </div>
+            </div>
+          </div>
         )}
         {feedbackModal.isOpen && (
           <div style={{

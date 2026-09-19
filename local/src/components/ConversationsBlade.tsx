@@ -7,6 +7,7 @@ interface ConversationsBladeProps {
   activeSessionId: string;
   onSelect: (sessionId: string) => void;
   onNew: () => void;
+  refreshKey?: number;
 }
 
 function formatRelativeTime(iso: string): string {
@@ -21,7 +22,7 @@ function formatRelativeTime(iso: string): string {
   return `${diffDay}d ago`;
 }
 
-const ConversationsBlade: React.FC<ConversationsBladeProps> = ({ activeSessionId, onSelect, onNew }) => {
+const ConversationsBlade: React.FC<ConversationsBladeProps> = ({ activeSessionId, onSelect, onNew, refreshKey }) => {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -32,7 +33,7 @@ const ConversationsBlade: React.FC<ConversationsBladeProps> = ({ activeSessionId
       .catch(() => { if (!cancelled) setConversations([]); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, []);
+  }, [refreshKey]);
 
   const handleDelete = async (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();
