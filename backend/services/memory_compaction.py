@@ -17,6 +17,12 @@ DEFAULT_SIMILARITY_THRESHOLD = float(os.getenv("MEMORY_COMPACTION_SIMILARITY", "
 DEFAULT_META_COMPACTION_THRESHOLD = int(os.getenv("MEMORY_META_COMPACTION_THRESHOLD", "500"))
 DEFAULT_META_SIMILARITY_THRESHOLD = float(os.getenv("MEMORY_META_COMPACTION_SIMILARITY", "0.90"))
 MIN_FACTS_FOR_PATTERN_EXTRACTION = int(os.getenv("MIN_FACTS_FOR_PATTERN_EXTRACTION", "8"))
+# Re-running pattern extraction over a barely-changed fact set just gives the model another
+# chance to phrase the same underlying pattern slightly differently — fact-level dedup catches
+# exact/near-exact restatements, but not that kind of drift. Skip unless real time has passed
+# OR the fact set has actually grown meaningfully since the last completed run.
+MIN_PATTERN_EXTRACTION_INTERVAL_HOURS = float(os.getenv("MIN_PATTERN_EXTRACTION_INTERVAL_HOURS", "24"))
+MIN_NEW_FACTS_FOR_PATTERN_EXTRACTION = int(os.getenv("MIN_NEW_FACTS_FOR_PATTERN_EXTRACTION", "5"))
 
 TIER1_SOURCE_TYPE = "compacted_summary"
 TIER2_SOURCE_TYPE = "compacted_meta_summary"
@@ -118,6 +124,19 @@ async def _summarize_cluster(cluster: List[dict]) -> dict:
         return fallback
 
 
+def _get_last_pattern_extraction(db, username: str) -> Optional[dict]:
+    """Most recent COMPLETED pattern_extraction event for this user, or None if there isn't
+    one (or db is unavailable) — used to gate re-runs via MIN_PATTERN_EXTRACTION_INTERVAL_HOURS/
+    MIN_NEW_FACTS_FOR_PATTERN_EXTRACTION below. Only "completed" runs count, so a run skipped
+    for not having enough facts yet never blocks a later attempt once facts do exist."""
+    if db is None:
+        return None
+    return db["memory_compaction_events"].find_one(
+        {"username": username, "type": "pattern_extraction", "status": "completed"},
+        sort=[("timestamp", -1)],
+    )
+
+
 async def extract_user_patterns(db, username: str) -> dict:
     """Analyzes a user's accumulated facts as a whole to find recurring higher-level patterns
     (e.g. "consistently gravitates toward agent systems, workflow engines, operational
@@ -128,6 +147,20 @@ async def extract_user_patterns(db, username: str) -> dict:
     facts = load_user_facts(username)
     if len(facts) < MIN_FACTS_FOR_PATTERN_EXTRACTION:
         return {"status": "skipped", "reason": "not_enough_facts", "fact_count": len(facts)}
+
+    last_run = _get_last_pattern_extraction(db, username)
+    if last_run:
+        last_timestamp = datetime.fromisoformat(last_run["timestamp"])
+        if last_timestamp.tzinfo is None:
+            last_timestamp = last_timestamp.replace(tzinfo=timezone.utc)
+        hours_since = (datetime.now(timezone.utc) - last_timestamp).total_seconds() / 3600
+        new_facts_since = len(facts) - last_run.get("fact_count", 0)
+        if hours_since < MIN_PATTERN_EXTRACTION_INTERVAL_HOURS and new_facts_since < MIN_NEW_FACTS_FOR_PATTERN_EXTRACTION:
+            logger.info(
+                "[MemoryCompaction] Pattern extraction cooldown active for %s (%.1fh since last "
+                "run, %d new fact(s)) — skipping.", username, hours_since, new_facts_since,
+            )
+            return {"status": "skipped", "reason": "cooldown", "fact_count": len(facts)}
 
     facts_text = "\n".join(f"- [{f.category}] {f.fact}" for f in facts)
 
@@ -200,9 +233,11 @@ async def _run_compaction(
 
         clusters = _cluster_chunks(candidates, threshold=similarity_threshold)
         multi_clusters = [c for c in clusters if len(c) >= 2]
+        singleton_chunks = [c[0] for c in clusters if len(c) == 1]
         logger.info(
-            "[MemoryCompaction] Tier %s: %d candidate chunk(s) for %s formed %d cluster(s) (threshold=%.2f).",
-            tier, len(candidates), username, len(multi_clusters), similarity_threshold,
+            "[MemoryCompaction] Tier %s: %d candidate chunk(s) for %s formed %d cluster(s) "
+            "and %d singleton(s) (threshold=%.2f).",
+            tier, len(candidates), username, len(multi_clusters), len(singleton_chunks), similarity_threshold,
         )
         clusters_formed = len(multi_clusters)
 
@@ -228,11 +263,30 @@ async def _run_compaction(
                     save_user_fact(username, fact_text, category=fact.get("category") or "preference", source="inferred")
                     facts_promoted += 1
 
+        singletons_promoted = 0
+        if singleton_chunks:
+            # A chunk with nothing similar enough to merge with isn't a failure to compact —
+            # it's genuinely distinct information, and a normal, healthy memory is full of
+            # that. The bug this fixes: leaving it out of both the delete and the "already
+            # compacted" tag meant it stayed in the "uncompacted" pool forever, getting
+            # re-fetched and re-clustered (again finding nothing to merge with) on every
+            # future run — real production logs showed this exact pattern, e.g. "107
+            # candidate chunk(s)... formed 0 cluster(s)" twice in a row. Retagging it to this
+            # tier's output source_type — no LLM call, no content change, just relabeling —
+            # removes it from that query so it stops being repeatedly rescanned, while still
+            # leaving it eligible to cluster with something else later at Tier 2's own pass.
+            db[USER_MEMORY_COLLECTION].update_many(
+                {"_id": {"$in": [c["_id"] for c in singleton_chunks]}},
+                {"$set": {"source_type": output_source_type}},
+            )
+            singletons_promoted = len(singleton_chunks)
+
         result = {
             "status": "completed",
             "chunks_before": chunks_before,
             "chunks_after": _count_all_chunks(db, username),
             "clusters_formed": clusters_formed,
+            "singletons_promoted": singletons_promoted,
             "facts_promoted": facts_promoted,
             "tier": tier,
         }

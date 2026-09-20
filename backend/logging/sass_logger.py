@@ -41,9 +41,15 @@ def setup_logging():
             "transformers", "huggingface_hub", "sentence_transformers", "chromadb"
         ]
         for logger_name in noisy_loggers:
-            logging.getLogger(logger_name).setLevel(logging.CRITICAL)     
-            
+            logging.getLogger(logger_name).setLevel(logging.CRITICAL)
+
         logging.getLogger("uvicorn.error").setLevel(logging.ERROR)
         logging.getLogger("uvicorn").setLevel(logging.ERROR)
+
+        # google-genai logs an "AFC is enabled with max remote calls: N" line on basically
+        # every single model call — pure noise that drowns out our own step-by-step tool_agent
+        # logging in the same stream. WARNING (not CRITICAL like the fully-silenced libs above)
+        # so a genuine API error from this library still surfaces.
+        logging.getLogger("google_genai").setLevel(logging.WARNING)
         
     return logger

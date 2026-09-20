@@ -286,6 +286,69 @@ async def test_show_work_true_includes_the_steps_footer(monkeypatch):
     assert "Check the tests directory" in result["content_to_format"]
 
 
+# ---------------------------------------------------------------------------
+# Deep thinking (per-user setting) raises the step cap + retry-nudge budget
+# ---------------------------------------------------------------------------
+
+@run_async
+async def test_deep_thinking_off_uses_standard_loop_limits(monkeypatch):
+    _setup_github_repo(monkeypatch)
+    captured_kwargs = {}
+
+    async def fake_run_react_loop(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"final_answer": "done", "attempts": [], "show_work": False}
+
+    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+
+    state = _state("what does this repo do?")
+    state["deep_thinking"] = False
+    await aw.tool_agent_node(state)
+
+    assert captured_kwargs["max_iterations"] == aw.TOOL_AGENT_MAX_ITERATIONS
+    assert captured_kwargs["max_retry_nudges"] == aw.TOOL_AGENT_MAX_RETRY_NUDGES
+
+
+@run_async
+async def test_deep_thinking_missing_from_state_defaults_to_standard_limits(monkeypatch):
+    """The field is absent entirely on any state built before this feature existed (or any
+    test/state dict that doesn't set it) — must fall back to the standard limits, not error."""
+    _setup_github_repo(monkeypatch)
+    captured_kwargs = {}
+
+    async def fake_run_react_loop(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"final_answer": "done", "attempts": [], "show_work": False}
+
+    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+
+    await aw.tool_agent_node(_state("what does this repo do?"))
+
+    assert captured_kwargs["max_iterations"] == aw.TOOL_AGENT_MAX_ITERATIONS
+    assert captured_kwargs["max_retry_nudges"] == aw.TOOL_AGENT_MAX_RETRY_NUDGES
+
+
+@run_async
+async def test_deep_thinking_on_raises_step_cap_and_retry_nudge_budget(monkeypatch):
+    _setup_github_repo(monkeypatch)
+    captured_kwargs = {}
+
+    async def fake_run_react_loop(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"final_answer": "done", "attempts": [], "show_work": False}
+
+    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+
+    state = _state("what does this repo do?")
+    state["deep_thinking"] = True
+    await aw.tool_agent_node(state)
+
+    assert captured_kwargs["max_iterations"] == aw.TOOL_AGENT_MAX_ITERATIONS_DEEP
+    assert captured_kwargs["max_retry_nudges"] == aw.TOOL_AGENT_MAX_RETRY_NUDGES_DEEP
+    assert aw.TOOL_AGENT_MAX_ITERATIONS_DEEP > aw.TOOL_AGENT_MAX_ITERATIONS
+    assert aw.TOOL_AGENT_MAX_RETRY_NUDGES_DEEP > aw.TOOL_AGENT_MAX_RETRY_NUDGES
+
+
 @run_async
 async def test_mongo_unsafe_write_triggers_approval(monkeypatch):
     monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])

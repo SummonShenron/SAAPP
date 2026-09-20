@@ -26,6 +26,11 @@ VALID_CATEGORIES = {
 FACT_SIMILARITY_THRESHOLD = float(os.getenv("FACT_SIMILARITY_THRESHOLD", "0.80"))
 FACT_REINFORCEMENT_INCREMENT = float(os.getenv("FACT_REINFORCEMENT_INCREMENT", "0.15"))
 FACT_CONFIDENCE_HALF_LIFE_DAYS = float(os.getenv("FACT_CONFIDENCE_HALF_LIFE_DAYS", "90"))
+# The whole fact list is stored as one array on one MongoDB document (see save_user_facts) —
+# with a full embedding per fact (~12-15KB as JSON), an unbounded array risks approaching
+# Mongo's 16MB single-document limit for a long-lived heavy account. Capping it keeps that
+# structurally impossible rather than just unlikely.
+MAX_STORED_FACTS = int(os.getenv("MAX_STORED_FACTS", "400"))
 
 
 class UserFact(BaseModel):
@@ -144,6 +149,32 @@ def _effective_confidence(fact: "UserFact", now: datetime) -> float:
     return fact.confidence * (0.5 ** (days_since_update / FACT_CONFIDENCE_HALF_LIFE_DAYS))
 
 
+def _prune_excess_facts(facts: List["UserFact"], protect_id: Optional[str] = None) -> List["UserFact"]:
+    """Keeps the store at or under MAX_STORED_FACTS so it can never approach Mongo's 16MB
+    single-document limit. Identity facts are never pruned (foundational, and naturally small
+    in number — see fetch_relevant_user_facts' same treatment); `protect_id` additionally
+    shields whichever fact save_user_fact just touched, so telling it something never results
+    in that exact fact being evicted in the same call. Among everything else, the
+    lowest-effective-confidence facts (most decayed / least reinforced) go first."""
+    if len(facts) <= MAX_STORED_FACTS:
+        return facts
+
+    now = datetime.now(timezone.utc)
+    protected = [f for f in facts if f.category == "identity" or f.id == protect_id]
+    other = [f for f in facts if f.category != "identity" and f.id != protect_id]
+    other.sort(key=lambda f: _effective_confidence(f, now), reverse=True)
+
+    keep_count = max(MAX_STORED_FACTS - len(protected), 0)
+    kept_other = other[:keep_count]
+    dropped = len(other) - len(kept_other)
+    if dropped > 0:
+        logger.info(
+            "[MemoryUtils] Pruned %d lowest-confidence fact(s) for a user to stay under the "
+            "%d-fact cap.", dropped, MAX_STORED_FACTS,
+        )
+    return protected + kept_other
+
+
 def save_user_fact(
     username: str,
     fact: str,
@@ -204,6 +235,7 @@ def save_user_fact(
         )
         all_facts.append(result)
 
+    all_facts = _prune_excess_facts(all_facts, protect_id=result.id)
     save_user_facts(username, all_facts)
     logger.info("Saved memory fact for %s: [%s] %s", username, category, result.fact)
     return result
