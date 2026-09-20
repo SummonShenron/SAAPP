@@ -448,6 +448,28 @@ You extract a single durable fact from the user's message for long-term memory s
 USER MESSAGE:
 {message}
 
+GROUNDING: Write down only what this message actually states. Never generalize a specific
+statement into a broader rule, never infer a boundary, restriction, or standing instruction the
+user didn't actually give, and never add scope or absoluteness ("completely separate", "no
+involvement in", "always"/"never") that isn't genuinely there. If the message is mentioning
+something in passing, the fact should be equally modest — a durable fact is a record of what was
+said, not an interpretation of what it might imply.
+
+CATEGORY: Pick based on whether this should surface in every future conversation regardless of
+topic, or only when actually relevant:
+- "identity": foundational and employer/project-agnostic — name, pronouns, role in the abstract
+  ("a software engineer"), being this assistant's architect. These are ALWAYS shown to you in
+  every future conversation no matter the topic, so reserve this for things that genuinely
+  belong everywhere.
+- "career": anything tied to a specific employer, job, or work context (e.g. "works at X",
+  "uses Python/AWS at their job") — surfaced only when the current conversation is actually
+  about work, not injected into unrelated conversations the way "identity" is.
+- "preference" | "setting" | "trait" | "project" | "goal" | "relationship": as their names imply,
+  also surfaced only when relevant, never unconditionally.
+When in doubt between "identity" and something else, prefer the other category — the cost of
+under-including in every-conversation context is much lower than the cost of a work-specific or
+narrow fact bleeding into an unrelated conversation.
+
 Return ONLY a JSON object matching this schema, with no preamble or markdown:
 {{
   "category": "preference" | "identity" | "setting" | "trait" | "career" | "project" | "goal" | "relationship",

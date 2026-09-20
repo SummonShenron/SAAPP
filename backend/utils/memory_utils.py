@@ -92,11 +92,13 @@ def save_user_facts(username: str, facts: List[UserFact]) -> None:
         json.dump(facts_dicts, f, indent=2)
 
 
-def find_similar_fact(facts: List[UserFact], category: str, fact_text: str) -> Optional[UserFact]:
-    """Naive same-category text-overlap match, used to update an existing fact instead of duplicating it."""
+def find_similar_fact(facts: List[UserFact], fact_text: str) -> Optional[UserFact]:
+    """Naive text-overlap match across ALL categories, used to update an existing fact instead
+    of duplicating it. Deliberately not category-scoped — see _find_best_embedding_match for why
+    a same-category restriction here is actively harmful, not just narrow."""
     candidate = fact_text.strip().lower()
     for existing in facts:
-        if existing.category != category or not existing.active:
+        if not existing.active:
             continue
         existing_text = existing.fact.strip().lower()
         if existing_text == candidate or existing_text in candidate or candidate in existing_text:
@@ -104,11 +106,22 @@ def find_similar_fact(facts: List[UserFact], category: str, fact_text: str) -> O
     return None
 
 
-def _find_best_embedding_match(facts: List[UserFact], category: str, embedding: List[float]) -> tuple:
-    """Returns (best_matching_fact, similarity) among same-category facts that have an embedding."""
+def _find_best_embedding_match(facts: List[UserFact], embedding: List[float]) -> tuple:
+    """Returns (best_matching_fact, similarity) among ALL active facts with an embedding,
+    regardless of category.
+
+    Used to be scoped to same-category facts only, which meant the same real-world fact
+    extracted into different categories on different turns (a fact-extraction judgment call,
+    not something the user controls) could never be recognized as a duplicate of itself — this
+    is exactly how "works at Principal" ended up duplicated across identity/career/setting
+    instead of ever being caught and merged. Duplication is about MEANING, not which category a
+    fact happened to land in; _judge_fact_relationship's semantic "duplicate/supersede/distinct"
+    call (not this function) is the actual safety net against merging two facts that are only
+    superficially similar in embedding space, so relaxing this filter doesn't weaken that check.
+    """
     best_fact, best_sim = None, 0.0
     for existing in facts:
-        if existing.category != category or not existing.active or not existing.embedding:
+        if not existing.active or not existing.embedding:
             continue
         sim = cosine_similarity(embedding, existing.embedding)
         if sim > best_sim:
@@ -196,7 +209,7 @@ def save_user_fact(
     existing = None
     relationship_action = None
     if new_embedding is not None:
-        best_match, best_sim = _find_best_embedding_match(all_facts, category, new_embedding)
+        best_match, best_sim = _find_best_embedding_match(all_facts, new_embedding)
         if best_match is not None and best_sim >= FACT_SIMILARITY_THRESHOLD:
             relationship_action = _judge_fact_relationship(best_match.fact, fact_text)
             if relationship_action in ("duplicate", "supersede"):
@@ -205,7 +218,7 @@ def save_user_fact(
         # Embeddings unavailable for some reason — fall back to the old naive substring check
         # rather than always creating a new fact. Treated as reinforcement (same fact restated),
         # since there's no LLM judgment available to detect a genuine contradiction here.
-        existing = find_similar_fact(all_facts, category, fact_text)
+        existing = find_similar_fact(all_facts, fact_text)
         if existing is not None:
             relationship_action = "duplicate"
 
@@ -216,6 +229,11 @@ def save_user_fact(
         else:  # "supersede" — a genuinely changed fact resets to the passed-in baseline
             existing.confidence = confidence
         existing.fact = fact_text
+        # Corrects category drift on every re-observation instead of freezing whichever category
+        # the fact happened to get on its very first (possibly inconsistent) extraction — this is
+        # the other half of fixing the identity/career/setting fragmentation bug: cross-category
+        # matching finds the old fact, and this line stops it from keeping a stale category.
+        existing.category = category
         existing.embedding = new_embedding if new_embedding is not None else existing.embedding
         existing.source = source
         existing.updated_at = now

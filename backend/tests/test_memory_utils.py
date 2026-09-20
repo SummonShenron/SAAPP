@@ -117,6 +117,45 @@ def test_save_user_fact_invalid_category_defaults_to_preference():
     assert saved.category == "preference"
 
 
+def test_save_user_fact_dedups_across_categories():
+    """The actual bug this guards against: the same real-world fact ('works at Principal')
+    extracted into 'identity' once and 'career' another time used to never be recognized as a
+    duplicate of itself, because dedup only ever compared same-category facts. It's now merged
+    regardless of which category each mention landed in."""
+    memory_utils.save_user_fact("jack", "Works at Principal.", category="identity")
+    memory_utils.save_user_fact("jack", "works at principal.", category="career")
+
+    facts = memory_utils.load_user_facts("jack")
+    assert len(facts) == 1
+
+
+def test_save_user_fact_cross_category_merge_corrects_stored_category():
+    """A re-observation doesn't just update the fact text — it corrects the category too, so a
+    fact that was miscategorized once (e.g. an older, less consistent extraction) self-heals the
+    next time the same fact is mentioned and re-extracted with a better category."""
+    memory_utils.save_user_fact("jack", "Works at Principal.", category="identity")
+    updated = memory_utils.save_user_fact("jack", "works at principal.", category="career")
+
+    assert updated.category == "career"
+    facts = memory_utils.load_user_facts("jack")
+    assert facts[0].category == "career"
+
+
+def test_save_user_fact_cross_category_supersede_also_corrects_category(monkeypatch):
+    monkeypatch.setattr(memory_utils, "embed_text", lambda text: [1.0, 0.0])  # force a "similar" match
+    monkeypatch.setattr(
+        memory_utils.lite_llm, "invoke",
+        Mock(return_value=SimpleNamespace(content=json.dumps({"action": "supersede"})))
+    )
+    memory_utils.save_user_fact("jack", "Works at Principal.", category="identity")
+    updated = memory_utils.save_user_fact("jack", "Works at Acme now.", category="career")
+
+    assert updated.category == "career"
+    assert updated.fact == "Works at Acme now."
+    facts = memory_utils.load_user_facts("jack")
+    assert len(facts) == 1
+
+
 def test_load_user_facts_filters_by_category():
     memory_utils.save_user_fact("jack", "Prefers dark mode UI.", category="preference")
     memory_utils.save_user_fact("jack", "Name is Jack.", category="identity")
