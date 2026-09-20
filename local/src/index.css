@@ -17,6 +17,8 @@
   --accent-success: #10b981; /* Soft emerald green for secure badges */
   --accent-danger: #ef4444;  /* Muted crimson for alerts */
   --bubble-user-bg: #eff6ff;
+  --code-bg: #0f172a;       /* CodeBlock's syntax-highlighter background (Chat.tsx) */
+  --code-border: #334155;
   --font-sans: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --reverse-shadow: 
       0 2px -4px rgba(0, 0, 0, 0.02),
@@ -75,6 +77,8 @@
   --bubble-ai-border: #0a0a0c;
   --bubble-ai-text: #e5e7eb;
   --filter-bg: #1c1111;
+  --code-bg: #0a0a0c;       /* Matches the AI bubble surface instead of the default slate */
+  --code-border: var(--border-color);
   --hero-overlay: linear-gradient(rgba(10, 10, 12, 0.4), rgba(10, 10, 12, 0.85));
   --input-text: var(--text-main);
   --card-text: #e5e7eb;
@@ -96,6 +100,10 @@
   padding: 0;
 }
 
+.theme-shadow, html body {
+  background-color:  #1a1a1a;
+}
+
 body, html {
   width: 100%;
   height: 100%;
@@ -105,9 +113,7 @@ body, html {
   overflow-x: hidden;
 }
 
-body:has(.theme-shadow) {
-  background-color: #353333;
-}
+
 
 /* Custom Clean Scrollbar */
 ::-webkit-scrollbar {
@@ -382,6 +388,7 @@ body:has(.theme-shadow) {
   width: 100%;
   margin: 0 auto;
   position: relative;
+  background-color: var(--bg-main);
 }
 
 div:has(.portal-body) {
@@ -1125,11 +1132,29 @@ div:has(.portal-body) {
 
 @media (max-width: 768px) {
   .filter-row {
-    flex-direction: column;
-    align-items: flex-start;
+    /* Was flex-direction: column, which puts every child (label, select, toggle) on its
+     own line — 3 rows. flex-wrap lets them share rows instead; whichever item gets
+     flex: 0 0 100% below is the one forced onto its own line, everything else just falls
+     in naturally around it. */
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .filter-row select {
+    flex: 1;
+    min-width: 0;
+  }
+  .switch-track {
+    justify-content: end;
+    display: flex;
   }
   .rag-mode-toggle-label {
+    /* Forced onto its own row 2, leaving the label + select to share row 1. */
+    flex: 0 0 100%;
     margin-left: 0;
+    /* Now that this label spans the full row, space its own two children (the text and
+       the switch) apart instead of letting them bunch together on the left. */
+    justify-content: space-between;
   }
 }
 
@@ -1147,6 +1172,11 @@ div:has(.portal-body) {
   transform: translateY(-2px);
   box-shadow: var(--shadow-hover);
 }
+select:not(:-internal-list-box):not([multiple]) option {
+  background: var(--bg-secondary) !important;
+  color: var(--text-main) !important;
+}
+
 .theme-shadow .filter-row select { 
   background: var(--bg-secondary) !important;
   border: 1px solid var(--border-color) !important;
@@ -1268,6 +1298,11 @@ div:has(.portal-body) {
   display: none;
 }
 
+/* Counterpart to .desktop-only below — hidden by default (desktop), shown under 768px. */
+.mobile-only {
+  display: none;
+}
+
 .mobile-drawer {
   display: none;
 }
@@ -1277,6 +1312,10 @@ div:has(.portal-body) {
   /* Hide standard desktop link row */
   .desktop-only {
     display: none !important;
+  }
+
+  .mobile-only {
+    display: inline;
   }
 
   /* Show mobile hamburger button */
@@ -1296,7 +1335,14 @@ div:has(.portal-body) {
     align-items: center;
     justify-content: center;
   }
-
+  .theme-shadow .mobile-drawer {
+    box-shadow: var(--shadow);
+    background: var(--bg-main) !important;
+    border: 1px solid var(--border-color) !important;
+    color: var(--text-main) !important;
+    border-bottom-left-radius: 16px;
+    border-bottom-right-radius: 16px;
+  }
   /* Slick Mobile Slide-down Drawer */
   .mobile-drawer {
     display: flex;
@@ -1313,7 +1359,10 @@ div:has(.portal-body) {
     box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
     animation: slideDown 0.2s ease-out forwards;
   }
-
+  .theme-shadow .theme-toggle-btn-mobile {
+    
+    background: var(--bg-secondary) !important;
+  }
   .mobile-drawer-header {
     display: flex;
     justify-content: space-between;

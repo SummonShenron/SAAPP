@@ -10,6 +10,8 @@ interface FiltersProps {
   setAllowedAffiliates: (affs: string[]) => void;
   ragMode: string;
   onRagModeChange: (mode: string) => void;
+  deepThinking: boolean;
+  onDeepThinkingChange: (enabled: boolean) => void;
 }
 
 export const Filters: React.FC<FiltersProps> = ({
@@ -19,7 +21,9 @@ export const Filters: React.FC<FiltersProps> = ({
   allowedAffiliates,
   setAllowedAffiliates,
   ragMode,
-  onRagModeChange
+  onRagModeChange,
+  deepThinking,
+  onDeepThinkingChange
 }) => {
   const { isLoaded, isSignedIn } = useAuth();
   const [fetchingFilters, setFetchingFilters] = useState<boolean>(true);
@@ -79,7 +83,10 @@ export const Filters: React.FC<FiltersProps> = ({
 
   return (
     <div className="filter-row">
-      <label htmlFor="affiliate-select">Active Security Scope:</label>
+      <label htmlFor="affiliate-select">
+        <span className="desktop-only">Active Security Scope:</span>
+        <span className="mobile-only">Scope:</span>
+      </label>
       <select 
         id="affiliate-select"
         value={selectedAffiliate} 
@@ -101,6 +108,22 @@ export const Filters: React.FC<FiltersProps> = ({
             checked={ragMode === 'open'}
             disabled={loadingChat || principal === 'guest_bty'}
             onChange={(e) => onRagModeChange(e.target.checked ? 'open' : 'strict')}
+          />
+          <span className="switch-track">
+            <span className="switch-thumb" />
+          </span>
+        </span>
+      </label>
+
+      <label htmlFor="deep-thinking-toggle" className="rag-mode-toggle-label" title="Deep thinking lets the assistant take more investigation steps and double-check itself more before answering, at the cost of a slower reply.">
+        <span>Deep thinking</span>
+        <span className="switch">
+          <input
+            id="deep-thinking-toggle"
+            type="checkbox"
+            checked={deepThinking}
+            disabled={loadingChat || principal === 'guest_bty'}
+            onChange={(e) => onDeepThinkingChange(e.target.checked)}
           />
           <span className="switch-track">
             <span className="switch-thumb" />

@@ -53,6 +53,13 @@ from backend.utils.normalize_utils import ensure_str
 load_dotenv()
 logger = logging.getLogger("SASS Logger")
 TOOL_AGENT_MAX_ITERATIONS = int(os.getenv("TOOL_AGENT_MAX_ITERATIONS", "5"))
+# Deep thinking (a per-user opt-in setting, see user_settings_utils) raises both the step
+# ceiling and how many times the retry-nudge is allowed to reject a premature "final" — a
+# higher step cap alone wouldn't help if the loop still only gets one nudge to actually use
+# the extra room to double-check itself.
+TOOL_AGENT_MAX_ITERATIONS_DEEP = int(os.getenv("TOOL_AGENT_MAX_ITERATIONS_DEEP", "12"))
+TOOL_AGENT_MAX_RETRY_NUDGES = int(os.getenv("TOOL_AGENT_MAX_RETRY_NUDGES", "1"))
+TOOL_AGENT_MAX_RETRY_NUDGES_DEEP = int(os.getenv("TOOL_AGENT_MAX_RETRY_NUDGES_DEEP", "3"))
 async def safe_emit_event(name: str, data: dict):
     """Safely emit a custom event, ignoring errors if called outside an active run context."""
     try:
@@ -2079,6 +2086,20 @@ def _parse_agent_json(raw_text: str) -> dict:
     return {}
 
 
+_EMPTY_OBSERVATION_VALUES = {"", "[]", "{}", "none", "null", "no results", "no results found"}
+
+
+def _is_empty_observation(observation: str) -> bool:
+    """An empty result (no matches, an empty list, an empty file listing) is not the same as
+    "nothing exists" — it's very often a sign the query, path, repo, or collection was wrong,
+    not proof of absence (this is exactly what happened with the repo-misresolution bug
+    earlier: a wrong repo name didn't error, it just came back empty). Treated the same way
+    an outright "ERROR: ..." is by the retry-nudge tracking in run_react_loop, since both are
+    "this step didn't actually get you anywhere" — the model just can't tell that from the
+    text alone without this check."""
+    return observation.strip().lower() in _EMPTY_OBSERVATION_VALUES
+
+
 _MAX_OBSERVATION_CHARS = 4000
 
 
@@ -2167,6 +2188,7 @@ async def run_react_loop(
     max_iterations: int,
     node_name: str,
     initial_attempts: list | None = None,
+    max_retry_nudges: int = 1,
 ) -> dict:
     """Generic Reason -> Act -> Observe -> Decide loop shared by every iterative tool
     (MongoDB, GitHub search, ...). Each step asks the model for the next action given
@@ -2182,38 +2204,44 @@ async def run_react_loop(
     starting from zero.
 
     A prompt-level instruction alone isn't enough to stop the model from giving up right after
-    a failed action even when steps remain — it already has evidence of that ("never claim
-    something exists without verifying it" was in the prompt and got broken anyway, in the
-    exact scenario this guards). retry_nudge_used enforces it mechanically instead of just
-    asking nicely: the first time the loop sees an outstanding failed action with steps still
-    available, it tells the model so and, if the model tries to conclude anyway, rejects that
-    "final" once and forces one more real step. It never fires twice in one call, so a
-    genuinely doomed action (a real 404, a real rate limit) still gets an honest "final" on the
-    next try rather than looping forever.
+    a failed OR empty action even when steps remain — it already has evidence of that ("never
+    claim something exists without verifying it" was in the prompt and got broken anyway, in
+    the exact scenario this guards). retry_nudge_count enforces it mechanically instead of just
+    asking nicely: whenever the loop sees an outstanding failed-or-empty action with steps
+    still available, it tells the model so and, if the model tries to conclude anyway, rejects
+    that "final" and forces one more real step — up to max_retry_nudges times per call (default
+    1). It stops rejecting after that budget is spent, so a genuinely doomed action (a real
+    404, a real rate limit, a search that's empty no matter how it's phrased) still gets an
+    honest "final" rather than looping forever. Deep thinking mode raises this budget alongside
+    max_iterations, since a higher step cap alone doesn't help if the loop only gets to
+    second-guess itself once.
 
-    "Outstanding failed action" is tracked per tool_action name, not just "did the last step
-    fail" — a real failure mode this caught: read_repo_file 404s, list_repo_tree (a different
-    action, taken to diagnose the 404) then succeeds, and the model concludes right there
-    without ever actually retrying the read. Checking only the last observation would see the
-    successful list and never nudge, even though the thing the user actually asked for was
-    never retrieved. unretried_error_tools tracks every tool_action that has failed and not
-    since been attempted again, regardless of what ran in between."""
+    "Outstanding failed-or-empty action" is tracked per tool_action name, not just "did the
+    last step fail" — a real failure mode this caught: read_repo_file 404s, list_repo_tree (a
+    different action, taken to diagnose the 404) then succeeds, and the model concludes right
+    there without ever actually retrying the read. Checking only the last observation would
+    see the successful list and never nudge, even though the thing the user actually asked for
+    was never retrieved. Empty results are tracked the same way as outright errors (see
+    _is_empty_observation) — an empty search result is very often a sign of looking in the
+    wrong place (wrong repo, wrong collection, wrong query), not proof nothing exists.
+    unretried_inconclusive_tools tracks every tool_action that has failed or come back empty
+    and not since been attempted again, regardless of what ran in between."""
     attempts: list = list(initial_attempts or [])
     final_answer = None
     # Defaults true (show the receipt) whenever a "final" doesn't explicitly say otherwise —
     # a missing/malformed field is more likely a parsing hiccup than a deliberate "hide this",
     # so err toward the more transparent option rather than silently dropping useful context.
     show_work = True
-    retry_nudge_used = False
-    unretried_error_tools: set = set()
+    retry_nudge_count = 0
+    unretried_inconclusive_tools: set = set()
 
     for step in range(max_iterations):
         forced_final = step == max_iterations - 1
-        # Shown on every step with an outstanding failure, not just once — only the actual
-        # rejection of a premature "final" below is one-shot (via retry_nudge_used), so the
-        # model still sees the reminder if it takes an unrelated detour (like listing the repo
-        # tree) before eventually trying to conclude.
-        needs_retry_nudge = not forced_final and bool(unretried_error_tools)
+        # Shown on every step with an outstanding failure or empty result, not just once —
+        # only the actual rejection of a premature "final" below is budget-limited (via
+        # retry_nudge_count), so the model still sees the reminder if it takes an unrelated
+        # detour (like listing the repo tree) before eventually trying to conclude.
+        needs_retry_nudge = not forced_final and bool(unretried_inconclusive_tools)
 
         question_for_step = question
         if forced_final:
@@ -2222,11 +2250,13 @@ async def run_react_loop(
                 "action=\"final\" now, honestly summarizing what you tried and found.)"
             )
         if needs_retry_nudge:
-            failed_tools = ", ".join(sorted(unretried_error_tools))
+            failed_tools = ", ".join(sorted(unretried_inconclusive_tools))
             question_for_step += (
-                f"\n\n(One or more of your actions failed and was never successfully retried "
-                f"({failed_tools}), and you still have steps remaining — actually retry it with "
-                "corrected information (a different diagnostic action, like listing the repo "
+                f"\n\n(One or more of your actions failed or came back empty and was never "
+                f"successfully retried ({failed_tools}), and you still have steps remaining — "
+                "an empty result often means the query, path, or scope was wrong, not that "
+                "nothing exists. Actually retry it with corrected information (a different "
+                "diagnostic action, like listing the repo "
                 "tree, does not count as retrying it) before concluding. Only choose "
                 "action=\"final\" now if you are certain nothing else could help.)"
             )
@@ -2247,17 +2277,21 @@ async def run_react_loop(
             break
 
         action = decision.get("action")
-        if action == "final" and needs_retry_nudge and not retry_nudge_used:
-            # Told to retry and it tried to conclude anyway — force exactly one more real step
-            # instead of accepting a premature answer. retry_nudge_used flips here (at the
+        if action == "final" and needs_retry_nudge and retry_nudge_count < max_retry_nudges:
+            # Told to retry and it tried to conclude anyway — force one more real step instead
+            # of accepting a premature answer. retry_nudge_count only increments here (at the
             # actual rejection), not just when the nudge was shown, so a detour in between
-            # (e.g. it lists the repo tree first) doesn't burn the one-shot for free.
-            retry_nudge_used = True
+            # (e.g. it lists the repo tree first) doesn't spend the budget for free.
+            retry_nudge_count += 1
             continue
         if action == "final":
             final_answer = decision.get("answer") or "I wasn't able to find a conclusive answer."
             show_work = decision.get("show_work")
             show_work = show_work if isinstance(show_work, bool) else True
+            logger.info(
+                "[%s] Step %s: accepted final answer after %s real action(s) — %r",
+                node_name, step + 1, len(attempts), final_answer[:200],
+            )
             break
 
         if action == "clarify":
@@ -2289,16 +2323,21 @@ async def run_react_loop(
 
         tool_action_name = decision.get("tool_action") or ""
         if tool_action_name:
-            if tool_action_name in unretried_error_tools:
-                # Attempting a previously-failed tool again satisfies "it was retried" even if
-                # this new attempt also errors — a genuinely doomed action (a real 404 that
-                # will never resolve) shouldn't force a second forced extra step on top of the
+            if tool_action_name in unretried_inconclusive_tools:
+                # Attempting a previously-failed-or-empty tool again satisfies "it was
+                # retried" even if this new attempt also fails or comes back empty — a
+                # genuinely doomed action (a real 404, a search that's empty no matter how
+                # it's phrased) shouldn't force a second forced extra step on top of the
                 # honest retry it already got.
-                unretried_error_tools.discard(tool_action_name)
-            elif observation.startswith("ERROR"):
-                unretried_error_tools.add(tool_action_name)
+                unretried_inconclusive_tools.discard(tool_action_name)
+            elif observation.startswith("ERROR") or _is_empty_observation(observation):
+                unretried_inconclusive_tools.add(tool_action_name)
         args_summary = ", ".join(f"{k}={v}" for k, v in (decision.get("args") or {}).items())
         action_desc = f"{tool_action_name}({args_summary})" if tool_action_name else (args_summary or "")
+        logger.info(
+            "[%s] Step %s result — action=%s | observation=%r",
+            node_name, step + 1, action_desc or "(none)", observation[:200],
+        )
         attempts.append({
             "purpose": purpose,
             "action_desc": action_desc,
@@ -2337,31 +2376,61 @@ async def run_react_loop(
 _FILE_EXTENSION_RE = re.compile(r"\.[A-Za-z0-9]{1,5}$")
 
 
+# Directory/programming nouns so common across virtually any repo's structure that a bare
+# two-segment mention built from one is far more likely to be a path fragment ("the fix is in
+# backend/services", "check local/src") than a real GitHub owner/repo — a real repo owner is
+# effectively never named "backend" or "services". This has to be repo-agnostic (not just this
+# project's own folder names) so pointing the assistant at a genuinely different repo doesn't
+# reintroduce the exact same false-positive class against THAT repo's directories instead.
+_GENERIC_PATH_SEGMENTS = {
+    "backend", "frontend", "local", "src", "lib", "libs", "app", "apps", "services", "service",
+    "utils", "util", "components", "component", "models", "model", "tests", "test", "docs",
+    "doc", "config", "configs", "scripts", "script", "node_modules", "dist", "build", "assets",
+    "public", "static", "vendor", "bin", "include", "source", "sources",
+}
+
+
 def extract_github_repo(text: str | None, fallback: str = "SummonShenron/SAAPP") -> str:
     """Extract an owner/repo from a prompt or state, falling back to SAAPP only when needed.
 
-    The trigger keywords ("for"/"in"/"repo"/...) are common English prepositions, not just
-    repo-mention markers — "its in backend/services/agent_workflow.py" was matching "in" +
-    "backend/services" (stopping at the second "/") and handing that back as a real repo,
-    which then 404'd on every GitHub API call built from it. The lookbehind/lookahead below
-    require the match to be a standalone two-segment token, not a slice out of a longer path
-    (blocked by a "/" immediately before or after), and the file-extension check rejects a
-    match whose second segment ends like a filename (agent_workflow.py) rather than a repo
-    name — belt-and-suspenders against the same class of false positive.
+    A real repo reference needs an unambiguous signal: a github.com URL, an explicit "repo"/
+    "repository"/"target repo" cue, a backtick-wrapped slug, or (as a last resort) a bare
+    "owner/repo"-shaped token with no such cue at all — e.g. "look at facebook/react instead".
+    "for"/"in" used to also count as a trigger, but they're common English prepositions, not
+    repo-mention markers — "its in backend/services/agent_workflow.py" matched "in" +
+    "backend/services" (stopping at the second "/") and handed that back as a real repo, which
+    then 404'd on every GitHub API call built from it — the actual root cause of a 404 that
+    persisted across process restarts, because nothing about the environment was ever the
+    problem. Dropping them costs nothing: the bare-token pattern below already independently
+    catches genuinely-intended mentions like "facebook/react" with no keyword needed at all.
+
+    The lookbehind/lookahead require any match to be a standalone two-segment token, not a
+    slice out of a longer path (blocked by a "/" immediately before or after); the
+    file-extension check rejects a match whose second segment ends like a filename
+    (agent_workflow.py) rather than a repo name; and _GENERIC_PATH_SEGMENTS rejects a candidate
+    where either segment is a directory name common enough to belong to any repo's own
+    structure rather than actually naming one — belt-and-suspenders against the same class of
+    false positive, generalized beyond just this project's own folder names.
     """
     if not text:
         return fallback
 
     patterns = [
-        r"(?:for|in|repo(?:sitory)?|target(?:\s+repo)?)[\s:`]*(?<![\w/.-])([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?![\w/.-])",
+        r"github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)",
+        r"(?:repo(?:sitory)?|target(?:\s+repo)?)[\s:`]*(?<![\w/.-])([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?![\w/.-])",
         r"`(?<![\w/.-])([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?![\w/.-])`",
         r"(?<![\w/.-])([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?![\w/.-])",
     ]
 
     for pattern in patterns:
         for match in re.finditer(pattern, text, re.IGNORECASE):
-            candidate = match.group(1).strip()
+            candidate = match.group(1).strip().rstrip("/")
+            if candidate.lower().endswith(".git"):
+                candidate = candidate[:-len(".git")]
             if _FILE_EXTENSION_RE.search(candidate):
+                continue
+            segments = [s.lower() for s in candidate.split("/")]
+            if any(s in _GENERIC_PATH_SEGMENTS for s in segments):
                 continue
             return candidate
 
@@ -2473,9 +2542,18 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
 
         def _get_default_branch():
             repo_res = requests.get(f"{api_base}/repos/{repo}", headers=headers)
-            return repo_res.json().get("default_branch", "main") if repo_res.status_code == 200 else "main"
+            if repo_res.status_code != 200:
+                logger.warning(
+                    "[tool_agent_node] Could not fetch repo metadata for %r (status %s) — "
+                    "falling back to branch 'main'. Every GitHub action this turn will target "
+                    "this exact repo, so if that's wrong, every one of them will 404.",
+                    repo, repo_res.status_code,
+                )
+                return "main"
+            return repo_res.json().get("default_branch", "main")
 
         default_branch = await asyncio.to_thread(_get_default_branch)
+        logger.info("[tool_agent_node] Resolved repo=%r, default_branch=%r", repo, default_branch)
 
         # Mongo collection names are only resolved (and only ever offered as an action) for
         # admins — skips a needless DB round-trip for everyone else, and means non-admins
@@ -2626,6 +2704,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
 
             return await asyncio.to_thread(_dispatch_github)
 
+        deep_thinking = bool(state.get("deep_thinking"))
         try:
             loop_result = await run_react_loop(
                 question=msg,
@@ -2633,9 +2712,10 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 prompt_template=prompt_template,
                 act=_act,
                 is_unsafe=_is_unsafe,
-                max_iterations=TOOL_AGENT_MAX_ITERATIONS,
+                max_iterations=TOOL_AGENT_MAX_ITERATIONS_DEEP if deep_thinking else TOOL_AGENT_MAX_ITERATIONS,
                 node_name="tool_agent_node",
                 initial_attempts=resumed_attempts,
+                max_retry_nudges=TOOL_AGENT_MAX_RETRY_NUDGES_DEEP if deep_thinking else TOOL_AGENT_MAX_RETRY_NUDGES,
             )
         except _UnsafeActionRequested as e:
             drafted_code = (e.decision.get("args") or {}).get("code", "") or ""

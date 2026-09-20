@@ -83,12 +83,25 @@ class FakeCollection:
     def find(self, filt, projection=None):
         return [d for d in self.docs if self._matches(d, filt)]
 
+    def find_one(self, filt, sort=None):
+        matches = self.find(filt)
+        if not matches:
+            return None
+        if sort:
+            key, direction = sort[0]
+            matches = sorted(matches, key=lambda d: d.get(key), reverse=(direction == -1))
+        return matches[0]
+
     def count_documents(self, filt):
         return len(self.find(filt))
 
     def delete_many(self, filt):
         for d in self.find(filt):
             self.docs.remove(d)
+
+    def update_many(self, filt, update):
+        for d in self.find(filt):
+            d.update(update.get("$set", {}))
 
     def insert_one(self, doc):
         self.docs.append(doc)
@@ -153,6 +166,7 @@ async def test_compact_user_memory_inserts_before_deleting_and_promotes_facts(mo
 
     assert result["status"] == "completed"
     assert result["clusters_formed"] == 1
+    assert result["singletons_promoted"] == 0
     assert result["facts_promoted"] == 1
     assert result["chunks_before"] == 2
     assert result["chunks_after"] == 1  # both originals removed, one compacted summary added
@@ -165,6 +179,47 @@ async def test_compact_user_memory_inserts_before_deleting_and_promotes_facts(mo
 
     # And the compacted summary is now excluded from future compaction runs.
     assert mc.count_uncompacted_chunks(fake_db, "jack") == 0
+
+
+@run_async
+async def test_dissimilar_singletons_are_promoted_not_left_behind_forever(monkeypatch):
+    """The actual bug this fixes, reproduced: three genuinely distinct chunks (real production
+    logs showed exactly this shape — a healthy memory full of diverse content forms zero
+    clusters). Before the fix they'd stay counted as "uncompacted" forever, getting re-fetched
+    and re-clustered (finding nothing, every time) on every future run. After the fix they're
+    retagged and the backlog actually clears."""
+    fake_db = FakeDB()
+    _seed_chunks(fake_db, "jack", [
+        _chunk("Prefers dark mode", [1.0, 0.0, 0.0], _id="id-a"),
+        _chunk("Works on a LangGraph agent project", [0.0, 1.0, 0.0], _id="id-b"),
+        _chunk("Lives in Iowa", [0.0, 0.0, 1.0], _id="id-c"),
+    ])
+
+    llm_mock = AsyncMock()
+    monkeypatch.setattr(mc.lite_llm, "ainvoke", llm_mock)
+
+    result = await mc.compact_user_memory(fake_db, vector_store=object(), username="jack")
+
+    assert result["status"] == "completed"
+    assert result["clusters_formed"] == 0
+    assert result["singletons_promoted"] == 3
+    assert result["chunks_before"] == 3
+    assert result["chunks_after"] == 3  # nothing deleted — genuinely distinct content is kept
+    llm_mock.assert_not_called()  # no cluster ever formed, so no summarization call was made
+
+    remaining = fake_db["user_memory_chunks"].find({"username": "jack"})
+    assert len(remaining) == 3
+    assert all(d["source_type"] == "compacted_summary" for d in remaining)
+    assert {d["text"] for d in remaining} == {
+        "Prefers dark mode", "Works on a LangGraph agent project", "Lives in Iowa",
+    }
+
+    # The real proof: the backlog is actually gone, not just hidden for one run.
+    assert mc.count_uncompacted_chunks(fake_db, "jack") == 0
+    second_run = await mc.compact_user_memory(fake_db, vector_store=object(), username="jack")
+    assert second_run == {
+        "status": "skipped", "reason": "not_enough_chunks", "chunks_before": 3, "tier": 1,
+    }
 
 
 @run_async
@@ -342,3 +397,88 @@ async def test_maybe_trigger_compaction_cascades_into_meta_only_when_tier1_compl
     monkeypatch.setattr(mc, "compact_user_memory", fake_compact_completed)
     await mc.maybe_trigger_compaction(fake_db, object(), "jack", threshold=0)
     assert meta_calls == ["jack"]  # tier-1 completed, so tier-2 gets checked
+
+
+# ---------------------------------------------------------------------------
+# Pattern extraction cooldown
+# ---------------------------------------------------------------------------
+
+def _facts(n, category="preference"):
+    return [SimpleNamespace(category=category, fact=f"Fact number {i}") for i in range(n)]
+
+
+def _seed_pattern_extraction_event(fake_db, username, *, hours_ago: float, fact_count: int):
+    import datetime as dt
+    timestamp = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=hours_ago)).isoformat()
+    fake_db["memory_compaction_events"].insert_one({
+        "username": username,
+        "type": "pattern_extraction",
+        "status": "completed",
+        "fact_count": fact_count,
+        "timestamp": timestamp,
+    })
+
+
+@run_async
+async def test_pattern_extraction_cooldown_blocks_recent_rerun_with_few_new_facts(monkeypatch):
+    fake_db = FakeDB()
+    _seed_pattern_extraction_event(fake_db, "jack", hours_ago=1, fact_count=mc.MIN_FACTS_FOR_PATTERN_EXTRACTION)
+    monkeypatch.setattr(mc, "load_user_facts", lambda username: _facts(mc.MIN_FACTS_FOR_PATTERN_EXTRACTION + 1))
+    llm_mock = AsyncMock()
+    monkeypatch.setattr(mc.lite_llm, "ainvoke", llm_mock)
+
+    result = await mc.extract_user_patterns(fake_db, "jack")
+
+    assert result == {"status": "skipped", "reason": "cooldown", "fact_count": mc.MIN_FACTS_FOR_PATTERN_EXTRACTION + 1}
+    llm_mock.assert_not_called()
+
+
+@run_async
+async def test_pattern_extraction_cooldown_allows_rerun_after_interval_expires(monkeypatch):
+    fake_db = FakeDB()
+    _seed_pattern_extraction_event(
+        fake_db, "jack",
+        hours_ago=mc.MIN_PATTERN_EXTRACTION_INTERVAL_HOURS + 1,
+        fact_count=mc.MIN_FACTS_FOR_PATTERN_EXTRACTION,
+    )
+    monkeypatch.setattr(mc, "load_user_facts", lambda username: _facts(mc.MIN_FACTS_FOR_PATTERN_EXTRACTION))
+    monkeypatch.setattr(
+        mc.lite_llm, "ainvoke",
+        AsyncMock(return_value=SimpleNamespace(content=json.dumps({"patterns": []})))
+    )
+
+    result = await mc.extract_user_patterns(fake_db, "jack")
+
+    assert result["status"] == "completed"
+
+
+@run_async
+async def test_pattern_extraction_cooldown_allows_rerun_with_enough_new_facts(monkeypatch):
+    fake_db = FakeDB()
+    _seed_pattern_extraction_event(fake_db, "jack", hours_ago=1, fact_count=mc.MIN_FACTS_FOR_PATTERN_EXTRACTION)
+    monkeypatch.setattr(
+        mc, "load_user_facts",
+        lambda username: _facts(mc.MIN_FACTS_FOR_PATTERN_EXTRACTION + mc.MIN_NEW_FACTS_FOR_PATTERN_EXTRACTION),
+    )
+    monkeypatch.setattr(
+        mc.lite_llm, "ainvoke",
+        AsyncMock(return_value=SimpleNamespace(content=json.dumps({"patterns": []})))
+    )
+
+    result = await mc.extract_user_patterns(fake_db, "jack")
+
+    assert result["status"] == "completed"
+
+
+@run_async
+async def test_pattern_extraction_no_prior_run_has_no_cooldown(monkeypatch):
+    fake_db = FakeDB()
+    monkeypatch.setattr(mc, "load_user_facts", lambda username: _facts(mc.MIN_FACTS_FOR_PATTERN_EXTRACTION))
+    monkeypatch.setattr(
+        mc.lite_llm, "ainvoke",
+        AsyncMock(return_value=SimpleNamespace(content=json.dumps({"patterns": []})))
+    )
+
+    result = await mc.extract_user_patterns(fake_db, "jack")
+
+    assert result["status"] == "completed"

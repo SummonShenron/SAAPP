@@ -36,6 +36,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  
   margin-bottom: 16px;
 }
 
@@ -44,6 +45,23 @@
   font-weight: bold;
   margin: 0;
   color: var(--text-main);
+}
+.conversations-actions {
+  display: flex;
+  gap: 8px;
+}
+.conversations-exit-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  padding: 6px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all 0.2s ease;
 }
 
 .conversations-new-btn {
@@ -94,7 +112,7 @@
 }
 
 .conversation-row.active {
-  border-color: #4a6fa5;
+  border-color: var(--border-color);
   background: rgba(74, 111, 165, 0.1);
 }
 

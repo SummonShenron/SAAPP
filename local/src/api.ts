@@ -280,6 +280,33 @@ export async function updateRagMode(ragMode: string): Promise<{ rag_mode: string
 }
 
 /**
+ * Get / set the current user's deep thinking setting — lets the tool agent take more
+ * ReAct steps (and reconsider a premature answer more than once) at the cost of latency.
+ */
+export async function getDeepThinking(): Promise<{ deep_thinking: boolean }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/deep-thinking`, {
+    headers: { ...authHeaders }
+  });
+  if (!res.ok) throw new Error("Failed to fetch deep thinking setting.");
+  return res.json();
+}
+
+export async function updateDeepThinking(deepThinking: boolean): Promise<{ deep_thinking: boolean }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/deep-thinking`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders
+    },
+    body: JSON.stringify({ deep_thinking: deepThinking })
+  });
+  if (!res.ok) throw new Error("Failed to update deep thinking setting.");
+  return res.json();
+}
+
+/**
  * List the current user's conversation threads
  */
 export interface ConversationSummary {
@@ -556,5 +583,7 @@ export const api = {
   getConversation,
   deleteConversation,
   getRagMode,
-  updateRagMode
+  updateRagMode,
+  getDeepThinking,
+  updateDeepThinking
 };

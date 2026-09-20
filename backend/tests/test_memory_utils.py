@@ -293,3 +293,69 @@ def test_category_expansion_new_categories_round_trip():
 def test_pattern_category_is_valid():
     saved = memory_utils.save_user_fact("jack", "Consistently gravitates toward agent systems.", category="pattern")
     assert saved.category == "pattern"
+
+
+# ---------------------------------------------------------------------------
+# Fact-store cap — tested directly against _prune_excess_facts (pure function,
+# no embeddings/DB involved) rather than through save_user_fact's full dedup
+# pipeline, so it isn't at the mercy of hash-bucket collisions at scale. Reuses
+# the _make_fact helper defined above (category/confidence/days_old/fact_id).
+
+def test_prune_excess_facts_noop_under_cap(monkeypatch):
+    monkeypatch.setattr(memory_utils, "MAX_STORED_FACTS", 10)
+    facts = [_make_fact(fact_id=str(i)) for i in range(5)]
+    assert memory_utils._prune_excess_facts(facts) == facts
+
+
+def test_prune_excess_facts_drops_lowest_confidence_first(monkeypatch):
+    monkeypatch.setattr(memory_utils, "MAX_STORED_FACTS", 2)
+    high = _make_fact(fact_id="high", confidence=1.0)
+    mid = _make_fact(fact_id="mid", confidence=0.5)
+    low = _make_fact(fact_id="low", confidence=0.1)
+
+    result = memory_utils._prune_excess_facts([low, mid, high])
+
+    assert {f.id for f in result} == {"high", "mid"}
+
+
+def test_prune_excess_facts_never_drops_identity(monkeypatch):
+    # 2 identity facts + a cap of 3 leaves exactly 1 slot for non-identity facts.
+    monkeypatch.setattr(memory_utils, "MAX_STORED_FACTS", 3)
+    identity1 = _make_fact(fact_id="id1", category="identity", confidence=0.01)
+    identity2 = _make_fact(fact_id="id2", category="identity", confidence=0.01)
+    high_pref = _make_fact(fact_id="pref-high", category="preference", confidence=1.0)
+    low_pref = _make_fact(fact_id="pref-low", category="preference", confidence=0.2)
+
+    result = memory_utils._prune_excess_facts([identity1, identity2, high_pref, low_pref])
+
+    # Both identity facts survive even though that pushes the total over the cap — capacity
+    # for non-identity facts shrinks accordingly (only the highest-confidence one fits).
+    result_ids = {f.id for f in result}
+    assert {"id1", "id2"} <= result_ids
+    assert "pref-high" in result_ids
+    assert "pref-low" not in result_ids
+
+
+def test_prune_excess_facts_protects_the_just_saved_fact_even_if_low_confidence(monkeypatch):
+    monkeypatch.setattr(memory_utils, "MAX_STORED_FACTS", 2)
+    just_saved = _make_fact(fact_id="new", category="preference", confidence=0.05)  # freshly created, barely any confidence yet
+    older_high = _make_fact(fact_id="old-high", category="preference", confidence=1.0)
+    older_mid = _make_fact(fact_id="old-mid", category="preference", confidence=0.5)
+
+    result = memory_utils._prune_excess_facts([older_high, older_mid, just_saved], protect_id="new")
+
+    result_ids = {f.id for f in result}
+    assert "new" in result_ids  # protected regardless of its own confidence
+    assert "old-high" in result_ids
+    assert "old-mid" not in result_ids
+
+
+def test_save_user_fact_prunes_when_cap_exceeded(monkeypatch):
+    monkeypatch.setattr(memory_utils, "MAX_STORED_FACTS", 3)
+    for i in range(5):
+        memory_utils.save_user_fact("jack", f"Distinct fact number {i}.", category="preference")
+
+    facts = memory_utils.load_user_facts("jack")
+    assert len(facts) == 3
+    # The most recently saved fact is always protected, so it must have survived.
+    assert any(f.fact == "Distinct fact number 4." for f in facts)

@@ -150,8 +150,8 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
           margin: 0,
           borderRadius: '8px',
           fontSize: '0.85rem',
-          background: '#0f172a',
-          border: '1px solid #334155',
+          background: 'var(--code-bg)',
+          border: '1px solid var(--code-border)',
         }}
       >
         {code}
@@ -437,7 +437,6 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const hashSearch = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
   const searchParams = new URLSearchParams(window.location.search || hashSearch);
   const isEmbedded = searchParams.get('mode') === 'embed';
-
   // Trace is available by default in standalone mode, but starts hidden when embedded.
   const [showTracePanel, setShowTracePanel] = useState(() => {
     if (isEmbedded) return false;
@@ -460,6 +459,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const principal = getEffectivePrincipal();
   const [selectedAffiliate, setSelectedAffiliate] = useState<string>('All');
   const [ragMode, setRagMode] = useState<string>('strict');
+  const [deepThinking, setDeepThinking] = useState<boolean>(false);
   const [allowedAffiliates, setAllowedAffiliates] = useState<string[]>([]);
   const [userEmail, setUserEmail] = useState<string>('');
   const [agentStatus, setAgentStatus] = useState<string>('');
@@ -690,6 +690,23 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
       setRagMode(result.rag_mode);
     } catch (err) {
       console.error("Failed to update RAG mode setting:", err);
+    }
+  };
+
+  useEffect(() => {
+    if (!principal) return;
+    api.getDeepThinking()
+      .then(data => setDeepThinking(data.deep_thinking))
+      .catch(err => console.error("Failed to fetch deep thinking setting:", err));
+  }, [principal]);
+
+  const handleDeepThinkingChange = async (enabled: boolean) => {
+    setDeepThinking(enabled);
+    try {
+      const result = await api.updateDeepThinking(enabled);
+      setDeepThinking(result.deep_thinking);
+    } catch (err) {
+      console.error("Failed to update deep thinking setting:", err);
     }
   };
 
@@ -1464,6 +1481,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               setAllowedAffiliates={setAllowedAffiliates}
               ragMode={ragMode}
               onRagModeChange={handleRagModeChange}
+              deepThinking={deepThinking}
+              onDeepThinkingChange={handleDeepThinkingChange}
             />
           )}
         </footer>
@@ -1476,6 +1495,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               onSelect={switchConversation}
               onNew={startNewConversation}
               refreshKey={conversationsRefreshKey}
+              onClose={toggleConversationsBlade}
             />
           </div>
         )}

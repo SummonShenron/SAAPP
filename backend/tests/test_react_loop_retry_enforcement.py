@@ -64,6 +64,56 @@ async def test_premature_final_after_error_is_rejected_once_then_accepted():
     assert "retry it" in captured_prompts[2]
 
 
+def test_is_empty_observation_detects_common_empty_shapes():
+    for value in ["", "[]", "{}", "None", "null", "no results", "No Results Found", "  "]:
+        assert aw._is_empty_observation(value), f"expected {value!r} to be treated as empty"
+
+
+def test_is_empty_observation_does_not_flag_real_content():
+    for value in ["0", "main", "[1, 2, 3]", "found nothing wrong with the config"]:
+        assert not aw._is_empty_observation(value), f"expected {value!r} to NOT be treated as empty"
+
+
+@run_async
+async def test_premature_final_after_empty_result_is_rejected_once_then_accepted():
+    """Same enforcement as the error case, but for an empty (not erroring) result — an empty
+    search is often a sign of the wrong repo/query, not proof nothing exists, so it shouldn't
+    be treated as good enough to conclude on the first try either."""
+    captured_prompts = []
+
+    responses = [
+        _llm_response(action="query", purpose="Search for the config", tool_action="list_repo_tree", args={}),
+        _llm_response(action="final", answer="Nothing exists, giving up despite having steps left."),
+        _llm_response(action="final", answer="Okay, retried and here's the honest answer."),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            return "[]"  # empty, not an error
+
+        result = await aw.run_react_loop(
+            question="find the config file",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert len(captured_prompts) == 3
+    assert result["final_answer"] == "Okay, retried and here's the honest answer."
+    assert "came back empty" in captured_prompts[1]
+    assert "wrong, not that" in captured_prompts[1]
+
+
 @run_async
 async def test_diagnostic_detour_does_not_hide_an_unretried_failure():
     """Real failure mode this guards: read_repo_file 404s, list_repo_tree (a different action,
@@ -140,6 +190,84 @@ async def test_final_without_any_prior_error_is_accepted_immediately():
 
     assert call_count["n"] == 1
     assert result["final_answer"] == "Straightforward honest answer."
+
+
+@run_async
+async def test_max_retry_nudges_raises_the_rejection_budget():
+    """Deep thinking mode passes a higher max_retry_nudges so the loop keeps rejecting a
+    premature 'final' (as long as the failed tool is still unretried) more than once, not just
+    the single rejection every other test in this file exercises with the default budget."""
+    captured_prompts = []
+    responses = [
+        _llm_response(action="query", purpose="Read the file", tool_action="read_file", args={"path": "x.py"}),
+        _llm_response(action="final", answer="Giving up on attempt 1."),
+        _llm_response(action="final", answer="Giving up on attempt 2."),
+        _llm_response(action="final", answer="Giving up on attempt 3."),
+        _llm_response(action="final", answer="Okay, honestly giving up after repeated nudging."),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            return "ERROR: could not fetch x.py (404)"
+
+        result = await aw.run_react_loop(
+            question="what does x.py do?",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=6,
+            node_name="test_node",
+            max_retry_nudges=3,
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    # 1 failing query + 3 rejected finals + 1 accepted final = 5 LLM calls.
+    assert len(captured_prompts) == 5
+    assert result["final_answer"] == "Okay, honestly giving up after repeated nudging."
+    assert len(result["attempts"]) == 1  # only the one real (failed) action was ever recorded
+
+
+@run_async
+async def test_default_max_retry_nudges_still_rejects_only_once():
+    """Confirms the default (no max_retry_nudges passed) preserves the exact pre-existing
+    one-shot behavior other tests in this file rely on."""
+    captured_prompts = []
+    responses = [
+        _llm_response(action="query", purpose="Read the file", tool_action="read_file", args={"path": "x.py"}),
+        _llm_response(action="final", answer="Giving up despite having steps left."),
+        _llm_response(action="final", answer="Okay, accepted on the second try."),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            return "ERROR: could not fetch x.py (404)"
+
+        result = await aw.run_react_loop(
+            question="what does x.py do?",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert len(captured_prompts) == 3
+    assert result["final_answer"] == "Okay, accepted on the second try."
 
 
 @run_async

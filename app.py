@@ -80,7 +80,10 @@ from backend.utils.memory_utils import (
 )
 from backend.services.memory_compaction import compact_user_memory, compact_meta_memory
 from backend.services.memory_search import retrieve_relevant_memory_context
-from backend.utils.user_settings_utils import get_user_rag_mode, set_user_rag_mode, VALID_RAG_MODES
+from backend.utils.user_settings_utils import (
+    get_user_rag_mode, set_user_rag_mode, VALID_RAG_MODES,
+    get_user_deep_thinking_mode, set_user_deep_thinking_mode,
+)
 from backend.utils.fallback_utils import rewrite_fallback
 from backend.services.reward_evaluator import evaluate_response, build_correction_prompt, REWARD_EVAL_SOURCE_TYPES
 from backend.logging.sass_logger import setup_logging
@@ -190,6 +193,9 @@ class EventCreate(BaseModel):
 
 class RagModeUpdate(BaseModel):
     rag_mode: str
+
+class DeepThinkingUpdate(BaseModel):
+    deep_thinking: bool
 
 class SaveConversationRequest(BaseModel):
     title: str
@@ -442,6 +448,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
 
     target_scope = accessible_affiliates["accessible_affiliates"] if requested_affiliate == "All" else [requested_affiliate]
     effective_rag_mode = get_user_rag_mode(username)  # already forced to "strict" for locked identities like guest_bty
+    effective_deep_thinking = get_user_deep_thinking_mode(username)  # already forced off for locked identities like guest_bty
 
     # ---------- Conversation Memory State Init ----------
     # The full transcript in chat_sessions[history_key] is kept durable (it's what gets
@@ -459,6 +466,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
         "session_id": session_id,
         "target_scope": target_scope,
         "rag_mode": effective_rag_mode,
+        "deep_thinking": effective_deep_thinking,
         "documents": [],
         "relevance_grade": "web_search" if force_web_search else "",
         "loop_count": 0,
@@ -716,6 +724,10 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                         reason=verdict["reason"],
                         tag=verdict["tag"],
                         rating="negative",
+                    )
+                    logger.info(
+                        "Reward evaluator correction applied — original: %r | corrected: %r",
+                        original_response[:200], full_response[:200],
                     )
 
             yield f"data: {json.dumps({'event': 'final_generation', 'text': full_response})}\n\n"
@@ -1335,6 +1347,19 @@ async def update_rag_mode_setting(payload: RagModeUpdate, current_user = Depends
         raise HTTPException(status_code=400, detail="rag_mode must be 'strict' or 'open'")
     saved = set_user_rag_mode(username, payload.rag_mode)
     return {"rag_mode": saved}
+
+
+@app.get("/api/settings/deep-thinking")
+async def get_deep_thinking_setting(current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    return {"deep_thinking": get_user_deep_thinking_mode(username)}
+
+
+@app.put("/api/settings/deep-thinking")
+async def update_deep_thinking_setting(payload: DeepThinkingUpdate, current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    saved = set_user_deep_thinking_mode(username, payload.deep_thinking)
+    return {"deep_thinking": saved}
 
 
 @app.post("/api/v1/webhooks/ingest", status_code=status.HTTP_200_OK)
