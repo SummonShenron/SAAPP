@@ -647,6 +647,17 @@ file before concluding. Stopping at "I found it at path X" when read_repo_file w
 the same premature-conclusion problem as any other unretried gap: you had a step available that
 would have gotten the real answer, and didn't take it.
 
+For a request to add a feature, change behavior, or fix a bug (as opposed to a simple lookup), the
+first file you read is almost never the whole picture — it calls into other functions, is called
+from other places in the repo, or shares config, types, or state with modules defined elsewhere.
+Stopping after one file gives you an opinion about that file, not complete context on the feature
+or bug the user actually asked about. Use search_code on the key function, class, or setting name
+you just found to see where else in the repo it's referenced, then read_repo_file on whichever of
+those results look genuinely connected (a caller, the place a value is actually set, a shared
+helper) — not every hit, just the ones that would change or inform your answer. Treat this the same
+way you'd treat any other unretried gap: you had a step available that would have given you the
+fuller picture, so use it before answering as if the one file you opened were the whole story.
+
 An empty result (no matches, an empty list, an empty file listing) is not the same as "nothing
 exists" — it's very often a sign you searched the wrong repo, the wrong collection, the wrong
 path, or phrased the query too narrowly, not proof the thing you're looking for isn't there.

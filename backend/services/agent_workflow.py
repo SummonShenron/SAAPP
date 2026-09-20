@@ -52,12 +52,12 @@ from backend.utils.normalize_utils import ensure_str
 
 load_dotenv()
 logger = logging.getLogger("SASS Logger")
-TOOL_AGENT_MAX_ITERATIONS = int(os.getenv("TOOL_AGENT_MAX_ITERATIONS", "5"))
+TOOL_AGENT_MAX_ITERATIONS = int(os.getenv("TOOL_AGENT_MAX_ITERATIONS", "7"))
 # Deep thinking (a per-user opt-in setting, see user_settings_utils) raises both the step
 # ceiling and how many times the retry-nudge is allowed to reject a premature "final" — a
 # higher step cap alone wouldn't help if the loop still only gets one nudge to actually use
 # the extra room to double-check itself.
-TOOL_AGENT_MAX_ITERATIONS_DEEP = int(os.getenv("TOOL_AGENT_MAX_ITERATIONS_DEEP", "12"))
+TOOL_AGENT_MAX_ITERATIONS_DEEP = int(os.getenv("TOOL_AGENT_MAX_ITERATIONS_DEEP", "14"))
 TOOL_AGENT_MAX_RETRY_NUDGES = int(os.getenv("TOOL_AGENT_MAX_RETRY_NUDGES", "1"))
 TOOL_AGENT_MAX_RETRY_NUDGES_DEEP = int(os.getenv("TOOL_AGENT_MAX_RETRY_NUDGES_DEEP", "3"))
 async def safe_emit_event(name: str, data: dict):
@@ -2696,6 +2696,26 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             commits = res.json()
             return "\n".join(f"{c['sha'][:7]} — {c['commit']['message'].splitlines()[0]}" for c in commits)
 
+        def _search_code(query: str):
+            # This is what makes "find every file this feature/bug touches" actually possible —
+            # list_repo_tree only gives paths and read_repo_file only gives one file at a time,
+            # neither can tell the model where else a function/class/import is referenced across
+            # the repo. GitHub's code search covers exactly that gap (a function's callers, a
+            # class's other usages, everywhere a config key is read).
+            if not query:
+                return "ERROR: no query given"
+            res = requests.get(
+                f"{api_base}/search/code",
+                headers={**headers, "Accept": "application/vnd.github.text-match+json"},
+                params={"q": f"{query} repo:{repo}", "per_page": 20},
+            )
+            if res.status_code != 200:
+                return f"ERROR: could not search code ({res.status_code})"
+            items = res.json().get("items", [])
+            if not items:
+                return "No matches."
+            return "\n".join(item.get("path", "") for item in items)
+
         # --- dynamic, per-user action menu — non-admins never even see run_mongo_query ---
         menu_lines = []
         if is_admin:
@@ -2708,6 +2728,9 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
         menu_lines.extend([
             "- list_repo_tree — no args; lists every file path in the repo",
             "- read_repo_file — args: path (relative file path within the repo)",
+            "- search_code — args: query (a function/class/variable name or exact string); finds "
+            "every file in the repo that references it — use this to find what calls, imports, "
+            "or otherwise connects to the file/function you're already looking at",
             "- diff_branches — args: base (branch name), head (branch name)",
             "- list_commits — args: branch (branch name), limit (max number of commits, integer)",
             "- web_search — args: query (the exact search query string to run)",
@@ -2754,6 +2777,8 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     return _list_tree()
                 if tool_action == "read_repo_file":
                     return _read_file(args.get("path"))
+                if tool_action == "search_code":
+                    return _search_code(args.get("query"))
                 if tool_action == "diff_branches":
                     return _diff_branches(args.get("base"), args.get("head"))
                 if tool_action == "list_commits":
