@@ -307,6 +307,7 @@ async def test_deep_thinking_off_uses_standard_loop_limits(monkeypatch):
 
     assert captured_kwargs["max_iterations"] == aw.TOOL_AGENT_MAX_ITERATIONS
     assert captured_kwargs["max_retry_nudges"] == aw.TOOL_AGENT_MAX_RETRY_NUDGES
+    assert captured_kwargs["llm"] is aw.lite_llm
 
 
 @run_async
@@ -345,6 +346,7 @@ async def test_deep_thinking_on_raises_step_cap_and_retry_nudge_budget(monkeypat
 
     assert captured_kwargs["max_iterations"] == aw.TOOL_AGENT_MAX_ITERATIONS_DEEP
     assert captured_kwargs["max_retry_nudges"] == aw.TOOL_AGENT_MAX_RETRY_NUDGES_DEEP
+    assert captured_kwargs["llm"] is aw.lite_llm_deep
     assert aw.TOOL_AGENT_MAX_ITERATIONS_DEEP > aw.TOOL_AGENT_MAX_ITERATIONS
     assert aw.TOOL_AGENT_MAX_RETRY_NUDGES_DEEP > aw.TOOL_AGENT_MAX_RETRY_NUDGES
 

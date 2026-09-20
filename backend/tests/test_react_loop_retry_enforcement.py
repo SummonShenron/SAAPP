@@ -19,6 +19,31 @@ def _llm_response(**payload):
 
 
 @run_async
+async def test_run_react_loop_uses_the_passed_llm_not_the_default():
+    """Deep thinking passes lite_llm_deep — the loop must actually call that object, not
+    silently fall back to the module-level lite_llm regardless of what's passed in."""
+    custom_llm = SimpleNamespace(ainvoke=AsyncMock(side_effect=[
+        _llm_response(action="final", answer="answered by the custom llm", show_work=False),
+    ]))
+
+    async def act(decision):
+        return "unused"
+
+    result = await aw.run_react_loop(
+        question="anything",
+        schema="repo=x",
+        prompt_template="{question} | {schema} | {attempts}",
+        act=act,
+        max_iterations=5,
+        node_name="test_node",
+        llm=custom_llm,
+    )
+
+    assert result["final_answer"] == "answered by the custom llm"
+    custom_llm.ainvoke.assert_called_once()
+
+
+@run_async
 async def test_premature_final_after_error_is_rejected_once_then_accepted():
     """The exact scenario this guards: the model's first action fails, it still has steps left,
     and it tries to conclude right away instead of retrying. The loop must reject that one

@@ -23,7 +23,7 @@ from langchain_core.documents import Document
 from langchain_core.callbacks.manager import adispatch_custom_event
 from settings import PAAPP_BASE_URL
 from backend.services.search import get_secure_retriever
-from backend.models.models import get_chat_llm, lite_llm
+from backend.models.models import get_chat_llm, lite_llm, lite_llm_deep
 from backend.state import graph_db
 from backend.utils.attachment_utils import retrieve_from_session
 from backend.utils.isolation_kb_utils import load_directory, load_user_directory_groups
@@ -2189,6 +2189,7 @@ async def run_react_loop(
     node_name: str,
     initial_attempts: list | None = None,
     max_retry_nudges: int = 1,
+    llm=lite_llm,
 ) -> dict:
     """Generic Reason -> Act -> Observe -> Decide loop shared by every iterative tool
     (MongoDB, GitHub search, ...). Each step asks the model for the next action given
@@ -2201,7 +2202,9 @@ async def run_react_loop(
     _ClarificationNeeded if the model reports genuine uncertainty instead of guessing.
     `initial_attempts`, when given, seeds the loop with attempts already made in an earlier
     call — the resume side of a clarification pause, so the loop continues instead of
-    starting from zero.
+    starting from zero. `llm` defaults to lite_llm; deep thinking mode passes lite_llm_deep
+    instead, so a wider step/nudge budget also comes with more carefully reasoned individual
+    step decisions rather than just more of them.
 
     A prompt-level instruction alone isn't enough to stop the model from giving up right after
     a failed OR empty action even when steps remain — it already has evidence of that ("never
@@ -2268,7 +2271,7 @@ async def run_react_loop(
         )
 
         try:
-            response = await lite_llm.ainvoke(prompt)
+            response = await llm.ainvoke(prompt)
             resp_content = response.content if hasattr(response, "content") else str(response)
             raw_text = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in resp_content]) if isinstance(resp_content, list) else str(resp_content)
             decision = _parse_agent_json(raw_text)
@@ -2357,7 +2360,7 @@ async def run_react_loop(
                 schema=schema,
                 attempts=_format_react_attempts(attempts),
             )
-            response = await lite_llm.ainvoke(prompt)
+            response = await llm.ainvoke(prompt)
             resp_content = response.content if hasattr(response, "content") else str(response)
             raw_text = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in resp_content]) if isinstance(resp_content, list) else str(resp_content)
             decision = _parse_agent_json(raw_text)
@@ -2722,6 +2725,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 node_name="tool_agent_node",
                 initial_attempts=resumed_attempts,
                 max_retry_nudges=TOOL_AGENT_MAX_RETRY_NUDGES_DEEP if deep_thinking else TOOL_AGENT_MAX_RETRY_NUDGES,
+                llm=lite_llm_deep if deep_thinking else lite_llm,
             )
         except _UnsafeActionRequested as e:
             drafted_code = (e.decision.get("args") or {}).get("code", "") or ""

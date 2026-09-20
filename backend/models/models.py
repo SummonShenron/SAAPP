@@ -113,6 +113,19 @@ lite_llm = LazyLLM(
     max_retries=1,
 )
 
+# 2b. Deep-thinking variant of the fast utility LLM — same fast/cheap model, with native
+# extended reasoning enabled. Used by tool_agent_node's ReAct loop when the user's deep_thinking
+# setting is on: TOOL_AGENT_MAX_ITERATIONS_DEEP and the wider retry-nudge budget only pay off if
+# each individual step's own decision is more carefully reasoned too, not just more numerous —
+# verified live that gemini-3.1-flash-lite genuinely accepts thinking_level (the "3.5+" framing
+# in LazyLLM's docstring doesn't hold here).
+lite_llm_deep = LazyLLM(
+    model_name="gemini-3.1-flash-lite",
+    temperature=0.2,
+    max_retries=1,
+    thinking_level="high",
+)
+
 # 3. Dedicated Streaming LLM (Gemini 3.5 with low thinking level for fast TTFT)
 stream_llm = LazyLLM(
     model_name="gemini-3.5-flash",
