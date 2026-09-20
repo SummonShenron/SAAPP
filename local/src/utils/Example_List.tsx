@@ -2,12 +2,14 @@
 const AFFILIATE_QUESTION_POOLS: Record<string, string[]> = {
   'Affiliate_A': [
     "Who is Sonic?",
+    "Write a script comparing the speed of Sonic and Shadow.",
     "Tell me about Sonic Adventure 2.",
     "Is there any data regarding Shadow?",
     "What are the Chaos Emeralds?",
     "Who is Dr. Eggman?"
   ],
   'Affiliate_B': [
+    "Write a script that compares the power levels of various Dragon Ball characters.",
     "Who is Goku?",
     "What are the Dragon Balls?",
     "Tell me about the Saiyan race.",
@@ -15,9 +17,9 @@ const AFFILIATE_QUESTION_POOLS: Record<string, string[]> = {
     "What is a Senzu Bean?"
   ],
   'Affiliate_C': [
-    "Tell me about Jack and his work.",
+    "Explain the agent_workflow.py file and its role in the Sonic Assistant's multi-agent workflow.",
     "What is the Story of the Sonic Assistant",
-    "How does Sonic Assistant's multi-agent workflow work?",
+    "How does Sonic Assistant's memory system work?",
     "Who is Jack Harper?",
     "What was changed in the last pull request?",
     "What are the different routing strategies leveraged by the Sonic Assistant?",
@@ -28,7 +30,8 @@ const AFFILIATE_QUESTION_POOLS: Record<string, string[]> = {
     "Where is Trainer's Edge, and how can I get in contact with Madison?",
     "What is the proper deadlift form?",
     "How can I get in contact with Coach Madison?",
-    "Can you explain why it is worth investing in personal training?"
+    "Can you explain why it is worth investing in personal training?",
+    "Explain progressive overload in strength training."
   ],
 };
 
@@ -60,12 +63,12 @@ export async function getDynamicExampleQuestions(
       const authorizedPool = allowedAffiliates
         .flatMap(aff => AFFILIATE_QUESTION_POOLS[aff] || []);
 
-      return shuffledCopy(authorizedPool).slice(0, 3);
+      return shuffledCopy(authorizedPool).slice(0, 6);
     }
 
     // Scenario 2: Target Isolated Tenant Scope
     const targetedPool = AFFILIATE_QUESTION_POOLS[affiliate] || [];
-    return shuffledCopy(targetedPool).slice(0, 3);
+    return shuffledCopy(targetedPool).slice(0, 6);
 
   } catch (error) {
     console.error("Failed to map affiliate directory vectors to question pools:", error);

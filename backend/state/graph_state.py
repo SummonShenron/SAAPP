@@ -54,6 +54,10 @@ class GraphState(TypedDict):
     rag_mode: Optional[str]                       # "strict" (default) or "open"
     deep_thinking: Optional[bool]                 # raises tool_agent_node's step cap + retry-nudge budget
     insight_answer: Optional[str]                 # Woven into CONVERSATIONAL_PROMPT's {insight} slot
+    paused_clarification: Optional[Dict[str, Any]]  # {"original_question": str, "attempts": list[dict]} —
+    # the one field deliberately exempted from reset_transient_state's per-turn reset, so it
+    # survives across turns via the checkpointer instead of being re-derived from rendered card
+    # text (see tool_agent_node's _ClarificationNeeded handling and classify_intent's resume check)
 
 # def route_user_query(state: GraphState) -> str:
 #     """

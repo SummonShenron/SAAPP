@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import sonicImg from '../assets/sonicandshadow.jpg';
+import swooshLogoImg from '../assets/white_swoosh.png';
 import { Filters } from '../components/Filters';
 import ConversationsBlade from '../components/ConversationsBlade';
 import { getDynamicExampleQuestions } from '../utils/Example_List';
@@ -367,18 +367,13 @@ const ChatMessageList = React.memo(function ChatMessageList({
           </div>
         ) : (
           <div className="sonic-loader-container">
-            <img
-              src={theme === 'sonic' ? sonicSpinImg : shadowSpinImg}
-              alt="loading"
-              style={{ width: '48px', height: '48px' }}
-            />
-            <div className="loading-text">
-              {getNodeLabel(agentStatus) || "Collecting rings and tokens..."}
-            </div>
+            <div className="sonic-ring-loader"></div>
+            {agentStatus && <span className="agent-status-text">{agentStatus}</span>}
           </div>
         )
       )}
       <div ref={messagesEndRef} />
+      
     </div>
   );
 });
@@ -1243,10 +1238,11 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
   <div>
     {/* HERO BANNER (hidden entirely in embed mode) */}
     {!isEmbedded && (
-      <div className="hero-banner" style={{ backgroundImage: `linear-gradient(rgba(18, 24, 36, 0.7), rgba(18, 24, 36, 0.95)), url(${sonicImg})` }}>
+      <div className={`hero-banner ${theme === 'shadow' ? 'theme-shadow' : 'theme-sonic'}`}>
+        <img src={swooshLogoImg} alt="Logo" className="hero-logo-icon" />
         <div className="banner-context">
-          <h3>{theme === 'sonic' ? 'Sonic Assistant' : 'Shadow Engine'}</h3>
-          <h4>{theme === 'sonic' ? 'Rolling around at the speed of sound.' : 'Behold the Ultimate Power.'}</h4>
+          <h3>{theme === 'sonic' ? 'Sonic Assistant' : 'Sonic Assistant'}</h3>
+          <h4>{theme === 'sonic' ? 'Powered by Sonic Graph Technologies.' : 'Powered by Sonic Graph Technologies.'}</h4>
           {userEmail && <p className="badge">Principal Account Identity: {userEmail}</p>}
         </div>
       </div>

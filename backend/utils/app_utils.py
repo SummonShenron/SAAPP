@@ -462,7 +462,13 @@ async def run_synthetic_read_only_question(
         "requestId": uuid.uuid4().hex,
     }
 
-    final_state = await workflow.ainvoke(initial_state)
+    # A fresh, never-reused thread_id per call — this endpoint is a stateless health check, not
+    # a real conversation, so it must never persist or resurrect anything across calls. Passing
+    # SOME "configurable" key is mandatory once the graph is compiled with a checkpointer
+    # (LangGraph raises otherwise); a random id here guarantees no checkpoint ever accumulates
+    # or gets reused for it.
+    graph_config = {"configurable": {"thread_id": f"synthetic::{uuid.uuid4().hex}"}}
+    final_state = await workflow.ainvoke(initial_state, config=graph_config)
 
     logger.info(
         "Synthetic workflow final_state keys: %s",

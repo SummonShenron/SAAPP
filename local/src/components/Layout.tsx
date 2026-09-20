@@ -19,6 +19,29 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
   const [closing, setClosing] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  const HELP_CLOSE_ANIMATION_MS = 200;
+
+  const closeHelp = () => {
+    setClosing(true);
+    setTimeout(() => {
+      setShowHelp(false);
+      setClosing(false);
+    }, HELP_CLOSE_ANIMATION_MS);
+    // Fire-and-forget: dismissing it (by any means) means it should never auto-show again,
+    // regardless of whether this was the automatic first-time popup or a manual reopen.
+    api.updateHasSeenHelp(true).catch((err) => console.error("Failed to record help panel as seen:", err));
+  };
+
+  useEffect(() => {
+    if (!showHelp) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeHelp();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showHelp]);
+
   // --- EMBED MODE DETECTION ---
 const hashSearch = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
 const searchParams = new URLSearchParams(window.location.search || hashSearch);
@@ -29,7 +52,11 @@ if (typeof window !== 'undefined') {
   getEffectivePrincipal();
 }
   const toggleHelp = () => {
-    setShowHelp(!showHelp);
+    if (showHelp) {
+      closeHelp();
+    } else {
+      setShowHelp(true);
+    }
     setMobileMenuOpen(false);
   };
 
@@ -56,6 +83,21 @@ if (typeof window !== 'undefined') {
     }
   }, [isLoaded, isSignedIn, isEmbedded]);
 
+  // Auto-show the help/onboarding overlay once, the first time a user ever signs in — the
+  // embed iframe never renders it at all (see the isEmbedded early return below), so skip the
+  // check entirely there rather than fetching a setting nothing will use.
+  useEffect(() => {
+    if (!isLoaded || isEmbedded) return;
+    const hasAuth = isSignedIn || !!localStorage.getItem('guest_token');
+    if (!hasAuth) return;
+
+    api.getHasSeenHelp()
+      .then((data) => {
+        if (!data.has_seen_help) setShowHelp(true);
+      })
+      .catch((err) => console.warn("Could not fetch help-seen setting:", err));
+  }, [isLoaded, isSignedIn, isEmbedded]);
+
   const handleNavClick = (path: string) => {
     navigate(path);
     setMobileMenuOpen(false);
@@ -75,7 +117,7 @@ if (typeof window !== 'undefined') {
     <div className={`portal-container ${theme === "shadow" ? "theme-shadow" : ""}`}>
       <nav className="menu-navigator">
         <div className="nav-logo" onClick={() => navigate("/")}>
-          {theme === "sonic" ? "⚡Sonic Assistant" : "⚡Shadow Engine"}
+          {theme === "sonic" ? "Sonic Assistant" : "Sonic Assistant"}
         </div>
 
         {/* Desktop Links */}
@@ -130,10 +172,18 @@ if (typeof window !== 'undefined') {
       {/* Main page content */}
       <Outlet />
 
-      {/* Sidebar panel */}
+      {/* Help / onboarding overlay */}
       {showHelp && (
-        <div className={`help-panel-container ${closing ? "closing" : ""}`}>
-          <HelpPanel />
+        <div
+          className={`help-panel-backdrop ${closing ? "closing" : ""}`}
+          onClick={closeHelp}
+        >
+          <div
+            className={`help-panel-container ${closing ? "closing" : ""}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <HelpPanel onClose={closeHelp} />
+          </div>
         </div>
       )}
     </div>

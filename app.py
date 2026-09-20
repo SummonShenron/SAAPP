@@ -85,6 +85,7 @@ from backend.utils.user_settings_utils import (
     get_user_deep_thinking_mode, set_user_deep_thinking_mode,
     get_user_target_repo, set_user_target_repo,
     get_user_settings_bundle,
+    get_user_has_seen_help, set_user_has_seen_help,
 )
 from backend.utils.fallback_utils import rewrite_fallback
 from backend.services.reward_evaluator import evaluate_response, build_correction_prompt, REWARD_EVAL_SOURCE_TYPES
@@ -201,6 +202,9 @@ class DeepThinkingUpdate(BaseModel):
 
 class TargetRepoUpdate(BaseModel):
     target_repo: Optional[str] = None
+
+class HasSeenHelpUpdate(BaseModel):
+    has_seen_help: bool
 
 class SaveConversationRequest(BaseModel):
     title: str
@@ -429,6 +433,14 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
     question = request.question.strip()
     session_id = request.session_id.strip() if request.session_id else f"{username}_session"
     history_key = f"{username}::{session_id}"
+    # history_key already uniquely identifies one conversation — reused directly as the
+    # checkpointer's thread_id, no separate ID scheme needed. Defined once, up front, so both
+    # graph invocation sites below use the exact same config regardless of which branch runs.
+    # Passing this is required (not just useful) once the graph is compiled with a checkpointer:
+    # LangGraph raises if a checkpointer is attached and config has no "configurable" key at
+    # all — harmless to always pass it even when checkpointer setup failed and
+    # compiled_workflow has none attached.
+    graph_config = {"configurable": {"thread_id": history_key}}
     t_auth_start = time.perf_counter()
     
     if not verify_paapp_access(username):
@@ -559,8 +571,8 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                 # 1. LIVE GRAPH EXECUTION & EVENT STREAMING
                 logger.info("--- STARTING LIVE GRAPH EXECUTION ---")
                 workflow = services.get("compiled_workflow")
-                
-                async for event in workflow.astream_events(initial_state, version="v2"):
+
+                async for event in workflow.astream_events(initial_state, version="v2", config=graph_config):
                     kind = event["event"]
 
                     # Catch Custom Thoughts emitted by your nodes via adispatch_custom_event
@@ -578,7 +590,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
 
             # Fallback just in case event streaming missed the final state dict
             if not final_state:
-                final_state = await workflow.ainvoke(initial_state)
+                final_state = await workflow.ainvoke(initial_state, config=graph_config)
 
             t_graph_end = time.perf_counter()
 
@@ -766,6 +778,20 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
         },
     )
 
+async def _delete_checkpoint_thread(username: str, session_id: str) -> None:
+    """Deletes a conversation's checkpointed graph state (if a checkpointer is configured) —
+    without this, a deleted/cleared conversation's checkpoint document would live in Mongo
+    forever, the same class of unbounded-growth problem already fixed for the fact store.
+    Best-effort: a checkpoint cleanup failure must never block the conversation deletion itself."""
+    checkpointer = services.get("checkpointer")
+    if checkpointer is None:
+        return
+    try:
+        await checkpointer.adelete_thread(f"{username}::{session_id}")
+    except Exception:
+        logger.exception("Failed to delete checkpoint thread for %s::%s", username, session_id)
+
+
 @app.post("/api/chat/clear")
 async def clear_chat(request: Request, user = Depends(get_current_user)):
     data = await request.json()
@@ -786,14 +812,19 @@ async def clear_chat(request: Request, user = Depends(get_current_user)):
         chat_sessions.pop(key, None)
 
     if session_id:
-        # Empty this one conversation in place — keeps its id/title/slot in the conversation list.
+        # Empty this one conversation in place — keeps its id/title/slot in the conversation
+        # list, but the same thread_id will be reused going forward, so its checkpoint (any
+        # pending action, paused clarification, etc.) must be cleared too or stale state from
+        # before the clear could resurface on the next message.
         save_conversation_turn(username, session_id, [])
+        await _delete_checkpoint_thread(username, session_id)
         return {"status": "cleared", "count": 1}
 
     # No specific conversation given: wipe every conversation this user has.
     conversations = load_user_conversations(username)
     for convo in conversations:
         delete_user_conversation(username, convo["session_id"])
+        await _delete_checkpoint_thread(username, convo["session_id"])
     return {"status": "cleared", "count": len(conversations)}
 
 @app.post("/api/upload-attachment")
@@ -1062,6 +1093,7 @@ async def remove_conversation(session_id: str, current_user = Depends(get_curren
     chat_sessions.pop(f"{username}::{session_id}", None)
     if not delete_user_conversation(username, session_id):
         raise HTTPException(status_code=404, detail="Conversation not found")
+    await _delete_checkpoint_thread(username, session_id)
     return {"status": "deleted", "session_id": session_id}
 
 @app.get("/admin/paapp")
@@ -1383,6 +1415,19 @@ async def update_target_repo_setting(payload: TargetRepoUpdate, current_user = D
     username = current_user.get("sub")
     saved = set_user_target_repo(username, payload.target_repo)
     return {"target_repo": saved}
+
+
+@app.get("/api/settings/has-seen-help")
+async def get_has_seen_help_setting(current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    return {"has_seen_help": get_user_has_seen_help(username)}
+
+
+@app.put("/api/settings/has-seen-help")
+async def update_has_seen_help_setting(payload: HasSeenHelpUpdate, current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    saved = set_user_has_seen_help(username, payload.has_seen_help)
+    return {"has_seen_help": saved}
 
 
 @app.post("/api/v1/webhooks/ingest", status_code=status.HTTP_200_OK)

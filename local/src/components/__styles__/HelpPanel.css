@@ -1,11 +1,11 @@
 .help-panel {
-  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 24px 28px;
   background: var(--bg-main);
-  border-left: 1px solid var(--border-color);
-  overflow-y: auto;
   transition: all 0.2s ease;
 }
-
 
 .help-panel .help-title {
   font-size: 1.4rem;
@@ -16,106 +16,198 @@
 .help-panel .help-subtitle {
   font-size: 0.9rem;
   color: var(--text-main);
-  margin-bottom: 20px;
+  margin-bottom: 0;
+  max-width: 720px;
 }
 
-.help-panel .help-section {
-  margin-bottom: 15px;
+.help-panel-header {
+  padding-right: 32px; /* keep the subtitle clear of the close button */
+  margin-bottom: 18px;
+  flex-shrink: 0;
 }
 
-.help-panel .help-section-header {
-  width: 100%;
-  background: var(--bg-main);
-  border-color: var(--border-color);
-  padding: 10px;
-  font-size: 1rem;
+.help-panel-body {
   display: flex;
-  justify-content: space-between;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  border-radius: 16px;
-  color: var(--text-main)
+  gap: 24px;
+  flex: 1;
+  min-height: 0;
 }
 
-.help-panel .help-section-header:hover {
-    box-shadow: var(--shadow-hover);
-    transform: translateY(-2px);
-    transition: all 0.2s ease;
-}
-
-.help-panel .help-section-header:active {
-  box-shadow: none;
-  transform: translateY(2px);
-  transition: all 0.2s ease;
-}
-
-.help-panel .help-section-body {
-  padding: 10px;
-  background: var(--bg-main);
-  border-left: 1px solid var(--border-color);
-}
-
-.help-panel .help-code {
-  background: var(--bg-main);
-  padding: 8px;
-  border-radius: 4px;
-  font-family: monospace;
-}
-
-.help-panel-container {
-  position: fixed;
-  left: 0;
-  top: 0;
-  height: 100%;
-  width: 350px;
-  background: var(--bg-main);
-  border-right: 1px solid var(--border-color);
+.help-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 260px;
+  flex-shrink: 0;
   overflow-y: auto;
-  z-index: 999;
-  box-shadow: 2px 0 8px rgba(0,0,0,0.15);
-  animation: slideInLeft 0.25s ease-out;
+  padding-right: 8px;
+  border-right: 1px solid var(--border-color);
 }
 
-@keyframes slideInLeft {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(0);
-  }
+.help-nav-item {
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 0.9rem;
+  color: var(--text-main);
+  cursor: pointer;
+  transition: all 0.15s ease;
 }
 
-.help-panel-container.closing {
-  animation: slideOutLeft 0.25s ease-in forwards;
+.help-nav-item:hover {
+  background: var(--border-color);
 }
 
-@keyframes slideOutLeft {
-  from { transform: translateX(0); }
-  to { transform: translateX(-100%); }
+.help-nav-item.active {
+  background: #4a6fa5;
+  color: #ffffff;
+  font-weight: 600;
 }
 
-/* Fix bullet indentation */
-.help-panel .help-section-body ul {
-  margin-left: 0;          /* Remove default browser margin */
-  padding-left: 20px;      /* Controlled indentation */
+.help-content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 4px 8px 4px 4px;
 }
 
-/* Fix bullet alignment so they don't spill past the border */
-.help-panel .help-section-body li {
+.help-content-title {
+  margin-top: 0;
+  margin-bottom: 12px;
+  font-size: 1.1rem;
+  color: var(--text-main);
+}
+
+.help-content p {
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+
+.help-content ul {
+  margin: 0 0 12px;
+  padding-left: 20px;
+}
+
+.help-content li {
   margin-bottom: 6px;
-  font-size: 0.95rem;      /* Slightly smaller, cleaner */
+  font-size: 0.95rem;
   line-height: 1.4;
 }
 
-/* Fix code block spacing */
-.help-panel .help-code {
-  margin-left: 0;
-  padding-left: 12px;
+.help-content .help-code {
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-family: monospace;
   font-size: 0.9rem;
+  margin: 0 0 12px;
 }
 
-/* Fix section body padding so content stays inside the vertical line */
-.help-panel .help-section-body {
-  padding: 12px 16px;
-  border-left: 3px solid #4a6fa5;
+.help-panel-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 998;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  animation: fadeInBackdrop 0.2s ease-out;
+}
+
+.help-panel-backdrop.closing {
+  animation: fadeOutBackdrop 0.2s ease-in forwards;
+}
+
+@keyframes fadeInBackdrop {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fadeOutBackdrop {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+.help-panel-container {
+  position: relative;
+  width: min(94vw, 1400px);
+  height: min(85vh, 820px);
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  overflow: hidden;
+  z-index: 999;
+  box-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.4);
+  animation: popInHelp 0.2s ease-out;
+}
+
+.help-panel-container.closing {
+  animation: popOutHelp 0.2s ease-in forwards;
+}
+
+@keyframes popInHelp {
+  from { opacity: 0; transform: scale(0.96) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes popOutHelp {
+  from { opacity: 1; transform: scale(1) translateY(0); }
+  to { opacity: 0; transform: scale(0.96) translateY(8px); }
+}
+
+.help-panel-close-btn {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  background: transparent;
+  border: none;
+  color: var(--text-main);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 8px;
+  z-index: 1;
+}
+
+.help-panel-close-btn:hover {
+  background: var(--border-color);
+}
+
+@media (max-width: 768px) {
+  .help-panel-container {
+    width: 96vw;
+    height: 92vh;
+  }
+
+  .help-panel {
+    padding: 18px 16px;
+  }
+
+  .help-panel-body {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .help-nav {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+    padding-right: 0;
+    padding-bottom: 8px;
+  }
+
+  .help-nav-item {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
 }

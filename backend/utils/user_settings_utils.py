@@ -172,3 +172,31 @@ def set_user_target_repo(username: str, repo: Optional[str]) -> Optional[str]:
 
     _write_local_setting(username, "target_repo", repo)
     return repo
+
+
+def get_user_has_seen_help(username: str) -> bool:
+    """Whether this user has already dismissed the onboarding/help overlay — a layout-level
+    concern, not something the chat request path needs, so unlike rag_mode/deep_thinking/
+    target_repo it deliberately isn't part of get_user_settings_bundle. Not subject to
+    TOGGLE_LOCKED_USERS: seeing the help panel repeatedly carries no cost/scope concern the way
+    an elevated resource setting would."""
+    doc = _fetch_settings_doc(username)
+    seen = doc.get("has_seen_help")
+    return seen if isinstance(seen, bool) else False
+
+
+def set_user_has_seen_help(username: str, seen: bool) -> bool:
+    """Persists that this user has dismissed the onboarding/help overlay, so it doesn't
+    auto-show again on their next sign-in (on any device)."""
+    seen = bool(seen)
+
+    db = get_db()
+    if db is not None:
+        db["user_settings"].update_one(
+            {"username": username},
+            {"$set": {"has_seen_help": seen}},
+            upsert=True,
+        )
+
+    _write_local_setting(username, "has_seen_help", seen)
+    return seen

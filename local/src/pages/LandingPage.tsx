@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSignIn, useAuth, useClerk } from '@clerk/clerk-react';
 import { useNavigate } from 'react-router-dom';
-import sonicImg from '../assets/sonicandshadow.jpg';
+import logoImg from '../assets/neutral_logo.png'; // Updated logo import
 import { getMe, logLogin } from '../api';
 import sonicSpinImg from '../assets/sonic-rolling.gif';
 
@@ -24,7 +24,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
         try {
           console.log("Fetching user profile for:", userId);
           
-          // Give Clerk a split-second to ensure the session token is fully loaded and attached
           await new Promise((resolve) => setTimeout(resolve, 300));
 
           const clerkEmail = (window as any)?.Clerk?.user?.primaryEmailAddress?.emailAddress || (window as any)?.Clerk?.user?.emailAddresses?.[0]?.emailAddress || userId;
@@ -50,14 +49,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
     initializeUser();
   }, [isAuthLoaded, isSignedIn, userId, onEnter, navigate]);
 
-  // 2. Guest Sandbox Entry (Awaited)
+  // 2. Guest Sandbox Entry
   const handleGuestEntry = async () => {
     setServerStarting(true);
     localStorage.setItem('guest_token', 'guest-sandbox-token');
     localStorage.setItem('principal', 'guest');
     localStorage.setItem('x-user-id', 'guest');
 
-    // Ensure login event reaches MongoDB before component unmounts
     await logLogin();
 
     onEnter('guest');
@@ -119,14 +117,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
               gap: 12,
               marginTop: 8,
               fontSize: '0.85rem',
-              color: '#64748b',
+              color: '#788ba5',
               width: '100%',
               justifyContent: 'space-between',
               flexWrap: 'wrap'
             }}
           >
             <div style={{ flex: '1 1 auto', minWidth: 180 }}>
-              <strong style={{ color: '#111827' }}>Affiliate access</strong>
+              <strong style={{ color: '#bbbbbd' }}>Affiliate access</strong>
               <div style={{ marginTop: 4 }}>
                 <span style={{ display: 'inline-block', marginRight: 10 }}>
                   <strong>A</strong> — Sonic docs
@@ -226,7 +224,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
           )}
         </div>
       </div>
-      <div className="landing-right" style={{ backgroundImage: `url(${sonicImg})` }} />
+
+      {/* Hero Right: Displays Logo directly centered */}
+      <div className="landing-right">
+        <img src={logoImg} alt="Sonic Graph Technologies" className="landing-hero-logo" />
+      </div>
     </div>
   );
 };
