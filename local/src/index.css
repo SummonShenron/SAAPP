@@ -113,6 +113,66 @@ body, html {
   overflow-x: hidden;
 }
 
+.theme-shadow .repo-banner {
+  background-color: var(--bg-main) !important;
+  border: 1px solid var(--border-color) !important;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+  box-shadow: var(--shadow-hover);
+}
+
+.theme-shadow .repo-banner input {
+  background-color: var(--bg-main) !important;
+  border: 1px solid var(--border-color) !important;
+  color: var(--text-main) !important;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  box-shadow: var(--shadow-hover);
+  transition: all 0.2s ease;
+}
+
+.repo-banner input:active {
+  box-shadow: none;
+  transform: translateY(0);
+  transition: all 0.2s ease;
+}
+.repo-banner input:active {
+  box-shadow: none;
+  transform: translateY(0);
+  transition: all 0.2s ease;
+  outline: none;
+}
+
+.repo-banner:hover{
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-dark-hover);
+  transition: all 0.2s ease;
+}
+
+.repo-banner input:hover {
+  box-shadow: var(--shadow-dark-hover);
+  transition: all 0.2s ease;
+}
+
+.repo-banner button {
+  background-color: var(--bg-main) !important;
+  border: 1px solid var(--border-color) !important;
+  color: var(--text-main) !important;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  box-shadow: var(--shadow-hover);
+  transition: all 0.2s ease;
+}
+
+.repo-banner button:hover {
+  box-shadow: var(--shadow-dark-hover);
+  transition: all 0.2s ease;
+}
+
 
 
 /* Custom Clean Scrollbar */

@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import logging
 from typing import Optional
@@ -17,11 +18,13 @@ VALID_RAG_MODES = {RAG_MODE_STRICT, RAG_MODE_OPEN}
 
 DEFAULT_DEEP_THINKING = False
 
+_TARGET_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+
 # Identities that must never opt into a heavier-than-default setting (open RAG scope, deep
-# thinking's larger step budget) — guest_bty is the single shared identity every anonymous
-# BTY Fitness embed visitor authenticates as, so honoring a stored override for it would leak
-# across every visitor of that widget, and for deep thinking would also hand every anonymous
-# visitor a much more expensive request by default.
+# thinking's larger step budget, a pinned target repo) — guest_bty is the single shared
+# identity every anonymous BTY Fitness embed visitor authenticates as, so honoring a stored
+# override for it would leak across every visitor of that widget, and for deep thinking would
+# also hand every anonymous visitor a much more expensive request by default.
 TOGGLE_LOCKED_USERS = {"guest_bty"}
 
 
@@ -51,22 +54,36 @@ def _write_local_setting(username: str, key: str, value) -> None:
         json.dump(data, f, indent=2)
 
 
+def _fetch_settings_doc(username: str) -> dict:
+    """One read of the user's whole settings document (Mongo) or file (local fallback) — every
+    getter below reads from this instead of issuing its own query, since rag_mode,
+    deep_thinking, and target_repo all live on the exact same per-user record."""
+    db = get_db()
+    if db is not None:
+        return db["user_settings"].find_one({"username": username}) or {}
+    return _read_local_settings(username)
+
+
+def _resolve_rag_mode(doc: dict) -> str:
+    mode = doc.get("rag_mode")
+    return mode if mode in VALID_RAG_MODES else RAG_MODE_STRICT
+
+
+def _resolve_deep_thinking(doc: dict) -> bool:
+    enabled = doc.get("deep_thinking")
+    return enabled if isinstance(enabled, bool) else DEFAULT_DEEP_THINKING
+
+
+def _resolve_target_repo(doc: dict) -> Optional[str]:
+    repo = doc.get("target_repo")
+    return repo if repo and _TARGET_REPO_RE.match(repo) else None
+
+
 def get_user_rag_mode(username: str) -> str:
     """Returns the user's stored RAG mode, defaulting to (and locking) 'strict'."""
     if username in TOGGLE_LOCKED_USERS:
         return RAG_MODE_STRICT
-
-    db = get_db()
-    if db is not None:
-        doc = db["user_settings"].find_one({"username": username})
-        if doc and doc.get("rag_mode") in VALID_RAG_MODES:
-            return doc["rag_mode"]
-        return RAG_MODE_STRICT
-
-    data = _read_local_settings(username)
-    if data.get("rag_mode") in VALID_RAG_MODES:
-        return data["rag_mode"]
-    return RAG_MODE_STRICT
+    return _resolve_rag_mode(_fetch_settings_doc(username))
 
 
 def set_user_rag_mode(username: str, mode: str) -> str:
@@ -92,18 +109,7 @@ def get_user_deep_thinking_mode(username: str) -> bool:
     """Returns whether the user has deep thinking enabled, defaulting to (and locking) off."""
     if username in TOGGLE_LOCKED_USERS:
         return DEFAULT_DEEP_THINKING
-
-    db = get_db()
-    if db is not None:
-        doc = db["user_settings"].find_one({"username": username})
-        if doc and isinstance(doc.get("deep_thinking"), bool):
-            return doc["deep_thinking"]
-        return DEFAULT_DEEP_THINKING
-
-    data = _read_local_settings(username)
-    if isinstance(data.get("deep_thinking"), bool):
-        return data["deep_thinking"]
-    return DEFAULT_DEEP_THINKING
+    return _resolve_deep_thinking(_fetch_settings_doc(username))
 
 
 def set_user_deep_thinking_mode(username: str, enabled: bool) -> bool:
@@ -122,3 +128,47 @@ def set_user_deep_thinking_mode(username: str, enabled: bool) -> bool:
 
     _write_local_setting(username, "deep_thinking", enabled)
     return enabled
+
+
+def get_user_target_repo(username: str) -> Optional[str]:
+    """Returns the user's pinned "owner/repo", or None to keep the existing per-message
+    auto-detection (resolve_recent_mention) as the fallback. Locked identities never get a
+    pinned repo of their own."""
+    if username in TOGGLE_LOCKED_USERS:
+        return None
+    return _resolve_target_repo(_fetch_settings_doc(username))
+
+
+def get_user_settings_bundle(username: str) -> dict:
+    """Fetches rag_mode, deep_thinking, and target_repo in a single DB round trip — for the hot
+    chat-request path, which used to call the three getters above separately (3 network round
+    trips per message for 3 fields on the exact same document) instead of once."""
+    if username in TOGGLE_LOCKED_USERS:
+        return {"rag_mode": RAG_MODE_STRICT, "deep_thinking": DEFAULT_DEEP_THINKING, "target_repo": None}
+    doc = _fetch_settings_doc(username)
+    return {
+        "rag_mode": _resolve_rag_mode(doc),
+        "deep_thinking": _resolve_deep_thinking(doc),
+        "target_repo": _resolve_target_repo(doc),
+    }
+
+
+def set_user_target_repo(username: str, repo: Optional[str]) -> Optional[str]:
+    """Validates and persists a user's pinned target repo. A falsy or malformed value clears
+    the pin (back to per-message auto-detection) rather than being silently ignored — an
+    invalid save should read as "not set", not as "still whatever it was before"."""
+    repo = (repo or "").strip()
+    repo = repo if _TARGET_REPO_RE.match(repo) else None
+    if username in TOGGLE_LOCKED_USERS:
+        repo = None
+
+    db = get_db()
+    if db is not None:
+        db["user_settings"].update_one(
+            {"username": username},
+            {"$set": {"target_repo": repo}},
+            upsert=True,
+        )
+
+    _write_local_setting(username, "target_repo", repo)
+    return repo

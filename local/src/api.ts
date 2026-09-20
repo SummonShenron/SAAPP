@@ -307,6 +307,33 @@ export async function updateDeepThinking(deepThinking: boolean): Promise<{ deep_
 }
 
 /**
+ * Get / set the current user's pinned target repo ("owner/repo") — when set, tool_agent_node
+ * uses it directly instead of guessing the repo from conversation text. null/"" clears the pin.
+ */
+export async function getTargetRepo(): Promise<{ target_repo: string | null }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/target-repo`, {
+    headers: { ...authHeaders }
+  });
+  if (!res.ok) throw new Error("Failed to fetch target repo setting.");
+  return res.json();
+}
+
+export async function updateTargetRepo(targetRepo: string | null): Promise<{ target_repo: string | null }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/target-repo`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders
+    },
+    body: JSON.stringify({ target_repo: targetRepo })
+  });
+  if (!res.ok) throw new Error("Failed to update target repo setting.");
+  return res.json();
+}
+
+/**
  * List the current user's conversation threads
  */
 export interface ConversationSummary {
@@ -585,5 +612,7 @@ export const api = {
   getRagMode,
   updateRagMode,
   getDeepThinking,
-  updateDeepThinking
+  updateDeepThinking,
+  getTargetRepo,
+  updateTargetRepo
 };

@@ -349,6 +349,58 @@ async def test_deep_thinking_on_raises_step_cap_and_retry_nudge_budget(monkeypat
     assert aw.TOOL_AGENT_MAX_RETRY_NUDGES_DEEP > aw.TOOL_AGENT_MAX_RETRY_NUDGES
 
 
+# ---------------------------------------------------------------------------
+# Repo resolution priority: current-message mention > pinned setting > history scan > default
+# ---------------------------------------------------------------------------
+
+@run_async
+async def test_explicit_repo_in_current_message_overrides_pinned_repo(monkeypatch):
+    """A pinned target repo (state["repo"], set via the settings banner) is easy to forget
+    about — it must not silently swallow an explicit, unambiguous repo mention in the message
+    the user just sent."""
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    requested_repos = []
+
+    def fake_get(url, headers=None, params=None):
+        requested_repos.append(url)
+        return _http_response(200, {"default_branch": "main"})
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    responses = [_llm_response(action="final", answer="done", show_work=False)]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    state = _state("check facebook/react for how they handle this")
+    state["repo"] = "old-owner/pinned-repo"
+    await aw.tool_agent_node(state)
+
+    assert any("facebook/react" in url for url in requested_repos)
+    assert not any("pinned-repo" in url for url in requested_repos)
+
+
+@run_async
+async def test_pinned_repo_used_when_current_message_names_none(monkeypatch):
+    """With no explicit repo mention in the current message, the pin still applies — this is
+    the whole point of pinning one."""
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    requested_repos = []
+
+    def fake_get(url, headers=None, params=None):
+        requested_repos.append(url)
+        return _http_response(200, {"default_branch": "main"})
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    responses = [_llm_response(action="final", answer="done", show_work=False)]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    state = _state("what does this file do?")
+    state["repo"] = "old-owner/pinned-repo"
+    await aw.tool_agent_node(state)
+
+    assert any("pinned-repo" in url for url in requested_repos)
+
+
 @run_async
 async def test_mongo_unsafe_write_triggers_approval(monkeypatch):
     monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])

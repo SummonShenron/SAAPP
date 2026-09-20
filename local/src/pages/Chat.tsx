@@ -532,6 +532,11 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [showTooltip, setShowTooltip] = useState(false);
   const tooltipRef = useRef<HTMLDivElement>(null);
 
+  const [targetRepo, setTargetRepo] = useState<string>("");
+  const [showRepoBanner, setShowRepoBanner] = useState(false);
+  const [repoInput, setRepoInput] = useState("");
+  const [repoSaving, setRepoSaving] = useState(false);
+
   const [showConversations, setShowConversations] = useState(false);
   const [conversationsClosing, setConversationsClosing] = useState(false);
 
@@ -707,6 +712,45 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
       setDeepThinking(result.deep_thinking);
     } catch (err) {
       console.error("Failed to update deep thinking setting:", err);
+    }
+  };
+
+  useEffect(() => {
+    if (!principal) return;
+    api.getTargetRepo()
+      .then(data => {
+        const repo = data.target_repo || "";
+        setTargetRepo(repo);
+        setRepoInput(repo);
+      })
+      .catch(err => console.error("Failed to fetch target repo setting:", err));
+  }, [principal]);
+
+  const handleSaveTargetRepo = async () => {
+    setRepoSaving(true);
+    try {
+      const result = await api.updateTargetRepo(repoInput.trim() || null);
+      const saved = result.target_repo || "";
+      setTargetRepo(saved);
+      setRepoInput(saved);
+      setShowRepoBanner(false);
+    } catch (err) {
+      console.error("Failed to update target repo setting:", err);
+    } finally {
+      setRepoSaving(false);
+    }
+  };
+
+  const handleClearTargetRepo = async () => {
+    setRepoSaving(true);
+    try {
+      await api.updateTargetRepo(null);
+      setTargetRepo("");
+      setRepoInput("");
+    } catch (err) {
+      console.error("Failed to clear target repo setting:", err);
+    } finally {
+      setRepoSaving(false);
     }
   };
 
@@ -1287,6 +1331,86 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
             )}
           </div>
 
+          {showRepoBanner && (
+            <div className="repo-banner"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                padding: "10px 14px",
+                marginBottom: "8px",
+                background: isEmbedded ? "#121316" : "#121824",
+                border: isEmbedded ? "1px solid rgba(0, 242, 254, 0.4)" : "1px solid #334155",
+                borderRadius: "12px",
+                fontSize: "13px",
+                color: "#f8fafc",
+              }}
+            >
+              <span style={{ color: "#94a3b8", whiteSpace: "nowrap" }}>Target repo:</span>
+              <input
+                type="text"
+                value={repoInput}
+                onChange={(e) => setRepoInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") { e.preventDefault(); handleSaveTargetRepo(); }
+                }}
+                placeholder="owner/repo (blank = auto-detect)"
+                disabled={repoSaving}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  background: "transparent",
+                  border: "1px solid #334155",
+                  borderRadius: "8px",
+                  padding: "6px 10px",
+                  color: "#f8fafc",
+                  fontSize: "13px",
+                }}
+              />
+              <button
+                type="button"
+                onClick={handleSaveTargetRepo}
+                disabled={repoSaving}
+                style={{
+                  background: "#3b82f6",
+                  border: "none",
+                  borderRadius: "8px",
+                  padding: "6px 12px",
+                  color: "#fff",
+                  fontSize: "13px",
+                  cursor: repoSaving ? "not-allowed" : "pointer",
+                }}
+              >
+                Save
+              </button>
+              {targetRepo && (
+                <button
+                  type="button"
+                  onClick={handleClearTargetRepo}
+                  disabled={repoSaving}
+                  style={{
+                    background: "transparent",
+                    border: "1px solid #334155",
+                    borderRadius: "8px",
+                    padding: "6px 12px",
+                    color: "#cbd5e1",
+                    fontSize: "13px",
+                    cursor: repoSaving ? "not-allowed" : "pointer",
+                  }}
+                >
+                  Clear
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowRepoBanner(false)}
+                style={{ background: "transparent", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: "14px" }}
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
           {uploadedFiles.length > 0 && (
             <div className="attached-files-banner">
               {uploadedFiles.map((file, idx) => (
@@ -1379,6 +1503,23 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                     </div>
                   )}
                 </div>
+
+                <button
+                  type="button"
+                  className={`circle-icon-button ${targetRepo ? 'trace-active' : ''}`}
+                  onClick={() => setShowRepoBanner(!showRepoBanner)}
+                  title={targetRepo ? `Target repo: ${targetRepo}` : "Set target repo"}
+                  style={targetRepo ? {
+                    background: '#3b82f6',
+                    border: '1px solid #3b82f6',
+                    boxShadow: '0 0 8px rgba(99, 102, 241, 0.5)'
+                  } : {}}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="16 18 22 12 16 6" />
+                    <polyline points="8 6 2 12 8 18" />
+                  </svg>
+                </button>
 
                 <button
                   type="button"

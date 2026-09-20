@@ -88,3 +88,82 @@ def test_setting_deep_thinking_does_not_clobber_previously_saved_rag_mode():
     usu.set_user_deep_thinking_mode("jack", True)
     assert usu.get_user_rag_mode("jack") == "open"
     assert usu.get_user_deep_thinking_mode("jack") is True
+
+
+def test_default_target_repo_is_none():
+    assert usu.get_user_target_repo("jack") is None
+
+
+def test_set_and_get_target_repo_round_trip():
+    saved = usu.set_user_target_repo("jack", "facebook/react")
+    assert saved == "facebook/react"
+    assert usu.get_user_target_repo("jack") == "facebook/react"
+
+
+def test_malformed_target_repo_clears_the_pin():
+    usu.set_user_target_repo("jack", "facebook/react")
+    saved = usu.set_user_target_repo("jack", "not a repo")
+    assert saved is None
+    assert usu.get_user_target_repo("jack") is None
+
+
+def test_empty_target_repo_clears_the_pin():
+    usu.set_user_target_repo("jack", "facebook/react")
+    saved = usu.set_user_target_repo("jack", "")
+    assert saved is None
+    assert usu.get_user_target_repo("jack") is None
+
+
+def test_target_repo_scoped_per_username():
+    usu.set_user_target_repo("jack", "facebook/react")
+    usu.set_user_target_repo("alice", "torvalds/linux")
+    assert usu.get_user_target_repo("jack") == "facebook/react"
+    assert usu.get_user_target_repo("alice") == "torvalds/linux"
+
+
+def test_locked_user_cannot_set_target_repo():
+    saved = usu.set_user_target_repo("guest_bty", "facebook/react")
+    assert saved is None
+    assert usu.get_user_target_repo("guest_bty") is None
+
+
+def test_setting_target_repo_does_not_clobber_other_settings():
+    usu.set_user_rag_mode("jack", "open")
+    usu.set_user_deep_thinking_mode("jack", True)
+    usu.set_user_target_repo("jack", "facebook/react")
+    assert usu.get_user_rag_mode("jack") == "open"
+    assert usu.get_user_deep_thinking_mode("jack") is True
+    assert usu.get_user_target_repo("jack") == "facebook/react"
+
+
+def test_settings_bundle_defaults():
+    bundle = usu.get_user_settings_bundle("jack")
+    assert bundle == {"rag_mode": "strict", "deep_thinking": False, "target_repo": None}
+
+
+def test_settings_bundle_matches_individual_getters_after_changes():
+    usu.set_user_rag_mode("jack", "open")
+    usu.set_user_deep_thinking_mode("jack", True)
+    usu.set_user_target_repo("jack", "facebook/react")
+    bundle = usu.get_user_settings_bundle("jack")
+    assert bundle == {"rag_mode": "open", "deep_thinking": True, "target_repo": "facebook/react"}
+
+
+def test_settings_bundle_forces_defaults_for_locked_user():
+    usu.set_user_target_repo("guest_bty", "facebook/react")  # rejected, but prove the bundle ignores it too
+    bundle = usu.get_user_settings_bundle("guest_bty")
+    assert bundle == {"rag_mode": "strict", "deep_thinking": False, "target_repo": None}
+
+
+def test_settings_bundle_reads_document_once(monkeypatch):
+    """The whole point of the bundle: one fetch, not three."""
+    calls = {"n": 0}
+    original = usu._fetch_settings_doc
+
+    def counting_fetch(username):
+        calls["n"] += 1
+        return original(username)
+
+    monkeypatch.setattr(usu, "_fetch_settings_doc", counting_fetch)
+    usu.get_user_settings_bundle("jack")
+    assert calls["n"] == 1

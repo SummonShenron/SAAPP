@@ -2505,7 +2505,8 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             {"node": "tool_agent_node", "title": "Investigating...", "detail": "Preparing available tools..."}
         )
 
-        msg = state.get("messages", [])[-1].content.strip()
+        latest_message_content = state.get("messages", [])[-1].content.strip()
+        msg = latest_message_content
 
         # Resuming a paused clarification: the previous assistant message is the question it
         # asked, and the one before that is the original request. Recombine them into one
@@ -2524,8 +2525,13 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
 
         # Resolve the repo BEFORE folding in attached/pasted code — arbitrary pasted content
         # can contain its own "word/word"-shaped substrings that would otherwise hijack
-        # repo detection. Recency-first across turns, not just the single latest message.
-        repo = state.get("repo") or resolve_recent_mention(
+        # repo detection. Priority: an explicit repo mention in the message the user just sent
+        # always wins over a pinned/persisted repo setting (state["repo"], set via the target-repo
+        # banner) — a pin is easy to forget about, and it would otherwise silently override even
+        # an unambiguous "check facebook/react instead" with no way to tell the model meant it.
+        # Only when THIS message says nothing does the pin apply, then the older scan-the-whole
+        # -history fallback, then the hardcoded default.
+        repo = extract_github_repo(latest_message_content, fallback=None) or state.get("repo") or resolve_recent_mention(
             state.get("messages", []), lambda c: extract_github_repo(c, fallback=None)
         ) or "SummonShenron/SAAPP"
 
