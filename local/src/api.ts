@@ -334,6 +334,33 @@ export async function updateTargetRepo(targetRepo: string | null): Promise<{ tar
 }
 
 /**
+ * Get / set whether the current user has already dismissed the onboarding/help overlay —
+ * drives whether it auto-shows on sign-in (see Layout.tsx).
+ */
+export async function getHasSeenHelp(): Promise<{ has_seen_help: boolean }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/has-seen-help`, {
+    headers: { ...authHeaders }
+  });
+  if (!res.ok) throw new Error("Failed to fetch has-seen-help setting.");
+  return res.json();
+}
+
+export async function updateHasSeenHelp(hasSeenHelp: boolean): Promise<{ has_seen_help: boolean }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/has-seen-help`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders
+    },
+    body: JSON.stringify({ has_seen_help: hasSeenHelp })
+  });
+  if (!res.ok) throw new Error("Failed to update has-seen-help setting.");
+  return res.json();
+}
+
+/**
  * List the current user's conversation threads
  */
 export interface ConversationSummary {
@@ -614,5 +641,7 @@ export const api = {
   getDeepThinking,
   updateDeepThinking,
   getTargetRepo,
-  updateTargetRepo
+  updateTargetRepo,
+  getHasSeenHelp,
+  updateHasSeenHelp
 };

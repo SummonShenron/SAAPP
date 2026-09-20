@@ -167,3 +167,44 @@ def test_settings_bundle_reads_document_once(monkeypatch):
     monkeypatch.setattr(usu, "_fetch_settings_doc", counting_fetch)
     usu.get_user_settings_bundle("jack")
     assert calls["n"] == 1
+
+
+def test_default_has_seen_help_is_false():
+    assert usu.get_user_has_seen_help("jack") is False
+
+
+def test_set_and_get_has_seen_help_round_trip():
+    saved = usu.set_user_has_seen_help("jack", True)
+    assert saved is True
+    assert usu.get_user_has_seen_help("jack") is True
+
+
+def test_has_seen_help_scoped_per_username():
+    usu.set_user_has_seen_help("jack", True)
+    assert usu.get_user_has_seen_help("jack") is True
+    assert usu.get_user_has_seen_help("alice") is False
+
+
+def test_has_seen_help_not_locked_for_guest_bty():
+    """Unlike rag_mode/deep_thinking/target_repo, seeing the help panel carries no cost or
+    scope concern, so guest_bty is allowed to have this set like any other user."""
+    saved = usu.set_user_has_seen_help("guest_bty", True)
+    assert saved is True
+    assert usu.get_user_has_seen_help("guest_bty") is True
+
+
+def test_setting_has_seen_help_does_not_clobber_other_settings():
+    usu.set_user_rag_mode("jack", "open")
+    usu.set_user_target_repo("jack", "facebook/react")
+    usu.set_user_has_seen_help("jack", True)
+    assert usu.get_user_rag_mode("jack") == "open"
+    assert usu.get_user_target_repo("jack") == "facebook/react"
+    assert usu.get_user_has_seen_help("jack") is True
+
+
+def test_has_seen_help_not_included_in_settings_bundle():
+    """Deliberately kept out of the hot chat-path bundle — it's a layout/onboarding concern,
+    not something tool_agent_node or the reasoner needs."""
+    usu.set_user_has_seen_help("jack", True)
+    bundle = usu.get_user_settings_bundle("jack")
+    assert "has_seen_help" not in bundle

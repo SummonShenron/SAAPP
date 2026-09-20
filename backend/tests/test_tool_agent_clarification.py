@@ -16,11 +16,12 @@ def run_async(fn):
     return wrapper
 
 
-def _state(question="find the bug in the auth flow", messages=None, username="jack"):
+def _state(question="find the bug in the auth flow", messages=None, username="jack", **overrides):
     return {
         "username": username,
         "messages": messages or [HumanMessage(content=question)],
         "documents": [],
+        **overrides,
     }
 
 
@@ -44,22 +45,23 @@ def _setup_github_repo(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# _format_attempts_steps / _recover_attempts_from_steps_text round-trip
+# _format_attempts_steps: display rendering only — recovery is now handled by
+# reading state["paused_clarification"] directly (see reset_transient_state /
+# the checkpointer), not by parsing this rendered text back out.
 # ---------------------------------------------------------------------------
 
-def test_attempts_steps_round_trip():
+def test_format_attempts_steps_renders_purpose_action_and_observation():
     attempts = [
         {"purpose": "List the repo tree", "action_desc": "list_repo_tree()", "observation": "ERROR: could not fetch tree (404)"},
         {"purpose": "Check recent commits", "action_desc": "list_commits(branch=main, limit=5)", "observation": "abc1234 — fix: something"},
     ]
     rendered = aw._format_attempts_steps(attempts)
-    recovered = aw._recover_attempts_from_steps_text(rendered)
 
-    assert recovered == attempts
-
-
-def test_recover_attempts_from_steps_text_returns_empty_for_plain_text():
-    assert aw._recover_attempts_from_steps_text("just a normal message with no steps in it") == []
+    assert "Step 1 — List the repo tree" in rendered
+    assert "list_repo_tree()" in rendered
+    assert "could not fetch tree (404)" in rendered
+    assert "Step 2 — Check recent commits" in rendered
+    assert "abc1234" in rendered
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +99,8 @@ async def test_run_react_loop_raises_clarification_needed():
 
 
 # ---------------------------------------------------------------------------
-# tool_agent_node: pauses for clarification instead of guessing
+# tool_agent_node: pauses for clarification instead of guessing, and persists
+# real resume state (not just rendered card text) into paused_clarification.
 # ---------------------------------------------------------------------------
 
 @run_async
@@ -110,12 +113,18 @@ async def test_tool_agent_node_pauses_with_clarification(monkeypatch):
         )),
     )
 
-    result = await aw.tool_agent_node(_state("read the core workflow file and suggest an idea"))
+    question = "read the core workflow file and suggest an idea"
+    result = await aw.tool_agent_node(_state(question))
 
     assert result["relevance_grade"] == "needs_clarification"
     assert aw.CLARIFICATION_CARD_MARKER in result["content_to_format"]
     assert "SummonShenron/SAAPP or SummonShenron/errAgent" in result["content_to_format"]
     assert result["messages"][-1].content == result["content_to_format"]
+
+    # The real resume mechanism: a dedicated state field, not the rendered card text.
+    paused = result["paused_clarification"]
+    assert paused["original_question"] == question
+    assert paused["attempts"] == []
 
 
 @run_async
@@ -138,24 +147,46 @@ async def test_tool_agent_node_clarification_includes_steps_so_far(monkeypatch):
 
     assert "What I've checked so far" in result["content_to_format"]
     assert "List the repo tree" in result["content_to_format"]
+    # Same attempt data is available in real state, not just the rendered footer.
+    assert result["paused_clarification"]["attempts"][0]["purpose"] == "List the repo tree"
 
 
 # ---------------------------------------------------------------------------
-# classify_intent: detects a reply to a paused clarification
+# classify_intent: detects a reply to a paused clarification via real state
 # ---------------------------------------------------------------------------
 
 def test_classify_intent_detects_clarification_reply():
-    prev_ai_message = SimpleNamespace(
-        type="ai",
-        content=f"**{aw.CLARIFICATION_CARD_MARKER}:**\n\nWhich repo did you mean?",
-    )
-    human_original = SimpleNamespace(type="human", content="read the workflow file")
-    new_reply = SimpleNamespace(type="human", content="SummonShenron/SAAPP")
-    state = {"messages": [human_original, prev_ai_message, new_reply]}
+    state = {
+        "messages": [
+            SimpleNamespace(type="human", content="read the workflow file"),
+            SimpleNamespace(type="ai", content="Which repo did you mean?"),
+            SimpleNamespace(type="human", content="SummonShenron/SAAPP"),
+        ],
+        "paused_clarification": {
+            "original_question": "read the workflow file",
+            "attempts": [],
+        },
+    }
 
     intent = aw.classify_intent("SummonShenron/SAAPP", state=state)
 
     assert intent == "resume_tool_agent"
+
+
+def test_classify_intent_does_not_resume_without_paused_clarification_in_state():
+    """The old mechanism (scanning the previous message for card-marker text) is gone —
+    rendered text alone, with nothing in state, must not trigger a resume."""
+    state = {
+        "messages": [
+            SimpleNamespace(type="human", content="read the workflow file"),
+            SimpleNamespace(type="ai", content=f"**{aw.CLARIFICATION_CARD_MARKER}:**\n\nWhich repo did you mean?"),
+            SimpleNamespace(type="human", content="SummonShenron/SAAPP"),
+        ],
+    }
+
+    intent = aw.classify_intent("SummonShenron/SAAPP", state=state)
+
+    assert intent != "resume_tool_agent"
 
 
 def test_build_agent_plan_routes_resume_tool_agent():
@@ -164,26 +195,18 @@ def test_build_agent_plan_routes_resume_tool_agent():
 
 
 # ---------------------------------------------------------------------------
-# Full resume: a genuinely separate second turn continues instead of restarting
+# Full resume: a genuinely separate second turn continues instead of restarting,
+# reading real (checkpointer-carried) state rather than re-parsing message text.
 # ---------------------------------------------------------------------------
 
 @run_async
 async def test_tool_agent_node_resumes_with_recovered_attempts(monkeypatch):
-    """Mirrors the real app.py flow: turn 2 is a brand-new state dict connected to turn 1 only
-    via the persisted messages list — pending_action never survives between real turns (see
-    classify_intent's card_marker comment), so resuming has to work off the message text alone."""
+    """Mirrors the real app.py flow with a checkpointer attached: turn 2 is a brand-new state
+    dict, but paused_clarification survived via the checkpointer (reset_transient_state
+    deliberately never clears it) — the one field this whole migration is about."""
     _setup_github_repo(monkeypatch)
 
-    original_question = HumanMessage(content="read the core workflow file and suggest an idea")
-    clarification_card = SimpleNamespace(
-        type="ai",
-        content=(
-            f"**{aw.CLARIFICATION_CARD_MARKER}:**\n\nWhich repo did you mean?\n\n"
-            "**What I've checked so far:**\n\n"
-            "**Step 1 — List the repo tree:**\n```\nlist_repo_tree()\n```\n"
-            "**Result:**\n```\nERROR: could not fetch tree (404)\n```"
-        ),
-    )
+    original_question = "read the core workflow file and suggest an idea"
     user_answer = HumanMessage(content="SummonShenron/SAAPP")
 
     captured_prompts = []
@@ -194,7 +217,17 @@ async def test_tool_agent_node_resumes_with_recovered_attempts(monkeypatch):
 
     monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
 
-    turn2_state = _state(messages=[original_question, clarification_card, user_answer])
+    turn2_state = _state(
+        messages=[user_answer],
+        paused_clarification={
+            "original_question": original_question,
+            "attempts": [{
+                "purpose": "List the repo tree",
+                "action_desc": "list_repo_tree()",
+                "observation": "ERROR: could not fetch tree (404)",
+            }],
+        },
+    )
     result = await aw.tool_agent_node(turn2_state)
 
     assert result["relevance_grade"] == "tool_agent"
@@ -206,3 +239,5 @@ async def test_tool_agent_node_resumes_with_recovered_attempts(monkeypatch):
     # The original ask and the user's clarifying answer both reached the loop's question.
     assert "read the core workflow file" in captured_prompts[0]
     assert "SummonShenron/SAAPP" in captured_prompts[0]
+    # Consumed — must not linger into a hypothetical turn 3.
+    assert result["paused_clarification"] is None

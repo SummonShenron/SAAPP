@@ -73,6 +73,59 @@ def ensure_workflow_keys(state: GraphState) -> GraphState:
     state.setdefault("requestId", uuid.uuid4().hex)
     return state
 
+
+# Every GraphState field that must NOT persist across turns, with its fresh-per-turn default —
+# matching each field's OWN existing `.get(key, default)` fallback used elsewhere, not just
+# `None` uniformly. That distinction is load-bearing: setting a key to None makes it PRESENT in
+# state, so a downstream `state.get("user_decision", "").lower()` no longer falls back to ""
+# (the key exists now) and would crash on None instead — caught by the test suite the first
+# time this ran for real. snapshot/classified/analysis_output/patterns/trends/insights are
+# deliberately NOT listed: they belong exclusively to the separate insights_workflow.py graph
+# (a different compiled graph, no checkpointer, invoked independently via /api/insights) —
+# nothing in THIS graph's nodes ever writes them, so there's nothing here to resurrect.
+#
+# Only meaningful now that create_workflow() can be compiled with a real checkpointer: once a
+# checkpointer + thread_id is used, LangGraph silently resurrects any channel absent from a
+# turn's input state from whatever was checkpointed on a PRIOR turn, however many turns back
+# that was (verified against LangGraph's own Pregel loop). app.py's initial_state never sets
+# most of these, so without this reset they'd all leak across turns the moment a checkpointer
+# was attached. paused_clarification is the one deliberate exception — it's the only field
+# meant to survive, so it's the only transient GraphState field NOT listed here.
+_TRANSIENT_STATE_DEFAULTS: Dict[str, Any] = {
+    "coordinator_intent": "",
+    "coordinator_plan": [],
+    "content_to_format": None,
+    "raw_generation": None,
+    "code_approval_status": None,
+    "drafted_code": None,
+    "github_query": "",
+    "github_results": "",
+    "pr_number": None,
+    "pr_review_status": None,
+    "comment_url": None,
+    "voice_payload": None,
+    "user_groups": [],
+    "pending_action": None,
+    "write_action": None,
+    "user_decision": "",
+    "modified_details": None,
+    "last_intent": None,
+    "memory_facts": None,
+    "memory_hits": None,
+    "insight_answer": None,
+}
+
+
+def reset_transient_state(state: GraphState) -> GraphState:
+    """Called once, as the very first thing coordinator_node does (the graph's sole entry
+    point — see create_workflow's `add_edge(START, "coordinator_node")`), so this always runs
+    exactly once per turn regardless of which caller built the initial state dict. Overwrites
+    every transient field unconditionally — a field genuinely set earlier THIS SAME turn can't
+    exist yet, since this runs before anything else does."""
+    state.update(_TRANSIENT_STATE_DEFAULTS)
+    return state
+
+
 # ============================================================
 # COORDINATOR_NODE (sync)
 # ============================================================
@@ -83,11 +136,16 @@ async def coordinator_node(state: GraphState) -> GraphState:
     request_id = state["requestId"]
     node_name = "coordinator_node"
     with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
+        logger.info("--- COORDINATOR NODE START ---")
+        # Logged BEFORE reset_transient_state so this reflects what a checkpointer actually
+        # resurrected from a prior turn (if anything) — useful for verifying the checkpointer is
+        # really wired up, and the one field it doesn't apply to.
+        logger.debug(f"Incoming state pending_action: {state.get('pending_action')}")
+        logger.debug(f"Incoming state paused_clarification: {state.get('paused_clarification')}")
+        state = reset_transient_state(state)
+
         node_input = state.copy()
         last_msg = state["messages"][-1].content.lower().strip()
-
-        logger.info("--- COORDINATOR NODE START ---")
-        logger.debug(f"Incoming state pending_action: {state.get('pending_action')}")
 
         state = await reasoner_node(state)
 
@@ -118,43 +176,90 @@ async def coordinator_node(state: GraphState) -> GraphState:
 
         return state
 
-def coordinator_router(state: GraphState) -> str:
-    logger.info("Preparing next step.")
+# Single source of truth for every agent-name -> node-name mapping in the plan mechanism —
+# shared by coordinator_router (the first dispatch) and plan_continue_router (every subsequent
+# one), so there's no risk of the two drifting apart on what "tool_agent" or "memory_save" means.
+_AGENT_NODE_MAP = {
+    "retriever": "retrieve_node",
+    "conversational": "conversational_node",
+    "formatter": "formatter_node",
+    "summarizer": "summarizer_node",
+    "paapp": "paapp_node",
+    "memory_save": "memory_save_node",
+    "memory_recall": "memory_recall_node",
+    "tool_agent": "tool_agent_node",
+    "pr_summary": "pr_summary",
+    "propose_write": "propose_write_node",
+    "execute_write": "execute_write_node",
+}
 
+# An identity map over every node the plan mechanism can ever dispatch to — used as the
+# `mapping` argument for every add_conditional_edges(..., plan_continue_router, ...) call, since
+# _dispatch_next_in_plan already resolves an agent name to its final node name before returning,
+# so LangGraph's conditional-edge mapping just needs to route each possible return value to
+# itself. Covers both on_empty defaults too, since "conversational_node" and "formatter_node"
+# are themselves already values in _AGENT_NODE_MAP.
+_PLAN_DESTINATIONS = {node_name: node_name for node_name in _AGENT_NODE_MAP.values()}
+
+
+def _dispatch_next_in_plan(state: GraphState, on_empty: str) -> str:
+    """Pops and dispatches the next queued agent from state["coordinator_plan"] (built once by
+    build_agent_plan inside coordinator_node). Used by both coordinator_router (the first
+    dispatch) and plan_continue_router (every subsequent one) — they differ only in what "the
+    plan is empty" should mean at that point in the graph.
+
+    Mutates coordinator_plan in place and reassigns it onto state; coordinator_plan is a plain
+    list with no reducer, so this relies on LangGraph aliasing (not copying) channel values
+    across sequential nodes — true today since create_workflow() compiles with no checkpointer,
+    but would break if this field were ever read inside a parallel/fan-out branch, which it
+    currently never is.
+    """
     plan = state.get("coordinator_plan", [])
-    intent = state.get("coordinator_intent", [])
-
     if not plan:
-        logger.info("--- COORDINATOR NODE END ---")
-        return "conversational_node"
+        logger.info("[Plan] Queue empty — falling through to '%s'.", on_empty)
+        return on_empty
 
     next_agent = plan.pop(0)
     state["coordinator_plan"] = plan
-    state["last_intent"] = intent
+    state["last_intent"] = state.get("coordinator_intent")
+    destination = _AGENT_NODE_MAP.get(next_agent, on_empty)
+    logger.info(f"[Plan] Dispatching next queued agent: '{next_agent}' -> '{destination}'")
+    return destination
 
-    mapping = {
-        "retriever": "retrieve_node",
-        "reasoner": "reasoner_node",
-        "conversational": "conversational_node",
-        "formatter": "formatter_node",
-        "summarizer": "summarizer_node",
-        "paapp": "paapp_node",
-        "workflow": "conversational_node",
-        "tool": "conversational_node",
-        "memory_save": "memory_save_node",
-        "memory_recall": "memory_recall_node",
-        "insight": "snapshot_node",
-        "tool_agent": "tool_agent_node",
-        "pr_summary": "pr_summary",
-        "propose_write": "propose_write_node",
-        "execute_write": "execute_write_node"
-    }
-    destination = mapping.get(next_agent, "conversational_node")
-    logger.debug(f"Next agent from plan: '{next_agent}'")
-    logger.debug(f"Router returning destination string: '{destination}'")
-    logger.info(f"sending request to {next_agent}")
+
+def coordinator_router(state: GraphState) -> str:
+    """First dispatch, right after coordinator_node builds the plan. An empty plan here means
+    nothing was ever queued — a bare conversational turn."""
+    logger.info("Preparing next step.")
+    destination = _dispatch_next_in_plan(state, on_empty="conversational_node")
     logger.info("--- COORDINATOR NODE END ---")
-    return mapping.get(next_agent, "conversational_node")
+    return destination
+
+
+def plan_continue_router(state: GraphState) -> str:
+    """Re-entry point after each plan-driven node finishes. An empty plan here means the whole
+    plan is done — proceed to formatting/generation, not back to a bare conversational turn.
+
+    This is what makes a multi-agent plan (e.g. ["memory_save", "retriever"]) actually run every
+    step instead of silently dropping everything after the first: previously nothing in the
+    graph ever routed back to coordinator_node to pop the rest of the queue, so every plan-driven
+    node's static edge straight to formatter_node just discarded whatever else was queued.
+    """
+    return _dispatch_next_in_plan(state, on_empty="formatter_node")
+
+
+def route_after_grading_with_plan_continuation(state: GraphState) -> str:
+    """Wraps route_after_grading (left completely untouched — still independently unit-tested)
+    so retrieval doesn't swallow a queued step after it. A plan like
+    ["memory_save", "retriever", "summarizer"] is real whenever multiple reasoner flags fire in
+    the same turn; without this, grading's exit always went straight to formatter_node,
+    reproducing the exact "silently drops anything after the first agent" bug one hop later.
+    "rewrite_query_node" is still an internal retry within the retrieval sub-loop, not "done
+    with this plan step", so it's passed through unchanged."""
+    outcome = route_after_grading(state)
+    if outcome == "rewrite_query_node":
+        return "rewrite_query_node"
+    return _dispatch_next_in_plan(state, on_empty="formatter_node")
 
 def is_valid_pending_pr(pending_action: Optional[dict]) -> bool:
     """Verifies that pending_action exists AND holds complete PR parameters."""
@@ -222,14 +327,16 @@ def classify_intent(message: str, state: dict = None) -> str:
             if REJECTION_PATTERN.search(msg_clean):
                 return "cancel_action"
 
-        # Same reasoning as the write-action card_marker check above, for tool_agent_node's own
-        # clarification pause: a short reply like "the SAAPP one" won't reliably trip the
-        # reasoner's needs_github_search/needs_code_interpreter flags on its own, so without this
-        # explicit check it would fall through to a fresh, unrelated classification instead of
-        # resuming the paused search.
-        if CLARIFICATION_CARD_MARKER in prev_content:
-            logger.debug("Detected pending tool_agent clarification in previous message — resuming tool_agent")
-            return "resume_tool_agent"
+    # tool_agent_node's own clarification pause: a short reply like "the SAAPP one" won't
+    # reliably trip the reasoner's needs_github_search/needs_code_interpreter flags on its own,
+    # so without this explicit check it would fall through to a fresh, unrelated classification
+    # instead of resuming the paused search. Unlike the write-action check above (still
+    # text-based — see its comment), this reads real checkpointed state directly:
+    # paused_clarification is the one GraphState field reset_transient_state deliberately
+    # leaves alone, so it survives from the turn that raised it into this one.
+    if state.get("paused_clarification"):
+        logger.debug("Detected paused_clarification in state — resuming tool_agent")
+        return "resume_tool_agent"
 
     pending_action = state.get("pending_action") or {}
     status = pending_action.get("status")
@@ -337,7 +444,7 @@ def build_agent_plan(intent: str, state: dict) -> dict:
         return {"agents": ["tool_agent", "formatter"], "skip": []}
 
     # Continuation of a paused tool_agent_node clarification (see classify_intent's
-    # CLARIFICATION_CARD_MARKER check) — same reasoning as web_search just above: a short
+    # state["paused_clarification"] check) — same reasoning as web_search just above: a short
     # answer to "which repo did you mean?" won't reliably set the reasoner's own
     # needs_github_search/needs_code_interpreter flags, so this routes deterministically
     # instead of leaving it to flags that were never about this reply in the first place.
@@ -1999,50 +2106,6 @@ def answer_weekday_pattern(analysis):
         "details": weekday
     }
 
-def insight_query_node(state: dict) -> dict:
-    question = state.get("original_question")
-    analysis = state.get("analysis_output", {})
-    classified = state.get("classified", {}).get("classified_tasks", {})
-    logs = state.get("classified", {}).get("classified_logs", [])
-    calendar = state.get("classified", {}).get("classified_calendar", [])
-
-    if not question:
-        return {
-            **state,
-            "relevance_grade": "conversational",
-            "content_to_format": "I didn't receive a question to analyze."
-        }
-
-    # 1. Interpret the question
-    intent = interpret_insight_question(question)
-
-    # 2. Run the query
-    answer = run_insight_query(
-        intent=intent,
-        analysis=analysis,
-        classified_tasks=classified,
-        classified_logs=logs,
-        classified_calendar=calendar
-    )
-
-    # 3. THE FIX: Inject the calculated answer as a high-priority "document"
-    doc = Document(
-        page_content=f"SYSTEM ANALYTICS REPORT:\n{answer['answer']}",
-        metadata={"source": "system_insight", "priority": True}
-    )
-
-    current_docs = state.get("documents", [])
-    current_docs.append(doc)
-
-    # 4. Return a NEW dictionary so LangGraph strictly registers the update.
-    # We set relevance_grade="yes" so app.py uses the permissive RAG prompt.
-    return {
-        **state,
-        "documents": current_docs,
-        "relevance_grade": "yes",
-        "content_to_format": answer["answer"]
-    }
-
 # ============================================================
 # SHARED REACT-LOOP INFRASTRUCTURE (Mongo/GitHub/web all fold into tool_agent_node below)
 # ============================================================
@@ -2152,30 +2215,15 @@ def _format_react_attempts(attempts: list) -> str:
 
 
 def _format_attempts_steps(attempts: list) -> str:
-    """Renders attempts as 'Step N — purpose / Result' blocks — used both in a completed
-    answer's footer and in a clarification pause message, so recovering attempts back out of
-    either one (see _recover_attempts_from_steps_text) works identically."""
+    """Renders attempts as 'Step N — purpose / Result' blocks for display — used both in a
+    completed answer's footer and in a clarification pause message. Purely a display renderer:
+    resuming a paused clarification reads attempts back from real checkpointed state
+    (state["paused_clarification"]), not by re-parsing this rendered text."""
     return "\n\n".join(
         f"**Step {i} — {a['purpose']}:**\n```\n{a['action_desc']}\n```\n"
         f"**Result:**\n```\n{_format_observation_for_footer(a['observation'])}\n```"
         for i, a in enumerate(attempts, 1)
     )
-
-
-_ATTEMPT_STEP_RE = re.compile(
-    r"\*\*Step \d+ — (.+?):\*\*\n```\n(.*?)\n```\n\*\*Result:\*\*\n```\n(.*?)\n```",
-    re.DOTALL,
-)
-
-
-def _recover_attempts_from_steps_text(content: str) -> list:
-    """Parses 'Step N — purpose / Result' blocks (see _format_attempts_steps) back into the
-    {purpose, action_desc, observation} shape run_react_loop works with, so a clarification
-    pause's attempts-so-far can seed the loop on resume instead of it starting from zero."""
-    return [
-        {"purpose": purpose, "action_desc": action_desc, "observation": observation}
-        for purpose, action_desc, observation in _ATTEMPT_STEP_RE.findall(content)
-    ]
 
 
 async def run_react_loop(
@@ -2511,20 +2559,21 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
         latest_message_content = state.get("messages", [])[-1].content.strip()
         msg = latest_message_content
 
-        # Resuming a paused clarification: the previous assistant message is the question it
-        # asked, and the one before that is the original request. Recombine them into one
-        # question for the loop and recover the attempts already made, so it continues instead
-        # of starting over — pending_action never survives between real turns (see classify_intent's
-        # card_marker comment above), so reconstructing from persisted messages is the only way.
-        all_messages = state.get("messages", [])
+        # Resuming a paused clarification: state["paused_clarification"] (real checkpointed
+        # state — the one field reset_transient_state deliberately leaves alone) carries the
+        # original question and the attempts already made, so the loop continues instead of
+        # starting over. Recombine into one question for the loop, then clear it immediately —
+        # it must not linger into the turn after this one.
         resumed_attempts: list = []
-        if len(all_messages) >= 2 and CLARIFICATION_CARD_MARKER in _content_of(all_messages[-2]):
-            resumed_attempts = _recover_attempts_from_steps_text(_content_of(all_messages[-2]))
-            original_question = _content_of(all_messages[-3]) if len(all_messages) >= 3 else msg
+        paused = state.get("paused_clarification")
+        if paused:
+            resumed_attempts = paused.get("attempts", [])
+            original_question = paused.get("original_question", msg)
             msg = (
                 f"{original_question}\n\n"
                 f"(You previously asked the user for clarification; they answered: \"{msg}\")"
             )
+            state["paused_clarification"] = None
 
         # Resolve the repo BEFORE folding in attached/pasted code — arbitrary pasted content
         # can contain its own "word/word"-shaped substrings that would otherwise hijack
@@ -2758,6 +2807,12 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 "generation": clarification_message,
                 "content_to_format": clarification_message,
                 "messages": new_messages,
+                # Real, checkpointed resume state — CLARIFICATION_CARD_MARKER in the rendered
+                # message above is now purely cosmetic (a heading users see), not part of how
+                # the next turn detects/recovers this pause; that's classify_intent reading this
+                # field directly, and reset_transient_state is the one place that deliberately
+                # never clears it.
+                "paused_clarification": {"original_question": msg, "attempts": e.attempts},
             }
 
         final_answer = loop_result["final_answer"]
@@ -3417,7 +3472,7 @@ def execute_write_node(state: dict) -> dict:
 # WORKFLOW ASSEMBLY & COMPILATION
 # ============================================================
 
-def create_workflow(vector_store, user_memory_vector_store=None):
+def create_workflow(vector_store, user_memory_vector_store=None, checkpointer=None):
     workflow = StateGraph(GraphState)
     async def retrieve_node_with_store(state):
         return await retrieve_node(state, vector_store)
@@ -3439,73 +3494,39 @@ def create_workflow(vector_store, user_memory_vector_store=None):
     workflow.add_node("summarizer_node", summarizer_node)
     workflow.add_node("formatter_node", formatter_node)
     workflow.add_node("paapp_node", paapp_node)
-    workflow.add_node("snapshot_node", data_snapshot_node)
-    workflow.add_node("classifier_node", activity_classifier_node)
-    workflow.add_node("pattern_node", pattern_detector_node)
-    workflow.add_node("trend_node", trend_analyzer_node)
-    workflow.add_node("insight_query_node", insight_query_node)
     workflow.add_node("tool_agent_node", tool_agent_node)
     workflow.add_node("pr_summary", pr_summarizer_node)
     workflow.add_node("propose_write_node", propose_write_node)
     workflow.add_node("execute_write_node", execute_write_node)
 
     workflow.add_edge(START, "coordinator_node")
-    workflow.add_conditional_edges(
-        "coordinator_node",
-        coordinator_router,  
-        {
-            "memory_save_node": "memory_save_node",
-            "memory_recall_node": "memory_recall_node",
-            "retrieve_node": "retrieve_node",
-            "rewrite_query_node": "rewrite_query_node",
-            "conversational_node": "conversational_node",
-            "generate_node": "generate_node",
-            "summarizer_node": "summarizer_node",
-            "formatter_node": "formatter_node",
-            "paapp_node": "paapp_node",
-            "insight": "snapshot_node",
-            "snapshot_node": "snapshot_node",
-            "classifier_node": "classifier_node",
-            "pattern_node": "pattern_node",
-            "trend_node": "trend_node",
-            "insight_query_node": "insight_query_node",
-            "tool_agent_node": "tool_agent_node",
-            "pr_summary": "pr_summary",
-            "propose_write_node": "propose_write_node",
-            "execute_write_node": "execute_write_node"
-        }
-    )
-    
-    workflow.add_edge("paapp_node", "formatter_node")
-    workflow.add_edge("memory_save_node", "formatter_node")
-    workflow.add_edge("memory_recall_node", "formatter_node")
-    workflow.add_edge("summarizer_node", "formatter_node")
+    workflow.add_conditional_edges("coordinator_node", coordinator_router, _PLAN_DESTINATIONS)
+
+    # Every plan-driven node re-enters the plan queue via plan_continue_router instead of a
+    # static edge to formatter_node — this is what makes a multi-agent plan (e.g.
+    # ["memory_save", "retriever"]) actually run every queued step instead of silently dropping
+    # everything after the first (see plan_continue_router's docstring for the history).
+    for plan_driven_node in (
+        "paapp_node", "memory_save_node", "memory_recall_node", "summarizer_node",
+        "tool_agent_node", "pr_summary", "propose_write_node", "execute_write_node",
+        "conversational_node",
+    ):
+        workflow.add_conditional_edges(plan_driven_node, plan_continue_router, _PLAN_DESTINATIONS)
+
     workflow.add_edge("formatter_node", "generate_node")
     workflow.add_edge("retrieve_node", "grade_documents_node")
     workflow.add_edge("rewrite_query_node", "retrieve_node")
-    workflow.add_edge("tool_agent_node", "formatter_node")
-    workflow.add_edge("pr_summary", "formatter_node")
-    workflow.add_edge("propose_write_node", "formatter_node")
-    workflow.add_edge("execute_write_node", "formatter_node")
-    # --- PARALLEL FAN-OUT FOR ANALYTICS ---
-    workflow.add_edge("snapshot_node", "classifier_node")
-    # LangGraph runs pattern_node and trend_node concurrently
-    workflow.add_edge("classifier_node", "pattern_node")
-    workflow.add_edge("classifier_node", "trend_node")
-    # Fan-in back to insight_query_node (waits for both to complete)
-    workflow.add_edge("pattern_node", "insight_query_node")
-    workflow.add_edge("trend_node", "insight_query_node")
-    
-    workflow.add_edge("insight_query_node", "formatter_node")
+
+    # route_after_grading_with_plan_continuation wraps route_after_grading (unchanged, still
+    # independently unit-tested) so a queued step after "retriever" in a multi-agent plan isn't
+    # silently dropped the same way it used to be for every other plan-driven node above — see
+    # its docstring. Also fixes the kb_open grounding gap: both non-loop outcomes now reach
+    # formatter_node (the only thing that sets voice_payload.source_type from rag_mode) instead
+    # of skipping straight to generate_node.
     workflow.add_conditional_edges(
         "grade_documents_node",
-        route_after_grading,
-        {
-            "generate_node": "generate_node",
-            "rewrite_query_node": "rewrite_query_node",
-            "fallback_empty": "generate_node"
-        }
+        route_after_grading_with_plan_continuation,
+        {**_PLAN_DESTINATIONS, "rewrite_query_node": "rewrite_query_node"},
     )
     workflow.add_edge("generate_node", END)
-    workflow.add_edge("conversational_node", "formatter_node")
-    return workflow.compile()
+    return workflow.compile(checkpointer=checkpointer)

@@ -9,6 +9,7 @@ langchain-core
 langchain-community
 langchain-google-genai
 langchain-mongodb
+langgraph-checkpoint-mongodb
 pymongo
 requests
 python-dotenv

@@ -59,7 +59,7 @@
   --bg-alt: #910000;    
   --bg-surface: #ffffff;     
   --bg-surface-hover: #2e2e36;
-  --border-color: #af2626;
+  --border-color: #7a0010;
   --ai-border-color: #ffffff; 
   --user-border-color: #910000;   
   --text-main: #e6e6e6;      
@@ -70,7 +70,7 @@
   --text: #ffffff;
 
   /* Component Overrides */
-  --bubble-user-bg: #910000;
+  --bubble-user-bg: #7a0010;
   --bubble-user-border: #7f1d1d;
   --bubble-user-text: #f3f4f6;
   --bubble-ai-bg: #0a0a0c;
@@ -78,7 +78,7 @@
   --bubble-ai-text: #e5e7eb;
   --filter-bg: #1c1111;
   --code-bg: #0a0a0c;       /* Matches the AI bubble surface instead of the default slate */
-  --code-border: var(--border-color);
+  --code-border: #0a0a0c;
   --hero-overlay: linear-gradient(rgba(10, 10, 12, 0.4), rgba(10, 10, 12, 0.85));
   --input-text: var(--text-main);
   --card-text: #e5e7eb;
@@ -192,7 +192,7 @@ body, html {
 }
 
 /* ==========================================================================
-   2. LANDING PAGE STYLES (Identity Gatekeeper)
+   2. LANDING PAGE STYLES (Identity Gatekeeper - Flipped Gradient)
    ========================================================================== */
 .landing-page {
   display: flex;
@@ -206,34 +206,75 @@ body, html {
   flex-direction: column;
   justify-content: center;
   padding: 10% 5%;
-  background-color: var(--bg-surface);
-  border-right: 1px solid var(--border-color);
+  /* Gradient starts dark slate on the far left and dissolves into pure white at the center seam */
+  background: linear-gradient(
+    90deg,
+    #0f172a 0%,
+    #1e293b 30%,
+    #475569 60%,
+    #e2e8f0 88%,
+    #ffffff 100%
+  );
+  border-right: none;
+  z-index: 2;
 }
 
 .landing-right {
   flex: 1.2;
-  background-size: cover;
-  background-position: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   position: relative;
+  background-color: #ffffff; /* Clean white backdrop to pop the logo */
+  overflow: hidden;
+  padding: 2rem 3rem;
 }
 
-/* Clean pastel overlay to anchor the landing image smoothly */
+/* Subtle ambient radial light around logo */
 .landing-right::before {
   content: '';
   position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background: linear-gradient(90deg, var(--bg-surface) 0%, rgba(219, 234, 254, 0.3) 100%);
+  inset: 0;
+  background: radial-gradient(circle at 50% 60%, rgba(59, 130, 246, 0.06) 0%, transparent 65%);
+  pointer-events: none;
 }
 
+.landing-hero-logo {
+  max-width: 78%;
+  max-height: 68%;
+  object-fit: contain;
+  z-index: 2;
+  margin-top: 3rem;
+  filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.08));
+  transition: transform 0.4s ease;
+}
+
+.landing-hero-logo:hover {
+  transform: translateY(-2px) scale(1.02);
+}
+
+/* Typography contrast updates for dark-to-light left panel */
 .landing-hero-text h2 {
   font-size: 2.2rem;
   letter-spacing: 0.5px;
   margin-bottom: 0.5rem;
-  color: var(--text-main);
+  color: #f8fafc;
+}
+
+.landing-hero-text h3 {
+  color: #cbd5e1;
+  font-size: 1.1rem;
+  margin-bottom: 0.25rem;
+}
+
+.landing-hero-text h4 {
+  color: #94a3b8;
+  font-size: 0.95rem;
+  font-weight: 400;
 }
 
 .landing-hero-text p {
-  color: #4b5563;
+  color: #cbd5e1;
   margin-bottom: 2.5rem;
   font-size: 1rem;
   line-height: 1.5;
@@ -269,7 +310,6 @@ body, html {
   cursor: not-allowed;
   box-shadow: none;
 }
-
 /* ==========================================================================
    3. SECURE PORTAL CORE LAYOUT (Chat Interface)
    ========================================================================== */
@@ -363,54 +403,57 @@ body, html {
   color: var(--accent-danger);
 }
 
-/* Banner Frame (Locked perfectly at 45% position) */
+/* Hero Banner Frame */
 .hero-banner {
   height: 110px;
-  background-size: cover;
-  background-position: center 45%; 
   position: relative;
   display: flex;
   align-items: center;
-  padding: 0 1.5rem;
-  border-bottom: 1px solid var(--border-color);
-  box-shadow: var(--light-shadow);
-  /* transition: all 0.9 ease; */
-  --hero-bg: none;
-  transition: filter 0.4s ease;
-}
-
-.theme-shadow .hero-banner {
-  box-shadow: var(--shadow);
-}
-
-/* Soft white tint shield layer to keep text highly legible */
-.hero-banner::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background: linear-gradient(rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.75));
+  gap: 1.25rem;
+  padding: 0 1.75rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  transition: background 0.4s ease, filter 0.3s ease;
   z-index: 1;
 }
 
+/* Blue Gradient (Sonic / Light Theme) */
+.hero-banner.theme-sonic,
+.theme-sonic .hero-banner {
+  background: linear-gradient(135deg, #0a1128 0%, #1c2541 45%, #2a4365 100%);
+}
+
+/* Red Gradient (Shadow / Dark Theme) */
+.hero-banner.theme-shadow,
+.theme-shadow .hero-banner {
+  background: linear-gradient(135deg, #09090b 0%, #3a0007 50%, #7a0010 100%);
+}
+
+/* Subtle background watermark using the swoosh symbol */
 .hero-banner::after {
   content: '';
   position: absolute;
-  inset: 0;
-  /* background: linear-gradient(rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.75)); */
-  background-size: cover;
-  background-position: center 45%;
+  right: -30px;
+  top: -40%;
+  width: 280px;
+  height: 180%;
+  background-image: var(--hero-bg, url('./assets/white_swoosh.png'));
   background-repeat: no-repeat;
-  background-image: var(--hero-bg); /* pulls the inline backgroundImage */
-  transform: scale(1);
-  transition: transform 0.6s ease;
+  background-position: center;
+  background-size: contain;
+  opacity: 0.08;
+  pointer-events: none;
   z-index: 1;
 }
 
-/* Hover zoom */
-.hero-banner:hover {
-  /* box-shadow: var(--shadow-hover); */
-  transition: all 0.2 ease;
-  filter: brightness(1.07);
+/* Logo icon positioning & glow */
+.hero-logo-icon {
+  height: 52px;
+  width: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.3));
+  z-index: 2;
 }
 
 .banner-context {
@@ -419,23 +462,35 @@ body, html {
 }
 
 .banner-context h3 {
-  font-size: 1.4rem;
+  font-size: 1.35rem;
   font-weight: 700;
   letter-spacing: 0.5px;
-  margin-bottom: 0.25rem;
-  color: var(--text-main);
+  margin: 0 0 0.15rem 0;
+  color: #ffffff;
+}
+
+.banner-context h4 {
+  font-size: 0.85rem;
+  font-weight: 400;
+  margin: 0 0 0.4rem 0;
+  color: rgba(255, 255, 255, 0.75);
 }
 
 .badge {
-  background: rgba(16, 185, 129, 0.1);
-  color: var(--accent-success);
-  border: 1px solid rgba(16, 185, 129, 0.2);
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
   padding: 3px 10px;
   border-radius: 4px;
   font-size: 0.75rem;
   display: inline-block;
   font-family: monospace;
   font-weight: 600;
+}
+
+/* Hover feedback */
+.hero-banner:hover {
+  filter: brightness(1.08);
 }
 
 /* Main Body Framework */
@@ -620,9 +675,9 @@ div:has(.portal-body) {
 
 .theme-shadow .message-bubble.user {
   align-self: flex-end;
-  background: #910000;       /* Very soft, clean light blue bubble */
+  background: #7a0010;       /* Very soft, clean light blue bubble */
   color: var(--text);   /* Easy reading deep blue text */
-  border: 1px solid #910000;
+  border: 1px solid #7a0010;
   box-shadow: var(--shadow);
 }
 
@@ -671,7 +726,7 @@ div:has(.portal-body) {
 
 
 .theme-shadow .query-card {
-  background: #910000;                  
+  background: #7a0010 ;                  
   border: 1px solid var(--border-color);
   filter: var(--loader-glow);         
 }
@@ -895,13 +950,13 @@ div:has(.portal-body) {
 
 .theme-shadow .circle-icon-button:hover:not(:disabled) {
   transform: translateY(-2px);
-  background: var(--accent-primary);
+  background: #7a0010;
   box-shadow: var(--shadow-hover);
 }
 
 .theme-shadow .circle-icon-buttonactive:not(:disabled) {
   transform: translateY(2px);
-  background: var(--accent-primary);
+  background: #7a0010;
   box-shadow: var(--shadow-hover);
 }
 .theme-shadow .circle-icon-button:hover {
@@ -1290,27 +1345,72 @@ select:not(:-internal-list-box):not([multiple]) option {
    ========================================================================== */
 
 
-/* Container alignment for the loader */
+/* Custom Sonic Graph Loader Container */
 .sonic-loader-container {
   display: flex;
+  flex-direction: row; /* Align loader and status text horizontally */
   align-items: center;
-  gap: 1rem;
-  border: none !important; 
-  background: transparent !important;
-  padding: 1rem !important;
+  justify-content: flex-start; /* Push everything to the left */
+  gap: 16px;
+  margin: 16px 0 16px 12px; /* Margin on the left matches the AI avatar/bubble alignment */
+  width: 100%;
 }
 
-/* 🌀 The GIF Sprite Controller */
-.sonic-spin-gif {
-  width: 32px;
+.sonic-ring-loader {
+  width: 32px; /* Slightly tighter profile to match text height */
   height: 32px;
-  object-fit: contain;
-  
-  /* 💡 PRO-TIP: Keeps old-school 16-bit pixels razor-sharp instead of blurry */
-  image-rendering: pixelated; 
-  
-  /* Optional: Adds a subtle blue chaos energy glow behind the sprite */
-  /* filter: drop-shadow(0 0 6px rgba(59, 130, 246, 0.6)); */
+  border: 4px solid rgba(255, 204, 0, 0.15);
+  border-top: 4px solid #ffcc00;
+  border-radius: 50%;
+  animation: sonic-spin 0.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  box-shadow: 0 0 12px rgba(255, 204, 0, 0.5);
+  position: relative;
+  flex-shrink: 0; /* Prevent the ring from squeezing */
+}
+
+/* Inner pulsing core */
+.sonic-ring-loader::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  right: 4px;
+  bottom: 4px;
+  border-radius: 50%;
+  background: rgba(255, 204, 0, 0.2);
+  animation: sonic-pulse 1.6s ease-in-out infinite;
+}
+
+/* Text status styling next to the loader */
+.agent-status-text {
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Shadow Engine Theme Override */
+.theme-shadow .sonic-ring-loader {
+  border: 4px solid rgba(220, 38, 38, 0.15); /* Faint red track */
+  border-top: 4px solid #dc2626; /* Crimson spinning arc */
+  box-shadow: 0 0 12px rgba(220, 38, 38, 0.6);
+}
+
+.theme-shadow .sonic-ring-loader::after {
+  background: rgba(220, 38, 38, 0.25);
+}
+
+/* Animations */
+@keyframes sonic-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes sonic-pulse {
+  0%, 100% { transform: scale(0.8); opacity: 0.5; }
+  50% { transform: scale(1.1); opacity: 1; }
 }
 
 /* Keeps the text pulsing while waiting */
