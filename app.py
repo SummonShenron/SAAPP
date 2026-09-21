@@ -581,6 +581,14 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                         yield f"data: {json.dumps({'event': 'node_progress', 'node': data.get('node', 'system'), 'title': data.get('title', 'Processing...'), 'detail': data.get('detail', '')})}\n\n"
                         await asyncio.sleep(0.01)
 
+                    # A view-only browserless.io LiveURL, emitted once tool_agent_node's browser_*
+                    # actions actually open a session — lets the frontend embed a real-time watch
+                    # link in the in-progress chat bubble (see backend/services/browser_tool.py).
+                    if kind == "on_custom_event" and event.get("name") == "browser_live_view":
+                        data = event.get("data", {})
+                        yield f"data: {json.dumps({'event': 'browser_live_view', 'url': data.get('url', '')})}\n\n"
+                        await asyncio.sleep(0.01)
+
                     # Catch Final State when the graph finishes (Look for the final dictionary output)
                     if kind == "on_chain_end":
                         output = event.get("data", {}).get("output")

@@ -48,6 +48,9 @@ from backend.state.graph_state import GraphState, route_after_grading
 from langgraph.graph import StateGraph, START, END
 from backend.utils.db_utils import get_db
 from backend.services.python_sandbox import run_python_sandboxed, SAFE_IMPORT_ALLOWLIST
+from backend.services.browser_tool import (
+    BrowserSession, browser_navigate, browser_read_text, browser_click, browser_type, browser_screenshot,
+)
 from backend.utils.normalize_utils import ensure_str
 
 load_dotenv()
@@ -2651,6 +2654,22 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             "enumerate": enumerate, "zip": zip
         }
 
+        # One CDP session per tool_agent_node call, lazily connected on the first browser_*
+        # action and reused by every subsequent one this turn — the finally block around
+        # run_react_loop below closes it exactly once when the loop ends, on every exit path.
+        # "live_view_emitted" guards the browser_live_view custom event below so it only ever
+        # fires once per turn, the moment a LiveURL first becomes available.
+        browser_session_holder: dict = {"session": None, "live_view_emitted": False}
+
+        async def _get_browser_session() -> BrowserSession:
+            if browser_session_holder["session"] is None:
+                ws_endpoint = os.getenv("BROWSERLESS_WS_ENDPOINT")
+                if not ws_endpoint:
+                    raise RuntimeError("BROWSERLESS_WS_ENDPOINT is not configured")
+                timeout_ms = int(os.getenv("BROWSER_TOOL_TIMEOUT_SECONDS", "20")) * 1000
+                browser_session_holder["session"] = BrowserSession(ws_endpoint, timeout_ms)
+            return browser_session_holder["session"]
+
         def _run_mongo_code(code: str):
             local_scope = {"db": db, "username": username, "result": None}
             exec(code, {"__builtins__": exec_builtins}, local_scope)
@@ -2743,6 +2762,19 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             "- diff_branches — args: base (branch name), head (branch name)",
             "- list_commits — args: branch (branch name), limit (max number of commits, integer)",
             "- web_search — args: query (the exact search query string to run)",
+            "- browser_navigate — args: url (a fully-qualified http(s) URL); loads it in a real "
+            "headless browser and returns its title/final URL — call this before any other "
+            "browser_* action",
+            "- browser_read_text — no args; returns the visible text of the CURRENTLY loaded "
+            "page — the cheap way to see what a live page actually says; prefer this over "
+            "browser_screenshot unless the visual appearance itself matters",
+            "- browser_click — args: text (the visible label of the button/link to click) on "
+            "the CURRENTLY loaded page — use browser_read_text first if unsure what's clickable",
+            "- browser_type — args: label (label or placeholder identifying the input), value "
+            "(text to type into it), submit (true/false — press Enter afterward)",
+            "- browser_screenshot — no args; describes what the CURRENTLY loaded page visually "
+            "looks like (layout, colors, prominent UI) — slower than browser_read_text (one "
+            "extra AI vision call), use only when appearance itself is what's being asked about",
             "- run_python — args: code (a small, self-contained Python snippet; print(...) "
             "whatever you need to see — no filesystem, network, or subprocess access is "
             "available, and only these stdlib modules can be imported: "
@@ -2771,6 +2803,29 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 search = DuckDuckGoSearchAPIWrapper()
                 results = await asyncio.to_thread(search.results, query, max_results=3)
                 return [r for r in results if isinstance(r, dict)] if results else []
+            if tool_action in {
+                "browser_navigate", "browser_read_text", "browser_click", "browser_type", "browser_screenshot"
+            }:
+                try:
+                    session = await _get_browser_session()
+                except RuntimeError as e:
+                    return f"ERROR: {e}"
+                if tool_action == "browser_navigate":
+                    result = await browser_navigate(session, args.get("url"))
+                    # Fires once, the moment a LiveURL first becomes available — lets the
+                    # frontend embed a real-time (view-only) watch link in the chat bubble,
+                    # via the exact same custom-event pipe trace_detail already uses.
+                    if session.live_url and not browser_session_holder["live_view_emitted"]:
+                        browser_session_holder["live_view_emitted"] = True
+                        await safe_emit_event("browser_live_view", {"url": session.live_url})
+                    return result
+                if tool_action == "browser_read_text":
+                    return await browser_read_text(session)
+                if tool_action == "browser_click":
+                    return await browser_click(session, args.get("text"))
+                if tool_action == "browser_type":
+                    return await browser_type(session, args.get("label"), args.get("value"), bool(args.get("submit")))
+                return await browser_screenshot(session, lite_llm)
             if tool_action == "run_python":
                 # run_python_sandboxed always returns {"output", "error"} and never raises —
                 # normalized to this loop's own "ERROR: ..." string convention (used by every
@@ -2797,57 +2852,72 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             return await asyncio.to_thread(_dispatch_github)
 
         deep_thinking = bool(state.get("deep_thinking"))
+        # Outer try/finally guarantees the browser session (if any browser_* action opened one
+        # this turn) is closed exactly once, regardless of which of the three exit paths below
+        # runs — normal completion falls through to the finally before continuing on to build
+        # final_answer; both exception handlers return from inside the inner try/except, and the
+        # finally still runs before either return completes.
         try:
-            loop_result = await run_react_loop(
-                question=msg,
-                schema=schema,
-                prompt_template=prompt_template,
-                act=_act,
-                is_unsafe=_is_unsafe,
-                max_iterations=TOOL_AGENT_MAX_ITERATIONS_DEEP if deep_thinking else TOOL_AGENT_MAX_ITERATIONS,
-                node_name="tool_agent_node",
-                initial_attempts=resumed_attempts,
-                max_retry_nudges=TOOL_AGENT_MAX_RETRY_NUDGES_DEEP if deep_thinking else TOOL_AGENT_MAX_RETRY_NUDGES,
-                llm=lite_llm_deep if deep_thinking else lite_llm,
-            )
-        except _UnsafeActionRequested as e:
-            drafted_code = (e.decision.get("args") or {}).get("code", "") or ""
-            purpose = e.decision.get("purpose", "Database query")
-            summary_line = f"Ready to run this database operation:\n```python\n{drafted_code}\n```\n**Purpose:** {purpose}"
-            approval_message = (
-                "**Approval Required**\n\n"
-                f"{summary_line}\n\n"
-                "*Please Approve, Modify parameters, or Reject this action.*"
-            )
-            new_messages = list(state.get("messages", [])) + [AIMessage(content=approval_message)]
-            return {
-                **state,
-                "pending_action": {"action_type": "run_mongo_write", "details": {"code": drafted_code, "purpose": purpose}},
-                "relevance_grade": "hitl_approval_required",
-                "generation": approval_message,
-                "content_to_format": approval_message,
-                "messages": new_messages,
-            }
-        except _ClarificationNeeded as e:
-            steps_so_far = _format_attempts_steps(e.attempts)
-            clarification_message = (
-                f"**{CLARIFICATION_CARD_MARKER}:**\n\n{e.question}"
-                + (f"\n\n**What I've checked so far:**\n\n{steps_so_far}" if steps_so_far else "")
-            )
-            new_messages = list(state.get("messages", [])) + [AIMessage(content=clarification_message)]
-            return {
-                **state,
-                "relevance_grade": "needs_clarification",
-                "generation": clarification_message,
-                "content_to_format": clarification_message,
-                "messages": new_messages,
-                # Real, checkpointed resume state — CLARIFICATION_CARD_MARKER in the rendered
-                # message above is now purely cosmetic (a heading users see), not part of how
-                # the next turn detects/recovers this pause; that's classify_intent reading this
-                # field directly, and reset_transient_state is the one place that deliberately
-                # never clears it.
-                "paused_clarification": {"original_question": msg, "attempts": e.attempts},
-            }
+            try:
+                loop_result = await run_react_loop(
+                    question=msg,
+                    schema=schema,
+                    prompt_template=prompt_template,
+                    act=_act,
+                    is_unsafe=_is_unsafe,
+                    max_iterations=TOOL_AGENT_MAX_ITERATIONS_DEEP if deep_thinking else TOOL_AGENT_MAX_ITERATIONS,
+                    node_name="tool_agent_node",
+                    initial_attempts=resumed_attempts,
+                    max_retry_nudges=TOOL_AGENT_MAX_RETRY_NUDGES_DEEP if deep_thinking else TOOL_AGENT_MAX_RETRY_NUDGES,
+                    llm=lite_llm_deep if deep_thinking else lite_llm,
+                )
+            except _UnsafeActionRequested as e:
+                drafted_code = (e.decision.get("args") or {}).get("code", "") or ""
+                purpose = e.decision.get("purpose", "Database query")
+                summary_line = f"Ready to run this database operation:\n```python\n{drafted_code}\n```\n**Purpose:** {purpose}"
+                approval_message = (
+                    "**Approval Required**\n\n"
+                    f"{summary_line}\n\n"
+                    "*Please Approve, Modify parameters, or Reject this action.*"
+                )
+                new_messages = list(state.get("messages", [])) + [AIMessage(content=approval_message)]
+                return {
+                    **state,
+                    "pending_action": {"action_type": "run_mongo_write", "details": {"code": drafted_code, "purpose": purpose}},
+                    "relevance_grade": "hitl_approval_required",
+                    "generation": approval_message,
+                    "content_to_format": approval_message,
+                    "messages": new_messages,
+                }
+            except _ClarificationNeeded as e:
+                steps_so_far = _format_attempts_steps(e.attempts)
+                clarification_message = (
+                    f"**{CLARIFICATION_CARD_MARKER}:**\n\n{e.question}"
+                    + (f"\n\n**What I've checked so far:**\n\n{steps_so_far}" if steps_so_far else "")
+                )
+                new_messages = list(state.get("messages", [])) + [AIMessage(content=clarification_message)]
+                return {
+                    **state,
+                    "relevance_grade": "needs_clarification",
+                    "generation": clarification_message,
+                    "content_to_format": clarification_message,
+                    "messages": new_messages,
+                    # Real, checkpointed resume state — CLARIFICATION_CARD_MARKER in the rendered
+                    # message above is now purely cosmetic (a heading users see), not part of how
+                    # the next turn detects/recovers this pause; that's classify_intent reading this
+                    # field directly, and reset_transient_state is the one place that deliberately
+                    # never clears it. NOTE: a live browser session cannot be checkpointed here —
+                    # if this pause resumes, tool_agent_node reconnects a fresh session rather
+                    # than resuming the old page, since the finally below already closed it.
+                    "paused_clarification": {"original_question": msg, "attempts": e.attempts},
+                }
+        finally:
+            browser_session = browser_session_holder.get("session")
+            if browser_session is not None:
+                try:
+                    await browser_session.close()
+                except Exception:
+                    logger.exception("[tool_agent_node] failed to close browser session cleanly.")
 
         final_answer = loop_result["final_answer"]
         attempts = loop_result["attempts"]

@@ -599,3 +599,217 @@ async def test_attached_code_reaches_the_prompt(monkeypatch):
     await aw.tool_agent_node(_state("does this already exist in the repo?", documents=[attachment]))
 
     assert any("totally_unique_marker_function" in p for p in captured_prompts)
+
+
+# ---------------------------------------------------------------------------
+# browser_* actions — no admin gate, one session per turn, always closed
+# ---------------------------------------------------------------------------
+
+class _FakeBrowserSession:
+    """Stands in for backend.services.browser_tool.BrowserSession — these tests only care that
+    tool_agent_node constructs/reuses/closes exactly one of these per call; the real session's
+    own behavior is covered by test_browser_tool.py."""
+    instances = []
+
+    def __init__(self, ws_endpoint, action_timeout_ms):
+        self.ws_endpoint = ws_endpoint
+        self.action_timeout_ms = action_timeout_ms
+        self.live_url = None  # matches BrowserSession's own default; set per-test when needed
+        self.close = AsyncMock()
+        _FakeBrowserSession.instances.append(self)
+
+
+@run_async
+async def test_browser_actions_available_to_everyone(monkeypatch):
+    """Unlike run_mongo_query, there's no is_admin gate on the browser_* actions — a guest
+    should see them in the menu too."""
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("BROWSERLESS_WS_ENDPOINT", "wss://fake-endpoint")
+    _setup_github_repo(monkeypatch)
+
+    captured_prompts = []
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return _llm_response(action="final", answer="No conclusive answer.")
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("what's on the SAAPP homepage right now?"))
+
+    assert any("browser_navigate" in p and "browser_screenshot" in p for p in captured_prompts)
+
+
+@run_async
+async def test_browser_navigate_dispatches_and_returns_observation(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("BROWSERLESS_WS_ENDPOINT", "wss://fake-endpoint")
+    _FakeBrowserSession.instances = []
+    monkeypatch.setattr(aw, "BrowserSession", _FakeBrowserSession)
+    _setup_github_repo(monkeypatch)
+
+    fake_navigate = AsyncMock(return_value="Navigated to https://sonicassistant.com/ (status 200). Page title: 'Sonic Assistant'")
+    monkeypatch.setattr(aw, "browser_navigate", fake_navigate)
+
+    responses = [
+        _llm_response(action="query", purpose="Load the homepage", tool_action="browser_navigate", args={"url": "https://sonicassistant.com"}),
+        _llm_response(action="final", answer="The homepage loaded fine.", show_work=True),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("is our homepage up?"))
+
+    fake_navigate.assert_awaited_once()
+    assert fake_navigate.call_args.args[1] == "https://sonicassistant.com"
+    assert "Sonic Assistant" in result["content_to_format"]
+
+
+@run_async
+async def test_browser_navigate_emits_live_view_event_once(monkeypatch):
+    """The moment a LiveURL becomes available, tool_agent_node should emit exactly one
+    browser_live_view custom event (app.py streams it to the frontend as its own SSE event,
+    separate from trace_detail) — and never a second time even if browser_navigate runs again
+    later in the same turn (e.g. navigating to a second page)."""
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("BROWSERLESS_WS_ENDPOINT", "wss://fake-endpoint")
+    _FakeBrowserSession.instances = []
+    monkeypatch.setattr(aw, "BrowserSession", _FakeBrowserSession)
+    _setup_github_repo(monkeypatch)
+
+    live_url = "https://production-sfo.browserless.io/live/index.html?i=xyz"
+
+    async def fake_navigate(session, url):
+        session.live_url = live_url  # mirrors what the real BrowserSession sets on first connect
+        return f"Navigated to {url}."
+
+    monkeypatch.setattr(aw, "browser_navigate", fake_navigate)
+    fake_emit = AsyncMock()
+    monkeypatch.setattr(aw, "safe_emit_event", fake_emit)
+
+    responses = [
+        _llm_response(action="query", purpose="Load page one", tool_action="browser_navigate", args={"url": "https://example.com/one"}),
+        _llm_response(action="query", purpose="Load page two", tool_action="browser_navigate", args={"url": "https://example.com/two"}),
+        _llm_response(action="final", answer="Checked both pages.", show_work=False),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    await aw.tool_agent_node(_state("check those two pages"))
+
+    live_view_calls = [c for c in fake_emit.call_args_list if c.args[0] == "browser_live_view"]
+    assert len(live_view_calls) == 1
+    assert live_view_calls[0].args[1] == {"url": live_url}
+
+
+@run_async
+async def test_browser_session_reused_across_two_steps(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("BROWSERLESS_WS_ENDPOINT", "wss://fake-endpoint")
+    _FakeBrowserSession.instances = []
+    monkeypatch.setattr(aw, "BrowserSession", _FakeBrowserSession)
+    _setup_github_repo(monkeypatch)
+    monkeypatch.setattr(aw, "browser_navigate", AsyncMock(return_value="Navigated."))
+    monkeypatch.setattr(aw, "browser_click", AsyncMock(return_value="Clicked."))
+
+    responses = [
+        _llm_response(action="query", purpose="Load the page", tool_action="browser_navigate", args={"url": "https://example.com"}),
+        _llm_response(action="query", purpose="Click sign in", tool_action="browser_click", args={"text": "Sign in"}),
+        _llm_response(action="final", answer="Done.", show_work=False),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    await aw.tool_agent_node(_state("go sign in"))
+
+    # _get_browser_session memoizes across steps within the same tool_agent_node call — only
+    # one BrowserSession should ever be constructed for these two browser_* steps.
+    assert len(_FakeBrowserSession.instances) == 1
+
+
+@run_async
+async def test_browser_session_closed_after_normal_completion(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("BROWSERLESS_WS_ENDPOINT", "wss://fake-endpoint")
+    _FakeBrowserSession.instances = []
+    monkeypatch.setattr(aw, "BrowserSession", _FakeBrowserSession)
+    _setup_github_repo(monkeypatch)
+    monkeypatch.setattr(aw, "browser_navigate", AsyncMock(return_value="Navigated."))
+
+    responses = [
+        _llm_response(action="query", purpose="Load the page", tool_action="browser_navigate", args={"url": "https://example.com"}),
+        _llm_response(action="final", answer="Done.", show_work=False),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    await aw.tool_agent_node(_state("go check example.com"))
+
+    assert len(_FakeBrowserSession.instances) == 1
+    _FakeBrowserSession.instances[0].close.assert_awaited_once()
+
+
+@run_async
+async def test_browser_session_closed_after_clarification_pause(monkeypatch):
+    """The finally around run_react_loop must fire on every exit path, not just the happy one —
+    a live CDP session can't be checkpointed into paused_clarification, so it has to be closed
+    here even though the turn is pausing rather than finishing."""
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("BROWSERLESS_WS_ENDPOINT", "wss://fake-endpoint")
+    _FakeBrowserSession.instances = []
+    monkeypatch.setattr(aw, "BrowserSession", _FakeBrowserSession)
+    _setup_github_repo(monkeypatch)
+    monkeypatch.setattr(aw, "browser_navigate", AsyncMock(return_value="Navigated."))
+
+    responses = [
+        _llm_response(action="query", purpose="Load the page", tool_action="browser_navigate", args={"url": "https://example.com"}),
+        _llm_response(action="clarify", question="Which page on the site did you mean?"),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("check the site"))
+
+    assert result["relevance_grade"] == "needs_clarification"
+    assert len(_FakeBrowserSession.instances) == 1
+    _FakeBrowserSession.instances[0].close.assert_awaited_once()
+
+
+@run_async
+async def test_browser_navigate_missing_ws_endpoint_returns_error_observation(monkeypatch):
+    """A missing BROWSERLESS_WS_ENDPOINT must surface as an honest ERROR observation the loop
+    can react to, not a raised exception that crashes the turn."""
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.delenv("BROWSERLESS_WS_ENDPOINT", raising=False)
+    _setup_github_repo(monkeypatch)
+
+    responses = [
+        _llm_response(action="query", purpose="Load the page", tool_action="browser_navigate", args={"url": "https://example.com"}),
+        _llm_response(action="final", answer="Couldn't check the live site.", show_work=True),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("check the site"))
+
+    assert "ERROR" in result["content_to_format"]
+    assert "BROWSERLESS_WS_ENDPOINT" in result["content_to_format"]
+
+
+@run_async
+async def test_browser_screenshot_uses_lite_llm(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("BROWSERLESS_WS_ENDPOINT", "wss://fake-endpoint")
+    _FakeBrowserSession.instances = []
+    monkeypatch.setattr(aw, "BrowserSession", _FakeBrowserSession)
+    _setup_github_repo(monkeypatch)
+
+    fake_screenshot = AsyncMock(return_value="URL: https://example.com/\nA plain page.")
+    monkeypatch.setattr(aw, "browser_screenshot", fake_screenshot)
+    monkeypatch.setattr(aw, "browser_navigate", AsyncMock(return_value="Navigated."))
+
+    responses = [
+        _llm_response(action="query", purpose="Load the page", tool_action="browser_navigate", args={"url": "https://example.com"}),
+        _llm_response(action="query", purpose="See what it looks like", tool_action="browser_screenshot", args={}),
+        _llm_response(action="final", answer="It's a plain page.", show_work=False),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    await aw.tool_agent_node(_state("what does example.com look like?"))
+
+    fake_screenshot.assert_awaited_once()
+    assert fake_screenshot.call_args.args[1] is aw.lite_llm

@@ -32,9 +32,25 @@ ddgs
 sentry-sdk[fastapi]
 pytest
 wasmtime>=27.0.0
+# Playwright's Python package only — no local Chromium/Firefox/WebKit binaries are installed
+# (would need `playwright install`, infeasible on Render's buildpack runtime, no Dockerfile in
+# this repo). Every browser_* action (backend/services/browser_tool.py) connects to a remote,
+# already-running browser via connect_over_cdp() against browserless.io, so the pip package
+# alone is sufficient.
+playwright>=1.47,<2.0
 # errAgent client SDK (replaces the old hand-copied backend/logging/erragent_handler.py).
 # Installed from GitHub, not a local path — a relative "-e ../errAgent/sdk" only resolves on
 # a machine where errAgent happens to be checked out as a sibling directory; it would fail
 # during a Render (or any CI) build, which checks out this repo in isolation. Once erragent-sdk
 # is published to PyPI, switch this to a plain "erragent-sdk" version pin instead.
-git+https://github.com/SummonShenron/errAgent.git@sdk-v0.1.0#subdirectory=sdk
+# Pinned to v0.4.1, not the original v0.1.0: v0.1.0 predates the "erragent dev"/"erragent serve"
+# local daemon entirely (added in errAgent commit 2087d59), yet its own entry_points.txt already
+# points the `erragent` console script at erragent.local.cli:main — so that command has never
+# actually been importable when installed at v0.1.0. The "erragent dev" subcommand specifically
+# (used by start_all.ps1 to run the daemon + this app together) wasn't added until v0.4.0, hence
+# v0.4.1 (latest at time of writing) rather than an earlier daemon-only tag. Diffed v0.1.0..v0.4.1
+# on every core client file directly (client.py/context.py/handler.py/middleware.py/config.py/
+# __init__.py): the only change is config.py/__init__.py now defaulting ERRAGENT_LOCAL_ONLY to
+# true whenever ERRAGENT_LOCAL_URL is set (the local daemon already forwards to the cloud itself,
+# so this just stops local-dev errors from double-reporting) — no signature/API changes anywhere.
+git+https://github.com/SummonShenron/errAgent.git@sdk-v0.4.1#subdirectory=sdk

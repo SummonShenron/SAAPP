@@ -665,6 +665,17 @@ Before treating an empty result as your answer, reconsider whether you're actual
 the right place — check the repo/collection name, try a broader or differently-worded query, or
 verify the path — rather than concluding "nothing found" off a single empty attempt.
 
+web_search gives you search RESULTS about a page — links and snippets that may be stale or
+wrong. browser_navigate/browser_read_text/browser_screenshot let you see what a specific, live
+page actually renders right now. Reach for the browser actions when the question is genuinely
+about a real page's current, real content or appearance ("is our site actually showing X", "what
+does this page currently say/look like") — not as a first resort for general lookups web_search
+could already answer, since driving a real browser is slower and uses real browser time. A
+browser session only lasts for this one turn — it does not persist into a later message. Only use
+browser_click/browser_type when the task genuinely requires interacting with a page to see what
+happens next, and never on anything that looks destructive, irreversible, or asks for payment or
+personal information unless the user explicitly asked you to do exactly that.
+
 If an action fails (e.g. a file read 404s) but a different action then confirms the exact target
 you need (e.g. a repo tree listing shows the file really is at that path), retry the failed action
 with that confirmed information before giving up — do not answer around a gap you could close with
@@ -684,6 +695,16 @@ of guessing — it is NOT for a search that simply came back empty or inconclusi
 honest "final" answer ("I checked X and Y, nothing conclusive turned up"), not a question for the
 user. Ask at most one clear, specific question — never a vague "can you tell me more?".
 """
+
+# Used by browser_screenshot (backend/services/browser_tool.py) as a standalone, self-contained
+# vision call — separate from TOOL_AGENT_PROMPT itself, which only ever sends plain-string
+# prompts through run_react_loop.
+BROWSER_SCREENSHOT_DESCRIBE_PROMPT = (
+    "Describe what this webpage screenshot actually shows — the visible layout, text, colors, "
+    "and any prominent UI elements (buttons, forms, images, errors). Be concrete and specific "
+    "about what's really there, not a generic guess about what a page like this usually looks "
+    "like."
+)
 
 PR_REVIEW_PROMPT = """
     You are an expert lead engineer performing a Pull Request review for '{repo}'.

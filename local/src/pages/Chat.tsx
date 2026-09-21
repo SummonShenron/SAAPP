@@ -24,6 +24,7 @@ interface Message {
   text: string;
   feedback?: 'like' | 'dislike' | null;
   images?: MessageImage[];
+  liveBrowserUrl?: string; // view-only browserless.io LiveURL — see browser_live_view handling
 }
 
 const IMAGE_EXTENSION_MIME: Record<string, string> = {
@@ -199,6 +200,17 @@ const ChatMessageList = React.memo(function ChatMessageList({
                       <AttachmentImage key={idx} fileId={img.fileId} filename={img.filename} />
                     ) : null
                   )}
+                </div>
+              )}
+              {msg.liveBrowserUrl && (
+                <div className="message-live-browser">
+                  <div className="message-live-browser-label">🔴 Watching live — view only</div>
+                  <iframe
+                    src={msg.liveBrowserUrl}
+                    title="Live browser session"
+                    className="message-live-browser-frame"
+                    sandbox="allow-scripts allow-same-origin"
+                  />
                 </div>
               )}
               <div className="message-text">
@@ -1034,6 +1046,18 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
                 if (!isProcessingQueue.current) {
                   processNodeQueue();
                 }
+              }
+              if (payload.event === 'browser_live_view' && payload.url) {
+                // Attaches to the in-progress AI bubble, same target the 'token' handler below
+                // appends streamed text to — the embed rides along with that same message.
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const lastIndex = updated.length - 1;
+                  if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
+                    updated[lastIndex] = { ...updated[lastIndex], liveBrowserUrl: payload.url };
+                  }
+                  return updated;
+                });
               }
               if (payload.event === 'token') {
                 if (!hasStreamedRef.current) {
