@@ -456,6 +456,12 @@ body, html {
   z-index: 2;
 }
 
+@media (max-width: 768px) {
+  .hero-logo-icon {
+    display: none;
+  }
+}
+
 .banner-context {
   position: relative;
   z-index: 2;
