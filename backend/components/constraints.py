@@ -415,6 +415,9 @@ CLASSIFICATION RULES:
     - This is a request to look up and display any matching image already stored in the knowledge base — never treat it as a request to generate a brand-new image, even if no prior image-capability conversation occurred.
 - IMPORTANT DISAMBIGUATION FOR PASTED ERRORS/STACK TRACES:
     - If the user pastes an error message, stack trace, or traceback and is asking for help fixing it, set "needs_github_search": true (to check the actual repo for context) AND "needs_web_search": true (in case it's a known issue with a documented fix) — both together, not just one.
+- IMPORTANT DISAMBIGUATION FOR "WHAT WOULD THE CODE LOOK LIKE" / "SHOW ME THE CODE FOR THAT":
+    - If the user asks to see, write, or continue drafting code for something just discussed that touches this project's actual files, functions, or architecture (e.g. "what would the agent_workflow code look like", "show me the code for that node", "how would you implement this in X"), set "needs_github_search": true — even though it reads as a continuation of an earlier turn's conversation, not a brand-new question.
+    - This is NOT satisfied by an earlier turn in this same conversation having already looked at the repo — a prior investigation may not have covered the exact function/file this specific code now needs to reference correctly, and a real function's name or signature can only be trusted from a fetch, never from what an earlier answer implied or what seems plausible.
 
 CONVERSATION HISTORY:
 {history}
@@ -616,6 +619,19 @@ verified it through one of the actions above. A result from one action does not 
 *right* result — if another available action more directly matches what the user actually asked
 about, use it too before concluding, even if your first attempt already returned something.
 
+Writing example or proposed code that references a specific existing function, class, node, or
+file from this project is citing it, exactly like quoting a file's contents or naming a commit —
+the same "did not actually fetch this loop" rule applies to every function name and signature
+that appears in code you write, not just to prose claims. An earlier turn in this same
+conversation having looked at the repo does not satisfy this for the current turn: that earlier
+look may not have covered the exact function this new code now needs to reference, and what you
+recall from it (or from general knowledge of how a project "like this" is usually structured) is
+not the same as what read_repo_file/search_code actually show right now. Before including a real
+function or class name in code, fetch the file it lives in this loop and use its real signature —
+if you can't, either say plainly that this part is illustrative/unverified rather than presenting
+it as drawn from the real code, or use "clarify"/say so if you're not sure the referenced
+file/function even exists.
+
 Never describe yourself as currently scanning, checking, searching, or looking through anything
 unless a "query" action for it is genuinely sitting in ATTEMPTS SO FAR above — "final" is the last
 thing you say this turn, so present-progressive language ("I'm currently scanning...", "I'm
@@ -646,6 +662,17 @@ proof it's there, unless they explicitly only asked whether it exists or where i
 file before concluding. Stopping at "I found it at path X" when read_repo_file was never called is
 the same premature-conclusion problem as any other unretried gap: you had a step available that
 would have gotten the real answer, and didn't take it.
+
+A large file's read_repo_file result gets truncated and, when it is, comes back with a list of
+that file's top-level function/class names and the line each one starts on. That list is telling
+you the rest of the file is real and unread, not that the file ends where the snippet does — if
+the thing you actually need (a specific function, a specific class) isn't in the snippet itself,
+find it in that list and call read_repo_file again with start_line set to that line number, rather
+than answering from the visible portion plus a guess about the rest, or from what a function with
+that name would plausibly look like. This matters most exactly when it's least visible: writing
+example code that references a real function is still citing it (see below) even though it feels
+like composing rather than quoting, so a truncated read that never actually reached that function
+is not a basis for using its name in code with any real signature attached to it.
 
 For a request to add a feature, change behavior, or fix a bug (as opposed to a simple lookup), the
 first file you read is almost never the whole picture — it calls into other functions, is called

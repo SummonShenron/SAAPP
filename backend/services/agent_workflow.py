@@ -63,6 +63,31 @@ TOOL_AGENT_MAX_ITERATIONS = int(os.getenv("TOOL_AGENT_MAX_ITERATIONS", "7"))
 TOOL_AGENT_MAX_ITERATIONS_DEEP = int(os.getenv("TOOL_AGENT_MAX_ITERATIONS_DEEP", "14"))
 TOOL_AGENT_MAX_RETRY_NUDGES = int(os.getenv("TOOL_AGENT_MAX_RETRY_NUDGES", "1"))
 TOOL_AGENT_MAX_RETRY_NUDGES_DEEP = int(os.getenv("TOOL_AGENT_MAX_RETRY_NUDGES_DEEP", "3"))
+
+# read_repo_file's truncation/paging knobs. A flat character-count cap on a large file (this repo
+# has several 2000+ line files) silently cuts off before ever reaching a function defined further
+# down — a real fabrication risk, since a model can mistake "I was given the start of the file"
+# for "I read the file" and fill the gap it never saw with something plausible instead of real
+# code. start_line lets a caller jump straight to a specific line once it knows where to look
+# (from _build_definition_index below, or from search_code), the same way a normal editor would.
+_READ_FILE_CHAR_CAP = 3500
+_READ_FILE_DEFAULT_LINE_WINDOW = 150
+_TOP_LEVEL_DEF_RE = re.compile(r'^(?:async\s+)?(def|class)\s+(\w+)')
+
+
+def _build_definition_index(lines: list) -> str:
+    """A lightweight table of contents for a large file: every top-level (module-level, not
+    nested inside a class/function) def/class and the line it starts on. Lets the model jump
+    straight to the real function it needs via start_line instead of guessing or reading from
+    the top of a multi-thousand-line file and hoping the truncated slice happens to reach it."""
+    entries = [
+        f"  line {i}: {m.group(1)} {m.group(2)}"
+        for i, line in enumerate(lines, start=1)
+        if (m := _TOP_LEVEL_DEF_RE.match(line))
+    ]
+    return "\n".join(entries[:150])
+
+
 async def safe_emit_event(name: str, data: dict):
     """Safely emit a custom event, ignoring errors if called outside an active run context."""
     try:
@@ -2688,7 +2713,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             ]
             return "\n".join(paths[:400])
 
-        def _read_file(path: str):
+        def _read_file(path: str, start_line=None, line_count=None):
             if not path:
                 return "ERROR: no path given"
             file_url = f"{api_base}/repos/{repo}/contents/{path}"
@@ -2701,8 +2726,48 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             except Exception:
                 return f"ERROR: could not decode {path}"
             html_url = f"{gh_base}/{repo}/blob/{default_branch}/{path}"
-            snippet = decoded[:3500] + ("\n... [truncated]" if len(decoded) > 3500 else "")
-            return f"URL: {html_url}\n{snippet}"
+
+            try:
+                start_line = int(start_line) if start_line else None
+            except (TypeError, ValueError):
+                start_line = None
+
+            if start_line:
+                lines = decoded.splitlines()
+                if start_line > len(lines):
+                    return f"ERROR: {path} only has {len(lines)} lines — start_line {start_line} is past the end"
+                try:
+                    count = int(line_count) if line_count else _READ_FILE_DEFAULT_LINE_WINDOW
+                except (TypeError, ValueError):
+                    count = _READ_FILE_DEFAULT_LINE_WINDOW
+                start_idx = start_line - 1
+                end_idx = start_idx + count
+                window = lines[start_idx:end_idx]
+                more_note = (
+                    f"\n... [{len(lines) - end_idx} more lines below — re-call with a higher "
+                    f"start_line to keep reading]" if end_idx < len(lines) else ""
+                )
+                return (
+                    f"URL: {html_url}\nLines {start_line}-{start_idx + len(window)} of {len(lines)} "
+                    f"total:\n{chr(10).join(window)}{more_note}"
+                )
+
+            if len(decoded) <= _READ_FILE_CHAR_CAP:
+                return f"URL: {html_url}\n{decoded}"
+
+            lines = decoded.splitlines()
+            snippet = decoded[:_READ_FILE_CHAR_CAP]
+            index = _build_definition_index(lines)
+            index_note = (
+                f"\n\n... [truncated — this file has {len(lines)} lines total, too long to show in "
+                f"full. Top-level definitions found in it:\n{index}\nCall read_repo_file again with "
+                f"start_line set to the one you actually need — do not assume the file's contents "
+                f"past this point from general knowledge of what a file like this usually contains.]"
+                if index else
+                f"\n... [truncated — this file has {len(lines)} lines total; re-call with a "
+                f"start_line to read further into it instead of guessing what comes next.]"
+            )
+            return f"URL: {html_url}\n{snippet}{index_note}"
 
         def _diff_branches(base: str, head: str):
             if not base or not head:
@@ -2755,7 +2820,13 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             )
         menu_lines.extend([
             "- list_repo_tree — no args; lists every file path in the repo",
-            "- read_repo_file — args: path (relative file path within the repo)",
+            "- read_repo_file — args: path (relative file path within the repo), start_line "
+            "(optional, 1-indexed — jump straight to this line instead of reading from the top), "
+            "line_count (optional, defaults to 150 — how many lines to show from start_line). A "
+            "large file's response gets truncated with a list of its top-level function/class "
+            "names and line numbers when read without start_line — use that list to jump straight "
+            "to the one you need on your next call, rather than assuming the truncated snippet is "
+            "the whole file or guessing what the rest contains",
             "- search_code — args: query (a function/class/variable name or exact string); finds "
             "every file in the repo that references it — use this to find what calls, imports, "
             "or otherwise connects to the file/function you're already looking at",
@@ -2840,7 +2911,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 if tool_action == "list_repo_tree":
                     return _list_tree()
                 if tool_action == "read_repo_file":
-                    return _read_file(args.get("path"))
+                    return _read_file(args.get("path"), args.get("start_line"), args.get("line_count"))
                 if tool_action == "search_code":
                     return _search_code(args.get("query"))
                 if tool_action == "diff_branches":

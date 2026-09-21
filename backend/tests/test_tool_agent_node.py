@@ -460,6 +460,151 @@ async def test_github_action_self_corrects_after_wrong_file(monkeypatch):
     assert "get_current_user" in result["content_to_format"]
 
 
+# ---------------------------------------------------------------------------
+# read_repo_file paging — the fix for a real fabrication bug: a flat char-count
+# truncation could silently cut off before ever reaching a function defined
+# further down a large file, with nothing telling the model to keep reading.
+# ---------------------------------------------------------------------------
+
+def _build_large_file_fixture():
+    """A synthetic file comfortably over _READ_FILE_CHAR_CAP, with two known top-level
+    functions separated by enough filler that the second one lands well past the truncation
+    point. Returns (content, line_number_of_reasoner_node)."""
+    padding = "\n".join(f"# filler line {i}" for i in range(250))
+    content = (
+        f"import os\n\n{padding}\n\n"
+        "async def reasoner_node(state):\n    pass\n\n"
+        f"{padding}\n\n"
+        "async def memory_save_node(state):\n    pass\n"
+    )
+    assert len(content) > aw._READ_FILE_CHAR_CAP, "fixture must actually exercise truncation"
+    reasoner_line = next(
+        i for i, line in enumerate(content.splitlines(), start=1)
+        if line.startswith("async def reasoner_node")
+    )
+    return content, reasoner_line
+
+
+@run_async
+async def test_read_repo_file_truncation_includes_definition_index(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    big_content, _ = _build_large_file_fixture()
+    repo_resp = _http_response(200, {"default_branch": "main"})
+    file_resp = _http_response(200, {"content": _b64(big_content)})
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        if url.endswith("/contents/backend/services/agent_workflow.py"):
+            return file_resp
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+
+    captured_prompts = []
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        if len(captured_prompts) == 1:
+            return _llm_response(
+                action="query", purpose="Read the file",
+                tool_action="read_repo_file", args={"path": "backend/services/agent_workflow.py"},
+            )
+        return _llm_response(action="final", answer="Done.")
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("what does reasoner_node do?"))
+
+    # The second prompt's ATTEMPTS SO FAR section carries the first read's observation —
+    # confirming the truncated response names BOTH functions and their line numbers, not just
+    # whatever happened to fit in the first _READ_FILE_CHAR_CAP characters.
+    followup_prompt = captured_prompts[1]
+    assert "truncated" in followup_prompt
+    assert "reasoner_node" in followup_prompt
+    assert "memory_save_node" in followup_prompt
+    assert "start_line" in followup_prompt
+
+
+@run_async
+async def test_read_repo_file_start_line_jumps_past_the_truncation_point(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    big_content, reasoner_line = _build_large_file_fixture()
+    repo_resp = _http_response(200, {"default_branch": "main"})
+    file_resp = _http_response(200, {"content": _b64(big_content)})
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        if url.endswith("/contents/backend/services/agent_workflow.py"):
+            return file_resp
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+
+    captured_prompts = []
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        if len(captured_prompts) == 1:
+            return _llm_response(
+                action="query", purpose="Jump straight to reasoner_node",
+                tool_action="read_repo_file",
+                args={"path": "backend/services/agent_workflow.py", "start_line": reasoner_line, "line_count": 2},
+            )
+        return _llm_response(action="final", answer="Found it.")
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("show me reasoner_node's real code"))
+
+    followup_prompt = captured_prompts[1]
+    assert "async def reasoner_node" in followup_prompt
+    # A tight 2-line window starting exactly at reasoner_node — none of the padding on either
+    # side of it (250 lines each) should have been dragged in.
+    assert "filler line" not in followup_prompt
+    assert "import os" not in followup_prompt
+
+
+@run_async
+async def test_read_repo_file_start_line_past_end_of_file_is_error(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    _setup_github_repo(monkeypatch)
+    monkeypatch.setattr(
+        aw.requests, "get",
+        lambda url, headers=None, params=None: (
+            _http_response(200, {"default_branch": "main"}) if url.endswith("/repos/SummonShenron/SAAPP")
+            else _http_response(200, {"content": _b64("just a few lines\nof real content\n")})
+        ),
+    )
+
+    captured_prompts = []
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        if len(captured_prompts) == 1:
+            return _llm_response(
+                action="query", purpose="Jump way past the end", tool_action="read_repo_file",
+                args={"path": "app.py", "start_line": 9999},
+            )
+        return _llm_response(action="final", answer="That line doesn't exist.")
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("show me line 9999 of app.py"))
+
+    # Confirms _read_file itself reports the out-of-range request as an honest ERROR observation
+    # (picked up by the same retry-nudge tracking as any other failed action) rather than
+    # silently returning an empty/truncated window.
+    followup_prompt = captured_prompts[1]
+    assert "ERROR" in followup_prompt
+    assert "only has" in followup_prompt
+
+
 @run_async
 async def test_non_admin_can_freely_use_github_and_web_actions(monkeypatch):
     monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
