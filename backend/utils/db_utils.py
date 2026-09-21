@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 import logging
 from datetime import datetime, timezone
 from typing import Optional, Any
-# Load your .env file
+
 load_dotenv()
 logger = logging.getLogger("SASS Logger")
 # Global variable to hold the client so we don't reconnect every time
@@ -31,15 +31,15 @@ def test_connection():
     """Run this once to see if it works!"""
     db = get_db()
     if db is None:
-        print("USE_DB is not set to true.")
+        logger.info("USE_DB is not set to true.")
         return False
     try:
         # The 'ping' command
         db.command('ping')
-        print("Successfully connected to MongoDB!")
+        logger.info("Successfully connected to MongoDB!")
         return True
     except Exception as e:
-        print(f"Connection failed: {e}")
+        logger.info(f"Connection failed: {e}")
         return False
 
 def resolve_service_registry_repo(service_name: str) -> Optional[str]:

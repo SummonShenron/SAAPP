@@ -3,7 +3,7 @@ import os
 import logging
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langgraph.checkpoint.mongodb import MongoDBSaver
-
+from backend.utils.logo import print_logo
 from backend.services.agent_workflow import create_workflow
 from backend.services.insights_workflow import create_insight_workflow
 from backend.services.memory_search import get_user_memory_vector_store
@@ -14,6 +14,7 @@ from langchain_mongodb import MongoDBAtlasVectorSearch
 logger = logging.getLogger("SASS Logger")
 
 def startup_services():
+    print_logo()
     # 1. CONNECT TO DATABASE
     db = get_db()
     if db is None:

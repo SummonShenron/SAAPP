@@ -67,10 +67,10 @@ function App() {
         path="/chat"
         element={<ChatPage theme={theme} toggleTheme={toggleTheme} />}
       />
-        <Route path="/time-tracking" element={<TimeWorkspace />} />
+        {/* <Route path="/time-tracking" element={<TimeWorkspace />} /> */}
         <Route path="/self-service" element={<SelfServicePage />} />
-        <Route path="/taskboard" element={<Taskboard />} />
-        <Route path="/insights" element={<InsightsPage/>} />
+        {/* <Route path="/taskboard" element={<Taskboard />} />
+        <Route path="/insights" element={<InsightsPage/>} /> */}
 
       </Route>
       {/* Catch-all */}

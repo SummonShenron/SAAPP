@@ -127,9 +127,9 @@ if (typeof window !== 'undefined') {
           </span>
           <span onClick={() => navigate("/chat")}>Chat</span>
           <span onClick={() => navigate("/self-service")}>Self Service</span>
-          {isAdmin && <span onClick={() => navigate("/time-tracking")}>Time Tracking</span>}
+          {/* {isAdmin && <span onClick={() => navigate("/time-tracking")}>Time Tracking</span>}
           <span onClick={() => navigate("/taskboard")}>Taskboard</span>
-          <span onClick={() => navigate("/insights")}>Insights</span>
+          <span onClick={() => navigate("/insights")}>Insights</span> */}
           <span onClick={toggleHelp}>Help</span>
           <span onClick={handleLogout} className="nav-exit">Disconnect</span>
         </div>

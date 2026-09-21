@@ -229,11 +229,13 @@ def _dispatch_next_in_plan(state: GraphState, on_empty: str) -> str:
 
 def coordinator_router(state: GraphState) -> str:
     """First dispatch, right after coordinator_node builds the plan. An empty plan here means
-    nothing was ever queued — a bare conversational turn."""
-    logger.info("Preparing next step.")
-    destination = _dispatch_next_in_plan(state, on_empty="conversational_node")
-    logger.info("--- COORDINATOR NODE END ---")
-    return destination
+    nothing was ever queued — a bare conversational turn.
+
+    Deliberately does not log its own "node end"/"preparing" lines — coordinator_node already
+    logs "--- COORDINATOR NODE END ---" right before this router runs, and _dispatch_next_in_plan
+    already logs exactly where the plan is heading; a second END line here previously made it
+    look like the coordinator ran twice per turn."""
+    return _dispatch_next_in_plan(state, on_empty="conversational_node")
 
 
 def plan_continue_router(state: GraphState) -> str:
@@ -293,17 +295,20 @@ def classify_intent(message: str, state: dict = None) -> str:
     msg = message.lower().strip()
     msg_clean = msg.strip("!.,")
     state = state or {}
-    logger.debug(f"State keys: {list(state.keys())}")
+    # Was previously preceded by a full `list(state.keys())` dump — a fixed ~40-field list that
+    # never varies call to call and never told anyone anything about this specific turn, and
+    # this function is called twice per turn whenever build_agent_plan reclassifies a follow-up
+    # (see its "follow_up_intent" branch), doubling the noise for zero new information.
     logger.debug(f"pending_action: {state.get('pending_action')}")
     logger.debug(f"last_intent: {state.get('last_intent')}")
 
     messages = state.get("messages", []) or []
 
-    user_messages = [m for m in messages if getattr(m, "type", None) == "human"]
-
-    logger.debug(f"User messages count: {len(user_messages)}")
-    for i, um in enumerate(user_messages):
-        logger.debug(f"user_messages[{i}]: {um.content}")
+    # Was previously followed by a loop dumping every human message in the entire conversation
+    # history at DEBUG, one line each, on every single turn — unbounded per-turn log volume that
+    # grows for the rest of the session, and the list itself was never read for anything besides
+    # that logging. Nothing downstream in this function needs individual message content.
+    logger.debug(f"User messages count: {sum(1 for m in messages if getattr(m, 'type', None) == 'human')}")
 
     # Any registered write action (PR, issue, Mongo write, and whatever gets registered next)
     # is detected from the ASSISTANT'S OWN prior card text, not the user's original phrasing —
@@ -2358,7 +2363,11 @@ async def run_react_loop(
             continue
 
         purpose = decision.get("purpose", "Working...")
-        logger.info(f"[{node_name}] Step {step+1}: {purpose}")
+        # No log call here (removed) — the result line logged once the action actually runs
+        # (a few lines down) already folds this same purpose in alongside the action and
+        # observation, so a separate pre-announcement was just the same text twice, even at
+        # DEBUG. The live trace panel still gets the purpose immediately via safe_emit_event,
+        # independent of any logger.
         await safe_emit_event("trace_detail", {"node": node_name, "title": "Working...", "detail": purpose})
 
         if is_unsafe(decision):
@@ -2386,8 +2395,8 @@ async def run_react_loop(
         args_summary = ", ".join(f"{k}={v}" for k, v in (decision.get("args") or {}).items())
         action_desc = f"{tool_action_name}({args_summary})" if tool_action_name else (args_summary or "")
         logger.info(
-            "[%s] Step %s result — action=%s | observation=%r",
-            node_name, step + 1, action_desc or "(none)", observation[:200],
+            "[%s] Step %s (%s) — action=%s | observation=%r",
+            node_name, step + 1, purpose, action_desc or "(none)", observation[:200],
         )
         attempts.append({
             "purpose": purpose,

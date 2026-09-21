@@ -333,7 +333,10 @@ async def maybe_trigger_meta_compaction(db, vector_store, username: str, thresho
     effective_threshold = DEFAULT_META_COMPACTION_THRESHOLD if threshold is None else threshold
     try:
         pool_size = _count_tier2_pool(db, username)
-        logger.info("[MemoryCompaction] Tier 2 check for %s: pool=%d threshold=%d", username, pool_size, effective_threshold)
+        # DEBUG, not INFO — this check runs after every tier-1 completion regardless of whether
+        # it actually triggers anything, so at INFO it was pure per-message noise; the "compacted
+        # N chunks" result below (an actual event) stays at INFO.
+        logger.debug("[MemoryCompaction] Tier 2 check for %s: pool=%d threshold=%d", username, pool_size, effective_threshold)
         if pool_size > effective_threshold:
             await compact_meta_memory(db, vector_store, username)
             # Reuse this same "enough has accumulated to warrant a deeper pass" checkpoint to
@@ -352,7 +355,10 @@ async def maybe_trigger_compaction(db, vector_store, username: str, threshold: O
     effective_threshold = DEFAULT_COMPACTION_THRESHOLD if threshold is None else threshold
     try:
         uncompacted = count_uncompacted_chunks(db, username)
-        logger.info("[MemoryCompaction] Tier 1 check for %s: uncompacted=%d threshold=%d", username, uncompacted, effective_threshold)
+        # DEBUG, not INFO — called after every new chunk is embedded (i.e. after every message
+        # that gets memory-indexed), regardless of whether the threshold is actually crossed;
+        # the real event (a compaction run actually happening) is logged at INFO further down.
+        logger.debug("[MemoryCompaction] Tier 1 check for %s: uncompacted=%d threshold=%d", username, uncompacted, effective_threshold)
         if uncompacted > effective_threshold:
             result = await compact_user_memory(db, vector_store, username)
             if result.get("status") == "completed":
