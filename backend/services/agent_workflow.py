@@ -51,6 +51,7 @@ from backend.services.python_sandbox import run_python_sandboxed, SAFE_IMPORT_AL
 from backend.services.browser_tool import (
     BrowserSession, browser_navigate, browser_read_text, browser_click, browser_type, browser_screenshot,
 )
+from backend.services.ci_test_runner import run_repo_tests, DEFAULT_MAX_WAIT_SECONDS as CI_TEST_RUN_MAX_WAIT_SECONDS
 from backend.utils.normalize_utils import ensure_str
 
 load_dotenv()
@@ -238,9 +239,11 @@ def _dispatch_next_in_plan(state: GraphState, on_empty: str) -> str:
 
     Mutates coordinator_plan in place and reassigns it onto state; coordinator_plan is a plain
     list with no reducer, so this relies on LangGraph aliasing (not copying) channel values
-    across sequential nodes — true today since create_workflow() compiles with no checkpointer,
-    but would break if this field were ever read inside a parallel/fan-out branch, which it
-    currently never is.
+    across sequential nodes within one run. A checkpointer (added since this comment was first
+    written — see create_workflow's checkpointer param) persists state at each step boundary but
+    doesn't change same-run aliasing between sequential nodes, so this still holds; it would only
+    break if this field were ever read inside a parallel/fan-out branch, which it currently never
+    is.
     """
     plan = state.get("coordinator_plan", [])
     if not plan:
@@ -2809,7 +2812,17 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 return "No matches."
             return "\n".join(item.get("path", "") for item in items)
 
-        # --- dynamic, per-user action menu — non-admins never even see run_mongo_query ---
+        def _run_tests(test_commands: str, branch: str = None):
+            # Real CI execution, not reasoning about whether code would work — dispatches this
+            # repo's own .github/workflows/patchy-tests.yml and blocks (this whole call runs via
+            # asyncio.to_thread, same as every other GitHub action here) until it actually
+            # finishes, up to CI_TEST_RUN_MAX_WAIT_SECONDS.
+            return run_repo_tests(
+                repo, branch or default_branch, test_commands or "", headers, api_base,
+                max_wait_seconds=CI_TEST_RUN_MAX_WAIT_SECONDS,
+            )
+
+        # --- dynamic, per-user action menu — non-admins never even see run_mongo_query/run_repo_tests ---
         menu_lines = []
         if is_admin:
             menu_lines.append(
@@ -2817,6 +2830,16 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 "its output to a variable named result; wrap cursor operations like find()/aggregate() "
                 "in list(...); for text-field matching prefer a MongoDB regex with case-insensitive "
                 "options over strict equality)"
+            )
+            menu_lines.append(
+                "- run_repo_tests — args: test_commands (one or more lines, each exactly "
+                "'pytest <path>[::TestName::test_name]' — no shell operators, this is validated "
+                "and will be rejected otherwise), branch (optional, defaults to the resolved "
+                "default branch); actually dispatches this repo's real CI test workflow and waits "
+                "for a REAL pass/fail result — genuine verified ground truth, not something you "
+                "reason about or assume. Slower than every other action (can take a couple of "
+                "minutes) since it's really running the test suite — use it to verify a fix or "
+                "change actually works before telling the user it does, not for routine lookups"
             )
         menu_lines.extend([
             "- list_repo_tree — no args; lists every file path in the repo",
@@ -2869,6 +2892,10 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 if not is_admin:
                     return "ERROR: not authorized for this action"
                 return await asyncio.to_thread(_run_mongo_code, args.get("code", "") or "")
+            if tool_action == "run_repo_tests":
+                if not is_admin:
+                    return "ERROR: not authorized for this action"
+                return await asyncio.to_thread(_run_tests, args.get("test_commands"), args.get("branch"))
             if tool_action == "web_search":
                 query = args.get("query") or msg
                 search = DuckDuckGoSearchAPIWrapper()

@@ -216,6 +216,92 @@ async def test_non_admin_cannot_execute_mongo_action_even_if_returned(monkeypatc
     assert "not authorized" in result["content_to_format"].lower()
 
 
+@run_async
+async def test_non_admin_action_menu_never_includes_run_repo_tests(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    _setup_github_repo(monkeypatch)
+
+    captured_prompts = []
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return _llm_response(action="final", answer="No conclusive answer.")
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("does the fix for X actually work?"))
+
+    # The general guidance paragraph mentions run_repo_tests by name (worded conditionally —
+    # "if available to you (admin only)"), so check for the actual actionable menu entry
+    # (its args shape) rather than the bare word, which is what actually determines whether the
+    # model can call it.
+    assert all("run_repo_tests — args:" not in p for p in captured_prompts)
+
+
+@run_async
+async def test_admin_action_menu_includes_run_repo_tests(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])
+    _setup_github_repo(monkeypatch)
+    monkeypatch.setattr(aw, "get_db", lambda: _FakeDB({"user_memory_facts": _FakeCollection()}))
+
+    captured_prompts = []
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return _llm_response(action="final", answer="No conclusive answer.")
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("does the fix for X actually work?"))
+
+    assert any("run_repo_tests — args:" in p for p in captured_prompts)
+
+
+@run_async
+async def test_non_admin_cannot_execute_run_repo_tests_even_if_returned(monkeypatch):
+    """Defense in depth, mirroring the equivalent run_mongo_query test."""
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    _setup_github_repo(monkeypatch)
+
+    responses = [
+        _llm_response(action="query", purpose="Try running tests anyway", tool_action="run_repo_tests", args={"test_commands": "pytest backend/tests/test_a.py"}),
+        _llm_response(action="final", answer="Could not run that."),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state())
+
+    assert "not authorized" in result["content_to_format"].lower()
+
+
+@run_async
+async def test_run_repo_tests_dispatches_with_repo_and_default_branch(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])
+    _setup_github_repo(monkeypatch)
+    monkeypatch.setattr(aw, "get_db", lambda: _FakeDB({"user_memory_facts": _FakeCollection()}))
+
+    fake_run_tests = Mock(return_value="Test run SUCCESS: https://github.com/SummonShenron/SAAPP/actions/runs/1")
+    monkeypatch.setattr(aw, "run_repo_tests", fake_run_tests)
+
+    responses = [
+        _llm_response(
+            action="query", purpose="Verify the fix", tool_action="run_repo_tests",
+            args={"test_commands": "pytest backend/tests/test_a.py"},
+        ),
+        _llm_response(action="final", answer="Confirmed — the tests pass."),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("does the fix actually work?"))
+
+    fake_run_tests.assert_called_once()
+    call_args = fake_run_tests.call_args.args
+    assert call_args[0] == "SummonShenron/SAAPP"  # repo
+    assert call_args[1] == "main"  # falls back to default_branch when branch arg omitted
+    assert call_args[2] == "pytest backend/tests/test_a.py"
+    assert "Confirmed" in result["content_to_format"]
+
+
 # ---------------------------------------------------------------------------
 # Mongo action via the unified agent
 # ---------------------------------------------------------------------------

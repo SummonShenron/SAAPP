@@ -501,6 +501,32 @@ Return ONLY a JSON object matching this schema, with no preamble or markdown:
   similar, and the existing fact should be kept alongside it, not replaced.
 """
 
+# Only ever invoked when the matched existing fact's category is "goal"/"project" AND
+# FACT_CONFLICT_PROMPT already returned "supersede" — kept as its own prompt rather than widening
+# that one's 3-way enum so every other category's judgment is unaffected.
+GOAL_STATUS_PROMPT = """
+You maintain a user's long-term memory facts. A NEW statement was already judged to update
+("supersede") an EXISTING goal or project fact. Decide whether the new statement indicates that
+goal/project is now finished, abandoned/no longer wanted, or still ongoing.
+
+EXISTING GOAL/PROJECT FACT:
+{existing_fact}
+
+NEW STATEMENT:
+{new_fact}
+
+Return ONLY a JSON object matching this schema, with no preamble or markdown:
+{{
+  "status": "active" | "achieved" | "abandoned"
+}}
+
+- "achieved": the new statement says this goal/project was completed or succeeded.
+- "abandoned": the new statement says the user gave up on it, no longer wants it, or it's no
+  longer relevant.
+- "active": the new statement is an update (progress, a changed detail) but the goal/project is
+  still ongoing.
+"""
+
 MEMORY_TURN_SUMMARY_PROMPT = """
 Summarize the key fact, decision, or takeaway from this exchange in ONE short third-person
 sentence about the user, suitable for long-term semantic memory (e.g. "Asked about deploying
@@ -631,6 +657,38 @@ function or class name in code, fetch the file it lives in this loop and use its
 if you can't, either say plainly that this part is illustrative/unverified rather than presenting
 it as drawn from the real code, or use "clarify"/say so if you're not sure the referenced
 file/function even exists.
+
+The same fetch-it-this-loop rule applies just as much to claiming something does NOT exist or
+ISN'T wired up yet ("there's no X", "Y currently doesn't happen") as it does to claiming something
+does — an absence claim is still a claim. A single comment or one file's docstring saying a thing
+isn't there can simply be stale relative to code elsewhere that changed since it was written;
+before telling the user a capability or mechanism is absent, search_code for it (not just trust
+whatever the first file you opened happened to say) so a genuinely later change elsewhere in the
+repo has a chance to contradict an outdated comment before you repeat it as current fact.
+
+When a request has several distinct sub-parts (e.g. "what would this take across the state
+schema, the routing logic, the internal loop, and the API layer" — four named areas, not one),
+having unused steps left when you choose "final" is a signal to double-check, not evidence you
+were efficient. Answer once each named part has real, this-loop-verified grounding, not once
+whichever ones happened to be quickest to check felt sufficient — a fluent answer that only
+actually verified two of four parts has the same premature-conclusion problem as stopping after
+one failed action, just spread across the parts of the question instead of across retries of one.
+
+When proposing new or changed code for a router or conditional-edge function in this codebase
+specifically, a return value is only valid if it's a registered destination for that exact edge —
+check the corresponding add_conditional_edges(...) call's mapping (e.g. via search_code for the
+router function's name) before presenting a new return value as correct. LangGraph raises at
+runtime if a router returns anything outside that mapping, so a plausible-sounding node name that
+was never actually checked against it is not a safe thing to hand someone as working code.
+
+If run_repo_tests is available to you (admin only) and the question is genuinely about whether a
+fix or change actually works — not what the code currently does, but whether a specific proposed
+change makes something pass — use it instead of reasoning your way to a confident-sounding verdict.
+Reading the code and explaining why a fix should work is still a guess about runtime behavior, no
+matter how carefully reasoned; run_repo_tests gets you the real answer by actually running the
+tests. It's slower than everything else here, so don't reach for it on a routine lookup or when
+the user hasn't asked you to verify anything — but when they have, a real pass/fail beats a
+plausible explanation every time.
 
 Never describe yourself as currently scanning, checking, searching, or looking through anything
 unless a "query" action for it is genuinely sitting in ATTEMPTS SO FAR above — "final" is the last

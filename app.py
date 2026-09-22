@@ -74,6 +74,7 @@ from backend.utils.attachment_utils import (
 )
 from backend.utils.memory_utils import (
     fetch_relevant_user_facts,
+    fetch_goal_nudge_context,
     load_user_facts,
     delete_user_fact,
     delete_all_user_facts,
@@ -653,6 +654,7 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
             yield f"data: {json.dumps({'event': 'node_progress', 'node': 'formatter_node', 'title': 'Formatting output structure...', 'detail': f'Synthesizing final answer for {question[:30]}...'})}\n\n"
             guardrail_context = fetch_relevant_corrections(username, question)
             memory_context = fetch_relevant_user_facts(username, question)
+            goal_nudge_context = fetch_goal_nudge_context(username)
 
             if guardrail_context:
                 prompt = prompt + guardrail_context
@@ -662,6 +664,10 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
             if memory_context:
                 prompt = prompt + memory_context
                 yield f"data: {json.dumps({'event': 'node_progress', 'node': 'user_memory', 'title': 'Applying known user context', 'detail': 'Injected saved preferences/facts into context prompt.'})}\n\n"
+
+            if goal_nudge_context:
+                prompt = prompt + goal_nudge_context
+                yield f"data: {json.dumps({'event': 'node_progress', 'node': 'goal_nudge_checkin', 'title': 'Checking in on a stale goal', 'detail': 'Injected a stale goal/project check-in into context prompt.'})}\n\n"
 
             # The unified voice prompt's {data} slot is populated from voice_payload/documents
             # above, but attachment summaries are appended separately here (unchanged) since

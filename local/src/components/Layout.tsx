@@ -115,7 +115,11 @@ if (typeof window !== 'undefined') {
   // Regular Standalone Mode Layout
   return (
     <div className={`portal-container ${theme === "shadow" ? "theme-shadow" : ""}`}>
-      <nav className="menu-navigator">
+      <nav 
+        className="menu-navigator"
+        onMouseEnter={() => window.dispatchEvent(new CustomEvent("nav-hover", { detail: true }))}
+        onMouseLeave={() => window.dispatchEvent(new CustomEvent("nav-hover", { detail: false }))}
+      >
         <div className="nav-logo" onClick={() => navigate("/")}>
           {theme === "sonic" ? "Sonic Assistant" : "Sonic Assistant"}
         </div>

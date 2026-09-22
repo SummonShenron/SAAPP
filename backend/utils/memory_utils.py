@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from backend.utils.db_utils import get_db
 from backend.utils.embedding_utils import embed_text, cosine_similarity
-from backend.components.constraints import FACT_CONFLICT_PROMPT
+from backend.components.constraints import FACT_CONFLICT_PROMPT, GOAL_STATUS_PROMPT
 from backend.models.models import lite_llm
 
 logger = logging.getLogger("SASS Logger")
@@ -26,6 +26,10 @@ VALID_CATEGORIES = {
 FACT_SIMILARITY_THRESHOLD = float(os.getenv("FACT_SIMILARITY_THRESHOLD", "0.80"))
 FACT_REINFORCEMENT_INCREMENT = float(os.getenv("FACT_REINFORCEMENT_INCREMENT", "0.15"))
 FACT_CONFIDENCE_HALF_LIFE_DAYS = float(os.getenv("FACT_CONFIDENCE_HALF_LIFE_DAYS", "90"))
+# How long a goal/project fact can go unmentioned before it's worth a conversational check-in —
+# see find_stale_goal_to_nudge. Deliberately separate from FACT_CONFIDENCE_HALF_LIFE_DAYS: decay
+# is about fading old facts OUT of context, staleness here is about the opposite (surfacing them).
+GOAL_NUDGE_INTERVAL_DAYS = float(os.getenv("GOAL_NUDGE_INTERVAL_DAYS", "14"))
 # The whole fact list is stored as one array on one MongoDB document (see save_user_facts) —
 # with a full embedding per fact (~12-15KB as JSON), an unbounded array risks approaching
 # Mongo's 16MB single-document limit for a long-lived heavy account. Capping it keeps that
@@ -44,6 +48,9 @@ class UserFact(BaseModel):
     updated_at: str
     active: bool = True
     embedding: Optional[List[float]] = None
+    goal_status: Optional[str] = None  # "active"|"achieved"|"abandoned"; only meaningful when
+                                        # category is "goal"/"project", else always None
+    last_nudged_at: Optional[str] = None  # None until find_stale_goal_to_nudge first surfaces it
 
 
 def _get_user_file(username: str) -> str:
@@ -147,6 +154,25 @@ def _judge_fact_relationship(existing_fact: str, new_fact: str) -> str:
         return "distinct"
 
 
+def _judge_goal_status(existing_fact: str, new_fact: str) -> str:
+    """Asks the LLM whether a new statement — already judged to supersede an existing goal/project
+    fact — means that goal/project is now finished, abandoned, or still ongoing. Defaults to
+    'active' (no status change) on any failure, mirroring _judge_fact_relationship's safe default."""
+    try:
+        response = lite_llm.invoke(GOAL_STATUS_PROMPT.format(existing_fact=existing_fact, new_fact=new_fact))
+        raw_content = response.content if hasattr(response, "content") else str(response)
+        if isinstance(raw_content, list):
+            raw_text = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in raw_content])
+        else:
+            raw_text = str(raw_content)
+        clean_json = raw_text.replace("```json", "").replace("```", "").strip()
+        status = json.loads(clean_json).get("status")
+        return status if status in ("active", "achieved", "abandoned") else "active"
+    except Exception:
+        logger.exception("[MemoryUtils] Goal status judgment failed; leaving status active.")
+        return "active"
+
+
 def _effective_confidence(fact: "UserFact", now: datetime) -> float:
     """Read-time-only decay — never mutates stored confidence, always reflects current trust.
     Identity facts are foundational rather than time-sensitive, so they never decay."""
@@ -228,6 +254,13 @@ def save_user_fact(
             existing.confidence = min(1.0, existing.confidence + FACT_REINFORCEMENT_INCREMENT)
         else:  # "supersede" — a genuinely changed fact resets to the passed-in baseline
             existing.confidence = confidence
+            # Only for goal/project facts, and only on a genuine update (not a plain restatement,
+            # which "duplicate" already means) — checks whether this update means the goal/project
+            # is now finished or abandoned, using existing.fact (still the pre-update text here).
+            if existing.category in ("goal", "project"):
+                new_status = _judge_goal_status(existing.fact, fact_text)
+                if new_status in ("achieved", "abandoned"):
+                    existing.goal_status = new_status
         existing.fact = fact_text
         # Corrects category drift on every re-observation instead of freezing whichever category
         # the fact happened to get on its very first (possibly inconsistent) extraction — this is
@@ -250,6 +283,7 @@ def save_user_fact(
             updated_at=now,
             active=True,
             embedding=new_embedding,
+            goal_status="active" if category in ("goal", "project") else None,
         )
         all_facts.append(result)
 
@@ -270,6 +304,81 @@ def delete_user_fact(username: str, fact_id: str) -> bool:
 
 def delete_all_user_facts(username: str) -> None:
     save_user_facts(username, [])
+
+
+def find_stale_goal_to_nudge(username: str, interval_days: Optional[float] = None) -> Optional["UserFact"]:
+    """Finds the single most-overdue active goal/project fact worth checking in on: category in
+    {"goal","project"}, goal_status == "active", and it's been at least `interval_days` since the
+    LATER of (updated_at, last_nudged_at) — using last_nudged_at as a floor is what makes this a
+    periodic cadence rather than a one-shot: without it, nudging would itself reset the very
+    staleness clock that triggered the nudge. Returns at most one fact so a single turn never
+    surfaces more than one check-in. Never raises."""
+    threshold = interval_days if interval_days is not None else GOAL_NUDGE_INTERVAL_DAYS
+    try:
+        facts = load_user_facts(username)
+        candidates = [
+            f for f in facts
+            if f.category in ("goal", "project") and (f.goal_status or "active") == "active"
+        ]
+        if not candidates:
+            return None
+
+        now = datetime.now(timezone.utc)
+
+        def _parse(ts: str) -> datetime:
+            dt = datetime.fromisoformat(ts)
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+        overdue = []
+        for f in candidates:
+            try:
+                reference = _parse(f.updated_at)
+                if f.last_nudged_at:
+                    nudged = _parse(f.last_nudged_at)
+                    if nudged > reference:
+                        reference = nudged
+                days_stale = (now - reference).total_seconds() / 86400
+            except Exception:
+                continue
+            if days_stale >= threshold:
+                overdue.append((days_stale, f))
+
+        if not overdue:
+            return None
+        overdue.sort(key=lambda item: item[0], reverse=True)
+        return overdue[0][1]
+    except Exception:
+        logger.exception("[MemoryUtils] Could not evaluate stale goals for %s", username)
+        return None
+
+
+def fetch_goal_nudge_context(username: str) -> str:
+    """Builds a short, explicitly-optional 'STALE GOAL CHECK-IN' block for passive per-turn
+    injection — a sibling to fetch_relevant_user_facts, called the same way from app.py. Surfaces
+    at most one stale goal/project fact and stamps its last_nudged_at so the periodic cadence is
+    measured from the nudge itself, not just the last time the user mentioned it. Never raises —
+    mirrors fetch_relevant_user_facts' try/except-returns-"" pattern."""
+    try:
+        fact = find_stale_goal_to_nudge(username)
+        if not fact:
+            return ""
+
+        all_facts = load_user_facts(username)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        for f in all_facts:
+            if f.id == fact.id:
+                f.last_nudged_at = now_iso
+        save_user_facts(username, all_facts)
+
+        return (
+            "\n\nSTALE GOAL CHECK-IN (this is optional and conversational — only weave it in if "
+            "it fits naturally, never force it into an unrelated reply):\n"
+            f"- The user hasn't mentioned this {fact.category} in a while: \"{fact.fact}\". If it "
+            "feels natural, you may casually ask how it's going.\n"
+        )
+    except Exception:
+        logger.exception("[MemoryUtils] Could not build goal nudge context for %s", username)
+        return ""
 
 
 def fetch_relevant_user_facts(username: str, question: str, limit: int = 5) -> str:
