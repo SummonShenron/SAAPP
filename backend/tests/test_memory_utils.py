@@ -242,12 +242,14 @@ def test_facts_are_scoped_per_username():
     assert [f.fact for f in memory_utils.load_user_facts("alice")] == ["Alice's fact."]
 
 
-def _make_fact(category="trait", confidence=1.0, days_old=0, fact_id="test-id", embedding=None):
+def _make_fact(category="trait", confidence=1.0, days_old=0, fact_id="test-id", embedding=None,
+                goal_status=None, last_nudged_at=None):
     now = datetime.now(timezone.utc)
     updated = (now - timedelta(days=days_old)).isoformat()
     return memory_utils.UserFact(
         id=fact_id, username="jack", category=category, fact="test fact", source="explicit",
         confidence=confidence, created_at=updated, updated_at=updated, active=True, embedding=embedding,
+        goal_status=goal_status, last_nudged_at=last_nudged_at,
     )
 
 
@@ -398,3 +400,190 @@ def test_save_user_fact_prunes_when_cap_exceeded(monkeypatch):
     assert len(facts) == 3
     # The most recently saved fact is always protected, so it must have survived.
     assert any(f.fact == "Distinct fact number 4." for f in facts)
+
+
+# ---------------------------------------------------------------------------
+# Goal/project lifecycle status + stale check-in nudge
+# ---------------------------------------------------------------------------
+
+def test_user_fact_goal_status_and_last_nudged_at_default_to_none():
+    fact = _make_fact()
+    assert fact.goal_status is None
+    assert fact.last_nudged_at is None
+
+    memory_utils.save_user_facts("jack", [fact])
+    reloaded = memory_utils.load_user_facts("jack")[0]
+    assert reloaded.goal_status is None
+    assert reloaded.last_nudged_at is None
+
+
+def test_save_user_fact_new_goal_and_project_default_to_active_status():
+    goal = memory_utils.save_user_fact("jack", "Wants to learn Spanish.", category="goal")
+    project = memory_utils.save_user_fact("jack", "Building a side app.", category="project")
+    pref = memory_utils.save_user_fact("jack", "Prefers dark mode UI.", category="preference")
+
+    assert goal.goal_status == "active"
+    assert project.goal_status == "active"
+    assert pref.goal_status is None
+
+
+def test_save_user_fact_supersede_on_goal_marks_achieved(monkeypatch):
+    seeded = _make_fact(
+        category="goal", fact_id="goal-id",
+        embedding=memory_utils.embed_text("Wants to learn Spanish."),
+    )
+    seeded.fact = "Wants to learn Spanish."
+    seeded.goal_status = "active"
+    memory_utils.save_user_facts("jack", [seeded])
+
+    monkeypatch.setattr(
+        memory_utils.lite_llm, "invoke",
+        Mock(side_effect=[
+            SimpleNamespace(content=json.dumps({"action": "supersede"})),
+            SimpleNamespace(content=json.dumps({"status": "achieved"})),
+        ]),
+    )
+    updated = memory_utils.save_user_fact("jack", "wants to learn spanish.", category="goal")
+
+    assert updated.id == "goal-id"
+    assert updated.goal_status == "achieved"
+
+
+def test_save_user_fact_supersede_on_project_marks_abandoned(monkeypatch):
+    seeded = _make_fact(
+        category="project", fact_id="project-id",
+        embedding=memory_utils.embed_text("Building a side app."),
+    )
+    seeded.fact = "Building a side app."
+    seeded.goal_status = "active"
+    memory_utils.save_user_facts("jack", [seeded])
+
+    monkeypatch.setattr(
+        memory_utils.lite_llm, "invoke",
+        Mock(side_effect=[
+            SimpleNamespace(content=json.dumps({"action": "supersede"})),
+            SimpleNamespace(content=json.dumps({"status": "abandoned"})),
+        ]),
+    )
+    updated = memory_utils.save_user_fact("jack", "building a side app.", category="project")
+
+    assert updated.id == "project-id"
+    assert updated.goal_status == "abandoned"
+
+
+def test_save_user_fact_duplicate_on_goal_does_not_call_goal_status_judge(monkeypatch):
+    seeded = _make_fact(
+        category="goal", fact_id="goal-id",
+        embedding=memory_utils.embed_text("Wants to learn Spanish."),
+    )
+    seeded.fact = "Wants to learn Spanish."
+    seeded.goal_status = "active"
+    memory_utils.save_user_facts("jack", [seeded])
+
+    # Autouse fixture already stubs lite_llm.invoke to return "duplicate" by default.
+    fake_judge = Mock()
+    monkeypatch.setattr(memory_utils, "_judge_goal_status", fake_judge)
+
+    memory_utils.save_user_fact("jack", "wants to learn spanish.", category="goal")
+
+    fake_judge.assert_not_called()
+
+
+def test_save_user_fact_supersede_on_non_goal_category_does_not_call_goal_status_judge(monkeypatch):
+    seeded = _make_fact(fact_id="pref-id", embedding=memory_utils.embed_text("Prefers dark mode UI."))
+    seeded.fact = "Prefers dark mode UI."
+    memory_utils.save_user_facts("jack", [seeded])
+
+    monkeypatch.setattr(
+        memory_utils.lite_llm, "invoke",
+        Mock(return_value=SimpleNamespace(content=json.dumps({"action": "supersede"})))
+    )
+    fake_judge = Mock()
+    monkeypatch.setattr(memory_utils, "_judge_goal_status", fake_judge)
+
+    memory_utils.save_user_fact("jack", "prefers light mode ui.", category="preference")
+
+    fake_judge.assert_not_called()
+
+
+def test_find_stale_goal_to_nudge_returns_none_when_nothing_qualifies():
+    assert memory_utils.find_stale_goal_to_nudge("jack") is None
+
+    memory_utils.save_user_facts("jack", [_make_fact(category="preference", days_old=100)])
+    assert memory_utils.find_stale_goal_to_nudge("jack") is None
+
+
+def test_find_stale_goal_to_nudge_respects_interval():
+    interval = memory_utils.GOAL_NUDGE_INTERVAL_DAYS
+    fresh = _make_fact(category="goal", fact_id="fresh", goal_status="active", days_old=interval - 1)
+    stale = _make_fact(category="goal", fact_id="stale", goal_status="active", days_old=interval + 1)
+
+    memory_utils.save_user_facts("jack", [fresh])
+    assert memory_utils.find_stale_goal_to_nudge("jack") is None
+
+    memory_utils.save_user_facts("jack", [stale])
+    result = memory_utils.find_stale_goal_to_nudge("jack")
+    assert result is not None
+    assert result.id == "stale"
+
+
+def test_find_stale_goal_to_nudge_respects_last_nudged_at_not_just_updated_at():
+    now_iso = datetime.now(timezone.utc).isoformat()
+    fact = _make_fact(category="goal", goal_status="active", days_old=30, last_nudged_at=now_iso)
+    memory_utils.save_user_facts("jack", [fact])
+
+    assert memory_utils.find_stale_goal_to_nudge("jack") is None
+
+
+def test_find_stale_goal_to_nudge_excludes_achieved_and_abandoned():
+    achieved = _make_fact(category="goal", fact_id="achieved", goal_status="achieved", days_old=100)
+    abandoned = _make_fact(category="project", fact_id="abandoned", goal_status="abandoned", days_old=100)
+    memory_utils.save_user_facts("jack", [achieved, abandoned])
+
+    assert memory_utils.find_stale_goal_to_nudge("jack") is None
+
+
+def test_find_stale_goal_to_nudge_excludes_non_goal_project_categories():
+    old_pref = _make_fact(category="preference", fact_id="pref", days_old=100)
+    memory_utils.save_user_facts("jack", [old_pref])
+
+    assert memory_utils.find_stale_goal_to_nudge("jack") is None
+
+
+def test_find_stale_goal_to_nudge_picks_most_overdue_when_multiple_qualify():
+    less_stale = _make_fact(category="goal", fact_id="less-stale", goal_status="active", days_old=20)
+    more_stale = _make_fact(category="project", fact_id="more-stale", goal_status="active", days_old=40)
+    memory_utils.save_user_facts("jack", [less_stale, more_stale])
+
+    result = memory_utils.find_stale_goal_to_nudge("jack")
+    assert result.id == "more-stale"
+
+
+def test_fetch_goal_nudge_context_empty_when_nothing_stale():
+    assert memory_utils.fetch_goal_nudge_context("jack") == ""
+
+
+def test_fetch_goal_nudge_context_returns_block_and_updates_last_nudged_at():
+    stale = _make_fact(category="goal", fact_id="stale-id", goal_status="active",
+                        days_old=memory_utils.GOAL_NUDGE_INTERVAL_DAYS + 1)
+    stale.fact = "Wants to learn Spanish."
+    memory_utils.save_user_facts("jack", [stale])
+
+    context = memory_utils.fetch_goal_nudge_context("jack")
+
+    assert "STALE GOAL CHECK-IN" in context
+    assert "Wants to learn Spanish." in context
+
+    reloaded = next(f for f in memory_utils.load_user_facts("jack") if f.id == "stale-id")
+    assert reloaded.last_nudged_at is not None
+    nudged_at = datetime.fromisoformat(reloaded.last_nudged_at)
+    assert (datetime.now(timezone.utc) - nudged_at).total_seconds() < 5
+
+
+def test_fetch_goal_nudge_context_never_raises_on_internal_error(monkeypatch):
+    def _boom(username, interval_days=None):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(memory_utils, "find_stale_goal_to_nudge", _boom)
+
+    assert memory_utils.fetch_goal_nudge_context("jack") == ""

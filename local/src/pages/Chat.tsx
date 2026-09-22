@@ -445,6 +445,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const searchParams = new URLSearchParams(window.location.search || hashSearch);
   const isEmbedded = searchParams.get('mode') === 'embed';
   // Trace is available by default in standalone mode, but starts hidden when embedded.
+  const [isNavHovered, setIsNavHovered] = useState(false); 
   const [showTracePanel, setShowTracePanel] = useState(() => {
     if (isEmbedded) return false;
     if (typeof window !== 'undefined') {
@@ -558,6 +559,14 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
       setShowConversations(true);
     }
   };
+  useEffect(() => {
+    const handleNavHover = (e: Event) => {
+      const customEvent = e as CustomEvent<boolean>;
+      setIsNavHovered(customEvent.detail);
+    };
+    window.addEventListener("nav-hover", handleNavHover);
+    return () => window.removeEventListener("nav-hover", handleNavHover);
+  }, []);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -1262,7 +1271,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
   <div>
     {/* HERO BANNER (hidden entirely in embed mode) */}
     {!isEmbedded && (
-      <div className={`hero-banner ${theme === 'shadow' ? 'theme-shadow' : 'theme-sonic'}`}>
+      <div className={`hero-banner ${isNavHovered ? 'nav-hover-active' : ''} ${theme === 'shadow' ? 'theme-shadow' : 'theme-sonic'}`}>
         <img src={swooshLogoImg} alt="Logo" className="hero-logo-icon" />
         <div className="banner-context">
           <h3>{theme === 'sonic' ? 'Sonic Assistant' : 'Sonic Assistant'}</h3>
@@ -1762,7 +1771,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
             color: '#e2e8f0',
             boxShadow: '0 12px 28px rgba(0,0,0,0.5)',
             overflowY: 'auto',
-            zIndex: 100,
+            zIndex: 1,
             boxSizing: 'border-box'
           }}>
             <style>{`
