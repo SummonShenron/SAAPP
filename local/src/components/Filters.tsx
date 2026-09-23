@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { api } from '../api';
+import { api, type KnowledgeBase } from '../api';
 import { useAuth } from '@clerk/clerk-react';
 
 interface FiltersProps {
   selectedAffiliate: string;
   setSelectedAffiliate: (affiliate: string) => void;
   loadingChat: boolean;
-  allowedAffiliates: string[];
-  setAllowedAffiliates: (affs: string[]) => void;
+  allowedAffiliates: KnowledgeBase[];
+  setAllowedAffiliates: (affs: KnowledgeBase[]) => void;
   ragMode: string;
   onRagModeChange: (mode: string) => void;
   deepThinking: boolean;
@@ -35,7 +35,7 @@ export const Filters: React.FC<FiltersProps> = ({
 
   // Handle guest flows first; do not wait on Clerk
   if (isGuest) {
-    setAllowedAffiliates([guestScope]);
+    setAllowedAffiliates([{ id: guestScope, display_name: guestScope.replace('_', ' ') }]);
     if (selectedAffiliate === 'All' || selectedAffiliate !== guestScope) {
       setSelectedAffiliate(guestScope);
     }
@@ -60,8 +60,8 @@ export const Filters: React.FC<FiltersProps> = ({
       const affiliates = await api.getAffiliates(principal);
       setAllowedAffiliates(affiliates);
 
-      if (affiliates.length > 0 && selectedAffiliate !== 'All' && !affiliates.includes(selectedAffiliate)) {
-        setSelectedAffiliate(affiliates[0]);
+      if (affiliates.length > 0 && selectedAffiliate !== 'All' && !affiliates.some(a => a.id === selectedAffiliate)) {
+        setSelectedAffiliate(affiliates[0].id);
       }
     } catch (err) {
       console.error("Filter fetch error:", err);
@@ -95,7 +95,7 @@ export const Filters: React.FC<FiltersProps> = ({
       >
         <option value="All">Select a knowledge base...</option>
         {allowedAffiliates.map((aff) => (
-          <option key={aff} value={aff}>{aff}</option>
+          <option key={aff.id} value={aff.id}>{aff.display_name}</option>
         ))}
       </select>
 

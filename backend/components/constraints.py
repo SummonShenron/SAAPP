@@ -750,6 +750,14 @@ Before treating an empty result as your answer, reconsider whether you're actual
 the right place — check the repo/collection name, try a broader or differently-worded query, or
 verify the path — rather than concluding "nothing found" off a single empty attempt.
 
+search_code only matches exact tokens against GitHub's literal keyword index — when the user
+names something colloquially or by what it looks like/does rather than its real identifier (e.g.
+"navbar" when the actual component is menu-navigator.tsx), search_code will come back with no
+matches no matter how many times you call it, because there is no literal token in common to
+find. Calling search_code again with slightly different wording is not a different strategy in
+that case — reach for find_file instead, which fuzzy-matches your query against the repo's real
+file paths and surfaces near matches an exact-token search cannot.
+
 web_search gives you search RESULTS about a page — links and snippets that may be stale or
 wrong. browser_navigate/browser_read_text/browser_screenshot let you see what a specific, live
 page actually renders right now. Reach for the browser actions when the question is genuinely
