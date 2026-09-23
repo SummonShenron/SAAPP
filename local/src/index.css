@@ -1086,6 +1086,11 @@ div:has(.portal-body) {
     background: var(--bg-secondary) !important;
     box-shadow: var(--shadow);
   }
+  .theme-shadow .mobile-trace-pill-container button {
+    border: 1px solid var(--border-color) !important;
+    background: var(--bg-secondary) !important;
+    box-shadow: var(--shadow);
+  }
 }
 .icon-button:disabled {
   opacity: 0.4;

@@ -1363,6 +1363,46 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
 
         {/* 3. INPUT AREA & FOOTER */}
         <footer className="controls-footer" style={{ position: 'relative' }}>
+          {/* MOBILE TRACE PILL (Pinned inside top of footer) */}
+          <div className="mobile-trace-pill-container">
+            <style>{`
+              @media (min-width: 768px) {
+                .mobile-trace-pill-container {
+                  display: none !important;
+                }
+              }
+            `}</style>
+
+            {showTracePanel && (
+              <div style={{ display: 'flex', justifyContent: 'center', width: '100%', marginBottom: '8px' }}>
+                <button
+                  type="button"
+                  onClick={() => setIsMobileTraceOpen(true)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '6px 14px',
+                    background: 'rgba(30, 41, 59, 0.9)',
+                    border: '1px solid rgba(148, 163, 184, 0.3)',
+                    borderRadius: '9999px',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                    fontSize: '12px',
+                    color: '#cbd5e1',
+                    cursor: 'pointer',
+                    backdropFilter: 'blur(8px)',
+                    zIndex: 50
+                  }}
+                >
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#6366f1', display: 'inline-block' }} />
+                  <span style={{ maxWidth: '200px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {latestStepTitle || "View live execution trace..."}
+                  </span>
+                  <span>▲</span>
+                </button>
+              </div>
+            )}
+          </div>
 
           {showRepoBanner && (
             <div className="repo-banner"
