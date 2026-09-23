@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 from langchain_core.documents import Document
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
 
 from backend.services import agent_workflow as aw
 
@@ -1408,3 +1408,79 @@ async def test_trace_symbol_no_matches(monkeypatch):
     result = await aw.tool_agent_node(_state("trace totallyNonexistentSymbol"))
 
     assert "Couldn't find it anywhere in the repo." in result["content_to_format"]
+
+
+# ---------------------------------------------------------------------------
+# Conversation history threaded into TOOL_AGENT_PROMPT — the real failure this
+# closes: a multi-turn task's actual instruction lived a few messages back, and
+# by the time the model finally acted on a short confirming reply ("yes you
+# do...."), that turn's prompt contained nothing but that one line — no way to
+# recover what it was supposed to check once it acted. See
+# docs/coding-agent-roadmap.md.
+# ---------------------------------------------------------------------------
+
+@run_async
+async def test_history_is_threaded_into_tool_agent_prompt(monkeypatch):
+    _setup_github_repo(monkeypatch)
+    captured_kwargs = {}
+
+    async def fake_run_react_loop(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"final_answer": "done", "attempts": [], "show_work": False}
+
+    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+
+    state = {
+        "username": "jack",
+        "messages": [
+            HumanMessage(content="open a browser to btyfitness.app and verify you can click the chat widget icon"),
+            AIMessage(content="I don't think I have a live browser tool for that."),
+            HumanMessage(content="yes you do...."),
+        ],
+        "documents": [],
+    }
+    await aw.tool_agent_node(state)
+
+    assert "click the chat widget icon" in captured_kwargs["prompt_template"]
+
+
+@run_async
+async def test_history_is_capped_at_max_messages(monkeypatch):
+    _setup_github_repo(monkeypatch)
+    captured_kwargs = {}
+
+    async def fake_run_react_loop(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"final_answer": "done", "attempts": [], "show_work": False}
+
+    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+
+    old_messages = [HumanMessage(content=f"ancient message {i} — should be dropped") for i in range(20)]
+    state = {
+        "username": "jack",
+        "messages": old_messages + [
+            HumanMessage(content="recent message — should be kept"),
+            HumanMessage(content="what does this repo do?"),
+        ],
+        "documents": [],
+    }
+    await aw.tool_agent_node(state)
+
+    assert "recent message — should be kept" in captured_kwargs["prompt_template"]
+    assert "ancient message 0 — should be dropped" not in captured_kwargs["prompt_template"]
+
+
+@run_async
+async def test_history_fallback_text_on_first_message(monkeypatch):
+    _setup_github_repo(monkeypatch)
+    captured_kwargs = {}
+
+    async def fake_run_react_loop(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"final_answer": "done", "attempts": [], "show_work": False}
+
+    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+
+    await aw.tool_agent_node(_state("what does this repo do?"))
+
+    assert "(no prior messages this conversation)" in captured_kwargs["prompt_template"]

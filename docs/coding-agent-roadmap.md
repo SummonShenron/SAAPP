@@ -107,6 +107,57 @@ directive is/isn't injected into the question passed to `run_react_loop`).
 
 ---
 
+## 0b. `tool_agent_node` had zero conversation history (fixed)
+
+Discovered from a real, fresh production trace (not this session's earlier
+"Failure A/B" trace — a separate, later conversation): user asks Sonic to open
+`btyfitness.app` and click a chat widget icon to verify it works. Sonic stalls
+for two turns, then flatly and confidently denies having a browser tool at all
+("I don't actually have a live browser tool... I promise I'm not holding out on
+you") — while `browser_navigate` sat right there in that same turn's action
+menu, and had already been used successfully earlier in that exact
+conversation. Only after the user insisted directly ("dude you literally
+navigated your own site earlier today") did it finally navigate — then
+immediately closed the browser having verified nothing, having lost the actual
+task ("click the widget and verify it works").
+
+**Root cause, confirmed from the code, not guessed:** `TOOL_AGENT_PROMPT` had
+exactly one content slot for the request — `USER REQUEST: {question}` — filled
+from `state["messages"][-1]` alone. No `{history}` slot existed. `{schema}`
+isn't history either (`"repo=X, default_branch=Y..."` — pure infra metadata).
+`reasoner_node` already builds a real `formatted_history` from the whole
+message list for its own prompt (`agent_workflow.py` ~line 582) — that was
+never threaded into `tool_agent_node`'s loop at all. By the turn it finally
+acted, the ENTIRE prompt driving that decision was "dude you literally
+navigated your own site earlier today. you can indeed navigate to
+https://btyfitness.app" — an assertion of capability, not a restatement of what
+to check. It didn't forget in some vague sense; the information was
+structurally never in its context to begin with.
+
+**Fixed:**
+- New `{history}` slot in `TOOL_AGENT_PROMPT` (`constraints.py`), filled from
+  the prior N messages (capped — see below), pre-substituted via the same
+  `.replace()` pattern `actions_menu` already uses (with the same `{`/`}`
+  escaping, since past message content could itself contain literal braces).
+- `TOOL_AGENT_HISTORY_MAX_MESSAGES` (default 10, env-configurable) —
+  deliberately capped even though `reasoner_node`'s equivalent is uncapped:
+  `reasoner_node` builds its prompt once per turn, but `tool_agent_node`
+  rebuilds its prompt on every single ReAct step, so uncapped history would
+  multiply cost across every step of every turn, not pay for it once.
+- New `constraints.py` rules: (1) check AVAILABLE ACTIONS THIS TURN before
+  ever claiming a capability is missing — a fluent, detailed denial isn't more
+  trustworthy than a short one if the action is sitting in the menu; (2) when
+  RECENT CONVERSATION shows an instruction was given a few turns back and the
+  current request is a short confirmation ("yes", "go ahead"), find what it
+  was actually confirming in the history rather than treating the confirming
+  reply itself as the complete scope of the task.
+- 3 new tests in `test_tool_agent_node.py`: history threaded into the prompt
+  (reproducing the exact multi-turn scenario), capped at
+  `TOOL_AGENT_HISTORY_MAX_MESSAGES` (an old message is verifiably dropped, a
+  recent one kept), and the "(no prior messages)" fallback on a first message.
+
+---
+
 ## 1. Reference-classifying trace tool (done)
 
 **Problem it solves:** `search_code` (added earlier this session) already finds

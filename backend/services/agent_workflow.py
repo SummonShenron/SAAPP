@@ -65,6 +65,17 @@ TOOL_AGENT_MAX_ITERATIONS = int(os.getenv("TOOL_AGENT_MAX_ITERATIONS", "7"))
 TOOL_AGENT_MAX_ITERATIONS_DEEP = int(os.getenv("TOOL_AGENT_MAX_ITERATIONS_DEEP", "14"))
 TOOL_AGENT_MAX_RETRY_NUDGES = int(os.getenv("TOOL_AGENT_MAX_RETRY_NUDGES", "1"))
 TOOL_AGENT_MAX_RETRY_NUDGES_DEEP = int(os.getenv("TOOL_AGENT_MAX_RETRY_NUDGES_DEEP", "3"))
+# TOOL_AGENT_PROMPT's {question} used to be filled from ONLY state["messages"][-1] — a real
+# production trace showed this loses a multi-turn task entirely: the instruction ("click the
+# widget icon and verify it works") was given a few turns before the model actually acted on it,
+# and by the time it did, that turn's own prompt contained nothing but the latest one-line reply
+# ("you can indeed navigate to X"), with no way to recover what it was supposed to check once it
+# got there. reasoner_node already builds a similar formatted history for its own prompt with no
+# cap; this repeats that pattern but DOES cap it — tool_agent_node's prompt already carries a
+# large actions_menu and a growing attempts list, and unlike reasoner_node (built once per turn)
+# this prompt gets rebuilt on every single ReAct step, so uncapped history would multiply cost
+# across every step of every turn, not just pay for it once.
+TOOL_AGENT_HISTORY_MAX_MESSAGES = int(os.getenv("TOOL_AGENT_HISTORY_MAX_MESSAGES", "10"))
 
 # search_code only matches exact literal tokens against GitHub's keyword index — a colloquial
 # or descriptive name shares no tokens at all with a differently-named real file, so rewording
@@ -2784,6 +2795,14 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
         latest_message_content = state.get("messages", [])[-1].content.strip()
         msg = latest_message_content
 
+        # See TOOL_AGENT_HISTORY_MAX_MESSAGES's comment: a multi-turn task's real instruction, or
+        # what a short reply like "yes"/"go ahead" is actually confirming, often lives a few
+        # turns back — {question} alone (just this turn's message) can't recover that.
+        prior_messages = state.get("messages", [])[:-1][-TOOL_AGENT_HISTORY_MAX_MESSAGES:]
+        formatted_history = "\n".join(
+            f"{getattr(m, 'type', 'user')}: {getattr(m, 'content', '')}" for m in prior_messages
+        ) or "(no prior messages this conversation)"
+
         # Resuming a paused clarification: state["paused_clarification"] (real checkpointed
         # state — the one field reset_transient_state deliberately leaves alone) carries the
         # original question and the attempts already made, so the loop continues instead of
@@ -3207,6 +3226,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
         ])
         actions_menu = "\n".join(menu_lines)
         prompt_template = TOOL_AGENT_PROMPT.replace("{actions_menu}", actions_menu.replace("{", "{{").replace("}", "}}"))
+        prompt_template = prompt_template.replace("{history}", formatted_history.replace("{", "{{").replace("}", "}}"))
 
         def _is_unsafe(decision: dict) -> bool:
             if decision.get("tool_action") != "run_mongo_query":

@@ -605,6 +605,11 @@ don't restrict yourself to a single tool if the question genuinely needs more th
 example: checking the repo for a fix first, then searching the web for the same error if the
 repo alone isn't conclusive).
 
+RECENT CONVERSATION (oldest first, most recent last — this is what happened before the request
+below; a multi-turn task's actual instruction, or what a short reply like "yes" or "go ahead" is
+actually confirming, often lives here rather than in the request itself):
+{history}
+
 USER REQUEST: {question}
 
 CONTEXT: {schema}
@@ -717,6 +722,26 @@ genuinely don't know, use list_repo_tree (or whichever action actually answers i
 what that real result shows, or use "clarify" if it truly depends on something only the user
 knows — don't fold an unresolved question to the user into a "final" answer's prose instead of
 using the action built for exactly that.
+
+Before claiming you lack a capability or tool — "I don't have browser access," "I can't run
+code," anything of that shape — check AVAILABLE ACTIONS THIS TURN above first: if it's listed
+there, you have it right now, regardless of what feels true from general self-knowledge. This
+matters most exactly when it's least obvious: a real conversation showed this claimed with
+genuine-sounding confidence and detailed justification, including specific reasons why it
+supposedly couldn't be true — while browser_navigate sat right there in that same turn's action
+list the whole time, and had already been used successfully earlier in that very conversation
+(check RECENT CONVERSATION above too — a tool that was actually called a few turns ago is
+concrete evidence you have it now, not something to reason past). A fluent, detailed denial is
+not more trustworthy than a one-line one; both are equally wrong if the action is sitting in your
+own menu.
+
+When RECENT CONVERSATION shows an instruction or task was given a few turns ago and the current
+USER REQUEST is short — a confirmation ("yes", "go ahead"), a correction, or a reply that only
+makes sense in light of what was already asked — that earlier instruction is still the actual
+task. Don't let a short confirming reply become the entire scope of what you act on: find what it
+was actually confirming in the history above and act on that, not on the literal handful of words
+in the current message alone. Acting on "yes" as if it were a complete, standalone request is how
+a task's real purpose gets lost between when it was asked and when it's finally acted on.
 
 For a debugging or "why does X happen" investigation specifically (not a lookup or a
 calculation), the first place you find something *related* to the symptom is not the same as
