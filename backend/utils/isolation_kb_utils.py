@@ -1,5 +1,6 @@
 import os
 import json
+import hashlib
 import logging
 from typing import List, Dict, Any
 from settings import DIRECTORY_JSON_PATH
@@ -46,20 +47,42 @@ def load_user_directory_groups(username: str) -> List[str]:
         return user_record["groups"]
     return []
 
+def make_personal_kb_id(clerk_id: str) -> str:
+    """Deterministic, collision-safe id for a user's personal knowledge base — derived from the
+    Clerk subject (already the guaranteed-unique key used throughout this file), never from a
+    username or display name, which two different users could share."""
+    digest = hashlib.sha256((clerk_id or "").encode("utf-8")).hexdigest()[:10]
+    return f"kb_{digest}"
+
+# Role/administrative groups that live in the same flat `groups` list as KB-access groups but
+# are never themselves a knowledge base to show as a query-scope option.
+_NON_KB_ROLE_GROUPS = {"Global_Admins", "PAAPP_Admins", "Taskboard_Admins"}
+
 def get_accessible_affiliates(username: str, user_directory: dict) -> dict:
-    # Now this function just does logic, it doesn't care about startup
+    """Derives accessible knowledge bases purely from the caller's own `groups` — no fixed
+    enum, no Global_Admins bypass. A KB is any group that isn't a known role name and isn't an
+    ingest-companion group (the "{affiliate} Ingesters" suffix marks write, not read, access).
+    This is what makes a dynamically-created personal KB (see make_personal_kb_id) show up here
+    automatically, with zero changes to this function, the moment it's added to a user's groups."""
     user_claims = user_directory.get(username, {})
     user_groups = user_claims.get("groups", [])
-    accessible_affiliates = []
-    if "Affiliate_A" in user_groups or "Global_Admins" in user_groups:
-        accessible_affiliates.append("Affiliate_A")
-    if "Affiliate_B" in user_groups or "Global_Admins" in user_groups:
-        accessible_affiliates.append("Affiliate_B") 
-    if "Affiliate_C" in user_groups or "Global_Admins" in user_groups:
-        accessible_affiliates.append("Affiliate_C")
-    if "Affiliate_D" in user_groups or "Global_Admins" in user_groups:
-        accessible_affiliates.append("Affiliate_D")
+    accessible_affiliates = [
+        g for g in user_groups
+        if g not in _NON_KB_ROLE_GROUPS and not g.endswith(" Ingesters")
+    ]
     return {"accessible_affiliates": accessible_affiliates}
+
+def resolve_kb_display_names(directory: dict) -> dict:
+    """Builds an {id: display_name} lookup for personal KBs by scanning the directory dict
+    load_directory() already fetched in full — no extra Mongo round trip. A user doc with no
+    personal_kb field (e.g. an older account, or one of the shared Affiliate_A/B/C/D KBs, which
+    have no owning user) is simply skipped."""
+    display_names = {}
+    for user_doc in directory.values():
+        personal_kb = user_doc.get("personal_kb")
+        if personal_kb and personal_kb.get("id") and personal_kb.get("display_name"):
+            display_names[personal_kb["id"]] = personal_kb["display_name"]
+    return display_names
 
 def verify_user_ingest_access(username: str, affiliate: str) -> bool:
     """Validates if the user's groups contain the designated administrative Ingesters role."""

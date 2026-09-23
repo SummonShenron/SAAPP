@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import base64
+import difflib
 import os
 import re
 import uuid
@@ -2185,7 +2186,10 @@ def _parse_agent_json(raw_text: str) -> dict:
     return {}
 
 
-_EMPTY_OBSERVATION_VALUES = {"", "[]", "{}", "none", "null", "no results", "no results found"}
+_EMPTY_OBSERVATION_VALUES = {
+    "", "[]", "{}", "none", "null", "no results", "no results found",
+    "no matches.", "no matches", "no diff context available.", "no similar file paths found.",
+}
 
 
 def _is_empty_observation(observation: str) -> bool:
@@ -2303,16 +2307,20 @@ async def run_react_loop(
     max_iterations, since a higher step cap alone doesn't help if the loop only gets to
     second-guess itself once.
 
-    "Outstanding failed-or-empty action" is tracked per tool_action name, not just "did the
-    last step fail" — a real failure mode this caught: read_repo_file 404s, list_repo_tree (a
-    different action, taken to diagnose the 404) then succeeds, and the model concludes right
+    "Outstanding failed-or-empty action" is tracked per (tool_action name, args) pair, not just
+    "did the last step fail" — a real failure mode this caught: read_repo_file 404s, list_repo_tree
+    (a different action, taken to diagnose the 404) then succeeds, and the model concludes right
     there without ever actually retrying the read. Checking only the last observation would
     see the successful list and never nudge, even though the thing the user actually asked for
     was never retrieved. Empty results are tracked the same way as outright errors (see
     _is_empty_observation) — an empty search result is very often a sign of looking in the
     wrong place (wrong repo, wrong collection, wrong query), not proof nothing exists.
-    unretried_inconclusive_tools tracks every tool_action that has failed or come back empty
-    and not since been attempted again, regardless of what ran in between."""
+    unretried_inconclusive_tools maps every tool_action that has failed or come back empty to the
+    exact args it was called with, until it's attempted again with either a real success or
+    genuinely different args — calling the same failed action with the identical args again is
+    not a retry (it's the same query bouncing off the same wall) and does not clear the flag, so
+    it keeps nudging until the model actually changes something. Tracked regardless of what ran
+    in between."""
     attempts: list = list(initial_attempts or [])
     final_answer = None
     # Defaults true (show the receipt) whenever a "final" doesn't explicitly say otherwise —
@@ -2320,7 +2328,7 @@ async def run_react_loop(
     # so err toward the more transparent option rather than silently dropping useful context.
     show_work = True
     retry_nudge_count = 0
-    unretried_inconclusive_tools: set = set()
+    unretried_inconclusive_tools: dict = {}  # tool_action_name -> args signature of the failing call
 
     for step in range(max_iterations):
         forced_final = step == max_iterations - 1
@@ -2342,9 +2350,10 @@ async def run_react_loop(
                 f"\n\n(One or more of your actions failed or came back empty and was never "
                 f"successfully retried ({failed_tools}), and you still have steps remaining — "
                 "an empty result often means the query, path, or scope was wrong, not that "
-                "nothing exists. Actually retry it with corrected information (a different "
-                "diagnostic action, like listing the repo "
-                "tree, does not count as retrying it) before concluding. Only choose "
+                "nothing exists. Actually retry it with corrected information — a DIFFERENT "
+                "query/path/args than the one that just failed (calling it again with the exact "
+                "same args does not count as retrying it, and neither does a different "
+                "diagnostic action, like listing the repo tree) — before concluding. Only choose "
                 "action=\"final\" now if you are certain nothing else could help.)"
             )
 
@@ -2414,15 +2423,22 @@ async def run_react_loop(
 
         tool_action_name = decision.get("tool_action") or ""
         if tool_action_name:
-            if tool_action_name in unretried_inconclusive_tools:
-                # Attempting a previously-failed-or-empty tool again satisfies "it was
-                # retried" even if this new attempt also fails or comes back empty — a
-                # genuinely doomed action (a real 404, a search that's empty no matter how
-                # it's phrased) shouldn't force a second forced extra step on top of the
-                # honest retry it already got.
-                unretried_inconclusive_tools.discard(tool_action_name)
-            elif observation.startswith("ERROR") or _is_empty_observation(observation):
-                unretried_inconclusive_tools.add(tool_action_name)
+            args_signature = json.dumps(decision.get("args") or {}, sort_keys=True, default=str)
+            prior_args_signature = unretried_inconclusive_tools.get(tool_action_name)
+            still_failing = observation.startswith("ERROR") or _is_empty_observation(observation)
+            if prior_args_signature is not None:
+                # This tool_action was already outstanding. A success, OR a genuinely
+                # different call (even one that also fails), counts as the one honest retry
+                # it's owed — clear the flag either way, and do not immediately re-flag it
+                # even if this retry itself just failed too (a genuinely doomed action
+                # shouldn't force a second forced extra step on top of the retry it already
+                # got). A verbatim repeat of the exact same args is not a retry at all,
+                # though — that's the same query bouncing off the same wall — so it leaves
+                # the flag exactly as it was, and the nudge keeps showing.
+                if not still_failing or args_signature != prior_args_signature:
+                    del unretried_inconclusive_tools[tool_action_name]
+            elif still_failing:
+                unretried_inconclusive_tools[tool_action_name] = args_signature
         args_summary = ", ".join(f"{k}={v}" for k, v in (decision.get("args") or {}).items())
         action_desc = f"{tool_action_name}({args_summary})" if tool_action_name else (args_summary or "")
         logger.info(
@@ -2465,6 +2481,47 @@ async def run_react_loop(
 # ============================================================
 
 _FILE_EXTENSION_RE = re.compile(r"\.[A-Za-z0-9]{1,5}$")
+
+
+# find_file's fuzzy matching, so a colloquial name ("navbar") can still surface a differently
+# named real file (menu-navigator.tsx) even though they share no exact token — search_code only
+# matches GitHub's literal keyword index, which finds nothing at all in that case. Splits both on
+# non-alphanumeric characters AND camelCase boundaries so "MenuNavigator" and "menu-navigator"
+# tokenize to the same {"menu", "navigator"} regardless of naming convention.
+_PATH_TOKEN_SPLIT_RE = re.compile(r"[^a-zA-Z0-9]+")
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_FUZZY_MATCH_CUTOFF = 0.5
+_FUZZY_MATCH_LIMIT = 15
+
+
+def _tokenize_for_fuzzy_match(text: str) -> set:
+    tokens = set()
+    for fragment in _PATH_TOKEN_SPLIT_RE.split(text):
+        if not fragment:
+            continue
+        for sub in _CAMEL_BOUNDARY_RE.split(fragment):
+            if sub:
+                tokens.add(sub.lower())
+    return tokens
+
+
+def _fuzzy_path_score(query_tokens: set, path: str) -> float:
+    """Best similarity between any query token and any token in `path` (folder names and
+    filename, extension stripped) — an exact token match short-circuits to 1.0, otherwise
+    falls back to difflib's character-level ratio so near-misses (navbar/navigator, singular
+    vs. plural) still score usefully instead of an all-or-nothing exact match."""
+    path_tokens = _tokenize_for_fuzzy_match(_FILE_EXTENSION_RE.sub("", path))
+    if not path_tokens:
+        return 0.0
+    best = 0.0
+    for query_token in query_tokens:
+        for path_token in path_tokens:
+            if query_token == path_token:
+                return 1.0
+            ratio = difflib.SequenceMatcher(None, query_token, path_token).ratio()
+            if ratio > best:
+                best = ratio
+    return best
 
 
 # Directory/programming nouns so common across virtually any repo's structure that a bare
@@ -2703,18 +2760,52 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             exec(code, {"__builtins__": exec_builtins}, local_scope)
             return local_scope.get("result", None)
 
-        def _list_tree():
+        def _fetch_repo_paths():
+            # Shared by _list_tree and _find_file — a single real fetch of every path this
+            # repo actually has, so find_file's fuzzy matching runs against the full tree, not
+            # just whatever _list_tree happens to truncate its own display to.
             tree_url = f"{api_base}/repos/{repo}/git/trees/{default_branch}?recursive=1"
             res = requests.get(tree_url, headers=headers)
             if res.status_code != 200:
                 return f"ERROR: could not fetch tree ({res.status_code})"
             tree_items = res.json().get("tree", [])
-            paths = [
+            return [
                 item.get("path") for item in tree_items
                 if item.get("type") == "blob"
                 and not any(exclude in item.get("path", "") for exclude in ["node_modules", "dist", "__pycache__"])
             ]
+
+        def _list_tree():
+            paths = _fetch_repo_paths()
+            if isinstance(paths, str):
+                return paths  # propagate the "ERROR: ..." string from a failed fetch
             return "\n".join(paths[:400])
+
+        def _find_file(query: str):
+            # Local, no-index fuzzy file finder — scores every path list_repo_tree would
+            # already return against the query with difflib, entirely client-side. No
+            # embeddings, no per-repo setup, no external index to keep in sync — it works
+            # identically on any repo/user's tree the moment it's fetched, which is what makes
+            # it scale to other users' and other repos without a provisioning step. This is
+            # what closes the gap search_code's literal keyword index can't: a colloquial name
+            # ("navbar") that shares no exact token with the real file (menu-navigator.tsx).
+            if not query:
+                return "ERROR: no query given"
+            paths = _fetch_repo_paths()
+            if isinstance(paths, str):
+                return paths
+            query_tokens = _tokenize_for_fuzzy_match(query)
+            if not query_tokens:
+                return "ERROR: no usable query tokens"
+            scored = [
+                (path, _fuzzy_path_score(query_tokens, path))
+                for path in paths
+            ]
+            scored = [pair for pair in scored if pair[1] >= _FUZZY_MATCH_CUTOFF]
+            if not scored:
+                return "No similar file paths found."
+            scored.sort(key=lambda pair: pair[1], reverse=True)
+            return "\n".join(f"{path} (similarity {score:.2f})" for path, score in scored[:_FUZZY_MATCH_LIMIT])
 
         def _read_file(path: str, start_line=None, line_count=None):
             if not path:
@@ -2852,7 +2943,17 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             "the whole file or guessing what the rest contains",
             "- search_code — args: query (a function/class/variable name or exact string); finds "
             "every file in the repo that references it — use this to find what calls, imports, "
-            "or otherwise connects to the file/function you're already looking at",
+            "or otherwise connects to the file/function you're already looking at. It only matches "
+            "exact tokens, so it will find nothing for a colloquial/descriptive name that doesn't "
+            "literally appear in the code (e.g. \"navbar\" when the file is menu-navigator.tsx) — "
+            "use find_file for that case instead, not a second differently-worded search_code call",
+            "- find_file — args: query (a colloquial, descriptive, or approximate name — not "
+            "necessarily an exact identifier); fuzzy-matches it against every real file path in "
+            "the repo and returns the closest ones with a similarity score. Use this when the user "
+            "names something by what it does or looks like rather than its exact identifier, or "
+            "when search_code/read_repo_file already came back empty for a guessed name — it finds "
+            "near matches (menu-navigator.tsx from a query of \"navbar\") that an exact-token search "
+            "cannot",
             "- diff_branches — args: base (branch name), head (branch name)",
             "- list_commits — args: branch (branch name), limit (max number of commits, integer)",
             "- web_search — args: query (the exact search query string to run)",
@@ -2941,6 +3042,8 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     return _read_file(args.get("path"), args.get("start_line"), args.get("line_count"))
                 if tool_action == "search_code":
                     return _search_code(args.get("query"))
+                if tool_action == "find_file":
+                    return _find_file(args.get("query"))
                 if tool_action == "diff_branches":
                     return _diff_branches(args.get("base"), args.get("head"))
                 if tool_action == "list_commits":

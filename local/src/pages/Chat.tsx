@@ -3,7 +3,7 @@ import swooshLogoImg from '../assets/white_swoosh.png';
 import { Filters } from '../components/Filters';
 import ConversationsBlade from '../components/ConversationsBlade';
 import { getDynamicExampleQuestions } from '../utils/Example_List';
-import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal } from '../api'; 
+import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, type KnowledgeBase } from '../api';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -444,7 +444,11 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const hashSearch = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
   const searchParams = new URLSearchParams(window.location.search || hashSearch);
   const isEmbedded = searchParams.get('mode') === 'embed';
+  const [tracePanelPos, setTracePanelPos] = useState({ x: 0, y: 0 });
+  const [isDraggingTrace, setIsDraggingTrace] = useState(false);
+  const traceDragRef = useRef({ startX: 0, startY: 0, initialX: 0, initialY: 0 });
   // Trace is available by default in standalone mode, but starts hidden when embedded.
+
   const [isNavHovered, setIsNavHovered] = useState(false); 
   const [showTracePanel, setShowTracePanel] = useState(() => {
     if (isEmbedded) return false;
@@ -468,7 +472,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [selectedAffiliate, setSelectedAffiliate] = useState<string>('All');
   const [ragMode, setRagMode] = useState<string>('strict');
   const [deepThinking, setDeepThinking] = useState<boolean>(false);
-  const [allowedAffiliates, setAllowedAffiliates] = useState<string[]>([]);
+  const [allowedAffiliates, setAllowedAffiliates] = useState<KnowledgeBase[]>([]);
   const [userEmail, setUserEmail] = useState<string>('');
   const [agentStatus, setAgentStatus] = useState<string>('');
   const [agentPath, setAgentPath] = useState<string[]>([]);
@@ -559,6 +563,46 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
       setShowConversations(true);
     }
   };
+  const handleTraceMouseDown = (e: React.MouseEvent) => {
+  // Ignore clicks on buttons inside the header
+  if ((e.target as HTMLElement).closest('.circle-icon-button')) return;
+
+  setIsDraggingTrace(true);
+  traceDragRef.current = {
+    startX: e.clientX,
+    startY: e.clientY,
+    initialX: tracePanelPos.x,
+    initialY: tracePanelPos.y,
+  };
+};
+
+useEffect(() => {
+  const handleMouseMove = (e: MouseEvent) => {
+    if (!isDraggingTrace) return;
+    
+    const dx = e.clientX - traceDragRef.current.startX;
+    const dy = e.clientY - traceDragRef.current.startY;
+    
+    setTracePanelPos({
+      x: traceDragRef.current.initialX + dx,
+      y: traceDragRef.current.initialY + dy,
+    });
+  };
+
+  const handleMouseUp = () => {
+    setIsDraggingTrace(false);
+  };
+
+  if (isDraggingTrace) {
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  }
+
+  return () => {
+    window.removeEventListener('mousemove', handleMouseMove);
+    window.removeEventListener('mouseup', handleMouseUp);
+  };
+}, [isDraggingTrace]);
   useEffect(() => {
     const handleNavHover = (e: Event) => {
       const customEvent = e as CustomEvent<boolean>;
@@ -799,7 +843,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     setConversationsRefreshKey(k => k + 1);
     try {
       const questions = await getDynamicExampleQuestions(
-      allowedAffiliates,
+      allowedAffiliates.map(a => a.id),
       isEmbedded ? embedAffiliate : 'All'
     );
     setCurrentExampleQuestions(questions);
@@ -920,7 +964,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     if (allowedAffiliates.length === 0) return;
     const syncQuestionPool = async () => {
       setLoadingCards(true);
-      const questions = await getDynamicExampleQuestions(allowedAffiliates, selectedAffiliate);
+      const questions = await getDynamicExampleQuestions(allowedAffiliates.map(a => a.id), selectedAffiliate);
       setCurrentExampleQuestions(questions);
       setLoadingCards(false);
     };
@@ -1319,46 +1363,6 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
 
         {/* 3. INPUT AREA & FOOTER */}
         <footer className="controls-footer" style={{ position: 'relative' }}>
-          {/* MOBILE TRACE PILL (Pinned inside top of footer) */}
-          <div className="mobile-trace-pill-container">
-            <style>{`
-              @media (min-width: 768px) {
-                .mobile-trace-pill-container {
-                  display: none !important;
-                }
-              }
-            `}</style>
-
-            {showTracePanel && (
-              <div style={{ display: 'flex', justifyContent: 'center', width: '100%', marginBottom: '8px' }}>
-                <button
-                  type="button"
-                  onClick={() => setIsMobileTraceOpen(true)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '6px 14px',
-                    background: 'rgba(30, 41, 59, 0.9)',
-                    border: '1px solid rgba(148, 163, 184, 0.3)',
-                    borderRadius: '9999px',
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-                    fontSize: '12px',
-                    color: '#cbd5e1',
-                    cursor: 'pointer',
-                    backdropFilter: 'blur(8px)',
-                    zIndex: 50
-                  }}
-                >
-                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#6366f1', display: 'inline-block' }} />
-                  <span style={{ maxWidth: '200px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {latestStepTitle || "View live execution trace..."}
-                  </span>
-                  <span>▲</span>
-                </button>
-              </div>
-            )}
-          </div>
 
           {showRepoBanner && (
             <div className="repo-banner"
@@ -1762,6 +1766,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
             position: 'absolute',
             top: 0,
             left: 'calc(100% + 1.25rem)',
+            transform: `translate3d(${tracePanelPos.x}px, ${tracePanelPos.y}px, 0)`,
+            transition: isDraggingTrace ? 'none' : 'transform 0.1s ease',
             width: '320px',
             maxHeight: 'calc(100vh - 180px)',
             border: '1px solid rgba(148, 163, 184, 0.24)',
@@ -1772,7 +1778,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
             boxShadow: '0 12px 28px rgba(0,0,0,0.5)',
             overflowY: 'auto',
             zIndex: 1,
-            boxSizing: 'border-box'
+            boxSizing: 'border-box',
+            userSelect: isDraggingTrace ? 'none' : 'auto'
           }}>
             <style>{`
               @media (max-width: 767px) {
@@ -1781,16 +1788,28 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                 }
               }
             `}</style>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+            <div
+              onMouseDown={handleTraceMouseDown}
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: '0.75rem',
+                cursor: isDraggingTrace ? 'grabbing' : 'grab',
+                paddingBottom: '0.5rem',
+                borderBottom: '1px solid rgba(148, 163, 184, 0.1)'
+              }}
+            >
               <div>
-                <div style={{ fontSize: '0.9rem', fontWeight: 700 }}>How it works</div>
-                <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Live execution trace</div>
+                <div style={{ fontSize: '0.9rem', fontWeight: 700 }}>How it works ⠿</div>
+                <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Live execution trace (Drag to move)</div>
               </div>
               <button
                 type="button"
                 className="circle-icon-button"
                 onClick={toggleTracePanel}
                 title="Hide trace panel"
+                style={{ cursor: 'pointer' }}
               >
                 ✕
               </button>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { api } from '../api';
+import { api, type KnowledgeBase } from '../api';
 import './__styles__/SelfService.css';
 import { useAuth } from '@clerk/clerk-react';
 
@@ -13,9 +13,9 @@ interface DocumentRecord {
 export const SelfServicePage: React.FC = () => {
   const { getToken } = useAuth(); // <-- 2. ADD THIS
   const [principal, setPrincipal] = useState<string>('');
-  
+
   // --- STATE LAYER ---
-  const [allowedAffiliates, setAllowedAffiliates] = useState<string[]>([]);
+  const [allowedAffiliates, setAllowedAffiliates] = useState<KnowledgeBase[]>([]);
   const [userGroups, setUserGroups] = useState<string[]>([]);
   const [selectedAffiliate, setSelectedAffiliate] = useState<string>('');
   const [loadingInitial, setLoadingInitial] = useState<boolean>(true);
@@ -38,6 +38,7 @@ export const SelfServicePage: React.FC = () => {
   // FIX: Only check for the Ingesters role if a valid affiliate is selected.
   // This prevents searching for " Ingesters" (empty string prefix) when the component initializes.
   const hasIngestPermission = isGlobalAdmin || (selectedAffiliate && userGroups.includes(`${selectedAffiliate} Ingesters`));
+  const selectedDisplayName = allowedAffiliates.find(a => a.id === selectedAffiliate)?.display_name ?? selectedAffiliate;
 
   useEffect(() => {
   const storedId = localStorage.getItem('x-user-id') ?? "";
@@ -68,7 +69,7 @@ export const SelfServicePage: React.FC = () => {
         setUserGroups(verifiedGroups);
         
         if (verifiedAffiliates.length > 0) {
-            setSelectedAffiliate(verifiedAffiliates[0]); 
+            setSelectedAffiliate(verifiedAffiliates[0].id);
         }
       } catch (err) {
         console.error("Failed loading user authorization directory:", err);
@@ -183,7 +184,7 @@ export const SelfServicePage: React.FC = () => {
               disabled={uploading || deletingId !== null}
             >
               {(allowedAffiliates || []).map((aff) => (
-                <option key={aff} value={aff}>{aff.replace('_', ' ')}</option>
+                <option key={aff.id} value={aff.id}>{aff.display_name}</option>
               ))}
             </select>
           </div>
@@ -228,7 +229,7 @@ export const SelfServicePage: React.FC = () => {
                 className="action-button upload-submit-btn" 
                 disabled={!selectedFiles || uploading}
               >
-                {uploading ? "Executing Chunk Splitting Ingestion..." : `Upload to ${selectedAffiliate.replace('_', ' ')}`}
+                {uploading ? "Executing Chunk Splitting Ingestion..." : `Upload to ${selectedDisplayName}`}
               </button>
             </form>
           )}
@@ -260,7 +261,7 @@ export const SelfServicePage: React.FC = () => {
             <div className="loader-subtext">Synchronizing vector cluster indices...</div>
           ) : filteredDocuments.length === 0 ? (
             <div className="empty-manifest-notice">
-              {searchQuery ? "No files match query criteria." : `No documents indexed inside ${selectedAffiliate.replace('_', ' ')}.`}
+              {searchQuery ? "No files match query criteria." : `No documents indexed inside ${selectedDisplayName}.`}
             </div>
           ) : (
             <div className="manifest-table-scroll-zone">

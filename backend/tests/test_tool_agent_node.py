@@ -1044,3 +1044,85 @@ async def test_browser_screenshot_uses_lite_llm(monkeypatch):
 
     fake_screenshot.assert_awaited_once()
     assert fake_screenshot.call_args.args[1] is aw.lite_llm
+
+
+# ---------------------------------------------------------------------------
+# find_file — local fuzzy matching against the repo tree, closes the gap
+# search_code's literal keyword index can't (a colloquial name that shares no
+# exact token with the real file, e.g. "navbar" vs menu-navigator.tsx).
+# ---------------------------------------------------------------------------
+
+def test_fuzzy_path_score_finds_navbar_in_menu_navigator():
+    query_tokens = aw._tokenize_for_fuzzy_match("navbar")
+    score = aw._fuzzy_path_score(query_tokens, "local/src/components/menu-navigator.tsx")
+    assert score >= aw._FUZZY_MATCH_CUTOFF
+
+
+def test_fuzzy_path_score_finds_navbar_in_camel_case_filename():
+    query_tokens = aw._tokenize_for_fuzzy_match("navbar")
+    score = aw._fuzzy_path_score(query_tokens, "local/src/components/MenuNavigator.tsx")
+    assert score >= aw._FUZZY_MATCH_CUTOFF
+
+
+def test_fuzzy_path_score_rejects_unrelated_path():
+    query_tokens = aw._tokenize_for_fuzzy_match("navbar")
+    score = aw._fuzzy_path_score(query_tokens, "backend/services/ci_test_runner.py")
+    assert score < aw._FUZZY_MATCH_CUTOFF
+
+
+def test_fuzzy_path_score_exact_token_match_scores_perfectly():
+    query_tokens = aw._tokenize_for_fuzzy_match("affiliate")
+    score = aw._fuzzy_path_score(query_tokens, "backend/utils/isolation_kb_utils.py")
+    assert score < aw._FUZZY_MATCH_CUTOFF  # no real "affiliate" token in that path
+    score = aw._fuzzy_path_score(query_tokens, "local/src/components/Affiliate.tsx")
+    assert score == 1.0
+
+
+@run_async
+async def test_find_file_surfaces_a_near_match_search_code_would_miss(monkeypatch):
+    """The exact real-world failure this closes: the user says "navbar", the real file is
+    menu-navigator.tsx — zero literal tokens in common, so search_code would find nothing no
+    matter how many times it's called, but find_file's fuzzy match against the real repo tree
+    surfaces it immediately."""
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    repo_resp = _http_response(200, {"default_branch": "main"})
+    tree_resp = _http_response(200, {"tree": [
+        {"path": "local/src/components/menu-navigator.tsx", "type": "blob"},
+        {"path": "backend/services/ci_test_runner.py", "type": "blob"},
+        {"path": "local/src/pages/Chat.tsx", "type": "blob"},
+    ]})
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        if "/git/trees/" in url:
+            return tree_resp
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+
+    responses = [
+        _llm_response(action="query", purpose="Fuzzy-find the navbar component", tool_action="find_file", args={"query": "navbar"}),
+        _llm_response(action="final", answer="Found it at local/src/components/menu-navigator.tsx."),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("I need a navbar change"))
+
+    assert "menu-navigator.tsx" in result["content_to_format"]
+
+
+@run_async
+async def test_find_file_no_query_is_error(monkeypatch):
+    _setup_github_repo(monkeypatch)
+    responses = [
+        _llm_response(action="query", purpose="Find it", tool_action="find_file", args={}),
+        _llm_response(action="final", answer="Couldn't find it."),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("find the thing"))
+
+    assert "ERROR" in result["content_to_format"] or "Couldn't find it" in result["content_to_format"]

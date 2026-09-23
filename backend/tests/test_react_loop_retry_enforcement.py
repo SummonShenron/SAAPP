@@ -296,6 +296,52 @@ async def test_default_max_retry_nudges_still_rejects_only_once():
 
 
 @run_async
+async def test_verbatim_repeat_of_failed_query_does_not_clear_the_nudge():
+    """The bug this closes: retrying a failed action with the EXACT same args used to satisfy
+    "it was retried" and silently clear the outstanding flag even though nothing about the call
+    actually changed — the real-world symptom was the model calling search_code with the
+    identical query twice in a row and then giving up. A verbatim repeat must NOT clear the
+    flag (contrast with test_second_consecutive_error_does_not_trigger_a_second_nudge, where a
+    genuinely different args value on the retry does clear it)."""
+    captured_prompts = []
+    responses = [
+        _llm_response(action="query", purpose="Search for navbar", tool_action="search_code", args={"query": "navbar"}),
+        _llm_response(action="query", purpose="Search again", tool_action="search_code", args={"query": "navbar"}),  # verbatim repeat, not a real retry
+        _llm_response(action="final", answer="Giving up."),
+        _llm_response(action="final", answer="Okay, honestly giving up."),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            return "No matches."
+
+        result = await aw.run_react_loop(
+            question="where is the navbar?",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert len(captured_prompts) == 4
+    assert result["final_answer"] == "Okay, honestly giving up."
+    # The crux of the regression: the nudge must still be showing in the prompt right after
+    # the verbatim repeat (shown before the premature "final" attempt) — if the repeat had
+    # incorrectly cleared the flag, this would be absent.
+    assert "retry it" in captured_prompts[2]
+    assert len(result["attempts"]) == 2  # both real (failed) search_code calls, repeat included
+
+
+@run_async
 async def test_second_consecutive_error_does_not_trigger_a_second_nudge():
     """A genuinely doomed action (still failing after the forced retry) must still get an
     honest 'final' on the next try rather than the loop nudging forever."""

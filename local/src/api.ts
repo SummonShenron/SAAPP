@@ -165,10 +165,15 @@ export async function isPaappAdmin(clerkId: string): Promise<boolean> {
     return false;
   }
 }
+export interface KnowledgeBase {
+  id: string;
+  display_name: string;
+}
+
 /**
  * Fetch accessible workspace claims
  */
-export async function getAffiliates(username: string): Promise<string[]> {
+export async function getAffiliates(username: string): Promise<KnowledgeBase[]> {
   const authHeaders = await getAuthHeaders();
   const response = await fetch(
     `${BASE_URL}/api/affiliates?username=${encodeURIComponent(username)}`,

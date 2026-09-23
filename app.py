@@ -92,7 +92,7 @@ from backend.utils.fallback_utils import rewrite_fallback
 from backend.services.reward_evaluator import evaluate_response, build_correction_prompt, REWARD_EVAL_SOURCE_TYPES
 from backend.logging.sass_logger import setup_logging
 from backend.services.orchestrator import startup_services
-from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, verify_paapp_access, load_directory, seed_guest_tasks
+from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, verify_paapp_access, load_directory, seed_guest_tasks, make_personal_kb_id, resolve_kb_display_names
 from backend.utils.db_utils import get_db, save_error_event, test_connection
 from backend.auth.isolation_auth import get_current_user, record_login_event
 from contextlib import asynccontextmanager
@@ -325,11 +325,22 @@ def get_me(request: Request, current_user: dict = Depends(get_current_user)):
                 safe_email = email
 
             logger.info(f"[+] Provisioning user record for: {safe_email or safe_username}")
+            personal_kb_id = make_personal_kb_id(clerk_id)
+            personal_kb_display_name = f"{safe_username}'s Knowledge Base"
             new_user = {
                 "clerk_id": clerk_id,
                 "email": safe_email,
                 "username": safe_username,
-                "groups": ["Affiliate_A", "Affiliate_B", "Affiliate_C", "PAAPP_Admins", "Taskboard_Admins"],
+                "groups": [
+                    "Affiliate_A", "Affiliate_B", "Affiliate_C",
+                    "PAAPP_Admins", "Taskboard_Admins",
+                    personal_kb_id, f"{personal_kb_id} Ingesters",
+                ],
+                "personal_kb": {
+                    "id": personal_kb_id,
+                    "display_name": personal_kb_display_name,
+                    "created_at": datetime.utcnow(),
+                },
                 "created_at": datetime.utcnow()
             }
             users_col.insert_one(new_user)
@@ -393,12 +404,19 @@ async def log_user_login(request: Request, current_user: dict = Depends(get_curr
 async def get_affiliates(current_user = Depends(get_current_user)):
     clerk_id = current_user.get("sub")
     directory = load_directory()
-    
+
     # DEBUG: See if we can find the user with the new ID
     user_data = directory.get(clerk_id)
     logger.debug(f"Lookup result for {clerk_id}: {user_data}")
-    
-    return get_accessible_affiliates(clerk_id, directory)
+
+    accessible = get_accessible_affiliates(clerk_id, directory)["accessible_affiliates"]
+    display_names = resolve_kb_display_names(directory)
+    return {
+        "accessible_affiliates": [
+            {"id": aff, "display_name": display_names.get(aff, aff.replace("_", " "))}
+            for aff in accessible
+        ]
+    }
 
 
 @app.get("/api/user/groups")
@@ -954,6 +972,9 @@ async def upload_and_ingest_documents(
     files: List[UploadFile] = File(...),
     current_user = Depends(get_current_user)
 ):
+    if not verify_user_ingest_access(current_user.get("sub"), affiliate):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
     # 1. Access/Upload Logic
     db = get_db()
     fs = GridFS(db)
