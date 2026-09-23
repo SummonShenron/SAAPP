@@ -1484,3 +1484,55 @@ async def test_history_fallback_text_on_first_message(monkeypatch):
     await aw.tool_agent_node(_state("what does this repo do?"))
 
     assert "(no prior messages this conversation)" in captured_kwargs["prompt_template"]
+
+
+# ---------------------------------------------------------------------------
+# capability_denial_watchlist wiring — confirms TOOL_AGENT_CAPABILITY_DENIAL_WATCHLIST
+# is actually passed through, and end-to-end catches a real denial against the REAL
+# menu tool_agent_node builds (not a synthetic test template).
+# ---------------------------------------------------------------------------
+
+@run_async
+async def test_capability_denial_watchlist_passed_to_react_loop(monkeypatch):
+    _setup_github_repo(monkeypatch)
+    captured_kwargs = {}
+
+    async def fake_run_react_loop(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"final_answer": "done", "attempts": [], "show_work": False}
+
+    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+
+    await aw.tool_agent_node(_state("what does this repo do?"))
+
+    assert captured_kwargs["capability_denial_watchlist"] is aw.TOOL_AGENT_CAPABILITY_DENIAL_WATCHLIST
+
+
+@run_async
+async def test_browser_capability_denial_rejected_end_to_end(monkeypatch):
+    """Reproduces the real production trace end-to-end, through tool_agent_node's actual menu
+    construction (browser_navigate is always available, not admin-gated) — a confident denial
+    of browser access gets rejected once, then a real browser_navigate call is accepted."""
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("BROWSERLESS_WS_ENDPOINT", "wss://fake-endpoint")
+    _setup_github_repo(monkeypatch)
+    _FakeBrowserSession.instances = []
+    monkeypatch.setattr(aw, "BrowserSession", _FakeBrowserSession)
+    monkeypatch.setattr(aw, "browser_navigate", AsyncMock(return_value="Navigated to https://btyfitness.app"))
+
+    responses = [
+        _llm_response(
+            action="final",
+            answer="I don't actually have a live browser tool or sandbox execution environment right now.",
+        ),
+        _llm_response(
+            action="query", purpose="Actually check the live site", tool_action="browser_navigate",
+            args={"url": "https://btyfitness.app"},
+        ),
+        _llm_response(action="final", answer="Confirmed — the widget is there.", show_work=False),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("open a browser to btyfitness.app and check the widget"))
+
+    assert "Confirmed" in result["content_to_format"]

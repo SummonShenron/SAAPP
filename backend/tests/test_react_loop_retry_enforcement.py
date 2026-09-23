@@ -475,3 +475,128 @@ async def test_second_consecutive_error_does_not_trigger_a_second_nudge():
     # before the final honest answer.
     nudge_count = sum(1 for p in captured_prompts if "retry it" in p)
     assert nudge_count == 1
+
+
+# ---------------------------------------------------------------------------
+# capability_denial_watchlist — the second real production failure: a "final"
+# confidently denying a capability (browser access) that was sitting in that
+# exact turn's own action menu the whole time.
+# ---------------------------------------------------------------------------
+
+PROMPT_WITH_BROWSER_ACTION = (
+    "{question} | {schema} | {attempts}\n"
+    "AVAILABLE ACTIONS THIS TURN:\n- browser_navigate — args: url\n"
+)
+
+
+@run_async
+async def test_capability_denial_is_rejected_once_then_corrected_final_accepted():
+    """Reproduces the real trace: a confident denial of browser access while browser_navigate
+    is right there in the menu gets rejected once, and only a genuinely corrected answer (or a
+    real attempt) gets accepted afterward."""
+    captured_prompts = []
+    responses = [
+        _llm_response(
+            action="final",
+            answer="I don't actually have a live browser tool or sandbox execution environment right now.",
+        ),
+        _llm_response(action="final", answer="You're right, I do have browser access — let me check the live page."),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            return "unused"
+
+        result = await aw.run_react_loop(
+            question="open a browser to btyfitness.app and check the widget",
+            schema="repo=x",
+            prompt_template=PROMPT_WITH_BROWSER_ACTION,
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+            capability_denial_watchlist=aw.TOOL_AGENT_CAPABILITY_DENIAL_WATCHLIST,
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert len(captured_prompts) == 2
+    assert result["final_answer"] == "You're right, I do have browser access — let me check the live page."
+    assert "browser_navigate" in captured_prompts[1]
+    assert "is listed in AVAILABLE ACTIONS THIS TURN above" in captured_prompts[1]
+
+
+@run_async
+async def test_capability_denial_rejection_is_budget_limited():
+    """A second consecutive denial (the model insists despite the correction) must still get
+    an honest 'final' rather than looping forever."""
+    captured_prompts = []
+    responses = [
+        _llm_response(action="final", answer="I don't have a browser tool available."),
+        _llm_response(action="final", answer="I really don't have a browser tool, sorry."),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            return "unused"
+
+        result = await aw.run_react_loop(
+            question="open a browser to btyfitness.app",
+            schema="repo=x",
+            prompt_template=PROMPT_WITH_BROWSER_ACTION,
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+            capability_denial_watchlist=aw.TOOL_AGENT_CAPABILITY_DENIAL_WATCHLIST,
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert len(captured_prompts) == 2
+    assert result["final_answer"] == "I really don't have a browser tool, sorry."
+
+
+@run_async
+async def test_genuine_capability_denial_not_in_menu_is_accepted_immediately():
+    """False-positive guard: if the capability genuinely ISN'T in this turn's menu (no
+    browser_navigate substring present), a denial must be accepted as-is, not rejected."""
+    captured_prompts = []
+    responses = [
+        _llm_response(action="final", answer="I don't have a browser tool available for this."),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            return "unused"
+
+        result = await aw.run_react_loop(
+            question="open a browser to btyfitness.app",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",  # no browser_navigate in menu
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+            capability_denial_watchlist=aw.TOOL_AGENT_CAPABILITY_DENIAL_WATCHLIST,
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert len(captured_prompts) == 1
+    assert result["final_answer"] == "I don't have a browser tool available for this."

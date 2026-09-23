@@ -94,6 +94,27 @@ TOOL_AGENT_STUCK_ACTION_REDIRECTS = {
     ),
 }
 
+# A real production trace showed a "final" confidently and repeatedly denying browser access
+# ("I don't actually have a live browser tool...") while browser_navigate sat in that exact
+# turn's own action menu the whole time — a prose rule telling it to check the menu before
+# denying a capability already exists and still wasn't enough (see docs/coding-agent-roadmap.md).
+# Each entry: (regex matching how a user/model might refer to this capability in plain language,
+# the exact menu-line substring proving that tool_action is actually available this turn).
+TOOL_AGENT_CAPABILITY_DENIAL_WATCHLIST = [
+    (
+        re.compile(r'\b(browser|navigate (?:to|the)|headless browser|live (?:web|page|site)|screenshot)\b', re.IGNORECASE),
+        "- browser_navigate —",
+    ),
+    (
+        re.compile(r'\brun (?:code|python|a (?:script|snippet))\b|\bexecute (?:code|python|javascript)\b', re.IGNORECASE),
+        "- run_snippet —",
+    ),
+    (
+        re.compile(r'\b(mongo(?:db)?|the database)\b', re.IGNORECASE),
+        "- run_mongo_query —",
+    ),
+]
+
 # read_repo_file's truncation/paging knobs. A flat character-count cap on a large file (this repo
 # has several 2000+ line files) silently cuts off before ever reaching a function defined further
 # down — a real fabrication risk, since a model can mistake "I was given the start of the file"
@@ -2273,6 +2294,22 @@ class _ClarificationNeeded(Exception):
 CLARIFICATION_CARD_MARKER = "Need a bit more information to continue"
 
 
+# Catches the exact shape of a real production failure: a confident, detailed "final" answer
+# denying a capability that was sitting in that same turn's own action menu the whole time
+# (browser_navigate — see docs/coding-agent-roadmap.md, "tool_agent_node had zero conversation
+# history"). A prose rule already tells the model to check its own menu before denying a
+# capability; this is the mechanical backstop for when it doesn't, checking the actual "final"
+# TEXT against the actual menu rather than trusting the model caught its own contradiction. Only
+# the denial-shaped phrase is generic/repo-agnostic here — WHICH capabilities to watch for is
+# domain knowledge the caller (tool_agent_node) supplies via capability_denial_watchlist, the
+# same config-driven shape as stuck_action_redirects.
+_CAPABILITY_DENIAL_RE = re.compile(
+    r"\b(i (?:don'?t|do not) (?:actually |currently )?have\b|i can'?t\b|i'?m not able to\b|"
+    r"i lack\b|no access to\b|i (?:don'?t|do not) have access\b)",
+    re.IGNORECASE,
+)
+
+
 def _format_react_attempts(attempts: list) -> str:
     if not attempts:
         return "(none yet — this is the first step)"
@@ -2307,6 +2344,7 @@ async def run_react_loop(
     max_retry_nudges: int = 1,
     llm=lite_llm,
     stuck_action_redirects: dict | None = None,
+    capability_denial_watchlist: list | None = None,
 ) -> dict:
     """Generic Reason -> Act -> Observe -> Decide loop shared by every iterative tool
     (MongoDB, GitHub search, ...). Each step asks the model for the next action given
@@ -2365,7 +2403,20 @@ async def run_react_loop(
     and once a listed tool's streak reaches its threshold, injects `redirect_message` into the
     prompt AND actively rejects one further call to that same stuck tool_action (not executed, not
     recorded as an attempt) — forcing a real switch to a different action, the same mechanical
-    escalation already used for a premature "final"."""
+    escalation already used for a premature "final".
+
+    A second real production trace showed the same "prose alone isn't enough" lesson applies even
+    to a rule this loop's own prompt already states plainly: told to check its own action menu
+    before denying a capability, the model still produced a confident, detailed "final" claiming
+    it had no browser tool at all, while browser_navigate sat in that exact turn's menu.
+    `capability_denial_watchlist` (optional: a list of (capability_keyword_regex,
+    tool_action_menu_substring) pairs) is the mechanical backstop: when a "final" answer matches
+    both a generic denial-shaped phrase (_CAPABILITY_DENIAL_RE — "I don't have...", "I can't...",
+    etc.) AND one of the watchlist's capability keywords, AND that pair's tool_action_menu_substring
+    is actually present in this turn's prompt_template (proving the capability really is
+    available), the "final" is rejected once (not executed as a real step, no state to retry — just
+    a corrective notice injected into the next step) instead of trusting the model to have caught
+    its own contradiction."""
     attempts: list = list(initial_attempts or [])
     final_answer = None
     # Defaults true (show the receipt) whenever a "final" doesn't explicitly say otherwise —
@@ -2377,6 +2428,9 @@ async def run_react_loop(
     stuck_action_streak = {"tool": None, "count": 0}  # consecutive misses on ONE tool, any args
     stuck_action_reject_count = 0
     MAX_STUCK_ACTION_REJECTIONS = 1
+    capability_denial_reject_count = 0
+    MAX_CAPABILITY_DENIAL_REJECTIONS = 1
+    pending_capability_denial_notice: str | None = None
 
     for step in range(max_iterations):
         forced_final = step == max_iterations - 1
@@ -2417,6 +2471,9 @@ async def run_react_loop(
             )
         if stuck_redirect_active:
             question_for_step += f"\n\n({stuck_redirect_entry[1]})"
+        if pending_capability_denial_notice:
+            question_for_step += f"\n\n({pending_capability_denial_notice})"
+            pending_capability_denial_notice = None
 
         prompt = prompt_template.format(
             question=question_for_step,
@@ -2441,6 +2498,29 @@ async def run_react_loop(
             # (e.g. it lists the repo tree first) doesn't spend the budget for free.
             retry_nudge_count += 1
             continue
+        if action == "final" and not forced_final and capability_denial_watchlist and capability_denial_reject_count < MAX_CAPABILITY_DENIAL_REJECTIONS:
+            answer_text = decision.get("answer") or ""
+            denied_tool_marker = None
+            if _CAPABILITY_DENIAL_RE.search(answer_text):
+                for capability_re, tool_menu_substring in capability_denial_watchlist:
+                    if capability_re.search(answer_text) and tool_menu_substring in prompt_template:
+                        denied_tool_marker = tool_menu_substring
+                        break
+            if denied_tool_marker:
+                # A confident, detailed denial isn't more trustworthy than a short one if the
+                # capability is sitting right there in the menu — reject once (not executed,
+                # not recorded as an attempt) instead of trusting the model caught its own
+                # contradiction. Budget-limited for the same reason as every other mechanical
+                # rejection here: a genuinely correct "I don't have that" (a capability that
+                # really isn't in the menu) must still get through eventually.
+                capability_denial_reject_count += 1
+                pending_capability_denial_notice = (
+                    f"Your last answer denied having a capability, but '{denied_tool_marker}' is "
+                    "listed in AVAILABLE ACTIONS THIS TURN above — you do have it right now. Do "
+                    "not deny having it; if you haven't actually used it yet this turn, use it "
+                    "before answering."
+                )
+                continue
         if action == "final":
             final_answer = decision.get("answer") or "I wasn't able to find a conclusive answer."
             show_work = decision.get("show_work")
@@ -3327,6 +3407,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     max_retry_nudges=TOOL_AGENT_MAX_RETRY_NUDGES_DEEP if deep_thinking else TOOL_AGENT_MAX_RETRY_NUDGES,
                     llm=lite_llm_deep if deep_thinking else lite_llm,
                     stuck_action_redirects=TOOL_AGENT_STUCK_ACTION_REDIRECTS,
+                    capability_denial_watchlist=TOOL_AGENT_CAPABILITY_DENIAL_WATCHLIST,
                 )
             except _UnsafeActionRequested as e:
                 drafted_code = (e.decision.get("args") or {}).get("code", "") or ""

@@ -156,6 +156,33 @@ structurally never in its context to begin with.
   `TOOL_AGENT_HISTORY_MAX_MESSAGES` (an old message is verifiably dropped, a
   recent one kept), and the "(no prior messages)" fallback on a first message.
 
+**Follow-up (same session): mechanical backstop for the capability-denial rule
+itself.** The new "check your own menu before denying a capability" prose rule
+above got tested against the exact real trace and, predictably given tonight's
+own repeated lesson, needed a mechanical backstop too — the prose rule alone is
+an assumption, not a guarantee, until proven otherwise.
+
+**Shipped:** `run_react_loop` gained `capability_denial_watchlist` (optional:
+a list of `(capability_keyword_regex, tool_action_menu_substring)` pairs),
+alongside a generic `_CAPABILITY_DENIAL_RE` (denial-shaped phrases — "I don't
+have", "I can't", "I'm not able to", etc.). When a `"final"` answer matches
+both a denial phrase AND one of the watchlist's capability keywords, AND that
+pair's menu substring is actually present in the turn's real `prompt_template`
+(proving the capability genuinely is available), the `"final"` is rejected
+once — same mechanical shape as the premature-final and stuck-action
+rejections, budget-limited to 1 so a genuinely correct "I don't have that" (a
+capability that really isn't available) still gets through. `tool_agent_node`
+wires `TOOL_AGENT_CAPABILITY_DENIAL_WATCHLIST` covering browser access
+(`browser_navigate`), code execution (`run_snippet`), and database access
+(`run_mongo_query`) — the three "real backend action" tools most plausible to
+falsely deny. 6 new tests: rejected-once-then-corrected, budget-limited (a
+second denial gets accepted rather than looping), a false-positive guard
+(genuinely unavailable capability is never rejected), watchlist wiring, and a
+full end-to-end reproduction through `tool_agent_node`'s real menu
+construction (denial → rejection → real `browser_navigate` call → accepted
+final). Full suite: 377 passed, same one pre-existing unrelated failure as
+every other run this session.
+
 ---
 
 ## 1. Reference-classifying trace tool (done)
