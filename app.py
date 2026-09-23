@@ -95,6 +95,7 @@ from backend.services.orchestrator import startup_services
 from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, verify_paapp_access, load_directory, seed_guest_tasks, make_personal_kb_id, resolve_kb_display_names
 from backend.utils.db_utils import get_db, save_error_event, test_connection
 from backend.auth.isolation_auth import get_current_user, record_login_event
+from backend.services.checkpoint_retention import run_checkpoint_retention_loop
 from contextlib import asynccontextmanager
 from settings import DB_DIR
 from backend.components.time_storage import TimeEntryCreate, add_time_entry, load_user_time, clear_user_time, TimeEntry, save_user_time
@@ -139,8 +140,10 @@ async def lifespan(app: FastAPI):
         chat_sessions = load_chat_history()
     except Exception as e:
         logger.exception("Error loading chat history: %s", e)
+    retention_task = spawn_background_task(run_checkpoint_retention_loop())
     yield
     # Cleanup tasks would go here
+    retention_task.cancel()
     chat_sessions = {}
 # 3. Pass the lifespan to the app
 app = FastAPI(title="Secure RAG Engine API", lifespan=lifespan)

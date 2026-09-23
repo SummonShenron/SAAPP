@@ -342,6 +342,102 @@ async def test_verbatim_repeat_of_failed_query_does_not_clear_the_nudge():
 
 
 @run_async
+async def test_stuck_action_redirect_rejects_repeated_search_code_after_threshold():
+    """Reproduces the real production failure this mechanism exists to close: search_code
+    called with several genuinely DIFFERENT queries in a row, all empty. The args-signature
+    retry tracking (tested above) clears itself every time here, since each differently-worded
+    call counts as 'a genuine retry' — which is exactly the loophole that let the real trace
+    burn ~15 steps without ever switching tools. After 2 consecutive misses on search_code
+    specifically (regardless of wording), a further search_code call must be rejected outright
+    — not executed, not recorded — until the model actually switches to find_file."""
+    captured_prompts = []
+    responses = [
+        _llm_response(action="query", purpose="Search for trace-panel", tool_action="search_code", args={"query": "trace-panel"}),
+        _llm_response(action="query", purpose="Try different wording", tool_action="search_code", args={"query": "trace panel styling"}),
+        _llm_response(action="query", purpose="Try again", tool_action="search_code", args={"query": "hero trace overlay"}),  # should get rejected
+        _llm_response(action="query", purpose="Switch to find_file", tool_action="find_file", args={"query": "trace panel"}),
+        _llm_response(action="final", answer="Found it via find_file."),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        act_calls = []
+
+        async def act(decision):
+            act_calls.append(decision)
+            if decision.get("tool_action") == "find_file":
+                return "local/src/pages/Chat.tsx (similarity 0.80)"
+            return "No matches."
+
+        result = await aw.run_react_loop(
+            question="where is the trace-panel?",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=6,
+            node_name="test_node",
+            stuck_action_redirects={"search_code": (2, "Switch to find_file instead of search_code.")},
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert len(captured_prompts) == 5
+    assert result["final_answer"] == "Found it via find_file."
+    # The 3rd search_code attempt was rejected before execution — act() only ever saw the 2
+    # real search_code misses and the real find_file success, never the rejected retry.
+    assert len(act_calls) == 3
+    assert [c["tool_action"] for c in act_calls] == ["search_code", "search_code", "find_file"]
+    # The redirect text appears in the prompt shown right before the rejected attempt.
+    assert "Switch to find_file instead of search_code." in captured_prompts[2]
+    # 2 failed search_code + 1 successful find_file; the rejected attempt is never recorded.
+    assert len(result["attempts"]) == 3
+
+
+@run_async
+async def test_stuck_action_streak_resets_on_success_before_threshold():
+    """Guards against a false positive: one miss followed by a real success on the second,
+    differently-worded search_code call must never trigger the redirect — the streak resets
+    on success before it reaches the threshold."""
+    captured_prompts = []
+    responses = [
+        _llm_response(action="query", purpose="Search", tool_action="search_code", args={"query": "foo"}),
+        _llm_response(action="query", purpose="Search again", tool_action="search_code", args={"query": "bar"}),
+        _llm_response(action="final", answer="Found bar.py."),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            query = (decision.get("args") or {}).get("query")
+            return "No matches." if query == "foo" else "backend/bar.py"
+
+        result = await aw.run_react_loop(
+            question="find bar",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+            stuck_action_redirects={"search_code": (2, "switch to find_file")},
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert result["final_answer"] == "Found bar.py."
+    assert "switch to find_file" not in "".join(captured_prompts)
+
+
+@run_async
 async def test_second_consecutive_error_does_not_trigger_a_second_nudge():
     """A genuinely doomed action (still failing after the forced retry) must still get an
     honest 'final' on the next try rather than the loop nudging forever."""

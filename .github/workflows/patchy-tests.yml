@@ -5,12 +5,17 @@ on:
     inputs:
       test_commands:
         description: "Validated pytest commands"
-        required: true
+        required: false
+        type: string
+      python_snippet:
+        description: "Ad hoc Python snippet to run against this repo's real dependencies (Tier 1 executor — not a pytest command)"
+        required: false
         type: string
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
 
@@ -30,6 +35,7 @@ jobs:
           pip install "fastapi<0.118" "starlette<0.48" httpx
 
       - name: Validate and run Patchy tests
+        if: ${{ inputs.test_commands != '' }}
         env:
           TEST_COMMANDS: ${{ inputs.test_commands }}
         run: |
@@ -48,3 +54,18 @@ jobs:
 
             eval "$command"
           done <<< "$TEST_COMMANDS"
+
+      # Tier 1 real-execution path (see docs/coding-agent-roadmap.md): runs a real, ad hoc
+      # Python snippet against this repo's actually-installed dependencies, in this same
+      # ephemeral, secret-free runner — never on the production host, never with production
+      # credentials. Written to a file via printf rather than eval'd as a shell command, so the
+      # snippet's own content is never interpreted as shell syntax (no injection surface); the
+      # sandboxing boundary here is "this whole job is a throwaway VM with nothing sensitive in
+      # it," the same boundary the pytest path above already relies on.
+      - name: Run ad hoc Python snippet
+        if: ${{ inputs.python_snippet != '' }}
+        env:
+          PYTHON_SNIPPET: ${{ inputs.python_snippet }}
+        run: |
+          printf '%s\n' "$PYTHON_SNIPPET" > /tmp/patchy_snippet.py
+          timeout 60 python /tmp/patchy_snippet.py

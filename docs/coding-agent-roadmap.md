@@ -32,21 +32,82 @@ infrastructure, except where called out.
 
 ## Priority order (agreed this session)
 
-1. Reference-classifying trace tool
-2. Tier 2 — idiom-matching via retrieval
-3. Tier 1 — real Python execution against a repo's actual dependencies
-4. Per-user GitHub token scoping (design informed by `workflow_builder`)
+1. Reference-classifying trace tool — **done**
+2. Tier 2 — idiom-matching via retrieval — **done**
+3. Tier 1 — real Python execution against a repo's actual dependencies — **done**
+4. Per-user GitHub token scoping (design informed by `workflow_builder`) — **only item left**
 
 Rationale for this order: 1 and 2 are pure tool/prompt additions with no new
 infrastructure and directly serve the thing named as mattering most —
 "understand what the issue is and find the necessary pieces, since it has full
 access to the code." Tier 1 answers a different question (does code that's
 already written actually run) and is a genuinely bigger build. Token scoping only
-matters once the others make it worth pointing at someone else's repo at all.
+matters once the others make it worth pointing at someone else's repo at all —
+research is done (see section 4 below), implementation hasn't started.
 
 ---
 
-## 1. Reference-classifying trace tool (start here)
+## 0. Confirmed live in production — two real failures (both fixed)
+
+A real trace from production (latest pushed changes, not stale code — confirmed)
+caught both open gaps in this roadmap actually happening, in a single request:
+the user asked Sonic to inspect the real page to fix a z-index conflict between
+the hero-banner and the trace panel.
+
+**Failure A — `find_file` exists and is never used.** The trace shows repeated
+literal-keyword searches (`'trace-panel'`, then `'hero'`/`'Trace'`, then
+`'panel'`, then `'trace'` again) across ~15 steps, every one of them either
+`search_code` or a guessed `read_repo_file` (it tried `LandingPage.tsx`,
+`App.tsx`, `Layout.tsx` — none of which came from an actual search hit, all
+guessed from "how a project like this is probably organized," the exact
+antipattern `constraints.py` already has a rule against). `'trace-panel'` isn't
+a real string anywhere in the repo — the actual class is
+`desktop-trace-sidebar` — which is precisely the case `find_file` was built for
+tonight, and `constraints.py` already says explicitly to reach for it once
+`search_code` comes back empty for a name-like query. It never did. Since this
+ran against real current code, this rules out the "prompt guidance exists but
+isn't deployed" explanation — **the guidance exists, is live, and still isn't
+being followed.** That's now a confirmed finding, not a hypothesis: a prose rule
+buried in `constraints.py` isn't strong enough on its own to redirect behavior
+once a model is a dozen steps into a losing strategy.
+
+**Fixed:** `run_react_loop` now takes an optional `stuck_action_redirects: dict`
+mapping a `tool_action_name` to `(consecutive_miss_threshold, redirect_message)`.
+It tracks a CONSECUTIVE-misses streak per tool_action regardless of args (unlike
+the existing args-signature retry tracking, which treats any differently-worded
+retry as "honest" and clears itself — precisely the loophole that let the real
+trace burn ~15 steps). Once a listed tool's streak hits its threshold, the
+redirect message is injected into the prompt AND a further call to that same
+stuck tool is mechanically rejected (not executed, not recorded) — the same
+enforcement already used for a premature "final". `tool_agent_node` wires
+`TOOL_AGENT_STUCK_ACTION_REDIRECTS = {"search_code": (2, ...)}`. 2 new tests in
+`test_react_loop_retry_enforcement.py` reproduce the exact production trace
+(3 differently-worded `search_code` calls, 3rd one rejected, forced switch to
+`find_file`) and confirm no false-positive on a normal success.
+
+**Failure B — it never opened a browser at all**, despite being explicitly asked
+to "inspect the actual page." Confirmed the browser-copilot routing gap (see
+"Tabled" below) is real and observable today, not hypothetical — a z-index
+stacking conflict cannot be resolved from source alone (it depends on the full
+runtime DOM stacking context, not just one file's CSS).
+
+**Fixed:** since there's no natural "miss" signal for an action that was simply
+never attempted (unlike Failure A), this uses a different mechanism — a regex
+(`_mentions_visual_inspection` in `agent_workflow.py`) matching the real
+phrasing ("inspect the actual page", "z-index", "stacking", "how it
+looks/renders", "css/layout/rendering issue", etc.) against the user's own
+message. When it matches, `tool_agent_node` appends a directive straight onto
+*that turn's own question text* — before calling `run_react_loop` — telling it
+to use `browser_navigate` before concluding, since this is a stronger per-turn
+signal than a static system-prompt paragraph competing against many turns of
+code-reading momentum. The existing `TOOL_AGENT_PROMPT` browser-tools paragraph
+was also strengthened to name layout/CSS/z-index bugs explicitly, as a second,
+belt-and-suspenders layer. 4 new tests (2 for the regex, 2 confirming the
+directive is/isn't injected into the question passed to `run_react_loop`).
+
+---
+
+## 1. Reference-classifying trace tool (done)
 
 **Problem it solves:** `search_code` (added earlier this session) already finds
 every file that references a symbol, but it doesn't distinguish "this is where
@@ -71,25 +132,59 @@ the existing `search_code` machinery, but sorted into two buckets:
 - **read/pass-through sites** — everything else (reads, prop consumption,
   logging, re-exports)
 
-**Open questions to resolve before building:**
-- Classification heuristic: AST-based (accurate, more implementation work,
-  language-specific — would need separate handling for Python vs. TS/TSX) vs.
-  regex-based (cheaper, matches this repo's existing `search_code`/`find_file`
-  style, less precise). Given `find_file`'s fuzzy matcher already leans
-  regex/heuristic rather than a full parser, probably worth staying consistent
-  with that rather than introducing an AST dependency for one tool.
-  wonder if a shared helper between JS/TS and Python cases is feasible, or if it
-  needs two small language-specific classifiers.
-- Does this replace `search_code` or sit alongside it as a second action? Leaning
-  alongside — `search_code` stays the "does this exist at all" tool,
-  this becomes the "which of these hits actually matters" tool.
-- How does it interact with the existing retry-nudge mechanism in
-  `run_react_loop`? Probably no special-casing needed — it's just another
-  tool_action and gets the same empty/error tracking already fixed this session.
+**Decisions made:**
+- Regex-based classification, not AST — consistent with `find_file`'s own
+  precedent, no new parser dependency. Validated against 13 real lines pulled
+  from this repo (the trace-panel `useState`, `get_accessible_affiliates`,
+  personal-KB fields, an equality-check negative case) — 100% correct. Real
+  limits identified and accepted: a multi-line assignment where the symbol and
+  `=` land on different lines, or GitHub's truncated search fragment cutting off
+  before the `=`, can misclassify a write as a read. Accepted because the
+  failure mode is soft — a misclassified hit still shows up in the "read"
+  bucket, nothing is silently dropped, worst case is one extra file opened.
+  Genuine AST would need `tree-sitter` (no stdlib JS/TS parser) and a real
+  architecture change (parse each candidate file instead of one search call) —
+  deferred until false negatives actually show up in practice, not built
+  preemptively. Cheap half-measure if that day comes: AST just `.py` hits
+  (stdlib `ast`, free) and keep regex for `.ts`/`.tsx`.
+- Sits alongside `search_code`, doesn't replace it — `search_code` stays "does
+  this exist at all," `trace_symbol` is "which of these hits actually matters."
+- No special-casing needed in `run_react_loop` — it's just another tool_action,
+  covered by the existing empty/error retry tracking.
+
+**Shipped:**
+- `_classify_symbol_line(symbol, line)` — regex heuristic recognizing: a
+  def/class that IS the symbol, a plain assignment (with a negative lookbehind
+  so `==`/`!=`/`<=`/`>=` don't false-positive), an attribute/dict-style
+  assignment (`self.x =`, `state["x"] =`), a React state setter call
+  (`setSymbol(...)`, derived from the symbol name), a `useState`/`useReducer`/
+  `useRef`/`useMemo`/`useContext` destructuring that defines the symbol, and a
+  function returning it. Everything else is "read".
+- `_code_search_items()` — extracted the GitHub code-search call
+  `_search_code` already made (it was requesting `text-match+json` and
+  discarding the match fragments) into a shared helper, so `trace_symbol` reuses
+  the exact same request and actually uses the fragments for classification.
+- `trace_symbol` tool_agent_node action (args: `symbol`) — sorts every hit into
+  WRITE/DECIDE (with a sample line) vs. READ/PASS-THROUGH, available to
+  everyone (not admin-gated, same tier as `search_code`/`find_file`).
+- Tests: 5 unit tests on the classifier (Python def, plain assignment, React
+  state setter, a read, and the `==` negative case), 3 integration tests via
+  `tool_agent_node` (correct sorting end-to-end, empty-symbol error, no-matches
+  with a genuine retry). Full suite: 369 passed, same one pre-existing
+  unrelated failure as every other run this session.
 
 ---
 
-## 2. Tier 2 — idiom-matching via retrieval
+## 2. Tier 2 — idiom-matching via retrieval (done)
+
+**Shipped:** new paragraph in `constraints.py`'s `TOOL_AGENT_PROMPT`, right after
+the existing "citing a real function" rule — before writing new code for an
+existing file, pull 1-2 real analogous functions from the same repo
+(`search_code`/`find_file` → `read_repo_file`) and match their actual patterns,
+with concrete examples from this repo itself (closures inside `tool_agent_node`,
+plain `assert`/`monkeypatch` test style) rather than generic Python idiom. Pure
+prompt addition, no new tool, no dedicated test (matches how every other prose
+rule in this file is verified — by behavior, not a unit test of the string).
 
 **Problem it solves:** Sonic writes syntactically fine Python that doesn't match
 *this* codebase's actual conventions (this repo's specific error-handling style,
@@ -110,37 +205,60 @@ instead of just fact-retrieval.
 
 ---
 
-## 3. Tier 1 — real execution against a repo's actual dependencies
+## 3. Tier 1 — real execution against a repo's actual dependencies (done)
 
 **Confirmed gap (checked this session):** `run_python_sandboxed`
 (`backend/services/python_sandbox.py`) is a WASM sandbox restricted to a
 stdlib-only `SAFE_IMPORT_ALLOWLIST` (`math`, `re`, `json`, `itertools`, etc.). It
-cannot import `langgraph`, `pymongo`, or any real module from a target repo. The
-only real-execution path today is `run_repo_tests`
-(`backend/services/ci_test_runner.py`), which requires an *existing* pytest file,
-is admin-gated, and takes minutes (dispatches the real
-`.github/workflows/patchy-tests.yml` CI workflow). There is no rung between
-"reason about whether this would work" and "run the full test suite."
+cannot import `langgraph`, `pymongo`, or any real module from a target repo.
+`run_repo_tests` was the only real-execution path, and requires an *existing*
+pytest file — there was no rung for "run this ad hoc snippet."
 
-**Rough shape:** a lighter-weight `run_snippet_against_repo`-style action: check
-out the real repo with its real `requirements.txt` installed, run a short scratch
-script with real imports allowed — no test discovery, no fixtures, just "import
-the thing, call it, print the result" — before presenting new code as verified
-to work.
+**Design decision (multi-repo/multi-user from day one, not scoped to SAAPP's
+own repo):** initially considered running snippets as a subprocess in the
+server's own already-installed venv — free and fast, but only works for SAAPP's
+own repo (an arbitrary repo needs its OWN dependencies installed somewhere), and
+installing a possibly-untrusted repo's dependencies on the production host is a
+real code-execution risk regardless of env-var scoping. Explicitly chose to
+build this the way it'll actually need to work once per-user repos exist:
+reusing `.github/workflows/patchy-tests.yml`'s existing GitHub Actions dispatch
+(same pattern `run_repo_tests` already uses) — an ephemeral, secret-free runner
+per call, already parameterized on `repo`/token by construction, so it's
+multi-tenant-ready with no rework later. Traded away: speed (minutes, not
+seconds — accepted explicitly, this doesn't need to be fast for code
+verification/investigation) and no warm-environment caching (each run reinstalls
+deps fresh, same as every `run_repo_tests` call already does).
 
-**Open questions to resolve before building:**
-- Where does this actually run? Reusing the existing CI workflow again (like
-  `run_repo_tests` does) is the path of least new infrastructure, but that
-  workflow is built around `pytest <path>` invocations validated by a strict
-  regex — it would need either a new, narrowly-scoped workflow input, or a
-  separate lightweight execution path entirely (ephemeral container, a
-  short-lived cloud sandbox). This is the piece most likely to introduce a real
-  recurring cost, so it needs its own sizing pass before committing to an
-  approach.
-- Gating: presumably admin-only like `run_mongo_query`/`run_repo_tests`, at
-  least initially.
-- Timeout/resource limits analogous to the WASM sandbox's fuel accounting, sized
-  for "install deps + run a few lines" rather than a full suite.
+**Shipped:**
+- `.github/workflows/patchy-tests.yml`: added an optional `python_snippet` input
+  alongside the existing `test_commands` one (now also optional — backward
+  compatible, existing callers unaffected). The snippet is written to a file via
+  `printf '%s\n'` (never `eval`'d — no shell-injection surface regardless of
+  content) and run with a 60s `timeout`; job-level `timeout-minutes: 10` as a
+  backstop. This workflow is shared with errAgent's own separate Patchy
+  pipeline — the change is additive only, existing `test_commands` behavior is
+  untouched.
+- `backend/services/ci_test_runner.py`: extracted the dispatch/poll/lookup logic
+  shared by `run_repo_tests` into `_dispatch_and_wait()`, and added
+  `run_python_snippet()` on top of it. Unlike `run_repo_tests` (log fetched only
+  on failure), this always returns the log excerpt — the printed output is the
+  actual point of running a snippet, not just a pass/fail verdict. Validates
+  non-empty and a 20,000-char cap before ever dispatching.
+- `agent_workflow.py`: new admin-gated `run_snippet` tool_agent_node action
+  (`_run_snippet` closure, menu entry, `_act` dispatch branch), mirroring
+  `run_repo_tests`'s existing wiring exactly.
+- Tests: 6 new in `test_ci_test_runner.py` (empty/oversized rejection without
+  dispatching, correct `python_snippet` input name — not `test_commands` — sent
+  to the dispatch payload, success always includes output, failure includes the
+  real traceback), 4 new in `test_tool_agent_node.py` (admin-only menu
+  visibility, defense-in-depth execution block, correct repo/branch/code
+  dispatch). Full suite green (361 passed, same one pre-existing unrelated
+  failure as every other run this session).
+
+**Deferred, not forgotten:** no warm-environment caching (every call reinstalls
+dependencies from scratch) and no dedicated low-latency sandbox — both explicitly
+traded away for zero new recurring cost and immediate multi-tenant readiness.
+Revisit if the multi-minute wait ever actually becomes the blocker, not before.
 
 ---
 
@@ -254,3 +372,46 @@ referenced **nowhere else in the codebase** (confirmed via repo-wide grep) — a
 concrete, real example of exactly the "recommend a plausible-sounding fix without
 checking it's actually wired to anything" failure mode this whole roadmap is
 trying to close.
+
+---
+
+## Operational — automatic checkpoint retention (done)
+
+**Shipped:** `backend/services/checkpoint_retention.py` —
+`prune_old_checkpoints(keep_per_thread=3)` runs the same keep-last-N-per-thread
+logic used for the manual cleanup below, and `run_checkpoint_retention_loop()`
+runs it on a daily interval (`CHECKPOINT_RETENTION_INTERVAL_SECONDS` env var,
+default 24h) for the life of the process, resilient to a single failed pass.
+Wired into `app.py`'s `lifespan` via the existing `spawn_background_task`
+helper, cancelled cleanly on shutdown. 5 new tests in
+`backend/tests/test_checkpoint_retention.py`. Original incident notes below,
+kept for context.
+
+**Incident this session:** the Atlas cluster hit its 512MB storage quota and
+started rejecting all writes app-wide (new signups, uploads, memory saves —
+anything). Diagnosed live: `saapp_database` (real app data — documents, memory
+facts, conversations) was only ~23MB. **The other ~492MB — 96% of the entire
+quota — was `checkpointing_db`**, LangGraph's checkpoint persistence. Nothing has
+ever pruned it, so every single turn of every conversation writes a new
+checkpoint forever. Almost all of it (915 of 927 checkpoints) belonged to one
+single long-running dev thread.
+
+**Immediate fix applied (with explicit go-ahead):** deleted all but the 3 most
+recent checkpoints per `thread_id` in `checkpointing_db.checkpoints`, plus the
+matching `checkpoint_writes` entries (joined on `checkpoint_id`). Freed ~488MB,
+confirmed via a live write test afterward. Old checkpoints are only needed for
+LangGraph's time-travel/replay of past turns, not for continuing a conversation —
+keeping the last few per thread preserves resumability without unbounded growth.
+
+**Still needed — this will silently recur without it:** an automatic pruning
+step (e.g. a scheduled job, or prune-on-write triggered periodically) that keeps
+only the last N checkpoints per `thread_id` going forward, so this doesn't
+require another manual cluster-wide diagnosis next time it creeps up. Rough
+shape: reuse the exact keep-last-N-per-thread query used for tonight's manual
+cleanup, run on a schedule (daily/weekly) or opportunistically (e.g. after every
+Kth checkpoint write for a given thread). Open question: what's the right N —
+tonight used 3 as a safe manual-cleanup default; the real automated policy might
+want to key retention off something more meaningful (e.g. time-based: keep
+everything from the last 7 days regardless of count, prune anything older) rather
+than a flat per-thread count, since a single very active thread (like the one
+that caused this) would otherwise still grow unbounded within its "last N."

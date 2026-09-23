@@ -52,7 +52,7 @@ from backend.services.python_sandbox import run_python_sandboxed, SAFE_IMPORT_AL
 from backend.services.browser_tool import (
     BrowserSession, browser_navigate, browser_read_text, browser_click, browser_type, browser_screenshot,
 )
-from backend.services.ci_test_runner import run_repo_tests, DEFAULT_MAX_WAIT_SECONDS as CI_TEST_RUN_MAX_WAIT_SECONDS
+from backend.services.ci_test_runner import run_repo_tests, run_python_snippet, DEFAULT_MAX_WAIT_SECONDS as CI_TEST_RUN_MAX_WAIT_SECONDS
 from backend.utils.normalize_utils import ensure_str
 
 load_dotenv()
@@ -65,6 +65,23 @@ TOOL_AGENT_MAX_ITERATIONS = int(os.getenv("TOOL_AGENT_MAX_ITERATIONS", "7"))
 TOOL_AGENT_MAX_ITERATIONS_DEEP = int(os.getenv("TOOL_AGENT_MAX_ITERATIONS_DEEP", "14"))
 TOOL_AGENT_MAX_RETRY_NUDGES = int(os.getenv("TOOL_AGENT_MAX_RETRY_NUDGES", "1"))
 TOOL_AGENT_MAX_RETRY_NUDGES_DEEP = int(os.getenv("TOOL_AGENT_MAX_RETRY_NUDGES_DEEP", "3"))
+
+# search_code only matches exact literal tokens against GitHub's keyword index — a colloquial
+# or descriptive name shares no tokens at all with a differently-named real file, so rewording
+# the query never helps. A real production trace showed advisory prompt text alone wasn't
+# enough once the model was several steps into repeating this exact mistake (see
+# docs/coding-agent-roadmap.md, "Failure A"); this mechanically escalates after 2 consecutive
+# misses on search_code specifically, regardless of how differently each one was worded.
+TOOL_AGENT_STUCK_ACTION_REDIRECTS = {
+    "search_code": (
+        2,
+        "You have called search_code multiple times in a row with no results. search_code "
+        "only matches exact literal tokens — if the term you're looking for doesn't appear "
+        "verbatim anywhere in the codebase (a colloquial or descriptive name instead of the "
+        "real identifier), rewording the query will not help. Call find_file instead, with "
+        "the same concept — do not call search_code again this turn.",
+    ),
+}
 
 # read_repo_file's truncation/paging knobs. A flat character-count cap on a large file (this repo
 # has several 2000+ line files) silently cuts off before ever reaching a function defined further
@@ -2278,6 +2295,7 @@ async def run_react_loop(
     initial_attempts: list | None = None,
     max_retry_nudges: int = 1,
     llm=lite_llm,
+    stuck_action_redirects: dict | None = None,
 ) -> dict:
     """Generic Reason -> Act -> Observe -> Decide loop shared by every iterative tool
     (MongoDB, GitHub search, ...). Each step asks the model for the next action given
@@ -2320,7 +2338,23 @@ async def run_react_loop(
     genuinely different args — calling the same failed action with the identical args again is
     not a retry (it's the same query bouncing off the same wall) and does not clear the flag, so
     it keeps nudging until the model actually changes something. Tracked regardless of what ran
-    in between."""
+    in between.
+
+    A real production trace showed the above still isn't enough for one specific pattern: the
+    model called search_code with several genuinely DIFFERENT (differently-worded) queries in a
+    row, ~15 steps total, and never once switched to find_file — each retry was "genuine" by the
+    args-signature check above (different wording each time), so it kept clearing the nudge, even
+    though the actual problem (an exact-token search tool being used for a colloquial name) never
+    changes no matter how the query is reworded. A prose rule in the prompt telling it to use
+    find_file after an empty search_code already existed and was already live in production when
+    this happened — advisory text alone wasn't enough once it was several steps into a losing
+    strategy. `stuck_action_redirects` (optional: {tool_action_name: (consecutive_miss_threshold,
+    redirect_message)}) adds a mechanical escalation on top: it tracks a CONSECUTIVE-misses streak
+    per tool_action_name regardless of args (reset by any success or any different tool_action),
+    and once a listed tool's streak reaches its threshold, injects `redirect_message` into the
+    prompt AND actively rejects one further call to that same stuck tool_action (not executed, not
+    recorded as an attempt) — forcing a real switch to a different action, the same mechanical
+    escalation already used for a premature "final"."""
     attempts: list = list(initial_attempts or [])
     final_answer = None
     # Defaults true (show the receipt) whenever a "final" doesn't explicitly say otherwise —
@@ -2329,6 +2363,9 @@ async def run_react_loop(
     show_work = True
     retry_nudge_count = 0
     unretried_inconclusive_tools: dict = {}  # tool_action_name -> args signature of the failing call
+    stuck_action_streak = {"tool": None, "count": 0}  # consecutive misses on ONE tool, any args
+    stuck_action_reject_count = 0
+    MAX_STUCK_ACTION_REJECTIONS = 1
 
     for step in range(max_iterations):
         forced_final = step == max_iterations - 1
@@ -2337,6 +2374,17 @@ async def run_react_loop(
         # retry_nudge_count), so the model still sees the reminder if it takes an unrelated
         # detour (like listing the repo tree) before eventually trying to conclude.
         needs_retry_nudge = not forced_final and bool(unretried_inconclusive_tools)
+
+        stuck_redirect_entry = (
+            stuck_action_redirects.get(stuck_action_streak["tool"])
+            if stuck_action_redirects and stuck_action_streak["tool"]
+            else None
+        )
+        stuck_redirect_active = (
+            not forced_final
+            and stuck_redirect_entry is not None
+            and stuck_action_streak["count"] >= stuck_redirect_entry[0]
+        )
 
         question_for_step = question
         if forced_final:
@@ -2356,6 +2404,8 @@ async def run_react_loop(
                 "diagnostic action, like listing the repo tree) — before concluding. Only choose "
                 "action=\"final\" now if you are certain nothing else could help.)"
             )
+        if stuck_redirect_active:
+            question_for_step += f"\n\n({stuck_redirect_entry[1]})"
 
         prompt = prompt_template.format(
             question=question_for_step,
@@ -2402,6 +2452,19 @@ async def run_react_loop(
             })
             continue
 
+        if (
+            stuck_redirect_active
+            and decision.get("tool_action") == stuck_action_streak["tool"]
+            and stuck_action_reject_count < MAX_STUCK_ACTION_REJECTIONS
+        ):
+            # Told to switch away from this tool_action and it tried it again anyway — reject
+            # outright (not executed, not recorded as an attempt) instead of just hoping the
+            # redirect message alone changes its mind, the same mechanical escalation already
+            # used for a premature "final". Budget-limited for the same reason: a genuinely
+            # doomed switch shouldn't force a second forced rejection on top of the first.
+            stuck_action_reject_count += 1
+            continue
+
         purpose = decision.get("purpose", "Working...")
         # No log call here (removed) — the result line logged once the action actually runs
         # (a few lines down) already folds this same purpose in alongside the action and
@@ -2439,6 +2502,17 @@ async def run_react_loop(
                     del unretried_inconclusive_tools[tool_action_name]
             elif still_failing:
                 unretried_inconclusive_tools[tool_action_name] = args_signature
+
+            # Consecutive-misses streak, regardless of args — unlike the args-signature
+            # tracking above, a genuinely different query still counts against this streak,
+            # since rewording doesn't fix a fundamentally wrong tool choice. Any success, or
+            # a miss on a DIFFERENT tool_action, resets it.
+            if still_failing and stuck_action_streak["tool"] == tool_action_name:
+                stuck_action_streak["count"] += 1
+            elif still_failing:
+                stuck_action_streak = {"tool": tool_action_name, "count": 1}
+            else:
+                stuck_action_streak = {"tool": None, "count": 0}
         args_summary = ", ".join(f"{k}={v}" for k, v in (decision.get("args") or {}).items())
         action_desc = f"{tool_action_name}({args_summary})" if tool_action_name else (args_summary or "")
         logger.info(
@@ -2522,6 +2596,40 @@ def _fuzzy_path_score(query_tokens: set, path: str) -> float:
             if ratio > best:
                 best = ratio
     return best
+
+
+# trace_symbol's write-vs-read classification — regex-based (not a real parser) by design, to
+# stay consistent with find_file's own heuristic rather than pull in a per-language AST
+# dependency for one tool. Covers both this repo's Python and TypeScript/React conventions:
+# a plain assignment, an attribute/dict-style assignment, a def/class that IS the symbol, a
+# React state setter call (setSymbol(...)), a useState/useReducer/useRef/useMemo destructuring
+# that defines the symbol, and a function returning it — matching exactly the "write/decide
+# site" categories described in docs/coding-agent-roadmap.md. Everything else that mentions the
+# symbol (a read, a prop being consumed, a log line, a re-export) falls through to "read".
+def _classify_symbol_line(symbol: str, line: str) -> str:
+    stripped = line.strip()
+    escaped = re.escape(symbol)
+
+    if re.match(rf'^(export\s+)?(async\s+)?(def|function|class)\s+{escaped}\b', stripped):
+        return "write"
+
+    setter_name = f"set{symbol[0].upper()}{symbol[1:]}" if symbol else ""
+    if setter_name and re.search(rf'\b{re.escape(setter_name)}\s*\(', stripped):
+        return "write"
+
+    if re.search(rf'\b{escaped}\b[^=]*=\s*use(State|Reducer|Ref|Memo|Context)\s*\(', stripped):
+        return "write"
+
+    if re.search(rf'(?<![=!<>]){escaped}\s*=(?!=)', stripped):
+        return "write"
+
+    if re.search(rf'\.{escaped}\s*=(?!=)', stripped) or re.search(rf'\[["\']{escaped}["\']\]\s*=(?!=)', stripped):
+        return "write"
+
+    if re.search(rf'^return\b.*\b{escaped}\b', stripped):
+        return "write"
+
+    return "read"
 
 
 # Directory/programming nouns so common across virtually any repo's structure that a bare
@@ -2628,6 +2736,26 @@ def _format_observation_for_footer(observation) -> str:
     return json.dumps(observation, default=str, indent=2)
 
 
+# A real production trace showed a static system-prompt paragraph telling the model to reach
+# for browser_navigate on "a real page's current, real content or appearance" wasn't enough —
+# asked to "inspect the actual page" to fix a z-index conflict, it did 15 steps of pure repo
+# reading and never opened a browser once (see docs/coding-agent-roadmap.md, "Failure B").
+# Rather than trust a general system-prompt rule to out-compete many turns of code-reading
+# momentum, this detects the specific category of question (layout/rendering/visual state that
+# literally cannot be confirmed from source alone) and injects a directive into THIS turn's own
+# question text — much harder to deprioritize than a rule buried among many others.
+_VISUAL_INSPECTION_RE = re.compile(
+    r"\b(inspect|actual page|actual site|how (?:it|this|that) (?:looks|renders|appears)|"
+    r"z-?index|stacking|overlap(?:ping)?|visually|on[- ]?screen|in the browser|"
+    r"css (?:issue|bug|problem)|layout (?:issue|bug|problem)|rendering (?:issue|bug|problem))\b",
+    re.IGNORECASE,
+)
+
+
+def _mentions_visual_inspection(text: str) -> bool:
+    return bool(_VISUAL_INSPECTION_RE.search(text or ""))
+
+
 async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
     """Unified read-only research agent: Mongo (admin-only), GitHub, and web search all live
     as actions in one ReAct loop, so the model can reach for whichever tool (or sequence of
@@ -2689,6 +2817,17 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
         if attachment_docs:
             attached_text = "\n\n".join(d.page_content for d in attachment_docs)
             msg = f"{msg}\n\nATTACHED CODE (from this turn):\n{attached_text}"
+
+        if _mentions_visual_inspection(msg):
+            msg += (
+                "\n\n(This question is about how the page actually renders or behaves right "
+                "now — a layout, z-index, stacking, or visual-appearance question cannot be "
+                "answered from source code alone, since the real computed styles and DOM "
+                "stacking context only exist at runtime, not in any file. Use browser_navigate "
+                "(then browser_screenshot/browser_read_text as needed) to actually look at the "
+                "live page before concluding — do not answer from reading CSS/component source "
+                "alone just because it looks plausible.)"
+            )
 
         token = os.getenv("GITHUB_TOKEN")
         headers = {"Authorization": f"Bearer {token}", "Accept": "vnd.github+json"}
@@ -2883,6 +3022,20 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             commits = res.json()
             return "\n".join(f"{c['sha'][:7]} — {c['commit']['message'].splitlines()[0]}" for c in commits)
 
+        def _code_search_items(query: str):
+            # Shared by _search_code and _trace_symbol — a single real GitHub code-search call,
+            # requesting text-match fragments (not just paths) so trace_symbol has real matched
+            # LINES to classify, not just filenames. Returns a list of items, or an "ERROR: ..."
+            # string on failure — callers only need to check isinstance(result, str).
+            res = requests.get(
+                f"{api_base}/search/code",
+                headers={**headers, "Accept": "application/vnd.github.text-match+json"},
+                params={"q": f"{query} repo:{repo}", "per_page": 20},
+            )
+            if res.status_code != 200:
+                return f"ERROR: could not search code ({res.status_code})"
+            return res.json().get("items", [])
+
         def _search_code(query: str):
             # This is what makes "find every file this feature/bug touches" actually possible —
             # list_repo_tree only gives paths and read_repo_file only gives one file at a time,
@@ -2891,17 +3044,59 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             # class's other usages, everywhere a config key is read).
             if not query:
                 return "ERROR: no query given"
-            res = requests.get(
-                f"{api_base}/search/code",
-                headers={**headers, "Accept": "application/vnd.github.text-match+json"},
-                params={"q": f"{query} repo:{repo}", "per_page": 20},
-            )
-            if res.status_code != 200:
-                return f"ERROR: could not search code ({res.status_code})"
-            items = res.json().get("items", [])
+            items = _code_search_items(query)
+            if isinstance(items, str):
+                return items
             if not items:
                 return "No matches."
             return "\n".join(item.get("path", "") for item in items)
+
+        def _trace_symbol(symbol: str):
+            # Sorts every real reference search_code would already find into WRITE/DECIDE sites
+            # (an assignment, a state setter, a def/class that IS this symbol, a function
+            # returning it) vs. READ/PASS-THROUGH sites (everything else — a read, a prop being
+            # consumed, a log line, a re-export). search_code already tells you EVERY file that
+            # mentions something; this tells you which of those hits is actually worth opening
+            # first when tracing a value to where it's really decided, instead of burning steps
+            # opening every hit by hand to figure that out one at a time.
+            if not symbol:
+                return "ERROR: no symbol given"
+            items = _code_search_items(symbol)
+            if isinstance(items, str):
+                return items
+            if not items:
+                return "No matches."
+
+            write_sites, read_sites = [], []
+            for item in items:
+                path = item.get("path", "")
+                lines_touching_symbol = [
+                    line
+                    for tm in item.get("text_matches", [])
+                    for line in (tm.get("fragment") or "").splitlines()
+                    if symbol in line
+                ]
+                write_lines = [
+                    line.strip() for line in lines_touching_symbol
+                    if _classify_symbol_line(symbol, line) == "write"
+                ]
+                if write_lines:
+                    write_sites.append(f"{path}: {write_lines[0]}")
+                else:
+                    read_sites.append(path)
+
+            parts = []
+            if write_sites:
+                parts.append(
+                    "WRITE/DECIDE sites (where the value is actually set/returned — check "
+                    "these first):\n" + "\n".join(f"  {w}" for w in write_sites)
+                )
+            if read_sites:
+                parts.append(
+                    "READ/PASS-THROUGH sites (reads, prop consumption, re-exports):\n"
+                    + "\n".join(f"  {r}" for r in read_sites)
+                )
+            return "\n\n".join(parts) if parts else "No matches."
 
         def _run_tests(test_commands: str, branch: str = None):
             # Real CI execution, not reasoning about whether code would work — dispatches this
@@ -2910,6 +3105,16 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             # finishes, up to CI_TEST_RUN_MAX_WAIT_SECONDS.
             return run_repo_tests(
                 repo, branch or default_branch, test_commands or "", headers, api_base,
+                max_wait_seconds=CI_TEST_RUN_MAX_WAIT_SECONDS,
+            )
+
+        def _run_snippet(code: str, branch: str = None):
+            # Tier 1 real-execution path (docs/coding-agent-roadmap.md) — actually imports and
+            # runs a proposed function/fix against this repo's real installed dependencies in an
+            # ephemeral, secret-free CI runner, instead of just reasoning about whether it would
+            # work. Same dispatch/poll machinery as run_repo_tests, same asyncio.to_thread caller.
+            return run_python_snippet(
+                repo, branch or default_branch, code or "", headers, api_base,
                 max_wait_seconds=CI_TEST_RUN_MAX_WAIT_SECONDS,
             )
 
@@ -2931,6 +3136,20 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 "reason about or assume. Slower than every other action (can take a couple of "
                 "minutes) since it's really running the test suite — use it to verify a fix or "
                 "change actually works before telling the user it does, not for routine lookups"
+            )
+            menu_lines.append(
+                "- run_snippet — args: code (a short, self-contained Python script — real "
+                "imports from this repo's actual modules are allowed, unlike run_python's "
+                "stdlib-only sandbox), branch (optional, defaults to the resolved default "
+                "branch); actually imports and runs the snippet against this repo's real "
+                "installed dependencies in the same CI runner run_repo_tests uses, and returns "
+                "what it actually printed (or the real traceback if it raised) — genuine "
+                "verified behavior, not a guess about whether an import/signature/return value "
+                "is correct. Use this to check that a function you're about to propose actually "
+                "works — call it with a real or representative input and print the result — "
+                "before presenting it as working code. Slower than every other action except "
+                "run_repo_tests (real CI dispatch, not instant) — don't reach for it on a "
+                "routine lookup, only when actually verifying proposed code works"
             )
         menu_lines.extend([
             "- list_repo_tree — no args; lists every file path in the repo",
@@ -2954,6 +3173,16 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             "when search_code/read_repo_file already came back empty for a guessed name — it finds "
             "near matches (menu-navigator.tsx from a query of \"navbar\") that an exact-token search "
             "cannot",
+            "- trace_symbol — args: symbol (an exact function/variable/field/prop name — same "
+            "shape as search_code's query); like search_code, but sorts every real hit into "
+            "WRITE/DECIDE sites (an assignment, a React state setter call, a def/class that IS "
+            "this symbol, a function returning it) versus READ/PASS-THROUGH sites (everything "
+            "else — a read, a prop being consumed, a log line). Use this instead of search_code "
+            "when tracing WHERE a value actually comes from, not just everywhere it's mentioned — "
+            "it tells you which hits are worth opening first, instead of reading every hit by "
+            "hand to figure that out one at a time. Still only matches exact tokens like "
+            "search_code — for a colloquial name, use find_file first to find the real "
+            "identifier, then trace_symbol on that",
             "- diff_branches — args: base (branch name), head (branch name)",
             "- list_commits — args: branch (branch name), limit (max number of commits, integer)",
             "- web_search — args: query (the exact search query string to run)",
@@ -2997,6 +3226,10 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 if not is_admin:
                     return "ERROR: not authorized for this action"
                 return await asyncio.to_thread(_run_tests, args.get("test_commands"), args.get("branch"))
+            if tool_action == "run_snippet":
+                if not is_admin:
+                    return "ERROR: not authorized for this action"
+                return await asyncio.to_thread(_run_snippet, args.get("code"), args.get("branch"))
             if tool_action == "web_search":
                 query = args.get("query") or msg
                 search = DuckDuckGoSearchAPIWrapper()
@@ -3044,6 +3277,8 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     return _search_code(args.get("query"))
                 if tool_action == "find_file":
                     return _find_file(args.get("query"))
+                if tool_action == "trace_symbol":
+                    return _trace_symbol(args.get("symbol"))
                 if tool_action == "diff_branches":
                     return _diff_branches(args.get("base"), args.get("head"))
                 if tool_action == "list_commits":
@@ -3071,6 +3306,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     initial_attempts=resumed_attempts,
                     max_retry_nudges=TOOL_AGENT_MAX_RETRY_NUDGES_DEEP if deep_thinking else TOOL_AGENT_MAX_RETRY_NUDGES,
                     llm=lite_llm_deep if deep_thinking else lite_llm,
+                    stuck_action_redirects=TOOL_AGENT_STUCK_ACTION_REDIRECTS,
                 )
             except _UnsafeActionRequested as e:
                 drafted_code = (e.decision.get("args") or {}).get("code", "") or ""
