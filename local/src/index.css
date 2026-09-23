@@ -13,10 +13,10 @@
   --text-main: #1e3a8a;     /* Deep, soft royal blue for comfortable reading */
   --text-muted: #60a5fa;    /* Balanced sky blue for auxiliary items */
   --text: #000000;          /* Default text color (same as text-main for consistency) */
-  --accent-primary: #3b82f6; /* Smooth, modern classic blue (clean, non-aggressive) */
+  --accent-primary: #1e40af; /* Smooth, modern classic blue (clean, non-aggressive) */
   --accent-success: #10b981; /* Soft emerald green for secure badges */
   --accent-danger: #ef4444;  /* Muted crimson for alerts */
-  --bubble-user-bg: #eff6ff;
+  --bubble-user-bg: #F1F5F9 ;
   --code-bg: #0f172a;       /* CodeBlock's syntax-highlighter background (Chat.tsx) */
   --code-border: #334155;
   --font-sans: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
@@ -68,7 +68,7 @@
   --user-border-color: #910000;   
   --text-main: #e6e6e6;      
   --text-muted: #9ca3af;     
-  --accent-primary: #dc2626; 
+  --accent-primary: #910000; 
   --accent-success: #eab308; 
   --accent-danger: #ff0000;  
   --text: #ffffff;
@@ -77,8 +77,8 @@
   --bubble-user-bg: #7a0010;
   --bubble-user-border: #7f1d1d;
   --bubble-user-text: #f3f4f6;
-  --bubble-ai-bg: #0a0a0c;
-  --bubble-ai-border: #0a0a0c;
+  --bubble-ai-bg: #1a1a1a;
+  --bubble-ai-border: #1a1a1a;
   --bubble-ai-text: #e5e7eb;
   --filter-bg: #1c1111;
   --code-bg: #0a0a0c;       /* Matches the AI bubble surface instead of the default slate */
@@ -776,8 +776,8 @@ div:has(.portal-body) {
 
 .theme-shadow .message-bubble.ai {
   align-self: flex-start;
-  background: #1a1a1a;       /* Off-white bubble for AI response clarity */
-  border: 1px solid #1a1a1a;
+  background: var(--bubble-ai-bg);       /* Off-white bubble for AI response clarity */
+  border: 1px solid var(--bubble-ai-border);
   color: #334155;
   color: var(--text);
 }
@@ -1039,6 +1039,13 @@ div:has(.portal-body) {
 .circle-icon-button:active:not(:disabled) {
   transform: translateY(2px);
   
+}
+
+.circle-icon-button.trace-active {
+  border: 1px solid var(--border-color) !important;
+  background: var(--accent-primary) !important;
+  box-shadow: var(--shadow-hover);
+  filter:brightness(1.2)
 }
 
 .theme-shadow .circle-icon-button:hover:not(:disabled) {
@@ -1315,6 +1322,8 @@ div:has(.portal-body) {
 
 .switch input:checked + .switch-track {
   background: var(--accent-primary);
+  filter: brightness(1.2);
+  box-shadow: 0 0 8px var(--accent-primary);
 }
 
 .switch input:checked + .switch-track .switch-thumb {
