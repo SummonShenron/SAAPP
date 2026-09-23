@@ -540,6 +540,13 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [latestStepTitle, setLatestStepTitle] = useState("");
   const nodeQueueRef = useRef<{ node: string; detail?: string }[]>([]);
   const isProcessingQueue = useRef<boolean>(false);
+  // Cheap alternative to full mid-thought steering (see docs/coding-agent-roadmap.md): lets the
+  // user cut a turn short the moment it's clearly going down the wrong path, rather than waiting
+  // out the whole response. Deliberately just "stop" rather than "inject a correction mid-loop" —
+  // the real conversation-history threading added earlier this session means a follow-up message
+  // still lands with genuine context about what was interrupted, without needing any new
+  // concurrency/signaling infrastructure between an in-flight request and a new one.
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const [showTooltip, setShowTooltip] = useState(false);
   const tooltipRef = useRef<HTMLDivElement>(null);
@@ -1072,6 +1079,9 @@ useEffect(() => {
     hasStreamedRef.current = false;
     postPatchyStatus('thinking');
 
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
       await api.sendChatMessage(
         principal,
@@ -1191,7 +1201,9 @@ useEffect(() => {
               console.warn("Skipping partial, non-JSON SSE chunk buffer:", jsonErr);
             }
           }
-        }
+        },
+        undefined,
+        controller.signal
       );
 
       // Attachments are scoped to the turn that sent them (already durably stored server-side
@@ -1203,17 +1215,37 @@ useEffect(() => {
         setUploadedFiles([]);
       }
     } catch (err) {
-      console.error("Chat send failed:", err);
-      postPatchyStatus('error');
-      setMessages(prev => [
-        ...prev,
-        { id: genId(), sender: 'ai', text: "Vector assertion timed out. Check local engine allocations." }
-      ]);
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        // A deliberate Stop, not a failure — leave whatever partial text already streamed in
+        // place rather than showing a scary error over it.
+        setMessages(prev => {
+          const updated = [...prev];
+          const lastIndex = updated.length - 1;
+          if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
+            const existingText = updated[lastIndex].text || '';
+            updated[lastIndex] = { ...updated[lastIndex], text: existingText ? `${existingText}\n\n_[Stopped]_` : '_[Stopped before responding]_' };
+          }
+          return updated;
+        });
+        postPatchyStatus('done');
+      } else {
+        console.error("Chat send failed:", err);
+        postPatchyStatus('error');
+        setMessages(prev => [
+          ...prev,
+          { id: genId(), sender: 'ai', text: "Vector assertion timed out. Check local engine allocations." }
+        ]);
+      }
     } finally {
+      abortControllerRef.current = null;
       setLoading(false);
       setAgentStatus('');
       postPatchyStatus('done');
     }
+  };
+
+  const stopGeneration = () => {
+    abortControllerRef.current?.abort();
   };
 
   const onSubmitForm = (e: React.FormEvent) => {
@@ -1659,14 +1691,22 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                 </button>
 
                 <button
-                  type="submit"
+                  type={loading ? "button" : "submit"}
                   className="circle-icon-button"
-                  disabled={loading || !input.trim()}
+                  onClick={loading ? stopGeneration : undefined}
+                  disabled={!loading && !input.trim()}
+                  title={loading ? "Stop generating" : "Send"}
                 >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="2 12 22 12" />
-                    <polyline points="12 2 22 12 12 22" />
-                  </svg>
+                  {loading ? (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                      <rect x="6" y="6" width="12" height="12" rx="2" />
+                    </svg>
+                  ) : (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="2 12 22 12" />
+                      <polyline points="12 2 22 12 12 22" />
+                    </svg>
+                  )}
                 </button>
 
                 <button

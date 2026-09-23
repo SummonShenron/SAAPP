@@ -449,7 +449,7 @@ async def discover_documents(affiliate: str = "All", current_user = Depends(get_
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/chat")
-async def secure_chat(request: ChatRequest, current_user = Depends(get_current_user)):
+async def secure_chat(request: ChatRequest, http_request: Request, current_user = Depends(get_current_user)):
     username = current_user.get("sub")
     response_llm = get_stream_llm(username)
     question = request.question.strip()
@@ -594,7 +594,20 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                 logger.info("--- STARTING LIVE GRAPH EXECUTION ---")
                 workflow = services.get("compiled_workflow")
 
-                async for event in workflow.astream_events(initial_state, version="v2", config=graph_config):
+                event_stream = workflow.astream_events(initial_state, version="v2", config=graph_config)
+                async for event in event_stream:
+                    # A user-initiated Stop (see docs/coding-agent-roadmap.md) aborts the
+                    # client's fetch — without this check the graph (including slow admin
+                    # tools like run_repo_tests/run_snippet) would keep running to completion
+                    # server-side anyway, burning real LLM/tool cost for a response nobody is
+                    # waiting for. aclose() sends the generator a real cancellation signal
+                    # rather than just abandoning it half-consumed.
+                    if await http_request.is_disconnected():
+                        logger.info(f"[secure_chat] Client disconnected mid-investigation for {history_key}; stopping graph execution.")
+                        await event_stream.aclose()
+                        chat_sessions[history_key].append(AIMessage(content="_[Stopped by user before responding]_"))
+                        save_conversation_turn(username, session_id, chat_sessions[history_key])
+                        return
                     kind = event["event"]
 
                     # Catch Custom Thoughts emitted by your nodes via adispatch_custom_event
@@ -711,7 +724,19 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                     prompt = prompt + semantic_memory_context
                     yield f"data: {json.dumps({'event': 'node_progress', 'node': 'user_memory_recall', 'title': 'Recalling relevant memory', 'detail': 'Found semantically relevant past context.'})}\n\n"
             # 3. STREAM RESPONSE TOKENS FROM LLM
-            async for chunk in response_llm.astream(prompt):
+            token_stream = response_llm.astream(prompt)
+            async for chunk in token_stream:
+                # Same Stop check as the graph phase above — a user cutting off a response
+                # that's clearly going the wrong way shouldn't leave the LLM generating the
+                # rest of it into the void.
+                if await http_request.is_disconnected():
+                    logger.info(f"[secure_chat] Client disconnected mid-response for {history_key}; stopping token stream.")
+                    await token_stream.aclose()
+                    stopped_note = f"{full_response}\n\n_[Stopped by user]_" if full_response else "_[Stopped by user before responding]_"
+                    chat_sessions[history_key].append(AIMessage(content=stopped_note))
+                    save_conversation_turn(username, session_id, chat_sessions[history_key])
+                    return
+
                 if first_token:
                     first_token = False
                     t_first_token = time.perf_counter()
@@ -721,10 +746,10 @@ async def secure_chat(request: ChatRequest, current_user = Depends(get_current_u
                     token = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
                 else:
                     token = str(content) if content else ""
-                
+
                 if not token:
                     continue
-                
+
                 full_response += token
                 yield f"data: {json.dumps({'event': 'token', 'text': token})}\n\n"
                 await asyncio.sleep(0)

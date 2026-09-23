@@ -468,7 +468,8 @@ export async function sendChatMessage(
   borderScope: string,
   session_id: string,
   onTokenReceived: (token: string) => void,
-  onTraceReceived?: (payload: any) => void
+  onTraceReceived?: (payload: any) => void,
+  signal?: AbortSignal
 ): Promise<void> {
   const authHeaders = await getAuthHeaders();
   const response = await fetch(`${BASE_URL}/api/chat`, {
@@ -484,6 +485,7 @@ export async function sendChatMessage(
       attachments,
       session_id,
     }),
+    signal,
   });
 
   if (!response.ok) {
