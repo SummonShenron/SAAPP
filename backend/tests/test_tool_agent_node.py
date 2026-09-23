@@ -303,6 +303,92 @@ async def test_run_repo_tests_dispatches_with_repo_and_default_branch(monkeypatc
 
 
 # ---------------------------------------------------------------------------
+# run_snippet — Tier 1 real-execution path (docs/coding-agent-roadmap.md)
+# ---------------------------------------------------------------------------
+
+@run_async
+async def test_non_admin_action_menu_never_includes_run_snippet(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    _setup_github_repo(monkeypatch)
+
+    captured_prompts = []
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return _llm_response(action="final", answer="No conclusive answer.")
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("does this function actually work?"))
+
+    assert all("run_snippet — args:" not in p for p in captured_prompts)
+
+
+@run_async
+async def test_admin_action_menu_includes_run_snippet(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])
+    _setup_github_repo(monkeypatch)
+    monkeypatch.setattr(aw, "get_db", lambda: _FakeDB({"user_memory_facts": _FakeCollection()}))
+
+    captured_prompts = []
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return _llm_response(action="final", answer="No conclusive answer.")
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("does this function actually work?"))
+
+    assert any("run_snippet — args:" in p for p in captured_prompts)
+
+
+@run_async
+async def test_non_admin_cannot_execute_run_snippet_even_if_returned(monkeypatch):
+    """Defense in depth, mirroring the equivalent run_repo_tests/run_mongo_query tests."""
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    _setup_github_repo(monkeypatch)
+
+    responses = [
+        _llm_response(action="query", purpose="Try running a snippet anyway", tool_action="run_snippet", args={"code": "print(1)"}),
+        _llm_response(action="final", answer="Could not run that."),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state())
+
+    assert "not authorized" in result["content_to_format"].lower()
+
+
+@run_async
+async def test_run_snippet_dispatches_with_repo_default_branch_and_code(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])
+    _setup_github_repo(monkeypatch)
+    monkeypatch.setattr(aw, "get_db", lambda: _FakeDB({"user_memory_facts": _FakeCollection()}))
+
+    fake_run_snippet = Mock(return_value="Snippet run SUCCESS: https://github.com/SummonShenron/SAAPP/actions/runs/1\nthe function returned 42")
+    monkeypatch.setattr(aw, "run_python_snippet", fake_run_snippet)
+
+    responses = [
+        _llm_response(
+            action="query", purpose="Verify the function actually works", tool_action="run_snippet",
+            args={"code": "print(add(40, 2))"},
+        ),
+        _llm_response(action="final", answer="Confirmed — it returns 42."),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("does add(40, 2) actually return 42?"))
+
+    fake_run_snippet.assert_called_once()
+    call_args = fake_run_snippet.call_args.args
+    assert call_args[0] == "SummonShenron/SAAPP"  # repo
+    assert call_args[1] == "main"  # falls back to default_branch when branch arg omitted
+    assert call_args[2] == "print(add(40, 2))"
+    assert "Confirmed" in result["content_to_format"]
+
+
+# ---------------------------------------------------------------------------
 # Mongo action via the unified agent
 # ---------------------------------------------------------------------------
 
@@ -394,6 +480,23 @@ async def test_deep_thinking_off_uses_standard_loop_limits(monkeypatch):
     assert captured_kwargs["max_iterations"] == aw.TOOL_AGENT_MAX_ITERATIONS
     assert captured_kwargs["max_retry_nudges"] == aw.TOOL_AGENT_MAX_RETRY_NUDGES
     assert captured_kwargs["llm"] is aw.lite_llm
+
+
+@run_async
+async def test_stuck_action_redirects_passed_to_react_loop(monkeypatch):
+    _setup_github_repo(monkeypatch)
+    captured_kwargs = {}
+
+    async def fake_run_react_loop(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"final_answer": "done", "attempts": [], "show_work": False}
+
+    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+
+    await aw.tool_agent_node(_state("what does this repo do?"))
+
+    assert captured_kwargs["stuck_action_redirects"] is aw.TOOL_AGENT_STUCK_ACTION_REDIRECTS
+    assert "search_code" in captured_kwargs["stuck_action_redirects"]
 
 
 @run_async
@@ -1126,3 +1229,182 @@ async def test_find_file_no_query_is_error(monkeypatch):
     result = await aw.tool_agent_node(_state("find the thing"))
 
     assert "ERROR" in result["content_to_format"] or "Couldn't find it" in result["content_to_format"]
+
+
+# ---------------------------------------------------------------------------
+# Visual-inspection directive — the real production failure this closes: asked to
+# "inspect the actual page" for a z-index bug, the model did 15 steps of pure repo
+# reading and never opened a browser once. A keyword-triggered directive is injected
+# into the turn's own question text rather than relying solely on a static system-
+# prompt paragraph to out-compete many turns of code-reading momentum.
+# ---------------------------------------------------------------------------
+
+def test_mentions_visual_inspection_detects_the_real_production_phrasing():
+    assert aw._mentions_visual_inspection(
+        "can you inspect the actual page and fix the z-index issue between "
+        "the hero-banner and the trace panel?"
+    )
+
+
+def test_mentions_visual_inspection_negative_for_unrelated_question():
+    assert not aw._mentions_visual_inspection("how does the memory recall system work?")
+    assert not aw._mentions_visual_inspection("can you add a new field to the UserFact model?")
+
+
+@run_async
+async def test_visual_inspection_question_gets_browser_directive_injected(monkeypatch):
+    _setup_github_repo(monkeypatch)
+    captured_kwargs = {}
+
+    async def fake_run_react_loop(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"final_answer": "done", "attempts": [], "show_work": False}
+
+    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+
+    await aw.tool_agent_node(_state(
+        "can you inspect the actual page to find the z-index issue between the "
+        "hero-banner and trace panel?"
+    ))
+
+    assert "browser_navigate" in captured_kwargs["question"]
+    assert "cannot be answered from source code alone" in captured_kwargs["question"]
+
+
+@run_async
+async def test_non_visual_question_gets_no_browser_directive(monkeypatch):
+    _setup_github_repo(monkeypatch)
+    captured_kwargs = {}
+
+    async def fake_run_react_loop(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"final_answer": "done", "attempts": [], "show_work": False}
+
+    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+
+    await aw.tool_agent_node(_state("how does the goal nudge check-in work?"))
+
+    assert "browser_navigate" not in captured_kwargs["question"]
+
+
+# ---------------------------------------------------------------------------
+# trace_symbol — sorts search_code's hits into write/decide vs. read/pass-through
+# sites, so tracing where a value actually comes from doesn't require opening
+# every hit by hand (docs/coding-agent-roadmap.md, section 1).
+# ---------------------------------------------------------------------------
+
+def test_classify_symbol_line_recognizes_python_definition():
+    assert aw._classify_symbol_line(
+        "get_accessible_affiliates",
+        "def get_accessible_affiliates(username: str, user_directory: dict) -> dict:",
+    ) == "write"
+
+
+def test_classify_symbol_line_recognizes_plain_assignment():
+    assert aw._classify_symbol_line(
+        "accessible_affiliates",
+        "accessible_affiliates = [g for g in user_groups if g not in _NON_KB_ROLE_GROUPS]",
+    ) == "write"
+
+
+def test_classify_symbol_line_recognizes_react_state_setter():
+    assert aw._classify_symbol_line(
+        "tracePanelPos",
+        "const [tracePanelPos, setTracePanelPos] = useState({ x: 0, y: 0 });",
+    ) == "write"
+    assert aw._classify_symbol_line("tracePanelPos", "setTracePanelPos({ x: 1, y: 2 });") == "write"
+
+
+def test_classify_symbol_line_recognizes_a_read():
+    assert aw._classify_symbol_line(
+        "tracePanelPos",
+        "transform: `translate3d(${tracePanelPos.x}px, ${tracePanelPos.y}px, 0)`,",
+    ) == "read"
+    assert aw._classify_symbol_line(
+        "get_accessible_affiliates",
+        'accessible = get_accessible_affiliates(clerk_id, directory)["accessible_affiliates"]',
+    ) == "read"
+
+
+def test_classify_symbol_line_does_not_confuse_equality_check_with_assignment():
+    assert aw._classify_symbol_line("foo", "if foo == bar:") == "read"
+
+
+@run_async
+async def test_trace_symbol_sorts_write_and_read_sites(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    repo_resp = _http_response(200, {"default_branch": "main"})
+    search_resp = _http_response(200, {"items": [
+        {
+            "path": "backend/utils/isolation_kb_utils.py",
+            "text_matches": [{"fragment": "def get_accessible_affiliates(username: str, user_directory: dict) -> dict:"}],
+        },
+        {
+            "path": "app.py",
+            "text_matches": [{"fragment": 'accessible = get_accessible_affiliates(clerk_id, directory)["accessible_affiliates"]'}],
+        },
+    ]})
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        if url.endswith("/search/code"):
+            return search_resp
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+
+    responses = [
+        _llm_response(action="query", purpose="Trace the symbol", tool_action="trace_symbol", args={"symbol": "get_accessible_affiliates"}),
+        _llm_response(action="final", answer="It's defined in isolation_kb_utils.py and called from app.py."),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("where is get_accessible_affiliates actually decided?"))
+
+    assert "isolation_kb_utils.py" in result["content_to_format"]
+
+
+@run_async
+async def test_trace_symbol_no_query_is_error(monkeypatch):
+    _setup_github_repo(monkeypatch)
+    responses = [
+        _llm_response(action="query", purpose="Trace it", tool_action="trace_symbol", args={}),
+        _llm_response(action="final", answer="Couldn't trace it."),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("trace the thing"))
+
+    assert "ERROR" in result["content_to_format"] or "Couldn't trace it" in result["content_to_format"]
+
+
+@run_async
+async def test_trace_symbol_no_matches(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    repo_resp = _http_response(200, {"default_branch": "main"})
+    search_resp = _http_response(200, {"items": []})
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        if url.endswith("/search/code"):
+            return search_resp
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+
+    responses = [
+        _llm_response(action="query", purpose="Trace the symbol", tool_action="trace_symbol", args={"symbol": "totallyNonexistentSymbol"}),
+        _llm_response(action="query", purpose="Retry with a shorter form", tool_action="trace_symbol", args={"symbol": "NonexistentSymbol"}),
+        _llm_response(action="final", answer="Couldn't find it anywhere in the repo."),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("trace totallyNonexistentSymbol"))
+
+    assert "Couldn't find it anywhere in the repo." in result["content_to_format"]

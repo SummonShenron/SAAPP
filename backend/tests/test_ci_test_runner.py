@@ -153,3 +153,117 @@ def test_run_repo_tests_times_out_if_never_completes(monkeypatch):
 
     assert result.startswith("ERROR")
     assert "did not finish" in result
+
+
+# ---------------------------------------------------------------------------
+# run_python_snippet — Tier 1 real-execution path (docs/coding-agent-roadmap.md)
+# ---------------------------------------------------------------------------
+
+def test_run_python_snippet_rejects_empty_without_dispatching(monkeypatch):
+    fake_post = Mock()
+    monkeypatch.setattr(ctr.requests, "post", fake_post)
+
+    result = ctr.run_python_snippet(REPO, BRANCH, "   ", HEADERS, API_BASE)
+
+    assert result.startswith("ERROR")
+    fake_post.assert_not_called()
+
+
+def test_run_python_snippet_rejects_oversized_snippet_without_dispatching(monkeypatch):
+    fake_post = Mock()
+    monkeypatch.setattr(ctr.requests, "post", fake_post)
+
+    result = ctr.run_python_snippet(REPO, BRANCH, "x" * (ctr._SNIPPET_MAX_CHARS + 1), HEADERS, API_BASE)
+
+    assert result.startswith("ERROR")
+    assert "limit" in result
+    fake_post.assert_not_called()
+
+
+def test_run_python_snippet_dispatch_failure_returns_error(monkeypatch):
+    monkeypatch.setattr(ctr.requests, "post", lambda *a, **k: _http_response(422, text="bad ref"))
+
+    result = ctr.run_python_snippet(REPO, BRANCH, "print('hi')", HEADERS, API_BASE)
+
+    assert result.startswith("ERROR")
+    assert "422" in result
+
+
+def test_run_python_snippet_dispatches_with_python_snippet_input_not_test_commands(monkeypatch):
+    """The dispatch payload must carry the snippet under its own input name — reusing
+    test_commands would route it through the pytest-only validation step in the workflow."""
+    _patch_no_sleep(monkeypatch)
+    run = {"id": 42, "html_url": "https://github.com/SummonShenron/SAAPP/actions/runs/42", "created_at": _now_iso()}
+    captured_payload = {}
+
+    def fake_post(url, headers=None, json=None):
+        captured_payload.update(json or {})
+        return _http_response(204)
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/runs") and params and params.get("event") == "workflow_dispatch":
+            return _http_response(200, {"workflow_runs": [run]})
+        if url.endswith("/actions/runs/42"):
+            return _http_response(200, {"status": "completed", "conclusion": "success"})
+        if url.endswith("/actions/runs/42/jobs"):
+            return _http_response(200, {"jobs": [{"id": 1}]})
+        if url.endswith("/actions/jobs/1/logs"):
+            return _http_response(200, text="hi\n")
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(ctr.requests, "post", fake_post)
+    monkeypatch.setattr(ctr.requests, "get", fake_get)
+
+    ctr.run_python_snippet(REPO, BRANCH, "print('hi')", HEADERS, API_BASE)
+
+    assert captured_payload["inputs"] == {"python_snippet": "print('hi')"}
+
+
+def test_run_python_snippet_success_always_includes_printed_output(monkeypatch):
+    """Unlike run_repo_tests (log only on failure), a snippet's printed output is the point of
+    running it at all — the log excerpt must be included even on a SUCCESS conclusion."""
+    _patch_no_sleep(monkeypatch)
+    run = {"id": 88, "html_url": "https://github.com/SummonShenron/SAAPP/actions/runs/88", "created_at": _now_iso()}
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/runs") and params and params.get("event") == "workflow_dispatch":
+            return _http_response(200, {"workflow_runs": [run]})
+        if url.endswith("/actions/runs/88"):
+            return _http_response(200, {"status": "completed", "conclusion": "success"})
+        if url.endswith("/actions/runs/88/jobs"):
+            return _http_response(200, {"jobs": [{"id": 5}]})
+        if url.endswith("/actions/jobs/5/logs"):
+            return _http_response(200, text="the function returned 42")
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(ctr.requests, "post", lambda *a, **k: _http_response(204))
+    monkeypatch.setattr(ctr.requests, "get", fake_get)
+
+    result = ctr.run_python_snippet(REPO, BRANCH, "print(add(40, 2))", HEADERS, API_BASE)
+
+    assert "SUCCESS" in result
+    assert "the function returned 42" in result
+
+
+def test_run_python_snippet_failure_includes_traceback(monkeypatch):
+    _patch_no_sleep(monkeypatch)
+    run = {"id": 99, "html_url": "https://github.com/SummonShenron/SAAPP/actions/runs/99", "created_at": _now_iso()}
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/runs") and params and params.get("event") == "workflow_dispatch":
+            return _http_response(200, {"workflow_runs": [run]})
+        if url.endswith("/actions/runs/99"):
+            return _http_response(200, {"status": "completed", "conclusion": "failure"})
+        if url.endswith("/actions/runs/99/jobs"):
+            return _http_response(200, {"jobs": [{"id": 6}]})
+        if url.endswith("/actions/jobs/6/logs"):
+            return _http_response(200, text="Traceback (most recent call last):\nNameError: name 'add' is not defined")
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(ctr.requests, "post", lambda *a, **k: _http_response(204))
+    monkeypatch.setattr(ctr.requests, "get", fake_get)
+
+    result = ctr.run_python_snippet(REPO, BRANCH, "print(add(40, 2))", HEADERS, API_BASE)
+
+    assert "FAILURE" in result
+    assert "NameError" in result
