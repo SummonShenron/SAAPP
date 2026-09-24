@@ -453,6 +453,69 @@ trying to close.
 
 ---
 
+## 4b. Readiness check for Section 4 — asked Sonic to plan it, it wasn't ready (done)
+
+Before starting Section 4 for real, ran the actual test: asked Sonic (in its own
+production chat, not this session) to scan the repo and produce the full
+per-user-GitHub-token migration plan. It got the storage design right
+(`user_settings` collection, matching the existing `target_repo`/`deep_thinking`
+pattern) and correctly enumerated every test file referencing `GITHUB_TOKEN` — but
+its core wiring claim was fabricated: it said to edit the node in
+`agent_workflow.py` that calls `process_pr_summary`, and no such node exists —
+`process_pr_summary` (`backend/services/github_service.py:23`) is only ever
+called from a webhook handler in `app.py:1576`, with no LangGraph state, no
+session, no logged-in user to hang a per-user token on. It also missed that
+`os.getenv("GITHUB_TOKEN")` is independently re-fetched in **five separate
+places** inside `agent_workflow.py` (search/trace, PR-summarizer's
+`resolve_pr_number`, `fetch_branch_diff_summary`, `_execute_create_pr`,
+`_execute_create_issue`) — the actual refactor surface — and never mentioned
+`ci_test_runner.py` at all despite it consuming the same token via `headers`
+passed down from `tool_agent_node`.
+
+**Root-caused to two concrete, fixable mechanisms — not "the model just
+hallucinates":**
+
+1. `search_code`/`trace_symbol` ride GitHub's hosted `/search/code` index —
+   capped at 20 results per query, subject to indexing lag, and explicitly not
+   guaranteed complete per GitHub's own docs. Verified the gap directly: the
+   same "every file that reads GITHUB_TOKEN" question answered instantly and
+   completely (6 hits, no ambiguity) with a plain repo-wide grep, which is a
+   capability Sonic's tool loop didn't have — only a lossy remote index.
+2. `TOOL_AGENT_MAX_ITERATIONS = 7` (14 with deep thinking) is tuned for "find
+   this one function," not "confirm every candidate call site before claiming
+   completeness" — a real audit needs one search plus a `trace_symbol`/
+   confirmatory call per candidate site, which the flat budget doesn't leave
+   room for.
+
+**Fix shipped:**
+- **`search_literal`** (new tool_agent_node action, `agent_workflow.py`):
+  fetches the real file tree (`_fetch_repo_tree_items`, extracted from the
+  existing `_fetch_repo_paths`) and actually fetches+greps candidate blob
+  content via the Git Blobs API — slower (one request per candidate file, capped
+  at `_SEARCH_LITERAL_MAX_FILES_SCANNED`) but exhaustive by construction instead
+  of index-based. Skips binaries/lockfiles/oversized files
+  (`_SEARCH_LITERAL_SKIP_EXTENSIONS`, `_SEARCH_LITERAL_MAX_FILE_BYTES`). Menu
+  text explicitly tells the model to reach for this over `search_code`
+  specifically before claiming "every place X is used" is complete.
+- **`_is_audit_style_task`**: a keyword-triggered detector (same mechanical
+  pattern as `_mentions_visual_inspection`/the capability-denial watchlist —
+  prose alone doesn't stick) that recognizes "scan the repo," "every file,"
+  "plan a refactor," etc. in the user's own message and grants the same
+  `deep_thinking` step/nudge budget regardless of whether deep thinking is
+  actually toggled on.
+- Both are mechanical, not prompt-only, per this session's established pattern:
+  a real trace showed prose guidance alone doesn't reliably change behavior once
+  the model has momentum toward a plausible-sounding answer. 8 new tests in
+  `backend/tests/test_tool_agent_node.py`.
+
+**Still on hold:** Section 4 itself. This readiness check was a useful, cheap way
+to test "is Sonic actually proposing correct solutions yet" without committing to
+the real migration — the honest answer today is not yet, but the two gaps found
+are now fixed, and the same test should be re-run before starting Section 4 for
+real.
+
+---
+
 ## Operational — automatic checkpoint retention (done)
 
 **Shipped:** `backend/services/checkpoint_retention.py` —

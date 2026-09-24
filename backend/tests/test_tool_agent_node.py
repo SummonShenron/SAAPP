@@ -1411,6 +1411,172 @@ async def test_trace_symbol_no_matches(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# search_literal — exhaustive content grep, closing the real gap search_code's
+# hosted-index approach can't: a real production plan claimed a wrong call site
+# for a token it was asked to trace every usage of, because search_code's index
+# is capped/lossy by construction. This fetches and greps real blob content
+# instead, so "find every occurrence" gets a guaranteed-complete answer.
+# ---------------------------------------------------------------------------
+
+@run_async
+async def test_search_literal_finds_every_occurrence_across_files(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    repo_resp = _http_response(200, {"default_branch": "main"})
+    tree_resp = _http_response(200, {"tree": [
+        {"path": "backend/services/github_service.py", "type": "blob", "size": 100, "sha": "sha1"},
+        {"path": "backend/services/agent_workflow.py", "type": "blob", "size": 100, "sha": "sha2"},
+        {"path": "local/src/index.css", "type": "blob", "size": 100, "sha": "sha3"},
+    ]})
+    blob_contents = {
+        "sha1": "import os\ntoken = os.getenv(\"GITHUB_TOKEN\")\n",
+        "sha2": "import os\ntoken = os.getenv(\"GITHUB_TOKEN\")\nother_token = os.getenv(\"GITHUB_TOKEN\")\n",
+        "sha3": "body { color: red; }\n",
+    }
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        if "/git/trees/" in url:
+            return tree_resp
+        if "/git/blobs/" in url:
+            sha = url.rsplit("/", 1)[-1]
+            return _http_response(200, {"encoding": "base64", "content": _b64(blob_contents[sha])})
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+
+    responses = [
+        _llm_response(action="query", purpose="Find every usage", tool_action="search_literal", args={"term": "GITHUB_TOKEN"}),
+        _llm_response(action="final", answer="Found every usage."),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+    monkeypatch.setattr(aw.lite_llm_deep, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("find every place GITHUB_TOKEN is read"))
+
+    assert "github_service.py" in result["content_to_format"] or "Found every usage" in result["content_to_format"]
+
+
+@run_async
+async def test_search_literal_no_term_is_error(monkeypatch):
+    _setup_github_repo(monkeypatch)
+    responses = [
+        _llm_response(action="query", purpose="Search", tool_action="search_literal", args={}),
+        _llm_response(action="final", answer="Couldn't search."),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+    monkeypatch.setattr(aw.lite_llm_deep, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("search for the thing"))
+
+    assert "ERROR" in result["content_to_format"] or "Couldn't search" in result["content_to_format"]
+
+
+@run_async
+async def test_search_literal_no_matches_says_so_explicitly(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    repo_resp = _http_response(200, {"default_branch": "main"})
+    tree_resp = _http_response(200, {"tree": [
+        {"path": "app.py", "type": "blob", "size": 100, "sha": "sha1"},
+    ]})
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        if "/git/trees/" in url:
+            return tree_resp
+        if "/git/blobs/" in url:
+            return _http_response(200, {"encoding": "base64", "content": _b64("nothing interesting here\n")})
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+
+    responses = [
+        _llm_response(action="query", purpose="Search", tool_action="search_literal", args={"term": "TOTALLY_NONEXISTENT_VAR"}),
+        _llm_response(action="final", answer="Not found anywhere."),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+    monkeypatch.setattr(aw.lite_llm_deep, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("find every place TOTALLY_NONEXISTENT_VAR is read"))
+
+    assert "Not found anywhere." in result["content_to_format"]
+
+
+def test_search_literal_skips_oversized_and_binary_files():
+    items = [
+        {"path": "small.py", "type": "blob", "size": 100, "sha": "a"},
+        {"path": "huge.py", "type": "blob", "size": aw._SEARCH_LITERAL_MAX_FILE_BYTES + 1, "sha": "b"},
+        {"path": "image.png", "type": "blob", "size": 100, "sha": "c"},
+        {"path": "yarn.lock", "type": "blob", "size": 100, "sha": "d"},
+    ]
+    candidates = [
+        item for item in items
+        if item.get("size", 0) <= aw._SEARCH_LITERAL_MAX_FILE_BYTES
+        and not item.get("path", "").lower().endswith(aw._SEARCH_LITERAL_SKIP_EXTENSIONS)
+    ]
+    assert [c["path"] for c in candidates] == ["small.py"]
+
+
+# ---------------------------------------------------------------------------
+# Audit-style task detection — a real production plan (per-user GitHub token
+# refactor) fabricated a call site because the default 7-step budget didn't
+# leave room to confirm every candidate with trace_symbol/search_literal
+# before finalizing. This detects that task shape and grants it deep_thinking's
+# larger step/nudge budget regardless of whether deep_thinking is actually on.
+# ---------------------------------------------------------------------------
+
+def test_is_audit_style_task_detects_the_real_production_phrasing():
+    assert aw._is_audit_style_task(
+        "scan the repo and create a plan to turn the current github api token "
+        "connection to be per user instead of global. tell me every file we need to touch"
+    )
+
+
+def test_is_audit_style_task_negative_for_ordinary_question():
+    assert not aw._is_audit_style_task("where is the login flow implemented?")
+    assert not aw._is_audit_style_task("can you fix this one bug in Chat.tsx?")
+
+
+@run_async
+async def test_audit_style_task_gets_deep_iteration_budget(monkeypatch):
+    _setup_github_repo(monkeypatch)
+    captured_kwargs = {}
+
+    async def fake_run_react_loop(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"final_answer": "done", "attempts": [], "show_work": False}
+
+    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+
+    await aw.tool_agent_node(_state(
+        "scan the repo and plan a refactor — tell me every file we need to touch"
+    ))
+
+    assert captured_kwargs["max_iterations"] == aw.TOOL_AGENT_MAX_ITERATIONS_DEEP
+
+
+@run_async
+async def test_ordinary_task_keeps_normal_iteration_budget(monkeypatch):
+    _setup_github_repo(monkeypatch)
+    captured_kwargs = {}
+
+    async def fake_run_react_loop(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"final_answer": "done", "attempts": [], "show_work": False}
+
+    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+
+    await aw.tool_agent_node(_state("where is the login flow implemented?"))
+
+    assert captured_kwargs["max_iterations"] == aw.TOOL_AGENT_MAX_ITERATIONS
+
+
+# ---------------------------------------------------------------------------
 # Conversation history threaded into TOOL_AGENT_PROMPT — the real failure this
 # closes: a multi-turn task's actual instruction lived a few messages back, and
 # by the time the model finally acted on a short confirming reply ("yes you

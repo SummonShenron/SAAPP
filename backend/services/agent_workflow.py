@@ -125,6 +125,23 @@ _READ_FILE_CHAR_CAP = 3500
 _READ_FILE_DEFAULT_LINE_WINDOW = 150
 _TOP_LEVEL_DEF_RE = re.compile(r'^(?:async\s+)?(def|class)\s+(\w+)')
 
+# search_code rides GitHub's hosted /search/code index — capped at 20 results per query, subject
+# to indexing lag, and explicitly not guaranteed complete by GitHub's own docs. That's fine for
+# "find a plausible match" but a real production trace showed it fail exactly the task this exists
+# for: "find every file that reads GITHUB_TOKEN" needs a guaranteed-complete answer, not a
+# best-effort one, since a plan built on a silently-partial result set is worse than one that
+# admits it doesn't know. search_literal instead fetches the real file tree and greps actual
+# fetched blob content — slower (one API call per candidate file) but exhaustive by construction.
+_SEARCH_LITERAL_MAX_FILE_BYTES = 200_000
+_SEARCH_LITERAL_MAX_FILES_SCANNED = 300
+_SEARCH_LITERAL_MAX_MATCHES = 50
+_SEARCH_LITERAL_SKIP_EXTENSIONS = (
+    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp",
+    ".woff", ".woff2", ".ttf", ".eot",
+    ".pdf", ".zip", ".gz", ".tar",
+    ".lock", ".map",
+)
+
 
 def _build_definition_index(lines: list) -> str:
     """A lightweight table of contents for a large file: every top-level (module-level, not
@@ -2847,6 +2864,25 @@ def _mentions_visual_inspection(text: str) -> bool:
     return bool(_VISUAL_INSPECTION_RE.search(text or ""))
 
 
+# A real production trace showed the default step budget forced a premature, fabricated answer
+# on a "scan the repo and plan this refactor" ask: it needs one search plus a confirmatory
+# trace_symbol per candidate call site to actually be exhaustive, which the flat 7-step (or even
+# 14-step deep) budget doesn't leave room for — so it pattern-completed the rest instead of
+# admitting it ran out of steps. This detects that task shape from the user's own wording and
+# grants it the same higher budget deep_thinking gets, regardless of whether deep_thinking is on.
+_AUDIT_TASK_RE = re.compile(
+    r"\b(scan the (?:whole |entire )?repo|every (?:file|place|call ?site|usage|occurrence)s?|"
+    r"across the (?:whole |entire )?(?:repo|codebase)|cross-cutting|\baudit\b|"
+    r"(?:refactor|migration|architecture) plan|which files (?:do we|need to)|"
+    r"plan (?:the|this|a) (?:refactor|migration|architecture))\b",
+    re.IGNORECASE,
+)
+
+
+def _is_audit_style_task(text: str) -> bool:
+    return bool(_AUDIT_TASK_RE.search(text or ""))
+
+
 async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
     """Unified read-only research agent: Mongo (admin-only), GitHub, and web search all live
     as actions in one ReAct loop, so the model can reach for whichever tool (or sequence of
@@ -2998,20 +3034,30 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             exec(code, {"__builtins__": exec_builtins}, local_scope)
             return local_scope.get("result", None)
 
-        def _fetch_repo_paths():
-            # Shared by _list_tree and _find_file — a single real fetch of every path this
-            # repo actually has, so find_file's fuzzy matching runs against the full tree, not
-            # just whatever _list_tree happens to truncate its own display to.
+        def _fetch_repo_tree_items():
+            # Shared by _fetch_repo_paths and _search_literal — a single real fetch of every
+            # blob this repo actually has (path, size, sha), so both path-only consumers and
+            # content-scanning consumers work off the same real tree instead of two divergent
+            # fetches.
             tree_url = f"{api_base}/repos/{repo}/git/trees/{default_branch}?recursive=1"
             res = requests.get(tree_url, headers=headers)
             if res.status_code != 200:
                 return f"ERROR: could not fetch tree ({res.status_code})"
             tree_items = res.json().get("tree", [])
             return [
-                item.get("path") for item in tree_items
+                item for item in tree_items
                 if item.get("type") == "blob"
                 and not any(exclude in item.get("path", "") for exclude in ["node_modules", "dist", "__pycache__"])
             ]
+
+        def _fetch_repo_paths():
+            # Shared by _list_tree and _find_file — path-only view of the same tree, so
+            # find_file's fuzzy matching runs against the full tree, not just whatever
+            # _list_tree happens to truncate its own display to.
+            items = _fetch_repo_tree_items()
+            if isinstance(items, str):
+                return items
+            return [item.get("path") for item in items]
 
         def _list_tree():
             paths = _fetch_repo_paths()
@@ -3197,6 +3243,65 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 )
             return "\n\n".join(parts) if parts else "No matches."
 
+        def _search_literal(term: str):
+            # Exhaustive alternative to search_code — see the module-level comment above
+            # _SEARCH_LITERAL_MAX_FILE_BYTES for why this exists. Fetches the real tree, then
+            # actually fetches and greps candidate file content instead of trusting GitHub's
+            # search index to be complete. Deliberately slower (one request per file) — use
+            # search_code first; reach for this only when completeness itself is what matters
+            # (e.g. "find every place this env var/config key is read" before proposing a plan).
+            if not term:
+                return "ERROR: no term given"
+            items = _fetch_repo_tree_items()
+            if isinstance(items, str):
+                return items
+            candidates = [
+                item for item in items
+                if item.get("size", 0) <= _SEARCH_LITERAL_MAX_FILE_BYTES
+                and not item.get("path", "").lower().endswith(_SEARCH_LITERAL_SKIP_EXTENSIONS)
+            ][:_SEARCH_LITERAL_MAX_FILES_SCANNED]
+
+            matches = []
+            scanned = 0
+            for item in candidates:
+                if len(matches) >= _SEARCH_LITERAL_MAX_MATCHES:
+                    break
+                blob_res = requests.get(
+                    f"{api_base}/repos/{repo}/git/blobs/{item.get('sha')}", headers=headers
+                )
+                if blob_res.status_code != 200:
+                    continue
+                scanned += 1
+                blob = blob_res.json()
+                if blob.get("encoding") != "base64":
+                    continue
+                try:
+                    text = base64.b64decode(blob.get("content", "")).decode("utf-8", errors="ignore")
+                except Exception:
+                    continue
+                for line_no, line in enumerate(text.splitlines(), start=1):
+                    if term in line:
+                        matches.append(f"{item.get('path')}:{line_no}: {line.strip()}")
+                        if len(matches) >= _SEARCH_LITERAL_MAX_MATCHES:
+                            break
+
+            truncation_note = (
+                f" (stopped early at {_SEARCH_LITERAL_MAX_MATCHES} matches — there may be more; "
+                "narrow the term if you need to see past this)" if len(matches) >= _SEARCH_LITERAL_MAX_MATCHES
+                else ""
+            )
+            if not matches:
+                return (
+                    f"No occurrences of {term!r} found — exhaustively scanned {scanned} of "
+                    f"{len(candidates)} candidate files (skipped binaries/lockfiles/oversized "
+                    f"files). This is a real, complete answer for the files scanned, not an "
+                    f"index-based guess."
+                )
+            return (
+                f"Exhaustively scanned {scanned} of {len(candidates)} candidate files — "
+                f"{len(matches)} matching line(s){truncation_note}:\n" + "\n".join(matches)
+            )
+
         def _run_tests(test_commands: str, branch: str = None):
             # Real CI execution, not reasoning about whether code would work — dispatches this
             # repo's own .github/workflows/patchy-tests.yml and blocks (this whole call runs via
@@ -3282,6 +3387,14 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             "hand to figure that out one at a time. Still only matches exact tokens like "
             "search_code — for a colloquial name, use find_file first to find the real "
             "identifier, then trace_symbol on that",
+            "- search_literal — args: term (an exact string/identifier — e.g. an env var or "
+            "config key name); unlike search_code (which queries GitHub's search index and is "
+            "NOT guaranteed complete — capped results, indexing lag), this actually fetches "
+            "and greps real file content across the whole repo, so it is a guaranteed-complete "
+            "answer for the files it scans. Slower than search_code (one request per candidate "
+            "file) — use search_code first, and reach for this specifically when you are about "
+            "to state or rely on 'every place X is used/read' being complete, such as before "
+            "proposing a cross-file refactor plan",
             "- diff_branches — args: base (branch name), head (branch name)",
             "- list_commits — args: branch (branch name), limit (max number of commits, integer)",
             "- web_search — args: query (the exact search query string to run)",
@@ -3379,6 +3492,8 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     return _find_file(args.get("query"))
                 if tool_action == "trace_symbol":
                     return _trace_symbol(args.get("symbol"))
+                if tool_action == "search_literal":
+                    return _search_literal(args.get("term"))
                 if tool_action == "diff_branches":
                     return _diff_branches(args.get("base"), args.get("head"))
                 if tool_action == "list_commits":
@@ -3387,7 +3502,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
 
             return await asyncio.to_thread(_dispatch_github)
 
-        deep_thinking = bool(state.get("deep_thinking"))
+        deep_thinking = bool(state.get("deep_thinking")) or _is_audit_style_task(latest_message_content)
         # Outer try/finally guarantees the browser session (if any browser_* action opened one
         # this turn) is closed exactly once, regardless of which of the three exit paths below
         # runs — normal completion falls through to the finally before continuing on to build
