@@ -1,4 +1,5 @@
 from __future__ import annotations
+import ast
 import asyncio
 import base64
 import difflib
@@ -2362,6 +2363,7 @@ async def run_react_loop(
     llm=lite_llm,
     stuck_action_redirects: dict | None = None,
     capability_denial_watchlist: list | None = None,
+    architecture_map: str = "",
 ) -> dict:
     """Generic Reason -> Act -> Observe -> Decide loop shared by every iterative tool
     (MongoDB, GitHub search, ...). Each step asks the model for the next action given
@@ -2496,6 +2498,7 @@ async def run_react_loop(
             question=question_for_step,
             schema=schema,
             attempts=_format_react_attempts(attempts),
+            architecture_map=architecture_map,
         )
 
         try:
@@ -2645,6 +2648,7 @@ async def run_react_loop(
                 ),
                 schema=schema,
                 attempts=_format_react_attempts(attempts),
+                architecture_map=architecture_map,
             )
             response = await llm.ainvoke(prompt)
             resp_content = response.content if hasattr(response, "content") else str(response)
@@ -2873,14 +2877,139 @@ def _mentions_visual_inspection(text: str) -> bool:
 _AUDIT_TASK_RE = re.compile(
     r"\b(scan the (?:whole |entire )?repo|every (?:file|place|call ?site|usage|occurrence)s?|"
     r"across the (?:whole |entire )?(?:repo|codebase)|cross-cutting|\baudit\b|"
-    r"(?:refactor|migration|architecture) plan|which files (?:do we|need to)|"
-    r"plan (?:the|this|a) (?:refactor|migration|architecture))\b",
+    r"(?:refactor|migration|architecture) plan|which files (?:do we|need to|touch|are)|"
+    r"how many files|plan (?:the|this|a) (?:refactor|migration|architecture))\b",
     re.IGNORECASE,
 )
 
 
 def _is_audit_style_task(text: str) -> bool:
     return bool(_AUDIT_TASK_RE.search(text or ""))
+
+
+# Architecture map — an auto-injected, repo-wide internal-import graph for audit-style tasks
+# (docs/coding-agent-roadmap.md, Section 4c). search_literal/trace_symbol find where a SYMBOL is
+# referenced; this shows which FILES depend on which other files, which is what actually answers
+# "what else does this touch" for a cross-file refactor — the exact gap that produced the
+# fabricated per-user-token plan in Section 4b. Injected straight into the prompt (like `schema`
+# already is) rather than offered as a new opt-in tool_action, because this project has now
+# independently shown three times (Sections 0, 0b, 4b) that a capability the model must remember
+# to reach for gets skipped under pressure.
+_ARCH_MAP_MAX_FILES_SCANNED = 200
+_ARCH_MAP_MAX_FILE_BYTES = 200_000
+_ARCH_MAP_MAX_ENTRIES = 150
+_ARCH_MAP_PY_EXTENSION = ".py"
+_ARCH_MAP_JS_EXTENSIONS = (".ts", ".tsx", ".js", ".jsx")
+
+_JS_IMPORT_RE = re.compile(
+    r"""(?:^\s*import\s+['"]([^'"]+)['"])|(?:\bfrom\s+['"]([^'"]+)['"])|(?:\brequire\(\s*['"]([^'"]+)['"]\s*\))""",
+    re.MULTILINE,
+)
+
+
+def _extract_python_imports(content: str) -> list[str]:
+    # Best-effort, same spirit as _classify_symbol_line's regex heuristic — a file with a real
+    # (rare) syntax error just contributes no edges to the map instead of failing the whole thing.
+    # Relative imports are kept as their literal dotted form (e.g. ".utils") rather than resolved
+    # to a file path — the model can trivially map that back to a real path itself, and it avoids
+    # building a second, error-prone module-resolution layer for comparatively little benefit.
+    try:
+        tree = ast.parse(content)
+    except (SyntaxError, ValueError):
+        return []
+    imports: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imports.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            dots = "." * (node.level or 0)
+            if node.module:
+                imports.append(f"{dots}{node.module}")
+            else:
+                # `from . import utils` — module is None, the actual reference (a sibling
+                # module) lives in the imported names instead.
+                imports.extend(f"{dots}{alias.name}" for alias in node.names)
+    return imports
+
+
+def _extract_js_imports(content: str) -> list[str]:
+    # Regex, not a real parser — matches this codebase's own precedent (_classify_symbol_line)
+    # for TS/JS specifically. Covers `import x from '...'`, bare `import '...'`, and
+    # `require('...')`; does not cover dynamic `import(variable)` or path-aliased imports
+    # (e.g. tsconfig `@/`) — an acceptable, documented gap rather than a bundler-grade resolver.
+    imports = []
+    for match in _JS_IMPORT_RE.finditer(content):
+        imports.append(next(g for g in match.groups() if g))
+    return imports
+
+
+def _is_internal_python_import(import_str: str, top_level_segments: set) -> bool:
+    if import_str.startswith("."):
+        return True
+    return import_str.split(".")[0] in top_level_segments
+
+
+def _repo_top_level_segments(tree_items: list) -> set:
+    # Derived from the real tree every time (never hardcoded) so this works identically on any
+    # repo, not just this one — matches this session's own multi-repo/multi-user design goal.
+    segments = set()
+    for item in tree_items:
+        path = item.get("path", "")
+        parts = path.split("/")
+        segments.add(parts[0])
+        if len(parts) == 1 and parts[0].endswith(_ARCH_MAP_PY_EXTENSION):
+            segments.add(parts[0][: -len(_ARCH_MAP_PY_EXTENSION)])
+    return segments
+
+
+def _build_architecture_map(tree_items: list, fetch_content) -> str:
+    """Builds a compact FILE -> internal imports (and its inverse) map from real file content —
+    fetch_content(path) must return (content, error) like _fetch_file_content does. Only internal
+    (own-repo) imports are kept; a bare package import (os, react, requests) would otherwise
+    dominate the reverse map with useless high fan-in and drown out the edges that actually matter
+    for scoping a refactor's blast radius."""
+    top_level_segments = _repo_top_level_segments(tree_items)
+    candidates = [
+        item for item in tree_items
+        if item.get("path", "").endswith((_ARCH_MAP_PY_EXTENSION,) + _ARCH_MAP_JS_EXTENSIONS)
+        and item.get("size", 0) <= _ARCH_MAP_MAX_FILE_BYTES
+    ][:_ARCH_MAP_MAX_FILES_SCANNED]
+
+    imports_by_file: dict = {}
+    imported_by: dict = {}
+    for item in candidates:
+        path = item.get("path", "")
+        content, error = fetch_content(path)
+        if error or not isinstance(content, str):
+            continue
+        if path.endswith(_ARCH_MAP_PY_EXTENSION):
+            internal = [i for i in _extract_python_imports(content) if _is_internal_python_import(i, top_level_segments)]
+        else:
+            internal = [i for i in _extract_js_imports(content) if i.startswith(".")]
+        if not internal:
+            continue
+        imports_by_file[path] = sorted(set(internal))
+        for imp in internal:
+            imported_by.setdefault(imp, set()).add(path)
+
+    if not imports_by_file:
+        return ""
+
+    forward_lines = [
+        f"  {path} -> {', '.join(imports_by_file[path])}"
+        for path in sorted(imports_by_file)[:_ARCH_MAP_MAX_ENTRIES]
+    ]
+    reverse_lines = [
+        f"  {imp} <- imported by: {', '.join(sorted(imported_by[imp]))}"
+        for imp in sorted(imported_by)[:_ARCH_MAP_MAX_ENTRIES]
+    ]
+    return (
+        "PRE-COMPUTED ARCHITECTURE MAP (real internal-import graph — exhaustive for the files "
+        "scanned, not a guess; use this to find every file a change would touch instead of "
+        "relying on search_code alone):\n"
+        "FILE -> ITS INTERNAL IMPORTS:\n" + "\n".join(forward_lines) +
+        "\n\nINTERNAL MODULE -> IMPORTED BY:\n" + "\n".join(reverse_lines)
+    )
 
 
 async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
@@ -3020,6 +3149,15 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
         # fires once per turn, the moment a LiveURL first becomes available.
         browser_session_holder: dict = {"session": None, "live_view_emitted": False}
 
+        # Per-turn caches — _fetch_repo_tree_items was previously called fresh by every one of
+        # _fetch_repo_paths/_find_file/_search_literal, and _read_file re-fetched from GitHub
+        # even for a path already read earlier in the same investigation (search_code pointing
+        # back to a file already opened is a common pattern). Scoped to this single
+        # tool_agent_node call, same lifetime as browser_session_holder above — never persisted
+        # across turns, so this can't go stale the way a session- or process-level cache could.
+        _turn_tree_cache: dict = {}
+        _turn_file_cache: dict = {}
+
         async def _get_browser_session() -> BrowserSession:
             if browser_session_holder["session"] is None:
                 ws_endpoint = os.getenv("BROWSERLESS_WS_ENDPOINT")
@@ -3038,17 +3176,22 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             # Shared by _fetch_repo_paths and _search_literal — a single real fetch of every
             # blob this repo actually has (path, size, sha), so both path-only consumers and
             # content-scanning consumers work off the same real tree instead of two divergent
-            # fetches.
+            # fetches. Cached per turn (see _turn_tree_cache above) — only the success case is
+            # cached, so a transient failure doesn't get "stuck" for the rest of the turn.
+            if "items" in _turn_tree_cache:
+                return _turn_tree_cache["items"]
             tree_url = f"{api_base}/repos/{repo}/git/trees/{default_branch}?recursive=1"
             res = requests.get(tree_url, headers=headers)
             if res.status_code != 200:
                 return f"ERROR: could not fetch tree ({res.status_code})"
             tree_items = res.json().get("tree", [])
-            return [
+            items = [
                 item for item in tree_items
                 if item.get("type") == "blob"
                 and not any(exclude in item.get("path", "") for exclude in ["node_modules", "dist", "__pycache__"])
             ]
+            _turn_tree_cache["items"] = items
+            return items
 
         def _fetch_repo_paths():
             # Shared by _list_tree and _find_file — path-only view of the same tree, so
@@ -3091,18 +3234,36 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             scored.sort(key=lambda pair: pair[1], reverse=True)
             return "\n".join(f"{path} (similarity {score:.2f})" for path, score in scored[:_FUZZY_MATCH_LIMIT])
 
-        def _read_file(path: str, start_line=None, line_count=None):
-            if not path:
-                return "ERROR: no path given"
+        def _fetch_file_content(path: str):
+            # Raw decoded file text, with no URL/truncation formatting applied — the primitive
+            # both _read_file's human-facing display and any future machine-parseable consumer
+            # (e.g. an AST-based import scan) should build on, instead of each doing its own
+            # fetch. Returns (content, error): error is a human-readable "ERROR: ..." string on
+            # failure, content is None in that case — kept as two return values rather than one
+            # (with an isinstance/prefix check) because unlike _fetch_repo_tree_items's list vs.
+            # str split, both success and failure here are strings, so a real file that happened
+            # to start with the literal text "ERROR" would be indistinguishable from a failure.
+            # Cached per turn (see _turn_file_cache above) — only successes are cached.
+            if path in _turn_file_cache:
+                return _turn_file_cache[path], None
             file_url = f"{api_base}/repos/{repo}/contents/{path}"
             res = requests.get(file_url, headers=headers)
             if res.status_code != 200:
-                return f"ERROR: could not fetch {path} ({res.status_code})"
+                return None, f"ERROR: could not fetch {path} ({res.status_code})"
             file_data = res.json()
             try:
                 decoded = base64.b64decode(file_data.get("content", "")).decode("utf-8", errors="replace")
             except Exception:
-                return f"ERROR: could not decode {path}"
+                return None, f"ERROR: could not decode {path}"
+            _turn_file_cache[path] = decoded
+            return decoded, None
+
+        def _read_file(path: str, start_line=None, line_count=None):
+            if not path:
+                return "ERROR: no path given"
+            decoded, error = _fetch_file_content(path)
+            if error:
+                return error
             html_url = f"{gh_base}/{repo}/blob/{default_branch}/{path}"
 
             try:
@@ -3502,7 +3663,23 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
 
             return await asyncio.to_thread(_dispatch_github)
 
-        deep_thinking = bool(state.get("deep_thinking")) or _is_audit_style_task(latest_message_content)
+        is_audit_task = _is_audit_style_task(latest_message_content)
+        deep_thinking = bool(state.get("deep_thinking")) or is_audit_task
+
+        architecture_map = ""
+        if is_audit_task:
+            await safe_emit_event(
+                "trace_detail",
+                {
+                    "node": "tool_agent_node",
+                    "title": "Building architecture map...",
+                    "detail": "Scanning internal imports across the repo before investigating.",
+                }
+            )
+            tree_items = await asyncio.to_thread(_fetch_repo_tree_items)
+            if isinstance(tree_items, list):
+                architecture_map = await asyncio.to_thread(_build_architecture_map, tree_items, _fetch_file_content)
+
         # Outer try/finally guarantees the browser session (if any browser_* action opened one
         # this turn) is closed exactly once, regardless of which of the three exit paths below
         # runs — normal completion falls through to the finally before continuing on to build
@@ -3523,6 +3700,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     llm=lite_llm_deep if deep_thinking else lite_llm,
                     stuck_action_redirects=TOOL_AGENT_STUCK_ACTION_REDIRECTS,
                     capability_denial_watchlist=TOOL_AGENT_CAPABILITY_DENIAL_WATCHLIST,
+                    architecture_map=architecture_map,
                 )
             except _UnsafeActionRequested as e:
                 drafted_code = (e.decision.get("args") or {}).get("code", "") or ""

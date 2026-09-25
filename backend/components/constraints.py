@@ -613,7 +613,7 @@ actually confirming, often lives here rather than in the request itself):
 USER REQUEST: {question}
 
 CONTEXT: {schema}
-
+{architecture_map}
 AVAILABLE ACTIONS THIS TURN:
 {actions_menu}
 

@@ -71,12 +71,19 @@ class _FakeDB:
 
 
 def _setup_github_repo(monkeypatch, tree_items=None):
+    # tree_items, when given, serves /git/trees/ requests too — needed by any test whose prompt
+    # triggers _is_audit_style_task, since that now pre-fetches the tree for the architecture map
+    # before the ReAct loop even starts. Left as None (tree endpoint stays "unexpected") for every
+    # other test, so a real regression that unexpectedly hits the tree endpoint still fails loudly.
     monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
     repo_resp = _http_response(200, {"default_branch": "main"})
+    tree_resp = _http_response(200, {"tree": tree_items or []})
 
     def fake_get(url, headers=None, params=None):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
+        if tree_items is not None and "/git/trees/" in url:
+            return tree_resp
         raise AssertionError(f"Unexpected GET: {url}")
 
     monkeypatch.setattr(aw.requests, "get", fake_get)
@@ -794,6 +801,81 @@ async def test_read_repo_file_start_line_past_end_of_file_is_error(monkeypatch):
     assert "only has" in followup_prompt
 
 
+# ---------------------------------------------------------------------------
+# Per-turn caching — _fetch_repo_tree_items and _read_file/_fetch_file_content
+# were each doing a fresh GitHub API round trip on every single call, even for
+# the same path/tree re-requested later in the same investigation (a common
+# pattern: search_code points back to a file already opened, or find_file and
+# search_literal both need the full tree). Cached in a dict scoped to this one
+# tool_agent_node call — never persisted across turns.
+# ---------------------------------------------------------------------------
+
+@run_async
+async def test_read_repo_file_same_path_twice_only_fetches_once(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    repo_resp = _http_response(200, {"default_branch": "main"})
+    file_resp = _http_response(200, {"content": _b64("def get_current_user(): ...")})
+    contents_fetch_count = {"n": 0}
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        if url.endswith("/contents/app.py"):
+            contents_fetch_count["n"] += 1
+            return file_resp
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+
+    responses = [
+        _llm_response(action="query", purpose="Read app.py", tool_action="read_repo_file", args={"path": "app.py"}),
+        _llm_response(action="query", purpose="Re-check app.py after search_code pointed back to it", tool_action="read_repo_file", args={"path": "app.py"}),
+        _llm_response(action="final", answer="It's in app.py."),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    await aw.tool_agent_node(_state("where is login handled?"))
+
+    assert contents_fetch_count["n"] == 1
+
+
+@run_async
+async def test_repo_tree_only_fetched_once_across_multiple_actions(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    repo_resp = _http_response(200, {"default_branch": "main"})
+    tree_resp = _http_response(200, {"tree": [
+        {"path": "app.py", "type": "blob", "size": 100, "sha": "sha1"},
+    ]})
+    tree_fetch_count = {"n": 0}
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        if "/git/trees/" in url:
+            tree_fetch_count["n"] += 1
+            return tree_resp
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+
+    # list_repo_tree and find_file both go through _fetch_repo_tree_items — calling both in the
+    # same turn should still only hit GitHub once.
+    responses = [
+        _llm_response(action="query", purpose="List the tree", tool_action="list_repo_tree", args={}),
+        _llm_response(action="query", purpose="Now fuzzy-find something", tool_action="find_file", args={"query": "app"}),
+        _llm_response(action="final", answer="Found it."),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    await aw.tool_agent_node(_state("where's the main app file?"))
+
+    assert tree_fetch_count["n"] == 1
+
+
 @run_async
 async def test_non_admin_can_freely_use_github_and_web_actions(monkeypatch):
     monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
@@ -1442,6 +1524,12 @@ async def test_search_literal_finds_every_occurrence_across_files(monkeypatch):
         if "/git/blobs/" in url:
             sha = url.rsplit("/", 1)[-1]
             return _http_response(200, {"encoding": "base64", "content": _b64(blob_contents[sha])})
+        if "/contents/" in url:
+            # The architecture map (triggered by this same "find every place ..." phrasing)
+            # fetches each .py file's content independently via the Contents API — irrelevant to
+            # what this test actually checks (search_literal's own behavior), so any real content
+            # works here.
+            return _http_response(200, {"content": _b64("import os\n")})
         raise AssertionError(f"Unexpected GET: {url}")
 
     monkeypatch.setattr(aw.requests, "get", fake_get)
@@ -1490,6 +1578,8 @@ async def test_search_literal_no_matches_says_so_explicitly(monkeypatch):
             return tree_resp
         if "/git/blobs/" in url:
             return _http_response(200, {"encoding": "base64", "content": _b64("nothing interesting here\n")})
+        if "/contents/" in url:
+            return _http_response(200, {"content": _b64("import os\n")})
         raise AssertionError(f"Unexpected GET: {url}")
 
     monkeypatch.setattr(aw.requests, "get", fake_get)
@@ -1537,14 +1627,33 @@ def test_is_audit_style_task_detects_the_real_production_phrasing():
     )
 
 
+def test_is_audit_style_task_detects_the_verbatim_original_failing_prompt():
+    # The literal prompt (typo included) that produced the fabricated per-user-token plan —
+    # verified against real phrasing rather than just phrasing I invented for the test above.
+    assert aw._is_audit_style_task(
+        "your job, scan the repo and create a plan to turn the gurrent github api token "
+        "connection to be per user instead of global via an env var. tell me every file we "
+        "need to touch"
+    )
+
+
+def test_is_audit_style_task_detects_how_many_files_phrasing():
+    assert aw._is_audit_style_task("how many files touch the checkpoint retention logic")
+    assert aw._is_audit_style_task("which files touch the checkpoint retention logic")
+
+
 def test_is_audit_style_task_negative_for_ordinary_question():
     assert not aw._is_audit_style_task("where is the login flow implemented?")
     assert not aw._is_audit_style_task("can you fix this one bug in Chat.tsx?")
+    # Deliberately NOT treated as audit-style: bare "refactor" with no completeness language
+    # would bump the budget for small, single-file refactors too, cutting against the "zero
+    # added cost for normal turns" goal — a real precision/recall tradeoff, not an oversight.
+    assert not aw._is_audit_style_task("can you refactor the auth module to support multiple providers")
 
 
 @run_async
 async def test_audit_style_task_gets_deep_iteration_budget(monkeypatch):
-    _setup_github_repo(monkeypatch)
+    _setup_github_repo(monkeypatch, tree_items=[])
     captured_kwargs = {}
 
     async def fake_run_react_loop(**kwargs):
@@ -1574,6 +1683,162 @@ async def test_ordinary_task_keeps_normal_iteration_budget(monkeypatch):
     await aw.tool_agent_node(_state("where is the login flow implemented?"))
 
     assert captured_kwargs["max_iterations"] == aw.TOOL_AGENT_MAX_ITERATIONS
+
+
+# ---------------------------------------------------------------------------
+# Architecture map — an auto-injected, repo-wide internal-import graph for
+# audit-style tasks (docs/coding-agent-roadmap.md, Section 4c). Closes the real
+# gap behind the fabricated per-user-token plan: the model shouldn't have to
+# correctly guess to call an exhaustive tool for "every place X is used" — the
+# answer should already be in front of it before step 1.
+# ---------------------------------------------------------------------------
+
+def test_extract_python_imports_plain_and_from_imports():
+    content = "import os\nimport json as j\nfrom backend.services import github_service\n"
+    imports = aw._extract_python_imports(content)
+    assert "os" in imports
+    assert "json" in imports
+    assert "backend.services" in imports
+
+
+def test_extract_python_imports_relative_import_keeps_dots():
+    content = "from . import utils\nfrom ..services import agent_workflow\n"
+    imports = aw._extract_python_imports(content)
+    assert ".utils" in imports
+    assert "..services" in imports
+
+
+def test_extract_python_imports_syntax_error_returns_empty_list():
+    assert aw._extract_python_imports("def broken(:\n    pass") == []
+
+
+def test_extract_js_imports_covers_default_bare_and_require():
+    content = (
+        "import React from 'react';\n"
+        "import '../styles/index.css';\n"
+        "import { KnowledgeBase } from '../api';\n"
+        "const fs = require('fs');\n"
+    )
+    imports = aw._extract_js_imports(content)
+    assert "react" in imports
+    assert "../styles/index.css" in imports
+    assert "../api" in imports
+    assert "fs" in imports
+
+
+def test_is_internal_python_import_relative_always_internal():
+    assert aw._is_internal_python_import(".utils", {"backend"})
+    assert aw._is_internal_python_import("..services.agent_workflow", {"backend"})
+
+
+def test_is_internal_python_import_matches_real_top_level_segment():
+    assert aw._is_internal_python_import("backend.services.agent_workflow", {"backend", "local"})
+    assert not aw._is_internal_python_import("requests", {"backend", "local"})
+
+
+def test_repo_top_level_segments_includes_dirs_and_root_file_stems():
+    tree_items = [
+        {"path": "backend/services/agent_workflow.py"},
+        {"path": "local/src/pages/Chat.tsx"},
+        {"path": "app.py"},
+    ]
+    segments = aw._repo_top_level_segments(tree_items)
+    assert segments == {"backend", "local", "app.py", "app"}
+
+
+def test_build_architecture_map_builds_forward_and_reverse_graph():
+    tree_items = [
+        {"path": "app.py", "size": 10, "sha": "s1"},
+        {"path": "backend/services/github_service.py", "size": 10, "sha": "s2"},
+    ]
+    file_contents = {
+        "app.py": "from backend.services.github_service import process_pr_summary\n",
+        "backend/services/github_service.py": "import os\n",
+    }
+
+    def fake_fetch(path):
+        return file_contents[path], None
+
+    result = aw._build_architecture_map(tree_items, fake_fetch)
+
+    assert "app.py -> backend.services.github_service" in result
+    assert "backend.services.github_service <- imported by: app.py" in result
+    # External/stdlib imports (os) must not pollute the reverse map with noise.
+    assert " os <-" not in result
+
+
+def test_build_architecture_map_skips_files_with_no_internal_imports():
+    tree_items = [{"path": "app.py", "size": 10, "sha": "s1"}]
+
+    def fake_fetch(path):
+        return "import os\nimport requests\n", None
+
+    assert aw._build_architecture_map(tree_items, fake_fetch) == ""
+
+
+def test_build_architecture_map_skips_fetch_errors_without_raising():
+    tree_items = [{"path": "app.py", "size": 10, "sha": "s1"}]
+
+    def fake_fetch(path):
+        return None, "ERROR: could not fetch app.py (404)"
+
+    assert aw._build_architecture_map(tree_items, fake_fetch) == ""
+
+
+@run_async
+async def test_audit_task_gets_architecture_map_injected_into_prompt(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    repo_resp = _http_response(200, {"default_branch": "main"})
+    tree_resp = _http_response(200, {"tree": [
+        {"path": "app.py", "type": "blob", "size": 10, "sha": "s1"},
+        {"path": "backend/services/github_service.py", "type": "blob", "size": 10, "sha": "s2"},
+    ]})
+    file_contents = {
+        "app.py": "from backend.services.github_service import process_pr_summary\n",
+        "backend/services/github_service.py": "import os\n",
+    }
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        if "/git/trees/" in url:
+            return tree_resp
+        if "/contents/" in url:
+            path = url.split("/contents/", 1)[1]
+            return _http_response(200, {"content": _b64(file_contents[path])})
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+
+    captured_kwargs = {}
+
+    async def fake_run_react_loop(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"final_answer": "done", "attempts": [], "show_work": False}
+
+    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+
+    await aw.tool_agent_node(_state("scan the repo — tell me every file that touches process_pr_summary"))
+
+    assert "backend.services.github_service <- imported by: app.py" in captured_kwargs["architecture_map"]
+
+
+@run_async
+async def test_ordinary_task_gets_no_architecture_map(monkeypatch):
+    _setup_github_repo(monkeypatch)
+    captured_kwargs = {}
+
+    async def fake_run_react_loop(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"final_answer": "done", "attempts": [], "show_work": False}
+
+    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+
+    await aw.tool_agent_node(_state("where is the login flow implemented?"))
+
+    assert captured_kwargs["architecture_map"] == ""
 
 
 # ---------------------------------------------------------------------------
