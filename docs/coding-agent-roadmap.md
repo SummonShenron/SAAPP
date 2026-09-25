@@ -996,6 +996,133 @@ rather than continuing to add one marker/type at a time indefinitely.
 
 ---
 
+## 4j. The 4h fix's budget was the real limiter — it can outlast even deep thinking's retry allowance (fixed)
+
+Tried again after 4i. This attempt showed genuinely better investigative
+behavior than any before it — reading the real test file, dispatching the
+actual CI suite for a baseline (`run_repo_tests`, which failed with a
+`ModuleNotFoundError` — a separate, real finding not chased here; worth
+sharing more of that log if it recurs), and even attempting a `run_snippet`
+verification (though that snippet tested an isolated, invented
+proof-of-concept unrelated to the real codebase — "verification theater"
+that looks like real verification but proves nothing about the actual
+change, a distinct quality gap noted but not fixed here). Steps 7-9 are
+missing from the log — 3 rejections in a row, matching deep thinking's full
+`TOOL_AGENT_MAX_RETRY_NUDGES_DEEP` budget — and then step 10 fabricated the
+same answer anyway.
+
+Confirmed by direct reproduction (not guesswork) that 4h's own fix correctly
+rejects this exact action sequence when tested in isolation — so the gap
+wasn't in the truncation *detection*, it was in the budget: 4h's "always
+re-arm" fix made the flag persistent, but the rejection that checks it was
+still gated by `retry_nudge_count < max_retry_nudges`, shared with the
+ERROR/empty case. The model never once called `read_repo_file` with a
+`start_line` on any of the 3 files it had left truncated (`agent_workflow.py`,
+`constraints.py`, the test file) — it just kept re-submitting "final" itself
+three times, exhausted deep thinking's entire rejection allowance doing
+nothing to fix the actual problem, and walked through unblocked on the 4th.
+
+**Fixed in `agent_workflow.py`**: split truncation-driven rejection from
+ERROR/empty-driven rejection entirely. A new `truncated_unresolved_tools`
+set tracks which tool_actions have a live, unresolved truncation; a "final"
+is rejected **unconditionally** (no `retry_nudge_count` check at all) while
+that set is non-empty, since — unlike an ERROR that might be a genuine dead
+end deserving a bounded budget before an honest "I couldn't" is accepted —
+a truncated file is never actually a dead end; the rest of it is right
+there. Also strengthened the nudge text specifically for this case: it now
+names the actual unresolved path (parsed back out of the tracked args
+signature) and states plainly that this rejection has no limit, instead of
+sharing the generic "one or more actions failed" message with ordinary
+errors. `forced_final` (the last iteration) is still the one unconditional
+escape hatch, so the loop still always terminates.
+
+1 new test reproducing the exact real shape: 4 premature "final" attempts in
+a row (deliberately more than even deep thinking's 3-rejection budget)
+against a single still-truncated file, all rejected, only accepted once a
+real `start_line` read actually reaches the end — with `max_retry_nudges=1`
+explicitly set, proving the budget genuinely doesn't apply here at all.
+Updated one earlier test whose second retry (`start_line=260`) turned out to
+still leave 100 lines unread in its own fixture — previously invisible
+because that rejection budget silently absorbed it; now correctly required
+to actually reach the file's end. Full suite: 426 passed, same pre-existing
+unrelated failure.
+
+---
+
+## 5. Batched independent actions in the ReAct loop (done — built directly, not via self-drive)
+
+After the extensive 4b-4j diagnostic loop kept surfacing real infrastructure
+gaps rather than a working batching implementation (4d's capability gap, 4e's
+repo-resolution bug, 4f/4i's `LazyLLM` gaps, 4g/4h/4j's truncation-fabrication
+chain), built this one directly instead of continuing the self-drive
+experiment — the diagnostic value had been thoroughly extracted, and the
+feature itself (a real re-threading of `run_react_loop`'s core state
+machine) was worth building carefully rather than iterating against
+SAAPP's own attempts further.
+
+**Design, in `backend/services/agent_workflow.py`:**
+- New `TOOL_AGENT_BATCHABLE_ACTIONS` — a frozenset restricted to genuinely
+  side-effect-free, independent lookups (`list_repo_tree`, `read_repo_file`,
+  `search_code`, `find_file`, `trace_symbol`, `search_literal`,
+  `diff_branches`, `list_commits`, `web_search`, `run_python`).
+  `run_mongo_query`/`run_repo_tests`/`run_snippet` (writes or real slow CI
+  dispatches) and every `browser_*` action (inherently stateful/sequential —
+  a click depends on whatever page a prior navigate loaded) are excluded
+  regardless of what a caller passes.
+- `run_react_loop` gained an optional `batchable_actions: frozenset | None`
+  parameter. A "query" step can now submit `{"queries": [{"tool_action",
+  "args", "purpose"}, ...]}` instead of one `tool_action`/`args` pair — each
+  item runs concurrently via `asyncio.gather`.
+- The critical design constraint: **a batch must never get weaker mechanical
+  scrutiny than the equivalent sequential steps would have** — the exact
+  bookkeeping this whole diagnostic loop hardened (retry-nudge/
+  `unretried_inconclusive_tools` tracking, unresolved-truncation tracking,
+  the stuck-action streak) is applied once per item in a batch, in order,
+  via a `_record_action_result` helper extracted (behavior-preserving,
+  confirmed by the full suite passing unchanged before any new code was
+  added) from what was previously inline single-action logic. A stuck tool
+  slipped into a batch rejects the *entire* batch (not just that one item) —
+  otherwise the model could route around a stuck-action redirect by hiding
+  the stuck call alongside legitimate ones. A non-batchable action inside
+  `queries` is rejected individually with a synthetic `ERROR: ... cannot be
+  batched` observation (which, same as any other ERROR, correctly earns its
+  own ordinary retry-nudge — no special-casing). A batch capped at
+  `_MAX_BATCH_SIZE` (5) — excess items get their own "too many actions,
+  retry in a later step" observation rather than unbounded concurrent GitHub
+  calls.
+- `backend/components/constraints.py`'s `TOOL_AGENT_PROMPT` documents
+  `"queries"` as an alternative to `tool_action`/`args`, with a new
+  `{batchable_actions}` placeholder spliced in from the real
+  `TOOL_AGENT_BATCHABLE_ACTIONS` constant (not hand-copied text) so the
+  prompt can never drift from what's actually enforced.
+- 8 new tests: real concurrency (three actions that each sleep 0.2s finish
+  in well under the 0.6s sequential time), non-batchable action rejected
+  while its batch-mates still execute, a stuck tool anywhere in a batch
+  rejects the whole thing, a truncated read inside a batch still triggers
+  the unconditional (no-budget) rejection from Section 4j, a single-item
+  `queries` list executes correctly (it puts the real action inside the
+  list item, not at the top level — a real gap caught before it shipped),
+  batching is fully inert when a caller doesn't pass `batchable_actions`
+  (backward-compatible default), the batch-size cap, and one full
+  `tool_agent_node`-level integration test with real (mocked) GitHub calls
+  proving the prompt-splicing and constant-wiring work together end to end.
+- Full suite: 435 passed, same pre-existing unrelated `test_voice_composer.py`
+  failure.
+- **Not yet done**: live end-to-end verification against the real deployed
+  backend (the same recurring gap noted for the architecture map in Section
+  4c and the Stop-button feature earlier) — verified thoroughly at the unit/
+  integration level with real mocked GitHub responses, but nobody has
+  watched a real production turn actually emit and execute a `"queries"`
+  batch yet.
+
+**Next up:** per the original ask, try having SAAPP self-drive a smaller,
+better-scoped backend change now that the repo-resolution, transient-error,
+and truncation-fabrication infrastructure gaps this diagnostic loop found are
+fixed — see whether a properly-scoped task succeeds where the batching
+feature (a genuine core-loop rewrite) kept hitting real gaps instead.
+
+---
+
 ## Operational — automatic checkpoint retention (done)
 
 **Shipped:** `backend/services/checkpoint_retention.py` —

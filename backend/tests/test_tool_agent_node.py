@@ -888,7 +888,10 @@ async def test_final_after_truncated_read_is_rejected_once_then_accepted(monkeyp
     responses = [
         _llm_response(action="query", purpose="Read the file", tool_action="read_repo_file", args={"path": "backend/services/agent_workflow.py"}),
         _llm_response(action="final", answer="Premature — proposing changes based on the truncated snippet alone."),
-        _llm_response(action="query", purpose="Actually read further as instructed", tool_action="read_repo_file", args={"path": "backend/services/agent_workflow.py", "start_line": 260}),
+        # start_line=360 reaches the true end of this 509-line fixture (360 + 150 - 1 = 509) —
+        # a genuinely complete read, not just a different-but-still-incomplete one (see
+        # test_final_rejected_again_if_the_retry_read_is_still_incomplete for that case).
+        _llm_response(action="query", purpose="Actually read further as instructed", tool_action="read_repo_file", args={"path": "backend/services/agent_workflow.py", "start_line": 360}),
         _llm_response(action="final", answer="Now grounded in the real content."),
     ]
     monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
@@ -2187,3 +2190,56 @@ async def test_browser_capability_denial_rejected_end_to_end(monkeypatch):
     result = await aw.tool_agent_node(_state("open a browser to btyfitness.app and check the widget"))
 
     assert "Confirmed" in result["content_to_format"]
+
+
+# ---------------------------------------------------------------------------
+# Batching ("queries") end-to-end through the real tool_agent_node — confirms
+# the prompt splicing ({batchable_actions}) and the TOOL_AGENT_BATCHABLE_ACTIONS
+# wiring work together for real, not just against the generic run_react_loop
+# directly (see test_react_loop_retry_enforcement.py for the deeper mechanics).
+# ---------------------------------------------------------------------------
+
+@run_async
+async def test_tool_agent_node_executes_a_real_batch_of_independent_reads(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    repo_resp = _http_response(200, {"default_branch": "main"})
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        if url.endswith("/contents/a.py"):
+            return _http_response(200, {"content": _b64("A_CONTENT")})
+        if url.endswith("/contents/b.py"):
+            return _http_response(200, {"content": _b64("B_CONTENT")})
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+
+    responses = [
+        _llm_response(action="query", purpose="Read both independent files at once", queries=[
+            {"tool_action": "read_repo_file", "args": {"path": "a.py"}, "purpose": "Read a.py"},
+            {"tool_action": "read_repo_file", "args": {"path": "b.py"}, "purpose": "Read b.py"},
+        ]),
+        _llm_response(action="final", answer="Both files read: A_CONTENT and B_CONTENT."),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("compare a.py and b.py"))
+
+    assert "A_CONTENT" in result["content_to_format"]
+    assert "B_CONTENT" in result["content_to_format"]
+
+
+def test_tool_agent_prompt_documents_the_real_batchable_actions():
+    # The prompt's {batchable_actions} placeholder must actually get replaced with the real
+    # TOOL_AGENT_BATCHABLE_ACTIONS constant, not left as a literal unresolved placeholder (which
+    # would either crash prompt_template.format() or silently show the model a broken schema).
+    assert "run_mongo_query" not in aw.TOOL_AGENT_BATCHABLE_ACTIONS
+    assert "run_snippet" not in aw.TOOL_AGENT_BATCHABLE_ACTIONS
+    batchable_text = ", ".join(sorted(aw.TOOL_AGENT_BATCHABLE_ACTIONS))
+    filled = aw.TOOL_AGENT_PROMPT.replace("{batchable_actions}", batchable_text)
+    assert "{batchable_actions}" not in filled
+    assert "read_repo_file" in filled
+    assert batchable_text in filled

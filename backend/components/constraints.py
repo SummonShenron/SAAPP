@@ -624,12 +624,24 @@ Return ONLY a JSON object matching this schema, no preamble or markdown:
 {{
   "action": "query" or "final" or "clarify",
   "purpose": "short description of what this step does (required for action=query)",
-  "tool_action": "<one of the action names listed above>" (required for action=query),
-  "args": {{}} (required for action=query — an object with whatever fields that action's shape needs),
+  "tool_action": "<one of the action names listed above>" (required for action=query, UNLESS you use "queries" below instead),
+  "args": {{}} (required alongside "tool_action" — an object with whatever fields that action's shape needs),
+  "queries": [{{"tool_action": "...", "args": {{}}, "purpose": "..."}}, ...] (OPTIONAL — see BATCHING INDEPENDENT ACTIONS below; use this INSTEAD of "tool_action"/"args", not alongside them),
   "answer": "a direct, honest answer to the user's request (required for action=final)",
   "show_work": true or false (required for action=final — see below),
   "question": "one specific question for the user (required for action=clarify)"
 }}
+
+BATCHING INDEPENDENT ACTIONS: a single step normally costs one action, but if you need to look up
+several genuinely independent things at once — e.g. reading 3 unrelated files, or reading one file
+while also searching for an unrelated term — put them in "queries" instead of a single
+"tool_action"/"args": an array of {{"tool_action", "args", "purpose"}} objects, all executed
+concurrently in this ONE step instead of costing one step each. Only these actions may be batched
+this way: {batchable_actions}. Never batch an action whose input depends on another action's
+output (do those sequentially, one per step, instead), and never include a non-batchable action in
+"queries" — it will be rejected outright instead of run. If a step only needs one action, just use
+the plain "tool_action"/"args" fields as before; "queries" is an option for when it genuinely
+helps, not a requirement.
 
 "show_work" controls whether the raw step-by-step trace (what you ran, what each result was) also
 gets shown beneath your answer in the chat itself — the live trace panel already shows this in

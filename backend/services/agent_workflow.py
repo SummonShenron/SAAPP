@@ -115,6 +115,22 @@ _DEFAULT_STUCK_ACTION_MESSAGE = (
     "say so honestly in your final answer instead of continuing to retry."
 )
 
+# Built after the extensive diagnostic loop in docs/coding-agent-roadmap.md (Sections 4b-4j) —
+# every one of those traces burned most of a turn's step budget reading files/searching one at a
+# time before ever getting to reason about them. Deliberately restricted to genuinely
+# side-effect-free, independent lookups: run_mongo_query/run_repo_tests/run_snippet are writes or
+# real slow CI dispatches that must never run concurrently with anything else (see _is_unsafe and
+# the admin gates in _act), and every browser_* action is inherently stateful/sequential — a click
+# depends on whatever page a prior navigate actually loaded, so "independent" never applies to them.
+TOOL_AGENT_BATCHABLE_ACTIONS = frozenset({
+    "list_repo_tree", "read_repo_file", "search_code", "find_file", "trace_symbol",
+    "search_literal", "diff_branches", "list_commits", "web_search", "run_python",
+})
+# Caps a single step's real concurrent work — unbounded batching could still hit GitHub's rate
+# limits or just be wasteful even though it no longer costs step budget; excess items are dropped
+# with their own explicit "retry in a later step" observation rather than silently ignored.
+_MAX_BATCH_SIZE = 5
+
 # A real production trace showed a "final" confidently and repeatedly denying browser access
 # ("I don't actually have a live browser tool...") while browser_navigate sat in that exact
 # turn's own action menu the whole time — a prose rule telling it to check the menu before
@@ -2405,6 +2421,7 @@ async def run_react_loop(
     stuck_action_redirects: dict | None = None,
     capability_denial_watchlist: list | None = None,
     architecture_map: str = "",
+    batchable_actions: frozenset | None = None,
 ) -> dict:
     """Generic Reason -> Act -> Observe -> Decide loop shared by every iterative tool
     (MongoDB, GitHub search, ...). Each step asks the model for the next action given
@@ -2476,7 +2493,25 @@ async def run_react_loop(
     is actually present in this turn's prompt_template (proving the capability really is
     available), the "final" is rejected once (not executed as a real step, no state to retry — just
     a corrective notice injected into the next step) instead of trusting the model to have caught
-    its own contradiction."""
+    its own contradiction.
+
+    An extensive diagnostic loop (docs/coding-agent-roadmap.md, Sections 4b-4j) showed every one
+    of those real traces burn most of a turn's step budget reading files or searching one at a
+    time, well before ever reasoning about them — a genuinely multi-file investigation needs N
+    reads that don't depend on each other, but the loop only ever let it spend one action per
+    step. `batchable_actions` (optional: a frozenset of tool_action names safe to run
+    concurrently) lets a single "query" step submit `{"queries": [{"tool_action", "args",
+    "purpose"}, ...]}` instead of one `tool_action`/`args` pair — each item runs concurrently via
+    asyncio.gather, and every one of them still goes through the exact same real execution
+    (is_unsafe, trace emission, error handling) and mechanical bookkeeping (retry-nudge tracking,
+    truncation tracking, the stuck-action streak) that a real sequential step would have gotten,
+    applied once per item in the order given — a batch never gets WEAKER scrutiny than the
+    equivalent sequential steps would have, just fewer round trips to get there. A stuck tool
+    slipped into a batch rejects the entire batch (none of it runs) rather than silently dropping
+    just that one item, and any tool_action not in `batchable_actions` is rejected individually
+    with a synthetic error instead of executed — deliberately excludes writes
+    (`run_mongo_query`), real slow CI dispatches (`run_repo_tests`/`run_snippet`), and every
+    `browser_*` action (inherently stateful/sequential), regardless of what the caller passes."""
     attempts: list = list(initial_attempts or [])
     final_answer = None
     # Defaults true (show the receipt) whenever a "final" doesn't explicitly say otherwise —
@@ -2485,6 +2520,16 @@ async def run_react_loop(
     show_work = True
     retry_nudge_count = 0
     unretried_inconclusive_tools: dict = {}  # tool_action_name -> args signature of the failing call
+    # A real production trace showed even 3 rejections (deep thinking's full retry_nudge budget)
+    # isn't always enough: the model just kept re-submitting a "final" without ever taking the
+    # corrective action, and once the budget ran out it walked straight through with 3 different
+    # files still truncated and never re-read. Unlike an ERROR/empty result — which might be a
+    # genuinely unfixable dead end, so a bounded budget before accepting an honest "I couldn't"
+    # is the right call — a truncated file is never actually a dead end: the rest of it is right
+    # there. Tracked separately so a "final" is rejected UNCONDITIONALLY (no budget) while any
+    # tool_action_name in this set has an unresolved truncation, instead of sharing
+    # retry_nudge_count's limited budget with genuinely-unfixable failures.
+    truncated_unresolved_tools: set = set()
     stuck_action_streak = {"tool": None, "count": 0}  # consecutive misses on ONE tool, any args
     stuck_action_reject_count = 0
     MAX_STUCK_ACTION_REJECTIONS = 1
@@ -2535,6 +2580,30 @@ async def run_react_loop(
                 "diagnostic action, like listing the repo tree) — before concluding. Only choose "
                 "action=\"final\" now if you are certain nothing else could help.)"
             )
+        if truncated_unresolved_tools:
+            # More insistent than the generic nudge above, and names the actual path when it can
+            # — a real trace showed the generic reminder alone wasn't enough to change behavior
+            # across 3 rejections in a row. This one keeps firing with NO budget limit (see
+            # truncated_unresolved_tools' own comment) because more content is always available
+            # here, unlike a genuinely-failed action that might really be a dead end.
+            stuck_path = None
+            for stuck_tool in truncated_unresolved_tools:
+                try:
+                    stuck_path = json.loads(unretried_inconclusive_tools.get(stuck_tool, "{}")).get("path")
+                except (TypeError, ValueError):
+                    stuck_path = None
+                if stuck_path:
+                    break
+            path_hint = f" (the one you left unfinished was {stuck_path})" if stuck_path else ""
+            question_for_step += (
+                f"\n\n(You have not finished reading a file you started{path_hint} — it was "
+                "truncated and you never called read_repo_file again with a start_line to see "
+                "the rest. This is NOT a failed or empty result — the rest of the file is right "
+                "there waiting to be read. You MUST call read_repo_file with a start_line on that "
+                "same path as your very next action. This will keep being rejected, with no "
+                "limit, until you actually do this — proposing code changes to a file you have "
+                "not fully read is not acceptable.)"
+            )
         if stuck_redirect_active:
             question_for_step += f"\n\n({stuck_redirect_entry[1]})"
         if pending_capability_denial_notice:
@@ -2558,6 +2627,14 @@ async def run_react_loop(
             break
 
         action = decision.get("action")
+        if action == "final" and not forced_final and truncated_unresolved_tools:
+            # Unconditional — no budget check, unlike the ERROR/empty case below. A real
+            # production trace showed the model exhaust the ENTIRE deep-thinking retry budget
+            # (3 rejections) re-submitting "final" without ever actually re-reading any of the
+            # 3 files it had left truncated, then walk straight through once the budget ran out.
+            # A truncated file is never a genuine dead end, so there's no principled reason to
+            # ever let this go until it's actually resolved or the loop is forced to conclude.
+            continue
         if action == "final" and needs_retry_nudge and retry_nudge_count < max_retry_nudges:
             # Told to retry and it tried to conclude anyway — force one more real step instead
             # of accepting a premature answer. retry_nudge_count only increments here (at the
@@ -2610,99 +2687,131 @@ async def run_react_loop(
             })
             continue
 
+        queries = decision.get("queries")
+        # >= 1, not > 1 — a "queries" list with exactly one item still has to go through the
+        # batch path below, since it puts the real tool_action/args inside that one list item
+        # rather than at the top level; the batch machinery already handles any size >= 1
+        # correctly (asyncio.gather over a single task works fine), so there's no need for a
+        # separate single-item normalization path.
+        is_batch = isinstance(queries, list) and len(queries) >= 1
+        batch_tool_names = [q.get("tool_action") for q in queries if isinstance(q, dict)] if is_batch else []
+        stuck_tool_in_this_step = (
+            stuck_action_streak["tool"] in batch_tool_names if is_batch
+            else decision.get("tool_action") == stuck_action_streak["tool"]
+        )
         if (
             stuck_redirect_active
-            and decision.get("tool_action") == stuck_action_streak["tool"]
+            and stuck_tool_in_this_step
             and stuck_action_reject_count < MAX_STUCK_ACTION_REJECTIONS
         ):
-            # Told to switch away from this tool_action and it tried it again anyway — reject
-            # outright (not executed, not recorded as an attempt) instead of just hoping the
-            # redirect message alone changes its mind, the same mechanical escalation already
-            # used for a premature "final". Budget-limited for the same reason: a genuinely
-            # doomed switch shouldn't force a second forced rejection on top of the first.
+            # Told to switch away from this tool_action and it tried it again anyway — whether
+            # alone or slipped into a batch alongside other actions — reject the WHOLE step
+            # outright (nothing in it executes, nothing recorded as an attempt) instead of just
+            # hoping the redirect message alone changes its mind, the same mechanical escalation
+            # already used for a premature "final". Budget-limited for the same reason: a
+            # genuinely doomed switch shouldn't force a second forced rejection on top of the first.
             stuck_action_reject_count += 1
             continue
 
-        purpose = decision.get("purpose", "Working...")
-        # No log call here (removed) — the result line logged once the action actually runs
-        # (a few lines down) already folds this same purpose in alongside the action and
-        # observation, so a separate pre-announcement was just the same text twice, even at
-        # DEBUG. The live trace panel still gets the purpose immediately via safe_emit_event,
-        # independent of any logger.
-        await safe_emit_event("trace_detail", {"node": node_name, "title": "Working...", "detail": purpose})
+        async def _execute_one_action(tool_action_name: str, args: dict, purpose: str) -> str:
+            # Shared by the single-action and batch paths below so a batched action gets the
+            # exact same real execution (trace emission, is_unsafe, error handling) a sequential
+            # step would have — no weaker scrutiny just because it ran alongside others.
+            sub_decision = {"tool_action": tool_action_name, "args": args, "purpose": purpose}
+            await safe_emit_event("trace_detail", {"node": node_name, "title": "Working...", "detail": purpose})
+            if is_unsafe(sub_decision):
+                raise _UnsafeActionRequested(sub_decision)
+            try:
+                observation = act(sub_decision)
+                if asyncio.iscoroutine(observation):
+                    observation = await observation
+            except Exception as e:
+                observation = f"ERROR: {e}"
+            return _truncate_observation(observation)
 
-        if is_unsafe(decision):
-            raise _UnsafeActionRequested(decision)
+        def _record_action_result(tool_action_name: str, args: dict, purpose: str, observation: str) -> None:
+            # Exactly the bookkeeping a real sequential step already did — extracted so it can be
+            # applied once per item in a batch, in order, instead of only ever seeing one
+            # tool_action per step.
+            nonlocal stuck_action_streak
+            if tool_action_name:
+                args_signature = json.dumps(args or {}, sort_keys=True, default=str)
+                prior_args_signature = unretried_inconclusive_tools.get(tool_action_name)
+                is_unresolved_truncation = _mentions_unresolved_truncation(observation)
+                still_failing = (
+                    observation.startswith("ERROR")
+                    or _is_empty_observation(observation)
+                    or is_unresolved_truncation
+                )
+                if is_unresolved_truncation:
+                    unretried_inconclusive_tools[tool_action_name] = args_signature
+                    truncated_unresolved_tools.add(tool_action_name)
+                else:
+                    truncated_unresolved_tools.discard(tool_action_name)
+                    if prior_args_signature is not None:
+                        if not still_failing or args_signature != prior_args_signature:
+                            del unretried_inconclusive_tools[tool_action_name]
+                    elif still_failing:
+                        unretried_inconclusive_tools[tool_action_name] = args_signature
 
-        try:
-            observation = act(decision)
-            if asyncio.iscoroutine(observation):
-                observation = await observation
-        except Exception as e:
-            observation = f"ERROR: {e}"
-        observation = _truncate_observation(observation)
-
-        tool_action_name = decision.get("tool_action") or ""
-        if tool_action_name:
-            args_signature = json.dumps(decision.get("args") or {}, sort_keys=True, default=str)
-            prior_args_signature = unretried_inconclusive_tools.get(tool_action_name)
-            is_unresolved_truncation = _mentions_unresolved_truncation(observation)
-            still_failing = (
-                observation.startswith("ERROR")
-                or _is_empty_observation(observation)
-                or is_unresolved_truncation
+                is_stuck_worthy_miss = still_failing and not is_unresolved_truncation
+                if is_stuck_worthy_miss and stuck_action_streak["tool"] == tool_action_name:
+                    stuck_action_streak["count"] += 1
+                elif is_stuck_worthy_miss:
+                    stuck_action_streak = {"tool": tool_action_name, "count": 1}
+                else:
+                    stuck_action_streak = {"tool": None, "count": 0}
+            args_summary = ", ".join(f"{k}={v}" for k, v in (args or {}).items())
+            action_desc = f"{tool_action_name}({args_summary})" if tool_action_name else (args_summary or "")
+            logger.info(
+                "[%s] Step %s (%s) — action=%s | observation=%r",
+                node_name, step + 1, purpose, action_desc or "(none)", observation[:200],
             )
-            if is_unresolved_truncation:
-                # A truncated/still-paginating read isn't "doomed" the way an ERROR or empty
-                # result is — it's real, ongoing progress through a large file, and a real
-                # production trace showed a single huge file can legitimately need MORE than
-                # one further start_line call. The "one genuine retry earns a pass" logic below
-                # exists for failures that might not be fixable by trying again; it's the wrong
-                # model here, since it let the nudge go silent after exactly one retry even
-                # though the file was still nowhere near fully read. Always re-arm instead, so
-                # the nudge keeps firing until a read of this path genuinely reaches the end.
-                unretried_inconclusive_tools[tool_action_name] = args_signature
-            elif prior_args_signature is not None:
-                # This tool_action was already outstanding. A success, OR a genuinely
-                # different call (even one that also fails), counts as the one honest retry
-                # it's owed — clear the flag either way, and do not immediately re-flag it
-                # even if this retry itself just failed too (a genuinely doomed action
-                # shouldn't force a second forced extra step on top of the retry it already
-                # got). A verbatim repeat of the exact same args is not a retry at all,
-                # though — that's the same query bouncing off the same wall — so it leaves
-                # the flag exactly as it was, and the nudge keeps showing.
-                if not still_failing or args_signature != prior_args_signature:
-                    del unretried_inconclusive_tools[tool_action_name]
-            elif still_failing:
-                unretried_inconclusive_tools[tool_action_name] = args_signature
+            attempts.append({"purpose": purpose, "action_desc": action_desc, "observation": observation})
 
-            # Consecutive-misses streak, regardless of args — unlike the args-signature
-            # tracking above, a genuinely different query still counts against this streak,
-            # since rewording doesn't fix a fundamentally wrong tool choice. Any success, or
-            # a miss on a DIFFERENT tool_action, resets it. An unresolved truncation is
-            # deliberately excluded here (treated like a success) for the same reason it's
-            # exempted above — reading further into the same large file with a genuinely
-            # advancing start_line is real progress, not the same doomed call repeating, and
-            # must not trip the generic stuck-action circuit breaker just for taking several
-            # legitimate pages to get through one big file.
-            is_stuck_worthy_miss = still_failing and not is_unresolved_truncation
-            if is_stuck_worthy_miss and stuck_action_streak["tool"] == tool_action_name:
-                stuck_action_streak["count"] += 1
-            elif is_stuck_worthy_miss:
-                stuck_action_streak = {"tool": tool_action_name, "count": 1}
-            else:
-                stuck_action_streak = {"tool": None, "count": 0}
-        args_summary = ", ".join(f"{k}={v}" for k, v in (decision.get("args") or {}).items())
-        action_desc = f"{tool_action_name}({args_summary})" if tool_action_name else (args_summary or "")
-        logger.info(
-            "[%s] Step %s (%s) — action=%s | observation=%r",
-            node_name, step + 1, purpose, action_desc or "(none)", observation[:200],
-        )
-        attempts.append({
-            "purpose": purpose,
-            "action_desc": action_desc,
-            "observation": observation,
-        })
+        if is_batch:
+            batch_purpose = decision.get("purpose") or "Working..."
+            valid_items: list[dict] = []
+            for item in queries:
+                item = item if isinstance(item, dict) else {}
+                tool_name = item.get("tool_action")
+                item_purpose = item.get("purpose") or batch_purpose
+                item_args = item.get("args") or {}
+                if tool_name and batchable_actions and tool_name in batchable_actions:
+                    if len(valid_items) < _MAX_BATCH_SIZE:
+                        valid_items.append(item)
+                    else:
+                        _record_action_result(
+                            tool_name, item_args, item_purpose,
+                            f"ERROR: too many actions in one batch (max {_MAX_BATCH_SIZE}) — "
+                            "this one was dropped; retry it in a later step.",
+                        )
+                elif tool_name:
+                    _record_action_result(
+                        tool_name, item_args, item_purpose,
+                        f"ERROR: '{tool_name}' cannot be batched with other actions this way — "
+                        "call it in its own step instead.",
+                    )
+                else:
+                    _record_action_result(
+                        "", item_args, item_purpose,
+                        "ERROR: a batched item was missing a valid tool_action and was not executed.",
+                    )
+            if valid_items:
+                observations = await asyncio.gather(*(
+                    _execute_one_action(item["tool_action"], item.get("args") or {}, item.get("purpose") or batch_purpose)
+                    for item in valid_items
+                ))
+                for item, observation in zip(valid_items, observations):
+                    _record_action_result(
+                        item["tool_action"], item.get("args") or {}, item.get("purpose") or batch_purpose, observation,
+                    )
+            continue
+
+        purpose = decision.get("purpose", "Working...")
+        tool_action_name = decision.get("tool_action") or ""
+        observation = await _execute_one_action(tool_action_name, decision.get("args") or {}, purpose)
+        _record_action_result(tool_action_name, decision.get("args") or {}, purpose, observation)
 
     if final_answer is None:
         # Loop ran out of steps without an explicit final action — force one last honest
@@ -3689,6 +3798,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
         actions_menu = "\n".join(menu_lines)
         prompt_template = TOOL_AGENT_PROMPT.replace("{actions_menu}", actions_menu.replace("{", "{{").replace("}", "}}"))
         prompt_template = prompt_template.replace("{history}", formatted_history.replace("{", "{{").replace("}", "}}"))
+        prompt_template = prompt_template.replace("{batchable_actions}", ", ".join(sorted(TOOL_AGENT_BATCHABLE_ACTIONS)))
 
         def _is_unsafe(decision: dict) -> bool:
             if decision.get("tool_action") != "run_mongo_query":
@@ -3809,6 +3919,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     stuck_action_redirects=TOOL_AGENT_STUCK_ACTION_REDIRECTS,
                     capability_denial_watchlist=TOOL_AGENT_CAPABILITY_DENIAL_WATCHLIST,
                     architecture_map=architecture_map,
+                    batchable_actions=TOOL_AGENT_BATCHABLE_ACTIONS,
                 )
             except _UnsafeActionRequested as e:
                 drafted_code = (e.decision.get("args") or {}).get("code", "") or ""
