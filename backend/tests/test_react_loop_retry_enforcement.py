@@ -547,6 +547,64 @@ async def test_paginated_reads_of_a_large_file_never_trip_the_stuck_action_backs
 
 
 @run_async
+async def test_unresolved_truncation_rejects_final_beyond_the_normal_retry_budget():
+    """Reproduces the exact real production failure: given ordinary ERROR/empty budget rules
+    (max_retry_nudges=1, or even deep thinking's 3), the model just kept re-submitting 'final'
+    without ever taking the corrective action, and once the budget ran out it walked straight
+    through with the file still unread. An unresolved truncation must keep rejecting with NO
+    budget limit at all — it's never a genuine dead end — until the model actually reads
+    further or the loop is forced to conclude."""
+    responses = [
+        _llm_response(action="query", purpose="Read the file", tool_action="read_repo_file", args={"path": "big.py"}),
+        # 4 premature "final" attempts in a row — more than even deep thinking's 3-rejection
+        # budget would normally allow — must ALL be rejected since the file is still truncated.
+        _llm_response(action="final", answer="Premature attempt 1"),
+        _llm_response(action="final", answer="Premature attempt 2"),
+        _llm_response(action="final", answer="Premature attempt 3"),
+        _llm_response(action="final", answer="Premature attempt 4"),
+        # Finally takes the corrective action.
+        _llm_response(action="query", purpose="Actually read further", tool_action="read_repo_file", args={"path": "big.py", "start_line": 999}),
+        _llm_response(action="final", answer="Genuinely grounded now."),
+    ]
+
+    call_index = {"n": 0}
+
+    async def fake_ainvoke(prompt):
+        response = responses[call_index["n"]]
+        call_index["n"] += 1
+        return response
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        act_calls = []
+
+        async def act(decision):
+            act_calls.append(decision)
+            start_line = (decision.get("args") or {}).get("start_line", 0)
+            if start_line >= 999:
+                return "URL: x\nLines 999-1050 of 1050 total:\n...(reaches the end, no more remaining)"
+            return "URL: x\nLines 1-150 of 1050 total:\n... [900 more lines below — re-call with a higher start_line to keep reading]"
+
+        result = await aw.run_react_loop(
+            question="investigate big.py",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=10,
+            node_name="test_node",
+            max_retry_nudges=1,  # even the smallest, non-deep-thinking budget must not matter here
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert result["final_answer"] == "Genuinely grounded now."
+    # Only 2 real actions ever executed (the initial truncated read, then the completing one) —
+    # all 4 premature "final" attempts were rejected without ever reaching act().
+    assert len(act_calls) == 2
+
+
+@run_async
 async def test_second_consecutive_error_does_not_trigger_a_second_nudge():
     """A genuinely doomed action (still failing after the forced retry) must still get an
     honest 'final' on the next try rather than the loop nudging forever."""
@@ -709,3 +767,343 @@ async def test_genuine_capability_denial_not_in_menu_is_accepted_immediately():
 
     assert len(captured_prompts) == 1
     assert result["final_answer"] == "I don't have a browser tool available for this."
+
+
+# ---------------------------------------------------------------------------
+# Batching independent actions ("queries") — built after the extensive
+# diagnostic loop in docs/coding-agent-roadmap.md (Sections 4b-4j), where
+# every real trace burned most of a turn's step budget reading files one at a
+# time before ever reasoning about them. A batch must get real concurrent
+# execution AND the exact same mechanical scrutiny (retry-nudge/truncation
+# tracking, stuck-action streak) that N real sequential steps would have.
+# ---------------------------------------------------------------------------
+
+@run_async
+async def test_batched_queries_execute_concurrently_not_sequentially():
+    """Proves real concurrency, not just "multiple actions in one step" bookkeeping — three
+    actions that each sleep 0.2s must finish in well under 0.6s (sequential) if asyncio.gather
+    is actually being used."""
+    import time
+
+    responses = [
+        _llm_response(action="query", purpose="Read three independent files", queries=[
+            {"tool_action": "read_repo_file", "args": {"path": "a.py"}, "purpose": "Read a.py"},
+            {"tool_action": "read_repo_file", "args": {"path": "b.py"}, "purpose": "Read b.py"},
+            {"tool_action": "read_repo_file", "args": {"path": "c.py"}, "purpose": "Read c.py"},
+        ]),
+        _llm_response(action="final", answer="Read all three files."),
+    ]
+
+    async def fake_ainvoke(prompt):
+        return responses.pop(0)
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        act_calls = []
+
+        async def act(decision):
+            act_calls.append(decision["args"]["path"])
+            await asyncio.sleep(0.2)
+            return f"Content of {decision['args']['path']}"
+
+        start = time.monotonic()
+        result = await aw.run_react_loop(
+            question="compare three files",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+            batchable_actions=aw.TOOL_AGENT_BATCHABLE_ACTIONS,
+        )
+        elapsed = time.monotonic() - start
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert result["final_answer"] == "Read all three files."
+    assert sorted(act_calls) == ["a.py", "b.py", "c.py"]
+    # 3 sequential 0.2s calls would take >= 0.6s; real concurrency keeps this well under that.
+    assert elapsed < 0.5
+    # All 3 individual actions are visible in the attempts list, not collapsed into one entry —
+    # the model's next prompt needs to see each result distinctly.
+    assert len(result["attempts"]) == 3
+
+
+@run_async
+async def test_batch_rejects_non_batchable_action_but_still_runs_the_others():
+    """A non-batchable action (run_snippet — a real CI dispatch, never safe to run concurrently
+    with anything else) slipped into a batch must be rejected with its own synthetic error,
+    while the genuinely batchable actions alongside it still execute for real. The rejection
+    text starts with "ERROR:", so — same as any other ERROR observation — it correctly earns
+    one ordinary retry-nudge rejection of a premature "final" before being accepted; that's
+    consistent with how every other ERROR is treated, not a special case for this one."""
+    responses = [
+        _llm_response(action="query", purpose="Read a file and also run a snippet", queries=[
+            {"tool_action": "read_repo_file", "args": {"path": "a.py"}, "purpose": "Read a.py"},
+            {"tool_action": "run_snippet", "args": {"code": "print(1)"}, "purpose": "Run a snippet"},
+        ]),
+        _llm_response(action="final", answer="Premature — should be nudged once."),
+        _llm_response(action="final", answer="Done."),
+    ]
+
+    async def fake_ainvoke(prompt):
+        return responses.pop(0)
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        act_calls = []
+
+        async def act(decision):
+            act_calls.append(decision["tool_action"])
+            return f"Content of {decision['args'].get('path', '')}"
+
+        result = await aw.run_react_loop(
+            question="investigate",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+            batchable_actions=aw.TOOL_AGENT_BATCHABLE_ACTIONS,
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert result["final_answer"] == "Done."
+    # run_snippet was never actually executed — only read_repo_file was.
+    assert act_calls == ["read_repo_file"]
+    # Both items still show up in attempts — the rejected one with its own explicit reason.
+    assert len(result["attempts"]) == 2
+    rejected = next(a for a in result["attempts"] if a["action_desc"].startswith("run_snippet"))
+    assert "cannot be batched" in rejected["observation"]
+
+
+@run_async
+async def test_batch_containing_the_stuck_tool_is_rejected_entirely():
+    """A stuck-tool redirect must reject the WHOLE batch if the stuck tool is slipped in
+    alongside other, legitimate actions — not silently drop just that one item and run the
+    rest, which would let the model route around the redirect by hiding the stuck call in a
+    batch with unrelated actions."""
+    responses = [
+        _llm_response(action="query", purpose="Search for trace-panel", tool_action="search_code", args={"query": "trace-panel"}),
+        _llm_response(action="query", purpose="Try different wording", tool_action="search_code", args={"query": "trace panel styling"}),
+        # This batch smuggles search_code in alongside a legitimate read — must be rejected
+        # entirely, not partially executed.
+        _llm_response(action="query", purpose="Search again, plus read a related file", queries=[
+            {"tool_action": "search_code", "args": {"query": "hero trace overlay"}, "purpose": "Try again"},
+            {"tool_action": "read_repo_file", "args": {"path": "trace.py"}, "purpose": "Read trace.py"},
+        ]),
+        _llm_response(action="query", purpose="Switch to find_file", tool_action="find_file", args={"query": "trace panel"}),
+        _llm_response(action="final", answer="Found it via find_file."),
+    ]
+
+    async def fake_ainvoke(prompt):
+        return responses.pop(0)
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        act_calls = []
+
+        async def act(decision):
+            act_calls.append(decision.get("tool_action"))
+            if decision.get("tool_action") == "find_file":
+                return "local/src/pages/Chat.tsx (similarity 0.80)"
+            return "No matches."
+
+        result = await aw.run_react_loop(
+            question="where is the trace-panel?",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=6,
+            node_name="test_node",
+            stuck_action_redirects={"search_code": (2, "Switch to find_file instead of search_code.")},
+            batchable_actions=aw.TOOL_AGENT_BATCHABLE_ACTIONS,
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert result["final_answer"] == "Found it via find_file."
+    # The batch's read_repo_file never ran — the whole batch was rejected because it contained
+    # the stuck tool (search_code).
+    assert act_calls == ["search_code", "search_code", "find_file"]
+
+
+@run_async
+async def test_batched_truncated_read_still_blocks_a_premature_final():
+    """A truncated read inside a batch must still trigger the same unconditional
+    (no-budget-limit) rejection as a truncated read in a single-action step — the mechanical
+    bookkeeping must not get weaker just because the read happened as part of a batch."""
+    responses = [
+        _llm_response(action="query", purpose="Read two files at once", queries=[
+            {"tool_action": "read_repo_file", "args": {"path": "small.py"}, "purpose": "Read small.py"},
+            {"tool_action": "read_repo_file", "args": {"path": "big.py"}, "purpose": "Read big.py"},
+        ]),
+        _llm_response(action="final", answer="Premature — big.py was still truncated."),
+        _llm_response(action="query", purpose="Actually finish reading big.py", tool_action="read_repo_file", args={"path": "big.py", "start_line": 999}),
+        _llm_response(action="final", answer="Genuinely grounded now."),
+    ]
+
+    async def fake_ainvoke(prompt):
+        return responses.pop(0)
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        act_calls = []
+
+        async def act(decision):
+            act_calls.append(decision["args"].get("path"))
+            path = decision["args"]["path"]
+            if path == "small.py":
+                return "URL: x\nimport os\n"  # short, complete read
+            if decision["args"].get("start_line", 0) >= 999:
+                return "URL: x\nLines 999-1050 of 1050 total:\n...(reaches the end)"
+            return "URL: x\nLines 1-150 of 1050 total:\n... [900 more lines below — re-call with a higher start_line to keep reading]"
+
+        result = await aw.run_react_loop(
+            question="investigate two files",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=6,
+            node_name="test_node",
+            batchable_actions=aw.TOOL_AGENT_BATCHABLE_ACTIONS,
+            max_retry_nudges=1,
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert result["final_answer"] == "Genuinely grounded now."
+    assert act_calls == ["small.py", "big.py", "big.py"]
+
+
+@run_async
+async def test_single_item_queries_list_still_executes_correctly():
+    """A "queries" list with exactly one item puts the real tool_action/args inside that item,
+    not at the top level — must still go through real execution correctly rather than being
+    silently ignored (which would look like a no-op action)."""
+    responses = [
+        _llm_response(action="query", purpose="Read one file via queries", queries=[
+            {"tool_action": "read_repo_file", "args": {"path": "a.py"}, "purpose": "Read a.py"},
+        ]),
+        _llm_response(action="final", answer="Done."),
+    ]
+
+    async def fake_ainvoke(prompt):
+        return responses.pop(0)
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        act_calls = []
+
+        async def act(decision):
+            act_calls.append(decision["args"]["path"])
+            return "Content of a.py"
+
+        result = await aw.run_react_loop(
+            question="read a file",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+            batchable_actions=aw.TOOL_AGENT_BATCHABLE_ACTIONS,
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert result["final_answer"] == "Done."
+    assert act_calls == ["a.py"]
+
+
+@run_async
+async def test_batch_ignored_entirely_when_no_batchable_actions_configured():
+    """A caller that doesn't pass batchable_actions (the default, None) must not honor
+    "queries" at all — every item is rejected as non-batchable, since there is no allowlist to
+    check against. Backward-compatible: an old caller with no opinion on batching gets the
+    original one-action-per-step behavior, not a silent security-relevant change in what runs."""
+    responses = [
+        _llm_response(action="query", purpose="Try to batch", queries=[
+            {"tool_action": "read_repo_file", "args": {"path": "a.py"}, "purpose": "Read a.py"},
+            {"tool_action": "read_repo_file", "args": {"path": "b.py"}, "purpose": "Read b.py"},
+        ]),
+        _llm_response(action="final", answer="Done."),
+    ]
+
+    async def fake_ainvoke(prompt):
+        return responses.pop(0)
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        act_calls = []
+
+        async def act(decision):
+            act_calls.append(decision)
+            return "unused"
+
+        result = await aw.run_react_loop(
+            question="read two files",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+            # batchable_actions intentionally omitted — defaults to None.
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert result["final_answer"] == "Done."
+    assert act_calls == []  # neither item ever ran
+    assert all("cannot be batched" in a["observation"] for a in result["attempts"])
+
+
+@run_async
+async def test_batch_size_beyond_cap_is_dropped_with_its_own_error():
+    """More than _MAX_BATCH_SIZE genuinely batchable actions in one step must not all execute —
+    excess ones get a distinct "too many actions" error instead of silently running unbounded
+    concurrent work."""
+    over_cap = aw._MAX_BATCH_SIZE + 2
+    items = [
+        {"tool_action": "read_repo_file", "args": {"path": f"file{i}.py"}, "purpose": f"Read file{i}.py"}
+        for i in range(over_cap)
+    ]
+    responses = [
+        _llm_response(action="query", purpose="Read many files", queries=items),
+        _llm_response(action="final", answer="Done."),
+    ]
+
+    async def fake_ainvoke(prompt):
+        return responses.pop(0)
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        act_calls = []
+
+        async def act(decision):
+            act_calls.append(decision["args"]["path"])
+            return f"Content of {decision['args']['path']}"
+
+        result = await aw.run_react_loop(
+            question="read many files",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+            batchable_actions=aw.TOOL_AGENT_BATCHABLE_ACTIONS,
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert result["final_answer"] == "Done."
+    assert len(act_calls) == aw._MAX_BATCH_SIZE
+    dropped = [a for a in result["attempts"] if "too many actions" in a["observation"]]
+    assert len(dropped) == over_cap - aw._MAX_BATCH_SIZE
