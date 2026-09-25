@@ -3,6 +3,23 @@ import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import AIMessage
 
+# Shared by invoke/astream/ainvoke so a pattern added once (like 504 below, added after a real
+# production trace) protects every call path automatically instead of drifting across three
+# separately-maintained copies. "503"/"UNAVAILABLE" was the original coverage; "504"/
+# "DEADLINE_EXCEEDED"/"Gateway Timeout" was added after a real trace showed a 504 crash
+# tool_agent_node's ReAct loop mid-investigation, forcing a premature "you're out of steps"
+# synthesis from barely any real findings — which produced a fully fabricated answer despite an
+# explicit "never invent beyond what you found" instruction. Graceful degradation here lets the
+# loop's own existing recovery path (an unparseable response just becomes one recorded failed
+# step, not a crash) run instead of losing the whole turn to a transient API hiccup.
+_TRANSIENT_ERROR_MARKERS = ("503", "UNAVAILABLE", "504", "DEADLINE_EXCEEDED", "Gateway Timeout")
+
+
+def _is_transient_llm_error(e: Exception) -> bool:
+    text = str(e)
+    return any(marker in text for marker in _TRANSIENT_ERROR_MARKERS)
+
+
 class LazyLLM:
     def __init__(
         self,
@@ -66,8 +83,24 @@ class LazyLLM:
         try:
             return self._real_llm.invoke(*args, **kwargs)
         except Exception as e:
-            if "503" in str(e) or "UNAVAILABLE" in str(e):
-                print(f"CRITICAL: {self.model_name} API overloaded (503). Returning fallback note.")
+            if _is_transient_llm_error(e):
+                print(f"CRITICAL: {self.model_name} API overloaded/unavailable ({e}). Returning fallback note.")
+                return AIMessage(content="[System Note: AI model is experiencing high traffic. Please try again.]")
+            raise e
+
+    async def ainvoke(self, *args, **kwargs):
+        # Previously undefined on LazyLLM, so calls fell through __getattr__ straight to the
+        # real client's own ainvoke — completely bypassing the graceful-degradation handling
+        # below. tool_agent_node's entire ReAct loop calls exactly this method, so every
+        # transient error on that path was an unhandled crash rather than a recoverable note.
+        if self.dev_mode:
+            return AIMessage(content="[DEV_MODE] Mock LLM Response.")
+        self._ensure_initialized()
+        try:
+            return await self._real_llm.ainvoke(*args, **kwargs)
+        except Exception as e:
+            if _is_transient_llm_error(e):
+                print(f"CRITICAL: {self.model_name} API overloaded/unavailable ({e}). Returning fallback note.")
                 return AIMessage(content="[System Note: AI model is experiencing high traffic. Please try again.]")
             raise e
 
@@ -81,8 +114,8 @@ class LazyLLM:
             async for chunk in self._real_llm.astream(*args, **kwargs):
                 yield chunk
         except Exception as e:
-            if "503" in str(e) or "UNAVAILABLE" in str(e):
-                print(f"CRITICAL: {self.model_name} API overloaded (503).")
+            if _is_transient_llm_error(e):
+                print(f"CRITICAL: {self.model_name} API overloaded/unavailable ({e}).")
                 yield AIMessage(content="[System Note: AI model is experiencing high traffic. Please try again.]")
             else:
                 raise e

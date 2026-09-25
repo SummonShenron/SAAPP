@@ -732,12 +732,87 @@ turn. Costs at most one extra step (bounded by `max_retry_nudges`), not a
 budget-destroying loop like the two fixed above — left alone per the
 reactive-fixes-only discipline until it actually causes a real problem.
 
-**Also surfaced, unrelated to the above:** a 504 Gateway Timeout from the
-underlying Gemini API crashed the node with an unhandled exception rather
-than a graceful partial-answer recovery. First observed instance of this
-specific class of failure (a transient infra error, not a reasoning bug) —
-logged here rather than acted on, consistent with fixing from real repeated
-evidence rather than speculative resilience work.
+**Also surfaced, unrelated to the above — and now fixed too (see 4f):** a 504
+Gateway Timeout from the underlying Gemini API crashed the node with an
+unhandled exception rather than a graceful partial-answer recovery. First
+observed instance was logged here as "not acted on yet" — it recurred
+immediately on the very next real trace (4f) and directly caused a fully
+fabricated answer to ship, which was enough real repeated evidence to act on.
+
+---
+
+## 4f. `LazyLLM.ainvoke` had zero graceful-degradation handling — a 504 crashed the loop into fabricating a full fake implementation (fixed)
+
+Redirected the batching self-drive prompt (per 4d/4e) to skip the broken
+`create_pr` flow and just show code directly. What came back was a
+confidently-detailed, fully fabricated `run_react_loop` rewrite — wrong
+function signature, wrong return shape, references to module-level functions
+that don't exist (`search_code`/`read_repo_file` as importable names, when
+they're actually closures nested inside `tool_agent_node`), a fabricated
+`constraints.py` diff whose hunk content doesn't match the real file, and a
+test with a literal typo (`return_return_value`) that would silently no-op.
+It also deleted every mechanical fix built this session (stuck-action
+redirects, retry-nudge tracking, capability-denial watchlist, the
+architecture map, the per-turn cache) without mentioning any of them.
+
+**But the real production logs told a different, more useful story than "it
+ignored real code":** it genuinely investigated first —
+`list_repo_tree()` → `search_code(query=tool_agent_node)` →
+`read_repo_file(path=backend/services/agent_workflow.py)` — and that last
+call really did fetch the live file (the observation's first lines match the
+real current imports exactly). But `agent_workflow.py` is ~4,300 lines and
+`read_repo_file` truncates to `_READ_FILE_CHAR_CAP` (3500 chars) by design —
+nowhere near reaching `run_react_loop`'s real definition (~line 2350). It
+needed one more `read_repo_file(..., start_line=2350)` call to ever see the
+real loop. It never got the chance: step 4 hit a 504 Gateway Timeout from
+Gemini's own API, an unhandled exception that broke the loop immediately and
+forced the "you're out of steps — synthesize honestly, never invent beyond
+what you found" emergency prompt from just those 3 sparse attempts. Despite
+that explicit instruction, it fabricated a complete, wrong implementation
+anyway — the same core "prose says don't fabricate, it fabricates anyway"
+lesson this roadmap keeps re-learning in new shapes, this time triggered by
+an infra failure forcing a high-pressure synthesis rather than a normal
+budget exhaustion.
+
+**Root cause, found by reading `backend/models/models.py` directly:**
+`LazyLLM` (the wrapper behind `lite_llm`/`lite_llm_deep`/every LLM singleton
+in the app) only ever defined graceful-degradation handling on `.invoke()`
+(sync) and `.astream()` (streaming) — `.ainvoke()` was never defined on the
+class at all, so calling it fell through `__getattr__` straight to the real
+LangChain client's own `.ainvoke()`, completely bypassing every bit of
+`LazyLLM`'s protection. `run_react_loop` — the entire ReAct loop behind
+`tool_agent_node` — calls exactly `.ainvoke()`. Compounding it: even the
+existing protection only matched `"503"`/`"UNAVAILABLE"` in the error text,
+never `"504"`/`"DEADLINE_EXCEEDED"`, the exact error this trace (and the 4e
+trace before it) hit.
+
+**Fixed in `backend/models/models.py`:**
+- Extracted the transient-error check into a shared
+  `_is_transient_llm_error(e)` (matches `"503"`, `"UNAVAILABLE"`, `"504"`,
+  `"DEADLINE_EXCEEDED"`, `"Gateway Timeout"`) used by `invoke`, `astream`,
+  and the new `ainvoke` — a pattern added once now protects every call path
+  instead of three separately-drifting copies.
+- Added `LazyLLM.ainvoke`, mirroring `invoke`'s existing try/except shape:
+  on a transient error, returns the same graceful
+  `"[System Note: AI model is experiencing high traffic...]"` `AIMessage`
+  instead of raising. Back in `run_react_loop`, that non-JSON content just
+  becomes one recorded failed step via the loop's own existing
+  `_parse_agent_json` → `{}` → "model did not return a recognized action"
+  path — the loop already knew how to recover from this, it just never got
+  the chance because the exception never reached it as a normal step
+  failure.
+- New `backend/tests/test_models.py` (didn't exist before): 11 tests —
+  transient-error detection (503/504/negative), `ainvoke`
+  success/504/503/non-transient-reraise/dev-mode, and parity coverage for
+  `invoke`/`astream`'s existing behavior now sharing the same helper.
+- Full suite: 416 passed, same pre-existing unrelated `test_voice_composer.py`
+  failure.
+
+This also retroactively explains part of the 4e trace's 10-step 404 loop:
+its step-10 crash was the exact same `ainvoke`-has-no-protection gap, just
+on top of an already-exhausted budget from the repo-resolution bug — fixing
+`LazyLLM` doesn't undo the need for that fix, but it means a transient API
+blip won't independently end a turn early ever again.
 
 ---
 
