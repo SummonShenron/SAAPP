@@ -26,6 +26,20 @@ const SECTIONS: HelpTopic[] = [
       </>
     ),
   },
+    {
+    id: "personal_kb",
+    title: "Your Personal Knowledge Base",
+    content: (
+      <>
+        <p>Every user gets their own private, personal knowledge base upon sign-up.</p>
+        <ul>
+          <li><strong>Private & Secure:</strong> Your documents and data are isolated to your account.</li>
+          <li><strong>Context-Aware:</strong> The assistant uses your personal knowledge base to provide answers tailored to your specific documents and history.</li>
+          <li><strong>Easy Management:</strong> You can upload, manage, and query your documents directly through the interface.</li>
+        </ul>
+      </>
+    ),
+  },
   {
     id: "memory",
     title: "Memory & Personalization",
@@ -199,7 +213,7 @@ const SECTIONS: HelpTopic[] = [
       <>
         <p>Current issues the team is aware of:</p>
         <ul>
-          <li>Currently cannot remove deleted calendar events from Google Calendar if integrated</li>
+          <li>Continues to hallucinate occasionally when providing code solutions</li>
         </ul>
       </>
     ),

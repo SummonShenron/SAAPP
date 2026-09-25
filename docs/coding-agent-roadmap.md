@@ -516,6 +516,134 @@ real.
 
 ---
 
+## 4c. Second opinion (external Claude) on "Architecture Discovery," and today's increment
+
+Independently asked a separate Claude session (outside SAAPP, with real local
+file access) to review the repo and diagnose what caps multi-file "architecture
+discovery" tasks — the same failure shape as 4b. Notably more accurate than the
+per-user-token plan: every specific line number it cited (`run_react_loop` at
+`agent_workflow.py:2351`, `TOOL_AGENT_MAX_ITERATIONS` at line 60,
+`_is_audit_style_task` at line 2882, `search_literal` at line 3246,
+`_build_definition_index` at line 146) checked out exactly against the real
+file — it had actually read the code rather than gone through a lossy search
+tool. Real findings, cross-checked before acting on any of them:
+
+- `search_literal` (built for 4b) is opt-in — the model still has to choose it
+  over `search_code` mid-loop. Same "capability exists but must be invoked"
+  trap as `find_file` sitting unused in Section 0.
+- No persistent/per-turn architecture map — proposed auto-injecting a
+  stdlib-`ast`-based import graph (Python) + regex import extraction (TS/JS),
+  gated on `_is_audit_style_task`, spliced into the prompt the same way
+  `schema` already is — mechanical injection instead of a new opt-in tool,
+  consistent with this project's own proven lesson.
+- `_fetch_repo_tree_items()`/`_read_file()` had no caching — a multi-step
+  investigation could re-fetch the same tree or file multiple times in one turn.
+
+A second follow-up round (comparing its own investigation process to
+`tool_agent_node`'s) proposed four more ideas, evaluated on their merits rather
+than adopted wholesale — one contained a false claim (`asyncio.gather` "which
+the codebase already uses elsewhere" — grepped, it appears nowhere):
+
+1. **Real git checkout instead of per-action GitHub API calls.** Diagnosis (API
+   round-trip cost, GitHub's lossy search index, rate limits) is correct, but
+   its own risk comparison to `run_snippet` doesn't hold up — `run_snippet`'s
+   whole design point was keeping execution risk on a disposable CI runner with
+   zero shared state on SAAPP's own host; a git-cloned repo "cached per
+   session" is shared-tenant state on SAAPP's own disk, which is a different
+   (not smaller) risk shape, and exactly what Section 4's own notes already
+   flagged about changing SAAPP's threat model. **Decision: hold a
+   session-cached/persistent version until it can be co-designed with Section
+   4's per-user isolation, not before.** A per-turn-only ephemeral clone
+   (`tempfile.mkdtemp()`, cleaned up in a `finally` like `browser_session_holder`
+   already is) would be the safe version if this is revisited sooner.
+2. **Batch independent read-only actions per ReAct step** (concurrent
+   dispatch, one step instead of N for independent file reads). Real budget
+   relief with no new attack surface — but `run_react_loop`'s per-step
+   bookkeeping (stuck-action tracking, `unretried_inconclusive_tools`) assumes
+   one action per step, so this needs real re-threading, not just adding
+   `asyncio.gather`. **Decision: next up after the architecture map**, restricted
+   to read-only actions only (never batch `run_snippet`/`run_mongo_query`/writes).
+3. **Compact old ReAct attempts** past a certain step count. Reasonable, but
+   doing it via an LLM summarization pass (as proposed) reintroduces the exact
+   fabrication risk this whole roadmap fights — a lossy AI-generated summary
+   silently dropping a detail needed later. **Decision: if built, deterministic
+   truncation (keep last N attempts verbatim, older ones reduced to tool name +
+   paths touched), not another LLM call.** Not urgent — only matters once
+   14-step deep traces are actually happening and getting noisy in practice.
+4. **Fan-out/fan-in parallel mini sub-loops** per candidate area. Most
+   speculative of the four — real added cost (N parallel LLM loops per turn)
+   and coordination complexity. **Decision: held entirely**, revisit only if
+   the cheaper fixes above prove insufficient.
+
+**Shipped today** (the two zero-risk items, done before committing to the
+larger architecture-map work):
+
+- **Per-turn caching**: `_fetch_repo_tree_items()` and a new `_fetch_file_content()`
+  (extracted from `_read_file`, returns raw decoded content with no URL/truncation
+  formatting — also the clean primitive the future AST map should build on)
+  are now memoized in dicts scoped to one `tool_agent_node` call, same lifetime
+  as `browser_session_holder`. Never persisted across turns, so it can't go
+  stale the way a session-level cache could. 2 new tests confirming a repeated
+  path/tree fetch only hits GitHub once per turn.
+- **Verified `_is_audit_style_task` against real phrasing** instead of just
+  hand-written test cases — it does fire on the verbatim original failing
+  prompt (typo included), but missed "how many files touch X" entirely; added
+  that pattern. Deliberately did NOT broaden it to bare "refactor" — that would
+  bump the budget for small, single-file refactors too, against the "zero
+  added cost for normal turns" goal. 4 new tests, including one asserting the
+  bare-"refactor" case stays negative on purpose.
+
+**Also shipped this session — the AST-based architecture map itself (done):**
+
+- New module-level, independently-testable functions in `agent_workflow.py`:
+  `_extract_python_imports` (real `ast.parse`, walks `Import`/`ImportFrom`,
+  handles relative imports including the `from . import utils` case where the
+  reference lives in the imported names rather than `node.module`),
+  `_extract_js_imports` (regex — `import x from '...'`, bare `import '...'`,
+  `require('...')`, matching this repo's existing `_classify_symbol_line`
+  precedent for TS/JS), `_is_internal_python_import`/`_repo_top_level_segments`
+  (filters out stdlib/third-party noise like `os`/`requests`/`react` from the
+  reverse map — derived from the real tree every time, never hardcoded, so it
+  works on any repo), and `_build_architecture_map` (the forward file→imports
+  and reverse module→imported-by graph, built from real fetched file content —
+  deliberately takes `fetch_content` as a plain parameter rather than closing
+  over turn state, so it's testable with a fake function and no GitHub mocking
+  at all).
+- Wired into `tool_agent_node`: gated on `_is_audit_style_task`, built from the
+  same cached `_fetch_repo_tree_items()`/`_fetch_file_content()` from the
+  caching work above (so this feature made that one directly useful, not just
+  faster), and injected via a new `{architecture_map}` placeholder in
+  `TOOL_AGENT_PROMPT` (`backend/components/constraints.py`) — empty string on
+  every ordinary turn, so zero added prompt size/cost outside audit-style tasks.
+  `run_react_loop` gained a matching `architecture_map: str = ""` parameter
+  (its only real caller is `tool_agent_node`, so this was a safe, low-risk
+  signature change). A `trace_detail` event ("Building architecture map...")
+  fires while it's being built, matching this session's own established rule
+  that a loading state should describe what's actually happening.
+- Caught and fixed a real bug in my own first pass while writing its tests:
+  `from . import utils` was producing a bare `"."` (module is `None` for this
+  form; the actual reference lives in the imported names) instead of `.utils`
+  — a good concrete reminder that even code written specifically to fix a
+  fabrication problem needs the same "verify, don't trust the first plausible
+  version" treatment.
+- 13 new tests: pure-function coverage for both languages' import extraction,
+  the internal/external filter, the forward+reverse graph builder (including
+  skipping fetch errors and files with only external imports), and two
+  `tool_agent_node`-level integration tests confirming the map is actually
+  injected for an audit-style prompt and stays empty for an ordinary one.
+- Full suite: 401 passed, same pre-existing unrelated `test_voice_composer.py`
+  failure.
+- **Not yet done:** a live end-to-end browser verification (the pattern used
+  for every other feature this session) — the local backend the frontend
+  actually talks to on `localhost:8000` runs in a terminal outside this
+  session's visibility, the same gap hit earlier verifying the Stop-button
+  feature's backend half. Unit/integration coverage is solid, but this hasn't
+  been watched happen against a real repo yet.
+
+**Next up:** batched independent read actions (point 2 of the second review).
+
+---
+
 ## Operational — automatic checkpoint retention (done)
 
 **Shipped:** `backend/services/checkpoint_retention.py` —
