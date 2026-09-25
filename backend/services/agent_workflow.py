@@ -2385,6 +2385,67 @@ _CAPABILITY_DENIAL_RE = re.compile(
 )
 
 
+# A different failure shape from the same production trace as the capability-denial backstop
+# above (docs/coding-agent-roadmap.md, Section 7): three self-drive attempts in a row each
+# fabricated a different kind of ground truth (invented code, a false "this doesn't exist" claim,
+# and — the one this catches — a confidently-presented diff editing a data structure that was
+# never actually verified to exist). Before a "final" containing a diff against an EXISTING file
+# is accepted, at least one of that diff's own claimed pre-existing lines (context or removed,
+# never a `+` line) must actually appear in a real read_repo_file observation for that same path
+# recorded THIS turn — otherwise the diff was composed from a plausible guess, not derived from
+# what was actually fetched. String/regex based, not a real diff parser — same accepted
+# soft-failure-mode tradeoff already used by trace_symbol/find_file in this file.
+_DIFF_FILE_HEADER_RE = re.compile(r"^diff --git a/(\S+) b/\S+", re.MULTILINE)
+_DIFF_NEW_FILE_RE = re.compile(r"^new file mode")
+
+
+def _extract_diff_file_grounding_lines(final_answer: str) -> dict:
+    """Maps each existing-file path named in a `diff --git` block inside final_answer to the
+    non-added lines (context or removed) inside its hunks — the lines the diff claims already
+    existed in that file before this change. A brand-new file (a `new file mode` line before the
+    next file header) is skipped entirely, since there's nothing pre-existing to verify."""
+    files: dict = {}
+    current_path = None
+    skip_current = False
+    for line in final_answer.splitlines():
+        header_match = _DIFF_FILE_HEADER_RE.match(line)
+        if header_match:
+            current_path = header_match.group(1)
+            skip_current = False
+            files.setdefault(current_path, [])
+            continue
+        if current_path is None:
+            continue
+        if _DIFF_NEW_FILE_RE.match(line):
+            skip_current = True
+            files.pop(current_path, None)
+            continue
+        if skip_current or line.startswith(("+++", "---", "index ", "@@")) or line.startswith("+"):
+            continue
+        if line.startswith("-"):
+            files[current_path].append(line[1:].strip())
+        elif line.startswith(" "):
+            files[current_path].append(line[1:].strip())
+    return {path: [l for l in lines if l] for path, lines in files.items()}
+
+
+def _final_diff_disagrees_with_fetched_content(final_answer: str, attempts: list) -> str | None:
+    """Returns the file path of the first diff hunk whose claimed pre-existing lines never
+    actually appeared in a real read_repo_file result for that path this turn — a strong signal
+    the diff was composed from a guess instead of derived from real fetched content. None if every
+    diffed file either has real corroborating evidence or the answer contains no diff at all."""
+    for path, grounding_lines in _extract_diff_file_grounding_lines(final_answer).items():
+        if not grounding_lines:
+            continue
+        fetched_text = "\n".join(
+            a["observation"] for a in attempts
+            if a.get("action_desc", "").startswith("read_repo_file(") and f"path={path}" in a["action_desc"]
+        )
+        if not fetched_text or not any(line in fetched_text for line in grounding_lines):
+            return path
+    return None
+
+
 def _format_react_attempts(attempts: list) -> str:
     if not attempts:
         return "(none yet — this is the first step)"
@@ -2495,6 +2556,19 @@ async def run_react_loop(
     a corrective notice injected into the next step) instead of trusting the model to have caught
     its own contradiction.
 
+    A self-drive experiment (docs/coding-agent-roadmap.md, Section 7) surfaced a third fabrication
+    shape unrelated to any tool_action, budget, or capability check above: a confidently-formatted
+    diff editing a data structure (a whole dict) that was never verified to exist anywhere in the
+    real codebase — presented alongside quotes from OTHER, genuinely-read parts of the same file,
+    so it read as thoroughly researched. `_final_diff_disagrees_with_fetched_content` is the
+    mechanical backstop: when a "final" answer contains a `diff --git` block against an EXISTING
+    file (a new file has nothing pre-existing to verify and is skipped), at least one of that
+    hunk's own claimed pre-existing lines (context or removed, never a `+` line) must actually
+    appear in a real read_repo_file observation for that same path recorded THIS turn — otherwise
+    the "final" is rejected once, the same budget-limited shape as the capability-denial check
+    above, so a real diff grounded in an earlier part of the conversation (outside this loop's own
+    attempts) still gets through eventually rather than looping forever on a false positive.
+
     An extensive diagnostic loop (docs/coding-agent-roadmap.md, Sections 4b-4j) showed every one
     of those real traces burn most of a turn's step budget reading files or searching one at a
     time, well before ever reasoning about them — a genuinely multi-file investigation needs N
@@ -2536,6 +2610,9 @@ async def run_react_loop(
     capability_denial_reject_count = 0
     MAX_CAPABILITY_DENIAL_REJECTIONS = 1
     pending_capability_denial_notice: str | None = None
+    ungrounded_diff_reject_count = 0
+    MAX_UNGROUNDED_DIFF_REJECTIONS = 1
+    pending_ungrounded_diff_notice: str | None = None
 
     for step in range(max_iterations):
         forced_final = step == max_iterations - 1
@@ -2609,6 +2686,9 @@ async def run_react_loop(
         if pending_capability_denial_notice:
             question_for_step += f"\n\n({pending_capability_denial_notice})"
             pending_capability_denial_notice = None
+        if pending_ungrounded_diff_notice:
+            question_for_step += f"\n\n({pending_ungrounded_diff_notice})"
+            pending_ungrounded_diff_notice = None
 
         prompt = prompt_template.format(
             question=question_for_step,
@@ -2663,6 +2743,26 @@ async def run_react_loop(
                     "listed in AVAILABLE ACTIONS THIS TURN above — you do have it right now. Do "
                     "not deny having it; if you haven't actually used it yet this turn, use it "
                     "before answering."
+                )
+                continue
+        if action == "final" and not forced_final and ungrounded_diff_reject_count < MAX_UNGROUNDED_DIFF_REJECTIONS:
+            answer_text = decision.get("answer") or ""
+            ungrounded_path = _final_diff_disagrees_with_fetched_content(answer_text, attempts)
+            if ungrounded_path:
+                # Same shape as the capability-denial rejection above, one step later in the same
+                # real trace that motivated it: a confidently-formatted diff isn't more trustworthy
+                # than a rough one if none of what it claims already exists in the file ever
+                # actually came back from a real read this turn. Budget-limited for the same reason
+                # as every other mechanical rejection here — a real diff against a file genuinely
+                # read earlier in the conversation (outside this loop's own attempts) must still be
+                # allowed through eventually rather than looping forever on a false positive.
+                ungrounded_diff_reject_count += 1
+                pending_ungrounded_diff_notice = (
+                    f"Your proposed diff edits {ungrounded_path}, but none of the lines it claims "
+                    f"already exist there ever appeared in a real read_repo_file result for that "
+                    f"exact path this turn. Call read_repo_file({ungrounded_path}) for real, quote "
+                    "the actual current lines you're changing, and rebuild the diff from what's "
+                    "really there before answering again — do not guess at the file's structure."
                 )
                 continue
         if action == "final":
@@ -3742,10 +3842,14 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 "what it actually printed (or the real traceback if it raised) — genuine "
                 "verified behavior, not a guess about whether an import/signature/return value "
                 "is correct. Use this to check that a function you're about to propose actually "
-                "works — call it with a real or representative input and print the result — "
-                "before presenting it as working code. Slower than every other action except "
-                "run_repo_tests (real CI dispatch, not instant) — don't reach for it on a "
-                "routine lookup, only when actually verifying proposed code works"
+                "works — before presenting it as working code. The snippet MUST import and call "
+                "the real function/module you are proposing or verifying, using its actual path "
+                "in this repo (the one you already read via read_repo_file/search_code) — a fresh, "
+                "hand-rolled stand-in that reimplements the idea instead of importing the real "
+                "code proves nothing about whether your actual change works, it only proves your "
+                "stand-in works. Slower than every other action except run_repo_tests (real CI "
+                "dispatch, not instant) — don't reach for it on a routine lookup, only when "
+                "actually verifying proposed code works"
             )
         menu_lines.extend([
             "- list_repo_tree — no args; lists every file path in the repo",

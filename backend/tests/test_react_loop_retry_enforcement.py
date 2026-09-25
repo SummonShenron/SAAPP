@@ -770,6 +770,212 @@ async def test_genuine_capability_denial_not_in_menu_is_accepted_immediately():
 
 
 # ---------------------------------------------------------------------------
+# Ungrounded diffs — the third real fabrication shape from a self-drive
+# attempt (docs/coding-agent-roadmap.md, Section 7): a confidently-formatted
+# diff editing a data structure that was never verified to exist anywhere in
+# the real codebase, presented alongside genuine quotes from elsewhere in the
+# same file so it read as thoroughly researched.
+# ---------------------------------------------------------------------------
+
+GROUNDED_FILE_PATH = "backend/app.py"
+GROUNDED_FILE_CONTENT = "def foo():\n    return 1\n"
+
+GROUNDED_INITIAL_ATTEMPTS = [{
+    "purpose": "Read the real file",
+    "action_desc": f"read_repo_file(path={GROUNDED_FILE_PATH})",
+    "observation": f"URL: https://example/{GROUNDED_FILE_PATH}\n{GROUNDED_FILE_CONTENT}",
+}]
+
+UNGROUNDED_DIFF_ANSWER = (
+    "Here's the fix:\n```diff\n"
+    f"diff --git a/{GROUNDED_FILE_PATH} b/{GROUNDED_FILE_PATH}\n"
+    f"--- a/{GROUNDED_FILE_PATH}\n"
+    f"+++ b/{GROUNDED_FILE_PATH}\n"
+    "@@ -1,3 +1,3 @@\n"
+    " CONSTANTS = {\n"
+    '-    "a": 1,\n'
+    '+    "a": 2,\n'
+    " }\n"
+    "```"
+)
+
+GROUNDED_DIFF_ANSWER = (
+    "Here's the fix:\n```diff\n"
+    f"diff --git a/{GROUNDED_FILE_PATH} b/{GROUNDED_FILE_PATH}\n"
+    f"--- a/{GROUNDED_FILE_PATH}\n"
+    f"+++ b/{GROUNDED_FILE_PATH}\n"
+    "@@ -1,2 +1,2 @@\n"
+    " def foo():\n"
+    "-    return 1\n"
+    "+    return 2\n"
+    "```"
+)
+
+
+@run_async
+async def test_ungrounded_diff_is_rejected_once_then_corrected_final_accepted():
+    """Reproduces the real shape: a diff claims 'CONSTANTS = {\"a\": 1}' already exists in
+    backend/app.py, but the only real read_repo_file result for that path this turn shows a
+    completely different file — rejected once, then a diff actually matching real content is
+    accepted."""
+    captured_prompts = []
+    responses = [
+        _llm_response(action="final", answer=UNGROUNDED_DIFF_ANSWER),
+        _llm_response(action="final", answer=GROUNDED_DIFF_ANSWER),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            return "unused"
+
+        result = await aw.run_react_loop(
+            question="fix the bug in backend/app.py",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+            initial_attempts=list(GROUNDED_INITIAL_ATTEMPTS),
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert len(captured_prompts) == 2
+    assert result["final_answer"] == GROUNDED_DIFF_ANSWER
+    assert GROUNDED_FILE_PATH in captured_prompts[1]
+    assert "ever appeared in a real read_repo_file result" in captured_prompts[1]
+
+
+@run_async
+async def test_ungrounded_diff_rejection_is_budget_limited():
+    """A second consecutive ungrounded diff must still get an honest 'final' rather than
+    looping forever."""
+    captured_prompts = []
+    responses = [
+        _llm_response(action="final", answer=UNGROUNDED_DIFF_ANSWER),
+        _llm_response(action="final", answer=UNGROUNDED_DIFF_ANSWER),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            return "unused"
+
+        result = await aw.run_react_loop(
+            question="fix the bug in backend/app.py",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+            initial_attempts=list(GROUNDED_INITIAL_ATTEMPTS),
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert len(captured_prompts) == 2
+    assert result["final_answer"] == UNGROUNDED_DIFF_ANSWER
+
+
+@run_async
+async def test_diff_grounded_in_real_read_is_accepted_immediately():
+    """False-positive guard: a diff whose claimed pre-existing lines really did come back from
+    a real read_repo_file result this turn must be accepted right away, not rejected."""
+    captured_prompts = []
+    responses = [_llm_response(action="final", answer=GROUNDED_DIFF_ANSWER)]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            return "unused"
+
+        result = await aw.run_react_loop(
+            question="fix the bug in backend/app.py",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+            initial_attempts=list(GROUNDED_INITIAL_ATTEMPTS),
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert len(captured_prompts) == 1
+    assert result["final_answer"] == GROUNDED_DIFF_ANSWER
+
+
+@run_async
+async def test_diff_for_a_brand_new_file_is_never_flagged():
+    """A `new file mode` diff has nothing pre-existing to verify — must never be rejected even
+    with zero prior read_repo_file attempts for that path."""
+    new_file_answer = (
+        "```diff\n"
+        "diff --git a/backend/new_thing.py b/backend/new_thing.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/backend/new_thing.py\n"
+        "@@ -0,0 +1,2 @@\n"
+        "+def bar():\n"
+        "+    return 2\n"
+        "```"
+    )
+    captured_prompts = []
+    responses = [_llm_response(action="final", answer=new_file_answer)]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            return "unused"
+
+        result = await aw.run_react_loop(
+            question="add a new helper file",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert len(captured_prompts) == 1
+    assert result["final_answer"] == new_file_answer
+
+
+def test_extract_diff_file_grounding_lines_skips_added_and_header_lines():
+    lines = aw._extract_diff_file_grounding_lines(UNGROUNDED_DIFF_ANSWER)
+    assert lines[GROUNDED_FILE_PATH] == ["CONSTANTS = {", '"a": 1,', "}"]
+
+
+def test_final_diff_disagrees_with_fetched_content_negative_when_no_diff_present():
+    assert aw._final_diff_disagrees_with_fetched_content(
+        "No diff here, just a plain answer.", list(GROUNDED_INITIAL_ATTEMPTS)
+    ) is None
+
+
+# ---------------------------------------------------------------------------
 # Batching independent actions ("queries") — built after the extensive
 # diagnostic loop in docs/coding-agent-roadmap.md (Sections 4b-4j), where
 # every real trace burned most of a turn's step budget reading files one at a

@@ -1188,6 +1188,116 @@ unrelated `test_voice_composer.py` failure.
 
 ---
 
+## 7. Third self-drive attempt: "verification theater" in run_snippet — a third fabrication shape (fixed, built directly)
+
+Gave SAAPP a smaller task per 6's methodology, this time with an explicit
+guardrail added to the prompt after 6's failure: don't assert something
+doesn't exist without actually running a real search for it first and citing
+a genuine empty result. Asked it to fix `run_snippet`'s "verification
+theater" gap (4j) — a snippet that "verifies" a change by testing an
+invented, isolated stand-in instead of the real modified code.
+
+**What came back, checked line-by-line against the real files:**
+
+- It correctly found and accurately quoted two real existing prose rules in
+  `constraints.py` (the "don't treat an empty search as proof of absence"
+  rule and the "browser task first, source-reading second" rule) — genuinely
+  read the file this time, roughly the right line range, no guardrail
+  violation on those.
+- But the actual fix invents a `CONSTRAINTS = {...}` dictionary keyed by tool
+  name, edits `CONSTRAINTS["run_snippet"]`, and writes a test that does
+  `from backend.components.constraints import CONSTRAINTS`. No such name
+  exists anywhere in this repo — confirmed by a repo-wide search, not just
+  one file. `run_snippet`'s real menu text is built inline inside
+  `agent_workflow.py`'s dynamic `menu_lines.append(...)` construction
+  (~line 3736), gated on admin status; `constraints.py` holds one long
+  `TOOL_AGENT_PROMPT` string, never a per-tool dict. The diff and test both
+  target a structure that was never there to begin with.
+
+**A third distinct fabrication shape, worth naming alongside the other two:**
+4f-4j invented code that doesn't exist; 6 asserted real code doesn't exist;
+this one invents a plausible-sounding *data structure* that was never
+verified to exist, then edits and tests it as if it were real — the common
+thread across all three is the same root cause (composing a plausible answer
+instead of running one more real read/search), just surfacing in a different
+place each time. The new guardrail against denying real code's existence
+didn't (and couldn't) catch this — it needed the opposite check: verify a
+structure exists before editing it, not just before denying one.
+
+**Fixed directly in `agent_workflow.py`** (review-and-reject, same as
+Section 6): strengthened the real inline `run_snippet` menu text — it now
+explicitly requires importing and calling the actual function/module being
+verified, from its real path already read this turn, and states plainly that
+a hand-rolled stand-in proves the stand-in works, not that the real change
+does. Prompt-only, no new tool, no new tracking — matches the cheapest-shape
+precedent (the idiom-matching rule) this task was asked to reuse. 1 new test
+confirming the real admin-only menu text contains the anti-theater language.
+Full suite: 438 passed, same pre-existing unrelated failure.
+
+**Worth deciding before a fourth attempt:** three fabrication shapes in three
+tries, all caught by review-before-paste rather than by anything mechanical
+yet. That's the process working as designed, but it hasn't yet produced a
+self-drive success on any of the three "smaller" tasks tried since batching.
+Decision: treat "verify a structure exists before claiming to edit it" as its
+own mechanical gap rather than another one-off prompt correction — see
+Section 8.
+
+---
+
+## 8. Mechanical backstop for the third fabrication shape: ungrounded diffs (fixed, built directly)
+
+Section 7's rejected diff fabricated a whole data structure (`CONSTRAINTS`)
+that never existed, presented alongside genuine quotes from elsewhere in the
+same file — confident-looking, thoroughly-researched-looking, and still
+wrong. Unlike the capability-denial and stuck-action backstops, there was no
+existing mechanism to extend here — this is a new one, same budget-limited
+shape as the others.
+
+**Built in `agent_workflow.py`:**
+- `_extract_diff_file_grounding_lines(final_answer)` — parses any `diff --git
+  a/PATH b/PATH` block in a "final" answer and, per file, collects every
+  non-added line inside its hunks (context and removed lines — the lines the
+  diff claims already existed before the change). A `new file mode` diff is
+  skipped entirely — there's nothing pre-existing to verify for a brand-new
+  file. String/regex based, not a real diff parser, matching this file's own
+  accepted-soft-failure precedent (`trace_symbol`'s regex classifier,
+  `find_file`'s fuzzy match).
+- `_final_diff_disagrees_with_fetched_content(final_answer, attempts)` —
+  for each file a diff touches, checks whether at least one of its claimed
+  pre-existing lines actually appears in a real `read_repo_file` observation
+  for that exact path recorded THIS turn (matched via the real
+  `action_desc` format, `read_repo_file(path=...)`). Returns the first file
+  path where none of the claimed lines were ever actually seen.
+- `run_react_loop` gained a new budget-limited rejection gate (same shape as
+  `capability_denial_watchlist`, no new parameter needed since this doesn't
+  require caller-supplied domain knowledge): a "final" containing a diff
+  that fails this check is rejected once, with a corrective notice naming
+  the specific file and instructing a real `read_repo_file` call before
+  trying again — not unconditional like the truncation gate, since a diff
+  legitimately grounded in an earlier, out-of-loop part of the conversation
+  must still get through eventually rather than loop forever on a false
+  positive.
+- 7 new tests: the real fabricated-`CONSTANTS`-diff shape rejected once then
+  a corrected (really-grounded) diff accepted, budget-limited to one
+  rejection, a false-positive guard (a diff genuinely grounded in a real
+  read is accepted immediately), a brand-new-file diff never flagged
+  regardless of prior reads, plus direct unit coverage of both new helper
+  functions. Full suite: 444 passed, same pre-existing unrelated
+  `test_voice_composer.py` failure.
+
+**Known real limitation, accepted rather than solved:** this only grounds
+diffs against files fetched via `read_repo_file` inside THIS SAME
+`run_react_loop` call — a diff resting on real content read earlier in the
+conversation (a prior turn, or `initial_attempts` from a resumed
+clarification) is invisible to this specific check unless it also shows up
+as `initial_attempts` this call already threads through. Matches the same
+tradeoff already accepted for `unretried_inconclusive_tools` and the
+stuck-action streak — both are also scoped to one call's own `attempts`,
+not cross-turn memory. Revisit only if a real trace shows this scope is
+actually too narrow, not preemptively.
+
+---
+
 ## Operational — automatic checkpoint retention (done)
 
 **Shipped:** `backend/services/checkpoint_retention.py` —

@@ -442,6 +442,33 @@ async def test_admin_action_menu_includes_run_snippet(monkeypatch):
 
 
 @run_async
+async def test_run_snippet_menu_text_forbids_hand_rolled_stand_ins(monkeypatch):
+    # "Verification theater" (docs/coding-agent-roadmap.md, Section 4j/7): run_snippet was used
+    # to "verify" a change by testing an isolated, invented proof-of-concept instead of the real
+    # modified code — looks like verification in the trace, proves nothing. Reviewed and rejected
+    # a self-drive attempt at this fix that fabricated a nonexistent CONSTRAINTS dict in
+    # constraints.py; the real menu text lives inline here in agent_workflow.py.
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])
+    _setup_github_repo(monkeypatch)
+    monkeypatch.setattr(aw, "get_db", lambda: _FakeDB({"user_memory_facts": _FakeCollection()}))
+
+    captured_prompts = []
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return _llm_response(action="final", answer="No conclusive answer.")
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("does this function actually work?"))
+
+    assert any(
+        "MUST import and call the real function/module" in p and "hand-rolled stand-in" in p
+        for p in captured_prompts
+    )
+
+
+@run_async
 async def test_non_admin_cannot_execute_run_snippet_even_if_returned(monkeypatch):
     """Defense in depth, mirroring the equivalent run_repo_tests/run_mongo_query tests."""
     monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
