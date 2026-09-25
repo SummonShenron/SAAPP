@@ -92,6 +92,97 @@ def _setup_github_repo(monkeypatch, tree_items=None):
 
 
 # ---------------------------------------------------------------------------
+# Repo-resolution self-correction — a real production trace showed
+# extract_github_repo can still false-positive on an ordinary phrase with a
+# bare slash (e.g. "the updated functions/diffs for whatever needs to
+# change" read as owner/repo "functions/diffs") even past its existing
+# generic-path-segment denylist — no denylist can cover every English word
+# pair. The old behavior silently kept the wrong repo and defaulted only the
+# BRANCH to "main", so every GitHub action that turn 404'd with the model
+# never learning why (it just kept retrying list_repo_tree). Now a failed
+# repo-metadata fetch retries once against the pinned/default repo instead.
+# ---------------------------------------------------------------------------
+
+@run_async
+async def test_bad_extracted_repo_falls_back_to_default_and_notifies_model(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/repos/functions/diffs"):
+            return _http_response(404, {"message": "Not Found"})
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return _http_response(200, {"default_branch": "main"})
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    # Simulates the real false-positive: extract_github_repo reading an ordinary phrase's
+    # bare slash as an owner/repo mention.
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback=None: "functions/diffs" if fallback is None else fallback)
+
+    captured_kwargs = {}
+
+    async def fake_run_react_loop(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"final_answer": "done", "attempts": [], "show_work": False}
+
+    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+
+    await aw.tool_agent_node(_state("show me the updated functions/diffs for the refactor"))
+
+    assert "repo=SummonShenron/SAAPP" in captured_kwargs["schema"]
+    assert "functions/diffs" in captured_kwargs["schema"]
+    assert "false-positive" in captured_kwargs["schema"]
+
+
+@run_async
+async def test_genuinely_inaccessible_repo_warns_instead_of_looping_silently(monkeypatch):
+    # Both the extracted repo AND the fallback are the same, real-but-inaccessible repo — no
+    # different repo to retry against, so this must surface a plain warning instead of silently
+    # guessing branch "main" for a repo that was never confirmed to exist.
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return _http_response(404, {"message": "Not Found"})
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+
+    captured_kwargs = {}
+
+    async def fake_run_react_loop(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"final_answer": "done", "attempts": [], "show_work": False}
+
+    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+
+    await aw.tool_agent_node(_state("where is the login flow implemented?"))
+
+    assert "WARNING" in captured_kwargs["schema"]
+    assert "default_branch=main" in captured_kwargs["schema"]
+
+
+@run_async
+async def test_successful_repo_resolution_adds_no_note(monkeypatch):
+    _setup_github_repo(monkeypatch)
+    captured_kwargs = {}
+
+    async def fake_run_react_loop(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"final_answer": "done", "attempts": [], "show_work": False}
+
+    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+
+    await aw.tool_agent_node(_state("where is the login flow implemented?"))
+
+    assert "NOTE" not in captured_kwargs["schema"]
+    assert "WARNING" not in captured_kwargs["schema"]
+
+
+# ---------------------------------------------------------------------------
 # Admin access to Mongo action
 # ---------------------------------------------------------------------------
 

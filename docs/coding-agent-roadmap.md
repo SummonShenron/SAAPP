@@ -644,6 +644,103 @@ larger architecture-map work):
 
 ---
 
+## 4d. Tried to have SAAPP self-drive the batching feature — hit a real capability gap
+
+Asked SAAPP (production chat) to investigate and implement the batching
+feature, ending with "open a PR when you're done" — it just kept retrying PR
+creation without ever producing code. Root cause, confirmed by reading
+`_draft_create_pr`/`_execute_create_pr` directly: `create_pr` has no
+mechanism to create a branch or commit real file changes at all — it only
+computes a diff between a `head_branch`/`base_branch` that must **already
+exist** (defaulting to a literal, non-existent `"feature-branch"` if
+unspecified) and asks an LLM to write a title/body *describing* that diff.
+It's a "describe my already-pushed branch as a PR" tool, not an "implement
+this and commit it" tool — so the experiment was structurally blocked
+regardless of SAAPP's actual planning/coding quality.
+
+**Decision:** don't build "give SAAPP real code-commit capability" reactively
+right now — it's a much bigger trust/blast-radius jump (autonomous
+self-modification of its own repo) than anything shipped this session, and
+deserves the same deliberate co-design treatment as Section 4's per-user
+token work, not a quick patch. For now, the self-drive test continues by
+asking for code directly in the response instead of a PR (see 4e below,
+which is what that redirected prompt actually surfaced).
+
+---
+
+## 4e. Real production trace — false-positive repo extraction cascaded into a 10-step 404 loop (both fixed)
+
+Tried the redirected prompt from 4d above — investigate `run_react_loop` and
+show the code changes directly instead of opening a PR. Real production logs:
+
+```
+WARNING - Could not fetch repo metadata for 'functions/diffs' (status 404)
+INFO - Resolved repo='functions/diffs', default_branch='main'
+INFO - Step 1 ... action=list_repo_tree() | observation='ERROR: could not fetch tree (404)'
+INFO - Step 2 ... action=find_file(query=tool_agent_node) | observation='ERROR: could not fetch tree (404)'
+INFO - Step 5/7/9 ... action=list_repo_tree() | observation='ERROR: could not fetch tree (404)'  [x3, reworded purpose each time]
+ERROR - step 10 failed to produce a usable decision. [504 Gateway Timeout from the LLM API]
+```
+
+**Root cause 1 (the actual bug):** `extract_github_repo` read the literal
+phrase "the updated **functions/diffs** for whatever needs to change" — an
+entirely ordinary bit of English, not a repo mention — as owner/repo
+`functions/diffs`, past its own `_GENERIC_PATH_SEGMENTS` denylist (this exact
+false-positive class was already fixed once before, for "in
+backend/services" — see `extract_github_repo`'s own docstring; a denylist can
+never cover every ordinary word pair with a slash in it). Every GitHub action
+that turn then targeted a repo that doesn't exist, 404ing consistently, with
+`_get_default_branch`'s old behavior silently keeping the bad repo and only
+defaulting the *branch* to `"main"` — the model had no way to ever learn the
+real problem was the repo itself, not a missing file/path.
+
+**Root cause 2 (why it didn't recover):** `TOOL_AGENT_STUCK_ACTION_REDIRECTS`
+only ever covered `search_code` (the original Failure A). `list_repo_tree` —
+a no-argument action — had no mechanical backstop at all, so the model kept
+calling it again with a differently-worded `purpose` each time
+("transient?", "one more time", "one last time") — technically satisfying
+"try something different" without being able to change anything real, since
+a no-arg action has nothing to vary. Two independent real instances of this
+exact shape (search_code, now list_repo_tree) is real evidence for
+generalizing rather than hand-authoring a third entry later.
+
+**Fixed, both in `agent_workflow.py`:**
+- `_get_default_branch` now returns `None` (not a guessed `"main"`) on a
+  failed repo-metadata fetch. The caller retries once against the pinned/
+  default repo (`state["repo"]` or `SummonShenron/SAAPP`) if it differs from
+  the one that just failed, and surfaces a plain `NOTE`/`WARNING` into
+  `schema` either way — so the model sees "the repo you might have meant
+  doesn't exist, I used X instead" (or an honest "this repo may be
+  inaccessible") instead of a silent, undiagnosable string of 404s. 3 new
+  tests.
+- `TOOL_AGENT_STUCK_ACTION_REDIRECTS`'s lookup now falls back to a generic
+  `_DEFAULT_STUCK_ACTION_THRESHOLD`/`_DEFAULT_STUCK_ACTION_MESSAGE` (3
+  consecutive misses) for any tool_action not explicitly listed, instead of
+  giving unlisted tools no backstop at all. A listed entry (like
+  search_code's) still wins when present, since it can give more targeted
+  advice than the generic message. 1 new test (`list_repo_tree` stuck-loop,
+  reproducing the exact production shape).
+- Full suite: 405 passed, same pre-existing unrelated `test_voice_composer.py`
+  failure.
+
+**Noted, not fixed (real, but bounded/minor):** a no-arg action's
+`args_signature` never changes, so `unretried_inconclusive_tools` can never
+self-clear for it — the ordinary retry-nudge will reject one "final" attempt
+near the end of the turn even after the model has since done unrelated
+productive work, since that tool's flag just sits there for the rest of the
+turn. Costs at most one extra step (bounded by `max_retry_nudges`), not a
+budget-destroying loop like the two fixed above — left alone per the
+reactive-fixes-only discipline until it actually causes a real problem.
+
+**Also surfaced, unrelated to the above:** a 504 Gateway Timeout from the
+underlying Gemini API crashed the node with an unhandled exception rather
+than a graceful partial-answer recovery. First observed instance of this
+specific class of failure (a transient infra error, not a reasoning bug) —
+logged here rather than acted on, consistent with fixing from real repeated
+evidence rather than speculative resilience work.
+
+---
+
 ## Operational — automatic checkpoint retention (done)
 
 **Shipped:** `backend/services/checkpoint_retention.py` —

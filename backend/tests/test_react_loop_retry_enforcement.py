@@ -438,6 +438,61 @@ async def test_stuck_action_streak_resets_on_success_before_threshold():
 
 
 @run_async
+async def test_unlisted_tool_still_gets_generic_stuck_redirect():
+    """Reproduces a second real production failure: list_repo_tree (a no-argument action, not
+    listed in stuck_action_redirects at all) 404'd repeatedly after a bad repo resolution, and
+    the model just kept calling it again with a differently-worded purpose each time — a
+    no-arg action has nothing else to vary, so this technically satisfied 'try something
+    different' without changing anything real. Any tool not explicitly listed must still get a
+    generic circuit breaker instead of no backstop at all."""
+    captured_prompts = []
+    responses = [
+        _llm_response(action="query", purpose="List the tree", tool_action="list_repo_tree", args={}),
+        _llm_response(action="query", purpose="List it again, might be transient", tool_action="list_repo_tree", args={}),
+        _llm_response(action="query", purpose="One more time to be sure", tool_action="list_repo_tree", args={}),
+        _llm_response(action="query", purpose="One last time", tool_action="list_repo_tree", args={}),  # rejected (default threshold is 3)
+        # A no-arg action's args_signature never changes, so unretried_inconclusive_tools can
+        # never clear itself — the first "final" attempt still gets the ordinary retry-nudge
+        # rejection (a separate, independent mechanism from the stuck-action redirect above)
+        # before the forced-final step lets a second one through.
+        _llm_response(action="final", answer="Premature — should be rejected by the retry nudge."),
+        _llm_response(action="final", answer="Could not access the repo tree."),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        act_calls = []
+
+        async def act(decision):
+            act_calls.append(decision)
+            return "ERROR: could not fetch tree (404)"
+
+        result = await aw.run_react_loop(
+            question="list the repo",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=6,
+            node_name="test_node",
+            # No stuck_action_redirects entry for list_repo_tree at all — the generic fallback
+            # (_DEFAULT_STUCK_ACTION_THRESHOLD) is what must catch this.
+            stuck_action_redirects={"search_code": (2, "Switch to find_file instead of search_code.")},
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert result["final_answer"] == "Could not access the repo tree."
+    # The 4th list_repo_tree attempt was rejected before execution (default threshold is 3).
+    assert len(act_calls) == 3
+    assert "list_repo_tree multiple times in a row" in captured_prompts[3]
+
+
+@run_async
 async def test_second_consecutive_error_does_not_trigger_a_second_nudge():
     """A genuinely doomed action (still failing after the forced retry) must still get an
     honest 'final' on the next try rather than the loop nudging forever."""

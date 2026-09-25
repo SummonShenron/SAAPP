@@ -95,6 +95,26 @@ TOOL_AGENT_STUCK_ACTION_REDIRECTS = {
     ),
 }
 
+# A second real production trace showed the exact same failure shape recur on a DIFFERENT,
+# unlisted action: list_repo_tree (a no-argument action) 404'd because of a bad repo resolution,
+# and with no entry here for it, the model just kept calling it again with a differently-worded
+# "purpose" each time — technically satisfying "try something different" without being able to
+# change anything that actually mattered, since a no-arg action has nothing to vary. Two
+# independent real instances of "an unlisted tool gets no mechanical backstop at all" is enough
+# to generalize rather than hand-author one more entry and wait for the third: any tool_action not
+# explicitly listed above still gets this generic circuit breaker once its own consecutive-miss
+# streak crosses this threshold — a real answer or a genuinely different tool switches it off, same
+# as the specific entries.
+_DEFAULT_STUCK_ACTION_THRESHOLD = 3
+_DEFAULT_STUCK_ACTION_MESSAGE = (
+    "You have called {tool} multiple times in a row with no useful result. Rewording the stated "
+    "purpose each time is not a real retry if the action itself takes no arguments (or the same "
+    "ones) to vary — it is the same call bouncing off the same wall. Switch to a genuinely "
+    "different action this turn instead of calling {tool} again. If you have real reason to "
+    "believe the underlying repo/resource itself is inaccessible (not just this one path/query), "
+    "say so honestly in your final answer instead of continuing to retry."
+)
+
 # A real production trace showed a "final" confidently and repeatedly denying browser access
 # ("I don't actually have a live browser tool...") while browser_navigate sat in that exact
 # turn's own action menu the whole time — a prose rule telling it to check the menu before
@@ -2459,11 +2479,17 @@ async def run_react_loop(
         # detour (like listing the repo tree) before eventually trying to conclude.
         needs_retry_nudge = not forced_final and bool(unretried_inconclusive_tools)
 
-        stuck_redirect_entry = (
-            stuck_action_redirects.get(stuck_action_streak["tool"])
-            if stuck_action_redirects and stuck_action_streak["tool"]
-            else None
-        )
+        stuck_redirect_entry = None
+        if stuck_action_streak["tool"]:
+            # A tool-specific entry (like search_code's) always wins when listed — it can give
+            # more targeted advice ("call find_file instead") than the generic fallback below can.
+            # Every OTHER tool still gets the generic circuit breaker instead of no backstop at
+            # all — see _DEFAULT_STUCK_ACTION_MESSAGE's comment for why this is no longer
+            # search_code-specific.
+            stuck_redirect_entry = (stuck_action_redirects or {}).get(stuck_action_streak["tool"]) or (
+                _DEFAULT_STUCK_ACTION_THRESHOLD,
+                _DEFAULT_STUCK_ACTION_MESSAGE.format(tool=stuck_action_streak["tool"]),
+            )
         stuck_redirect_active = (
             not forced_final
             and stuck_redirect_entry is not None
@@ -3099,18 +3125,56 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
         gh_base = "https://github.com"
 
         def _get_default_branch():
+            # Returns None (not a guessed "main") on failure — a real production trace showed
+            # extract_github_repo can still false-positive on an ordinary phrase with a bare slash
+            # in it (e.g. "the updated functions/diffs for whatever needs to change" was read as
+            # owner/repo "functions/diffs") even with its existing generic-path-segment denylist,
+            # since that denylist can never cover every ordinary English word pair. Silently
+            # falling back to branch "main" while keeping the WRONG repo meant every single
+            # GitHub action that turn 404'd with no way for the model to ever learn why — it just
+            # kept retrying list_repo_tree, unable to diagnose a bad premise it never saw. None
+            # lets the caller retry against a known-good repo instead of guessing a branch for one
+            # that doesn't exist.
             repo_res = requests.get(f"{api_base}/repos/{repo}", headers=headers)
             if repo_res.status_code != 200:
                 logger.warning(
-                    "[tool_agent_node] Could not fetch repo metadata for %r (status %s) — "
-                    "falling back to branch 'main'. Every GitHub action this turn will target "
-                    "this exact repo, so if that's wrong, every one of them will 404.",
+                    "[tool_agent_node] Could not fetch repo metadata for %r (status %s).",
                     repo, repo_res.status_code,
                 )
-                return "main"
+                return None
             return repo_res.json().get("default_branch", "main")
 
         default_branch = await asyncio.to_thread(_get_default_branch)
+        repo_resolution_note = ""
+        if default_branch is None:
+            attempted_repo = repo
+            fallback_repo = state.get("repo") or "SummonShenron/SAAPP"
+            if fallback_repo != attempted_repo:
+                # Reassigned in this same enclosing scope, before any of the closures below
+                # (_fetch_repo_tree_items, _read_file, _get_default_branch itself, ...) are ever
+                # CALLED — Python resolves a free variable in its enclosing scope at call time,
+                # not at def time, so every GitHub action this turn correctly targets the
+                # corrected repo without needing to thread a new parameter through each one.
+                repo = fallback_repo
+                default_branch = await asyncio.to_thread(_get_default_branch)
+                if default_branch is not None:
+                    repo_resolution_note = (
+                        f"NOTE: the repo detected from your message ('{attempted_repo}') could not "
+                        f"be found on GitHub — most likely a false-positive extraction from ordinary "
+                        f"text containing a '/' rather than a real repo mention, not an environment "
+                        f"or token problem. Automatically fell back to '{repo}' instead; every "
+                        f"action below targets this repo. If '{repo}' is also wrong, say the "
+                        f"correct owner/repo explicitly rather than retrying the same lookup."
+                    )
+            if default_branch is None:
+                default_branch = "main"
+                repo_resolution_note = repo_resolution_note or (
+                    f"WARNING: could not confirm repo '{repo}' exists or is accessible on GitHub — "
+                    f"every action below may 404. This means the repo itself is wrong or "
+                    f"inaccessible, not that a specific file/path is missing — if repeated lookups "
+                    f"keep failing, say so plainly instead of retrying the same no-argument action "
+                    f"again with only the stated purpose reworded."
+                )
         logger.info("[tool_agent_node] Resolved repo=%r, default_branch=%r", repo, default_branch)
 
         # Mongo collection names are only resolved (and only ever offered as an action) for
@@ -3129,6 +3193,8 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 mongo_schema = "(unable to list collections)"
 
         schema_parts = [f"repo={repo}", f"default_branch={default_branch}"]
+        if repo_resolution_note:
+            schema_parts.append(repo_resolution_note)
         if is_admin:
             schema_parts.append(f"mongodb_collections={mongo_schema}")
         schema = ", ".join(schema_parts)
