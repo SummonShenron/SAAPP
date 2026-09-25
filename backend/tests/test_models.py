@@ -38,6 +38,22 @@ def test_is_transient_llm_error_negative_for_unrelated_errors():
     assert not m._is_transient_llm_error(ValueError("could not parse response"))
 
 
+def test_is_transient_llm_error_detects_bare_timeout_and_connection_errors():
+    # The real production trace this covers: a raw TimeoutError from aiohttp's own internal
+    # request timer, str(TimeoutError()) is typically empty so no text marker could ever match
+    # it — must be caught by type instead.
+    assert m._is_transient_llm_error(TimeoutError())
+    assert m._is_transient_llm_error(TimeoutError("some message"))
+    assert m._is_transient_llm_error(ConnectionError("connection reset"))
+
+
+def test_is_transient_llm_error_negative_for_other_empty_message_errors():
+    # A bare TimeoutError/ConnectionError is transient by type — an unrelated exception with an
+    # equally empty message must not be swept in just because string-matching finds nothing.
+    assert not m._is_transient_llm_error(ValueError())
+    assert not m._is_transient_llm_error(RuntimeError())
+
+
 # ---------------------------------------------------------------------------
 # LazyLLM.ainvoke — previously undefined on the class at all, so calls fell
 # through __getattr__ straight to the real client's own ainvoke, completely
@@ -66,6 +82,20 @@ async def test_ainvoke_returns_real_result_on_success():
 async def test_ainvoke_gracefully_degrades_on_504_instead_of_raising():
     fake_client = MagicMock()
     fake_client.ainvoke = AsyncMock(side_effect=Exception("504 Gateway Timeout. DEADLINE_EXCEEDED"))
+    llm = _lazy_llm_with_fake_client(fake_client)
+
+    result = await llm.ainvoke("some prompt")
+
+    assert "experiencing high traffic" in result.content
+
+
+@run_async
+async def test_ainvoke_gracefully_degrades_on_bare_timeout_error():
+    # The real production trace this covers: a raw TimeoutError from aiohttp's own internal
+    # request timer (no descriptive message at all) still crashed the loop before this fix,
+    # since the original 503/504 detection was purely text-based.
+    fake_client = MagicMock()
+    fake_client.ainvoke = AsyncMock(side_effect=TimeoutError())
     llm = _lazy_llm_with_fake_client(fake_client)
 
     result = await llm.ainvoke("some prompt")

@@ -959,6 +959,43 @@ thing.
 
 ---
 
+## 4i. `LazyLLM`'s transient-error detection was too narrow a second time — a bare `TimeoutError` (fixed)
+
+Tried again after 4h. This time the model correctly pushed further (step 3's
+`search_code` genuinely found nothing new, matching the codebase's real
+layout — no `find_file`/`trace_symbol` fallback attempted, a real but
+separate quality gap not chased here) before crashing at step 7 with a raw
+`TimeoutError` from aiohttp's own internal request timer, chained from an
+`asyncio.CancelledError` — a different exception shape than 4f's descriptive
+"504 Gateway Timeout" text. `LazyLLM.ainvoke` (built in 4f) correctly ran and
+called `_is_transient_llm_error`, but that check is purely text-based
+(`"503"`/`"504"`/etc. substrings), and `str(TimeoutError())` is typically
+empty — nothing to match, so it correctly-per-its-own-logic re-raised.
+
+**Fixed in `backend/models/models.py`:** `_is_transient_llm_error` now also
+checks the exception's *type* (`TimeoutError`, `ConnectionError`), not just
+its text, specifically because an exception with no message can't be caught
+by string matching no matter how many markers are added. Confirmed this is
+safe to treat as gracefully-degradable rather than a real error: this
+`TimeoutError` originates from google-genai's own HTTP client giving up on a
+slow request, not from this app's Stop-button cancellation path (built
+earlier this session), which goes through `Request.is_disconnected()`
+polling and an explicit generator `.aclose()` — never through an exception
+raised out of `llm.ainvoke()` itself — so this fix cannot suppress a genuine
+user-initiated stop. 4 new tests (type-based detection for both new types,
+a negative case confirming an unrelated empty-message exception like a bare
+`ValueError`/`RuntimeError` isn't swept in just because it also has no text,
+and an `ainvoke`-level integration test for the bare `TimeoutError` case).
+Full suite: 425 passed, same pre-existing unrelated failure.
+
+Two real, differently-shaped transient-error crashes in two consecutive
+attempts (4f's descriptive 504, this bare `TimeoutError`) is a reasonable
+signal that "the LLM call itself failed for infra reasons" is a real,
+recurring category here — worth remembering if a third shape shows up,
+rather than continuing to add one marker/type at a time indefinitely.
+
+---
+
 ## Operational — automatic checkpoint retention (done)
 
 **Shipped:** `backend/services/checkpoint_retention.py` —

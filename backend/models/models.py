@@ -12,10 +12,22 @@ from langchain_core.messages import AIMessage
 # explicit "never invent beyond what you found" instruction. Graceful degradation here lets the
 # loop's own existing recovery path (an unparseable response just becomes one recorded failed
 # step, not a crash) run instead of losing the whole turn to a transient API hiccup.
+#
+# A second real trace hit a DIFFERENT shape of the same underlying problem: a raw TimeoutError
+# from aiohttp's own internal request timer (str(TimeoutError()) is typically empty, so no text
+# marker could ever match it) — this is google-genai's HTTP client giving up on a slow request,
+# not our own app-level Stop-button cancellation (that goes through Request.is_disconnected()
+# polling + explicit generator .aclose(), never through an exception raised out of llm.ainvoke()
+# itself), so it's safe to treat as transient rather than let it propagate. Checked by type,
+# since text-matching can't catch an exception with no message. ConnectionError is included
+# alongside it as the same class of "the network hiccupped, not a reasoning problem" failure.
 _TRANSIENT_ERROR_MARKERS = ("503", "UNAVAILABLE", "504", "DEADLINE_EXCEEDED", "Gateway Timeout")
+_TRANSIENT_ERROR_TYPES = (TimeoutError, ConnectionError)
 
 
 def _is_transient_llm_error(e: Exception) -> bool:
+    if isinstance(e, _TRANSIENT_ERROR_TYPES):
+        return True
     text = str(e)
     return any(marker in text for marker in _TRANSIENT_ERROR_MARKERS)
 
