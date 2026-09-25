@@ -1313,3 +1313,168 @@ async def test_batch_size_beyond_cap_is_dropped_with_its_own_error():
     assert len(act_calls) == aw._MAX_BATCH_SIZE
     dropped = [a for a in result["attempts"] if "too many actions" in a["observation"]]
     assert len(dropped) == over_cap - aw._MAX_BATCH_SIZE
+
+
+# ---------------------------------------------------------------------------
+# Redundant-repeat backstop — a real production trace (docs/coding-agent-
+# roadmap.md, Section 9) burned its entire step budget re-reading the same
+# file/interface it had already gotten a real result for several steps
+# earlier, on a turn that then ran out of budget without ever answering.
+# ---------------------------------------------------------------------------
+
+@run_async
+async def test_exact_repeat_of_a_successful_action_is_skipped_not_re_executed():
+    """The real gap: a byte-identical repeat of an already-succeeded call must be skipped
+    before ever reaching act() again, not silently re-executed for zero new information."""
+    responses = [
+        _llm_response(action="query", purpose="Read the file", tool_action="read_repo_file", args={"path": "foo.py"}),
+        _llm_response(action="query", purpose="Read it again", tool_action="read_repo_file", args={"path": "foo.py"}),
+        _llm_response(action="final", answer="done"),
+    ]
+
+    async def fake_ainvoke(prompt):
+        return responses.pop(0)
+
+    act_calls = []
+
+    async def act(decision):
+        act_calls.append(decision)
+        return "def foo(): pass"
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        result = await aw.run_react_loop(
+            question="what does foo.py contain?",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert len(act_calls) == 1  # the second identical call never reached act()
+    assert result["final_answer"] == "done"
+    assert len(result["attempts"]) == 2
+    assert "already ran this exact action" in result["attempts"][1]["observation"]
+
+
+@run_async
+async def test_repeat_with_different_args_is_not_treated_as_redundant():
+    """False-positive guard: two calls to the same tool_action with genuinely different args
+    are two real, distinct lookups — neither should ever be skipped."""
+    responses = [
+        _llm_response(action="query", purpose="Read file A", tool_action="read_repo_file", args={"path": "a.py"}),
+        _llm_response(action="query", purpose="Read file B", tool_action="read_repo_file", args={"path": "b.py"}),
+        _llm_response(action="final", answer="done"),
+    ]
+
+    async def fake_ainvoke(prompt):
+        return responses.pop(0)
+
+    act_calls = []
+
+    async def act(decision):
+        act_calls.append(decision["args"]["path"])
+        return f"content of {decision['args']['path']}"
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        result = await aw.run_react_loop(
+            question="compare a.py and b.py",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert act_calls == ["a.py", "b.py"]
+    assert result["final_answer"] == "done"
+
+
+@run_async
+async def test_repeat_of_a_failed_action_is_not_treated_as_redundant():
+    """A repeated call that keeps failing is a genuinely different problem (the existing
+    retry-nudge/stuck-action tracking), not a redundant success — it must still execute for
+    real each time, never silently skipped."""
+    responses = [
+        _llm_response(action="query", purpose="Read missing file", tool_action="read_repo_file", args={"path": "missing.py"}),
+        _llm_response(action="query", purpose="Try again", tool_action="read_repo_file", args={"path": "missing.py"}),
+        _llm_response(action="final", answer="giving up"),
+        _llm_response(action="final", answer="giving up honestly"),
+    ]
+
+    async def fake_ainvoke(prompt):
+        return responses.pop(0)
+
+    act_calls = []
+
+    async def act(decision):
+        act_calls.append(decision)
+        return "ERROR: 404 not found"
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        result = await aw.run_react_loop(
+            question="what's in missing.py?",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert len(act_calls) == 2  # both failed attempts genuinely executed, neither skipped
+
+
+@run_async
+async def test_redundant_repeat_inside_a_batch_is_skipped_but_others_still_run():
+    """The same backstop must apply per-item inside a batch: a redundant item is skipped with
+    its own synthetic result while genuinely new items in the same batch still execute."""
+    responses = [
+        _llm_response(action="query", purpose="Read foo", tool_action="read_repo_file", args={"path": "foo.py"}),
+        _llm_response(action="query", purpose="Batch read foo again and read bar", queries=[
+            {"tool_action": "read_repo_file", "args": {"path": "foo.py"}, "purpose": "Read foo again"},
+            {"tool_action": "read_repo_file", "args": {"path": "bar.py"}, "purpose": "Read bar"},
+        ]),
+        _llm_response(action="final", answer="done"),
+    ]
+
+    async def fake_ainvoke(prompt):
+        return responses.pop(0)
+
+    act_calls = []
+
+    async def act(decision):
+        act_calls.append(decision["args"]["path"])
+        return f"content of {decision['args']['path']}"
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        result = await aw.run_react_loop(
+            question="read foo and bar",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+            batchable_actions=frozenset({"read_repo_file"}),
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert act_calls == ["foo.py", "bar.py"]  # foo.py only ever actually executed once
+    assert result["final_answer"] == "done"
+    assert len(result["attempts"]) == 3
+    assert "already ran this exact action" in result["attempts"][1]["observation"]
+    assert result["attempts"][2]["observation"] == "content of bar.py"

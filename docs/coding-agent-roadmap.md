@@ -1298,6 +1298,57 @@ actually too narrow, not preemptively.
 
 ---
 
+## 9. Redundant-repeat backstop — burning step budget re-doing already-done work (fixed, built directly)
+
+A real trace (a frontend fix asked of SAAPP directly, unrelated to any prior
+roadmap item — updating the trace-panel loading text) burned its entire
+14-step deep-thinking budget without ever producing an answer. Two distinct
+inefficiencies stood out on inspection: several genuinely independent
+lookups were done one at a time instead of batched (batching existed the
+whole time and was never used once — its own "capability exists, doesn't
+get invoked" problem, same as `find_file`/`search_literal` before it, not
+separately fixed here), and — the part this section fixes — two steps
+(re-reading the `TraceStep` interface and its rendering logic) were an exact
+repeat of two earlier steps that had already gotten a real, successful
+answer, several steps prior in the same turn. Pure wasted budget on zero new
+information.
+
+**Fixed in `agent_workflow.py`:** `succeeded_action_signatures`, a new set
+tracking every `(tool_action_name, args_signature)` pair that has genuinely
+succeeded (not an ERROR, not empty, not an unresolved truncation) at any
+point in the current turn, populated inside the existing
+`_record_action_result` bookkeeping. Before a proposed action (a lone
+`tool_action`/`args` pair, or any item inside a `queries` batch) is executed,
+`_is_redundant_repeat` checks whether that exact signature already succeeded
+— if so, the action is skipped before ever reaching `act()` (no wasted
+network/GitHub API call either) and recorded with a message pointing back at
+the matching earlier attempt instead of re-running it.
+
+Unlike every other mechanical check built this session, this one is
+**unconditional with no budget limit at all** — not a design oversight, a
+deliberate difference: a byte-identical repeat of an already-succeeded call
+within one turn can only ever return the same answer again, so there is no
+principled case where letting it re-run is ever the right call (contrast
+with the capability-denial or ungrounded-diff checks, which must eventually
+let a genuinely correct claim through).
+
+4 new tests: the core case (identical repeat skipped, `act()` called only
+once), a false-positive guard (different args on the same tool_action both
+execute for real), a negative guard (a repeated *failing* call is a
+different, already-handled problem — retry-nudge/stuck-action tracking — and
+must still execute for real each time, never silently skipped), and the
+same behavior applied to one item inside an otherwise-valid batch. Full
+suite: 448 passed, same pre-existing unrelated `test_voice_composer.py`
+failure.
+
+**Deliberately not addressed here:** batching's own non-adoption (it was
+available for the entire 14-step trace and never used). That's the same
+"opt-in capability doesn't get reached for" pattern as `find_file` and
+`search_literal` before it — worth its own fix, but a distinct problem from
+redundant re-work, and not chased in this pass.
+
+---
+
 ## Operational — automatic checkpoint retention (done)
 
 **Shipped:** `backend/services/checkpoint_retention.py` —

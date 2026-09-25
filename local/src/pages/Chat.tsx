@@ -96,6 +96,7 @@ interface ChatMessageListProps {
   hasChatted: boolean;
   loading: boolean;
   agentStatus: string;
+  latestStepTitle: string;
   theme: "sonic" | "shadow";
   isEmbedded: boolean;
   chatWindowRef: React.RefObject<HTMLDivElement | null>;
@@ -169,7 +170,7 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
 // direct function props, so a skipped re-render here never risks calling a stale closure over
 // sessionId/principal/etc — the same class of bug fixed earlier for attachmentsRef.
 const ChatMessageList = React.memo(function ChatMessageList({
-  messages, hasChatted, loading, agentStatus, theme, isEmbedded,
+  messages, hasChatted, loading, agentStatus, latestStepTitle, theme, isEmbedded,
   chatWindowRef, messagesEndRef, attachmentsRef, handleSendMessageRef, handleFeedbackRef, getTokenRef,
 }: ChatMessageListProps) {
   if (!hasChatted) return null;
@@ -374,13 +375,13 @@ const ChatMessageList = React.memo(function ChatMessageList({
               <span></span>
             </div>
             <div className="loading-text">
-              {getNodeLabel(agentStatus) || "Thinking..."}
+              {latestStepTitle || "Thinking..."}
             </div>
           </div>
         ) : (
           <div className="sonic-loader-container">
             <div className="sonic-ring-loader"></div>
-            {agentStatus && <span className="agent-status-text">{agentStatus}</span>}
+            {latestStepTitle && <span className="agent-status-text">{latestStepTitle}</span>}
           </div>
         )
       )}
@@ -1031,11 +1032,16 @@ useEffect(() => {
     isProcessingQueue.current = true;
     const item = nodeQueueRef.current.shift()!;
     const friendlyLabel = getNodeLabel(item.node);
+    // The main (non-embedded) loading spinner's label — latestStepTitle below — should show the
+    // backend's own per-step detail (e.g. "Synthesizing final answer for...") rather than the
+    // generic friendlyLabel, since that's the actual useful, per-step text for a multi-step node
+    // like tool_agent_node's ReAct loop, where no single static label fits every step.
+    const displayTitle = item.detail || friendlyLabel;
 
     setAgentStatus(item.node);
     setAgentPath(prev => (prev.includes(item.node) ? prev : [...prev, item.node]));
     markTraceComplete();
-    setLatestStepTitle(friendlyLabel);
+    setLatestStepTitle(displayTitle);
 
     addTraceStep({
       title: friendlyLabel,
@@ -1383,6 +1389,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           hasChatted={hasChatted}
           loading={loading}
           agentStatus={agentStatus}
+          latestStepTitle={latestStepTitle}
           theme={theme}
           isEmbedded={isEmbedded}
           chatWindowRef={chatWindowRef}

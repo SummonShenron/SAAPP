@@ -2585,7 +2585,21 @@ async def run_react_loop(
     just that one item, and any tool_action not in `batchable_actions` is rejected individually
     with a synthetic error instead of executed — deliberately excludes writes
     (`run_mongo_query`), real slow CI dispatches (`run_repo_tests`/`run_snippet`), and every
-    `browser_*` action (inherently stateful/sequential), regardless of what the caller passes."""
+    `browser_*` action (inherently stateful/sequential), regardless of what the caller passes.
+
+    A real trace showed batching alone doesn't stop a different kind of waste: the model re-ran
+    the exact same tool_action + args it had already gotten a real, successful result for several
+    steps earlier — reading the same file/interface twice for zero new information, on a turn that
+    then ran out of its entire step budget without ever producing an answer
+    (docs/coding-agent-roadmap.md, Section 9). `succeeded_action_signatures` tracks every
+    (tool_action_name, args_signature) pair that has genuinely succeeded (not an ERROR, not empty,
+    not an unresolved truncation) at any point THIS turn. Unlike every other mechanical check in
+    this loop, this one is unconditional with no budget limit at all — a byte-identical repeat of
+    an already-succeeded call can only ever return the same answer again within one turn, so there
+    is no genuine case where actually re-running it is the right call. A repeat is skipped before
+    ever reaching `act()` (no wasted network/GitHub API call either) and recorded with a message
+    pointing back at the matching earlier attempt, for both a lone action and any item inside a
+    batch."""
     attempts: list = list(initial_attempts or [])
     final_answer = None
     # Defaults true (show the receipt) whenever a "final" doesn't explicitly say otherwise —
@@ -2604,6 +2618,15 @@ async def run_react_loop(
     # tool_action_name in this set has an unresolved truncation, instead of sharing
     # retry_nudge_count's limited budget with genuinely-unfixable failures.
     truncated_unresolved_tools: set = set()
+    # A real production trace (docs/coding-agent-roadmap.md, Section 9) showed the model re-run
+    # the exact same tool_action + args it had already gotten a real, successful result for
+    # earlier in the SAME turn — re-reading a file/interface it had already read minutes (and
+    # several steps) before, burning step budget on zero new information. Unlike every other
+    # tracking dict here, this isn't about a failure — it's the opposite: (tool_action_name,
+    # args_signature) pairs are added here only on a genuine SUCCESS (see _record_action_result),
+    # so a later identical call can be recognized as pure redundant repeat and skipped without
+    # ever hitting the network/GitHub API a second time for it.
+    succeeded_action_signatures: set = set()
     stuck_action_streak = {"tool": None, "count": 0}  # consecutive misses on ONE tool, any args
     stuck_action_reject_count = 0
     MAX_STUCK_ACTION_REJECTIONS = 1
@@ -2854,6 +2877,9 @@ async def run_react_loop(
                     elif still_failing:
                         unretried_inconclusive_tools[tool_action_name] = args_signature
 
+                if not still_failing:
+                    succeeded_action_signatures.add((tool_action_name, args_signature))
+
                 is_stuck_worthy_miss = still_failing and not is_unresolved_truncation
                 if is_stuck_worthy_miss and stuck_action_streak["tool"] == tool_action_name:
                     stuck_action_streak["count"] += 1
@@ -2869,6 +2895,18 @@ async def run_react_loop(
             )
             attempts.append({"purpose": purpose, "action_desc": action_desc, "observation": observation})
 
+        def _is_redundant_repeat(tool_action_name: str, args: dict) -> bool:
+            if not tool_action_name:
+                return False
+            args_signature = json.dumps(args or {}, sort_keys=True, default=str)
+            return (tool_action_name, args_signature) in succeeded_action_signatures
+
+        _REDUNDANT_REPEAT_MESSAGE = (
+            "(Skipped — you already ran this exact action with these exact args earlier this "
+            "turn and it succeeded. Re-use that real result from the matching attempt above "
+            "instead of running it again.)"
+        )
+
         if is_batch:
             batch_purpose = decision.get("purpose") or "Working..."
             valid_items: list[dict] = []
@@ -2878,7 +2916,9 @@ async def run_react_loop(
                 item_purpose = item.get("purpose") or batch_purpose
                 item_args = item.get("args") or {}
                 if tool_name and batchable_actions and tool_name in batchable_actions:
-                    if len(valid_items) < _MAX_BATCH_SIZE:
+                    if _is_redundant_repeat(tool_name, item_args):
+                        _record_action_result(tool_name, item_args, item_purpose, _REDUNDANT_REPEAT_MESSAGE)
+                    elif len(valid_items) < _MAX_BATCH_SIZE:
                         valid_items.append(item)
                     else:
                         _record_action_result(
@@ -2910,8 +2950,12 @@ async def run_react_loop(
 
         purpose = decision.get("purpose", "Working...")
         tool_action_name = decision.get("tool_action") or ""
-        observation = await _execute_one_action(tool_action_name, decision.get("args") or {}, purpose)
-        _record_action_result(tool_action_name, decision.get("args") or {}, purpose, observation)
+        args = decision.get("args") or {}
+        if _is_redundant_repeat(tool_action_name, args):
+            observation = _REDUNDANT_REPEAT_MESSAGE
+        else:
+            observation = await _execute_one_action(tool_action_name, args, purpose)
+        _record_action_result(tool_action_name, args, purpose, observation)
 
     if final_answer is None:
         # Loop ran out of steps without an explicit final action — force one last honest
