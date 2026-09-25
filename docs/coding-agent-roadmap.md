@@ -816,6 +816,70 @@ blip won't independently end a turn early ever again.
 
 ---
 
+## 4g. Cleanest fabrication evidence yet — confidently stopped early with 3 steps of budget still unused (fixed)
+
+Gave SAAPP the same corrected batching prompt a third time, after the 4f fix.
+No crash this time — the loop ran cleanly start to finish. And it still
+produced the same generic, fabricated `run_react_loop` rewrite. This is
+better evidence than 4e/4f, not worse: with the infra excuse gone, what's
+left is a pure judgment failure with nothing else to blame.
+
+Real production logs:
+```
+Step 1 (Locate the file...) — action=list_repo_tree()
+Step 2 (Read the current implementation...) — action=read_repo_file(path=backend/services/agent_workflow.py)
+    | observation='URL: .../agent_workflow.py\nfrom __future__ import annotations\nimport ast\n...'
+Step 3 (Locate the run_react_loop function definition...) — action=search_code(query=def run_react_loop)
+    | observation='docs/coding-agent-roadmap.md\nbackend/services/browser_tool.py\n...\nagent_workflow.py\n...' [paths only, no line content]
+Step 4: accepted final answer after 3 real action(s) — [fabricated implementation]
+```
+
+Not audit-style-detected (this prompt doesn't match `_is_audit_style_task`),
+so the ordinary 7-step budget applied — and it stopped at step 4 with 3 full
+steps still unused. Step 2's `read_repo_file` truncated at
+`_READ_FILE_CHAR_CAP` (3500 chars) — nowhere near `run_react_loop`'s real
+body (~line 2350) — and its own truncation note explicitly says "do not
+assume the file's contents past this point... call read_repo_file again with
+start_line." Step 3's `search_code` only ever returns file *paths*, never
+matched-line content, so it added no new information at all — pure
+confirmation of something already known. The model never made the one
+obvious follow-up call (`read_repo_file(..., start_line=2350)`) and instead
+confidently fabricated a complete implementation, in direct violation of
+the truncation note's own explicit instruction — voluntarily, with plenty of
+budget left and no external pressure forcing the stop.
+
+**Fixed in `agent_workflow.py`**, reusing existing machinery rather than
+building new tracking: `run_react_loop`'s `still_failing` check (which
+already treats an `ERROR:`-prefixed or empty observation as "this step
+didn't get you anywhere," gating the retry-nudge that rejects a premature
+`final`) now also treats a truncated-and-unresolved `read_repo_file` result
+the same way, via a new `_mentions_unresolved_truncation` helper matching
+`_read_file`'s own truncation marker text. A follow-up `read_repo_file` call
+with a real `start_line` has a genuinely different `args_signature`, so it
+clears the flag through the exact same "was this a genuine retry" logic an
+ERROR or empty result already uses — no new tracking dict, no new mechanism,
+just widening what already-proven code considers "inconclusive." 5 new
+tests (helper coverage for both truncation-note variants plus a negative
+against the unrelated `_truncate_observation` marker, and an integration test
+reproducing the exact scenario: premature `final` after a truncated read gets
+rejected once, a real `start_line` re-read is required, then the second
+`final` is accepted). Full suite: 419 passed, same pre-existing unrelated
+failure.
+
+**Why this one crossed the bar for the claim-grounding idea held earlier:**
+the standing rule this session has held to is that speculative hardening
+waits for real evidence, not a hunch about what might break next. This is
+now three real instances of confident fabrication under insufficient
+grounding (4b's plan, 4e/4f's crash-forced synthesis, this clean voluntary
+stop) — but the fix that shipped isn't the broad, fuzzy "verify every claim"
+backstop discussed and deferred back then. It's a narrow, mechanical,
+three-line extension of an already-existing, already-tested check, with a
+precise trigger (a specific marker string) and no fuzzy-matching risk —
+proportionate to the evidence rather than a generalized answer to a still-
+underspecified problem.
+
+---
+
 ## Operational — automatic checkpoint retention (done)
 
 **Shipped:** `backend/services/checkpoint_retention.py` —

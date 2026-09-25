@@ -2290,6 +2290,21 @@ def _is_empty_observation(observation: str) -> bool:
     return observation.strip().lower() in _EMPTY_OBSERVATION_VALUES
 
 
+def _mentions_unresolved_truncation(observation: str) -> bool:
+    """A real production trace showed the model treat a truncated read_repo_file result as if
+    it were the whole file: it read agent_workflow.py once (truncated at _READ_FILE_CHAR_CAP,
+    nowhere near run_react_loop's actual body), never re-called with start_line despite the
+    truncation note explicitly saying to, and confidently proposed a fully fabricated
+    reimplementation instead — with 3 full steps of budget still unused, so this wasn't even
+    budget pressure. The truncation note already tells it not to guess; this makes that
+    mechanical instead of relying on it to comply. Reuses the exact same marker text _read_file
+    emits (both truncation variants share "truncated — this file has"), so a follow-up
+    read_repo_file call with a genuinely different start_line — a different args_signature —
+    clears it via the same unretried_inconclusive_tools machinery an ERROR or empty result
+    already does, no new tracking dict needed."""
+    return "truncated — this file has" in observation
+
+
 _MAX_OBSERVATION_CHARS = 4000
 
 
@@ -2625,7 +2640,11 @@ async def run_react_loop(
         if tool_action_name:
             args_signature = json.dumps(decision.get("args") or {}, sort_keys=True, default=str)
             prior_args_signature = unretried_inconclusive_tools.get(tool_action_name)
-            still_failing = observation.startswith("ERROR") or _is_empty_observation(observation)
+            still_failing = (
+                observation.startswith("ERROR")
+                or _is_empty_observation(observation)
+                or _mentions_unresolved_truncation(observation)
+            )
             if prior_args_signature is not None:
                 # This tool_action was already outstanding. A success, OR a genuinely
                 # different call (even one that also fails), counts as the one honest retry

@@ -815,6 +815,73 @@ async def test_read_repo_file_truncation_includes_definition_index(monkeypatch):
     assert "start_line" in followup_prompt
 
 
+# ---------------------------------------------------------------------------
+# _mentions_unresolved_truncation — a real production trace showed the model
+# treat a truncated read_repo_file result as if it were the whole file: read
+# a large file once, never re-called with start_line despite the truncation
+# note explicitly saying to, and confidently fabricated a full implementation
+# with 3 full steps of budget still unused. This makes "don't guess past a
+# truncation" mechanical instead of relying on the model to comply with the
+# note's own prose.
+# ---------------------------------------------------------------------------
+
+def test_mentions_unresolved_truncation_detects_both_read_file_variants():
+    # Exercises the real truncation note text directly rather than re-deriving it by hand.
+    assert aw._mentions_unresolved_truncation(
+        "... [truncated — this file has 500 lines total, too long to show in full. "
+        "Top-level definitions found in it:\nfoo (line 1)\nCall read_repo_file again with "
+        "start_line set to the one you actually need — do not assume the file's contents "
+        "past this point from general knowledge of what a file like this usually contains.]"
+    )
+    assert aw._mentions_unresolved_truncation(
+        "... [truncated — this file has 500 lines total; re-call with a start_line to read "
+        "further into it instead of guessing what comes next.]"
+    )
+
+
+def test_mentions_unresolved_truncation_negative_for_unrelated_text():
+    assert not aw._mentions_unresolved_truncation("URL: https://github.com/x/y\nimport os\n")
+    # The OTHER, unrelated truncation mechanism (_truncate_observation, for huge Mongo results
+    # etc.) uses different wording and must not false-positive here — re-reading with start_line
+    # makes no sense for that case since it isn't a read_repo_file pagination situation at all.
+    assert not aw._mentions_unresolved_truncation("... [truncated — 5000 total characters]")
+
+
+@run_async
+async def test_final_after_truncated_read_is_rejected_once_then_accepted(monkeypatch):
+    """The exact real production failure this closes: a truncated read_repo_file result, then
+    a confident 'final' with 3 full steps of budget still unused — no crash, no budget
+    exhaustion, just a premature stop. The retry-nudge machinery (already used for ERROR/empty
+    observations) must reject that first 'final' and force a real re-read with start_line."""
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    big_content, _ = _build_large_file_fixture()
+    repo_resp = _http_response(200, {"default_branch": "main"})
+    file_resp = _http_response(200, {"content": _b64(big_content)})
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        if url.endswith("/contents/backend/services/agent_workflow.py"):
+            return file_resp
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+
+    responses = [
+        _llm_response(action="query", purpose="Read the file", tool_action="read_repo_file", args={"path": "backend/services/agent_workflow.py"}),
+        _llm_response(action="final", answer="Premature — proposing changes based on the truncated snippet alone."),
+        _llm_response(action="query", purpose="Actually read further as instructed", tool_action="read_repo_file", args={"path": "backend/services/agent_workflow.py", "start_line": 260}),
+        _llm_response(action="final", answer="Now grounded in the real content."),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("what does memory_save_node do?"))
+
+    assert "Now grounded in the real content." in result["content_to_format"]
+
+
 @run_async
 async def test_read_repo_file_start_line_jumps_past_the_truncation_point(monkeypatch):
     monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
