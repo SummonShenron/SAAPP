@@ -1349,6 +1349,79 @@ redundant re-work, and not chased in this pass.
 
 ---
 
+## 10. Mismatched start_line note — ignoring ground truth it already had (fixed, built directly)
+
+A follow-up real trace, on the exact same "scan tool_agent_node" prompt,
+supplied the real backend log (not just the frontend UI text) this time —
+and it corrected an assumption from the Section 9 writeup: batching genuinely
+WAS used here (two steps each batched 2-3 independent reads together, visible
+as repeated step numbers in the log — `_record_action_result`'s log line uses
+the outer loop's step counter, which stays fixed for every item in one
+batch). So this trace's real waste is narrower and more specific than "no
+batching":
+
+```
+Step 1  list_repo_tree()
+Step 2  find_file(query=tool_agent_node)
+Step 3  search_code(query=tool_agent_node)
+Step 4  read_repo_file(agent_workflow.py) + read_repo_file(test_tool_agent_node.py)  [batched]
+Step 5  search_code(query=def tool_agent_node)          <- redundant: already found in step 4
+Step 6  trace_symbol(symbol=tool_agent_node)             <- redundant, and can't even help
+Step 8  read_repo_file(agent_workflow.py, start_line=400, line_count=200) + 2 more  [batched]
+```
+
+Step 4's `read_repo_file` (no `start_line`) truncated — and its own response
+already appends a real, line-numbered "Top-level definitions found in it"
+index (`_build_definition_index`), which would have named `tool_agent_node`'s
+actual line. Instead of reading that, steps 5 and 6 ran two MORE search
+tools — and neither could have helped anyway: checked `trace_symbol`'s real
+implementation directly, and its output is literally `f"{path}: {line_text}"`
+with no line number at all (GitHub's search API doesn't return one). Step 8
+then guessed `start_line=400`, nowhere near the real function. Three wasted
+steps (5, 6, and the wrong guess at 8) chasing information that was already
+sitting in step 4's own observation.
+
+**Fixed**, and — per a new standing decision this session — this is the
+first fix built following a new file-organization convention: new standalone
+ReAct-loop logic goes in `backend/utils/agent_utils.py` (previously created
+but completely unused — 4 orphaned functions, zero imports anywhere) instead
+of piling more inline closures into `agent_workflow.py` (~4,800+ lines from
+this session's own diagnostic work), preparing for an eventual split
+mirroring the existing `app.py`/`backend/utils/app_utils.py` pattern:
+`agent_workflow.py` keeps the graph nodes, `agent_utils.py` accumulates the
+plain functions.
+
+- **`backend/utils/agent_utils.py`** — new `parse_definition_index_from_observation(observation)`
+  extracts `_build_definition_index`'s embedded table into `{symbol_name:
+  line_number}` (returns `{}` for anything that isn't a truncated,
+  no-`start_line` `read_repo_file` result). New
+  `find_mismatched_start_line_note(purpose, path, start_line, line_count,
+  default_window, index_for_path)` returns a corrective note when `purpose`
+  names a symbol the index already placed at a real line, but the requested
+  `start_line`/`line_count` window won't actually reach it — `None`
+  otherwise, including when there's no index yet for that path or no
+  `start_line` was given at all.
+- **`backend/services/agent_workflow.py`** — new `definition_indexes_by_path: dict`
+  (path -> `{symbol: line}`) populated inside `_record_action_result`
+  whenever a bare (no-`start_line`) `read_repo_file` truncates with a real
+  index. A later `read_repo_file` call for the same path WITH a `start_line`
+  gets checked against it; a mismatch gets its corrective note appended
+  directly onto that call's own (still real, still successful) observation —
+  advisory, not a rejection, and unconditional like the redundant-repeat
+  check (a wrong guess costs nothing to point out, so there's no reason to
+  budget-limit it).
+- 9 new unit tests in `backend/tests/test_agent_utils.py` (index extraction
+  from all three `read_repo_file` response shapes, the exact real-trace
+  mismatch reproduced with its real numbers, window-actually-reaches-it
+  negative, purpose-names-no-indexed-symbol negative, no-index-yet negative,
+  no-start_line negative, default-window-when-line_count-missing) and 2
+  integration tests in `test_react_loop_retry_enforcement.py` (the real
+  shape end-to-end through `run_react_loop`, and a false-positive guard
+  where a correct `start_line` gets no note). Full suite: 459 passed, same
+  pre-existing unrelated `test_voice_composer.py` failure.
+
+---
+
 ## Operational — automatic checkpoint retention (done)
 
 **Shipped:** `backend/services/checkpoint_retention.py` —

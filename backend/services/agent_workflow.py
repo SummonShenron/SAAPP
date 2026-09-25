@@ -55,6 +55,7 @@ from backend.services.browser_tool import (
 )
 from backend.services.ci_test_runner import run_repo_tests, run_python_snippet, DEFAULT_MAX_WAIT_SECONDS as CI_TEST_RUN_MAX_WAIT_SECONDS
 from backend.utils.normalize_utils import ensure_str
+from backend.utils.agent_utils import parse_definition_index_from_observation, find_mismatched_start_line_note
 
 load_dotenv()
 logger = logging.getLogger("SASS Logger")
@@ -2627,6 +2628,14 @@ async def run_react_loop(
     # so a later identical call can be recognized as pure redundant repeat and skipped without
     # ever hitting the network/GitHub API a second time for it.
     succeeded_action_signatures: set = set()
+    # A real trace (Section 10) showed a subtler waste than an exact repeat: after read_repo_file
+    # truncates a file (no start_line given), its own response already lists every top-level
+    # def/class and its real line number — but the model ran two MORE search tools trying to
+    # relocate a symbol it had already been told the line number for, then still guessed the
+    # wrong start_line anyway. Maps path -> {symbol_name: line_number} from every truncated
+    # read_repo_file result seen this turn, so a later start_line guess for a named symbol can be
+    # checked against real ground truth instead of trusted blindly (see find_mismatched_start_line_note).
+    definition_indexes_by_path: dict = {}
     stuck_action_streak = {"tool": None, "count": 0}  # consecutive misses on ONE tool, any args
     stuck_action_reject_count = 0
     MAX_STUCK_ACTION_REJECTIONS = 1
@@ -2879,6 +2888,21 @@ async def run_react_loop(
 
                 if not still_failing:
                     succeeded_action_signatures.add((tool_action_name, args_signature))
+
+                if tool_action_name == "read_repo_file":
+                    path = (args or {}).get("path")
+                    start_line = (args or {}).get("start_line")
+                    if path and not start_line:
+                        index = parse_definition_index_from_observation(observation)
+                        if index:
+                            definition_indexes_by_path[path] = index
+                    elif path and start_line:
+                        note = find_mismatched_start_line_note(
+                            purpose, path, start_line, (args or {}).get("line_count"),
+                            _READ_FILE_DEFAULT_LINE_WINDOW, definition_indexes_by_path.get(path, {}),
+                        )
+                        if note:
+                            observation = f"{observation}\n\n{note}"
 
                 is_stuck_worthy_miss = still_failing and not is_unresolved_truncation
                 if is_stuck_worthy_miss and stuck_action_streak["tool"] == tool_action_name:

@@ -1478,3 +1478,108 @@ async def test_redundant_repeat_inside_a_batch_is_skipped_but_others_still_run()
     assert len(result["attempts"]) == 3
     assert "already ran this exact action" in result["attempts"][1]["observation"]
     assert result["attempts"][2]["observation"] == "content of bar.py"
+
+
+# ---------------------------------------------------------------------------
+# Mismatched start_line note — reproduces the exact real trace (docs/coding-
+# agent-roadmap.md, Section 10): a truncated read_repo_file's own definition
+# index already named tool_agent_node's real line, but the model ran two more
+# search tools and then still guessed the wrong start_line.
+# ---------------------------------------------------------------------------
+
+TRUNCATED_WITH_INDEX = (
+    "URL: https://github.com/x/y/blob/main/backend/services/agent_workflow.py\n"
+    "from __future__ import annotations\nimport ast\n...\n\n"
+    "... [truncated — this file has 4849 lines total, too long to show in full. "
+    "Top-level definitions found in it:\n"
+    "  line 3306: def tool_agent_node\n"
+    "Call read_repo_file again with start_line set to the one you actually need — do not "
+    "assume the file's contents past this point from general knowledge of what a file like "
+    "this usually contains.]"
+)
+AGENT_WORKFLOW_PATH = "backend/services/agent_workflow.py"
+
+
+@run_async
+async def test_wrong_start_line_guess_gets_a_corrective_note_pointing_at_the_real_line():
+    responses = [
+        _llm_response(
+            action="query", purpose="Locate tool_agent_node", tool_action="read_repo_file",
+            args={"path": AGENT_WORKFLOW_PATH},
+        ),
+        _llm_response(
+            action="query", purpose="Read tool_agent_node implementation.", tool_action="read_repo_file",
+            args={"path": AGENT_WORKFLOW_PATH, "start_line": 400, "line_count": 200},
+        ),
+        _llm_response(action="final", answer="done"),
+    ]
+
+    async def fake_ainvoke(prompt):
+        return responses.pop(0)
+
+    async def act(decision):
+        if decision["args"].get("start_line"):
+            return "URL: x\nLines 400-599 of 4849 total:\ndef is_valid_pending_pr(pending_action):\n    ...\n"
+        return TRUNCATED_WITH_INDEX
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        result = await aw.run_react_loop(
+            question="scan tool_agent_node's architecture",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert result["final_answer"] == "done"
+    second_observation = result["attempts"][1]["observation"]
+    assert "already placed at line 3306" in second_observation
+    assert "start_line=3306" in second_observation
+
+
+@run_async
+async def test_correct_start_line_gets_no_corrective_note():
+    """False-positive guard: a start_line that genuinely reaches the indexed symbol must not
+    get flagged."""
+    responses = [
+        _llm_response(
+            action="query", purpose="Locate tool_agent_node", tool_action="read_repo_file",
+            args={"path": AGENT_WORKFLOW_PATH},
+        ),
+        _llm_response(
+            action="query", purpose="Read tool_agent_node implementation.", tool_action="read_repo_file",
+            args={"path": AGENT_WORKFLOW_PATH, "start_line": 3300, "line_count": 150},
+        ),
+        _llm_response(action="final", answer="done"),
+    ]
+
+    async def fake_ainvoke(prompt):
+        return responses.pop(0)
+
+    async def act(decision):
+        if decision["args"].get("start_line"):
+            return "URL: x\nLines 3300-3449 of 4849 total:\nasync def tool_agent_node(state):\n    ...\n"
+        return TRUNCATED_WITH_INDEX
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        result = await aw.run_react_loop(
+            question="scan tool_agent_node's architecture",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert result["final_answer"] == "done"
+    second_observation = result["attempts"][1]["observation"]
+    assert "already placed at line" not in second_observation
