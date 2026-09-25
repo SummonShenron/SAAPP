@@ -880,6 +880,85 @@ underspecified problem.
 
 ---
 
+## 4h. The 4g fix had a real gap — two more, found by trying again for real
+
+Gave SAAPP the corrected prompt a fourth time. Real production logs:
+
+```
+Step 1 — action=list_repo_tree()
+Step 2 — action=read_repo_file(path=backend/services/agent_workflow.py)  [truncated, no start_line]
+Step 3 — action=search_code(query=def run_react_loop)  [paths only, no new info]
+[Step 4 missing from the log — the 4g fix correctly rejected a premature "final" here]
+Step 5 — action=read_repo_file(path=..., start_line=400)  [still incomplete — file is 4552 lines]
+Step 6: accepted final answer  [fabricated again]
+```
+
+The 4g fix genuinely fired (step 4's absence proves it) and the model
+responded exactly right — retried with a real `start_line`. But `start_line=400`
+landed nowhere near `run_react_loop` (~line 2350), the read was still
+incomplete, and step 6 fabricated anyway with zero further resistance. Two
+real gaps, found by testing the actual fix instead of assuming it was done:
+
+1. **`_mentions_unresolved_truncation` only covered two of three truncation
+   message shapes.** `_read_file` has a third: a *windowed* read (one with
+   `start_line` already set) that still has content remaining below emits
+   "N more lines below — re-call with a higher start_line," completely
+   different wording from the "whole file too long" variants. That's exactly
+   the shape a forced retry produces, so it was invisible to the check that
+   exists specifically to catch forced retries. Added it to the same helper.
+2. **A deeper bug in the existing retry-nudge logic itself**, only visible
+   once a real multi-page file was involved: the "one genuine retry earns a
+   pass" rule (documented, deliberate, correct for a truly doomed
+   ERROR/empty action) silently *cleared* the flag on the first different-args
+   retry and never re-armed it — even when that retry was itself still
+   incomplete. A confirming test with `deep_thinking=True` (3 allowed
+   rejections) proved it: the second "final" sailed through completely
+   unblocked after only one retry, because the flag was gone. An
+   unresolved-truncation observation isn't "doomed" the way an error is —
+   it's real, ongoing progress — so it now always re-arms the flag instead of
+   taking the one-pass-and-clear route, keeping the nudge live until a read
+   of that path genuinely reaches the file's end.
+
+**A third thing had to be gotten right at the same time**: the generic
+stuck-action backstop (4e) tracks consecutive misses on one tool_action
+regardless of args, with a default 3-miss threshold. Once truncation started
+correctly re-arming the retry-nudge on every incomplete page, a genuinely
+huge file needing 4+ sequential `read_repo_file` calls would trip that
+*separate* mechanism and get outright rejected — punishing exactly the
+correct behavior (reading further into the same file) as if it were the same
+doomed call repeating. Fixed by excluding an unresolved truncation from the
+stuck-streak update entirely (treated like a success there) while still
+requiring it to re-arm the retry-nudge — the two mechanisms now agree that
+"different start_line each time" is progress, not stuckness.
+
+**Fixed, all in `agent_workflow.py`:**
+- `_mentions_unresolved_truncation` now also matches the windowed-read
+  "more lines below" marker.
+- The retry-nudge tracking splits unresolved-truncation from ERROR/empty:
+  truncation always re-arms `unretried_inconclusive_tools`; ERROR/empty keep
+  the original one-genuine-retry-clears-it behavior.
+- The stuck-action streak update now excludes unresolved-truncation misses,
+  so legitimate multi-page reads of one large file never trip it.
+- 3 new tests: the missing truncation-message variant, a `deep_thinking=True`
+  end-to-end reproduction of the exact real bug (two rejections in a row,
+  each forcing real pagination progress, only accepted once a read
+  genuinely reaches the file's end), and 5 sequential paginated reads of a
+  simulated 650-line file confirming the stuck-action backstop never fires
+  despite far exceeding its own threshold.
+- Full suite: 422 passed, same pre-existing unrelated failure.
+
+**The pattern worth naming**: this fix only reached its correct, final shape
+by actually testing it against SAAPP's real behavior a second time rather
+than considering 4g done once its own unit tests passed. The first version's
+tests only exercised a single rejection (the non-deep-thinking default,
+`max_retry_nudges=1`), which happened to never expose the "clears and never
+re-arms" bug — it took the real multi-rejection, multi-page trace to surface
+it. Worth remembering next time a fix's own tests all pass: passing tests
+prove the fix does what the tests check, not that the tests check the right
+thing.
+
+---
+
 ## Operational — automatic checkpoint retention (done)
 
 **Shipped:** `backend/services/checkpoint_retention.py` —

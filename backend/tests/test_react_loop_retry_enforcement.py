@@ -493,6 +493,60 @@ async def test_unlisted_tool_still_gets_generic_stuck_redirect():
 
 
 @run_async
+async def test_paginated_reads_of_a_large_file_never_trip_the_stuck_action_backstop():
+    """Real progress through a genuinely huge file (a different, advancing start_line each
+    call) must never be confused with the same doomed action repeating — the generic
+    stuck-action circuit breaker (default threshold 3) would otherwise fire on the 4th
+    read_repo_file call even though each one is legitimately reading further, not bouncing off
+    the same wall. Every call here reports "more lines below" (still incomplete) except the
+    last, which reaches the end — 5 read_repo_file calls in a row, well past the threshold of 3,
+    must all go through uninterrupted."""
+    responses = [
+        _llm_response(action="query", purpose="Read page 1", tool_action="read_repo_file", args={"path": "big.py"}),
+        _llm_response(action="query", purpose="Read page 2", tool_action="read_repo_file", args={"path": "big.py", "start_line": 150}),
+        _llm_response(action="query", purpose="Read page 3", tool_action="read_repo_file", args={"path": "big.py", "start_line": 300}),
+        _llm_response(action="query", purpose="Read page 4", tool_action="read_repo_file", args={"path": "big.py", "start_line": 450}),
+        _llm_response(action="query", purpose="Read page 5, reaches the end", tool_action="read_repo_file", args={"path": "big.py", "start_line": 600}),
+        _llm_response(action="final", answer="Read the whole file across 5 pages."),
+    ]
+
+    call_count = {"n": 0}
+
+    async def fake_ainvoke(prompt):
+        response = responses[call_count["n"]]
+        call_count["n"] += 1
+        return response
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        act_calls = []
+
+        async def act(decision):
+            act_calls.append(decision)
+            start_line = (decision.get("args") or {}).get("start_line", 0)
+            if start_line >= 600:
+                return "URL: x\nLines 600-650 of 650 total:\n...(final page, no more remaining)"
+            return f"URL: x\nLines {start_line}-{start_line + 149} of 650 total:\n... [more lines below — re-call with a higher start_line to keep reading]"
+
+        result = await aw.run_react_loop(
+            question="read the whole file",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=8,
+            node_name="test_node",
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert result["final_answer"] == "Read the whole file across 5 pages."
+    # All 5 reads actually executed — none were rejected by the generic stuck-action backstop,
+    # despite read_repo_file being called 5 times in a row (well past its threshold of 3).
+    assert len(act_calls) == 5
+
+
+@run_async
 async def test_second_consecutive_error_does_not_trigger_a_second_nudge():
     """A genuinely doomed action (still failing after the forced retry) must still get an
     honest 'final' on the next try rather than the loop nudging forever."""

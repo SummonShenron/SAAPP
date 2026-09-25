@@ -839,12 +839,28 @@ def test_mentions_unresolved_truncation_detects_both_read_file_variants():
     )
 
 
+def test_mentions_unresolved_truncation_detects_windowed_read_with_more_remaining():
+    # A second real trace immediately exposed a gap in the first fix: forced to retry, the
+    # model correctly called read_repo_file WITH a start_line — but a windowed read that still
+    # has more content below emits a THIRD, different message shape than the two "whole file
+    # too long" variants above, and it wasn't covered.
+    assert aw._mentions_unresolved_truncation(
+        "URL: https://github.com/x/y\nLines 400-549 of 4552 total:\n...\n"
+        "... [4003 more lines below — re-call with a higher start_line to keep reading]"
+    )
+
+
 def test_mentions_unresolved_truncation_negative_for_unrelated_text():
     assert not aw._mentions_unresolved_truncation("URL: https://github.com/x/y\nimport os\n")
     # The OTHER, unrelated truncation mechanism (_truncate_observation, for huge Mongo results
     # etc.) uses different wording and must not false-positive here — re-reading with start_line
     # makes no sense for that case since it isn't a read_repo_file pagination situation at all.
     assert not aw._mentions_unresolved_truncation("... [truncated — 5000 total characters]")
+    # A windowed read that reaches the actual end of the file has no "more lines below" note at
+    # all (see _read_file's more_note logic) — must not false-positive on an ordinary complete read.
+    assert not aw._mentions_unresolved_truncation(
+        "URL: https://github.com/x/y\nLines 4500-4552 of 4552 total:\nasync def last_function():\n    pass\n"
+    )
 
 
 @run_async
@@ -880,6 +896,52 @@ async def test_final_after_truncated_read_is_rejected_once_then_accepted(monkeyp
     result = await aw.tool_agent_node(_state("what does memory_save_node do?"))
 
     assert "Now grounded in the real content." in result["content_to_format"]
+
+
+@run_async
+async def test_final_rejected_again_if_the_retry_read_is_still_incomplete(monkeypatch):
+    """The exact real production failure the "more lines below" widening closes: forced to
+    retry after a truncated whole-file read, the model correctly re-called with a start_line —
+    but that windowed read was ITSELF still incomplete (more content below), and under deep
+    thinking's multi-nudge budget it must be rejected AGAIN, not accepted just because it
+    technically used a different start_line once already. Only a read that actually reaches
+    the end of the file may be followed by an accepted final."""
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    big_content, _ = _build_large_file_fixture()  # 509 lines total
+    repo_resp = _http_response(200, {"default_branch": "main"})
+    file_resp = _http_response(200, {"content": _b64(big_content)})
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        if url.endswith("/contents/backend/services/agent_workflow.py"):
+            return file_resp
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+
+    responses = [
+        _llm_response(action="query", purpose="Read the file", tool_action="read_repo_file", args={"path": "backend/services/agent_workflow.py"}),
+        _llm_response(action="final", answer="Premature #1 — from the truncated whole-file snippet."),
+        # Still incomplete: start_line=260 + the default 150-line window ends at line 409, well
+        # short of this fixture's 509 total lines.
+        _llm_response(action="query", purpose="Retry with start_line", tool_action="read_repo_file", args={"path": "backend/services/agent_workflow.py", "start_line": 260}),
+        _llm_response(action="final", answer="Premature #2 — still hasn't reached the real content."),
+        # Reaches the true end this time (360 + 150 - 1 = 509 = total lines) — genuinely complete.
+        _llm_response(action="query", purpose="Retry again, further this time", tool_action="read_repo_file", args={"path": "backend/services/agent_workflow.py", "start_line": 360}),
+        _llm_response(action="final", answer="Now genuinely grounded in the full content."),
+    ]
+    monkeypatch.setattr(aw.lite_llm_deep, "ainvoke", AsyncMock(side_effect=responses))
+
+    state = _state("what does memory_save_node do?")
+    state["deep_thinking"] = True
+    result = await aw.tool_agent_node(state)
+
+    assert "Now genuinely grounded in the full content." in result["content_to_format"]
+    assert "Premature #1" not in result["content_to_format"]
+    assert "Premature #2" not in result["content_to_format"]
 
 
 @run_async

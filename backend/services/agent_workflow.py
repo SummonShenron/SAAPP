@@ -2298,11 +2298,17 @@ def _mentions_unresolved_truncation(observation: str) -> bool:
     reimplementation instead — with 3 full steps of budget still unused, so this wasn't even
     budget pressure. The truncation note already tells it not to guess; this makes that
     mechanical instead of relying on it to comply. Reuses the exact same marker text _read_file
-    emits (both truncation variants share "truncated — this file has"), so a follow-up
-    read_repo_file call with a genuinely different start_line — a different args_signature —
-    clears it via the same unretried_inconclusive_tools machinery an ERROR or empty result
-    already does, no new tracking dict needed."""
-    return "truncated — this file has" in observation
+    emits (both no-start_line truncation variants share "truncated — this file has"), so a
+    follow-up read_repo_file call with a genuinely different start_line — a different
+    args_signature — clears it via the same unretried_inconclusive_tools machinery an ERROR or
+    empty result already does, no new tracking dict needed.
+
+    A second real trace immediately exposed a gap in this same fix: forced to retry, the model
+    correctly called read_repo_file WITH a start_line — but that's a THIRD, different message
+    shape ("N more lines below — re-call with a higher start_line"), not the first two, so it
+    wasn't covered and the model declared "final" from lines 400-549 of a 4552-line file with
+    the real code (line ~2350) still unread. Same fix, same reasoning, just the missing variant."""
+    return "truncated — this file has" in observation or "more lines below" in observation
 
 
 _MAX_OBSERVATION_CHARS = 4000
@@ -2640,12 +2646,23 @@ async def run_react_loop(
         if tool_action_name:
             args_signature = json.dumps(decision.get("args") or {}, sort_keys=True, default=str)
             prior_args_signature = unretried_inconclusive_tools.get(tool_action_name)
+            is_unresolved_truncation = _mentions_unresolved_truncation(observation)
             still_failing = (
                 observation.startswith("ERROR")
                 or _is_empty_observation(observation)
-                or _mentions_unresolved_truncation(observation)
+                or is_unresolved_truncation
             )
-            if prior_args_signature is not None:
+            if is_unresolved_truncation:
+                # A truncated/still-paginating read isn't "doomed" the way an ERROR or empty
+                # result is — it's real, ongoing progress through a large file, and a real
+                # production trace showed a single huge file can legitimately need MORE than
+                # one further start_line call. The "one genuine retry earns a pass" logic below
+                # exists for failures that might not be fixable by trying again; it's the wrong
+                # model here, since it let the nudge go silent after exactly one retry even
+                # though the file was still nowhere near fully read. Always re-arm instead, so
+                # the nudge keeps firing until a read of this path genuinely reaches the end.
+                unretried_inconclusive_tools[tool_action_name] = args_signature
+            elif prior_args_signature is not None:
                 # This tool_action was already outstanding. A success, OR a genuinely
                 # different call (even one that also fails), counts as the one honest retry
                 # it's owed — clear the flag either way, and do not immediately re-flag it
@@ -2662,10 +2679,16 @@ async def run_react_loop(
             # Consecutive-misses streak, regardless of args — unlike the args-signature
             # tracking above, a genuinely different query still counts against this streak,
             # since rewording doesn't fix a fundamentally wrong tool choice. Any success, or
-            # a miss on a DIFFERENT tool_action, resets it.
-            if still_failing and stuck_action_streak["tool"] == tool_action_name:
+            # a miss on a DIFFERENT tool_action, resets it. An unresolved truncation is
+            # deliberately excluded here (treated like a success) for the same reason it's
+            # exempted above — reading further into the same large file with a genuinely
+            # advancing start_line is real progress, not the same doomed call repeating, and
+            # must not trip the generic stuck-action circuit breaker just for taking several
+            # legitimate pages to get through one big file.
+            is_stuck_worthy_miss = still_failing and not is_unresolved_truncation
+            if is_stuck_worthy_miss and stuck_action_streak["tool"] == tool_action_name:
                 stuck_action_streak["count"] += 1
-            elif still_failing:
+            elif is_stuck_worthy_miss:
                 stuck_action_streak = {"tool": tool_action_name, "count": 1}
             else:
                 stuck_action_streak = {"tool": None, "count": 0}
