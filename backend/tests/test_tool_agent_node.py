@@ -2064,6 +2064,56 @@ async def test_ordinary_task_gets_no_architecture_map(monkeypatch):
     assert captured_kwargs["architecture_map"] == ""
 
 
+@run_async
+async def test_audit_task_gets_search_literal_nudge_even_with_no_internal_imports(monkeypatch):
+    # Real gap found by reviewing (and rejecting) a self-drive attempt at this fix: search_literal
+    # is opt-in and the model reaches for the lossier search_code out of habit even on audit-style
+    # tasks, despite prose guidance already saying not to (docs/coding-agent-roadmap.md, Section
+    # 4c/6). The nudge must not depend on the architecture map itself finding anything.
+    _setup_github_repo(monkeypatch, tree_items=[])
+    captured_kwargs = {}
+
+    async def fake_run_react_loop(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"final_answer": "done", "attempts": [], "show_work": False}
+
+    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+
+    await aw.tool_agent_node(_state("audit the repo — find every place get_db is used"))
+
+    assert "search_literal" in captured_kwargs["architecture_map"]
+    assert "search_code" in captured_kwargs["architecture_map"]
+
+
+@run_async
+async def test_audit_task_gets_search_literal_nudge_even_if_tree_fetch_fails(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    repo_resp = _http_response(200, {"default_branch": "main"})
+    tree_error_resp = _http_response(404, text="not found")
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        if "/git/trees/" in url:
+            return tree_error_resp
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+
+    captured_kwargs = {}
+
+    async def fake_run_react_loop(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"final_answer": "done", "attempts": [], "show_work": False}
+
+    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+
+    await aw.tool_agent_node(_state("audit the repo — find every place get_db is used"))
+
+    assert "search_literal" in captured_kwargs["architecture_map"]
+
+
 # ---------------------------------------------------------------------------
 # Conversation history threaded into TOOL_AGENT_PROMPT — the real failure this
 # closes: a multi-turn task's actual instruction lived a few messages back, and

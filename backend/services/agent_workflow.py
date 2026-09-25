@@ -3064,6 +3064,20 @@ def _is_audit_style_task(text: str) -> bool:
     return bool(_AUDIT_TASK_RE.search(text or ""))
 
 
+# search_literal exists specifically because search_code rides GitHub's hosted search index
+# (capped at ~20 results, subject to indexing lag) and can silently miss real matches — but it's
+# opt-in, so an audit-style task ("find every place X is used") can still reach for search_code
+# out of habit and come back with a plausible-looking but incomplete answer (docs/coding-agent-
+# roadmap.md, Section 4c). Prose guidance for this already existed in TOOL_AGENT_PROMPT and wasn't
+# enough on its own — same lesson this whole file keeps re-learning — so this rides the same
+# mechanical injection already proven for the architecture map below instead of adding a new one.
+_AUDIT_TASK_SEARCH_NUDGE = (
+    "AUDIT TASK DETECTED: prefer search_literal over search_code for exhaustive results this turn "
+    "— search_code rides GitHub's hosted search index (capped, subject to indexing lag) and can "
+    "miss real matches; search_literal greps the actual repo tree directly.\n"
+)
+
+
 # Architecture map — an auto-injected, repo-wide internal-import graph for audit-style tasks
 # (docs/coding-agent-roadmap.md, Section 4c). search_literal/trace_symbol find where a SYMBOL is
 # referenced; this shows which FILES depend on which other files, which is what actually answers
@@ -3886,6 +3900,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
 
         architecture_map = ""
         if is_audit_task:
+            architecture_map = _AUDIT_TASK_SEARCH_NUDGE
             await safe_emit_event(
                 "trace_detail",
                 {
@@ -3896,7 +3911,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             )
             tree_items = await asyncio.to_thread(_fetch_repo_tree_items)
             if isinstance(tree_items, list):
-                architecture_map = await asyncio.to_thread(_build_architecture_map, tree_items, _fetch_file_content)
+                architecture_map += await asyncio.to_thread(_build_architecture_map, tree_items, _fetch_file_content)
 
         # Outer try/finally guarantees the browser session (if any browser_* action opened one
         # this turn) is closed exactly once, regardless of which of the three exit paths below

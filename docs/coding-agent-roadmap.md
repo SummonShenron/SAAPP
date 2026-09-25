@@ -1123,6 +1123,71 @@ feature (a genuine core-loop rewrite) kept hitting real gaps instead.
 
 ---
 
+## 6. Second self-drive attempt: search_literal opt-in nudge — a new, worse fabrication shape (fixed, built directly)
+
+Gave SAAPP a smaller, well-scoped task per 5's "next up": `search_literal` is
+still opt-in (4c's finding) — nudge audit-style tasks toward it, reusing
+whatever existing "detected task-type → inject something onto the turn"
+mechanism already exists in this codebase, rather than building a new one.
+The prompt deliberately didn't say where that mechanism lives, matching this
+session's established "point at the problem, let it investigate" style.
+
+**What came back, and what's actually true, checked line-by-line against the
+real file:**
+
+- SAAPP opened by declaring `_is_audit_style_task` "does not exist in the
+  repository yet... only a conceptual design note." It has existed, real and
+  tested, since Section 4c — `agent_workflow.py:3063`, with 6 passing tests in
+  `test_tool_agent_node.py`. This isn't a stale claim from old training data;
+  it had just been told to go investigate this exact file.
+- The real mechanism it was asked to find already exists and does exactly
+  what was wanted: `agent_workflow.py:3884-3899` already gates building an
+  `architecture_map` string on `is_audit_task` and splices it straight into
+  the prompt via `run_react_loop(architecture_map=...)`. SAAPP walked past it
+  and instead pointed at `classify_intent`/`build_agent_plan` — real
+  functions, but they route between graph nodes and have nothing to do with
+  tool selection inside one ReAct loop.
+- Its fix injects into `state["agent_scratchpad"]` — not a real field.
+  `GraphState` (`backend/state/graph_state.py`) has no such key, checked
+  exhaustively against the full TypedDict.
+- Its own proposed test would crash before testing anything: `tool_agent_node`
+  is `async def` (called synchronously, no `await`), and the state dict it
+  constructs is missing nearly every field `tool_agent_node` reads before
+  reaching the code path in question (schema, repo resolution, prompt
+  templating).
+- The "clean diff" is fabricated hunk content against invented line numbers —
+  same shape as 4f/4g/4h, describing a plausible-looking patch rather than
+  deriving one from the real file.
+
+**The new failure shape worth naming:** every prior fabrication (4f-4j)
+invented code that doesn't exist. This one is the inverse and arguably worse —
+it actively asserted that real, live, already-tested code *doesn't* exist,
+got it backwards rather than just under-informed. Had this been pasted in
+uncritically, `_is_audit_style_task` would have been silently redefined,
+colliding with its tested version.
+
+This was a review-and-reject, consistent with "we just audit and review the
+code it suggests, we don't paste it in unchecked." Given how small the real
+fix turned out to be once the actual precedent was identified, built it
+directly rather than retrying the self-drive a third time.
+
+**Fixed in `agent_workflow.py`:** a new `_AUDIT_TASK_SEARCH_NUDGE` constant,
+and the existing `is_audit_task` block (~line 3887) now sets
+`architecture_map = _AUDIT_TASK_SEARCH_NUDGE` up front and appends the real
+map to it (`+=`) once built, instead of starting from `""`. This decouples
+the nudge from whether the map itself successfully builds — the model should
+be told to prefer `search_literal` even when the tree fetch fails or the repo
+happens to have no internal imports to map. No new state field, no new
+prompt placeholder — rides the exact `{architecture_map}` splice point
+already proven safe by the architecture-map feature itself. 2 new tests:
+the nudge is present when the tree is empty (map itself is `""`), and the
+nudge is present even when the tree fetch fails outright (404) — the two
+cases that would have silently dropped it if the nudge were appended after
+the map instead of before it. Full suite: 437 passed, same pre-existing
+unrelated `test_voice_composer.py` failure.
+
+---
+
 ## Operational — automatic checkpoint retention (done)
 
 **Shipped:** `backend/services/checkpoint_retention.py` —
