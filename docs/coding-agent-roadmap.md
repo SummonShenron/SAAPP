@@ -1449,6 +1449,22 @@ something visible anywhere in the UI. Fixed end to end:
   turn to confirm, same recurring gap as every other frontend change this
   session.
 
+**Follow-up bug, found by the user actually testing live in production:**
+the main (non-embedded) spinner's label still showed the generic
+`getNodeLabel` fallback even after the earlier fix routed it through
+`latestStepTitle`. Root cause: `processNodeQueue` calls
+`setLatestStepTitle(displayTitle)` (correct, detail-preferring) immediately
+followed by `addTraceStep({title: friendlyLabel, ...})` — and `addTraceStep`
+had its OWN internal `setLatestStepTitle(title)` call using the generic
+`friendlyLabel`, always overwriting the correct value moments later within
+the same synchronous update. Not a deploy-lag or cache issue — genuinely
+this bug, confirmed by reading the actual current file rather than assuming
+the earlier fix was sufficient. **Fixed**: `addTraceStep` now sets
+`setLatestStepTitle(detail || title)` instead of `setLatestStepTitle(title)`,
+matching the same "prefer the specific description" rule used everywhere
+else this fix touched, so its own internal call no longer fights with
+`processNodeQueue`'s.
+
 ---
 
 ## Operational — automatic checkpoint retention (done)

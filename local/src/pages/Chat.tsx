@@ -315,7 +315,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
                     onClick={() => handleSendMessageRef.current(followUp, attachmentsRef.current)}
                     className="follow-up-btn"
                     style={{
-                      background: 'rgba(6, 182, 212, 0.1)',
+                      background: 'var(--follow-up-bg)',
                       border: '1px solid rgba(6, 182, 212, 0.4)',
                       color: '#22d3ee',
                       borderRadius: '16px',
@@ -1010,7 +1010,11 @@ useEffect(() => {
     const title = payload?.title || payload?.message || "Agent step";
     const detail = payload?.detail || payload?.message || "";
     const id = `${title}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    setLatestStepTitle(title);
+    // Prefer detail over title here too — processNodeQueue already calls setLatestStepTitle
+    // with the correct detail-preferring value right before calling addTraceStep, but this call
+    // used to unconditionally overwrite it back to the generic title every single time, which is
+    // exactly why the spinner never showed the real per-step description despite that fix.
+    setLatestStepTitle(detail || title);
     setTraceSteps(prev => [
       ...prev,
       {
