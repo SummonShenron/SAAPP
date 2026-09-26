@@ -2845,12 +2845,23 @@ async def run_react_loop(
             stuck_action_reject_count += 1
             continue
 
-        async def _execute_one_action(tool_action_name: str, args: dict, purpose: str) -> str:
+        async def _execute_one_action(
+            tool_action_name: str, args: dict, purpose: str,
+            batch_index: int | None = None, batch_size: int | None = None,
+        ) -> str:
             # Shared by the single-action and batch paths below so a batched action gets the
             # exact same real execution (trace emission, is_unsafe, error handling) a sequential
             # step would have — no weaker scrutiny just because it ran alongside others.
+            # batch_index/batch_size (only passed by the batch path, and only when the batch has
+            # more than one item) let the frontend trace panel actually show when concurrent
+            # batching happened, instead of the only way to confirm it being to read the backend
+            # log and notice several attempts sharing one step number.
             sub_decision = {"tool_action": tool_action_name, "args": args, "purpose": purpose}
-            await safe_emit_event("trace_detail", {"node": node_name, "title": "Working...", "detail": purpose})
+            trace_payload = {"node": node_name, "title": "Working...", "detail": purpose}
+            if batch_size and batch_size > 1:
+                trace_payload["batch_index"] = batch_index
+                trace_payload["batch_size"] = batch_size
+            await safe_emit_event("trace_detail", trace_payload)
             if is_unsafe(sub_decision):
                 raise _UnsafeActionRequested(sub_decision)
             try:
@@ -2963,8 +2974,11 @@ async def run_react_loop(
                     )
             if valid_items:
                 observations = await asyncio.gather(*(
-                    _execute_one_action(item["tool_action"], item.get("args") or {}, item.get("purpose") or batch_purpose)
-                    for item in valid_items
+                    _execute_one_action(
+                        item["tool_action"], item.get("args") or {}, item.get("purpose") or batch_purpose,
+                        batch_index=i + 1, batch_size=len(valid_items),
+                    )
+                    for i, item in enumerate(valid_items)
                 ))
                 for item, observation in zip(valid_items, observations):
                     _record_action_result(

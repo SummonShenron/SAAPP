@@ -1422,6 +1422,35 @@ plain functions.
 
 ---
 
+## 11. Trace panel now shows when batching actually ran (done)
+
+Confirming whether a real turn used batching required reading the raw
+backend log and noticing two attempts sharing one step number — not
+something visible anywhere in the UI. Fixed end to end:
+
+- `agent_workflow.py`: `_execute_one_action` gained optional
+  `batch_index`/`batch_size` parameters; the batch dispatch site passes them
+  (`batch_index=i+1, batch_size=len(valid_items)`) so each item's
+  `trace_detail` event carries them, but only when the batch actually has
+  more than one item — a lone action's event is unchanged.
+- `app.py`: the `trace_detail` → `node_progress` SSE forwarder previously
+  hardcoded exactly three fields (`node`/`title`/`detail`), silently
+  dropping anything else — now also passes `batch_index`/`batch_size`
+  through when present.
+- `Chat.tsx`: `TraceStep` gained optional `batchIndex`/`batchSize`, threaded
+  through `nodeQueueRef` → `processNodeQueue` → `addTraceStep`. Both trace
+  panel row renderers (mobile drawer and desktop sidebar) show a small
+  "⚡ batched N/M" badge next to a row's title when `batchSize > 1`.
+- 1 new backend test capturing real `safe_emit_event` calls, confirming a
+  batched action's event carries `batch_index`/`batch_size` and a lone
+  action's does not. Full suite: 460 passed, same pre-existing unrelated
+  failure. Frontend: `tsc -b --noEmit` clean, dev server loads with no new
+  console errors — the live websocket behavior itself still needs a real
+  turn to confirm, same recurring gap as every other frontend change this
+  session.
+
+---
+
 ## Operational — automatic checkpoint retention (done)
 
 **Shipped:** `backend/services/checkpoint_retention.py` —

@@ -401,6 +401,8 @@ interface TraceStep {
   title: string;
   detail: string;
   status: "active" | "complete";
+  batchIndex?: number;
+  batchSize?: number;
 }
 
 const parseFollowUp = (content: string) => {
@@ -539,7 +541,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [conversationsRefreshKey, setConversationsRefreshKey] = useState(0);
   const [isMobileTraceOpen, setIsMobileTraceOpen] = useState(false);
   const [latestStepTitle, setLatestStepTitle] = useState("");
-  const nodeQueueRef = useRef<{ node: string; detail?: string }[]>([]);
+  const nodeQueueRef = useRef<{ node: string; detail?: string; batchIndex?: number; batchSize?: number }[]>([]);
   const isProcessingQueue = useRef<boolean>(false);
   // Cheap alternative to full mid-thought steering (see docs/coding-agent-roadmap.md): lets the
   // user cut a turn short the moment it's clearly going down the wrong path, rather than waiting
@@ -1011,7 +1013,10 @@ useEffect(() => {
     setLatestStepTitle(title);
     setTraceSteps(prev => [
       ...prev,
-      { id, title, detail, status: payload?.status === "complete" ? "complete" : "active" }
+      {
+        id, title, detail, status: payload?.status === "complete" ? "complete" : "active",
+        batchIndex: payload?.batchIndex, batchSize: payload?.batchSize,
+      }
     ]);
   };
 
@@ -1046,7 +1051,9 @@ useEffect(() => {
     addTraceStep({
       title: friendlyLabel,
       detail: item.detail || `Node: ${item.node}`,
-      status: 'active'
+      status: 'active',
+      batchIndex: item.batchIndex,
+      batchSize: item.batchSize,
     });
 
     setTimeout(() => {
@@ -1111,7 +1118,10 @@ useEffect(() => {
                 addTraceStep(payload);
               }
               if (payload.event === 'node_progress') {
-                nodeQueueRef.current.push({ node: payload.node, detail: payload.detail });
+                nodeQueueRef.current.push({
+                  node: payload.node, detail: payload.detail,
+                  batchIndex: payload.batch_index, batchSize: payload.batch_size,
+                });
                 if (!isProcessingQueue.current) {
                   processNodeQueue();
                 }
@@ -1836,7 +1846,17 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                       background: step.status === 'complete' ? 'rgba(30, 41, 59, 0.8)' : 'rgba(15, 23, 42, 0.95)'
                     }}
                   >
-                    <div style={{ fontSize: '0.82rem', fontWeight: 700 }}>{step.title}</div>
+                    <div style={{ fontSize: '0.82rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      {step.title}
+                      {step.batchSize && step.batchSize > 1 && (
+                        <span style={{
+                          fontSize: '0.65rem', fontWeight: 600, padding: '0.1rem 0.4rem', borderRadius: '999px',
+                          background: 'rgba(56, 189, 248, 0.18)', color: '#38bdf8', border: '1px solid rgba(56, 189, 248, 0.4)',
+                        }}>
+                          ⚡ batched {step.batchIndex}/{step.batchSize}
+                        </span>
+                      )}
+                    </div>
                     <div style={{ fontSize: '0.76rem', color: '#94a3b8', marginTop: '0.25rem' }}>
                       {step.detail}
                     </div>
@@ -1925,7 +1945,17 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                     background: step.status === 'complete' ? 'rgba(30, 41, 59, 0.8)' : 'rgba(15, 23, 42, 0.95)'
                   }}
                 >
-                  <div style={{ fontSize: '0.82rem', fontWeight: 700 }}>{step.title}</div>
+                  <div style={{ fontSize: '0.82rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    {step.title}
+                    {step.batchSize && step.batchSize > 1 && (
+                      <span style={{
+                        fontSize: '0.65rem', fontWeight: 600, padding: '0.1rem 0.4rem', borderRadius: '999px',
+                        background: 'rgba(56, 189, 248, 0.18)', color: '#38bdf8', border: '1px solid rgba(56, 189, 248, 0.4)',
+                      }}>
+                        ⚡ batched {step.batchIndex}/{step.batchSize}
+                      </span>
+                    )}
+                  </div>
                   <div style={{ fontSize: '0.76rem', color: '#94a3b8', marginTop: '0.25rem' }}>
                     {step.detail}
                   </div>

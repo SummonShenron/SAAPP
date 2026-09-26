@@ -1037,6 +1037,65 @@ async def test_batched_queries_execute_concurrently_not_sequentially():
 
 
 @run_async
+async def test_batch_items_emit_batch_index_and_size_but_single_actions_do_not():
+    """The frontend trace panel needs a way to show when batching actually ran, rather than the
+    only way to confirm it being to read the backend log for repeated step numbers — each
+    batched action's trace_detail event must carry batch_index/batch_size; a lone action must
+    not, so the frontend can tell the two apart."""
+    responses = [
+        _llm_response(action="query", purpose="Read one file first", tool_action="read_repo_file", args={"path": "solo.py"}),
+        _llm_response(action="query", purpose="Read two independent files", queries=[
+            {"tool_action": "read_repo_file", "args": {"path": "a.py"}, "purpose": "Read a.py"},
+            {"tool_action": "read_repo_file", "args": {"path": "b.py"}, "purpose": "Read b.py"},
+        ]),
+        _llm_response(action="final", answer="done"),
+    ]
+
+    async def fake_ainvoke(prompt):
+        return responses.pop(0)
+
+    emitted = []
+
+    async def fake_emit_event(name, data):
+        emitted.append(data)
+
+    orig_ainvoke = aw.lite_llm.ainvoke
+    orig_emit = aw.safe_emit_event
+    aw.lite_llm.ainvoke = fake_ainvoke
+    aw.safe_emit_event = fake_emit_event
+    try:
+        async def act(decision):
+            return f"content of {decision['args']['path']}"
+
+        result = await aw.run_react_loop(
+            question="read solo, then a and b",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+            batchable_actions=aw.TOOL_AGENT_BATCHABLE_ACTIONS,
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig_ainvoke
+        aw.safe_emit_event = orig_emit
+
+    assert result["final_answer"] == "done"
+    solo_events = [e for e in emitted if e.get("detail") == "Read one file first"]
+    assert len(solo_events) == 1
+    assert "batch_index" not in solo_events[0]
+    assert "batch_size" not in solo_events[0]
+
+    batch_events = sorted(
+        (e for e in emitted if e.get("detail") in ("Read a.py", "Read b.py")),
+        key=lambda e: e["detail"],
+    )
+    assert len(batch_events) == 2
+    assert {e["batch_index"] for e in batch_events} == {1, 2}
+    assert all(e["batch_size"] == 2 for e in batch_events)
+
+
+@run_async
 async def test_batch_rejects_non_batchable_action_but_still_runs_the_others():
     """A non-batchable action (run_snippet — a real CI dispatch, never safe to run concurrently
     with anything else) slipped into a batch must be rejected with its own synthetic error,

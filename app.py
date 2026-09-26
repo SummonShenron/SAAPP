@@ -613,7 +613,21 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     # Catch Custom Thoughts emitted by your nodes via adispatch_custom_event
                     if kind == "on_custom_event" and event.get("name") == "trace_detail":
                         data = event.get("data", {})
-                        yield f"data: {json.dumps({'event': 'node_progress', 'node': data.get('node', 'system'), 'title': data.get('title', 'Processing...'), 'detail': data.get('detail', '')})}\n\n"
+                        node_progress_payload = {
+                            "event": "node_progress",
+                            "node": data.get("node", "system"),
+                            "title": data.get("title", "Processing..."),
+                            "detail": data.get("detail", ""),
+                        }
+                        # Only present when tool_agent_node's batching (run_react_loop's
+                        # "queries" support) actually ran this action concurrently alongside
+                        # others in the same step — lets the frontend trace panel show that
+                        # directly instead of the only way to confirm it being to read the
+                        # backend log for repeated step numbers.
+                        if data.get("batch_size"):
+                            node_progress_payload["batch_index"] = data.get("batch_index")
+                            node_progress_payload["batch_size"] = data.get("batch_size")
+                        yield f"data: {json.dumps(node_progress_payload)}\n\n"
                         await asyncio.sleep(0.01)
 
                     # A view-only browserless.io LiveURL, emitted once tool_agent_node's browser_*
