@@ -424,6 +424,211 @@ def test_recover_update_calendar_event_from_card_text_with_both_changes():
     }
 
 
+# ---------------------------------------------------------------------------
+# append_target_doc — inline-proposed like run_mongo_write, generic (not tied to any one
+# document's purpose), execute re-resolves doc_id fresh rather than trusting stored details.
+# ---------------------------------------------------------------------------
+
+def test_execute_append_target_doc_succeeds(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: [])
+    monkeypatch.setattr(aw, "get_user_target_doc_id", lambda username: "doc123")
+    monkeypatch.setattr(aw, "has_granted_scope", lambda username, scope: True)
+
+    class _FakeOAuth:
+        def get_valid_access_token(self, username):
+            return "fake-token"
+
+    monkeypatch.setattr(aw, "GoogleCalendarOAuth", _FakeOAuth)
+    monkeypatch.setattr(aw, "append_doc_text", lambda token, doc_id, content: "Appended successfully.")
+
+    details = {"content": "Summary of the week.", "doc_id": "doc123"}
+    result = aw.execute_write_node(_pending_state("append_target_doc", details))
+
+    assert "Appended successfully" in result["content_to_format"]
+    assert result["relevance_grade"] == "action_complete"
+
+
+def test_execute_append_target_doc_fails_when_doc_no_longer_configured(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: [])
+    monkeypatch.setattr(aw, "get_user_target_doc_id", lambda username: None)
+
+    details = {"content": "Summary.", "doc_id": "doc123"}
+    result = aw.execute_write_node(_pending_state("append_target_doc", details))
+
+    assert "Failed to append" in result["content_to_format"]
+    assert "no target document" in result["content_to_format"]
+
+
+def test_execute_append_target_doc_fails_when_docs_scope_missing(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: [])
+    monkeypatch.setattr(aw, "get_user_target_doc_id", lambda username: "doc123")
+    monkeypatch.setattr(aw, "has_granted_scope", lambda username, scope: False)
+
+    class _FakeOAuth:
+        def get_valid_access_token(self, username):
+            return "fake-token"
+
+    monkeypatch.setattr(aw, "GoogleCalendarOAuth", _FakeOAuth)
+
+    details = {"content": "Summary.", "doc_id": "doc123"}
+    result = aw.execute_write_node(_pending_state("append_target_doc", details))
+
+    assert "Docs access not granted" in result["content_to_format"]
+
+
+def test_recover_append_target_doc_from_card_text():
+    card = "Ready to append this to your target document:\n\nSome summary text.\n\n**Purpose:** Weekly update"
+    recovered = aw._recover_append_target_doc([AIMessage(content=card)], "")
+    assert recovered == {"content": "Some summary text.", "doc_id": None}
+
+
+@run_async
+async def test_propose_append_target_doc_end_to_end_via_tool_agent_node(monkeypatch):
+    """Regression guard: the generalized _UnsafeActionRequested handler must still produce
+    run_mongo_write's exact original card/pending_action shape (tested elsewhere), AND correctly
+    branch to the new append_target_doc shape — this test exercises the new branch through the
+    real tool_agent_node -> run_react_loop -> _is_unsafe -> _UnsafeActionRequested path, not just
+    a hand-built pending_action."""
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: [])
+    monkeypatch.setattr(aw, "get_user_target_doc_id", lambda username: "doc123")
+
+    from backend.tests.test_tool_agent_node import _setup_github_repo, _llm_response, _state
+
+    _setup_github_repo(monkeypatch)
+
+    responses = [
+        _llm_response(
+            action="query", purpose="Append summary",
+            tool_action="propose_append_target_doc", args={"content": "Weekly summary text."},
+        ),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("summarize this and add it to my doc"))
+
+    assert result["pending_action"]["action_type"] == "append_target_doc"
+    assert result["pending_action"]["details"]["content"] == "Weekly summary text."
+    assert result["pending_action"]["details"]["doc_id"] == "doc123"
+    assert result["relevance_grade"] == "hitl_approval_required"
+    assert "Ready to append this to your target document" in result["content_to_format"]
+
+
+@run_async
+async def test_propose_append_target_doc_no_target_doc_configured_short_circuits(monkeypatch):
+    """When no target document is configured, the model's proposal must produce a plain
+    informational message with no approval card — not a broken "Approve/Reject" prompt over
+    nothing real, same (None, message) convention used by _draft_create_calendar_event."""
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: [])
+    monkeypatch.setattr(aw, "get_user_target_doc_id", lambda username: None)
+
+    from backend.tests.test_tool_agent_node import _setup_github_repo, _llm_response, _state
+
+    _setup_github_repo(monkeypatch)
+
+    responses = [
+        _llm_response(
+            action="query", purpose="Append summary",
+            tool_action="propose_append_target_doc", args={"content": "Weekly summary text."},
+        ),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("summarize this and add it to my doc"))
+
+    assert result["pending_action"] is None
+    assert result["relevance_grade"] == "conversational"
+    assert "haven't set a target document" in result["content_to_format"]
+    assert "Approval Required" not in result["content_to_format"]
+
+
+# ---------------------------------------------------------------------------
+# send_email — upfront-triggered like create_calendar_event, no htmlLink-style confirmation
+# since Gmail's send response has no equivalent user-facing link.
+# ---------------------------------------------------------------------------
+
+def test_propose_write_node_no_gmail_send_scope_sends_plain_message(monkeypatch):
+    monkeypatch.setattr(aw, "has_granted_scope", lambda username, scope: False)
+
+    state = {
+        "username": "jack",
+        "write_action": "send_email",
+        "messages": [HumanMessage(content="send an email to sam@example.com saying hi")],
+    }
+    result = aw.propose_write_node(state)
+
+    assert result["pending_action"] is None
+    assert result["relevance_grade"] == "conversational"
+    assert "connect" in result["generation"].lower() or "reconnect" in result["generation"].lower()
+
+
+def test_propose_write_node_drafts_send_email_when_scope_granted(monkeypatch):
+    monkeypatch.setattr(aw, "has_granted_scope", lambda username, scope: True)
+    monkeypatch.setattr(
+        aw, "get_chat_llm",
+        lambda username: SimpleNamespace(invoke=lambda prompt: _llm_json(
+            '{"to": "sam@example.com", "subject": "Hello", "body": "Just saying hi."}'
+        ))
+    )
+
+    state = {
+        "username": "jack",
+        "write_action": "send_email",
+        "messages": [HumanMessage(content="send an email to sam@example.com saying hi")],
+    }
+    result = aw.propose_write_node(state)
+
+    assert result["pending_action"]["action_type"] == "send_email"
+    assert result["pending_action"]["details"]["to"] == "sam@example.com"
+    assert result["relevance_grade"] == "hitl_approval_required"
+
+
+def test_execute_write_node_sends_email_on_approval(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: [])
+    monkeypatch.setattr(aw, "has_granted_scope", lambda username, scope: True)
+
+    class _FakeOAuth:
+        def get_valid_access_token(self, username):
+            return "fake-token"
+
+    monkeypatch.setattr(aw, "GoogleCalendarOAuth", _FakeOAuth)
+    sent = {}
+    monkeypatch.setattr(aw, "send_message", lambda token, to, subject, body: sent.update(to=to, subject=subject, body=body))
+
+    details = {"to": "sam@example.com", "subject": "Hello", "body": "Just saying hi."}
+    result = aw.execute_write_node(_pending_state("send_email", details))
+
+    assert sent == {"to": "sam@example.com", "subject": "Hello", "body": "Just saying hi."}
+    assert "Email sent" in result["content_to_format"]
+    assert result["relevance_grade"] == "action_complete"
+
+
+def test_execute_write_node_send_email_fails_when_scope_missing(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: [])
+    monkeypatch.setattr(aw, "has_granted_scope", lambda username, scope: False)
+
+    class _FakeOAuth:
+        def get_valid_access_token(self, username):
+            return "fake-token"
+
+    monkeypatch.setattr(aw, "GoogleCalendarOAuth", _FakeOAuth)
+
+    details = {"to": "sam@example.com", "subject": "Hello", "body": "Hi"}
+    result = aw.execute_write_node(_pending_state("send_email", details))
+
+    assert "Gmail send access not granted" in result["content_to_format"]
+
+
+def test_recover_send_email_from_card_text():
+    card = (
+        "Ready to send this email:\n"
+        "- **To:** sam@example.com\n"
+        "- **Subject:** Hello\n\n"
+        "**Body:**\nJust saying hi.\n\n*Please Approve, Modify parameters, or Reject this action.*"
+    )
+    recovered = aw._recover_send_email([AIMessage(content=card)], "")
+    assert recovered == {"to": "sam@example.com", "subject": "Hello", "body": "Just saying hi."}
+
+
 @run_async
 async def test_mongo_write_proposal_to_execution_end_to_end(monkeypatch):
     monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])

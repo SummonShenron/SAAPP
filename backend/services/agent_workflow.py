@@ -39,6 +39,7 @@ from backend.components.constraints import (
     DRAFT_PR_PROMPT,
     DRAFT_CALENDAR_EVENT_PROMPT,
     UPDATE_CALENDAR_EVENT_PROMPT,
+    DRAFT_SEND_EMAIL_PROMPT,
     MEMORY_EXTRACTION_PROMPT
 )
 from backend.utils.memory_utils import save_user_fact, load_user_facts
@@ -48,10 +49,13 @@ from backend.components import taskboard
 from backend.state.graph_state import GraphState, route_after_grading
 from langgraph.graph import StateGraph, START, END
 from backend.utils.db_utils import get_db
-from backend.utils.user_settings_utils import get_user_timezone
-from backend.utils.google_calendar_utils import CALENDAR_LOCKED_USERS, get_connection_status as get_calendar_connection_status
+from backend.utils.user_settings_utils import get_user_timezone, get_user_target_doc_id
+from backend.utils.google_calendar_utils import CALENDAR_LOCKED_USERS, get_connection_status as get_calendar_connection_status, has_granted_scope
 from backend.services.google_calendar_oauth import GoogleCalendarOAuth, GoogleCalendarConnectionError
 from backend.services.google_calendar_service import list_events_for_day, create_event, update_event, find_event_by_summary_on_day
+from backend.services.google_gmail_service import search_messages, get_message_detail, get_attachment_text, send_message
+from backend.services.google_docs_service import append_text as append_doc_text
+from backend.services.google_drive_service import search_files as search_drive_files_fn, read_file as read_drive_file_fn
 from backend.services.python_sandbox import run_python_sandboxed, SAFE_IMPORT_ALLOWLIST
 from backend.services.browser_tool import (
     BrowserSession, browser_navigate, browser_read_text, browser_click, browser_type, browser_screenshot,
@@ -548,6 +552,15 @@ def classify_intent(message: str, state: dict = None) -> str:
     # list_google_calendar_events as one of its actions.
     if "google calendar" in msg:
         return "tool_agent"
+    # Checked before the bare "gmail"/"inbox" read-fallback below, same reasoning as
+    # create_pr/create_calendar_event sitting above their own generic catches — an explicit send
+    # request must not be swallowed by a read-intent fallback just because it also mentions email.
+    if re.search(r'\b(?:send|compose)\s+(?:an?\s+)?email\b', msg) or re.search(r'\bemail\s+[\w.+-]+@[\w.-]+', msg):
+        return "send_email"
+    # A bare mention of Gmail/inbox that isn't an explicit send request is a read/lookup —
+    # route to tool_agent, which has search_gmail/read_gmail_message/get_gmail_attachment.
+    if re.search(r'\b(?:gmail|my inbox|my email)\b', msg):
+        return "tool_agent"
     # Use word boundary so 'process' or 'provide' won't match 'pr'
     if re.search(r'\b(review pr|pull request|pr summary)\b', msg):
         return "pr_summary"
@@ -617,6 +630,11 @@ def build_agent_plan(intent: str, state: dict) -> dict:
         state["write_action"] = "update_calendar_event"
         return {"agents": ["propose_write", "formatter"], "skip": []}
 
+    if intent == "send_email" or flags.get("needs_send_email"):
+        state["last_intent"] = "propose_write"
+        state["write_action"] = "send_email"
+        return {"agents": ["propose_write", "formatter"], "skip": []}
+
     # 2b. Continuation of a non-PR HITL approval (e.g. approving a pending web search) —
     # these used to be classified correctly but silently dropped here, falling back to
     # whatever the reasoner's flags guessed for a bare "yes"/"no" reply. Web search is now
@@ -664,11 +682,12 @@ def build_agent_plan(intent: str, state: dict) -> dict:
         agents.append("summarizer")
     if flags.get("needs_paapp"):
         agents.append("paapp")
-    # Mongo/GitHub/web/calendar all fold into one multi-tool agent — any of these flags routes
-    # there, and the model itself decides which tool(s) the question actually needs.
+    # Mongo/GitHub/web/calendar/Gmail/Drive all fold into one multi-tool agent — any of these
+    # flags routes there, and the model itself decides which tool(s) the question actually needs.
     if (
         flags.get("needs_web_search") or flags.get("needs_code_interpreter")
         or flags.get("needs_github_search") or flags.get("needs_calendar_lookup")
+        or flags.get("needs_gmail_lookup") or flags.get("needs_drive_lookup")
     ):
         agents.append("tool_agent")
     if is_pr_request:
@@ -769,6 +788,9 @@ async def reasoner_node(state: GraphState) -> GraphState:
                 "needs_create_calendar_event": False,
                 "needs_update_calendar_event": False,
                 "needs_calendar_lookup": False,
+                "needs_gmail_lookup": False,
+                "needs_drive_lookup": False,
+                "needs_send_email": False,
             }
 
         logger.info(f"[Reasoner] Flags: {flags}")
@@ -2508,6 +2530,36 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             "surfaced elsewhere as insights) — use this only when the user is actually asking "
             "about their real Google Calendar. Returns an error telling the user to connect "
             "their calendar under Integrations if they haven't yet.",
+            "- search_gmail — args: query (real Gmail search syntax, e.g. "
+            "'has:attachment subject:report', 'from:someone@example.com'), max_results "
+            "(optional, default 10); returns a short list of matching emails "
+            "({id, subject, from, date, snippet}) on the CURRENT USER's own connected Gmail "
+            "inbox — use read_gmail_message next on whichever result looks relevant to see its "
+            "full content.",
+            "- read_gmail_message — args: message_id (from a search_gmail result); returns the "
+            "email's subject/from/date/body preview and a list of its attachments "
+            "({filename, mime_type, attachment_id, size}). If the content you need is in an "
+            "attachment (e.g. a JSON export), call get_gmail_attachment next — do not assume the "
+            "content is inline in the body just because it's a short preview.",
+            "- get_gmail_attachment — args: message_id, attachment_id (both from a "
+            "read_gmail_message result); returns the attachment's decoded content as text "
+            "(pretty-printed if it's valid JSON).",
+            "- search_drive_files — args: query (a real Google Drive query string, e.g. "
+            "\"name contains 'Report'\", \"fullText contains 'budget'\", "
+            "\"mimeType='application/vnd.google-apps.document'\"), max_results (optional, "
+            "default 10); returns matching files ({id, name, mimeType, modifiedTime}) from the "
+            "CURRENT USER's own connected Google Drive.",
+            "- read_drive_file — args: file_id (from a search_drive_files result); returns the "
+            "file's content as text — works for Google Docs, Google Sheets (as CSV), and plain "
+            "text files; returns an error for file types with no text representation (e.g. "
+            "Slides, images).",
+            "- propose_append_target_doc — args: content (the text you want appended — you must "
+            "have already gathered/composed this yourself via other actions first, e.g. after "
+            "reading and summarizing a Gmail attachment or Drive file); use the standard "
+            "'purpose' field to explain why. Appends to whatever document the CURRENT USER has "
+            "configured as their target document under Integrations. This ALWAYS requires the "
+            "user's approval before anything is written — call it only once, with your finished "
+            "content, not as a way to draft or iterate.",
         ])
         actions_menu = "\n".join(menu_lines)
         prompt_template = TOOL_AGENT_PROMPT.replace("{actions_menu}", actions_menu.replace("{", "{{").replace("}", "}}"))
@@ -2515,6 +2567,8 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
         prompt_template = prompt_template.replace("{batchable_actions}", ", ".join(sorted(TOOL_AGENT_BATCHABLE_ACTIONS)))
 
         def _is_unsafe(decision: dict) -> bool:
+            if decision.get("tool_action") == "propose_append_target_doc":
+                return True  # inherently a write — no keyword scan needed, unlike run_mongo_query
             if decision.get("tool_action") != "run_mongo_query":
                 return False
             code = ((decision.get("args") or {}).get("code") or "").lower()
@@ -2579,6 +2633,50 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 if not events:
                     return f"No events found on the connected Google Calendar for {date_arg}."
                 return "\n".join(f"- {e['start']}: {e['summary']}" for e in events)
+            if tool_action in {"search_gmail", "read_gmail_message", "get_gmail_attachment"}:
+                # Same tier as the calendar branch above — needs username for per-user token
+                # resolution, plus a scope check distinct from "no connection at all" (see
+                # has_granted_scope's docstring: a user connected before Gmail scopes were added
+                # will pass get_valid_access_token but 403 on the real Gmail call).
+                if username in CALENDAR_LOCKED_USERS:
+                    return "ERROR: Gmail is not available for this account"
+                try:
+                    token = await asyncio.to_thread(GoogleCalendarOAuth().get_valid_access_token, username)
+                except GoogleCalendarConnectionError:
+                    return "ERROR: No Google account connected for this user. Connect it under Integrations first."
+                if not has_granted_scope(username, "https://www.googleapis.com/auth/gmail.readonly"):
+                    return "ERROR: Gmail access not granted. Reconnect Google under Integrations to enable it."
+                if tool_action == "search_gmail":
+                    results = await asyncio.to_thread(search_messages, token, args.get("query", ""), int(args.get("max_results", 10)))
+                    if not results:
+                        return "No matching emails found."
+                    return "\n".join(f"- [{r['id']}] {r['subject']} — {r['from']} ({r['date']}): {r['snippet']}" for r in results)
+                if tool_action == "read_gmail_message":
+                    detail = await asyncio.to_thread(get_message_detail, token, args.get("message_id"))
+                    attachments_desc = (
+                        "; ".join(f"{a['filename']} (id: {a['attachment_id']}, {a['mime_type']})" for a in detail["attachments"])
+                        if detail["attachments"] else "none"
+                    )
+                    return (
+                        f"Subject: {detail['subject']}\nFrom: {detail['from']}\nDate: {detail['date']}\n"
+                        f"Attachments: {attachments_desc}\n\nBody:\n{detail['body_text']}"
+                    )
+                return await asyncio.to_thread(get_attachment_text, token, args.get("message_id"), args.get("attachment_id"))
+            if tool_action in {"search_drive_files", "read_drive_file"}:
+                if username in CALENDAR_LOCKED_USERS:
+                    return "ERROR: Google Drive is not available for this account"
+                try:
+                    token = await asyncio.to_thread(GoogleCalendarOAuth().get_valid_access_token, username)
+                except GoogleCalendarConnectionError:
+                    return "ERROR: No Google account connected for this user. Connect it under Integrations first."
+                if not has_granted_scope(username, "https://www.googleapis.com/auth/drive"):
+                    return "ERROR: Google Drive access not granted. Reconnect Google under Integrations to enable it."
+                if tool_action == "search_drive_files":
+                    results = await asyncio.to_thread(search_drive_files_fn, token, args.get("query", ""), int(args.get("max_results", 10)))
+                    if not results:
+                        return "No matching files found."
+                    return "\n".join(f"- [{f['id']}] {f['name']} ({f['mimeType']}, modified {f.get('modifiedTime', '?')})" for f in results)
+                return await asyncio.to_thread(read_drive_file_fn, token, args.get("file_id"))
             if tool_action == "run_python":
                 # run_python_sandboxed always returns {"output", "error"} and never raises —
                 # normalized to this loop's own "ERROR: ..." string convention (used by every
@@ -2652,6 +2750,40 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     batchable_actions=TOOL_AGENT_BATCHABLE_ACTIONS,
                 )
             except _UnsafeActionRequested as e:
+                if e.decision.get("tool_action") == "propose_append_target_doc":
+                    content = (e.decision.get("args") or {}).get("content", "") or ""
+                    purpose = e.decision.get("purpose", "Append to target document")
+                    doc_id = get_user_target_doc_id(username)
+                    if not doc_id:
+                        no_doc_message = (
+                            "You haven't set a target document yet — add its URL under "
+                            "Integrations, then ask me again."
+                        )
+                        new_messages = list(state.get("messages", [])) + [AIMessage(content=no_doc_message)]
+                        return {
+                            **state,
+                            "pending_action": None,
+                            "relevance_grade": "conversational",
+                            "generation": no_doc_message,
+                            "content_to_format": no_doc_message,
+                            "messages": new_messages,
+                        }
+                    summary_line = f"Ready to append this to your target document:\n\n{content}\n\n**Purpose:** {purpose}"
+                    approval_message = (
+                        "**Approval Required**\n\n"
+                        f"{summary_line}\n\n"
+                        "*Please Approve, Modify parameters, or Reject this action.*"
+                    )
+                    new_messages = list(state.get("messages", [])) + [AIMessage(content=approval_message)]
+                    return {
+                        **state,
+                        "pending_action": {"action_type": "append_target_doc", "details": {"content": content, "doc_id": doc_id}},
+                        "relevance_grade": "hitl_approval_required",
+                        "generation": approval_message,
+                        "content_to_format": approval_message,
+                        "messages": new_messages,
+                    }
+
                 drafted_code = (e.decision.get("args") or {}).get("code", "") or ""
                 purpose = e.decision.get("purpose", "Database query")
                 summary_line = f"Ready to run this database operation:\n```python\n{drafted_code}\n```\n**Purpose:** {purpose}"
@@ -3370,6 +3502,116 @@ def _recover_update_calendar_event(messages: list, repo_hint: str) -> dict | Non
     return None
 
 
+def _execute_append_target_doc(username: str, details: dict) -> str:
+    # Re-resolves doc_id fresh rather than trusting details["doc_id"] — the setting could have
+    # changed between the approval card being drafted and the user actually approving it.
+    doc_id = get_user_target_doc_id(username)
+    if not doc_id:
+        return "**Failed to append:** no target document is configured anymore. Set one under Integrations."
+
+    try:
+        token = GoogleCalendarOAuth().get_valid_access_token(username)
+    except GoogleCalendarConnectionError as error:
+        return f"**Failed to append:** {error}"
+
+    if not has_granted_scope(username, "https://www.googleapis.com/auth/documents"):
+        return "**Failed to append:** Docs access not granted. Reconnect Google under Integrations to enable it."
+
+    result = append_doc_text(token, doc_id, details.get("content", ""))
+    if result.startswith("ERROR"):
+        return f"**Failed to append:** {result[len('ERROR: '):]}"
+    return "**Appended successfully** to your target document."
+
+
+def _is_complete_append_target_doc(details: dict) -> bool:
+    return bool(details.get("content") and details.get("doc_id"))
+
+
+def _recover_append_target_doc(messages: list, repo_hint: str) -> dict | None:
+    for msg in reversed(messages or []):
+        content = _content_of(msg)
+        if "Ready to append this to your target document" not in content:
+            continue
+        match = re.search(r"Ready to append this to your target document:\n\n([\s\S]*?)\n\n\*\*Purpose:\*\*", content)
+        if match:
+            return {"content": match.group(1).strip(), "doc_id": None}
+    return None
+
+
+def _draft_send_email(state: GraphState) -> tuple[dict, str] | tuple[None, str]:
+    username = state.get("username")
+    if not has_granted_scope(username, "https://www.googleapis.com/auth/gmail.send"):
+        return None, (
+            "You haven't connected Gmail send access yet — head to **Integrations** to connect "
+            "or reconnect your Google account, then ask me to send this again."
+        )
+
+    messages = state.get("messages", [])
+    last_msg = messages[-1].content.strip() if messages else ""
+
+    try:
+        formatted_prompt = DRAFT_SEND_EMAIL_PROMPT.format(user_message=last_msg)
+        llm_response = get_chat_llm(username).invoke(formatted_prompt)
+        raw_content = getattr(llm_response, "content", "")
+        text_content = "".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in raw_content) if isinstance(raw_content, list) else str(raw_content)
+        clean_json = text_content.strip().strip("```json").strip("```").strip()
+        parsed_json = json.loads(clean_json)
+        to = parsed_json["to"]
+        subject = parsed_json["subject"]
+        body = parsed_json["body"]
+    except Exception:
+        logger.exception("Failed to parse LLM email draft.")
+        return None, "I couldn't figure out the email details from that — could you give me a recipient, subject, and what to say?"
+
+    details = {"to": to, "subject": subject, "body": body}
+    summary_line = (
+        "Ready to send this email:\n"
+        f"- **To:** {to}\n"
+        f"- **Subject:** {subject}\n\n"
+        f"**Body:**\n{body}"
+    )
+    return details, summary_line
+
+
+def _execute_send_email(username: str, details: dict) -> str:
+    try:
+        token = GoogleCalendarOAuth().get_valid_access_token(username)
+    except GoogleCalendarConnectionError as error:
+        return f"**Failed to send email:** {error}"
+
+    if not has_granted_scope(username, "https://www.googleapis.com/auth/gmail.send"):
+        return "**Failed to send email:** Gmail send access not granted. Reconnect Google under Integrations to enable it."
+
+    try:
+        send_message(token, details["to"], details["subject"], details["body"])
+    except Exception as error:
+        logger.exception("[execute_write_node:send_email] Gmail API call failed.")
+        return f"**Failed to send email:** {error}"
+
+    return f"**Email sent** to {details['to']}."
+
+
+def _is_complete_send_email(details: dict) -> bool:
+    return bool(details.get("to") and details.get("subject") and details.get("body"))
+
+
+def _recover_send_email(messages: list, repo_hint: str) -> dict | None:
+    for msg in reversed(messages or []):
+        content = _content_of(msg)
+        if "Ready to send this email" not in content:
+            continue
+        to_match = re.search(r"-\s*\*\*To:\*\*\s*(.+)", content)
+        subject_match = re.search(r"-\s*\*\*Subject:\*\*\s*(.+)", content)
+        body_match = re.search(r"\*\*Body:\*\*\n([\s\S]*?)(?=\n\n\*Please|\Z)", content)
+        if to_match and subject_match and body_match:
+            return {
+                "to": to_match.group(1).strip(),
+                "subject": subject_match.group(1).strip(),
+                "body": body_match.group(1).strip(),
+            }
+    return None
+
+
 WRITE_ACTIONS = {
     "create_pr": {
         "required_role": "Global_Admins",
@@ -3420,6 +3662,25 @@ WRITE_ACTIONS = {
         "is_complete": _is_complete_update_calendar_event,
         "recover_from_history": _recover_update_calendar_event,
         "card_marker": "Ready to update this calendar event",
+    },
+    "append_target_doc": {
+        "required_role": None,
+        # No "draft": proposed inline by tool_agent_node's own ReAct loop (same pattern as
+        # run_mongo_write) — the model doesn't know what to append until it's already gathered
+        # and summarized content itself via other actions.
+        "draft": None,
+        "execute": _execute_append_target_doc,
+        "is_complete": _is_complete_append_target_doc,
+        "recover_from_history": _recover_append_target_doc,
+        "card_marker": "Ready to append this to your target document",
+    },
+    "send_email": {
+        "required_role": None,
+        "draft": _draft_send_email,
+        "execute": _execute_send_email,
+        "is_complete": _is_complete_send_email,
+        "recover_from_history": _recover_send_email,
+        "card_marker": "Ready to send this email",
     },
 }
 

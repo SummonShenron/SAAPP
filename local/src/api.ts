@@ -339,6 +339,34 @@ export async function updateTargetRepo(targetRepo: string | null): Promise<{ tar
 }
 
 /**
+ * Get / set the current user's target Google Doc — a generic "document SAAPP can append to
+ * when asked" setting, not tied to any one purpose. Accepts either a raw Doc ID or a full
+ * docs.google.com URL; the backend extracts the ID either way.
+ */
+export async function getTargetDoc(): Promise<{ target_doc_id: string | null }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/target-doc`, {
+    headers: { ...authHeaders }
+  });
+  if (!res.ok) throw new Error("Failed to fetch target document setting.");
+  return res.json();
+}
+
+export async function updateTargetDoc(docUrlOrId: string | null): Promise<{ target_doc_id: string | null; warning: string | null }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/target-doc`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders
+    },
+    body: JSON.stringify({ doc_url_or_id: docUrlOrId })
+  });
+  if (!res.ok) throw new Error("Failed to update target document setting.");
+  return res.json();
+}
+
+/**
  * Get / set whether the current user has already dismissed the onboarding/help overlay —
  * drives whether it auto-shows on sign-in (see Layout.tsx).
  */
@@ -717,6 +745,8 @@ export const api = {
   updateDeepThinking,
   getTargetRepo,
   updateTargetRepo,
+  getTargetDoc,
+  updateTargetDoc,
   getHasSeenHelp,
   updateHasSeenHelp,
   getTimezone,

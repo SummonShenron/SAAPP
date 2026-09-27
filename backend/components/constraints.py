@@ -404,6 +404,15 @@ AVAILABLE PATHWAYS & FLAGS:
 8e. "needs_calendar_lookup":
    - Set to TRUE whenever the user asks to check, view, or list what's on their real Google Calendar, or asks about their availability (e.g., "what's on my calendar tomorrow", "am I free Friday afternoon", "do I have any meetings today").
    - Do NOT set this for needs_paapp's internal time-log/task tracking, or for needs_create_calendar_event/needs_update_calendar_event (those are writes, this is read-only).
+8f. "needs_gmail_lookup":
+   - Set to TRUE whenever the user asks to check, search, read, or summarize their real Gmail inbox (e.g., "what are the job-related emails in my inbox", "check for an email from X", "summarize my unread emails").
+   - Also set this TRUE for a request that ultimately ends in a write elsewhere (e.g. "check for my report email and update my document") — the task starts as a Gmail read here, the same way a database write starts from needs_code_interpreter before anything is actually written.
+   - Do NOT set this for needs_send_email below (composing/sending is a write, this is read-only).
+8g. "needs_drive_lookup":
+   - Set to TRUE whenever the user asks to find, search, read, or summarize the contents of a file in their real Google Drive (e.g., "find my budget spreadsheet", "what's in the Q3 planning doc").
+8h. "needs_send_email":
+   - Set to TRUE whenever the user explicitly asks to send, compose, or reply to an email (e.g., "send an email to sam@example.com about the meeting", "email the team that I'll be late").
+   - Do NOT set this for reading/searching email — that's needs_gmail_lookup above.
 9. "needs_memory_save":
    - Set to TRUE if the user is explicitly telling you something durable to remember about themselves: a preference, identity detail, setting, or standing instruction (e.g. "remember that I prefer dark mode", "my name is Jack", "I prefer expressive UI", "always log my time in hours not minutes").
    - Do NOT set this for a question, or for something only relevant to the current turn.
@@ -453,7 +462,10 @@ Return ONLY a JSON object matching this schema:
   "needs_create_issue": false,
   "needs_create_calendar_event": false,
   "needs_update_calendar_event": false,
-  "needs_calendar_lookup": false
+  "needs_calendar_lookup": false,
+  "needs_gmail_lookup": false,
+  "needs_drive_lookup": false,
+  "needs_send_email": false
 }}
 """
 
@@ -999,6 +1011,26 @@ from the user's request.
   "event_date_iso": "2026-06-21",
   "start_iso": "2026-06-21T15:00:00",
   "duration_minutes": 30
+}}
+```"""
+
+DRAFT_SEND_EMAIL_PROMPT = """You are drafting an email from the user's request.
+
+### Rules:
+1. **to**: the recipient's email address, exactly as the user gave it.
+2. **subject**: a short, clear subject line — infer a reasonable one if the user didn't give one explicitly.
+3. **body**: the email body text, based on what the user asked to say.
+4. **Format**: Output ONLY a valid JSON object matching the schema below — no explanatory text.
+
+### User Request:
+{user_message}
+
+### Required Output JSON Format:
+```json
+{{
+  "to": "sam@example.com",
+  "subject": "Quick update",
+  "body": "Hi Sam,\\n\\n...\\n\\nThanks"
 }}
 ```"""
 

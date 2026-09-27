@@ -1960,7 +1960,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
             color: '#e2e8f0',
             boxShadow: '0 12px 28px rgba(0,0,0,0.5)',
             overflowY: 'auto',
-            zIndex: 999,
+            zIndex: 900,
             boxSizing: 'border-box',
             userSelect: isDraggingTrace ? 'none' : 'auto'
           }}>
