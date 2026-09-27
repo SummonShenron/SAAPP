@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import swooshLogoImg from '../assets/white_swoosh.png';
 import { Filters } from '../components/Filters';
 import ConversationsBlade from '../components/ConversationsBlade';
+import OptionWheel, { type OptionWheelItem } from '../components/OptionWheel';
 import { getDynamicExampleQuestions } from '../utils/Example_List';
 import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, type KnowledgeBase } from '../api';
 import ReactMarkdown from 'react-markdown';
@@ -344,7 +345,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
                     style={msg.feedback === 'like' ? { color: '#22c55e', borderColor: '#22c55e', background: '#22c55e' } : {}}
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
+                      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
                     </svg>
                   </button>
 
@@ -356,7 +357,8 @@ const ChatMessageList = React.memo(function ChatMessageList({
                     style={msg.feedback === 'dislike' ? { color: '#ef4444', borderColor: '#ef4444' } : {}}
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3" />
+                      <path d="M12 21.23l-7.78-7.78a5.5 5.5 0 0 1 0-7.78L12 5.67l1.06-1.06a5.5 5.5 0 0 1 7.78 7.78L12 21.23z" />
+                      <path d="M12 5.67v15.56" />
                     </svg>
                   </button>
                 </div>
@@ -553,6 +555,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
 
   const [showTooltip, setShowTooltip] = useState(false);
   const tooltipRef = useRef<HTMLDivElement>(null);
+  const [showOverflowWheel, setShowOverflowWheel] = useState(false);
 
   const [targetRepo, setTargetRepo] = useState<string>("");
   const [showRepoBanner, setShowRepoBanner] = useState(false);
@@ -1362,7 +1365,98 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
   setFeedbackReason('');
   setFeedbackTag('hallucination');
 };
-  
+
+  // Secondary footer actions, tucked behind the "..." overflow button and
+  // surfaced through the OptionWheel popover instead of their own icons.
+  const overflowItems: OptionWheelItem[] = [
+    {
+      label: 'Help',
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="9" />
+          <line x1="12" y1="8" x2="12" y2="12" />
+          <line x1="12" y1="16" x2="12.01" y2="16" />
+        </svg>
+      )
+    },
+    {
+      label: targetRepo ? `Repo: ${targetRepo}` : 'Target Repo',
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="16 18 22 12 16 6" />
+          <polyline points="8 6 2 12 8 18" />
+        </svg>
+      )
+    },
+    {
+      label: 'Conversations',
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+        </svg>
+      )
+    },
+    {
+      label: 'Trace',
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M4 5h16" />
+          <path d="M7 10h10" />
+          <path d="M10 15h4" />
+        </svg>
+      )
+    },
+    {
+      label: 'Export',
+      disabled: loading || !hasChatted,
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <polyline points="7 10 12 15 17 10" />
+          <line x1="12" y1="15" x2="12" y2="3" />
+        </svg>
+      )
+    },
+    {
+      label: 'Delete',
+      disabled: loading,
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="3 6 5 6 21 6" />
+          <path d="M19 6l-2 14H7L5 6" />
+          <line x1="10" y1="11" x2="10" y2="17" />
+          <line x1="14" y1="11" x2="14" y2="17" />
+        </svg>
+      )
+    }
+  ];
+
+  const runOverflowAction = (index: number) => {
+    switch (index) {
+      case 0:
+        setShowTooltip(v => !v);
+        break;
+      case 1:
+        setShowRepoBanner(v => !v);
+        break;
+      case 2:
+        toggleConversationsBlade();
+        break;
+      case 3:
+        toggleTracePanel();
+        break;
+      case 4:
+        if (!loading && hasChatted) handleExportChat();
+        break;
+      case 5:
+        if (!loading) setShowClearConfirm(true);
+        break;
+      default:
+        break;
+    }
+    setShowOverflowWheel(false);
+  };
+
   return (
   <div>
     {/* HERO BANNER (hidden entirely in embed mode) */}
@@ -1580,18 +1674,60 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
 
               <div className="icon-row-overlay">
                 <div style={{ position: "relative" }}>
-                  <button 
-                    type="button" 
-                    className="circle-icon-button"
-                    onClick={() => setShowTooltip(!showTooltip)}
-                    title="Help / Info"
+                  <button
+                    type="button"
+                    className={`circle-icon-button ${showOverflowWheel ? 'trace-active' : ''}`}
+                    onClick={() => setShowOverflowWheel(v => !v)}
+                    title="More actions"
+                    style={showOverflowWheel ? {
+                      background: '#3b82f6',
+                      border: '1px solid #3b82f6',
+                      boxShadow: '0 0 8px rgba(99, 102, 241, 0.5)'
+                    } : {}}
                   >
+                    <style>{`
+                      .circle-icon-button.trace-active svg,
+                      .circle-icon-button.trace-active svg * {
+                        stroke: #ffffff !important;
+                      }
+                    `}</style>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <circle cx="12" cy="12" r="9" />
-                      <line x1="12" y1="8" x2="12" y2="12" />
-                      <line x1="12" y1="16" x2="12.01" y2="16" />
+                      <circle cx="5" cy="12" r="1.5" fill="currentColor" stroke="none" />
+                      <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+                      <circle cx="19" cy="12" r="1.5" fill="currentColor" stroke="none" />
                     </svg>
                   </button>
+
+                  {showOverflowWheel && (
+                    <div
+                      className="chat-overflow-wheel-popover"
+                      style={{
+                        position: "absolute",
+                        bottom: "45px",
+                        left: "0",
+                        width: "200px",
+                        maxHeight: "260px",
+                        background: isEmbedded ? "#121316" : "#121824",
+                        border: isEmbedded ? "1px solid rgba(0, 242, 254, 0.4)" : "1px solid #334155",
+                        borderRadius: "12px",
+                        boxShadow: isEmbedded
+                          ? "0 10px 25px -5px rgba(0, 0, 0, 0.7), 0 0 12px rgba(0, 242, 254, 0.15)"
+                          : "0 10px 25px -5px rgba(0, 0, 0, 0.5)",
+                        zIndex: 100,
+                        padding: "6px",
+                      }}
+                    >
+                      <OptionWheel
+                        items={overflowItems}
+                        columnLayout
+                        fontSize={0.85}
+                        textColor="#94a3b8"
+                        activeColor="#f8fafc"
+                        onActivate={index => runOverflowAction(index)}
+                      />
+                    </div>
+                  )}
+
                   {showTooltip && (
                     <div
                       className="chat-tooltip-popover"
@@ -1615,7 +1751,28 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                         lineHeight: "1.4"
                       }}
                     >
-                      <strong style={{ color: "#38bdf8", display: "block", marginBottom: "6px", fontSize: "13px" }}>
+                      <button
+                        type="button"
+                        onClick={() => setShowTooltip(false)}
+                        aria-label="Close"
+                        style={{
+                          all: "unset",
+                          position: "absolute",
+                          top: "8px",
+                          right: "10px",
+                          cursor: "pointer",
+                          color: "#94a3b8",
+                          fontSize: "14px",
+                          lineHeight: 1,
+                          padding: "2px"
+                        }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="18" y1="6" x2="6" y2="18" />
+                          <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </button>
+                      <strong style={{ color: "#38bdf8", display: "block", marginBottom: "6px", fontSize: "13px", paddingRight: "16px" }}>
                         Secure Index Tip:
                       </strong>
                       <ul style={{ margin: 0, paddingLeft: "16px", display: "flex", flexDirection: "column", gap: "6px", color: "#cbd5e1" }}>
@@ -1632,82 +1789,12 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
 
                 <button
                   type="button"
-                  className={`circle-icon-button ${targetRepo ? 'trace-active' : ''}`}
-                  onClick={() => setShowRepoBanner(!showRepoBanner)}
-                  title={targetRepo ? `Target repo: ${targetRepo}` : "Set target repo"}
-                  style={targetRepo ? {
-                    background: '#3b82f6',
-                    border: '1px solid #3b82f6',
-                    boxShadow: '0 0 8px rgba(99, 102, 241, 0.5)'
-                  } : {}}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="16 18 22 12 16 6" />
-                    <polyline points="8 6 2 12 8 18" />
-                  </svg>
-                </button>
-
-                <button
-                  type="button"
-                  className={`circle-icon-button ${showConversations ? 'trace-active' : ''}`}
-                  onClick={toggleConversationsBlade}
-                  title="Conversations"
-                  style={showConversations ? {
-                    background: '#3b82f6',
-                    border: '1px solid #3b82f6',
-                    boxShadow: '0 0 8px rgba(99, 102, 241, 0.5)'
-                  } : {}}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                  </svg>
-                </button>
-
-                <button
-                  type="button"
-                  className={`circle-icon-button ${showTracePanel ? 'trace-active' : ''}`}
-                  onClick={toggleTracePanel}
-                  title="Toggle execution trace"
-                  style={showTracePanel ? {
-                    background: '#3b82f6',
-                    border: '1px solid #3b82f6',
-                    boxShadow: '0 0 8px rgba(99, 102, 241, 0.5)'
-                  } : {}}
-                >
-                  <style>{`
-                    .circle-icon-button.trace-active svg,
-                    .circle-icon-button.trace-active svg * {
-                      stroke: #ffffff !important;
-                    }
-                  `}</style>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M4 5h16" />
-                    <path d="M7 10h10" />
-                    <path d="M10 15h4" />
-                  </svg>
-                </button>
-
-                <button
-                  type="button"
                   className="circle-icon-button"
                   onClick={() => document.getElementById("file-upload")?.click()}
                 >
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <line x1="12" y1="5" x2="12" y2="19" />
                     <line x1="5" y1="12" x2="19" y2="12" />
-                  </svg>
-                </button>
-
-                <button
-                  type="button"
-                  className="circle-icon-button"
-                  onClick={handleExportChat}
-                  disabled={loading || !hasChatted}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
                   </svg>
                 </button>
 
@@ -1728,21 +1815,6 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                       <polyline points="12 2 22 12 12 22" />
                     </svg>
                   )}
-                </button>
-
-                <button
-                  type="button"
-                  className="circle-icon-button"
-                  onClick={() => setShowClearConfirm(true)}
-                  disabled={loading}
-                  title="Delete this conversation"
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="3 6 5 6 21 6" />
-                    <path d="M19 6l-2 14H7L5 6" />
-                    <line x1="10" y1="11" x2="10" y2="17" />
-                    <line x1="14" y1="11" x2="14" y2="17" />
-                  </svg>
                 </button>
               </div>
             </div>

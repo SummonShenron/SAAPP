@@ -1,0 +1,103 @@
+.option-wheel {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  cursor: grab;
+  outline: none;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.option-wheel--dragging {
+  cursor: grabbing;
+}
+
+.option-wheel__item {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.55em;
+  padding-left: var(--ow-inset, 0px);
+  font-size: var(--ow-font-size, 1rem);
+  color: var(--ow-text-color, #a6a6a6);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  will-change: transform, opacity, filter;
+  transition: color 0.15s ease;
+}
+
+.option-wheel--right .option-wheel__item {
+  flex-direction: row-reverse;
+  padding-left: 0;
+  padding-right: var(--ow-inset, 0px);
+  text-align: right;
+}
+
+.option-wheel__item--selected {
+  color: #cfd2dd;
+  font-weight: 600;
+}
+
+.option-wheel__item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1em;
+  height: 1em;
+}
+
+.option-wheel__item-icon svg {
+  width: 1em;
+  height: 1em;
+  stroke: currentColor;
+}
+
+.option-wheel__item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.option-wheel--column {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  cursor: default;
+  height: auto;
+}
+
+.option-wheel--column .option-wheel__item {
+  position: static;
+  flex: none;
+  padding: 0.55em 0.75em;
+  border-radius: 8px;
+  opacity: 1;
+  filter: none;
+  transform: none;
+  will-change: auto;
+}
+
+.option-wheel--column .option-wheel__item:hover,
+.option-wheel--column .option-wheel__item:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ow-active-color, #ffffff);
+  outline: none;
+}
+
+.option-wheel--column .option-wheel__item--selected {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.option-wheel--column .option-wheel__item--disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
