@@ -629,6 +629,101 @@ def test_recover_send_email_from_card_text():
     assert recovered == {"to": "sam@example.com", "subject": "Hello", "body": "Just saying hi."}
 
 
+# ---------------------------------------------------------------------------
+# propose_send_email — inline-proposed like append_target_doc, for a send that depends on
+# something gathered mid-loop (e.g. "search github for the last 3 PRs and email me a summary")
+# rather than one draftable straight from the user's raw message.
+# ---------------------------------------------------------------------------
+
+@run_async
+async def test_propose_send_email_end_to_end_via_tool_agent_node(monkeypatch):
+    """Regression guard for the same bug propose_append_target_doc's end-to-end test guards:
+    the generalized _UnsafeActionRequested handler must branch correctly to the send_email shape,
+    using content the model actually composed itself via other actions first — not content
+    drafted straight from the user's raw message before anything was looked up."""
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: [])
+    monkeypatch.setattr(aw, "has_granted_scope", lambda username, scope: True)
+
+    from backend.tests.test_tool_agent_node import _setup_github_repo, _llm_response, _state
+
+    _setup_github_repo(monkeypatch)
+
+    responses = [
+        _llm_response(
+            action="query", purpose="Send PR summary",
+            tool_action="propose_send_email",
+            args={
+                "to": "harper.jack@principal.com",
+                "subject": "Summary of Recent GitHub Pull Requests",
+                "body": "Here is a summary of the last 3 real pull requests I found.",
+            },
+        ),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("search github for the last 3 PRs and email me a summary"))
+
+    assert result["pending_action"]["action_type"] == "send_email"
+    assert result["pending_action"]["details"] == {
+        "to": "harper.jack@principal.com",
+        "subject": "Summary of Recent GitHub Pull Requests",
+        "body": "Here is a summary of the last 3 real pull requests I found.",
+    }
+    assert result["relevance_grade"] == "hitl_approval_required"
+    assert "Ready to send this email" in result["content_to_format"]
+
+
+@run_async
+async def test_propose_send_email_missing_scope_short_circuits(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: [])
+    monkeypatch.setattr(aw, "has_granted_scope", lambda username, scope: False)
+
+    from backend.tests.test_tool_agent_node import _setup_github_repo, _llm_response, _state
+
+    _setup_github_repo(monkeypatch)
+
+    responses = [
+        _llm_response(
+            action="query", purpose="Send PR summary",
+            tool_action="propose_send_email",
+            args={"to": "sam@example.com", "subject": "Hi", "body": "Just checking in."},
+        ),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("email sam a summary"))
+
+    assert result["pending_action"] is None
+    assert result["relevance_grade"] == "conversational"
+    assert "haven't connected Gmail send access" in result["content_to_format"]
+    assert "Approval Required" not in result["content_to_format"]
+
+
+@run_async
+async def test_propose_send_email_incomplete_args_short_circuits(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: [])
+    monkeypatch.setattr(aw, "has_granted_scope", lambda username, scope: True)
+
+    from backend.tests.test_tool_agent_node import _setup_github_repo, _llm_response, _state
+
+    _setup_github_repo(monkeypatch)
+
+    responses = [
+        _llm_response(
+            action="query", purpose="Send PR summary",
+            tool_action="propose_send_email",
+            args={"to": "sam@example.com", "subject": "", "body": ""},
+        ),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("email sam a summary"))
+
+    assert result["pending_action"] is None
+    assert result["relevance_grade"] == "conversational"
+    assert "recipient, subject, and body" in result["content_to_format"]
+
+
 @run_async
 async def test_mongo_write_proposal_to_execution_end_to_end(monkeypatch):
     monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])
