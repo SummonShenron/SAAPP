@@ -88,7 +88,9 @@ from backend.utils.user_settings_utils import (
     get_user_settings_bundle,
     get_user_has_seen_help, set_user_has_seen_help,
     get_user_timezone, set_user_timezone,
+    get_user_target_doc_id, set_user_target_doc_id,
 )
+from backend.services.google_drive_service import get_file_metadata as get_drive_file_metadata
 from backend.utils.google_calendar_utils import (
     get_connection_status as get_calendar_connection_status,
     create_pending as create_calendar_pending,
@@ -241,6 +243,9 @@ class DeepThinkingUpdate(BaseModel):
 
 class TargetRepoUpdate(BaseModel):
     target_repo: Optional[str] = None
+
+class TargetDocUpdate(BaseModel):
+    doc_url_or_id: Optional[str] = None
 
 class HasSeenHelpUpdate(BaseModel):
     has_seen_help: bool
@@ -1530,6 +1535,30 @@ async def update_target_repo_setting(payload: TargetRepoUpdate, current_user = D
     username = current_user.get("sub")
     saved = set_user_target_repo(username, payload.target_repo)
     return {"target_repo": saved}
+
+
+@app.get("/api/settings/target-doc")
+async def get_target_doc_setting(current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    return {"target_doc_id": get_user_target_doc_id(username)}
+
+
+@app.put("/api/settings/target-doc")
+async def update_target_doc_setting(payload: TargetDocUpdate, current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    saved = set_user_target_doc_id(username, payload.doc_url_or_id)
+    warning = None
+    if saved:
+        # Best-effort validation using the user's own token, if connected — never blocks the
+        # save itself, since the connection or Docs scope might not exist yet.
+        try:
+            token = GoogleCalendarOAuth().get_valid_access_token(username)
+            metadata = get_drive_file_metadata(token, saved)
+            if metadata.get("mimeType") != "application/vnd.google-apps.document":
+                warning = "That ID doesn't look like a Google Doc."
+        except Exception:
+            warning = "Could not verify access to this document yet — check that it's shared with your connected Google account."
+    return {"target_doc_id": saved, "warning": warning}
 
 
 @app.get("/api/settings/has-seen-help")

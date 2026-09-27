@@ -26,6 +26,11 @@ DEFAULT_TIMEZONE = "America/Chicago"
 
 _TARGET_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
+# Google Doc IDs are opaque alphanumeric-ish strings, typically 40+ chars, but no fixed format is
+# documented — this charset/length check just filters out obviously-not-an-ID garbage input.
+_TARGET_DOC_ID_RE = re.compile(r"^[A-Za-z0-9_-]{10,}$")
+_TARGET_DOC_URL_RE = re.compile(r"/document/d/([A-Za-z0-9_-]+)")
+
 # Identities that must never opt into a heavier-than-default setting (open RAG scope, deep
 # thinking's larger step budget, a pinned target repo) — guest_bty is the single shared
 # identity every anonymous BTY Fitness embed visitor authenticates as, so honoring a stored
@@ -83,6 +88,21 @@ def _resolve_deep_thinking(doc: dict) -> bool:
 def _resolve_target_repo(doc: dict) -> Optional[str]:
     repo = doc.get("target_repo")
     return repo if repo and _TARGET_REPO_RE.match(repo) else None
+
+
+def _extract_doc_id(raw: str) -> Optional[str]:
+    """Accepts either a bare Doc ID or a full docs.google.com URL — a user pasting the URL
+    straight from their browser's address bar should just work, not require them to dig the ID
+    out of it themselves."""
+    url_match = _TARGET_DOC_URL_RE.search(raw)
+    if url_match:
+        return url_match.group(1)
+    return raw if _TARGET_DOC_ID_RE.match(raw) else None
+
+
+def _resolve_target_doc_id(doc: dict) -> Optional[str]:
+    doc_id = doc.get("target_doc_id")
+    return doc_id if doc_id and _TARGET_DOC_ID_RE.match(doc_id) else None
 
 
 def _is_valid_timezone(tz: str) -> bool:
@@ -191,6 +211,32 @@ def set_user_target_repo(username: str, repo: Optional[str]) -> Optional[str]:
 
     _write_local_setting(username, "target_repo", repo)
     return repo
+
+
+def get_user_target_doc_id(username: str) -> Optional[str]:
+    """Returns the user's configured target Google Doc ID — a generic "the document SAAPP
+    appends to when asked" setting, not tied to any one purpose (a weekly report is just one
+    user's own first use case for it). Not subject to TOGGLE_LOCKED_USERS — same reasoning as
+    timezone, no elevated-resource concern."""
+    return _resolve_target_doc_id(_fetch_settings_doc(username))
+
+
+def set_user_target_doc_id(username: str, raw_url_or_id: Optional[str]) -> Optional[str]:
+    """Validates and persists a user's target document. Accepts either a bare Doc ID or a full
+    docs.google.com URL. A falsy or malformed value clears the setting, matching
+    set_user_target_repo's invalid-value-clears convention."""
+    doc_id = _extract_doc_id((raw_url_or_id or "").strip())
+
+    db = get_db()
+    if db is not None:
+        db["user_settings"].update_one(
+            {"username": username},
+            {"$set": {"target_doc_id": doc_id}},
+            upsert=True,
+        )
+
+    _write_local_setting(username, "target_doc_id", doc_id)
+    return doc_id
 
 
 def get_user_timezone(username: str) -> str:

@@ -5,6 +5,7 @@
   padding: 24px 28px;
   background: var(--bg-main);
   transition: all 0.2s ease;
+  z-index: 952;
 }
 
 .help-panel .help-title {
@@ -110,7 +111,7 @@
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.55);
-  z-index: 998;
+  z-index: 950;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -140,7 +141,7 @@
   border: 1px solid var(--border-color);
   border-radius: 16px;
   overflow: hidden;
-  z-index: 999;
+  z-index: 952;
   box-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.4);
   animation: popInHelp 0.2s ease-out;
 }

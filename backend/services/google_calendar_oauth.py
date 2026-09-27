@@ -23,11 +23,26 @@ from google_auth_oauthlib.flow import Flow
 
 logger = logging.getLogger("SASS Logger")
 
-# calendar.events (not PAAPP's full-access 'calendar' scope) is enough for create/list/update.
-# openid + userinfo.email exist solely so build_connection() can show which real Google account is
-# connected — bare calendar.events alone doesn't return an email.
+# This is SAAPP's one combined Google grant, not calendar-only despite the module/constant name —
+# Drive, Docs, and Gmail were added later in the same session and bundled into this same OAuth
+# consent rather than a second connection, since Google treats a single grant covering N scopes as
+# costing the same one user-slot as a grant covering one scope (relevant given drive/gmail.readonly
+# are unverified restricted/sensitive scopes drawing from a shared, non-resettable 100-user lifetime
+# cap on this GCP project — see docs/coding-agent-roadmap.md). calendar.events is the only one of
+# these that's actually been verified with Google and is exempt from that cap.
+#
+# drive (full, not drive.file) — a narrower Picker-based drive.file flow was considered and
+# explicitly rejected for the target-doc-append feature: it would need a picker UI step to grant
+# access to each pre-existing file, which was judged too much ceremony for the intended UX.
+# documents — the real Docs API (documents.batchUpdate) needs its own scope; Drive's scope alone
+# only covers Drive-level file operations (rename/move/export/overwrite), not structural edits.
+# gmail.readonly / gmail.send — read (search/summarize inbox) and send, no inbox-modify access.
 GOOGLE_CALENDAR_SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/documents",
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
 ]

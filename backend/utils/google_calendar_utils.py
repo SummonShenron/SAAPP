@@ -69,6 +69,22 @@ def get_connection_status(username: str) -> dict:
     }
 
 
+def has_granted_scope(username: str, scope: str) -> bool:
+    """Distinguishes "no connection at all" from "connected, but the connection predates this
+    scope being added" — a real gap opened up once Drive/Docs/Gmail scopes were added after
+    Calendar was already live: get_valid_access_token() still returns a token for an
+    already-connected user, but calling a Gmail/Drive/Docs endpoint with it 403s
+    (insufficient_permission) rather than the invalid_grant that the self-heal-on-refresh path
+    already handles. Every action outside Calendar's own three functions must check this before
+    calling its API, so the failure surfaces as "reconnect to grant access" instead of a raw 403."""
+    if username in CALENDAR_LOCKED_USERS:
+        return False
+    doc = _fetch_connection_doc(username)
+    if not doc:
+        return False
+    return scope in (doc.get("scopes") or [])
+
+
 def save_connection(
     username: str,
     *,

@@ -328,6 +328,260 @@ async def test_list_google_calendar_events_blocks_locked_guest_identity(monkeypa
     assert any("ERROR: Google Calendar is not available for this account" in p for p in captured_prompts)
 
 
+# ---------------------------------------------------------------------------
+# Gmail read actions
+# ---------------------------------------------------------------------------
+
+@run_async
+async def test_search_gmail_returns_formatted_results(monkeypatch):
+    _setup_github_repo(monkeypatch)
+
+    class _FakeOAuth:
+        def get_valid_access_token(self, username):
+            return "fake-access-token"
+
+    monkeypatch.setattr(aw, "GoogleCalendarOAuth", _FakeOAuth)
+    monkeypatch.setattr(aw, "has_granted_scope", lambda username, scope: True)
+    monkeypatch.setattr(
+        aw, "search_messages",
+        lambda token, query, max_results: [{"id": "m1", "subject": "Weekly Report", "from": "app@x.com", "date": "Mon", "snippet": "..."}],
+    )
+
+    responses = [
+        _llm_response(action="query", purpose="Find report email", tool_action="search_gmail", args={"query": "subject:report"}),
+        _llm_response(action="final", answer="Found it.", show_work=True),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("check my gmail for the weekly report email"))
+    assert "Found it" in result["content_to_format"]
+
+
+@run_async
+async def test_read_gmail_message_returns_formatted_detail(monkeypatch):
+    _setup_github_repo(monkeypatch)
+
+    class _FakeOAuth:
+        def get_valid_access_token(self, username):
+            return "fake-access-token"
+
+    monkeypatch.setattr(aw, "GoogleCalendarOAuth", _FakeOAuth)
+    monkeypatch.setattr(aw, "has_granted_scope", lambda username, scope: True)
+    monkeypatch.setattr(
+        aw, "get_message_detail",
+        lambda token, message_id: {
+            "subject": "Weekly Report", "from": "app@x.com", "date": "Mon", "body_text": "See attached.",
+            "body_is_html": False, "attachments": [{"filename": "export.json", "mime_type": "application/json", "attachment_id": "att1", "size": 42}],
+        },
+    )
+
+    captured_prompts = []
+    responses = [
+        _llm_response(action="query", purpose="Read email", tool_action="read_gmail_message", args={"message_id": "m1"}),
+        _llm_response(action="final", answer="Done.", show_work=True),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses.pop(0)
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("check my gmail for the weekly report email"))
+    assert any("export.json" in p and "att1" in p for p in captured_prompts)
+
+
+@run_async
+async def test_get_gmail_attachment_returns_content(monkeypatch):
+    _setup_github_repo(monkeypatch)
+
+    class _FakeOAuth:
+        def get_valid_access_token(self, username):
+            return "fake-access-token"
+
+    monkeypatch.setattr(aw, "GoogleCalendarOAuth", _FakeOAuth)
+    monkeypatch.setattr(aw, "has_granted_scope", lambda username, scope: True)
+    monkeypatch.setattr(aw, "get_attachment_text", lambda token, message_id, attachment_id: '{"hours": 5}')
+
+    captured_prompts = []
+    responses = [
+        _llm_response(action="query", purpose="Read attachment", tool_action="get_gmail_attachment", args={"message_id": "m1", "attachment_id": "att1"}),
+        _llm_response(action="final", answer="Done.", show_work=True),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses.pop(0)
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("read that attachment"))
+    assert any('"hours": 5' in p for p in captured_prompts)
+
+
+@run_async
+async def test_gmail_actions_report_no_connection(monkeypatch):
+    _setup_github_repo(monkeypatch)
+
+    class _FakeOAuth:
+        def get_valid_access_token(self, username):
+            raise aw.GoogleCalendarConnectionError("No Google Calendar connection found for jack")
+
+    monkeypatch.setattr(aw, "GoogleCalendarOAuth", _FakeOAuth)
+
+    captured_prompts = []
+    responses = [
+        _llm_response(action="query", purpose="Search gmail", tool_action="search_gmail", args={"query": "report"}),
+        _llm_response(action="final", answer="Done.", show_work=True),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses.pop(0)
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("search my gmail for the report"))
+    assert any("Connect it under Integrations" in p for p in captured_prompts)
+
+
+@run_async
+async def test_gmail_actions_report_missing_scope(monkeypatch):
+    _setup_github_repo(monkeypatch)
+
+    class _FakeOAuth:
+        def get_valid_access_token(self, username):
+            return "fake-access-token"
+
+    monkeypatch.setattr(aw, "GoogleCalendarOAuth", _FakeOAuth)
+    monkeypatch.setattr(aw, "has_granted_scope", lambda username, scope: False)
+
+    captured_prompts = []
+    responses = [
+        _llm_response(action="query", purpose="Search gmail", tool_action="search_gmail", args={"query": "report"}),
+        _llm_response(action="final", answer="Done.", show_work=True),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses.pop(0)
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("search my gmail for the report"))
+    assert any("Gmail access not granted" in p for p in captured_prompts)
+
+
+# ---------------------------------------------------------------------------
+# Drive read actions
+# ---------------------------------------------------------------------------
+
+@run_async
+async def test_search_drive_files_returns_formatted_results(monkeypatch):
+    _setup_github_repo(monkeypatch)
+
+    class _FakeOAuth:
+        def get_valid_access_token(self, username):
+            return "fake-access-token"
+
+    monkeypatch.setattr(aw, "GoogleCalendarOAuth", _FakeOAuth)
+    monkeypatch.setattr(aw, "has_granted_scope", lambda username, scope: True)
+    monkeypatch.setattr(
+        aw, "search_drive_files_fn",
+        lambda token, query, max_results: [{"id": "f1", "name": "Budget", "mimeType": "application/vnd.google-apps.spreadsheet", "modifiedTime": "2026-01-01"}],
+    )
+
+    responses = [
+        _llm_response(action="query", purpose="Find budget file", tool_action="search_drive_files", args={"query": "name contains 'Budget'"}),
+        _llm_response(action="final", answer="Found it.", show_work=True),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("find my budget spreadsheet in drive"))
+    assert "Found it" in result["content_to_format"]
+
+
+@run_async
+async def test_read_drive_file_returns_content(monkeypatch):
+    _setup_github_repo(monkeypatch)
+
+    class _FakeOAuth:
+        def get_valid_access_token(self, username):
+            return "fake-access-token"
+
+    monkeypatch.setattr(aw, "GoogleCalendarOAuth", _FakeOAuth)
+    monkeypatch.setattr(aw, "has_granted_scope", lambda username, scope: True)
+    monkeypatch.setattr(aw, "read_drive_file_fn", lambda token, file_id: "Q3 revenue: $500k")
+
+    captured_prompts = []
+    responses = [
+        _llm_response(action="query", purpose="Read file", tool_action="read_drive_file", args={"file_id": "f1"}),
+        _llm_response(action="final", answer="Done.", show_work=True),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses.pop(0)
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("what's in my budget file"))
+    assert any("Q3 revenue" in p for p in captured_prompts)
+
+
+@run_async
+async def test_drive_actions_report_no_connection(monkeypatch):
+    _setup_github_repo(monkeypatch)
+
+    class _FakeOAuth:
+        def get_valid_access_token(self, username):
+            raise aw.GoogleCalendarConnectionError("No Google Calendar connection found for jack")
+
+    monkeypatch.setattr(aw, "GoogleCalendarOAuth", _FakeOAuth)
+
+    captured_prompts = []
+    responses = [
+        _llm_response(action="query", purpose="Search drive", tool_action="search_drive_files", args={"query": "name contains 'Budget'"}),
+        _llm_response(action="final", answer="Done.", show_work=True),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses.pop(0)
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("find my budget file in drive"))
+    assert any("Connect it under Integrations" in p for p in captured_prompts)
+
+
+@run_async
+async def test_drive_actions_report_missing_scope(monkeypatch):
+    _setup_github_repo(monkeypatch)
+
+    class _FakeOAuth:
+        def get_valid_access_token(self, username):
+            return "fake-access-token"
+
+    monkeypatch.setattr(aw, "GoogleCalendarOAuth", _FakeOAuth)
+    monkeypatch.setattr(aw, "has_granted_scope", lambda username, scope: False)
+
+    captured_prompts = []
+    responses = [
+        _llm_response(action="query", purpose="Search drive", tool_action="search_drive_files", args={"query": "name contains 'Budget'"}),
+        _llm_response(action="final", answer="Done.", show_work=True),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses.pop(0)
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("find my budget file in drive"))
+    assert any("Google Drive access not granted" in p for p in captured_prompts)
+
+
 @run_async
 async def test_non_admin_action_menu_never_includes_mongo(monkeypatch):
     """The actual security property: non-admins shouldn't even see run_mongo_query as an
