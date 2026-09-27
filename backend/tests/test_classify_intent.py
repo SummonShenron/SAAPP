@@ -96,3 +96,41 @@ def test_build_agent_plan_cancel_action_clears_pending_and_sets_insight():
     assert plan["agents"] == ["conversational"]
     assert state["pending_action"] is None
     assert "cancelled" in state["insight_answer"] or "rejected" in state["insight_answer"]
+
+
+def test_build_agent_plan_plain_send_email_takes_fast_upfront_path():
+    # No data-gathering flag set — nothing needs to be looked up before drafting, so this should
+    # stay on the fast path (draft directly from the message, no tool_agent loop).
+    state = {"reasoner_flags": {"needs_send_email": True}}
+    plan = build_agent_plan("send_email", state)
+    assert plan["agents"] == ["propose_write", "formatter"]
+    assert state["write_action"] == "send_email"
+
+
+def test_build_agent_plan_send_email_with_github_search_routes_to_tool_agent_first():
+    # Regression: a real production trace showed "search github for the last 3 PRs and email me
+    # a summary" set needs_github_search/needs_pr_summary AND needs_send_email simultaneously,
+    # and build_agent_plan's send_email check (checked before the tool_agent OR-chain) fired
+    # immediately — skipping the search entirely and having the draft LLM hallucinate fake PR
+    # numbers/titles into the email body from nothing but the raw message. Any co-occurring
+    # data-gathering flag must defer the send: tool_agent has to run first (and compose the real
+    # send itself, via propose_send_email, once it actually has results).
+    state = {
+        "reasoner_flags": {
+            "needs_send_email": True,
+            "needs_github_search": True,
+            "needs_pr_summary": True,
+        }
+    }
+    plan = build_agent_plan("send_email", state)
+    assert "propose_write" not in plan["agents"]
+    assert "tool_agent" in plan["agents"]
+    assert state.get("write_action") != "send_email"
+
+
+def test_build_agent_plan_send_email_with_gmail_lookup_routes_to_tool_agent_first():
+    # Same defer-until-gathered rule for any of the other lookup flags, not just GitHub.
+    state = {"reasoner_flags": {"needs_send_email": True, "needs_gmail_lookup": True}}
+    plan = build_agent_plan("send_email", state)
+    assert "propose_write" not in plan["agents"]
+    assert "tool_agent" in plan["agents"]

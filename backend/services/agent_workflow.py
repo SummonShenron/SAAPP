@@ -173,7 +173,7 @@ TOOL_AGENT_STUCK_ACTION_REDIRECTS = {
 # depends on whatever page a prior navigate actually loaded, so "independent" never applies to them.
 TOOL_AGENT_BATCHABLE_ACTIONS = frozenset({
     "list_repo_tree", "read_repo_file", "search_code", "find_file", "trace_symbol",
-    "search_literal", "diff_branches", "list_commits", "web_search", "run_python",
+    "search_literal", "diff_branches", "list_commits", "list_pull_requests", "web_search", "run_python",
 })
 # The actual per-step concurrency cap (_MAX_BATCH_SIZE) lives alongside run_react_loop itself now
 # (backend/services/react_loop.py) — nothing outside that loop needs it.
@@ -630,7 +630,19 @@ def build_agent_plan(intent: str, state: dict) -> dict:
         state["write_action"] = "update_calendar_event"
         return {"agents": ["propose_write", "formatter"], "skip": []}
 
-    if intent == "send_email" or flags.get("needs_send_email"):
+    # A send request that ALSO needs real data gathered first (e.g. "search github for the last
+    # 3 PRs and email me a summary") must not draft the email straight from the user's raw
+    # message — that hallucinates content, since nothing has actually been looked up yet. Route
+    # those through tool_agent instead, which has its own propose_send_email action for composing
+    # the send AFTER real results are in hand. Only take the fast upfront path (draft directly
+    # from the message, no lookup loop) when nothing else needs gathering first.
+    _needs_prior_lookup = any(
+        flags.get(f) for f in (
+            "needs_web_search", "needs_code_interpreter", "needs_github_search",
+            "needs_pr_summary", "needs_calendar_lookup", "needs_gmail_lookup", "needs_drive_lookup",
+        )
+    )
+    if (intent == "send_email" or flags.get("needs_send_email")) and not _needs_prior_lookup:
         state["last_intent"] = "propose_write"
         state["write_action"] = "send_email"
         return {"agents": ["propose_write", "formatter"], "skip": []}
@@ -2249,6 +2261,32 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             commits = res.json()
             return "\n".join(f"{c['sha'][:7]} — {c['commit']['message'].splitlines()[0]}" for c in commits)
 
+        def _list_pull_requests(state_filter: str, limit):
+            # GitHub's real PR list, sorted by most-recently-updated — this is what "the last N
+            # pull requests" actually means (list_commits covers commit history, not PRs; nothing
+            # else in this menu can answer "what were the last few PRs").
+            state_filter = (state_filter or "all").lower()
+            if state_filter not in {"open", "closed", "all"}:
+                state_filter = "all"
+            try:
+                limit = min(int(limit or 3), 20)
+            except (TypeError, ValueError):
+                limit = 3
+            res = requests.get(
+                f"{api_base}/repos/{repo}/pulls", headers=headers,
+                params={"state": state_filter, "sort": "updated", "direction": "desc", "per_page": limit},
+            )
+            if res.status_code != 200:
+                return f"ERROR: could not fetch pull requests ({res.status_code})"
+            prs = res.json()
+            if not prs:
+                return "No pull requests found."
+            return "\n".join(
+                f"#{pr['number']} — {pr['title']} ({'merged' if pr.get('merged_at') else pr['state']}, "
+                f"by {pr.get('user', {}).get('login', 'unknown')}, updated {pr['updated_at']})"
+                for pr in prs
+            )
+
         def _code_search_items(query: str):
             # Shared by _search_code and _trace_symbol — a single real GitHub code-search call,
             # requesting text-match fragments (not just paths) so trace_symbol has real matched
@@ -2505,6 +2543,11 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             "proposing a cross-file refactor plan",
             "- diff_branches — args: base (branch name), head (branch name)",
             "- list_commits — args: branch (branch name), limit (max number of commits, integer)",
+            "- list_pull_requests — args: state (optional — 'open', 'closed', or 'all', defaults "
+            "to 'all'), limit (optional, max number of PRs, defaults to 3); returns the most "
+            "recently-updated real pull requests on this repo ({number, title, state, author, "
+            "updated_at}). Use this for 'the last N pull requests' — list_commits only covers "
+            "commit history, not PRs.",
             "- web_search — args: query (the exact search query string to run)",
             "- browser_navigate — args: url (a fully-qualified http(s) URL); loads it in a real "
             "headless browser and returns its title/final URL — call this before any other "
@@ -2560,6 +2603,15 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             "configured as their target document under Integrations. This ALWAYS requires the "
             "user's approval before anything is written — call it only once, with your finished "
             "content, not as a way to draft or iterate.",
+            "- propose_send_email — args: to (recipient address), subject, body (the FULL email "
+            "text you want sent — you must have already gathered/composed this yourself first, "
+            "e.g. after searching GitHub/Gmail/Drive for the real information the email is about; "
+            "never invent PRs, emails, or file contents you haven't actually looked up). Use this "
+            "whenever sending the email depends on something you had to look up first — for a "
+            "send request that needs no lookup at all, the app drafts it directly and you will "
+            "never see this action offered. This ALWAYS requires the user's approval before "
+            "anything is sent — call it only once, with your finished draft, not as a way to "
+            "iterate.",
         ])
         actions_menu = "\n".join(menu_lines)
         prompt_template = TOOL_AGENT_PROMPT.replace("{actions_menu}", actions_menu.replace("{", "{{").replace("}", "}}"))
@@ -2567,7 +2619,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
         prompt_template = prompt_template.replace("{batchable_actions}", ", ".join(sorted(TOOL_AGENT_BATCHABLE_ACTIONS)))
 
         def _is_unsafe(decision: dict) -> bool:
-            if decision.get("tool_action") == "propose_append_target_doc":
+            if decision.get("tool_action") in {"propose_append_target_doc", "propose_send_email"}:
                 return True  # inherently a write — no keyword scan needed, unlike run_mongo_query
             if decision.get("tool_action") != "run_mongo_query":
                 return False
@@ -2704,6 +2756,8 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     return _diff_branches(args.get("base"), args.get("head"))
                 if tool_action == "list_commits":
                     return _list_commits(args.get("branch"), args.get("limit"))
+                if tool_action == "list_pull_requests":
+                    return _list_pull_requests(args.get("state"), args.get("limit"))
                 return f"ERROR: unrecognized tool_action '{tool_action}'"
 
             return await asyncio.to_thread(_dispatch_github)
@@ -2778,6 +2832,63 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     return {
                         **state,
                         "pending_action": {"action_type": "append_target_doc", "details": {"content": content, "doc_id": doc_id}},
+                        "relevance_grade": "hitl_approval_required",
+                        "generation": approval_message,
+                        "content_to_format": approval_message,
+                        "messages": new_messages,
+                    }
+
+                if e.decision.get("tool_action") == "propose_send_email":
+                    email_args = e.decision.get("args") or {}
+                    to = (email_args.get("to") or "").strip()
+                    subject = (email_args.get("subject") or "").strip()
+                    body = (email_args.get("body") or "").strip()
+                    if not (to and subject and body):
+                        incomplete_message = (
+                            "I need a recipient, subject, and body before I can send that — "
+                            "could you confirm all three?"
+                        )
+                        new_messages = list(state.get("messages", [])) + [AIMessage(content=incomplete_message)]
+                        return {
+                            **state,
+                            "pending_action": None,
+                            "relevance_grade": "conversational",
+                            "generation": incomplete_message,
+                            "content_to_format": incomplete_message,
+                            "messages": new_messages,
+                        }
+                    if not has_granted_scope(username, "https://www.googleapis.com/auth/gmail.send"):
+                        no_scope_message = (
+                            "You haven't connected Gmail send access yet — head to **Integrations** "
+                            "to connect or reconnect your Google account, then ask me to send this again."
+                        )
+                        new_messages = list(state.get("messages", [])) + [AIMessage(content=no_scope_message)]
+                        return {
+                            **state,
+                            "pending_action": None,
+                            "relevance_grade": "conversational",
+                            "generation": no_scope_message,
+                            "content_to_format": no_scope_message,
+                            "messages": new_messages,
+                        }
+                    # Same card format _draft_send_email produces, so _recover_send_email's
+                    # regex-based reconstruction (used if the checkpoint is reloaded mid-approval)
+                    # matches this path too, without needing a parallel recovery routine.
+                    summary_line = (
+                        "Ready to send this email:\n"
+                        f"- **To:** {to}\n"
+                        f"- **Subject:** {subject}\n\n"
+                        f"**Body:**\n{body}"
+                    )
+                    approval_message = (
+                        "**Approval Required**\n\n"
+                        f"{summary_line}\n\n"
+                        "*Please Approve, Modify parameters, or Reject this action.*"
+                    )
+                    new_messages = list(state.get("messages", [])) + [AIMessage(content=approval_message)]
+                    return {
+                        **state,
+                        "pending_action": {"action_type": "send_email", "details": {"to": to, "subject": subject, "body": body}},
                         "relevance_grade": "hitl_approval_required",
                         "generation": approval_message,
                         "content_to_format": approval_message,

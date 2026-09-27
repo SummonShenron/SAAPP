@@ -329,6 +329,50 @@ async def test_list_google_calendar_events_blocks_locked_guest_identity(monkeypa
 
 
 # ---------------------------------------------------------------------------
+# list_pull_requests — added so "the last N pull requests" is answerable with real GitHub data;
+# previously nothing in the menu could list PRs (only list_commits, which covers commit history).
+# ---------------------------------------------------------------------------
+
+@run_async
+async def test_list_pull_requests_returns_formatted_results(monkeypatch):
+    _setup_github_repo(monkeypatch)
+
+    repo_resp = _http_response(200, {"default_branch": "main"})
+    prs_resp = _http_response(200, [
+        {"number": 126, "title": "Fix mobile navigation layout issues", "state": "closed",
+         "merged_at": "2026-01-01T00:00:00Z", "user": {"login": "jack"}, "updated_at": "2026-01-01T00:00:00Z"},
+        {"number": 125, "title": "Optimize dashboard loading times", "state": "closed",
+         "merged_at": "2025-12-30T00:00:00Z", "user": {"login": "jack"}, "updated_at": "2025-12-30T00:00:00Z"},
+    ])
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        if url.endswith("/repos/SummonShenron/SAAPP/pulls"):
+            return prs_resp
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+
+    captured_prompts = []
+    responses = [
+        _llm_response(action="query", purpose="List recent PRs", tool_action="list_pull_requests", args={"limit": 3}),
+        _llm_response(action="final", answer="Done.", show_work=True),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses.pop(0)
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("search github for the last 3 pull requests"))
+
+    assert any("#126" in p and "Fix mobile navigation layout issues" in p and "merged" in p for p in captured_prompts)
+    assert any("#125" in p for p in captured_prompts)
+
+
+# ---------------------------------------------------------------------------
 # Gmail read actions
 # ---------------------------------------------------------------------------
 
