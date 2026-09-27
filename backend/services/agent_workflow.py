@@ -1,8 +1,6 @@
 from __future__ import annotations
-import ast
 import asyncio
 import base64
-import difflib
 import os
 import re
 import uuid
@@ -13,16 +11,16 @@ import requests
 import erragent
 import urllib.parse
 from functools import partial
+from pathlib import Path
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
-from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from backend.components.time_storage import load_user_time
 from backend.models.attachment import Attachment
 from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langchain_core.documents import Document
-from langchain_core.callbacks.manager import adispatch_custom_event
 from settings import PAAPP_BASE_URL
 from backend.services.search import get_secure_retriever
 from backend.models.models import get_chat_llm, lite_llm, lite_llm_deep
@@ -34,12 +32,13 @@ from backend.components.constraints import (
     SUMMARIZER_PROMPT,
     GRADING_PROMPT,
     REWRITING_PROMPT,
-    INSIGHT_QUERY_PROMPT,
     TOOL_AGENT_PROMPT,
     REASONER_PROMPT,
     ISSUE_DRAFT_PROMPT,
     PR_REVIEW_PROMPT,
     DRAFT_PR_PROMPT,
+    DRAFT_CALENDAR_EVENT_PROMPT,
+    UPDATE_CALENDAR_EVENT_PROMPT,
     MEMORY_EXTRACTION_PROMPT
 )
 from backend.utils.memory_utils import save_user_fact, load_user_facts
@@ -49,15 +48,67 @@ from backend.components import taskboard
 from backend.state.graph_state import GraphState, route_after_grading
 from langgraph.graph import StateGraph, START, END
 from backend.utils.db_utils import get_db
+from backend.utils.user_settings_utils import get_user_timezone
+from backend.utils.google_calendar_utils import CALENDAR_LOCKED_USERS, get_connection_status as get_calendar_connection_status
+from backend.services.google_calendar_oauth import GoogleCalendarOAuth, GoogleCalendarConnectionError
+from backend.services.google_calendar_service import list_events_for_day, create_event, update_event, find_event_by_summary_on_day
 from backend.services.python_sandbox import run_python_sandboxed, SAFE_IMPORT_ALLOWLIST
 from backend.services.browser_tool import (
     BrowserSession, browser_navigate, browser_read_text, browser_click, browser_type, browser_screenshot,
 )
 from backend.services.ci_test_runner import run_repo_tests, run_python_snippet, DEFAULT_MAX_WAIT_SECONDS as CI_TEST_RUN_MAX_WAIT_SECONDS
 from backend.utils.normalize_utils import ensure_str
-from backend.utils.agent_utils import parse_definition_index_from_observation, find_mismatched_start_line_note
+from backend.utils.agent_utils import (
+    parse_definition_index_from_observation, find_mismatched_start_line_note,
+    # ReAct-loop pure helpers moved out of this file (docs/coding-agent-roadmap.md — refactor
+    # process started per user request: agent_workflow.py keeps graph nodes, agent_utils.py
+    # accumulates plain functions). Imported back under their original names so every existing
+    # `aw._name` reference (tests, this file's own remaining code) keeps working unchanged.
+    _READ_FILE_CHAR_CAP, _READ_FILE_DEFAULT_LINE_WINDOW, _READ_FILE_MIN_SNIPPET_CHARS,
+    _DEFINITION_INDEX_WRAPPER, _TOP_LEVEL_DEF_RE, _build_definition_index,
+    _parse_agent_json, _EMPTY_OBSERVATION_VALUES, _is_empty_observation,
+    _mentions_unresolved_truncation, _MAX_OBSERVATION_CHARS, _truncate_observation,
+    _UnsafeActionRequested, _ClarificationNeeded,
+    _CAPABILITY_DENIAL_RE, _DIFF_FILE_HEADER_RE, _DIFF_NEW_FILE_RE,
+    _extract_diff_file_grounding_lines, _final_diff_disagrees_with_fetched_content,
+    _format_observation_for_footer, _format_react_attempts, _format_attempts_steps,
+    _FILE_EXTENSION_RE, _PATH_TOKEN_SPLIT_RE, _CAMEL_BOUNDARY_RE,
+    _FUZZY_MATCH_CUTOFF, _FUZZY_MATCH_LIMIT, _tokenize_for_fuzzy_match, _fuzzy_path_score,
+    _classify_symbol_line,
+    _VISUAL_INSPECTION_RE, _mentions_visual_inspection,
+    _AUDIT_TASK_RE, _is_audit_style_task, _AUDIT_TASK_SEARCH_NUDGE,
+    _ARCH_MAP_MAX_FILES_SCANNED, _ARCH_MAP_MAX_FILE_BYTES, _ARCH_MAP_MAX_ENTRIES,
+    _ARCH_MAP_PY_EXTENSION, _ARCH_MAP_JS_EXTENSIONS, _JS_IMPORT_RE,
+    _extract_python_imports, _extract_js_imports, _is_internal_python_import,
+    _repo_top_level_segments, _build_architecture_map,
+    resolve_recent_mention, safe_emit_event,
+)
+from backend.services.react_loop import run_react_loop, _MAX_BATCH_SIZE
+from backend.utils.insight_utils import (
+    # Productivity-insights analytics moved out of this file (docs/coding-agent-roadmap.md,
+    # Section 13) — a self-contained module for activity_classifier_node/pattern_detector_node/
+    # trend_analyzer_node/insight_generator_node, which stay here as the actual graph nodes and
+    # import everything else back under its original name.
+    CATEGORY_KEYWORDS, classify_text,
+    detect_time_patterns, detect_task_patterns, detect_calendar_patterns,
+    compute_daily_totals, compute_category_trends, compute_streaks,
+    compute_task_velocity, compute_calendar_load_trends,
+    generate_time_insights, generate_task_insights, generate_calendar_insights,
+    llm_json_call, interpret_insight_question, run_insight_query,
+    answer_top_category, answer_busiest_day, answer_productivity_window, answer_streaks,
+    answer_category_trend, answer_task_aging, answer_task_velocity, answer_calendar_load,
+    answer_weekday_pattern,
+)
 
-load_dotenv()
+
+# Pinned to an explicit path rather than a bare load_dotenv() call — python-dotenv's own
+# find_dotenv() switches from "walk up from this file's directory" to "walk up from
+# os.getcwd()" whenever it detects a debugger attached (sys.gettrace() is non-None), which is
+# exactly how local dev is normally run (VS Code/PyCharm debug launches) but never how Render
+# starts the process. If the debugger's working directory isn't inside the repo, that silently
+# no-ops and every os.getenv() below returns None — reproduced directly, not a guess. Resolving
+# from this file's own real location on disk sidesteps CWD/debugger detection entirely.
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 logger = logging.getLogger("SASS Logger")
 TOOL_AGENT_MAX_ITERATIONS = int(os.getenv("TOOL_AGENT_MAX_ITERATIONS", "7"))
 # Deep thinking (a per-user opt-in setting, see user_settings_utils) raises both the step
@@ -105,16 +156,9 @@ TOOL_AGENT_STUCK_ACTION_REDIRECTS = {
 # to generalize rather than hand-author one more entry and wait for the third: any tool_action not
 # explicitly listed above still gets this generic circuit breaker once its own consecutive-miss
 # streak crosses this threshold — a real answer or a genuinely different tool switches it off, same
-# as the specific entries.
-_DEFAULT_STUCK_ACTION_THRESHOLD = 3
-_DEFAULT_STUCK_ACTION_MESSAGE = (
-    "You have called {tool} multiple times in a row with no useful result. Rewording the stated "
-    "purpose each time is not a real retry if the action itself takes no arguments (or the same "
-    "ones) to vary — it is the same call bouncing off the same wall. Switch to a genuinely "
-    "different action this turn instead of calling {tool} again. If you have real reason to "
-    "believe the underlying repo/resource itself is inaccessible (not just this one path/query), "
-    "say so honestly in your final answer instead of continuing to retry."
-)
+# as the specific entries. The actual threshold/message constants for this live alongside
+# run_react_loop itself now (backend/services/react_loop.py), since nothing outside that loop
+# needs them.
 
 # Built after the extensive diagnostic loop in docs/coding-agent-roadmap.md (Sections 4b-4j) —
 # every one of those traces burned most of a turn's step budget reading files/searching one at a
@@ -127,10 +171,8 @@ TOOL_AGENT_BATCHABLE_ACTIONS = frozenset({
     "list_repo_tree", "read_repo_file", "search_code", "find_file", "trace_symbol",
     "search_literal", "diff_branches", "list_commits", "web_search", "run_python",
 })
-# Caps a single step's real concurrent work — unbounded batching could still hit GitHub's rate
-# limits or just be wasteful even though it no longer costs step budget; excess items are dropped
-# with their own explicit "retry in a later step" observation rather than silently ignored.
-_MAX_BATCH_SIZE = 5
+# The actual per-step concurrency cap (_MAX_BATCH_SIZE) lives alongside run_react_loop itself now
+# (backend/services/react_loop.py) — nothing outside that loop needs it.
 
 # A real production trace showed a "final" confidently and repeatedly denying browser access
 # ("I don't actually have a live browser tool...") while browser_navigate sat in that exact
@@ -153,16 +195,6 @@ TOOL_AGENT_CAPABILITY_DENIAL_WATCHLIST = [
     ),
 ]
 
-# read_repo_file's truncation/paging knobs. A flat character-count cap on a large file (this repo
-# has several 2000+ line files) silently cuts off before ever reaching a function defined further
-# down — a real fabrication risk, since a model can mistake "I was given the start of the file"
-# for "I read the file" and fill the gap it never saw with something plausible instead of real
-# code. start_line lets a caller jump straight to a specific line once it knows where to look
-# (from _build_definition_index below, or from search_code), the same way a normal editor would.
-_READ_FILE_CHAR_CAP = 3500
-_READ_FILE_DEFAULT_LINE_WINDOW = 150
-_TOP_LEVEL_DEF_RE = re.compile(r'^(?:async\s+)?(def|class)\s+(\w+)')
-
 # search_code rides GitHub's hosted /search/code index — capped at 20 results per query, subject
 # to indexing lag, and explicitly not guaranteed complete by GitHub's own docs. That's fine for
 # "find a plausible match" but a real production trace showed it fail exactly the task this exists
@@ -180,27 +212,6 @@ _SEARCH_LITERAL_SKIP_EXTENSIONS = (
     ".lock", ".map",
 )
 
-
-def _build_definition_index(lines: list) -> str:
-    """A lightweight table of contents for a large file: every top-level (module-level, not
-    nested inside a class/function) def/class and the line it starts on. Lets the model jump
-    straight to the real function it needs via start_line instead of guessing or reading from
-    the top of a multi-thousand-line file and hoping the truncated slice happens to reach it."""
-    entries = [
-        f"  line {i}: {m.group(1)} {m.group(2)}"
-        for i, line in enumerate(lines, start=1)
-        if (m := _TOP_LEVEL_DEF_RE.match(line))
-    ]
-    return "\n".join(entries[:150])
-
-
-async def safe_emit_event(name: str, data: dict):
-    """Safely emit a custom event, ignoring errors if called outside an active run context."""
-    try:
-        await adispatch_custom_event(name, data)
-    except RuntimeError:
-        # Safely ignored when called from fallback utilities or standalone scripts
-        pass
 
 def ensure_workflow_keys(state: GraphState) -> GraphState:
     state.setdefault("workflowName", "sonic_assistant")
@@ -517,6 +528,26 @@ def classify_intent(message: str, state: dict = None) -> str:
     # Checked before "pull request"/"pr" matching below since "issue" is unambiguous on its own.
     if re.search(r'\b(?:create|open|file|submit|draft)\s+(?:an?\s+)?(?:issue|bug report)\b', msg):
         return "create_issue"
+    # Checked BEFORE both the "schedule" -> task_paapp catch and the "calendar" -> insight catch
+    # below, the same way create_pr/create_issue are checked above the generic patterns they'd
+    # otherwise be swallowed by — a real Google Calendar write, not SAAPP's own internal
+    # time-log/insights feature or the (deprecated) PAAPP service. Deliberately does NOT match on
+    # a bare "google calendar" mention alone — "what's on my google calendar today" is a read, not
+    # a write, and must not be swallowed here (it falls through to the "google calendar" ->
+    # tool_agent check a few lines down instead).
+    if (
+        re.search(r'\b(?:schedule|add|create|book|set up)\s+(?:an?\s+)?(?:meeting|event|call|appointment)\b', msg)
+        or re.search(r'\b(?:add|put)\b.{0,40}\bto\s+(?:my\s+)?(?:google\s+)?calendar\b', msg)
+    ):
+        return "create_calendar_event"
+    if re.search(r'\b(?:move|reschedule|update|rename|change)\s+(?:my\s+)?(?:the\s+)?(?:meeting|event|call|appointment)\b', msg):
+        return "update_calendar_event"
+    # A plain "google calendar" mention that wasn't already caught as a create/update above is
+    # almost always a read/lookup question ("what's on my google calendar today", "am I free
+    # tomorrow on google calendar") — route to the general tool_agent loop, which has
+    # list_google_calendar_events as one of its actions.
+    if "google calendar" in msg:
+        return "tool_agent"
     # Use word boundary so 'process' or 'provide' won't match 'pr'
     if re.search(r'\b(review pr|pull request|pr summary)\b', msg):
         return "pr_summary"
@@ -576,6 +607,16 @@ def build_agent_plan(intent: str, state: dict) -> dict:
         state["write_action"] = "create_issue"
         return {"agents": ["propose_write", "formatter"], "skip": []}
 
+    if intent == "create_calendar_event" or flags.get("needs_create_calendar_event"):
+        state["last_intent"] = "propose_write"
+        state["write_action"] = "create_calendar_event"
+        return {"agents": ["propose_write", "formatter"], "skip": []}
+
+    if intent == "update_calendar_event" or flags.get("needs_update_calendar_event"):
+        state["last_intent"] = "propose_write"
+        state["write_action"] = "update_calendar_event"
+        return {"agents": ["propose_write", "formatter"], "skip": []}
+
     # 2b. Continuation of a non-PR HITL approval (e.g. approving a pending web search) —
     # these used to be classified correctly but silently dropped here, falling back to
     # whatever the reasoner's flags guessed for a bare "yes"/"no" reply. Web search is now
@@ -623,9 +664,12 @@ def build_agent_plan(intent: str, state: dict) -> dict:
         agents.append("summarizer")
     if flags.get("needs_paapp"):
         agents.append("paapp")
-    # Mongo/GitHub/web all fold into one multi-tool agent — any of the three flags routes
+    # Mongo/GitHub/web/calendar all fold into one multi-tool agent — any of these flags routes
     # there, and the model itself decides which tool(s) the question actually needs.
-    if flags.get("needs_web_search") or flags.get("needs_code_interpreter") or flags.get("needs_github_search"):
+    if (
+        flags.get("needs_web_search") or flags.get("needs_code_interpreter")
+        or flags.get("needs_github_search") or flags.get("needs_calendar_lookup")
+    ):
         agents.append("tool_agent")
     if is_pr_request:
         agents.append("pr_summary")
@@ -722,6 +766,9 @@ async def reasoner_node(state: GraphState) -> GraphState:
                 "needs_pr_summary": False,
                 "needs_create_pr": False,
                 "needs_create_issue": False,
+                "needs_create_calendar_event": False,
+                "needs_update_calendar_event": False,
+                "needs_calendar_lookup": False,
             }
 
         logger.info(f"[Reasoner] Flags: {flags}")
@@ -1475,37 +1522,6 @@ def data_snapshot_node(state: dict) -> dict:
 # Activity Classifier Node
 # ============================================================
 
-# --- Lightweight keyword-based classifier -------------------
-
-CATEGORY_KEYWORDS = {
-    "coding": ["code", "coding", "react", "fastapi", "python", "typescript", "debug", "fix", "build"],
-    "learning": ["learn", "study", "course", "tutorial", "read", "research"],
-    "admin": ["email", "paperwork", "form", "admin", "file", "organize"],
-    "job_search": ["apply", "application", "resume", "cover letter", "interview", "linkedin"],
-    "creative": ["design", "write", "draft", "create", "brainstorm"],
-    "health": ["gym", "workout", "run", "walk", "doctor"],
-    "personal": ["clean", "laundry", "errand", "shopping"],
-    "meeting": ["meeting", "call", "zoom", "chat"],
-}
-
-def classify_text(text: str) -> str:
-    """
-    Returns the best-fit category based on keyword matching.
-    Falls back to 'misc' if nothing matches.
-    """
-    if not text:
-        return "misc"
-
-    text_lower = text.lower()
-
-    for category, keywords in CATEGORY_KEYWORDS.items():
-        for kw in keywords:
-            if kw in text_lower:
-                return category
-
-    return "misc"
-
-
 # --- Main Node ------------------------------------------------
 
 def activity_classifier_node(state: dict) -> dict:
@@ -1576,104 +1592,6 @@ def activity_classifier_node(state: dict) -> dict:
 # Pattern Detector Node
 # ============================================================
 
-def detect_time_patterns(classified_logs):
-    """
-    Detects patterns in time usage:
-    - Most common activity categories
-    - Productivity windows (morning/afternoon/evening)
-    - Day-of-week activity patterns
-    """
-    category_counter = Counter()
-    hour_buckets = Counter()
-    weekday_counter = Counter()
-
-    for entry in classified_logs:
-        category_counter[entry["category"]] += 1
-
-        # Productivity windows
-        try:
-            dt = datetime.fromisoformat(entry["date"])
-            hour = dt.hour
-            if 5 <= hour < 12:
-                hour_buckets["morning"] += 1
-            elif 12 <= hour < 17:
-                hour_buckets["afternoon"] += 1
-            elif 17 <= hour < 22:
-                hour_buckets["evening"] += 1
-            else:
-                hour_buckets["late_night"] += 1
-
-            weekday_counter[dt.strftime("%A")] += 1
-        except:
-            pass
-
-    return {
-        "top_categories": category_counter.most_common(3),
-        "productivity_windows": hour_buckets,
-        "weekday_activity": weekday_counter
-    }
-
-
-def detect_task_patterns(classified_tasks):
-    stagnant = []
-    fast = []
-    backlog_categories = Counter()
-
-    # 1. Identify Oldest Backlog Tasks
-    backlog = classified_tasks.get("backlog", [])
-    # Sort by 'createdAt' (oldest first)
-    sorted_backlog = sorted(backlog, key=lambda x: x.get("createdAt", ""))
-    # Take the top 3 oldest
-    stagnant = sorted_backlog[:3] 
-
-    # 2. Calculate category distribution
-    for task in backlog:
-        backlog_categories[task["category"]] += 1
-
-    # 3. Detect fast-moving tasks (completed within 24 hours)
-    for task in classified_tasks.get("completed", []):
-        created = task.get("createdAt") # Ensure this matches your JSON key
-        completed = task.get("completedAt") # Ensure this key exists or is tracked
-        if created and completed:
-            try:
-                dt_created = datetime.fromisoformat(created.replace("Z", "+00:00"))
-                dt_completed = datetime.fromisoformat(completed.replace("Z", "+00:00"))
-                if dt_completed - dt_created < timedelta(days=1):
-                    fast.append(task)
-            except Exception:
-                pass
-
-    return {
-        "stagnant_tasks": stagnant, # Now contains the oldest backlog tasks
-        "fast_tasks": fast,
-        "backlog_category_distribution": backlog_categories
-    }
-
-
-def detect_calendar_patterns(classified_calendar):
-    """
-    Detects patterns in calendar events:
-    - Most common event categories
-    - Busy vs free days
-    - Meeting-heavy days
-    """
-    category_counter = Counter()
-    day_load = Counter()
-
-    for event in classified_calendar:
-        category_counter[event["category"]] += 1
-
-        date = event.get("date")
-        if date:
-            day_load[date] += 1
-
-    return {
-        "event_categories": category_counter,
-        "busy_days": day_load.most_common(3),
-        "free_days": [d for d, count in day_load.items() if count == 0]
-    }
-
-
 def pattern_detector_node(state: dict) -> dict:
     """
     Reads the classified snapshot and extracts behavioral patterns.
@@ -1696,123 +1614,6 @@ def pattern_detector_node(state: dict) -> dict:
 # ============================================================
 # Trend Analyzer Node
 # ============================================================
-
-def compute_daily_totals(logs):
-    """
-    Returns a dict: { '2026-07-10': total_minutes, ... }
-    """
-    totals = defaultdict(int)
-    for entry in logs:
-        try:
-            totals[entry["date"]] += entry["duration_minutes"]
-        except:
-            pass
-    return dict(totals)
-
-
-def compute_category_trends(classified_logs):
-    """
-    Tracks category frequency over time.
-    Example output:
-    {
-        "coding": { "2026-07-10": 2, "2026-07-11": 1 },
-        "learning": { ... }
-    }
-    """
-    trends = defaultdict(lambda: defaultdict(int))
-
-    for entry in classified_logs:
-        category = entry["category"]
-        date = entry["date"]
-        trends[category][date] += 1
-
-    return {cat: dict(days) for cat, days in trends.items()}
-
-
-def compute_streaks(daily_totals):
-    """
-    Detects productivity streaks:
-    - consecutive days with activity
-    - longest streak
-    - current streak
-    """
-    if not daily_totals:
-        return {
-            "current_streak": 0,
-            "longest_streak": 0,
-            "streak_days": []
-        }
-
-    dates = sorted(daily_totals.keys())
-    streak = 0
-    longest = 0
-    streak_days = []
-
-    prev_date = None
-
-    for d in dates:
-        dt = datetime.fromisoformat(d)
-        if prev_date and dt - prev_date == timedelta(days=1):
-            streak += 1
-        else:
-            streak = 1
-        longest = max(longest, streak)
-        streak_days.append(d)
-        prev_date = dt
-
-    return {
-        "current_streak": streak,
-        "longest_streak": longest,
-        "streak_days": streak_days
-    }
-
-
-def compute_task_velocity(classified_tasks):
-    """
-    Measures how quickly tasks move from backlog → in-progress → completed.
-    """
-    velocities = []
-
-    for task in classified_tasks.get("completed", []):
-        created = task.get("created_at")
-        completed = task.get("completed_at")
-
-        if created and completed:
-            try:
-                dt_created = datetime.fromisoformat(created)
-                dt_completed = datetime.fromisoformat(completed)
-                delta = dt_completed - dt_created
-                velocities.append(delta.total_seconds() / 3600)  # hours
-            except:
-                pass
-
-    if not velocities:
-        return {
-            "average_completion_hours": None,
-            "fastest_completion_hours": None,
-            "slowest_completion_hours": None
-        }
-
-    return {
-        "average_completion_hours": sum(velocities) / len(velocities),
-        "fastest_completion_hours": min(velocities),
-        "slowest_completion_hours": max(velocities)
-    }
-
-
-def compute_calendar_load_trends(classified_calendar):
-    """
-    Tracks how busy your calendar is over time.
-    """
-    load = defaultdict(int)
-
-    for event in classified_calendar:
-        date = event.get("date")
-        if date:
-            load[date] += 1
-
-    return dict(load)
-
 
 def trend_analyzer_node(state: dict) -> dict:
     """
@@ -1943,426 +1744,9 @@ def insight_generator_node(state: dict) -> dict:
     return { **state, "insights": insights }
 
 
-
-    
-# ============================================================
-# Insight Generator Node
-# ============================================================
-
-def generate_time_insights(patterns, trends):
-    insights = []
-    time_patterns = patterns.get("time_patterns", {})
-    
-    # --- Top categories ---
-    top = time_patterns.get("top_categories", [])
-    if top:
-        cat, count = top[0]
-        insights.append({
-            "title": "Most Frequent Activity Category",
-            "description": f"You spend most of your time on **{cat}** ({count} logged entries).",
-            "data": top
-        })
-
-    # --- Productivity windows ---
-    # Fix: Fetch "productivity_windows" from the nested time_patterns dictionary
-    windows = time_patterns.get("productivity_windows", {})
-    if isinstance(windows, dict) and windows:
-        best_window = max(windows, key=windows.get)
-        insights.append({
-            "title": "Productivity Window",
-            "description": f"Your most productive time of day is **{best_window}**.",
-            "data": windows
-        })
-
-    # --- Streaks ---
-    # Fix: Safely fetch streaks and default to an empty dict to prevent KeyError
-    streaks = trends.get("streaks", {})
-    longest_streak = streaks.get("longest_streak", 0)
-    if longest_streak > 1:
-        insights.append({
-            "title": "Consistency Streak",
-            "description": f"You had a **{longest_streak}-day streak** of logged activity.",
-            "data": streaks
-        })
-
-    return insights
-
-
-def generate_task_insights(patterns, trends):
-    insights = []
-    
-    # Define task_patterns first so it's available for all blocks
-    task_patterns = patterns.get("task_patterns", {})
-    
-    # --- Oldest Backlog Tasks ---
-    # Now this works because task_patterns is already defined
-    oldest = task_patterns.get("stagnant_tasks", []) 
-    if oldest:
-        titles = [t.get("title") for t in oldest]
-        insights.append({
-            "title": "Oldest Backlog Tasks",
-            "description": f"The oldest tasks waiting are: {', '.join(titles)}.",
-            "data": oldest
-        })
-
-    # --- Stagnant Tasks ---
-    stagnant = task_patterns.get("stagnant_tasks", [])
-    if stagnant:
-        insights.append({
-            "title": "Stagnant Tasks",
-            "description": f"You have **{len(stagnant)}** tasks that haven't moved recently. Consider breaking them down.",
-            "data": stagnant
-        })
-    # --- Fast Tasks ---
-    fast = task_patterns.get("fast_tasks", [])  # Cleaned up to use your task_patterns variable
-    if fast:
-        insights.append({
-            "title": "Fast-Moving Tasks",
-            "description": f"You completed **{len(fast)} tasks** within 24 hours — nice momentum.",
-            "data": fast
-        })
-
-    # --- Task Velocity (Fixed) ---
-    velocity = trends.get("task_velocity", {})  # Default to empty dict instead of None
-    avg_hours = velocity.get("average_completion_hours")  # Safely check for the key
-    
-    if avg_hours is not None:  # Ensure it exists and isn't None
-        avg = round(avg_hours, 1)
-        insights.append({
-            "title": "Task Completion Speed",
-            "description": f"Your average task completion time is **{avg} hours**.",
-            "data": velocity
-        })
-
-    return insights
-
-def generate_calendar_insights(patterns, trends):
-    insights = []
-    
-    # Safely get calendar_patterns, defaulting to an empty dict if missing
-    calendar_patterns = patterns.get("calendar_patterns", {})
-    
-    # Fix: Safely fetch busy_days with a default fallback list
-    busy = calendar_patterns.get("busy_days", [])
-    if busy:
-        # Assuming busy is a list of tuples/lists or days like [("Monday", 3)]
-        day, count = busy[0] if isinstance(busy[0], (list, tuple)) else (busy[0], "multiple")
-        insights.append({
-            "title": "Busiest Calendar Day",
-            "description": f"Your calendar is most packed on **{day}** with {count} scheduled events.",
-            "data": busy
-        })
-
-    # Apply the same safe fetching to meeting heavy days or total hours if they exist
-    meeting_heavy = calendar_patterns.get("meeting_heavy_days", [])
-    if meeting_heavy:
-        insights.append({
-            "title": "Meeting Heavy Days",
-            "description": f"You have **{len(meeting_heavy)}** days upcoming with back-to-back meetings.",
-            "data": meeting_heavy
-        })
-
-    return insights
-
-# ============================================================
-# INSIGHT QUERY NODE
-# ============================================================
-
-import json
-import re
-
-def llm_json_call(prompt: str) -> dict:
-    """
-    Calls the LLM and safely extracts JSON from the response.
-    Ensures the insight intent interpreter always returns a valid dict.
-    """
-
-    raw = lite_llm.invoke(prompt)
-    raw_content = raw.content if hasattr(raw, "content") else str(raw)
-    if isinstance(raw_content, list):
-        text = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in raw_content])
-    else:
-        text = str(raw_content)
-
-    # Extract JSON block
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if not match:
-        return {"type": "unknown", "time_range": None, "category": None}
-
-    try:
-        return json.loads(match.group(0))
-    except Exception:
-        return {"type": "unknown", "time_range": None, "category": None}
-
-def interpret_insight_question(question: str) -> dict:
-    prompt = INSIGHT_QUERY_PROMPT.format(question=question)
-    return llm_json_call(prompt)
-
-
-def run_insight_query(intent, analysis, classified_tasks, classified_logs, classified_calendar):
-    t = intent.get("type")
-
-    if t == "top_category":
-        return answer_top_category(analysis)
-
-    if t == "busiest_day":
-        return answer_busiest_day(analysis)
-
-    if t == "productivity_window":
-        return answer_productivity_window(analysis)
-
-    if t == "streaks":
-        return answer_streaks(analysis)
-
-    if t == "category_trend":
-        return answer_category_trend(analysis)
-
-    if t == "task_aging":
-        return answer_task_aging(classified_tasks)
-
-    if t == "task_velocity":
-        return answer_task_velocity(analysis)
-
-    if t == "calendar_load":
-        return answer_calendar_load(analysis)
-
-    if t == "weekday_pattern":
-        return answer_weekday_pattern(analysis)
-
-    return {
-        "answer": "I couldn’t map that question to your insights yet.",
-        "details": {}
-    }
-
-def answer_top_category(analysis):
-    top = analysis.get("time_patterns", {}).get("top_categories", [])
-    if not top:
-        return {"answer": "You have no logged activity.", "details": {}}
-
-    cat, count = top[0]
-    return {
-        "answer": f"You spent most of your time on **{cat}** ({count} logs).",
-        "details": {"top_categories": top}
-    }
-
-def answer_busiest_day(analysis):
-    busy = analysis.get("calendar_patterns", {}).get("busy_days", [])
-    if not busy:
-        return {"answer": "I don’t see any busy days in your calendar.", "details": {}}
-
-    day, count = busy[0]
-    return {
-        "answer": f"Your busiest day was **{day}** with {count} events.",
-        "details": {"busy_days": busy}
-    }
-
-def answer_productivity_window(analysis):
-    windows = analysis.get("time_patterns", {}).get("productivity_windows", {})
-    if not windows:
-        return {"answer": "I couldn’t detect a productivity window.", "details": {}}
-
-    best = max(windows, key=windows.get)
-    return {
-        "answer": f"Your most productive time of day is **{best}**.",
-        "details": {"windows": windows}
-    }
-
-def answer_streaks(analysis):
-    streaks = analysis.get("streaks", {})
-    longest = streaks.get("longest_streak", 0)
-
-    if longest <= 1:
-        return {"answer": "You don’t have any multi-day streaks yet.", "details": streaks}
-
-    return {
-        "answer": f"You had a **{longest}-day streak** of logged activity.",
-        "details": streaks
-    }
-
-def answer_category_trend(analysis):
-    trends = analysis.get("category_trends", {})
-    if not trends:
-        return {"answer": "I couldn’t detect any category trends.", "details": {}}
-
-    # Find category with most growth
-    growth = {}
-    for cat, days in trends.items():
-        if len(days) >= 2:
-            first = days[min(days)]
-            last = days[max(days)]
-            growth[cat] = last - first
-
-    if not growth:
-        return {"answer": "No category shows meaningful change over time.", "details": trends}
-
-    top_cat = max(growth, key=growth.get)
-    return {
-        "answer": f"Your fastest-growing category is **{top_cat}**.",
-        "details": {"category_trends": trends, "growth": growth}
-    }
-
-def answer_task_aging(classified_tasks):
-    backlog = classified_tasks.get("backlog", [])
-    if not backlog:
-        return {"answer": "You have no backlog tasks.", "details": {}}
-
-    oldest = sorted(backlog, key=lambda t: t.get("createdAt", ""))
-
-    return {
-        "answer": f"Your oldest backlog task is **{oldest[0].get('title')}**.",
-        "details": {"oldest_tasks": oldest}
-    }
-
-def answer_task_velocity(analysis):
-    velocity = analysis.get("task_velocity", {})
-    avg = velocity.get("average_completion_hours")
-
-    if avg is None:
-        return {"answer": "I couldn’t compute task velocity.", "details": velocity}
-
-    return {
-        "answer": f"Your average task completion time is **{avg:.1f} hours**.",
-        "details": velocity
-    }
-
-def answer_calendar_load(analysis):
-    load = analysis.get("calendar_trends", {})
-    if not load:
-        return {"answer": "Your calendar has no recorded load trends.", "details": {}}
-
-    busiest = max(load, key=load.get)
-    return {
-        "answer": f"Your busiest calendar day was **{busiest}** with {load[busiest]} events.",
-        "details": load
-    }
-
-def answer_weekday_pattern(analysis):
-    weekday = analysis.get("time_patterns", {}).get("weekday_activity", {})
-    if not weekday:
-        return {"answer": "I couldn’t detect weekday activity patterns.", "details": {}}
-
-    best = max(weekday, key=weekday.get)
-    return {
-        "answer": f"You’re most active on **{best}**.",
-        "details": weekday
-    }
-
 # ============================================================
 # SHARED REACT-LOOP INFRASTRUCTURE (Mongo/GitHub/web all fold into tool_agent_node below)
 # ============================================================
-def resolve_recent_mention(messages: list, extractor, skip_predicate=None):
-    """Scans messages most-recent-first, applying `extractor` to each message's content and
-    returning the first (i.e. most recent) truthy result. `skip_predicate`, if given, skips
-    a message's content entirely without trying to extract from it (e.g. bare approval
-    replies like "yes"/"ok" that never carry the real topic). Returns None if nothing in
-    history matches — callers apply their own final fallback."""
-    for m in reversed(messages or []):
-        content = getattr(m, "content", "") if hasattr(m, "content") else (m.get("content", "") if isinstance(m, dict) else str(m))
-        if skip_predicate and skip_predicate(content):
-            continue
-        result = extractor(content)
-        if result:
-            return result
-    return None
-
-
-def _parse_agent_json(raw_text: str) -> dict:
-    """Defensive JSON extraction shared by every ReAct-loop tool: tries direct parsing,
-    then a regex-located JSON object, then gives up and returns {} (the loop treats a
-    decision with no recognizable "action" as a failed step, not a crash)."""
-    clean_text = raw_text.strip()
-    clean_text = re.sub(r"^```(?:json|python)?\s*", "", clean_text, flags=re.IGNORECASE)
-    clean_text = re.sub(r"\s*```$", "", clean_text)
-
-    try:
-        parsed = json.loads(clean_text)
-        if isinstance(parsed, dict):
-            return parsed
-    except Exception:
-        json_match = re.search(r"(\{.*\})", clean_text, re.DOTALL)
-        if json_match:
-            try:
-                parsed = json.loads(json_match.group(1))
-                if isinstance(parsed, dict):
-                    return parsed
-            except Exception:
-                pass
-    return {}
-
-
-_EMPTY_OBSERVATION_VALUES = {
-    "", "[]", "{}", "none", "null", "no results", "no results found",
-    "no matches.", "no matches", "no diff context available.", "no similar file paths found.",
-}
-
-
-def _is_empty_observation(observation: str) -> bool:
-    """An empty result (no matches, an empty list, an empty file listing) is not the same as
-    "nothing exists" — it's very often a sign the query, path, repo, or collection was wrong,
-    not proof of absence (this is exactly what happened with the repo-misresolution bug
-    earlier: a wrong repo name didn't error, it just came back empty). Treated the same way
-    an outright "ERROR: ..." is by the retry-nudge tracking in run_react_loop, since both are
-    "this step didn't actually get you anywhere" — the model just can't tell that from the
-    text alone without this check."""
-    return observation.strip().lower() in _EMPTY_OBSERVATION_VALUES
-
-
-def _mentions_unresolved_truncation(observation: str) -> bool:
-    """A real production trace showed the model treat a truncated read_repo_file result as if
-    it were the whole file: it read agent_workflow.py once (truncated at _READ_FILE_CHAR_CAP,
-    nowhere near run_react_loop's actual body), never re-called with start_line despite the
-    truncation note explicitly saying to, and confidently proposed a fully fabricated
-    reimplementation instead — with 3 full steps of budget still unused, so this wasn't even
-    budget pressure. The truncation note already tells it not to guess; this makes that
-    mechanical instead of relying on it to comply. Reuses the exact same marker text _read_file
-    emits (both no-start_line truncation variants share "truncated — this file has"), so a
-    follow-up read_repo_file call with a genuinely different start_line — a different
-    args_signature — clears it via the same unretried_inconclusive_tools machinery an ERROR or
-    empty result already does, no new tracking dict needed.
-
-    A second real trace immediately exposed a gap in this same fix: forced to retry, the model
-    correctly called read_repo_file WITH a start_line — but that's a THIRD, different message
-    shape ("N more lines below — re-call with a higher start_line"), not the first two, so it
-    wasn't covered and the model declared "final" from lines 400-549 of a 4552-line file with
-    the real code (line ~2350) still unread. Same fix, same reasoning, just the missing variant."""
-    return "truncated — this file has" in observation or "more lines below" in observation
-
-
-_MAX_OBSERVATION_CHARS = 4000
-
-
-def _truncate_observation(observation) -> str:
-    """Every other action in this loop self-limits its own output (_read_file caps at 3500
-    chars, _list_tree caps at 400 paths) — an unbounded PyMongo query was the one path with no
-    cap at all, and a raw find() over a collection that stores embedding vectors is easily
-    hundreds of documents with long float arrays each. That observation gets JSON-dumped
-    straight into both the next reasoning prompt (_format_react_attempts) and the final
-    footer (_format_observation_for_footer), so one huge result set is enough to blow past
-    Gemini's 1,048,576-token input limit on the final Voice Composer call. Truncating once,
-    right where every tool's observation is captured, protects all of them generically instead
-    of special-casing Mongo."""
-    text = observation if isinstance(observation, str) else json.dumps(observation, default=str, indent=2)
-    if len(text) <= _MAX_OBSERVATION_CHARS:
-        return text
-    return text[:_MAX_OBSERVATION_CHARS] + f"\n... [truncated — {len(text)} total characters]"
-
-
-class _UnsafeActionRequested(Exception):
-    """Raised by run_react_loop when is_unsafe() flags a step, so the calling node can
-    build its own tool-specific approval-required response instead of the loop guessing."""
-    def __init__(self, decision: dict):
-        self.decision = decision
-
-
-class _ClarificationNeeded(Exception):
-    """Raised by run_react_loop when the model reports genuine uncertainty (action="clarify")
-    instead of guessing — carries the question to ask and the attempts made so far, so the
-    calling node can pause for a real answer and resume the loop from where it left off
-    instead of starting over."""
-    def __init__(self, question: str, attempts: list):
-        self.question = question
-        self.attempts = attempts
-
 
 # Card-marker text used the same way WRITE_ACTIONS' card_marker is: classify_intent scans the
 # assistant's own previous message for this exact string to know a bare-looking reply is
@@ -2370,738 +1754,9 @@ class _ClarificationNeeded(Exception):
 CLARIFICATION_CARD_MARKER = "Need a bit more information to continue"
 
 
-# Catches the exact shape of a real production failure: a confident, detailed "final" answer
-# denying a capability that was sitting in that same turn's own action menu the whole time
-# (browser_navigate — see docs/coding-agent-roadmap.md, "tool_agent_node had zero conversation
-# history"). A prose rule already tells the model to check its own menu before denying a
-# capability; this is the mechanical backstop for when it doesn't, checking the actual "final"
-# TEXT against the actual menu rather than trusting the model caught its own contradiction. Only
-# the denial-shaped phrase is generic/repo-agnostic here — WHICH capabilities to watch for is
-# domain knowledge the caller (tool_agent_node) supplies via capability_denial_watchlist, the
-# same config-driven shape as stuck_action_redirects.
-_CAPABILITY_DENIAL_RE = re.compile(
-    r"\b(i (?:don'?t|do not) (?:actually |currently )?have\b|i can'?t\b|i'?m not able to\b|"
-    r"i lack\b|no access to\b|i (?:don'?t|do not) have access\b)",
-    re.IGNORECASE,
-)
-
-
-# A different failure shape from the same production trace as the capability-denial backstop
-# above (docs/coding-agent-roadmap.md, Section 7): three self-drive attempts in a row each
-# fabricated a different kind of ground truth (invented code, a false "this doesn't exist" claim,
-# and — the one this catches — a confidently-presented diff editing a data structure that was
-# never actually verified to exist). Before a "final" containing a diff against an EXISTING file
-# is accepted, at least one of that diff's own claimed pre-existing lines (context or removed,
-# never a `+` line) must actually appear in a real read_repo_file observation for that same path
-# recorded THIS turn — otherwise the diff was composed from a plausible guess, not derived from
-# what was actually fetched. String/regex based, not a real diff parser — same accepted
-# soft-failure-mode tradeoff already used by trace_symbol/find_file in this file.
-_DIFF_FILE_HEADER_RE = re.compile(r"^diff --git a/(\S+) b/\S+", re.MULTILINE)
-_DIFF_NEW_FILE_RE = re.compile(r"^new file mode")
-
-
-def _extract_diff_file_grounding_lines(final_answer: str) -> dict:
-    """Maps each existing-file path named in a `diff --git` block inside final_answer to the
-    non-added lines (context or removed) inside its hunks — the lines the diff claims already
-    existed in that file before this change. A brand-new file (a `new file mode` line before the
-    next file header) is skipped entirely, since there's nothing pre-existing to verify."""
-    files: dict = {}
-    current_path = None
-    skip_current = False
-    for line in final_answer.splitlines():
-        header_match = _DIFF_FILE_HEADER_RE.match(line)
-        if header_match:
-            current_path = header_match.group(1)
-            skip_current = False
-            files.setdefault(current_path, [])
-            continue
-        if current_path is None:
-            continue
-        if _DIFF_NEW_FILE_RE.match(line):
-            skip_current = True
-            files.pop(current_path, None)
-            continue
-        if skip_current or line.startswith(("+++", "---", "index ", "@@")) or line.startswith("+"):
-            continue
-        if line.startswith("-"):
-            files[current_path].append(line[1:].strip())
-        elif line.startswith(" "):
-            files[current_path].append(line[1:].strip())
-    return {path: [l for l in lines if l] for path, lines in files.items()}
-
-
-def _final_diff_disagrees_with_fetched_content(final_answer: str, attempts: list) -> str | None:
-    """Returns the file path of the first diff hunk whose claimed pre-existing lines never
-    actually appeared in a real read_repo_file result for that path this turn — a strong signal
-    the diff was composed from a guess instead of derived from real fetched content. None if every
-    diffed file either has real corroborating evidence or the answer contains no diff at all."""
-    for path, grounding_lines in _extract_diff_file_grounding_lines(final_answer).items():
-        if not grounding_lines:
-            continue
-        fetched_text = "\n".join(
-            a["observation"] for a in attempts
-            if a.get("action_desc", "").startswith("read_repo_file(") and f"path={path}" in a["action_desc"]
-        )
-        if not fetched_text or not any(line in fetched_text for line in grounding_lines):
-            return path
-    return None
-
-
-def _format_react_attempts(attempts: list) -> str:
-    if not attempts:
-        return "(none yet — this is the first step)"
-    return "\n\n".join(
-        f"Attempt {i} — Purpose: {a['purpose']}\nAction: {a['action_desc']}\nObservation: {a['observation']}"
-        for i, a in enumerate(attempts, 1)
-    )
-
-
-def _format_attempts_steps(attempts: list) -> str:
-    """Renders attempts as 'Step N — purpose / Result' blocks for display — used both in a
-    completed answer's footer and in a clarification pause message. Purely a display renderer:
-    resuming a paused clarification reads attempts back from real checkpointed state
-    (state["paused_clarification"]), not by re-parsing this rendered text."""
-    return "\n\n".join(
-        f"**Step {i} — {a['purpose']}:**\n```\n{a['action_desc']}\n```\n"
-        f"**Result:**\n```\n{_format_observation_for_footer(a['observation'])}\n```"
-        for i, a in enumerate(attempts, 1)
-    )
-
-
-async def run_react_loop(
-    *,
-    question: str,
-    schema: str,
-    prompt_template: str,
-    act,
-    is_unsafe=lambda decision: False,
-    max_iterations: int,
-    node_name: str,
-    initial_attempts: list | None = None,
-    max_retry_nudges: int = 1,
-    llm=lite_llm,
-    stuck_action_redirects: dict | None = None,
-    capability_denial_watchlist: list | None = None,
-    architecture_map: str = "",
-    batchable_actions: frozenset | None = None,
-) -> dict:
-    """Generic Reason -> Act -> Observe -> Decide loop shared by every iterative tool
-    (MongoDB, GitHub search, ...). Each step asks the model for the next action given
-    everything tried so far; the model decides for itself when it has enough to answer,
-    or is honest that it doesn't. Returns {"final_answer": str, "attempts": list[dict],
-    "show_work": bool} — show_work is the model's own call on whether its step-by-step trace
-    is worth repeating in the chat message itself, not just the live trace panel (see
-    show_work's schema entry in TOOL_AGENT_PROMPT); defaults true when a "final" doesn't set it.
-    Raises _UnsafeActionRequested if is_unsafe() ever flags a proposed action, and
-    _ClarificationNeeded if the model reports genuine uncertainty instead of guessing.
-    `initial_attempts`, when given, seeds the loop with attempts already made in an earlier
-    call — the resume side of a clarification pause, so the loop continues instead of
-    starting from zero. `llm` defaults to lite_llm; deep thinking mode passes lite_llm_deep
-    instead, so a wider step/nudge budget also comes with more carefully reasoned individual
-    step decisions rather than just more of them.
-
-    A prompt-level instruction alone isn't enough to stop the model from giving up right after
-    a failed OR empty action even when steps remain — it already has evidence of that ("never
-    claim something exists without verifying it" was in the prompt and got broken anyway, in
-    the exact scenario this guards). retry_nudge_count enforces it mechanically instead of just
-    asking nicely: whenever the loop sees an outstanding failed-or-empty action with steps
-    still available, it tells the model so and, if the model tries to conclude anyway, rejects
-    that "final" and forces one more real step — up to max_retry_nudges times per call (default
-    1). It stops rejecting after that budget is spent, so a genuinely doomed action (a real
-    404, a real rate limit, a search that's empty no matter how it's phrased) still gets an
-    honest "final" rather than looping forever. Deep thinking mode raises this budget alongside
-    max_iterations, since a higher step cap alone doesn't help if the loop only gets to
-    second-guess itself once.
-
-    "Outstanding failed-or-empty action" is tracked per (tool_action name, args) pair, not just
-    "did the last step fail" — a real failure mode this caught: read_repo_file 404s, list_repo_tree
-    (a different action, taken to diagnose the 404) then succeeds, and the model concludes right
-    there without ever actually retrying the read. Checking only the last observation would
-    see the successful list and never nudge, even though the thing the user actually asked for
-    was never retrieved. Empty results are tracked the same way as outright errors (see
-    _is_empty_observation) — an empty search result is very often a sign of looking in the
-    wrong place (wrong repo, wrong collection, wrong query), not proof nothing exists.
-    unretried_inconclusive_tools maps every tool_action that has failed or come back empty to the
-    exact args it was called with, until it's attempted again with either a real success or
-    genuinely different args — calling the same failed action with the identical args again is
-    not a retry (it's the same query bouncing off the same wall) and does not clear the flag, so
-    it keeps nudging until the model actually changes something. Tracked regardless of what ran
-    in between.
-
-    A real production trace showed the above still isn't enough for one specific pattern: the
-    model called search_code with several genuinely DIFFERENT (differently-worded) queries in a
-    row, ~15 steps total, and never once switched to find_file — each retry was "genuine" by the
-    args-signature check above (different wording each time), so it kept clearing the nudge, even
-    though the actual problem (an exact-token search tool being used for a colloquial name) never
-    changes no matter how the query is reworded. A prose rule in the prompt telling it to use
-    find_file after an empty search_code already existed and was already live in production when
-    this happened — advisory text alone wasn't enough once it was several steps into a losing
-    strategy. `stuck_action_redirects` (optional: {tool_action_name: (consecutive_miss_threshold,
-    redirect_message)}) adds a mechanical escalation on top: it tracks a CONSECUTIVE-misses streak
-    per tool_action_name regardless of args (reset by any success or any different tool_action),
-    and once a listed tool's streak reaches its threshold, injects `redirect_message` into the
-    prompt AND actively rejects one further call to that same stuck tool_action (not executed, not
-    recorded as an attempt) — forcing a real switch to a different action, the same mechanical
-    escalation already used for a premature "final".
-
-    A second real production trace showed the same "prose alone isn't enough" lesson applies even
-    to a rule this loop's own prompt already states plainly: told to check its own action menu
-    before denying a capability, the model still produced a confident, detailed "final" claiming
-    it had no browser tool at all, while browser_navigate sat in that exact turn's menu.
-    `capability_denial_watchlist` (optional: a list of (capability_keyword_regex,
-    tool_action_menu_substring) pairs) is the mechanical backstop: when a "final" answer matches
-    both a generic denial-shaped phrase (_CAPABILITY_DENIAL_RE — "I don't have...", "I can't...",
-    etc.) AND one of the watchlist's capability keywords, AND that pair's tool_action_menu_substring
-    is actually present in this turn's prompt_template (proving the capability really is
-    available), the "final" is rejected once (not executed as a real step, no state to retry — just
-    a corrective notice injected into the next step) instead of trusting the model to have caught
-    its own contradiction.
-
-    A self-drive experiment (docs/coding-agent-roadmap.md, Section 7) surfaced a third fabrication
-    shape unrelated to any tool_action, budget, or capability check above: a confidently-formatted
-    diff editing a data structure (a whole dict) that was never verified to exist anywhere in the
-    real codebase — presented alongside quotes from OTHER, genuinely-read parts of the same file,
-    so it read as thoroughly researched. `_final_diff_disagrees_with_fetched_content` is the
-    mechanical backstop: when a "final" answer contains a `diff --git` block against an EXISTING
-    file (a new file has nothing pre-existing to verify and is skipped), at least one of that
-    hunk's own claimed pre-existing lines (context or removed, never a `+` line) must actually
-    appear in a real read_repo_file observation for that same path recorded THIS turn — otherwise
-    the "final" is rejected once, the same budget-limited shape as the capability-denial check
-    above, so a real diff grounded in an earlier part of the conversation (outside this loop's own
-    attempts) still gets through eventually rather than looping forever on a false positive.
-
-    An extensive diagnostic loop (docs/coding-agent-roadmap.md, Sections 4b-4j) showed every one
-    of those real traces burn most of a turn's step budget reading files or searching one at a
-    time, well before ever reasoning about them — a genuinely multi-file investigation needs N
-    reads that don't depend on each other, but the loop only ever let it spend one action per
-    step. `batchable_actions` (optional: a frozenset of tool_action names safe to run
-    concurrently) lets a single "query" step submit `{"queries": [{"tool_action", "args",
-    "purpose"}, ...]}` instead of one `tool_action`/`args` pair — each item runs concurrently via
-    asyncio.gather, and every one of them still goes through the exact same real execution
-    (is_unsafe, trace emission, error handling) and mechanical bookkeeping (retry-nudge tracking,
-    truncation tracking, the stuck-action streak) that a real sequential step would have gotten,
-    applied once per item in the order given — a batch never gets WEAKER scrutiny than the
-    equivalent sequential steps would have, just fewer round trips to get there. A stuck tool
-    slipped into a batch rejects the entire batch (none of it runs) rather than silently dropping
-    just that one item, and any tool_action not in `batchable_actions` is rejected individually
-    with a synthetic error instead of executed — deliberately excludes writes
-    (`run_mongo_query`), real slow CI dispatches (`run_repo_tests`/`run_snippet`), and every
-    `browser_*` action (inherently stateful/sequential), regardless of what the caller passes.
-
-    A real trace showed batching alone doesn't stop a different kind of waste: the model re-ran
-    the exact same tool_action + args it had already gotten a real, successful result for several
-    steps earlier — reading the same file/interface twice for zero new information, on a turn that
-    then ran out of its entire step budget without ever producing an answer
-    (docs/coding-agent-roadmap.md, Section 9). `succeeded_action_signatures` tracks every
-    (tool_action_name, args_signature) pair that has genuinely succeeded (not an ERROR, not empty,
-    not an unresolved truncation) at any point THIS turn. Unlike every other mechanical check in
-    this loop, this one is unconditional with no budget limit at all — a byte-identical repeat of
-    an already-succeeded call can only ever return the same answer again within one turn, so there
-    is no genuine case where actually re-running it is the right call. A repeat is skipped before
-    ever reaching `act()` (no wasted network/GitHub API call either) and recorded with a message
-    pointing back at the matching earlier attempt, for both a lone action and any item inside a
-    batch."""
-    attempts: list = list(initial_attempts or [])
-    final_answer = None
-    # Defaults true (show the receipt) whenever a "final" doesn't explicitly say otherwise —
-    # a missing/malformed field is more likely a parsing hiccup than a deliberate "hide this",
-    # so err toward the more transparent option rather than silently dropping useful context.
-    show_work = True
-    retry_nudge_count = 0
-    unretried_inconclusive_tools: dict = {}  # tool_action_name -> args signature of the failing call
-    # A real production trace showed even 3 rejections (deep thinking's full retry_nudge budget)
-    # isn't always enough: the model just kept re-submitting a "final" without ever taking the
-    # corrective action, and once the budget ran out it walked straight through with 3 different
-    # files still truncated and never re-read. Unlike an ERROR/empty result — which might be a
-    # genuinely unfixable dead end, so a bounded budget before accepting an honest "I couldn't"
-    # is the right call — a truncated file is never actually a dead end: the rest of it is right
-    # there. Tracked separately so a "final" is rejected UNCONDITIONALLY (no budget) while any
-    # tool_action_name in this set has an unresolved truncation, instead of sharing
-    # retry_nudge_count's limited budget with genuinely-unfixable failures.
-    truncated_unresolved_tools: set = set()
-    # A real production trace (docs/coding-agent-roadmap.md, Section 9) showed the model re-run
-    # the exact same tool_action + args it had already gotten a real, successful result for
-    # earlier in the SAME turn — re-reading a file/interface it had already read minutes (and
-    # several steps) before, burning step budget on zero new information. Unlike every other
-    # tracking dict here, this isn't about a failure — it's the opposite: (tool_action_name,
-    # args_signature) pairs are added here only on a genuine SUCCESS (see _record_action_result),
-    # so a later identical call can be recognized as pure redundant repeat and skipped without
-    # ever hitting the network/GitHub API a second time for it.
-    succeeded_action_signatures: set = set()
-    # A real trace (Section 10) showed a subtler waste than an exact repeat: after read_repo_file
-    # truncates a file (no start_line given), its own response already lists every top-level
-    # def/class and its real line number — but the model ran two MORE search tools trying to
-    # relocate a symbol it had already been told the line number for, then still guessed the
-    # wrong start_line anyway. Maps path -> {symbol_name: line_number} from every truncated
-    # read_repo_file result seen this turn, so a later start_line guess for a named symbol can be
-    # checked against real ground truth instead of trusted blindly (see find_mismatched_start_line_note).
-    definition_indexes_by_path: dict = {}
-    stuck_action_streak = {"tool": None, "count": 0}  # consecutive misses on ONE tool, any args
-    stuck_action_reject_count = 0
-    MAX_STUCK_ACTION_REJECTIONS = 1
-    capability_denial_reject_count = 0
-    MAX_CAPABILITY_DENIAL_REJECTIONS = 1
-    pending_capability_denial_notice: str | None = None
-    ungrounded_diff_reject_count = 0
-    MAX_UNGROUNDED_DIFF_REJECTIONS = 1
-    pending_ungrounded_diff_notice: str | None = None
-
-    for step in range(max_iterations):
-        forced_final = step == max_iterations - 1
-        # Shown on every step with an outstanding failure or empty result, not just once —
-        # only the actual rejection of a premature "final" below is budget-limited (via
-        # retry_nudge_count), so the model still sees the reminder if it takes an unrelated
-        # detour (like listing the repo tree) before eventually trying to conclude.
-        needs_retry_nudge = not forced_final and bool(unretried_inconclusive_tools)
-
-        stuck_redirect_entry = None
-        if stuck_action_streak["tool"]:
-            # A tool-specific entry (like search_code's) always wins when listed — it can give
-            # more targeted advice ("call find_file instead") than the generic fallback below can.
-            # Every OTHER tool still gets the generic circuit breaker instead of no backstop at
-            # all — see _DEFAULT_STUCK_ACTION_MESSAGE's comment for why this is no longer
-            # search_code-specific.
-            stuck_redirect_entry = (stuck_action_redirects or {}).get(stuck_action_streak["tool"]) or (
-                _DEFAULT_STUCK_ACTION_THRESHOLD,
-                _DEFAULT_STUCK_ACTION_MESSAGE.format(tool=stuck_action_streak["tool"]),
-            )
-        stuck_redirect_active = (
-            not forced_final
-            and stuck_redirect_entry is not None
-            and stuck_action_streak["count"] >= stuck_redirect_entry[0]
-        )
-
-        question_for_step = question
-        if forced_final:
-            question_for_step += (
-                "\n\n(You have used all your steps. You MUST return "
-                "action=\"final\" now, honestly summarizing what you tried and found.)"
-            )
-        if needs_retry_nudge:
-            failed_tools = ", ".join(sorted(unretried_inconclusive_tools))
-            question_for_step += (
-                f"\n\n(One or more of your actions failed or came back empty and was never "
-                f"successfully retried ({failed_tools}), and you still have steps remaining — "
-                "an empty result often means the query, path, or scope was wrong, not that "
-                "nothing exists. Actually retry it with corrected information — a DIFFERENT "
-                "query/path/args than the one that just failed (calling it again with the exact "
-                "same args does not count as retrying it, and neither does a different "
-                "diagnostic action, like listing the repo tree) — before concluding. Only choose "
-                "action=\"final\" now if you are certain nothing else could help.)"
-            )
-        if truncated_unresolved_tools:
-            # More insistent than the generic nudge above, and names the actual path when it can
-            # — a real trace showed the generic reminder alone wasn't enough to change behavior
-            # across 3 rejections in a row. This one keeps firing with NO budget limit (see
-            # truncated_unresolved_tools' own comment) because more content is always available
-            # here, unlike a genuinely-failed action that might really be a dead end.
-            stuck_path = None
-            for stuck_tool in truncated_unresolved_tools:
-                try:
-                    stuck_path = json.loads(unretried_inconclusive_tools.get(stuck_tool, "{}")).get("path")
-                except (TypeError, ValueError):
-                    stuck_path = None
-                if stuck_path:
-                    break
-            path_hint = f" (the one you left unfinished was {stuck_path})" if stuck_path else ""
-            question_for_step += (
-                f"\n\n(You have not finished reading a file you started{path_hint} — it was "
-                "truncated and you never called read_repo_file again with a start_line to see "
-                "the rest. This is NOT a failed or empty result — the rest of the file is right "
-                "there waiting to be read. You MUST call read_repo_file with a start_line on that "
-                "same path as your very next action. This will keep being rejected, with no "
-                "limit, until you actually do this — proposing code changes to a file you have "
-                "not fully read is not acceptable.)"
-            )
-        if stuck_redirect_active:
-            question_for_step += f"\n\n({stuck_redirect_entry[1]})"
-        if pending_capability_denial_notice:
-            question_for_step += f"\n\n({pending_capability_denial_notice})"
-            pending_capability_denial_notice = None
-        if pending_ungrounded_diff_notice:
-            question_for_step += f"\n\n({pending_ungrounded_diff_notice})"
-            pending_ungrounded_diff_notice = None
-
-        prompt = prompt_template.format(
-            question=question_for_step,
-            schema=schema,
-            attempts=_format_react_attempts(attempts),
-            architecture_map=architecture_map,
-        )
-
-        try:
-            response = await llm.ainvoke(prompt)
-            resp_content = response.content if hasattr(response, "content") else str(response)
-            raw_text = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in resp_content]) if isinstance(resp_content, list) else str(resp_content)
-            decision = _parse_agent_json(raw_text)
-        except Exception:
-            logger.exception("[%s] step %s failed to produce a usable decision.", node_name, step + 1)
-            break
-
-        action = decision.get("action")
-        if action == "final" and not forced_final and truncated_unresolved_tools:
-            # Unconditional — no budget check, unlike the ERROR/empty case below. A real
-            # production trace showed the model exhaust the ENTIRE deep-thinking retry budget
-            # (3 rejections) re-submitting "final" without ever actually re-reading any of the
-            # 3 files it had left truncated, then walk straight through once the budget ran out.
-            # A truncated file is never a genuine dead end, so there's no principled reason to
-            # ever let this go until it's actually resolved or the loop is forced to conclude.
-            continue
-        if action == "final" and needs_retry_nudge and retry_nudge_count < max_retry_nudges:
-            # Told to retry and it tried to conclude anyway — force one more real step instead
-            # of accepting a premature answer. retry_nudge_count only increments here (at the
-            # actual rejection), not just when the nudge was shown, so a detour in between
-            # (e.g. it lists the repo tree first) doesn't spend the budget for free.
-            retry_nudge_count += 1
-            continue
-        if action == "final" and not forced_final and capability_denial_watchlist and capability_denial_reject_count < MAX_CAPABILITY_DENIAL_REJECTIONS:
-            answer_text = decision.get("answer") or ""
-            denied_tool_marker = None
-            if _CAPABILITY_DENIAL_RE.search(answer_text):
-                for capability_re, tool_menu_substring in capability_denial_watchlist:
-                    if capability_re.search(answer_text) and tool_menu_substring in prompt_template:
-                        denied_tool_marker = tool_menu_substring
-                        break
-            if denied_tool_marker:
-                # A confident, detailed denial isn't more trustworthy than a short one if the
-                # capability is sitting right there in the menu — reject once (not executed,
-                # not recorded as an attempt) instead of trusting the model caught its own
-                # contradiction. Budget-limited for the same reason as every other mechanical
-                # rejection here: a genuinely correct "I don't have that" (a capability that
-                # really isn't in the menu) must still get through eventually.
-                capability_denial_reject_count += 1
-                pending_capability_denial_notice = (
-                    f"Your last answer denied having a capability, but '{denied_tool_marker}' is "
-                    "listed in AVAILABLE ACTIONS THIS TURN above — you do have it right now. Do "
-                    "not deny having it; if you haven't actually used it yet this turn, use it "
-                    "before answering."
-                )
-                continue
-        if action == "final" and not forced_final and ungrounded_diff_reject_count < MAX_UNGROUNDED_DIFF_REJECTIONS:
-            answer_text = decision.get("answer") or ""
-            ungrounded_path = _final_diff_disagrees_with_fetched_content(answer_text, attempts)
-            if ungrounded_path:
-                # Same shape as the capability-denial rejection above, one step later in the same
-                # real trace that motivated it: a confidently-formatted diff isn't more trustworthy
-                # than a rough one if none of what it claims already exists in the file ever
-                # actually came back from a real read this turn. Budget-limited for the same reason
-                # as every other mechanical rejection here — a real diff against a file genuinely
-                # read earlier in the conversation (outside this loop's own attempts) must still be
-                # allowed through eventually rather than looping forever on a false positive.
-                ungrounded_diff_reject_count += 1
-                pending_ungrounded_diff_notice = (
-                    f"Your proposed diff edits {ungrounded_path}, but none of the lines it claims "
-                    f"already exist there ever appeared in a real read_repo_file result for that "
-                    f"exact path this turn. Call read_repo_file({ungrounded_path}) for real, quote "
-                    "the actual current lines you're changing, and rebuild the diff from what's "
-                    "really there before answering again — do not guess at the file's structure."
-                )
-                continue
-        if action == "final":
-            final_answer = decision.get("answer") or "I wasn't able to find a conclusive answer."
-            show_work = decision.get("show_work")
-            show_work = show_work if isinstance(show_work, bool) else True
-            logger.info(
-                "[%s] Step %s: accepted final answer after %s real action(s) — %r",
-                node_name, step + 1, len(attempts), final_answer[:200],
-            )
-            break
-
-        if action == "clarify":
-            question_text = decision.get("question") or "I need a bit more information to continue — could you clarify?"
-            raise _ClarificationNeeded(question_text, attempts)
-
-        if action != "query":
-            attempts.append({
-                "purpose": decision.get("purpose", "(unclear)"),
-                "action_desc": "(no valid action returned)",
-                "observation": "ERROR: model did not return a recognized action",
-            })
-            continue
-
-        queries = decision.get("queries")
-        # >= 1, not > 1 — a "queries" list with exactly one item still has to go through the
-        # batch path below, since it puts the real tool_action/args inside that one list item
-        # rather than at the top level; the batch machinery already handles any size >= 1
-        # correctly (asyncio.gather over a single task works fine), so there's no need for a
-        # separate single-item normalization path.
-        is_batch = isinstance(queries, list) and len(queries) >= 1
-        batch_tool_names = [q.get("tool_action") for q in queries if isinstance(q, dict)] if is_batch else []
-        stuck_tool_in_this_step = (
-            stuck_action_streak["tool"] in batch_tool_names if is_batch
-            else decision.get("tool_action") == stuck_action_streak["tool"]
-        )
-        if (
-            stuck_redirect_active
-            and stuck_tool_in_this_step
-            and stuck_action_reject_count < MAX_STUCK_ACTION_REJECTIONS
-        ):
-            # Told to switch away from this tool_action and it tried it again anyway — whether
-            # alone or slipped into a batch alongside other actions — reject the WHOLE step
-            # outright (nothing in it executes, nothing recorded as an attempt) instead of just
-            # hoping the redirect message alone changes its mind, the same mechanical escalation
-            # already used for a premature "final". Budget-limited for the same reason: a
-            # genuinely doomed switch shouldn't force a second forced rejection on top of the first.
-            stuck_action_reject_count += 1
-            continue
-
-        async def _execute_one_action(
-            tool_action_name: str, args: dict, purpose: str,
-            batch_index: int | None = None, batch_size: int | None = None,
-        ) -> str:
-            # Shared by the single-action and batch paths below so a batched action gets the
-            # exact same real execution (trace emission, is_unsafe, error handling) a sequential
-            # step would have — no weaker scrutiny just because it ran alongside others.
-            # batch_index/batch_size (only passed by the batch path, and only when the batch has
-            # more than one item) let the frontend trace panel actually show when concurrent
-            # batching happened, instead of the only way to confirm it being to read the backend
-            # log and notice several attempts sharing one step number.
-            sub_decision = {"tool_action": tool_action_name, "args": args, "purpose": purpose}
-            trace_payload = {"node": node_name, "title": "Working...", "detail": purpose}
-            if batch_size and batch_size > 1:
-                trace_payload["batch_index"] = batch_index
-                trace_payload["batch_size"] = batch_size
-            await safe_emit_event("trace_detail", trace_payload)
-            if is_unsafe(sub_decision):
-                raise _UnsafeActionRequested(sub_decision)
-            try:
-                observation = act(sub_decision)
-                if asyncio.iscoroutine(observation):
-                    observation = await observation
-            except Exception as e:
-                observation = f"ERROR: {e}"
-            return _truncate_observation(observation)
-
-        def _record_action_result(tool_action_name: str, args: dict, purpose: str, observation: str) -> None:
-            # Exactly the bookkeeping a real sequential step already did — extracted so it can be
-            # applied once per item in a batch, in order, instead of only ever seeing one
-            # tool_action per step.
-            nonlocal stuck_action_streak
-            if tool_action_name:
-                args_signature = json.dumps(args or {}, sort_keys=True, default=str)
-                prior_args_signature = unretried_inconclusive_tools.get(tool_action_name)
-                is_unresolved_truncation = _mentions_unresolved_truncation(observation)
-                still_failing = (
-                    observation.startswith("ERROR")
-                    or _is_empty_observation(observation)
-                    or is_unresolved_truncation
-                )
-                if is_unresolved_truncation:
-                    unretried_inconclusive_tools[tool_action_name] = args_signature
-                    truncated_unresolved_tools.add(tool_action_name)
-                else:
-                    truncated_unresolved_tools.discard(tool_action_name)
-                    if prior_args_signature is not None:
-                        if not still_failing or args_signature != prior_args_signature:
-                            del unretried_inconclusive_tools[tool_action_name]
-                    elif still_failing:
-                        unretried_inconclusive_tools[tool_action_name] = args_signature
-
-                if not still_failing:
-                    succeeded_action_signatures.add((tool_action_name, args_signature))
-
-                if tool_action_name == "read_repo_file":
-                    path = (args or {}).get("path")
-                    start_line = (args or {}).get("start_line")
-                    if path and not start_line:
-                        index = parse_definition_index_from_observation(observation)
-                        if index:
-                            definition_indexes_by_path[path] = index
-                    elif path and start_line:
-                        note = find_mismatched_start_line_note(
-                            purpose, path, start_line, (args or {}).get("line_count"),
-                            _READ_FILE_DEFAULT_LINE_WINDOW, definition_indexes_by_path.get(path, {}),
-                        )
-                        if note:
-                            observation = f"{observation}\n\n{note}"
-
-                is_stuck_worthy_miss = still_failing and not is_unresolved_truncation
-                if is_stuck_worthy_miss and stuck_action_streak["tool"] == tool_action_name:
-                    stuck_action_streak["count"] += 1
-                elif is_stuck_worthy_miss:
-                    stuck_action_streak = {"tool": tool_action_name, "count": 1}
-                else:
-                    stuck_action_streak = {"tool": None, "count": 0}
-            args_summary = ", ".join(f"{k}={v}" for k, v in (args or {}).items())
-            action_desc = f"{tool_action_name}({args_summary})" if tool_action_name else (args_summary or "")
-            logger.info(
-                "[%s] Step %s (%s) — action=%s | observation=%r",
-                node_name, step + 1, purpose, action_desc or "(none)", observation[:200],
-            )
-            attempts.append({"purpose": purpose, "action_desc": action_desc, "observation": observation})
-
-        def _is_redundant_repeat(tool_action_name: str, args: dict) -> bool:
-            if not tool_action_name:
-                return False
-            args_signature = json.dumps(args or {}, sort_keys=True, default=str)
-            return (tool_action_name, args_signature) in succeeded_action_signatures
-
-        _REDUNDANT_REPEAT_MESSAGE = (
-            "(Skipped — you already ran this exact action with these exact args earlier this "
-            "turn and it succeeded. Re-use that real result from the matching attempt above "
-            "instead of running it again.)"
-        )
-
-        if is_batch:
-            batch_purpose = decision.get("purpose") or "Working..."
-            valid_items: list[dict] = []
-            for item in queries:
-                item = item if isinstance(item, dict) else {}
-                tool_name = item.get("tool_action")
-                item_purpose = item.get("purpose") or batch_purpose
-                item_args = item.get("args") or {}
-                if tool_name and batchable_actions and tool_name in batchable_actions:
-                    if _is_redundant_repeat(tool_name, item_args):
-                        _record_action_result(tool_name, item_args, item_purpose, _REDUNDANT_REPEAT_MESSAGE)
-                    elif len(valid_items) < _MAX_BATCH_SIZE:
-                        valid_items.append(item)
-                    else:
-                        _record_action_result(
-                            tool_name, item_args, item_purpose,
-                            f"ERROR: too many actions in one batch (max {_MAX_BATCH_SIZE}) — "
-                            "this one was dropped; retry it in a later step.",
-                        )
-                elif tool_name:
-                    _record_action_result(
-                        tool_name, item_args, item_purpose,
-                        f"ERROR: '{tool_name}' cannot be batched with other actions this way — "
-                        "call it in its own step instead.",
-                    )
-                else:
-                    _record_action_result(
-                        "", item_args, item_purpose,
-                        "ERROR: a batched item was missing a valid tool_action and was not executed.",
-                    )
-            if valid_items:
-                observations = await asyncio.gather(*(
-                    _execute_one_action(
-                        item["tool_action"], item.get("args") or {}, item.get("purpose") or batch_purpose,
-                        batch_index=i + 1, batch_size=len(valid_items),
-                    )
-                    for i, item in enumerate(valid_items)
-                ))
-                for item, observation in zip(valid_items, observations):
-                    _record_action_result(
-                        item["tool_action"], item.get("args") or {}, item.get("purpose") or batch_purpose, observation,
-                    )
-            continue
-
-        purpose = decision.get("purpose", "Working...")
-        tool_action_name = decision.get("tool_action") or ""
-        args = decision.get("args") or {}
-        if _is_redundant_repeat(tool_action_name, args):
-            observation = _REDUNDANT_REPEAT_MESSAGE
-        else:
-            observation = await _execute_one_action(tool_action_name, args, purpose)
-        _record_action_result(tool_action_name, args, purpose, observation)
-
-    if final_answer is None:
-        # Loop ran out of steps without an explicit final action — force one last honest
-        # synthesis instead of silently returning the last raw observation.
-        try:
-            prompt = prompt_template.format(
-                question=(
-                    f"{question}\n\n(You are out of steps. You MUST return action=\"final\" now, "
-                    "honestly summarizing what you tried and found — never invent an answer "
-                    "beyond what the attempts above actually show.)"
-                ),
-                schema=schema,
-                attempts=_format_react_attempts(attempts),
-                architecture_map=architecture_map,
-            )
-            response = await llm.ainvoke(prompt)
-            resp_content = response.content if hasattr(response, "content") else str(response)
-            raw_text = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in resp_content]) if isinstance(resp_content, list) else str(resp_content)
-            decision = _parse_agent_json(raw_text)
-            final_answer = decision.get("answer") or "I wasn't able to find a conclusive answer after several attempts."
-        except Exception:
-            logger.exception("[%s] final synthesis step failed.", node_name)
-            final_answer = "I wasn't able to find a conclusive answer after several attempts."
-
-    return {"final_answer": final_answer, "attempts": attempts, "show_work": show_work}
-
-
 # ============================================================
 # TOOL AGENT — unified Mongo + GitHub + web research loop
 # ============================================================
-
-_FILE_EXTENSION_RE = re.compile(r"\.[A-Za-z0-9]{1,5}$")
-
-
-# find_file's fuzzy matching, so a colloquial name ("navbar") can still surface a differently
-# named real file (menu-navigator.tsx) even though they share no exact token — search_code only
-# matches GitHub's literal keyword index, which finds nothing at all in that case. Splits both on
-# non-alphanumeric characters AND camelCase boundaries so "MenuNavigator" and "menu-navigator"
-# tokenize to the same {"menu", "navigator"} regardless of naming convention.
-_PATH_TOKEN_SPLIT_RE = re.compile(r"[^a-zA-Z0-9]+")
-_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
-_FUZZY_MATCH_CUTOFF = 0.5
-_FUZZY_MATCH_LIMIT = 15
-
-
-def _tokenize_for_fuzzy_match(text: str) -> set:
-    tokens = set()
-    for fragment in _PATH_TOKEN_SPLIT_RE.split(text):
-        if not fragment:
-            continue
-        for sub in _CAMEL_BOUNDARY_RE.split(fragment):
-            if sub:
-                tokens.add(sub.lower())
-    return tokens
-
-
-def _fuzzy_path_score(query_tokens: set, path: str) -> float:
-    """Best similarity between any query token and any token in `path` (folder names and
-    filename, extension stripped) — an exact token match short-circuits to 1.0, otherwise
-    falls back to difflib's character-level ratio so near-misses (navbar/navigator, singular
-    vs. plural) still score usefully instead of an all-or-nothing exact match."""
-    path_tokens = _tokenize_for_fuzzy_match(_FILE_EXTENSION_RE.sub("", path))
-    if not path_tokens:
-        return 0.0
-    best = 0.0
-    for query_token in query_tokens:
-        for path_token in path_tokens:
-            if query_token == path_token:
-                return 1.0
-            ratio = difflib.SequenceMatcher(None, query_token, path_token).ratio()
-            if ratio > best:
-                best = ratio
-    return best
-
-
-# trace_symbol's write-vs-read classification — regex-based (not a real parser) by design, to
-# stay consistent with find_file's own heuristic rather than pull in a per-language AST
-# dependency for one tool. Covers both this repo's Python and TypeScript/React conventions:
-# a plain assignment, an attribute/dict-style assignment, a def/class that IS the symbol, a
-# React state setter call (setSymbol(...)), a useState/useReducer/useRef/useMemo destructuring
-# that defines the symbol, and a function returning it — matching exactly the "write/decide
-# site" categories described in docs/coding-agent-roadmap.md. Everything else that mentions the
-# symbol (a read, a prop being consumed, a log line, a re-export) falls through to "read".
-def _classify_symbol_line(symbol: str, line: str) -> str:
-    stripped = line.strip()
-    escaped = re.escape(symbol)
-
-    if re.match(rf'^(export\s+)?(async\s+)?(def|function|class)\s+{escaped}\b', stripped):
-        return "write"
-
-    setter_name = f"set{symbol[0].upper()}{symbol[1:]}" if symbol else ""
-    if setter_name and re.search(rf'\b{re.escape(setter_name)}\s*\(', stripped):
-        return "write"
-
-    if re.search(rf'\b{escaped}\b[^=]*=\s*use(State|Reducer|Ref|Memo|Context)\s*\(', stripped):
-        return "write"
-
-    if re.search(rf'(?<![=!<>]){escaped}\s*=(?!=)', stripped):
-        return "write"
-
-    if re.search(rf'\.{escaped}\s*=(?!=)', stripped) or re.search(rf'\[["\']{escaped}["\']\]\s*=(?!=)', stripped):
-        return "write"
-
-    if re.search(rf'^return\b.*\b{escaped}\b', stripped):
-        return "write"
-
-    return "read"
-
 
 # Directory/programming nouns so common across virtually any repo's structure that a bare
 # two-segment mention built from one is far more likely to be a path fragment ("the fix is in
@@ -3200,189 +1855,6 @@ def extract_pr_request_details(text: str | None, fallback_repo: str = "SummonShe
         details["base_branch"] = branch_match.group(2).strip()
 
     return details
-
-def _format_observation_for_footer(observation) -> str:
-    if isinstance(observation, str):
-        return observation
-    return json.dumps(observation, default=str, indent=2)
-
-
-# A real production trace showed a static system-prompt paragraph telling the model to reach
-# for browser_navigate on "a real page's current, real content or appearance" wasn't enough —
-# asked to "inspect the actual page" to fix a z-index conflict, it did 15 steps of pure repo
-# reading and never opened a browser once (see docs/coding-agent-roadmap.md, "Failure B").
-# Rather than trust a general system-prompt rule to out-compete many turns of code-reading
-# momentum, this detects the specific category of question (layout/rendering/visual state that
-# literally cannot be confirmed from source alone) and injects a directive into THIS turn's own
-# question text — much harder to deprioritize than a rule buried among many others.
-_VISUAL_INSPECTION_RE = re.compile(
-    r"\b(inspect|actual page|actual site|how (?:it|this|that) (?:looks|renders|appears)|"
-    r"z-?index|stacking|overlap(?:ping)?|visually|on[- ]?screen|in the browser|"
-    r"css (?:issue|bug|problem)|layout (?:issue|bug|problem)|rendering (?:issue|bug|problem))\b",
-    re.IGNORECASE,
-)
-
-
-def _mentions_visual_inspection(text: str) -> bool:
-    return bool(_VISUAL_INSPECTION_RE.search(text or ""))
-
-
-# A real production trace showed the default step budget forced a premature, fabricated answer
-# on a "scan the repo and plan this refactor" ask: it needs one search plus a confirmatory
-# trace_symbol per candidate call site to actually be exhaustive, which the flat 7-step (or even
-# 14-step deep) budget doesn't leave room for — so it pattern-completed the rest instead of
-# admitting it ran out of steps. This detects that task shape from the user's own wording and
-# grants it the same higher budget deep_thinking gets, regardless of whether deep_thinking is on.
-_AUDIT_TASK_RE = re.compile(
-    r"\b(scan the (?:whole |entire )?repo|every (?:file|place|call ?site|usage|occurrence)s?|"
-    r"across the (?:whole |entire )?(?:repo|codebase)|cross-cutting|\baudit\b|"
-    r"(?:refactor|migration|architecture) plan|which files (?:do we|need to|touch|are)|"
-    r"how many files|plan (?:the|this|a) (?:refactor|migration|architecture))\b",
-    re.IGNORECASE,
-)
-
-
-def _is_audit_style_task(text: str) -> bool:
-    return bool(_AUDIT_TASK_RE.search(text or ""))
-
-
-# search_literal exists specifically because search_code rides GitHub's hosted search index
-# (capped at ~20 results, subject to indexing lag) and can silently miss real matches — but it's
-# opt-in, so an audit-style task ("find every place X is used") can still reach for search_code
-# out of habit and come back with a plausible-looking but incomplete answer (docs/coding-agent-
-# roadmap.md, Section 4c). Prose guidance for this already existed in TOOL_AGENT_PROMPT and wasn't
-# enough on its own — same lesson this whole file keeps re-learning — so this rides the same
-# mechanical injection already proven for the architecture map below instead of adding a new one.
-_AUDIT_TASK_SEARCH_NUDGE = (
-    "AUDIT TASK DETECTED: prefer search_literal over search_code for exhaustive results this turn "
-    "— search_code rides GitHub's hosted search index (capped, subject to indexing lag) and can "
-    "miss real matches; search_literal greps the actual repo tree directly.\n"
-)
-
-
-# Architecture map — an auto-injected, repo-wide internal-import graph for audit-style tasks
-# (docs/coding-agent-roadmap.md, Section 4c). search_literal/trace_symbol find where a SYMBOL is
-# referenced; this shows which FILES depend on which other files, which is what actually answers
-# "what else does this touch" for a cross-file refactor — the exact gap that produced the
-# fabricated per-user-token plan in Section 4b. Injected straight into the prompt (like `schema`
-# already is) rather than offered as a new opt-in tool_action, because this project has now
-# independently shown three times (Sections 0, 0b, 4b) that a capability the model must remember
-# to reach for gets skipped under pressure.
-_ARCH_MAP_MAX_FILES_SCANNED = 200
-_ARCH_MAP_MAX_FILE_BYTES = 200_000
-_ARCH_MAP_MAX_ENTRIES = 150
-_ARCH_MAP_PY_EXTENSION = ".py"
-_ARCH_MAP_JS_EXTENSIONS = (".ts", ".tsx", ".js", ".jsx")
-
-_JS_IMPORT_RE = re.compile(
-    r"""(?:^\s*import\s+['"]([^'"]+)['"])|(?:\bfrom\s+['"]([^'"]+)['"])|(?:\brequire\(\s*['"]([^'"]+)['"]\s*\))""",
-    re.MULTILINE,
-)
-
-
-def _extract_python_imports(content: str) -> list[str]:
-    # Best-effort, same spirit as _classify_symbol_line's regex heuristic — a file with a real
-    # (rare) syntax error just contributes no edges to the map instead of failing the whole thing.
-    # Relative imports are kept as their literal dotted form (e.g. ".utils") rather than resolved
-    # to a file path — the model can trivially map that back to a real path itself, and it avoids
-    # building a second, error-prone module-resolution layer for comparatively little benefit.
-    try:
-        tree = ast.parse(content)
-    except (SyntaxError, ValueError):
-        return []
-    imports: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            imports.extend(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            dots = "." * (node.level or 0)
-            if node.module:
-                imports.append(f"{dots}{node.module}")
-            else:
-                # `from . import utils` — module is None, the actual reference (a sibling
-                # module) lives in the imported names instead.
-                imports.extend(f"{dots}{alias.name}" for alias in node.names)
-    return imports
-
-
-def _extract_js_imports(content: str) -> list[str]:
-    # Regex, not a real parser — matches this codebase's own precedent (_classify_symbol_line)
-    # for TS/JS specifically. Covers `import x from '...'`, bare `import '...'`, and
-    # `require('...')`; does not cover dynamic `import(variable)` or path-aliased imports
-    # (e.g. tsconfig `@/`) — an acceptable, documented gap rather than a bundler-grade resolver.
-    imports = []
-    for match in _JS_IMPORT_RE.finditer(content):
-        imports.append(next(g for g in match.groups() if g))
-    return imports
-
-
-def _is_internal_python_import(import_str: str, top_level_segments: set) -> bool:
-    if import_str.startswith("."):
-        return True
-    return import_str.split(".")[0] in top_level_segments
-
-
-def _repo_top_level_segments(tree_items: list) -> set:
-    # Derived from the real tree every time (never hardcoded) so this works identically on any
-    # repo, not just this one — matches this session's own multi-repo/multi-user design goal.
-    segments = set()
-    for item in tree_items:
-        path = item.get("path", "")
-        parts = path.split("/")
-        segments.add(parts[0])
-        if len(parts) == 1 and parts[0].endswith(_ARCH_MAP_PY_EXTENSION):
-            segments.add(parts[0][: -len(_ARCH_MAP_PY_EXTENSION)])
-    return segments
-
-
-def _build_architecture_map(tree_items: list, fetch_content) -> str:
-    """Builds a compact FILE -> internal imports (and its inverse) map from real file content —
-    fetch_content(path) must return (content, error) like _fetch_file_content does. Only internal
-    (own-repo) imports are kept; a bare package import (os, react, requests) would otherwise
-    dominate the reverse map with useless high fan-in and drown out the edges that actually matter
-    for scoping a refactor's blast radius."""
-    top_level_segments = _repo_top_level_segments(tree_items)
-    candidates = [
-        item for item in tree_items
-        if item.get("path", "").endswith((_ARCH_MAP_PY_EXTENSION,) + _ARCH_MAP_JS_EXTENSIONS)
-        and item.get("size", 0) <= _ARCH_MAP_MAX_FILE_BYTES
-    ][:_ARCH_MAP_MAX_FILES_SCANNED]
-
-    imports_by_file: dict = {}
-    imported_by: dict = {}
-    for item in candidates:
-        path = item.get("path", "")
-        content, error = fetch_content(path)
-        if error or not isinstance(content, str):
-            continue
-        if path.endswith(_ARCH_MAP_PY_EXTENSION):
-            internal = [i for i in _extract_python_imports(content) if _is_internal_python_import(i, top_level_segments)]
-        else:
-            internal = [i for i in _extract_js_imports(content) if i.startswith(".")]
-        if not internal:
-            continue
-        imports_by_file[path] = sorted(set(internal))
-        for imp in internal:
-            imported_by.setdefault(imp, set()).add(path)
-
-    if not imports_by_file:
-        return ""
-
-    forward_lines = [
-        f"  {path} -> {', '.join(imports_by_file[path])}"
-        for path in sorted(imports_by_file)[:_ARCH_MAP_MAX_ENTRIES]
-    ]
-    reverse_lines = [
-        f"  {imp} <- imported by: {', '.join(sorted(imported_by[imp]))}"
-        for imp in sorted(imported_by)[:_ARCH_MAP_MAX_ENTRIES]
-    ]
-    return (
-        "PRE-COMPUTED ARCHITECTURE MAP (real internal-import graph — exhaustive for the files "
-        "scanned, not a guess; use this to find every file a change would touch instead of "
-        "relying on search_code alone):\n"
-        "FILE -> ITS INTERNAL IMPORTS:\n" + "\n".join(forward_lines) +
-        "\n\nINTERNAL MODULE -> IMPORTED BY:\n" + "\n".join(reverse_lines)
-    )
 
 
 async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
@@ -3708,17 +2180,31 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 return f"URL: {html_url}\n{decoded}"
 
             lines = decoded.splitlines()
-            snippet = decoded[:_READ_FILE_CHAR_CAP]
             index = _build_definition_index(lines)
-            index_note = (
-                f"\n\n... [truncated — this file has {len(lines)} lines total, too long to show in "
-                f"full. Top-level definitions found in it:\n{index}\nCall read_repo_file again with "
-                f"start_line set to the one you actually need — do not assume the file's contents "
-                f"past this point from general knowledge of what a file like this usually contains.]"
-                if index else
-                f"\n... [truncated — this file has {len(lines)} lines total; re-call with a "
-                f"start_line to read further into it instead of guessing what comes next.]"
-            )
+            if index:
+                # A real production trace (docs/coding-agent-roadmap.md, Section 12) showed this
+                # index — real, line-numbered ground truth for exactly where a symbol lives —
+                # silently lose its back half. A fixed 3500-char snippet plus the full index could
+                # push this whole observation past _MAX_OBSERVATION_CHARS (a later, generic cap
+                # applied to every tool's output in _truncate_observation), which slices from the
+                # START — meaning the index, appended at the END, was the first thing to get cut,
+                # for exactly the large-file case where it matters most. The index is more
+                # valuable than the raw preview once the file's already too big to show in full,
+                # so it gets first claim on the budget; the snippet shrinks to fit what's left
+                # instead of a fixed size regardless of how much room the index needs.
+                overhead = len(f"URL: {html_url}\n") + len(_DEFINITION_INDEX_WRAPPER.format(line_count=len(lines), index="")) + len(index)
+                snippet_budget = max(
+                    _READ_FILE_MIN_SNIPPET_CHARS,
+                    min(_READ_FILE_CHAR_CAP, _MAX_OBSERVATION_CHARS - overhead - 100),
+                )
+                snippet = decoded[:snippet_budget]
+                index_note = _DEFINITION_INDEX_WRAPPER.format(line_count=len(lines), index=index)
+            else:
+                snippet = decoded[:_READ_FILE_CHAR_CAP]
+                index_note = (
+                    f"\n... [truncated — this file has {len(lines)} lines total; re-call with a "
+                    f"start_line to read further into it instead of guessing what comes next.]"
+                )
             return f"URL: {html_url}\n{snippet}{index_note}"
 
         def _diff_branches(base: str, head: str):
@@ -3829,10 +2315,21 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             items = _fetch_repo_tree_items()
             if isinstance(items, str):
                 return items
-            candidates = [
+            extension_ok = [
                 item for item in items
+                if not item.get("path", "").lower().endswith(_SEARCH_LITERAL_SKIP_EXTENSIONS)
+            ]
+            # A real production trace (docs/coding-agent-roadmap.md, Section 12) showed this tool
+            # confidently report "no occurrences found, exhaustively scanned N of N candidate
+            # files" for a symbol that genuinely exists — in agent_workflow.py itself, which had
+            # quietly grown past _SEARCH_LITERAL_MAX_FILE_BYTES over the course of this session's
+            # own additions and was silently excluded from "candidates" before the count was even
+            # taken. Tracked separately so the response can say so explicitly instead of reporting
+            # a false completeness guarantee.
+            oversized = [item for item in extension_ok if item.get("size", 0) > _SEARCH_LITERAL_MAX_FILE_BYTES]
+            candidates = [
+                item for item in extension_ok
                 if item.get("size", 0) <= _SEARCH_LITERAL_MAX_FILE_BYTES
-                and not item.get("path", "").lower().endswith(_SEARCH_LITERAL_SKIP_EXTENSIONS)
             ][:_SEARCH_LITERAL_MAX_FILES_SCANNED]
 
             matches = []
@@ -3864,16 +2361,27 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 "narrow the term if you need to see past this)" if len(matches) >= _SEARCH_LITERAL_MAX_MATCHES
                 else ""
             )
+            oversized_note = ""
+            if oversized:
+                oversized_paths = sorted(item.get("path", "") for item in oversized)
+                shown = ", ".join(oversized_paths[:10])
+                more = f" (+{len(oversized_paths) - 10} more)" if len(oversized_paths) > 10 else ""
+                oversized_note = (
+                    f" WARNING: {len(oversized)} file(s) exceeded the "
+                    f"{_SEARCH_LITERAL_MAX_FILE_BYTES}-byte scan cap and were NOT searched — this "
+                    f"is NOT a guaranteed-complete answer if your target could be in one of them: "
+                    f"{shown}{more}. Read those directly instead."
+                )
             if not matches:
                 return (
                     f"No occurrences of {term!r} found — exhaustively scanned {scanned} of "
                     f"{len(candidates)} candidate files (skipped binaries/lockfiles/oversized "
                     f"files). This is a real, complete answer for the files scanned, not an "
-                    f"index-based guess."
+                    f"index-based guess.{oversized_note}"
                 )
             return (
                 f"Exhaustively scanned {scanned} of {len(candidates)} candidate files — "
-                f"{len(matches)} matching line(s){truncation_note}:\n" + "\n".join(matches)
+                f"{len(matches)} matching line(s){truncation_note}:{oversized_note}\n" + "\n".join(matches)
             )
 
         def _run_tests(test_commands: str, branch: str = None):
@@ -3994,6 +2502,12 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             "available, and only these stdlib modules can be imported: "
             f"{', '.join(sorted(SAFE_IMPORT_ALLOWLIST))}. Use this for calculations, data "
             "shaping, or checking your own logic — not for anything requiring I/O.)",
+            "- list_google_calendar_events — args: date (YYYY-MM-DD); lists events on the "
+            "CURRENT USER's own connected Google Calendar for that day. This is NOT the same "
+            "thing as the user's logged time entries/tasks (that's a separate internal feature, "
+            "surfaced elsewhere as insights) — use this only when the user is actually asking "
+            "about their real Google Calendar. Returns an error telling the user to connect "
+            "their calendar under Integrations if they haven't yet.",
         ])
         actions_menu = "\n".join(menu_lines)
         prompt_template = TOOL_AGENT_PROMPT.replace("{actions_menu}", actions_menu.replace("{", "{{").replace("}", "}}"))
@@ -4050,6 +2564,21 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 if tool_action == "browser_type":
                     return await browser_type(session, args.get("label"), args.get("value"), bool(args.get("submit")))
                 return await browser_screenshot(session, lite_llm)
+            if tool_action == "list_google_calendar_events":
+                # Dedicated branch (not folded into _dispatch_github) — needs `username` for
+                # per-user token resolution, same tier as the run_mongo_query branch above.
+                if username in CALENDAR_LOCKED_USERS:
+                    return "ERROR: Google Calendar is not available for this account"
+                try:
+                    token = await asyncio.to_thread(GoogleCalendarOAuth().get_valid_access_token, username)
+                except GoogleCalendarConnectionError:
+                    return "ERROR: No Google Calendar connected for this user. Connect it under Integrations first."
+                date_arg = args.get("date") or datetime.now().strftime("%Y-%m-%d")
+                tz = get_user_timezone(username)
+                events = await asyncio.to_thread(list_events_for_day, token, date_arg, tz)
+                if not events:
+                    return f"No events found on the connected Google Calendar for {date_arg}."
+                return "\n".join(f"- {e['start']}: {e['summary']}" for e in events)
             if tool_action == "run_python":
                 # run_python_sandboxed always returns {"output", "error"} and never raises —
                 # normalized to this loop's own "ERROR: ..." string convention (used by every
@@ -4659,6 +3188,188 @@ def _recover_run_mongo_write(messages: list, repo_hint: str) -> dict | None:
     return None
 
 
+def _draft_create_calendar_event(state: GraphState) -> tuple[dict, str] | tuple[None, str]:
+    """Unlike _draft_create_pr/_draft_create_issue, this can decline to propose anything real —
+    see propose_write_node's (None, message) short-circuit — when the user has no Google Calendar
+    connection yet, since there is nothing an approval card could meaningfully offer to execute."""
+    username = state.get("username")
+    if not get_calendar_connection_status(username).get("connected"):
+        return None, (
+            "You haven't connected Google Calendar yet — head to **Integrations** to connect "
+            "your account, then ask me to schedule this again."
+        )
+
+    messages = state.get("messages", [])
+    last_msg = messages[-1].content.strip() if messages else ""
+    tz = get_user_timezone(username)
+    now = datetime.now(ZoneInfo(tz)).strftime("%Y-%m-%d %H:%M (%A)")
+
+    try:
+        formatted_prompt = DRAFT_CALENDAR_EVENT_PROMPT.format(user_message=last_msg, timezone=tz, now=now)
+        llm_response = get_chat_llm(username).invoke(formatted_prompt)
+        raw_content = getattr(llm_response, "content", "")
+        text_content = "".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in raw_content) if isinstance(raw_content, list) else str(raw_content)
+        clean_json = text_content.strip().strip("```json").strip("```").strip()
+        parsed_json = json.loads(clean_json)
+        summary = parsed_json["summary"]
+        start_iso = parsed_json["start_iso"]
+        duration_minutes = int(parsed_json.get("duration_minutes", 30))
+    except Exception:
+        logger.exception("Failed to parse LLM calendar event draft.")
+        return None, "I couldn't figure out the event details from that — could you rephrase with a clear title and time?"
+
+    details = {"summary": summary, "start_iso": start_iso, "duration_minutes": duration_minutes, "timezone": tz}
+    summary_line = (
+        "Ready to schedule this event:\n"
+        f"- **Title:** {summary}\n"
+        f"- **When:** {start_iso} ({tz}), {duration_minutes} minutes"
+    )
+    return details, summary_line
+
+
+def _execute_create_calendar_event(username: str, details: dict) -> str:
+    try:
+        token = GoogleCalendarOAuth().get_valid_access_token(username)
+    except GoogleCalendarConnectionError as error:
+        return f"**Failed to schedule event:** {error}"
+
+    try:
+        created = create_event(
+            token, details["summary"], details["start_iso"],
+            details.get("duration_minutes", 30), details.get("timezone") or get_user_timezone(username),
+        )
+    except Exception as error:
+        logger.exception("[execute_write_node:create_calendar_event] Google Calendar API call failed.")
+        return f"**Failed to schedule event:** {error}"
+
+    link = f" [View on Google Calendar]({created['html_link']})" if created.get("html_link") else ""
+    return f"**Event scheduled:** '{created['summary']}' at {created['start']}.{link}"
+
+
+def _is_complete_create_calendar_event(details: dict) -> bool:
+    return bool(details.get("summary") and details.get("start_iso"))
+
+
+def _recover_create_calendar_event(messages: list, repo_hint: str) -> dict | None:
+    for msg in reversed(messages or []):
+        content = _content_of(msg)
+        if "Ready to schedule this event" not in content:
+            continue
+        title_match = re.search(r"-\s*\*\*Title:\*\*\s*(.+)", content)
+        when_match = re.search(r"-\s*\*\*When:\*\*\s*(\S+)\s*\(([^)]+)\),\s*(\d+)\s*minutes", content)
+        if title_match and when_match:
+            return {
+                "summary": title_match.group(1).strip(),
+                "start_iso": when_match.group(1).strip(),
+                "timezone": when_match.group(2).strip(),
+                "duration_minutes": int(when_match.group(3)),
+            }
+    return None
+
+
+def _draft_update_calendar_event(state: GraphState) -> tuple[dict, str] | tuple[None, str]:
+    username = state.get("username")
+    if not get_calendar_connection_status(username).get("connected"):
+        return None, (
+            "You haven't connected Google Calendar yet — head to **Integrations** to connect "
+            "your account, then ask me to update this again."
+        )
+
+    messages = state.get("messages", [])
+    last_msg = messages[-1].content.strip() if messages else ""
+    tz = get_user_timezone(username)
+    now = datetime.now(ZoneInfo(tz)).strftime("%Y-%m-%d %H:%M (%A)")
+
+    try:
+        formatted_prompt = UPDATE_CALENDAR_EVENT_PROMPT.format(user_message=last_msg, timezone=tz, now=now)
+        llm_response = get_chat_llm(username).invoke(formatted_prompt)
+        raw_content = getattr(llm_response, "content", "")
+        text_content = "".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in raw_content) if isinstance(raw_content, list) else str(raw_content)
+        clean_json = text_content.strip().strip("```json").strip("```").strip()
+        parsed_json = json.loads(clean_json)
+        search_summary = parsed_json["search_summary"]
+        event_date_iso = parsed_json["event_date_iso"]
+    except Exception:
+        logger.exception("Failed to parse LLM calendar event update draft.")
+        return None, "I couldn't figure out which event to update from that — could you name the event and its date?"
+
+    details = {"search_summary": search_summary, "event_date_iso": event_date_iso, "timezone": tz}
+    if parsed_json.get("new_summary"):
+        details["new_summary"] = parsed_json["new_summary"]
+    if parsed_json.get("start_iso"):
+        details["start_iso"] = parsed_json["start_iso"]
+        details["duration_minutes"] = int(parsed_json.get("duration_minutes", 30))
+
+    lines = ["Ready to update this calendar event:", f'- **Find:** "{search_summary}" on {event_date_iso}']
+    if details.get("new_summary"):
+        lines.append(f"- **Rename to:** {details['new_summary']}")
+    if details.get("start_iso"):
+        lines.append(f"- **Move to:** {details['start_iso']} ({tz})")
+    if not details.get("new_summary") and not details.get("start_iso"):
+        lines.append("- **Change:** (no changes specified — nothing will happen)")
+    summary_line = "\n".join(lines)
+    return details, summary_line
+
+
+def _execute_update_calendar_event(username: str, details: dict) -> str:
+    try:
+        token = GoogleCalendarOAuth().get_valid_access_token(username)
+    except GoogleCalendarConnectionError as error:
+        return f"**Failed to update event:** {error}"
+
+    tz = details.get("timezone") or get_user_timezone(username)
+    try:
+        event = find_event_by_summary_on_day(token, details["search_summary"], details["event_date_iso"], tz)
+    except Exception as error:
+        logger.exception("[execute_write_node:update_calendar_event] Google Calendar lookup failed.")
+        return f"**Failed to update event:** {error}"
+    if not event:
+        return (
+            f"**Failed to update event:** couldn't find an event matching "
+            f"\"{details['search_summary']}\" on {details['event_date_iso']}."
+        )
+
+    updates = {}
+    if details.get("new_summary"):
+        updates["summary"] = details["new_summary"]
+    if details.get("start_iso"):
+        updates["start_iso"] = details["start_iso"]
+        updates["duration_minutes"] = details.get("duration_minutes", 30)
+
+    try:
+        updated = update_event(token, event["id"], updates, tz)
+    except Exception as error:
+        logger.exception("[execute_write_node:update_calendar_event] Google Calendar update failed.")
+        return f"**Failed to update event:** {error}"
+
+    link = f" [View on Google Calendar]({updated['html_link']})" if updated.get("html_link") else ""
+    return f"**Event updated:** '{updated['summary']}' now at {updated['start']}.{link}"
+
+
+def _is_complete_update_calendar_event(details: dict) -> bool:
+    return bool(details.get("search_summary") and details.get("event_date_iso"))
+
+
+def _recover_update_calendar_event(messages: list, repo_hint: str) -> dict | None:
+    for msg in reversed(messages or []):
+        content = _content_of(msg)
+        if "Ready to update this calendar event" not in content:
+            continue
+        find_match = re.search(r'\*\*Find:\*\*\s*"([^"]+)"\s*on\s*(\S+)', content)
+        if not find_match:
+            continue
+        details = {"search_summary": find_match.group(1).strip(), "event_date_iso": find_match.group(2).strip()}
+        rename_match = re.search(r"\*\*Rename to:\*\*\s*(.+)", content)
+        if rename_match:
+            details["new_summary"] = rename_match.group(1).strip()
+        move_match = re.search(r"\*\*Move to:\*\*\s*(\S+)\s*\(([^)]+)\)", content)
+        if move_match:
+            details["start_iso"] = move_match.group(1).strip()
+            details["timezone"] = move_match.group(2).strip()
+        return details
+    return None
+
+
 WRITE_ACTIONS = {
     "create_pr": {
         "required_role": "Global_Admins",
@@ -4691,6 +3402,25 @@ WRITE_ACTIONS = {
         "recover_from_history": _recover_run_mongo_write,
         "card_marker": "Ready to run this database operation",
     },
+    "create_calendar_event": {
+        # None, not "Global_Admins" — scheduling a calendar event is personal, not an
+        # admin-only capability; every non-guest user may do this on their own behalf. See
+        # execute_write_node's RBAC check: a falsy required_role means no role gate at all.
+        "required_role": None,
+        "draft": _draft_create_calendar_event,
+        "execute": _execute_create_calendar_event,
+        "is_complete": _is_complete_create_calendar_event,
+        "recover_from_history": _recover_create_calendar_event,
+        "card_marker": "Ready to schedule this event",
+    },
+    "update_calendar_event": {
+        "required_role": None,
+        "draft": _draft_update_calendar_event,
+        "execute": _execute_update_calendar_event,
+        "is_complete": _is_complete_update_calendar_event,
+        "recover_from_history": _recover_update_calendar_event,
+        "card_marker": "Ready to update this calendar event",
+    },
 }
 
 
@@ -4712,6 +3442,19 @@ def propose_write_node(state: GraphState) -> GraphState:
             return state
 
         details, summary_line = action["draft"](state)
+        if details is None:
+            # A draft can decline to propose anything real (e.g. create_calendar_event when the
+            # user has no Google Calendar connection yet) — summary_line is then a plain
+            # informational message, not an approval card, so no pending_action is set and the
+            # generic "Approve/Modify/Reject" footer below is skipped entirely.
+            new_messages = list(messages) + [AIMessage(content=summary_line)]
+            return {
+                **state,
+                "pending_action": None,
+                "relevance_grade": "conversational",
+                "generation": summary_line,
+                "messages": new_messages,
+            }
         new_pending_action = {"action_type": action_name, "details": details}
         card_msg = (
             "**Approval Required**\n\n"
@@ -4761,9 +3504,11 @@ def execute_write_node(state: dict) -> dict:
                 "pending_action": None,
             }
 
-        # 1. RBAC check — one site for every registered write action.
+        # 1. RBAC check — one site for every registered write action. required_role of None means
+        # no role gate (e.g. create_calendar_event/update_calendar_event — personal actions any
+        # non-guest user may take on their own behalf, not an admin-only capability).
         user_groups = load_user_directory_groups(username)
-        if action["required_role"] not in user_groups:
+        if action["required_role"] and action["required_role"] not in user_groups:
             return {
                 **state,
                 "content_to_format": f"Access denied: this action is restricted to {action['required_role']}.",

@@ -223,6 +223,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
             </div>
           )}
         </div>
+
+        <div style={{ marginTop: '2rem', display: 'flex', gap: '1rem', fontSize: '0.8rem' }}>
+          <a href="#/privacy" style={{ color: '#64748b' }}>Privacy Policy</a>
+          <a href="#/terms" style={{ color: '#64748b' }}>Terms of Service</a>
+        </div>
       </div>
 
       {/* Hero Right: Displays Logo directly centered */}

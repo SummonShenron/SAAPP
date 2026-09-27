@@ -3,6 +3,7 @@ import re
 import json
 import logging
 from typing import Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from backend.utils.db_utils import get_db
 
@@ -17,6 +18,11 @@ RAG_MODE_OPEN = "open"
 VALID_RAG_MODES = {RAG_MODE_STRICT, RAG_MODE_OPEN}
 
 DEFAULT_DEEP_THINKING = False
+
+# PAAPP's legacy calendar tool hardcoded every event to 'America/Chicago' for a single operator —
+# now that calendar actions are per-user (see backend/services/google_calendar_oauth.py), this is
+# only ever used as the fallback before a user has explicitly set their own.
+DEFAULT_TIMEZONE = "America/Chicago"
 
 _TARGET_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
@@ -77,6 +83,19 @@ def _resolve_deep_thinking(doc: dict) -> bool:
 def _resolve_target_repo(doc: dict) -> Optional[str]:
     repo = doc.get("target_repo")
     return repo if repo and _TARGET_REPO_RE.match(repo) else None
+
+
+def _is_valid_timezone(tz: str) -> bool:
+    try:
+        ZoneInfo(tz)
+        return True
+    except (ZoneInfoNotFoundError, ValueError):
+        return False
+
+
+def _resolve_timezone(doc: dict) -> str:
+    tz = doc.get("timezone")
+    return tz if tz and _is_valid_timezone(tz) else DEFAULT_TIMEZONE
 
 
 def get_user_rag_mode(username: str) -> str:
@@ -172,6 +191,32 @@ def set_user_target_repo(username: str, repo: Optional[str]) -> Optional[str]:
 
     _write_local_setting(username, "target_repo", repo)
     return repo
+
+
+def get_user_timezone(username: str) -> str:
+    """Returns the user's stored IANA timezone (e.g. 'America/New_York'), defaulting to
+    DEFAULT_TIMEZONE if never set. Not subject to TOGGLE_LOCKED_USERS — a timezone preference
+    carries no elevated-resource/scope concern the way rag_mode/deep_thinking/target_repo do."""
+    return _resolve_timezone(_fetch_settings_doc(username))
+
+
+def set_user_timezone(username: str, tz: str) -> str:
+    """Validates and persists a user's IANA timezone. An invalid or unrecognized value resets to
+    DEFAULT_TIMEZONE rather than being silently ignored, matching set_user_target_repo's
+    invalid-value-clears-the-setting convention."""
+    tz = (tz or "").strip()
+    tz = tz if _is_valid_timezone(tz) else DEFAULT_TIMEZONE
+
+    db = get_db()
+    if db is not None:
+        db["user_settings"].update_one(
+            {"username": username},
+            {"$set": {"timezone": tz}},
+            upsert=True,
+        )
+
+    _write_local_setting(username, "timezone", tz)
+    return tz
 
 
 def get_user_has_seen_help(username: str) -> bool:

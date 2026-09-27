@@ -252,6 +252,83 @@ async def test_run_python_failure_uses_error_prefix_convention(monkeypatch):
 
 
 @run_async
+async def test_list_google_calendar_events_returns_formatted_agenda(monkeypatch):
+    _setup_github_repo(monkeypatch)
+    monkeypatch.setattr(aw, "get_user_timezone", lambda username: "America/Chicago")
+
+    class _FakeOAuth:
+        def get_valid_access_token(self, username):
+            return "fake-access-token"
+
+    monkeypatch.setattr(aw, "GoogleCalendarOAuth", _FakeOAuth)
+    monkeypatch.setattr(
+        aw, "list_events_for_day",
+        lambda token, date, tz: [{"id": "e1", "summary": "Standup", "start": "2026-06-21T09:00:00", "end": "2026-06-21T09:15:00"}],
+    )
+
+    responses = [
+        _llm_response(action="query", purpose="Check calendar", tool_action="list_google_calendar_events", args={"date": "2026-06-21"}),
+        _llm_response(action="final", answer="You have a Standup at 9am.", show_work=True),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("what's on my google calendar tomorrow?"))
+
+    assert "Standup" in result["content_to_format"]
+
+
+@run_async
+async def test_list_google_calendar_events_reports_no_connection(monkeypatch):
+    _setup_github_repo(monkeypatch)
+
+    class _FakeOAuth:
+        def get_valid_access_token(self, username):
+            raise aw.GoogleCalendarConnectionError("No Google Calendar connection found for jack")
+
+    monkeypatch.setattr(aw, "GoogleCalendarOAuth", _FakeOAuth)
+
+    captured_prompts = []
+    responses = [
+        _llm_response(action="query", purpose="Check calendar", tool_action="list_google_calendar_events", args={"date": "2026-06-21"}),
+        _llm_response(action="final", answer="Done.", show_work=True),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses.pop(0)
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("what's on my google calendar tomorrow?"))
+
+    # The real ERROR observation from the tool call must have been fed back to the model as
+    # context for its next step — not just whatever the mocked "final" answer happens to say.
+    assert any("Connect it under Integrations" in p for p in captured_prompts)
+
+
+@run_async
+async def test_list_google_calendar_events_blocks_locked_guest_identity(monkeypatch):
+    _setup_github_repo(monkeypatch)
+    monkeypatch.setattr(aw, "CALENDAR_LOCKED_USERS", {"guest_bty"})
+
+    captured_prompts = []
+    responses = [
+        _llm_response(action="query", purpose="Check calendar", tool_action="list_google_calendar_events", args={"date": "2026-06-21"}),
+        _llm_response(action="final", answer="Done.", show_work=True),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses.pop(0)
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("what's on my google calendar tomorrow?", username="guest_bty"))
+
+    assert any("ERROR: Google Calendar is not available for this account" in p for p in captured_prompts)
+
+
+@run_async
 async def test_non_admin_action_menu_never_includes_mongo(monkeypatch):
     """The actual security property: non-admins shouldn't even see run_mongo_query as an
     option, not just be rejected if they somehow ask for it."""
@@ -840,6 +917,73 @@ async def test_read_repo_file_truncation_includes_definition_index(monkeypatch):
     assert "reasoner_node" in followup_prompt
     assert "memory_save_node" in followup_prompt
     assert "start_line" in followup_prompt
+
+
+def _build_file_with_many_top_level_defs(def_count=100, target_index=90, padding_per_def=6):
+    """A file with enough top-level defs that the definition index itself is sizeable, and
+    enough padding (comment lines, which _TOP_LEVEL_DEF_RE doesn't match) to push the total file
+    size well past truncation — independently of index size, so this reproduces the real
+    production gap (docs/coding-agent-roadmap.md, Section 12) without the index alone exceeding
+    _MAX_OBSERVATION_CHARS. Under the OLD behavior (fixed 3500-char snippet + full index, then a
+    later blanket 4000-char cap slicing from the start) the index — appended after the snippet —
+    got cut off before reaching a def this late in it; under the fix, the index gets first claim
+    on the budget and the snippet shrinks instead. target_index is deliberately late but still
+    comfortably within _build_definition_index's own 150-entry cap, so this isolates THIS bug
+    from that separate, already-accepted limit."""
+    lines = ["import os", ""]
+    for i in range(def_count):
+        if i == target_index:
+            lines.append("async def target_function(state):")
+        else:
+            lines.append(f"def filler_{i}():")
+        lines.append("    pass")
+        for p in range(padding_per_def):
+            lines.append(f"    # padding line {p} for filler {i}")
+        lines.append("")
+    content = "\n".join(lines)
+    assert len(content) > aw._READ_FILE_CHAR_CAP, "fixture must actually exercise truncation"
+    target_line = next(
+        i for i, line in enumerate(content.splitlines(), start=1)
+        if line.startswith("async def target_function")
+    )
+    return content, target_line
+
+
+@run_async
+async def test_definition_index_survives_even_with_many_top_level_defs(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    big_content, target_line = _build_file_with_many_top_level_defs()
+    repo_resp = _http_response(200, {"default_branch": "main"})
+    file_resp = _http_response(200, {"content": _b64(big_content)})
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        if url.endswith("/contents/backend/services/agent_workflow.py"):
+            return file_resp
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+
+    captured_prompts = []
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        if len(captured_prompts) == 1:
+            return _llm_response(
+                action="query", purpose="Read the file",
+                tool_action="read_repo_file", args={"path": "backend/services/agent_workflow.py"},
+            )
+        return _llm_response(action="final", answer="Done.")
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("where is target_function defined?"))
+
+    followup_prompt = captured_prompts[1]
+    assert f"line {target_line}: def target_function" in followup_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -1845,6 +1989,56 @@ async def test_search_literal_no_matches_says_so_explicitly(monkeypatch):
     result = await aw.tool_agent_node(_state("find every place TOTALLY_NONEXISTENT_VAR is read"))
 
     assert "Not found anywhere." in result["content_to_format"]
+
+
+@run_async
+async def test_search_literal_warns_when_a_candidate_was_too_big_to_scan(monkeypatch):
+    """Real production gap (docs/coding-agent-roadmap.md, Section 12): agent_workflow.py itself
+    grew past _SEARCH_LITERAL_MAX_FILE_BYTES this session and got silently excluded from
+    "candidates" — the tool then confidently reported "no occurrences found, exhaustively
+    scanned N of N candidate files" for a symbol that genuinely exists in that exact file. The
+    observation fed back into the loop must now say explicitly when a file was skipped for size."""
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    repo_resp = _http_response(200, {"default_branch": "main"})
+    tree_resp = _http_response(200, {"tree": [
+        {"path": "small.py", "type": "blob", "size": 100, "sha": "sha1"},
+        {"path": "backend/services/agent_workflow.py", "type": "blob", "size": aw._SEARCH_LITERAL_MAX_FILE_BYTES + 1, "sha": "sha2"},
+    ]})
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        if "/git/trees/" in url:
+            return tree_resp
+        if "/git/blobs/" in url:
+            return _http_response(200, {"encoding": "base64", "content": _b64("nothing interesting here\n")})
+        if "/contents/" in url:
+            return _http_response(200, {"content": _b64("import os\n")})
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+
+    captured_prompts = []
+    responses = [
+        _llm_response(action="query", purpose="Search", tool_action="search_literal", args={"term": "_format_react_attempts"}),
+        _llm_response(action="final", answer="done"),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+    monkeypatch.setattr(aw.lite_llm_deep, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("find every occurrence of _format_react_attempts"))
+
+    assert len(captured_prompts) == 2
+    assert "exceeded the" in captured_prompts[1]
+    assert "backend/services/agent_workflow.py" in captured_prompts[1]
+    assert "NOT searched" in captured_prompts[1]
 
 
 def test_search_literal_skips_oversized_and_binary_files():

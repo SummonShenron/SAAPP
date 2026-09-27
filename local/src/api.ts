@@ -27,7 +27,7 @@ function getEmbeddedMode(): boolean {
   return searchParams.get('mode') === 'embed' || window.location.href.includes('mode=embed');
 }
 
-function isGuestPrincipal(principal: string | null | undefined): boolean {
+export function isGuestPrincipal(principal: string | null | undefined): boolean {
   return principal === 'guest' || principal === 'guest_bty';
 }
 
@@ -366,6 +366,74 @@ export async function updateHasSeenHelp(hasSeenHelp: boolean): Promise<{ has_see
 }
 
 /**
+ * Get / set the current user's IANA timezone (e.g. "America/New_York") — used when the agent
+ * schedules a Google Calendar event on the user's behalf.
+ */
+export async function getTimezone(): Promise<{ timezone: string }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/timezone`, {
+    headers: { ...authHeaders }
+  });
+  if (!res.ok) throw new Error("Failed to fetch timezone setting.");
+  return res.json();
+}
+
+export async function updateTimezone(timezone: string): Promise<{ timezone: string }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/timezone`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders
+    },
+    body: JSON.stringify({ timezone })
+  });
+  if (!res.ok) throw new Error("Failed to update timezone setting.");
+  return res.json();
+}
+
+/**
+ * Per-user Google Calendar connection (Integrations page) — the backend does the actual OAuth
+ * code exchange server-side; the frontend only ever sees an authorization URL to navigate to and
+ * a plain connected/disconnected status afterward.
+ */
+export interface CalendarConnectionStatus {
+  connected: boolean;
+  account_email: string | null;
+  scopes: string[];
+  connected_at: string | null;
+}
+
+export async function getCalendarStatus(): Promise<CalendarConnectionStatus> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/calendar/status`, {
+    headers: { ...authHeaders }
+  });
+  if (!res.ok) throw new Error("Failed to fetch Google Calendar connection status.");
+  return res.json();
+}
+
+export async function startCalendarConnection(returnTo: string): Promise<{ authorization_url: string }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/calendar/connect/start?return_to=${encodeURIComponent(returnTo)}`, {
+    method: "POST",
+    headers: { ...authHeaders }
+  });
+  if (!res.ok) throw new Error("Failed to start Google Calendar connection.");
+  return res.json();
+}
+
+export async function disconnectCalendar(): Promise<{ connected: boolean }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/calendar/disconnect`, {
+    method: "POST",
+    headers: { ...authHeaders }
+  });
+  if (!res.ok) throw new Error("Failed to disconnect Google Calendar.");
+  return res.json();
+}
+
+/**
  * List the current user's conversation threads
  */
 export interface ConversationSummary {
@@ -650,5 +718,10 @@ export const api = {
   getTargetRepo,
   updateTargetRepo,
   getHasSeenHelp,
-  updateHasSeenHelp
+  updateHasSeenHelp,
+  getTimezone,
+  updateTimezone,
+  getCalendarStatus,
+  startCalendarConnection,
+  disconnectCalendar
 };

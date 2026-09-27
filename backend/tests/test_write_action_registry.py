@@ -248,6 +248,182 @@ def test_execute_write_node_mongo_missing_details_does_not_attempt_recovery(monk
 # actually be approved and executed, end to end, via execute_write_node.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# create_calendar_event / update_calendar_event — personal actions, no admin gate,
+# and the propose_write_node (None, message) short-circuit when there's no connection yet.
+# ---------------------------------------------------------------------------
+
+def test_propose_write_node_no_calendar_connection_sends_plain_message_not_a_card(monkeypatch):
+    monkeypatch.setattr(aw, "get_calendar_connection_status", lambda username: {"connected": False})
+
+    state = {
+        "username": "jack",
+        "write_action": "create_calendar_event",
+        "messages": [HumanMessage(content="schedule a call with Sam tomorrow at 2pm")],
+    }
+    result = aw.propose_write_node(state)
+
+    assert result["pending_action"] is None
+    assert result["relevance_grade"] == "conversational"
+    assert "connect" in result["generation"].lower()
+    assert "Approval Required" not in result["generation"]
+
+
+def test_propose_write_node_drafts_calendar_event_when_connected(monkeypatch):
+    monkeypatch.setattr(aw, "get_calendar_connection_status", lambda username: {"connected": True})
+    monkeypatch.setattr(aw, "get_user_timezone", lambda username: "America/Chicago")
+    monkeypatch.setattr(
+        aw, "get_chat_llm",
+        lambda username: SimpleNamespace(invoke=lambda prompt: _llm_json(
+            '{"summary": "Call with Sam", "start_iso": "2026-06-21T14:00:00", "duration_minutes": 30}'
+        ))
+    )
+
+    state = {
+        "username": "jack",
+        "write_action": "create_calendar_event",
+        "messages": [HumanMessage(content="schedule a call with Sam tomorrow at 2pm")],
+    }
+    result = aw.propose_write_node(state)
+
+    assert result["pending_action"]["action_type"] == "create_calendar_event"
+    assert result["pending_action"]["details"]["summary"] == "Call with Sam"
+    assert result["relevance_grade"] == "hitl_approval_required"
+    assert "Approval Required" in result["generation"]
+
+
+def test_execute_write_node_allows_non_admin_to_schedule_calendar_event(monkeypatch):
+    """The regression this guards: create_calendar_event/update_calendar_event's required_role
+    of None must not require ANY group, while every other registered action still does."""
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: [])  # no groups at all
+
+    class _FakeOAuth:
+        def get_valid_access_token(self, username):
+            return "fake-access-token"
+
+    monkeypatch.setattr(aw, "GoogleCalendarOAuth", _FakeOAuth)
+    monkeypatch.setattr(aw, "get_user_timezone", lambda username: "America/Chicago")
+    monkeypatch.setattr(
+        aw, "create_event",
+        lambda token, summary, start_iso, duration_minutes, tz: {
+            "id": "evt1", "summary": summary, "html_link": "https://calendar.google.com/evt1", "start": start_iso,
+        },
+    )
+
+    details = {"summary": "Call with Sam", "start_iso": "2026-06-21T14:00:00", "duration_minutes": 30}
+    result = aw.execute_write_node(_pending_state("create_calendar_event", details))
+
+    assert "denied" not in result.get("content_to_format", "").lower()
+    assert "Event scheduled" in result["content_to_format"]
+    assert result["relevance_grade"] == "action_complete"
+
+
+def test_execute_write_node_still_blocks_non_admin_for_create_pr_after_rbac_change(monkeypatch):
+    """Regression guard for the one-line RBAC change (falsy required_role bypasses the gate) —
+    confirms it didn't accidentally weaken the check for actions that DO require a role."""
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: [])
+    mock_post = Mock()
+    monkeypatch.setattr(aw.requests, "post", mock_post)
+
+    details = {"title": "t", "body": "b", "head_branch": "h", "base_branch": "m", "repo": "o/r"}
+    result = aw.execute_write_node(_pending_state("create_pr", details))
+
+    assert "denied" in result["content_to_format"].lower()
+    mock_post.assert_not_called()
+
+
+def test_execute_write_node_reports_failure_when_calendar_connection_missing(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: [])
+
+    class _FakeOAuth:
+        def get_valid_access_token(self, username):
+            raise aw.GoogleCalendarConnectionError("No Google Calendar connection found for jack")
+
+    monkeypatch.setattr(aw, "GoogleCalendarOAuth", _FakeOAuth)
+
+    details = {"summary": "Call with Sam", "start_iso": "2026-06-21T14:00:00", "duration_minutes": 30}
+    result = aw.execute_write_node(_pending_state("create_calendar_event", details))
+
+    assert "Failed to schedule event" in result["content_to_format"]
+    assert result["relevance_grade"] == "action_complete"
+
+
+def test_execute_write_node_updates_calendar_event_by_finding_it_first(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: [])
+
+    class _FakeOAuth:
+        def get_valid_access_token(self, username):
+            return "fake-access-token"
+
+    monkeypatch.setattr(aw, "GoogleCalendarOAuth", _FakeOAuth)
+    monkeypatch.setattr(aw, "get_user_timezone", lambda username: "America/Chicago")
+    monkeypatch.setattr(
+        aw, "find_event_by_summary_on_day",
+        lambda token, search_summary, event_date_iso, tz: {"id": "evt1", "summary": "Call with Sam"},
+    )
+    monkeypatch.setattr(
+        aw, "update_event",
+        lambda token, event_id, updates, tz: {
+            "id": event_id, "summary": updates.get("summary", "Call with Sam"),
+            "html_link": "https://calendar.google.com/evt1", "start": updates.get("start_iso"),
+        },
+    )
+
+    details = {
+        "search_summary": "Call with Sam", "event_date_iso": "2026-06-21",
+        "start_iso": "2026-06-21T15:00:00", "duration_minutes": 30, "timezone": "America/Chicago",
+    }
+    result = aw.execute_write_node(_pending_state("update_calendar_event", details))
+
+    assert "Event updated" in result["content_to_format"]
+    assert result["relevance_grade"] == "action_complete"
+
+
+def test_execute_write_node_update_calendar_event_reports_not_found(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: [])
+
+    class _FakeOAuth:
+        def get_valid_access_token(self, username):
+            return "fake-access-token"
+
+    monkeypatch.setattr(aw, "GoogleCalendarOAuth", _FakeOAuth)
+    monkeypatch.setattr(aw, "get_user_timezone", lambda username: "America/Chicago")
+    monkeypatch.setattr(aw, "find_event_by_summary_on_day", lambda token, search_summary, event_date_iso, tz: None)
+
+    details = {"search_summary": "Nonexistent event", "event_date_iso": "2026-06-21"}
+    result = aw.execute_write_node(_pending_state("update_calendar_event", details))
+
+    assert "couldn't find an event" in result["content_to_format"]
+
+
+def test_recover_create_calendar_event_from_card_text():
+    card = (
+        "Ready to schedule this event:\n"
+        "- **Title:** Call with Sam\n"
+        "- **When:** 2026-06-21T14:00:00 (America/Chicago), 30 minutes"
+    )
+    recovered = aw._recover_create_calendar_event([AIMessage(content=card)], "")
+    assert recovered == {
+        "summary": "Call with Sam", "start_iso": "2026-06-21T14:00:00",
+        "timezone": "America/Chicago", "duration_minutes": 30,
+    }
+
+
+def test_recover_update_calendar_event_from_card_text_with_both_changes():
+    card = (
+        "Ready to update this calendar event:\n"
+        '- **Find:** "Call with Sam" on 2026-06-21\n'
+        "- **Rename to:** Call with Samantha\n"
+        "- **Move to:** 2026-06-21T15:00:00 (America/Chicago)"
+    )
+    recovered = aw._recover_update_calendar_event([AIMessage(content=card)], "")
+    assert recovered == {
+        "search_summary": "Call with Sam", "event_date_iso": "2026-06-21",
+        "new_summary": "Call with Samantha",
+        "start_iso": "2026-06-21T15:00:00", "timezone": "America/Chicago",
+    }
+
+
 @run_async
 async def test_mongo_write_proposal_to_execution_end_to_end(monkeypatch):
     monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])

@@ -90,6 +90,37 @@ def test_setting_deep_thinking_does_not_clobber_previously_saved_rag_mode():
     assert usu.get_user_deep_thinking_mode("jack") is True
 
 
+def test_default_timezone_is_america_chicago():
+    assert usu.get_user_timezone("jack") == usu.DEFAULT_TIMEZONE == "America/Chicago"
+
+
+def test_set_and_get_timezone_round_trip():
+    saved = usu.set_user_timezone("jack", "America/New_York")
+    assert saved == "America/New_York"
+    assert usu.get_user_timezone("jack") == "America/New_York"
+
+
+def test_invalid_timezone_defaults_to_america_chicago():
+    saved = usu.set_user_timezone("jack", "Not/A_Real_Zone")
+    assert saved == usu.DEFAULT_TIMEZONE
+    assert usu.get_user_timezone("jack") == usu.DEFAULT_TIMEZONE
+
+
+def test_timezone_scoped_per_username():
+    usu.set_user_timezone("jack", "America/New_York")
+    usu.set_user_timezone("alice", "Europe/London")
+    assert usu.get_user_timezone("jack") == "America/New_York"
+    assert usu.get_user_timezone("alice") == "Europe/London"
+
+
+def test_timezone_not_subject_to_toggle_locked_users():
+    """Unlike rag_mode/deep_thinking, a timezone preference carries no elevated-resource
+    concern — guest_bty may set/read one like any other user."""
+    saved = usu.set_user_timezone("guest_bty", "Europe/London")
+    assert saved == "Europe/London"
+    assert usu.get_user_timezone("guest_bty") == "Europe/London"
+
+
 def test_default_target_repo_is_none():
     assert usu.get_user_target_repo("jack") is None
 

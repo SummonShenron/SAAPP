@@ -1467,6 +1467,207 @@ else this fix touched, so its own internal call no longer fights with
 
 ---
 
+## 12. Self-drive attempt on attempt-compaction surfaces two real tool bugs (fixed, built directly)
+
+Gave SAAPP the attempt-truncation task from Section 9's menu (deterministic
+compaction of old ReAct attempts). It didn't fabricate a diff this time —
+genuinely searched, hit real dead ends, said so honestly, and got caught by
+the pre-existing `reward_evaluator` (not built this session) when its
+narrative summary claimed to have found the implementation despite its own
+gathered evidence showing "not found." That's the system working — multiple
+independent layers, this one catching what nothing built this session
+needed to. But the raw backend log revealed the actual root cause, and it
+was worse than a model failure: **`_format_react_attempts` genuinely exists,
+confirmed directly, and two separate tools gave false "not found" answers
+for it.**
+
+**Also corrected here:** the model's own recovery text claimed "the Python
+sandbox is currently missing its WebAssembly runtime" — flagged at first as
+a fourth fabrication (the `.wasm` file exists in this checkout), but the raw
+log proved that wrong: step 7 really did call `run_python` and got exactly
+that error back. Real finding, not fabricated — root-caused separately to
+`backend/sandbox/python-3.12.0.wasm` being deliberately gitignored (a 26MB
+third-party binary, `fetch_sandbox.py` exists specifically to (re)download
+it) with no `render.yaml`/build script in this repo to run that fetch as
+part of deploy — so every fresh Render build had no interpreter, silently,
+this whole time. Fixed by the user directly in Render's dashboard build
+command; not a code change.
+
+**Bug 1 — `search_literal`, the tool built specifically to be immune to
+`search_code`'s lossy hosted index, is now blind to the largest file in the
+repo.** `agent_workflow.py` grew to 245,543 bytes over the course of this
+very session's own additions — past `_SEARCH_LITERAL_MAX_FILE_BYTES`
+(200,000). Its skip filter silently excluded it from "candidates" before
+the count was even taken, so `search_literal(term="_format_react_attempts")`
+confidently reported "No occurrences found... exhaustively scanned 140 of
+140 candidate files" — true for the files it scanned, false in the sense
+that actually mattered. **Fixed**: candidates now tracked separately by
+skip reason (extension vs. oversized); both the "no matches" and "matches
+found" responses append an explicit warning naming any oversized file(s)
+excluded, instead of implying blanket completeness.
+
+**Bug 2 — the definition index (Section 10's own dependency) was being
+silently gutted for large files.** `_format_react_attempts` is well within
+`_build_definition_index`'s 150-entry cap (only 65 top-level defs precede
+it), so it should have been in step 1's index. But `_read_file`'s
+truncation response built a FIXED 3500-char raw-content snippet, then
+appended the full index after it — and `_truncate_observation` (a later,
+generic 4000-char cap applied to every tool's output) slices from the
+START, meaning on a file with enough top-level defs, the index — appended
+at the end — was the first thing to lose characters, silently, regardless
+of which specific symbol the model actually needed. This fully explains why
+Section 10's mismatched-start-line check never got a chance to fire here:
+the ground truth existed in step 1's real observation and got thrown away
+by an unrelated cap before ever reaching `_record_action_result`. **Fixed**:
+the index now gets first claim on the observation's budget — the snippet
+shrinks (down to a `_READ_FILE_MIN_SNIPPET_CHARS` floor) to make room for
+the full index, computed from the real overhead (URL + wrapper text +
+index length), instead of a fixed size regardless of how much room the
+index needs.
+
+3 new tests: `search_literal` warns explicitly when a candidate was too big
+to scan (reproducing the real trace's exact shape), and a large-file fixture
+with 100 top-level defs and deliberately heavy non-def padding (isolating
+"total file size" from "index size," so this tests the interaction between
+the two truncation layers specifically, not `_build_definition_index`'s own
+already-accepted 150-entry cap) — confirmed by direct calculation that the
+target symbol would NOT have survived the old fixed-snippet behavior (6123
+combined chars, sliced at 4000) but does survive the fix. Full suite: 462
+passed, same pre-existing unrelated `test_voice_composer.py` failure.
+
+---
+
+## 13. File-organization refactor started — agent_workflow.py → agent_utils.py (in progress, incremental by design)
+
+`agent_workflow.py` reached 4,933 lines from this session's own diagnostic
+loop. User-requested, explicitly incremental process (not a one-pass split):
+`agent_workflow.py` keeps LangGraph node functions, `backend/utils/
+agent_utils.py` accumulates plain, importable helper functions, mirroring the
+existing `app.py` / `app_utils.py` pattern.
+
+**Inventory taken first** (147 top-level definitions across the file),
+classified into: node functions/routers/`create_workflow` (stay), two
+self-contained chunks big enough to warrant their own future files (a ~700-
+line productivity-insights analytics module — proposed `insight_utils.py`,
+not yet done — and `run_react_loop` itself, ~550 lines, a genuine standalone
+engine parameterized via callbacks, proposed `backend/services/react_loop.py`,
+not yet done), the ReAct-loop pure helpers (this batch), and higher-blast-
+radius items deliberately deferred (`extract_github_repo`/
+`extract_pr_request_details`, used across 4 other test files; the PR/issue/
+mongo-write drafting functions, tightly coupled to `WRITE_ACTIONS`).
+
+**Shipped this batch:** ~46 ReAct-loop pure helpers and their constants moved
+to `backend/utils/agent_utils.py` — JSON/observation parsing, the diff-
+grounding check (Section 8), fuzzy-matching (`find_file`/`trace_symbol`'s
+classifier), the task-shape detectors (Sections 0, 4c), and the whole
+architecture-map subsystem (Section 4c), plus `_build_definition_index`
+(Section 10). Every moved name is re-imported into `agent_workflow.py`'s
+namespace under its original name, so every existing `aw._name` test
+reference kept working with zero test-file changes needed. Verified the
+module still imports and runs correctly (`_is_audit_style_task`,
+`_build_definition_index` called directly and confirmed working post-move)
+before running the suite. Result: `agent_workflow.py` 4,933 → 4,464 lines
+(~9.5% reduction this pass), full suite green — 462 passed, same
+pre-existing unrelated failure.
+
+**Next up, whenever this continues:** the insights-analytics module (biggest
+remaining single-pass line-count win), then `run_react_loop` itself, then
+the deferred higher-blast-radius items last.
+
+**Second batch, same session:** the insights-analytics module — a new
+`backend/utils/insight_utils.py`, containing `classify_text`/
+`CATEGORY_KEYWORDS`, all three `detect_*_patterns` functions, all five
+`compute_*` trend functions, all three `generate_*_insights` functions,
+`llm_json_call`/`interpret_insight_question`/`run_insight_query`, and the
+9-function `answer_*` family. The four actual graph nodes
+(`activity_classifier_node`, `pattern_detector_node`, `trend_analyzer_node`,
+`insight_generator_node`) stay in `agent_workflow.py` and import everything
+back under its original name, same pattern as batch one. Confirmed while
+reading through this block: `interpret_insight_question`/`run_insight_query`
+(and by extension the whole `answer_*` family, only ever called from
+`run_insight_query`) are genuinely dead code — not called from anywhere else
+in the repo, not app.py, not any test. Pre-existing, not introduced by this
+move; left in place (moving code isn't the moment to also decide what's
+safe to delete) but worth a note for whoever eventually looks at it.
+
+Also found and fixed in passing: `resolve_recent_mention` was sitting
+physically inside this block by file position, but every real call site is
+inside `tool_agent_node`/PR-drafting code, not insights — it moved to
+`agent_utils.py` instead, where it actually belongs by usage, not to
+`insight_utils.py`.
+
+Also removed now-dead imports from `agent_workflow.py`: `Counter`,
+`defaultdict`, `timedelta` (every real usage was inside the moved block),
+and `INSIGHT_QUERY_PROMPT` (only used by `interpret_insight_question`, which
+now imports it directly in its new file). Result: `agent_workflow.py` 4,464
+→ 3,913 lines this pass (4,933 → 3,913 total, ~20.7% reduction across both
+batches). Full suite green — 462 passed, same pre-existing unrelated
+`test_voice_composer.py` failure. Sanity-checked the module actually
+imports and the re-exported names work (`classify_text`, `CATEGORY_KEYWORDS`,
+`resolve_recent_mention`) before running the suite, same discipline as
+batch one.
+
+**Still next up:** `run_react_loop` itself (own dedicated service file), then
+the deferred higher-blast-radius items (`extract_github_repo`/
+`extract_pr_request_details`, the PR/issue/mongo-write drafting functions).
+
+**Third batch, same session:** `run_react_loop` itself — a new
+`backend/services/react_loop.py`, not a "utils" file, since it's a genuine
+standalone engine parameterized entirely via the `act`/`is_unsafe` callbacks
+rather than a closure over `tool_agent_node`'s local state. Moved the whole
+~570-line function (including its extensive docstring documenting every
+mechanical backstop built this session) plus the two constants only it uses
+(`_DEFAULT_STUCK_ACTION_THRESHOLD`, `_DEFAULT_STUCK_ACTION_MESSAGE`,
+`_MAX_BATCH_SIZE`).
+
+**A real circular-dependency risk surfaced here that the first two batches
+never hit**: `run_react_loop` calls `safe_emit_event`, which was still
+defined in `agent_workflow.py` — but `agent_workflow.py` needs to import
+`run_react_loop` FROM the new file (since `tool_agent_node` calls it), so
+importing `safe_emit_event` the other direction would have been circular.
+Fixed by moving `safe_emit_event` itself into `agent_utils.py` too (it's
+fully standalone — just wraps `adispatch_custom_event` — and is genuinely
+used by many OTHER node functions across the file, not just the ReAct loop,
+so it belongs in the shared utils file regardless). Resulting dependency
+graph is clean and one-directional: `agent_workflow.py` → `agent_utils.py`
++ `react_loop.py` + `insight_utils.py`; `react_loop.py` → `agent_utils.py`
+only; `agent_utils.py` → stdlib/langchain_core only.
+
+**A second real gap this batch caught, unlike the first two**: one test
+(`test_batch_items_emit_batch_index_and_size_but_single_actions_do_not` in
+`test_react_loop_retry_enforcement.py`) monkeypatched `aw.safe_emit_event`
+directly (a name rebind, not an attribute mutation) — which silently stops
+working once `run_react_loop` resolves that name from `react_loop.py`'s own
+namespace instead. `aw.lite_llm.ainvoke = ...`-style patches in every other
+test were unaffected (mutating an attribute on the shared `lite_llm` object
+works identically regardless of which module imported the name), but this
+one specific pattern needed the test itself updated to patch
+`react_loop.safe_emit_event` instead — the one test file change either batch
+has needed so far, and a good concrete lesson: extracting a function to a
+new module can break a monkeypatch even when every re-exported name still
+resolves correctly, if the patch was a name-rebind rather than an
+object-attribute mutation.
+
+`_MAX_BATCH_SIZE`, unlike the previous batches' moved constants, IS directly
+referenced by `aw._MAX_BATCH_SIZE` in that same test file — re-imported back
+into `agent_workflow.py` alongside `run_react_loop` itself for that reason.
+Confirmed the module imports and `aw.run_react_loop`/`aw._MAX_BATCH_SIZE`/
+`aw.safe_emit_event` all resolve correctly before running the suite.
+
+Result: `agent_workflow.py` 3,913 → 3,343 lines this pass (4,933 → 3,343
+total, **~32.2% reduction across three batches**). Full suite green — 462
+passed, same pre-existing unrelated `test_voice_composer.py` failure; one
+test file (`test_react_loop_retry_enforcement.py`) needed a small update for
+the monkeypatch-target reason above, no other test files touched.
+
+**Still deferred:** `extract_github_repo`/`extract_pr_request_details` (used
+across 4 other test files) and the PR/issue/mongo-write drafting functions
+(tightly coupled to `WRITE_ACTIONS`/`propose_write_node`/`execute_write_node`)
+— both remain the highest-blast-radius items left, intentionally saved for
+last.
+
+---
+
 ## Operational — automatic checkpoint retention (done)
 
 **Shipped:** `backend/services/checkpoint_retention.py` —

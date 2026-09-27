@@ -379,9 +379,10 @@ AVAILABLE PATHWAYS & FLAGS:
    - Set to TRUE ONLY if the user's message is an explicit continuation or modifier of the immediately preceding turn (e.g., "show me the code for that", "explain that function further", "what about line 20?"). 
    - Set to FALSE if the user is asking an entirely new question or introducing a new component/feature (e.g., asking about PAAPP after discussing search), even if it's part of the same conversation.
 
-5. "needs_paapp": 
-    - Set to TRUE only for personal productivity operations: logging time, tracking activity, viewing/editing personal calendar events, or taskboard operations.
+5. "needs_paapp":
+    - Set to TRUE only for personal productivity operations: logging time, tracking activity, or taskboard operations.
     - Do NOT set this for customer-facing booking/help-center questions.
+    - Do NOT set this for scheduling/viewing/editing a real Google Calendar event — that's needs_create_calendar_event/needs_update_calendar_event below, a separate native capability, not PAAPP.
 
 6. "needs_github_search":
    - Set to TRUE if the user is asking about the code repo, github repo, source code, system architecture, implementation details, or how a feature works under the hood for the project (including product aliases like "Sonic Assistant" or repository "SummonShenron/SAAPP").
@@ -395,6 +396,14 @@ AVAILABLE PATHWAYS & FLAGS:
 8b. "needs_create_issue":
    - Set to TRUE whenever the user requests to open, create, or file a GitHub issue or bug report (e.g., "open an issue for this", "file a bug about the login flow", "create a GitHub issue").
    - Do NOT set this for a Pull Request request (that's needs_create_pr) or a general question about the repo (that's needs_github_search).
+8c. "needs_create_calendar_event":
+   - Set to TRUE whenever the user asks to schedule, add, create, or book a meeting/event/call/appointment on their Google Calendar (e.g., "schedule a call with Sam tomorrow at 2pm", "add lunch with Sarah to my calendar", "book a 30 minute meeting Friday morning").
+   - This is a real Google Calendar write, distinct from needs_paapp (SAAPP's own internal time-log/task tracking) and from needs_retrieval's booking/help-center disambiguation above.
+8d. "needs_update_calendar_event":
+   - Set to TRUE whenever the user asks to move, reschedule, rename, or otherwise change an existing Google Calendar event (e.g., "move my 2pm meeting to 3pm", "reschedule the call with Sam to Friday", "rename my 10am event").
+8e. "needs_calendar_lookup":
+   - Set to TRUE whenever the user asks to check, view, or list what's on their real Google Calendar, or asks about their availability (e.g., "what's on my calendar tomorrow", "am I free Friday afternoon", "do I have any meetings today").
+   - Do NOT set this for needs_paapp's internal time-log/task tracking, or for needs_create_calendar_event/needs_update_calendar_event (those are writes, this is read-only).
 9. "needs_memory_save":
    - Set to TRUE if the user is explicitly telling you something durable to remember about themselves: a preference, identity detail, setting, or standing instruction (e.g. "remember that I prefer dark mode", "my name is Jack", "I prefer expressive UI", "always log my time in hours not minutes").
    - Do NOT set this for a question, or for something only relevant to the current turn.
@@ -441,7 +450,10 @@ Return ONLY a JSON object matching this schema:
   "needs_github_search": false,
   "needs_pr_summary": false,
   "needs_create_pr": false,
-  "needs_create_issue": false
+  "needs_create_issue": false,
+  "needs_create_calendar_event": false,
+  "needs_update_calendar_event": false,
+  "needs_calendar_lookup": false
 }}
 """
 
@@ -929,6 +941,64 @@ detailed Markdown description body.
 {{
   "title": "short, descriptive issue title",
   "body": "### Description\\n- What's the problem or request\\n\\n### Context & Notes\\n- Any details the user provided"
+}}
+```"""
+
+DRAFT_CALENDAR_EVENT_PROMPT = """You are drafting a Google Calendar event from the user's request.
+
+### Rules:
+1. **summary**: A short, clear event title (what the user is scheduling).
+2. **start_iso**: A full ISO 8601 local datetime (e.g. "2026-06-21T14:00:00"), resolved from
+   whatever relative or absolute time the user gave (e.g. "tomorrow at 2pm", "next Tuesday at
+   10:30", "June 21st at 2pm") using the current date/time and timezone given below. Never include
+   a UTC offset or "Z" suffix — this is a local wall-clock time in the user's own timezone.
+3. **duration_minutes**: An integer. Default to 30 if the user didn't say how long.
+4. **Format**: Output ONLY a valid JSON object matching the schema below — no explanatory text.
+
+### Current date/time (user's timezone, {timezone}):
+{now}
+
+### User Request:
+{user_message}
+
+### Required Output JSON Format:
+```json
+{{
+  "summary": "short event title",
+  "start_iso": "2026-06-21T14:00:00",
+  "duration_minutes": 30
+}}
+```"""
+
+UPDATE_CALENDAR_EVENT_PROMPT = """You are drafting an update to an existing Google Calendar event
+from the user's request.
+
+### Rules:
+1. **search_summary**: A short keyword/phrase to find the existing event by (e.g. what the user
+   called it, like "lunch with Sam" or "team standup").
+2. **event_date_iso**: The date (YYYY-MM-DD) the existing event is on, resolved from the current
+   date/time given below if the user only said something relative ("today", "tomorrow").
+3. **new_summary**: The new title, only if the user asked to rename the event — omit this key
+   entirely if they didn't.
+4. **start_iso**: A new full ISO 8601 local datetime (no UTC offset/"Z"), only if the user asked to
+   move/reschedule the event — omit this key entirely if they didn't.
+5. **duration_minutes**: An integer, only if the user asked to change the event's length — omit
+   this key entirely if they didn't.
+6. **Format**: Output ONLY a valid JSON object matching the schema below — no explanatory text.
+
+### Current date/time (user's timezone, {timezone}):
+{now}
+
+### User Request:
+{user_message}
+
+### Required Output JSON Format:
+```json
+{{
+  "search_summary": "lunch with Sam",
+  "event_date_iso": "2026-06-21",
+  "start_iso": "2026-06-21T15:00:00",
+  "duration_minutes": 30
 }}
 ```"""
 

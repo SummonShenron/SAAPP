@@ -3,6 +3,9 @@ import { useState } from "react";
 import { LandingPage } from "./pages/LandingPage";
 import { ChatPage } from "./pages/Chat";
 import { SelfServicePage } from "./pages/SelfService";
+import { IntegrationsPage } from "./pages/Integrations";
+import { PrivacyPage } from "./pages/Privacy";
+import { TermsPage } from "./pages/Terms";
 import { Layout } from "../src/components/Layout";
 import { api } from "./api";
 import { TimeWorkspace } from "./pages/Time"
@@ -50,6 +53,9 @@ function App() {
           />
         }
       />
+      {/* Public legal pages — no auth, no nav chrome. Linked from Google's OAuth consent screen. */}
+      <Route path="/privacy" element={<PrivacyPage />} />
+      <Route path="/terms" element={<TermsPage />} />
       {/* Layout wrapper for all authenticated pages */}
       <Route
         element={
@@ -69,6 +75,7 @@ function App() {
       />
         {/* <Route path="/time-tracking" element={<TimeWorkspace />} /> */}
         <Route path="/self-service" element={<SelfServicePage />} />
+        <Route path="/integrations" element={<IntegrationsPage />} />
         {/* <Route path="/taskboard" element={<Taskboard />} />
         <Route path="/insights" element={<InsightsPage/>} /> */}
 

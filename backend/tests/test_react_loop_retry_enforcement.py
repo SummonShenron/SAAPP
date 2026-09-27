@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from backend.services import agent_workflow as aw
+from backend.services import react_loop
 
 
 def run_async(fn):
@@ -1060,9 +1061,12 @@ async def test_batch_items_emit_batch_index_and_size_but_single_actions_do_not()
         emitted.append(data)
 
     orig_ainvoke = aw.lite_llm.ainvoke
-    orig_emit = aw.safe_emit_event
+    # run_react_loop lives in backend.services.react_loop (docs/coding-agent-roadmap.md, Section
+    # 13) and calls safe_emit_event as a name resolved from ITS OWN module namespace — patching
+    # aw.safe_emit_event wouldn't affect that binding at all, since it's a separate import.
+    orig_emit = react_loop.safe_emit_event
     aw.lite_llm.ainvoke = fake_ainvoke
-    aw.safe_emit_event = fake_emit_event
+    react_loop.safe_emit_event = fake_emit_event
     try:
         async def act(decision):
             return f"content of {decision['args']['path']}"
@@ -1078,7 +1082,7 @@ async def test_batch_items_emit_batch_index_and_size_but_single_actions_do_not()
         )
     finally:
         aw.lite_llm.ainvoke = orig_ainvoke
-        aw.safe_emit_event = orig_emit
+        react_loop.safe_emit_event = orig_emit
 
     assert result["final_answer"] == "done"
     solo_events = [e for e in emitted if e.get("detail") == "Read one file first"]
