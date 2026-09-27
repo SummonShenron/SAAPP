@@ -1,0 +1,61 @@
+/* These pages are reached directly (Google's OAuth review, a user pasting the link) without the
+   app shell's theme wrapper ever mounting, so every color here is hardcoded rather than relying
+   on inherited CSS custom properties that may not be in scope. */
+.legal-container {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 5rem;
+  color: #e2e8f0;
+  background-color: #0f172a;
+  min-height: 100vh;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  line-height: 1.6;
+}
+
+.legal-header {
+  margin-bottom: 2rem;
+  border-bottom: 1px solid #334155;
+  padding-bottom: 1.25rem;
+}
+
+.legal-header h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  margin: 0 0 0.4rem 0;
+  background: linear-gradient(90deg, #38bdf8, #2563eb);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.legal-updated {
+  color: #94a3b8;
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.legal-body h2 {
+  color: #f8fafc;
+  font-size: 1.25rem;
+  margin: 2rem 0 0.75rem;
+}
+
+.legal-body p,
+.legal-body li {
+  color: #cbd5e1;
+  font-size: 0.95rem;
+}
+
+.legal-body ul {
+  padding-left: 1.5rem;
+}
+
+.legal-body a {
+  color: #38bdf8;
+}
+
+.legal-body code {
+  background: #1e293b;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.85em;
+}

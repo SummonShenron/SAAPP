@@ -1,7 +1,7 @@
 // src/components/Layout.tsx
 import { Outlet, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
-import { api, getEffectivePrincipal } from "../api";
+import { api, getEffectivePrincipal, isGuestPrincipal } from "../api";
 import HelpPanel from "../components/HelpPanel";
 import { useAuth } from '@clerk/clerk-react';
 
@@ -131,6 +131,7 @@ if (typeof window !== 'undefined') {
           </span>
           <span onClick={() => navigate("/chat")}>Chat</span>
           <span onClick={() => navigate("/self-service")}>Self Service</span>
+          {!isGuestPrincipal(getEffectivePrincipal()) && <span onClick={() => navigate("/integrations")}>Integrations</span>}
           {/* {isAdmin && <span onClick={() => navigate("/time-tracking")}>Time Tracking</span>}
           <span onClick={() => navigate("/taskboard")}>Taskboard</span>
           <span onClick={() => navigate("/insights")}>Insights</span> */}
@@ -165,6 +166,7 @@ if (typeof window !== 'undefined') {
           <div className="mobile-drawer-links">
             <span onClick={() => handleNavClick("/chat")}>Chat Workspace</span>
             <span onClick={() => handleNavClick("/self-service")}>Self Service</span>
+            {!isGuestPrincipal(getEffectivePrincipal()) && <span onClick={() => handleNavClick("/integrations")}>Integrations</span>}
             {isAdmin && <span onClick={() => handleNavClick("/time-tracking")}>⏱ Time Tracking</span>}
             <span onClick={() => handleNavClick("/taskboard")}>Taskboard</span>
             <span onClick={() => handleNavClick("/insights")}>Insights</span>

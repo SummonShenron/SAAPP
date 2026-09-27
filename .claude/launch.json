@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "local", "run", "dev", "--", "--host"],
       "port": 5173
+    },
+    {
+      "name": "local-backend",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "app:app", "--reload", "--port", "8000"],
+      "port": 8000
     }
   ]
 }

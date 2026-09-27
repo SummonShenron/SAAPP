@@ -20,7 +20,7 @@ from gridfs import GridFS
 from bson.objectid import ObjectId
 from datetime import datetime, timezone
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from backend.components import taskboard
@@ -87,7 +87,19 @@ from backend.utils.user_settings_utils import (
     get_user_target_repo, set_user_target_repo,
     get_user_settings_bundle,
     get_user_has_seen_help, set_user_has_seen_help,
+    get_user_timezone, set_user_timezone,
 )
+from backend.utils.google_calendar_utils import (
+    get_connection_status as get_calendar_connection_status,
+    create_pending as create_calendar_pending,
+    get_pending as get_calendar_pending,
+    consume_pending as consume_calendar_pending,
+    delete_connection as delete_calendar_connection,
+    save_connection as save_calendar_connection,
+    ensure_indexes as ensure_calendar_indexes,
+    CALENDAR_LOCKED_USERS,
+)
+from backend.services.google_calendar_oauth import GoogleCalendarOAuth
 from backend.utils.fallback_utils import rewrite_fallback
 from backend.services.reward_evaluator import evaluate_response, build_correction_prompt, REWARD_EVAL_SOURCE_TYPES
 from backend.logging.sass_logger import setup_logging
@@ -141,6 +153,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.exception("Error loading chat history: %s", e)
     retention_task = spawn_background_task(run_checkpoint_retention_loop())
+    if get_db() is not None:
+        ensure_calendar_indexes()
     yield
     # Cleanup tasks would go here
     retention_task.cancel()
@@ -162,6 +176,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_CALENDAR_RETURN_TO_ALLOWED_HOSTS = {
+    "127.0.0.1", "localhost", "sonicassistant.com", "www.sonicassistant.com",
+}
+_CALENDAR_RETURN_TO_HOST_RE = re.compile(r"^(saapp|saapp-[\w-]+)\.vercel\.app$")
+
+
+def _is_allowed_calendar_return_to(url: str) -> bool:
+    """Mirrors the CORSMiddleware config above so this allow-list can't silently drift from it —
+    a return_to outside these hosts would let /api/calendar/connect/start be used as an open
+    redirect after a real Google OAuth consent screen, so this is checked before the OAuth flow
+    ever starts."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return False
+    return parsed.hostname in _CALENDAR_RETURN_TO_ALLOWED_HOSTS or bool(_CALENDAR_RETURN_TO_HOST_RE.match(parsed.hostname))
+
+
 logger = setup_logging()  # Initialize the logger from backend/logging/sass_logger.py
 erragent.install(logger)
 logger.info("--- BOOTING SECURE KNOWLEDGE ASSISTANT ---")
@@ -209,6 +244,9 @@ class TargetRepoUpdate(BaseModel):
 
 class HasSeenHelpUpdate(BaseModel):
     has_seen_help: bool
+
+class TimezoneUpdate(BaseModel):
+    timezone: str
 
 class SaveConversationRequest(BaseModel):
     title: str
@@ -1505,6 +1543,79 @@ async def update_has_seen_help_setting(payload: HasSeenHelpUpdate, current_user 
     username = current_user.get("sub")
     saved = set_user_has_seen_help(username, payload.has_seen_help)
     return {"has_seen_help": saved}
+
+
+@app.get("/api/settings/timezone")
+async def get_timezone_setting(current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    return {"timezone": get_user_timezone(username)}
+
+
+@app.put("/api/settings/timezone")
+async def update_timezone_setting(payload: TimezoneUpdate, current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    saved = set_user_timezone(username, payload.timezone)
+    return {"timezone": saved}
+
+
+@app.post("/api/calendar/connect/start")
+async def start_calendar_connection(return_to: str = Query(...), current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    if username in CALENDAR_LOCKED_USERS:
+        raise HTTPException(status_code=403, detail="Google Calendar is not available for this account")
+    if not _is_allowed_calendar_return_to(return_to):
+        raise HTTPException(status_code=400, detail="return_to must be a trusted application URL")
+
+    try:
+        url, state, code_verifier = GoogleCalendarOAuth().authorization_url()
+    except ValueError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    create_calendar_pending(state, username, code_verifier, return_to)
+    return {"authorization_url": url}
+
+
+@app.get("/api/calendar/callback")
+async def calendar_oauth_callback(request: Request, state: str = Query(...)):
+    # No auth dependency — Google's redirect is a bare browser navigation carrying no Bearer
+    # token. The pending record (looked up by state alone) is what recovers which user started
+    # this flow; see google_calendar_utils.create_pending/get_pending.
+    # HashRouter (see local/src/main.tsx) — the route lives after the '#', not as a real path.
+    default_target = "https://www.sonicassistant.com/#/integrations"
+    pending = get_calendar_pending(state)
+    if not pending:
+        return RedirectResponse(f"{default_target}?calendar_error=expired")
+
+    return_to = pending.get("return_to") or default_target
+    username = pending.get("username")
+    oauth_error = request.query_params.get("error")
+    if oauth_error:
+        consume_calendar_pending(state)
+        return RedirectResponse(f"{return_to}?calendar_error=access_denied")
+
+    try:
+        connection = GoogleCalendarOAuth().build_connection(str(request.url), state, pending.get("code_verifier"))
+        save_calendar_connection(username, **connection)
+        consume_calendar_pending(state)
+    except Exception:
+        logger.exception("[calendar_oauth_callback] Failed to complete Google Calendar connection for %s", username)
+        return RedirectResponse(f"{return_to}?calendar_error=connection_failed")
+
+    return RedirectResponse(f"{return_to}?connected=google")
+
+
+@app.get("/api/calendar/status")
+async def get_calendar_status(current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    return get_calendar_connection_status(username)
+
+
+@app.post("/api/calendar/disconnect")
+async def disconnect_calendar(current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    GoogleCalendarOAuth().revoke(username)
+    delete_calendar_connection(username)
+    return {"connected": False}
 
 
 @app.post("/api/v1/webhooks/ingest", status_code=status.HTTP_200_OK)
