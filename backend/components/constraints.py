@@ -353,6 +353,44 @@ Return ONLY a JSON object, no preamble or markdown:
 }}
 """
 
+IDIOM_GROUNDING_CHECK_PROMPT = """
+You are checking whether an AI coding agent's PROPOSED CODE is genuinely tailored to this
+specific repository, or generic/exampleish code that would look essentially the same regardless
+of what it actually found — a completely different question from whether any individual claim is
+factually true. Generic boilerplate usually isn't factually WRONG about anything; it just doesn't
+reuse anything real from what was actually gathered this turn. It invents a plausible-looking but
+made-up function name, a different error-handling pattern than this repo actually uses, or
+boilerplate that ignores an existing convention it should have followed.
+
+REAL TOOL OBSERVATIONS GATHERED THIS TURN (the ONLY real evidence of this repo's actual code —
+its real imports, helper functions, naming, error-handling style, and existing conventions):
+{attempts}
+
+THE AGENT'S PROPOSED ANSWER (containing code):
+{final_answer}
+
+Ask yourself: would this exact code look essentially the same if the agent had never seen any of
+the real file excerpts above? Does it reuse actual helper functions, imports, error-handling
+style, naming conventions, and structure that genuinely appear in the observations — or does it
+invent generic equivalents from scratch?
+
+Return ONLY a JSON object, no preamble or markdown:
+{{
+  "grounded": true or false,
+  "reason_category": null if grounded, else "no_real_example_found" or "real_example_ignored",
+  "reason": null if grounded, else a specific explanation —
+    for "no_real_example_found": describe what KIND of real precedent is missing from the
+    observations above (e.g. "no existing tool_action registration was ever read this turn"), so
+    a more targeted search can be suggested next;
+    for "real_example_ignored": name the SPECIFIC real file/function from the observations above
+    that already shows the pattern the proposed code should have followed, and what it ignored
+    about it
+}}
+Only flag genuinely generic/exampleish code — a reasonable adaptation of a real pattern found in
+the observations, even if not a byte-for-byte copy, is NOT what this checks for. When in doubt
+about whether code is genuinely generic versus a fair, real adaptation, do not flag it.
+"""
+
 RELATIONSHIP_PROMPT = """
 Analyze the following text and extract relationships. 
 Return ONLY a JSON object with the key 'relationships'.

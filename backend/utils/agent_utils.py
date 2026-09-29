@@ -7,7 +7,7 @@ from datetime import datetime
 
 from langchain_core.callbacks.manager import adispatch_custom_event
 
-from backend.components.constraints import GROUNDING_CHECK_PROMPT
+from backend.components.constraints import GROUNDING_CHECK_PROMPT, IDIOM_GROUNDING_CHECK_PROMPT
 
 logger = logging.getLogger("SASS Logger")
 
@@ -370,6 +370,82 @@ async def _check_final_answer_grounding(final_answer: str, attempts: list, llm) 
         return []
     claims = decision.get("unsupported_claims")
     return [c.strip() for c in claims if isinstance(c, str) and c.strip()] if isinstance(claims, list) else []
+
+
+# The grounding check above catches FALSE claims — something stated as fact that never appeared
+# in attempts. Its own prompt explicitly says not to flag a reasonable synthesis or a plainly-
+# labeled inference. Generic, exampleish proposed code usually isn't factually wrong about
+# anything — it doesn't claim a function exists that doesn't, it doesn't misquote a value. It's
+# boilerplate that would look identical whether the model had read the repo or read nothing at
+# all. That's a different axis entirely — "is this actually derived from what you found" versus
+# "is this true" — and no amount of tuning the existing check catches it, since by design it's
+# only allowed to object to false statements. These two checks target that separate axis.
+_CODE_BLOCK_RE = re.compile(r"```[\w]*\n.*?```", re.DOTALL)
+# Kept intentionally narrow to the tools that actually produce real code/content from this repo —
+# a successful list_repo_tree or list_commits proves the model looked around, but not that it
+# actually read anything resembling an implementation to model new code on.
+_CODE_PRECEDENT_RESEARCH_ACTIONS = ("read_repo_file(", "search_code(", "search_literal(", "find_file(")
+
+
+def _final_answer_has_code_block(final_answer: str) -> bool:
+    return bool(_CODE_BLOCK_RE.search(final_answer or ""))
+
+
+def _has_successful_code_precedent_research(attempts: list) -> bool:
+    """True if at least one read_repo_file/search_code/search_literal/find_file attempt this turn
+    came back with a real, non-empty, non-error result — not just that one of these was CALLED,
+    which says nothing about whether it actually returned anything to model new code on."""
+    for attempt in attempts:
+        action_desc = attempt.get("action_desc", "") or ""
+        if not action_desc.startswith(_CODE_PRECEDENT_RESEARCH_ACTIONS):
+            continue
+        observation = attempt.get("observation", "") or ""
+        if not observation.startswith("ERROR") and not _is_empty_observation(observation):
+            return True
+    return False
+
+
+async def _check_idiom_grounding(final_answer: str, attempts: list, llm) -> dict | None:
+    """The second, distinct check "tailored vs exampleish" needs, since _check_final_answer_
+    grounding is structurally forbidden from flagging this (its own prompt tells it not to flag
+    a reasonable synthesis or inference, and generic code is exactly that shape — not false,
+    just not derived from anything real). Returns None when the proposed code is judged
+    genuinely grounded, when final_answer has no code block at all (nothing to judge), when
+    attempts is empty (nothing to compare against — _has_successful_code_precedent_research
+    above is what actually enforces there being something here before this ever runs for real),
+    or if the check itself fails to run (fail-open, same convention as every other soft-failure
+    in this module). Otherwise returns {"reason_category": "no_real_example_found" |
+    "real_example_ignored", "reason": "..."} — the category distinguishes a discovery problem
+    (nothing comparable was ever found) from a compliance problem (a real precedent WAS read and
+    the proposed code didn't use it), since those need genuinely different corrective nudges."""
+    if not attempts or not _final_answer_has_code_block(final_answer):
+        return None
+    try:
+        prompt = IDIOM_GROUNDING_CHECK_PROMPT.format(
+            final_answer=final_answer,
+            attempts=_format_react_attempts(attempts),
+        )
+        response = await llm.ainvoke(prompt)
+        resp_content = response.content if hasattr(response, "content") else str(response)
+        raw_text = (
+            "".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in resp_content)
+            if isinstance(resp_content, list) else str(resp_content)
+        )
+        decision = _parse_agent_json(raw_text)
+    except Exception:
+        logger.exception("[idiom_grounding_check] check failed to run — treating as grounded (fail-open).")
+        return None
+    if decision.get("grounded", True):
+        return None
+    reason = (decision.get("reason") or "").strip()
+    if not reason:
+        # Flagged as ungrounded but gave nothing to act on — fail-open rather than reject with a
+        # notice that has nothing concrete to tell the model to actually do differently.
+        return None
+    reason_category = decision.get("reason_category")
+    if reason_category not in {"no_real_example_found", "real_example_ignored"}:
+        reason_category = "no_real_example_found"
+    return {"reason_category": reason_category, "reason": reason}
 
 
 def _format_observation_for_footer(observation) -> str:
