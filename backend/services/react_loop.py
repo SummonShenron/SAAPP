@@ -17,6 +17,7 @@ from backend.utils.agent_utils import (
     _ClarificationNeeded,
     _UnsafeActionRequested,
     _READ_FILE_DEFAULT_LINE_WINDOW,
+    _check_final_answer_grounding,
     _format_react_attempts,
     _final_diff_disagrees_with_fetched_content,
     _is_empty_observation,
@@ -142,6 +143,23 @@ async def run_react_loop(
     above, so a real diff grounded in an earlier part of the conversation (outside this loop's own
     attempts) still gets through eventually rather than looping forever on a false positive.
 
+    The diff check above only catches one specific, mechanically-checkable fabrication shape. The
+    general case — an arbitrary prose claim (a function name, a specific value, a "such-and-such
+    exists/doesn't exist" assertion) that never actually came from any real observation — has no
+    reliable string/regex check and structurally cannot be caught downstream either: this app's
+    reward evaluator (reward_evaluator.py) only ever sees this final_answer AFTER it has already
+    been folded into "the DATA" a second LLM rewrites into the user-facing response, and is told
+    to judge that rewrite's faithfulness to the DATA it was handed — by the time it runs, a
+    fabrication made HERE has already become the ground truth everything downstream is judged
+    against, and the check structurally cannot look further upstream than the data it was given.
+    `_check_final_answer_grounding` runs a second, independent LLM call comparing the proposed
+    final_answer against the real `attempts` gathered this turn, right here where they still exist
+    as separate things — the only place this can actually be checked. Same budget-limited-rejection
+    shape as every other mechanical gate above (reject once, force a correction, let a second
+    attempt through even if this was a false positive), and skipped entirely when there are no real
+    attempts yet (nothing to ground a claim in), so a purely conversational "final" never pays this
+    extra LLM-call's cost.
+
     An extensive diagnostic loop (docs/coding-agent-roadmap.md, Sections 4b-4j) showed every one
     of those real traces burn most of a turn's step budget reading files or searching one at a
     time, well before ever reasoning about them — a genuinely multi-file investigation needs N
@@ -217,6 +235,9 @@ async def run_react_loop(
     ungrounded_diff_reject_count = 0
     MAX_UNGROUNDED_DIFF_REJECTIONS = 1
     pending_ungrounded_diff_notice: str | None = None
+    ungrounded_claim_reject_count = 0
+    MAX_UNGROUNDED_CLAIM_REJECTIONS = 1
+    pending_ungrounded_claim_notice: str | None = None
 
     for step in range(max_iterations):
         forced_final = step == max_iterations - 1
@@ -293,6 +314,9 @@ async def run_react_loop(
         if pending_ungrounded_diff_notice:
             question_for_step += f"\n\n({pending_ungrounded_diff_notice})"
             pending_ungrounded_diff_notice = None
+        if pending_ungrounded_claim_notice:
+            question_for_step += f"\n\n({pending_ungrounded_claim_notice})"
+            pending_ungrounded_claim_notice = None
 
         prompt = prompt_template.format(
             question=question_for_step,
@@ -367,6 +391,24 @@ async def run_react_loop(
                     f"exact path this turn. Call read_repo_file({ungrounded_path}) for real, quote "
                     "the actual current lines you're changing, and rebuild the diff from what's "
                     "really there before answering again — do not guess at the file's structure."
+                )
+                continue
+        if action == "final" and not forced_final and ungrounded_claim_reject_count < MAX_UNGROUNDED_CLAIM_REJECTIONS:
+            answer_text = decision.get("answer") or ""
+            unsupported_claims = await _check_final_answer_grounding(answer_text, attempts, llm)
+            if unsupported_claims:
+                # The general case the diff check above can't cover — an arbitrary prose claim
+                # (a function name, a specific value, an existence assertion) with no reliable
+                # mechanical check, so a second LLM call judges it against the real attempts
+                # instead. Same budget-limited shape as every rejection above: force one real
+                # correction, then let a second attempt through even if this was a false positive.
+                ungrounded_claim_reject_count += 1
+                claims_list = "; ".join(unsupported_claims)
+                pending_ungrounded_claim_notice = (
+                    "Your last answer made at least one claim that doesn't actually appear in your "
+                    f"real observations this turn: {claims_list}. Either verify each of these with a "
+                    "real action before answering again, or remove/qualify them as unverified — do "
+                    "not restate them as fact without real evidence from this turn."
                 )
                 continue
         if action == "final":

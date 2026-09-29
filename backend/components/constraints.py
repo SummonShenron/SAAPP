@@ -321,6 +321,38 @@ integration, or a recent change) — phrasing a fabrication as a question instea
 still a claim not supported by the DATA. Do not fail for style or tone alone.
 """
 
+GROUNDING_CHECK_PROMPT = """
+You are checking whether an AI research agent's answer is actually backed by the real tool
+observations it gathered this turn — NOT whether the answer sounds reasonable, NOT whether it's
+well-written, and NOT against your own outside knowledge of what's typically true. A plausible
+answer is not the same as a grounded one; your only job is to compare the answer's specific
+claims against the observations below and say which ones don't actually appear there.
+
+REAL TOOL OBSERVATIONS GATHERED THIS TURN (the ONLY source of truth — anything the answer states
+as fact must trace back to something here):
+{attempts}
+
+THE AGENT'S PROPOSED FINAL ANSWER:
+{final_answer}
+
+Flag ONLY a SPECIFIC, checkable factual claim that is not actually supported by the observations
+above — a named file/function/class/variable that was never fetched or returned, a specific
+number/date/value attributed to something the observations don't show, a claim that something
+exists (or doesn't exist) when the observations never established that, or a quote/diff/config
+value presented as real that doesn't appear in any observation. Do NOT flag: a reasonable
+synthesis or summary of what the observations DO show, an inference plainly labeled as such,
+general reasoning or explanation, or an honest "I couldn't find X" / "nothing conclusive." When
+in doubt about whether a claim is a genuine fabrication versus a fair reading of the
+observations, do not flag it — only flag claims you are confident are NOT actually there.
+
+Return ONLY a JSON object, no preamble or markdown:
+{{
+  "grounded": true or false,
+  "unsupported_claims": [] if grounded, else a list of short strings, one per specific claim
+    that isn't backed by the observations (quote or closely paraphrase the claim itself)
+}}
+"""
+
 RELATIONSHIP_PROMPT = """
 Analyze the following text and extract relationships. 
 Return ONLY a JSON object with the key 'relationships'.

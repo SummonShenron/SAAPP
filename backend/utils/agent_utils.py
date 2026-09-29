@@ -1,10 +1,15 @@
 import ast
 import difflib
 import json
+import logging
 import re
 from datetime import datetime
 
 from langchain_core.callbacks.manager import adispatch_custom_event
+
+from backend.components.constraints import GROUNDING_CHECK_PROMPT
+
+logger = logging.getLogger("SASS Logger")
 
 
 async def safe_emit_event(name: str, data: dict):
@@ -330,6 +335,43 @@ def _final_diff_disagrees_with_fetched_content(final_answer: str, attempts: list
     return None
 
 
+async def _check_final_answer_grounding(final_answer: str, attempts: list, llm) -> list[str]:
+    """Runs a lightweight LLM-based grounding check comparing a ReAct loop's proposed final
+    answer against the REAL tool observations gathered this turn — the check the reward
+    evaluator structurally cannot do, since by the time evaluate_response runs, this final_answer
+    has already been folded into "the DATA" the Voice Composer rewrites and the evaluator is told
+    to trust; a fabrication made here becomes the ground truth everything downstream judges
+    against. This has to run right here, while final_answer and attempts still exist as separate
+    things. Returns a list of specific unsupported-claim strings (empty if grounded, OR if the
+    check itself failed to run — fail-open, same as every other soft-failure in this module,
+    since a broken checker should never be able to block every future answer).
+    _final_diff_disagrees_with_fetched_content above catches one specific, mechanically-checkable
+    shape of this (a fabricated diff); this is the general case for arbitrary prose claims, which
+    has no reliable regex/string check and genuinely needs a second model's judgment instead.
+    """
+    if not attempts:
+        return []
+    try:
+        prompt = GROUNDING_CHECK_PROMPT.format(
+            final_answer=final_answer,
+            attempts=_format_react_attempts(attempts),
+        )
+        response = await llm.ainvoke(prompt)
+        resp_content = response.content if hasattr(response, "content") else str(response)
+        raw_text = (
+            "".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in resp_content)
+            if isinstance(resp_content, list) else str(resp_content)
+        )
+        decision = _parse_agent_json(raw_text)
+    except Exception:
+        logger.exception("[grounding_check] check failed to run — treating as grounded (fail-open).")
+        return []
+    if decision.get("grounded"):
+        return []
+    claims = decision.get("unsupported_claims")
+    return [c.strip() for c in claims if isinstance(c, str) and c.strip()] if isinstance(claims, list) else []
+
+
 def _format_observation_for_footer(observation) -> str:
     if isinstance(observation, str):
         return observation
@@ -491,6 +533,50 @@ _AUDIT_TASK_SEARCH_NUDGE = (
 )
 
 
+# --- README-first context for audit-style tasks ---
+
+# A cross-file refactor/audit question benefits from the project's own documented purpose and
+# conventions BEFORE diving into individual files — the same reasoning that motivated the
+# architecture map below: a capability/context the model must remember to seek out on its own
+# (here, thinking to read README.md before investigating) gets skipped under pressure, so this is
+# injected automatically into the prompt rather than left as something it has to think to do.
+# Root-level only, deliberately — a repo's own top-level README is the one doc almost guaranteed
+# to describe what the whole project actually is; a docs/ subfolder's structure varies too much
+# project to project to guess at without real signal, and this is meant to be a cheap, safe
+# default, not an attempt to discover every doc in the repo.
+_README_CANDIDATE_PATHS = ("README.md", "Readme.md", "README.rst", "README.txt", "README")
+_README_MAX_CHARS = 6000
+
+
+def _find_readme_path(tree_items: list) -> str | None:
+    paths = {item.get("path", "") for item in tree_items}
+    for candidate in _README_CANDIDATE_PATHS:
+        if candidate in paths:
+            return candidate
+    return None
+
+
+def _build_readme_context(tree_items: list, fetch_content) -> str:
+    """Fetches the repo's own top-level README (if any) and returns a prompt-ready block —
+    fetch_content(path) must return (content, error) like _fetch_file_content does. Empty string
+    if there's no README at the root, the fetch fails, or it's blank — a missing/unreachable
+    README isn't an error worth surfacing to the model, just nothing extra to add this turn."""
+    readme_path = _find_readme_path(tree_items)
+    if not readme_path:
+        return ""
+    content, error = fetch_content(readme_path)
+    if error or not isinstance(content, str) or not content.strip():
+        return ""
+    truncated = content[:_README_MAX_CHARS]
+    if len(content) > _README_MAX_CHARS:
+        truncated += f"\n... [truncated — {readme_path} continues past this point]"
+    return (
+        f"PROJECT README ({readme_path}) — real documented context; read this before individual "
+        "files so you understand what this project actually is/does before investigating "
+        f"specifics:\n{truncated}\n\n"
+    )
+
+
 # --- architecture map (moved) ---
 
 # An auto-injected, repo-wide internal-import graph for audit-style tasks (docs/coding-agent-
@@ -555,6 +641,26 @@ def _is_internal_python_import(import_str: str, top_level_segments: set) -> bool
     return import_str.split(".")[0] in top_level_segments
 
 
+def _import_scope_key(importing_path: str, import_str: str) -> str:
+    """A RELATIVE import string alone (Python's '.utils'/'..models', or JS/TS's './api') is
+    ambiguous repo-wide — it resolves relative to the IMPORTING file's own directory, so the
+    identical string written in two different directories names two completely different real
+    modules. Without this, _build_architecture_map's reverse map (imported_by) would key on the
+    bare string alone and silently merge unrelated files from different directories into one
+    entry — e.g. every file anywhere in the repo that happens to write `from .utils import x`
+    bundled together, even though `.utils` inside backend/services/ and `.utils` inside
+    frontend/components/ are unrelated. An ABSOLUTE import (a real top-level package name) has no
+    such ambiguity — it names the same real module no matter which file imports it — so it's
+    returned unprefixed, keeping the map's normal (non-relative) case exactly as readable as
+    before. Deliberately NOT a real module resolver (matches _extract_python_imports' own
+    documented tradeoff) — just enough disambiguation to stop two unrelated modules from
+    colliding into one entry; scoping by directory, not resolving to the actual target file."""
+    if not import_str.startswith("."):
+        return import_str
+    importer_dir = importing_path.rsplit("/", 1)[0] if "/" in importing_path else "(repo root)"
+    return f"{importer_dir}::{import_str}"
+
+
 def _repo_top_level_segments(tree_items: list) -> set:
     # Derived from the real tree every time (never hardcoded) so this works identically on any
     # repo, not just this one — matches this session's own multi-repo/multi-user design goal.
@@ -596,7 +702,10 @@ def _build_architecture_map(tree_items: list, fetch_content) -> str:
             continue
         imports_by_file[path] = sorted(set(internal))
         for imp in internal:
-            imported_by.setdefault(imp, set()).add(path)
+            # See _import_scope_key's own docstring — a relative import must be scoped by the
+            # importing file's directory here (the reverse map), even though the forward map
+            # above keeps the raw string exactly as written in the file.
+            imported_by.setdefault(_import_scope_key(path, imp), set()).add(path)
 
     if not imports_by_file:
         return ""

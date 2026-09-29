@@ -1,6 +1,9 @@
 import asyncio
 import functools
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+
+from bson import ObjectId
 
 from backend.services import checkpoint_retention as cr
 
@@ -29,6 +32,19 @@ class _FakeDeleteResult:
         self.deleted_count = count
 
 
+def _matches(doc, query):
+    for key, cond in query.items():
+        value = doc.get(key)
+        if isinstance(cond, dict):
+            if "$in" in cond and value not in cond["$in"]:
+                return False
+            if "$lt" in cond and not (value < cond["$lt"]):
+                return False
+        elif value != cond:
+            return False
+    return True
+
+
 class _FakeCheckpointsCollection:
     def __init__(self, docs):
         self.docs = docs  # list of {"_id", "thread_id", "checkpoint_id"}
@@ -41,13 +57,37 @@ class _FakeCheckpointsCollection:
         return seen
 
     def find(self, query, projection=None):
-        thread_id = query.get("thread_id")
-        return _FakeCursor([d for d in self.docs if d.get("thread_id") == thread_id])
+        return _FakeCursor([d for d in self.docs if _matches(d, query)])
+
+    def aggregate(self, pipeline, allowDiskUse=False):
+        # Minimal interpreter for exactly the two stages prune_old_checkpoints actually issues
+        # ({"$sort": {"_id": -1}} then a $group-with-$push by thread_id) — not a general Mongo
+        # aggregation engine, just enough to prove the real pipeline's shape/order is correct.
+        docs = list(self.docs)
+        for stage in pipeline:
+            if "$sort" in stage:
+                (key, direction), = stage["$sort"].items()
+                docs.sort(key=lambda d: d[key], reverse=(direction == -1))
+            elif "$group" in stage:
+                group_spec = stage["$group"]
+                group_key_field = group_spec["_id"].lstrip("$")
+                push_field_name, push_spec = next(
+                    (k, v["$push"]) for k, v in group_spec.items() if k != "_id"
+                )
+                grouped = {}
+                order = []
+                for d in docs:
+                    key = d[group_key_field]
+                    if key not in grouped:
+                        grouped[key] = []
+                        order.append(key)
+                    grouped[key].append({out_key: d[ref.lstrip("$")] for out_key, ref in push_spec.items()})
+                docs = [{"_id": key, push_field_name: grouped[key]} for key in order]
+        return docs
 
     def delete_many(self, query):
-        ids = set(query["_id"]["$in"])
         before = len(self.docs)
-        self.docs = [d for d in self.docs if d["_id"] not in ids]
+        self.docs = [d for d in self.docs if not _matches(d, query)]
         return _FakeDeleteResult(before - len(self.docs))
 
 
@@ -89,7 +129,9 @@ def test_prune_keeps_last_n_per_thread(monkeypatch):
     db, checkpoints, writes = _fake_db(docs, [])
     monkeypatch.setattr(cr, "get_db", lambda: db)
 
-    summary = cr.prune_old_checkpoints(keep_per_thread=3)
+    # max_age_days=0 disables the separate age axis for this test — plain int _ids here aren't
+    # real ObjectIds, and this test is only exercising the per-thread floor.
+    summary = cr.prune_old_checkpoints(keep_per_thread=3, max_age_days=0)
 
     assert summary["skipped"] is False
     assert summary["threads_seen"] == 2
@@ -109,7 +151,7 @@ def test_prune_deletes_matching_checkpoint_writes(monkeypatch):
     db, checkpoints, writes = _fake_db(docs, writes_docs)
     monkeypatch.setattr(cr, "get_db", lambda: db)
 
-    summary = cr.prune_old_checkpoints(keep_per_thread=2)
+    summary = cr.prune_old_checkpoints(keep_per_thread=2, max_age_days=0)
 
     assert summary["deleted_checkpoints"] == 3
     assert summary["deleted_checkpoint_writes"] == 3
@@ -122,7 +164,7 @@ def test_prune_thread_with_fewer_than_keep_is_untouched(monkeypatch):
     db, checkpoints, writes = _fake_db(docs, [])
     monkeypatch.setattr(cr, "get_db", lambda: db)
 
-    summary = cr.prune_old_checkpoints(keep_per_thread=3)
+    summary = cr.prune_old_checkpoints(keep_per_thread=3, max_age_days=0)
 
     assert summary["threads_pruned"] == 0
     assert summary["deleted_checkpoints"] == 0
@@ -135,6 +177,60 @@ def test_prune_returns_skipped_when_db_disabled(monkeypatch):
     summary = cr.prune_old_checkpoints()
 
     assert summary == {"skipped": True, "reason": "USE_DB not enabled"}
+
+
+# ---------------------------------------------------------------------------
+# max_age_days — the second axis. Bounds total storage against all-time thread COUNT, which
+# the per-thread floor alone never does (a thread abandoned long ago keeps its floor forever).
+# ---------------------------------------------------------------------------
+
+def test_prune_deletes_aged_checkpoints_even_within_the_per_thread_floor(monkeypatch):
+    now = datetime.now(timezone.utc)
+    old_id = ObjectId.from_datetime(now - timedelta(days=200))
+    recent_id = ObjectId.from_datetime(now - timedelta(days=1))
+    docs = [
+        _ckpt(old_id, "abandoned-thread", "old-ckpt"),
+        _ckpt(recent_id, "active-thread", "recent-ckpt"),
+    ]
+    writes_docs = [{"checkpoint_id": "old-ckpt"}, {"checkpoint_id": "recent-ckpt"}]
+    db, checkpoints, writes = _fake_db(docs, writes_docs)
+    monkeypatch.setattr(cr, "get_db", lambda: db)
+
+    # keep_per_thread=5 means the per-thread floor alone would leave BOTH untouched (neither
+    # thread has more than 5 checkpoints) — only the age axis should remove the old one.
+    summary = cr.prune_old_checkpoints(keep_per_thread=5, max_age_days=90)
+
+    assert summary["threads_pruned"] == 0  # per-thread floor did nothing
+    assert summary["deleted_aged_checkpoints"] == 1
+    assert summary["deleted_aged_checkpoint_writes"] == 1
+    remaining_ids = [d["checkpoint_id"] for d in checkpoints.docs]
+    assert remaining_ids == ["recent-ckpt"]
+    remaining_write_ids = [w["checkpoint_id"] for w in writes.docs]
+    assert remaining_write_ids == ["recent-ckpt"]
+
+
+def test_prune_age_axis_disabled_when_max_age_days_is_zero(monkeypatch):
+    old_id = ObjectId.from_datetime(datetime.now(timezone.utc) - timedelta(days=365))
+    docs = [_ckpt(old_id, "abandoned-thread", "old-ckpt")]
+    db, checkpoints, writes = _fake_db(docs, [])
+    monkeypatch.setattr(cr, "get_db", lambda: db)
+
+    summary = cr.prune_old_checkpoints(keep_per_thread=5, max_age_days=0)
+
+    assert summary["deleted_aged_checkpoints"] == 0
+    assert len(checkpoints.docs) == 1
+
+
+def test_prune_age_axis_keeps_checkpoints_newer_than_cutoff(monkeypatch):
+    recent_id = ObjectId.from_datetime(datetime.now(timezone.utc) - timedelta(days=5))
+    docs = [_ckpt(recent_id, "active-thread", "recent-ckpt")]
+    db, checkpoints, writes = _fake_db(docs, [])
+    monkeypatch.setattr(cr, "get_db", lambda: db)
+
+    summary = cr.prune_old_checkpoints(keep_per_thread=5, max_age_days=90)
+
+    assert summary["deleted_aged_checkpoints"] == 0
+    assert len(checkpoints.docs) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +247,7 @@ async def test_retention_loop_calls_prune_and_survives_a_failure(monkeypatch):
     gets a chance, same resilience as this app's other background tasks."""
     call_count = {"n": 0}
 
-    def fake_prune(keep_per_thread):
+    def fake_prune(keep_per_thread, max_age_days):
         call_count["n"] += 1
         if call_count["n"] == 1:
             raise RuntimeError("transient mongo error")

@@ -1,7 +1,25 @@
+import asyncio
+import functools
+import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 from backend.utils.agent_utils import (
     parse_definition_index_from_observation,
     find_mismatched_start_line_note,
+    _check_final_answer_grounding,
 )
+
+
+def run_async(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        return asyncio.run(fn(*args, **kwargs))
+    return wrapper
+
+
+def _llm_response(**payload):
+    return SimpleNamespace(content=json.dumps(payload))
 
 
 TRUNCATED_OBSERVATION = (
@@ -93,3 +111,82 @@ def test_find_mismatched_start_line_note_uses_default_window_when_line_count_mis
         3200, None, 150, index,
     )
     assert note is None
+
+
+# ---------------------------------------------------------------------------
+# _check_final_answer_grounding — the general claim-vs-observation check run_react_loop uses
+# on every non-forced "final" with real attempts, since the reward evaluator structurally can't
+# do this job (it only ever sees final_answer after it's already been folded into "the DATA" a
+# second LLM is told to trust — see react_loop.py's docstring for the full reasoning).
+# ---------------------------------------------------------------------------
+
+_SOME_ATTEMPTS = [{
+    "purpose": "Read the file", "action_desc": "read_repo_file(path=x.py)",
+    "observation": "def foo():\n    return 1\n",
+}]
+
+
+@run_async
+async def test_check_final_answer_grounding_skips_the_llm_call_when_no_attempts():
+    """Nothing to ground a claim in yet — must not spend an LLM call on a purely conversational
+    final with zero real tool observations this turn."""
+    llm = SimpleNamespace(ainvoke=AsyncMock())
+
+    result = await _check_final_answer_grounding("Some answer.", [], llm)
+
+    assert result == []
+    llm.ainvoke.assert_not_called()
+
+
+@run_async
+async def test_check_final_answer_grounding_returns_claims_when_flagged():
+    llm = SimpleNamespace(ainvoke=AsyncMock(return_value=_llm_response(
+        grounded=False, unsupported_claims=["PR #999 titled 'Fix the thing'"],
+    )))
+
+    result = await _check_final_answer_grounding(
+        "PR #999, titled 'Fix the thing', fixes the bug.", _SOME_ATTEMPTS, llm,
+    )
+
+    assert result == ["PR #999 titled 'Fix the thing'"]
+    llm.ainvoke.assert_called_once()
+
+
+@run_async
+async def test_check_final_answer_grounding_returns_empty_when_grounded():
+    llm = SimpleNamespace(ainvoke=AsyncMock(return_value=_llm_response(grounded=True, unsupported_claims=[])))
+
+    result = await _check_final_answer_grounding("foo() returns 1.", _SOME_ATTEMPTS, llm)
+
+    assert result == []
+
+
+@run_async
+async def test_check_final_answer_grounding_ignores_non_string_or_blank_claims():
+    llm = SimpleNamespace(ainvoke=AsyncMock(return_value=_llm_response(
+        grounded=False, unsupported_claims=["a real claim", "", "   ", 42, None],
+    )))
+
+    result = await _check_final_answer_grounding("some answer", _SOME_ATTEMPTS, llm)
+
+    assert result == ["a real claim"]
+
+
+@run_async
+async def test_check_final_answer_grounding_fails_open_when_llm_call_raises():
+    """A broken checker must never be able to block every future answer — same soft-failure
+    convention as every other backstop in this module."""
+    llm = SimpleNamespace(ainvoke=AsyncMock(side_effect=RuntimeError("boom")))
+
+    result = await _check_final_answer_grounding("some answer", _SOME_ATTEMPTS, llm)
+
+    assert result == []
+
+
+@run_async
+async def test_check_final_answer_grounding_fails_open_on_unparseable_response():
+    llm = SimpleNamespace(ainvoke=AsyncMock(return_value=SimpleNamespace(content="not json at all")))
+
+    result = await _check_final_answer_grounding("some answer", _SOME_ATTEMPTS, llm)
+
+    assert result == []
