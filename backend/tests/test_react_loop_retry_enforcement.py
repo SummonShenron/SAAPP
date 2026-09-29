@@ -19,6 +19,16 @@ def _llm_response(**payload):
     return SimpleNamespace(content=json.dumps(payload))
 
 
+# A substring unique to GROUNDING_CHECK_PROMPT (constraints.py) — lets every test's fake_ainvoke
+# recognize the grounding-check gate's own extra LLM call and short-circuit it as "grounded"
+# without consuming a slot from that test's `responses` list. Without this, the grounding check
+# (added to react_loop.py's "final" acceptance path, fires whenever attempts is non-empty) would
+# silently shift every subsequent response by one index/pop in nearly every test below that
+# reaches an accepted "final" with real attempts — this keeps those tests focused on what they're
+# actually asserting instead of all needing their own bespoke grounded-response bookkeeping.
+GROUNDING_CHECK_MARKER = "REAL TOOL OBSERVATIONS GATHERED THIS TURN"
+
+
 @run_async
 async def test_run_react_loop_uses_the_passed_llm_not_the_default():
     """Deep thinking passes lite_llm_deep — the loop must actually call that object, not
@@ -59,6 +69,12 @@ async def test_premature_final_after_error_is_rejected_once_then_accepted():
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            # This test isn't exercising the grounding check itself — short-circuit it as
+            # "grounded" without consuming a slot from `responses`, so every other test's
+            # response list/index assertions stay meaningful regardless of whether the new
+            # grounding-check gate (react_loop.py) happens to fire for this scenario.
+            return _llm_response(grounded=True, unsupported_claims=[])
         captured_prompts.append(prompt)
         return responses[len(captured_prompts) - 1]
 
@@ -114,6 +130,12 @@ async def test_premature_final_after_empty_result_is_rejected_once_then_accepted
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            # This test isn't exercising the grounding check itself — short-circuit it as
+            # "grounded" without consuming a slot from `responses`, so every other test's
+            # response list/index assertions stay meaningful regardless of whether the new
+            # grounding-check gate (react_loop.py) happens to fire for this scenario.
+            return _llm_response(grounded=True, unsupported_claims=[])
         captured_prompts.append(prompt)
         return responses[len(captured_prompts) - 1]
 
@@ -156,6 +178,12 @@ async def test_diagnostic_detour_does_not_hide_an_unretried_failure():
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            # This test isn't exercising the grounding check itself — short-circuit it as
+            # "grounded" without consuming a slot from `responses`, so every other test's
+            # response list/index assertions stay meaningful regardless of whether the new
+            # grounding-check gate (react_loop.py) happens to fire for this scenario.
+            return _llm_response(grounded=True, unsupported_claims=[])
         captured_prompts.append(prompt)
         return responses[len(captured_prompts) - 1]
 
@@ -233,6 +261,12 @@ async def test_max_retry_nudges_raises_the_rejection_budget():
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            # This test isn't exercising the grounding check itself — short-circuit it as
+            # "grounded" without consuming a slot from `responses`, so every other test's
+            # response list/index assertions stay meaningful regardless of whether the new
+            # grounding-check gate (react_loop.py) happens to fire for this scenario.
+            return _llm_response(grounded=True, unsupported_claims=[])
         captured_prompts.append(prompt)
         return responses[len(captured_prompts) - 1]
 
@@ -272,6 +306,12 @@ async def test_default_max_retry_nudges_still_rejects_only_once():
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            # This test isn't exercising the grounding check itself — short-circuit it as
+            # "grounded" without consuming a slot from `responses`, so every other test's
+            # response list/index assertions stay meaningful regardless of whether the new
+            # grounding-check gate (react_loop.py) happens to fire for this scenario.
+            return _llm_response(grounded=True, unsupported_claims=[])
         captured_prompts.append(prompt)
         return responses[len(captured_prompts) - 1]
 
@@ -313,6 +353,12 @@ async def test_verbatim_repeat_of_failed_query_does_not_clear_the_nudge():
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            # This test isn't exercising the grounding check itself — short-circuit it as
+            # "grounded" without consuming a slot from `responses`, so every other test's
+            # response list/index assertions stay meaningful regardless of whether the new
+            # grounding-check gate (react_loop.py) happens to fire for this scenario.
+            return _llm_response(grounded=True, unsupported_claims=[])
         captured_prompts.append(prompt)
         return responses[len(captured_prompts) - 1]
 
@@ -361,6 +407,12 @@ async def test_stuck_action_redirect_rejects_repeated_search_code_after_threshol
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            # This test isn't exercising the grounding check itself — short-circuit it as
+            # "grounded" without consuming a slot from `responses`, so every other test's
+            # response list/index assertions stay meaningful regardless of whether the new
+            # grounding-check gate (react_loop.py) happens to fire for this scenario.
+            return _llm_response(grounded=True, unsupported_claims=[])
         captured_prompts.append(prompt)
         return responses[len(captured_prompts) - 1]
 
@@ -412,6 +464,12 @@ async def test_stuck_action_streak_resets_on_success_before_threshold():
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            # This test isn't exercising the grounding check itself — short-circuit it as
+            # "grounded" without consuming a slot from `responses`, so every other test's
+            # response list/index assertions stay meaningful regardless of whether the new
+            # grounding-check gate (react_loop.py) happens to fire for this scenario.
+            return _llm_response(grounded=True, unsupported_claims=[])
         captured_prompts.append(prompt)
         return responses[len(captured_prompts) - 1]
 
@@ -461,6 +519,12 @@ async def test_unlisted_tool_still_gets_generic_stuck_redirect():
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            # This test isn't exercising the grounding check itself — short-circuit it as
+            # "grounded" without consuming a slot from `responses`, so every other test's
+            # response list/index assertions stay meaningful regardless of whether the new
+            # grounding-check gate (react_loop.py) happens to fire for this scenario.
+            return _llm_response(grounded=True, unsupported_claims=[])
         captured_prompts.append(prompt)
         return responses[len(captured_prompts) - 1]
 
@@ -514,6 +578,8 @@ async def test_paginated_reads_of_a_large_file_never_trip_the_stuck_action_backs
     call_count = {"n": 0}
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
         response = responses[call_count["n"]]
         call_count["n"] += 1
         return response
@@ -571,6 +637,8 @@ async def test_unresolved_truncation_rejects_final_beyond_the_normal_retry_budge
     call_index = {"n": 0}
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
         response = responses[call_index["n"]]
         call_index["n"] += 1
         return response
@@ -617,6 +685,12 @@ async def test_second_consecutive_error_does_not_trigger_a_second_nudge():
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            # This test isn't exercising the grounding check itself — short-circuit it as
+            # "grounded" without consuming a slot from `responses`, so every other test's
+            # response list/index assertions stay meaningful regardless of whether the new
+            # grounding-check gate (react_loop.py) happens to fire for this scenario.
+            return _llm_response(grounded=True, unsupported_claims=[])
         captured_prompts.append(prompt)
         return responses[len(captured_prompts) - 1]
 
@@ -672,6 +746,12 @@ async def test_capability_denial_is_rejected_once_then_corrected_final_accepted(
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            # This test isn't exercising the grounding check itself — short-circuit it as
+            # "grounded" without consuming a slot from `responses`, so every other test's
+            # response list/index assertions stay meaningful regardless of whether the new
+            # grounding-check gate (react_loop.py) happens to fire for this scenario.
+            return _llm_response(grounded=True, unsupported_claims=[])
         captured_prompts.append(prompt)
         return responses[len(captured_prompts) - 1]
 
@@ -710,6 +790,12 @@ async def test_capability_denial_rejection_is_budget_limited():
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            # This test isn't exercising the grounding check itself — short-circuit it as
+            # "grounded" without consuming a slot from `responses`, so every other test's
+            # response list/index assertions stay meaningful regardless of whether the new
+            # grounding-check gate (react_loop.py) happens to fire for this scenario.
+            return _llm_response(grounded=True, unsupported_claims=[])
         captured_prompts.append(prompt)
         return responses[len(captured_prompts) - 1]
 
@@ -745,6 +831,12 @@ async def test_genuine_capability_denial_not_in_menu_is_accepted_immediately():
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            # This test isn't exercising the grounding check itself — short-circuit it as
+            # "grounded" without consuming a slot from `responses`, so every other test's
+            # response list/index assertions stay meaningful regardless of whether the new
+            # grounding-check gate (react_loop.py) happens to fire for this scenario.
+            return _llm_response(grounded=True, unsupported_claims=[])
         captured_prompts.append(prompt)
         return responses[len(captured_prompts) - 1]
 
@@ -826,6 +918,12 @@ async def test_ungrounded_diff_is_rejected_once_then_corrected_final_accepted():
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            # This test isn't exercising the grounding check itself — short-circuit it as
+            # "grounded" without consuming a slot from `responses`, so every other test's
+            # response list/index assertions stay meaningful regardless of whether the new
+            # grounding-check gate (react_loop.py) happens to fire for this scenario.
+            return _llm_response(grounded=True, unsupported_claims=[])
         captured_prompts.append(prompt)
         return responses[len(captured_prompts) - 1]
 
@@ -864,6 +962,12 @@ async def test_ungrounded_diff_rejection_is_budget_limited():
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            # This test isn't exercising the grounding check itself — short-circuit it as
+            # "grounded" without consuming a slot from `responses`, so every other test's
+            # response list/index assertions stay meaningful regardless of whether the new
+            # grounding-check gate (react_loop.py) happens to fire for this scenario.
+            return _llm_response(grounded=True, unsupported_claims=[])
         captured_prompts.append(prompt)
         return responses[len(captured_prompts) - 1]
 
@@ -897,6 +1001,12 @@ async def test_diff_grounded_in_real_read_is_accepted_immediately():
     responses = [_llm_response(action="final", answer=GROUNDED_DIFF_ANSWER)]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            # This test isn't exercising the grounding check itself — short-circuit it as
+            # "grounded" without consuming a slot from `responses`, so every other test's
+            # response list/index assertions stay meaningful regardless of whether the new
+            # grounding-check gate (react_loop.py) happens to fire for this scenario.
+            return _llm_response(grounded=True, unsupported_claims=[])
         captured_prompts.append(prompt)
         return responses[len(captured_prompts) - 1]
 
@@ -941,6 +1051,12 @@ async def test_diff_for_a_brand_new_file_is_never_flagged():
     responses = [_llm_response(action="final", answer=new_file_answer)]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            # This test isn't exercising the grounding check itself — short-circuit it as
+            # "grounded" without consuming a slot from `responses`, so every other test's
+            # response list/index assertions stay meaningful regardless of whether the new
+            # grounding-check gate (react_loop.py) happens to fire for this scenario.
+            return _llm_response(grounded=True, unsupported_claims=[])
         captured_prompts.append(prompt)
         return responses[len(captured_prompts) - 1]
 
@@ -977,6 +1093,203 @@ def test_final_diff_disagrees_with_fetched_content_negative_when_no_diff_present
 
 
 # ---------------------------------------------------------------------------
+# General claim-vs-observation grounding check — the diff check above only catches one specific,
+# mechanically-checkable fabrication shape; this is the general case for arbitrary prose claims,
+# via a second independent LLM call (see react_loop.py's docstring for the full reasoning on why
+# this can't live in the reward evaluator instead).
+# ---------------------------------------------------------------------------
+
+@run_async
+async def test_ungrounded_claim_is_rejected_once_then_corrected_final_accepted():
+    """The real scenario this guards: the model fabricates a specific fact (a PR title/number
+    never actually returned by any real tool call) — rejected once, then an honest, qualified
+    answer is accepted."""
+    captured_prompts = []
+    responses = [
+        _llm_response(action="query", purpose="List PRs", tool_action="list_pull_requests", args={}),
+        _llm_response(action="final", answer="PR #999, 'Add quantum caching', fixed the bug."),
+        _llm_response(grounded=False, unsupported_claims=["PR #999, 'Add quantum caching'"]),
+        _llm_response(action="final", answer="I found one recent PR but can't confirm which fixed the bug."),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            return "#101 — Fix login bug (merged, by jack, updated 2026-01-01)"
+
+        result = await aw.run_react_loop(
+            question="which PR fixed the login bug?",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert len(captured_prompts) == 4
+    assert result["final_answer"] == "I found one recent PR but can't confirm which fixed the bug."
+    assert "PR #999, 'Add quantum caching'" in captured_prompts[3]
+
+
+@run_async
+async def test_ungrounded_claim_rejection_is_budget_limited():
+    """A second consecutive fabrication must still get an honest 'final' rather than looping
+    forever — same budget-of-1 shape as every other mechanical gate in this loop."""
+    captured_prompts = []
+    fabricated_answer = "PR #999, 'Add quantum caching', fixed the bug."
+    responses = [
+        _llm_response(action="query", purpose="List PRs", tool_action="list_pull_requests", args={}),
+        _llm_response(action="final", answer=fabricated_answer),
+        _llm_response(grounded=False, unsupported_claims=["PR #999, 'Add quantum caching'"]),
+        _llm_response(action="final", answer=fabricated_answer),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            return "#101 — Fix login bug (merged, by jack, updated 2026-01-01)"
+
+        result = await aw.run_react_loop(
+            question="which PR fixed the login bug?",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    # The second fabrication got through — once MAX_UNGROUNDED_CLAIM_REJECTIONS (1) is spent, the
+    # gate's own budget check short-circuits before ever calling the checker again (no 5th call),
+    # so the repeated fabrication is accepted rather than looping forever.
+    assert len(captured_prompts) == 4
+    assert result["final_answer"] == fabricated_answer
+
+
+@run_async
+async def test_grounded_final_is_accepted_after_one_check_call():
+    """False-positive guard, and confirms the check is skipped entirely when there are no real
+    attempts yet: a purely conversational final with zero tool calls costs no extra LLM call."""
+    captured_prompts = []
+    responses = [_llm_response(action="final", answer="Hi there!")]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            return "unused"
+
+        result = await aw.run_react_loop(
+            question="hey, how's it going?",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    # No real attempts existed when "final" was proposed — the grounding check must not fire at
+    # all (not even one extra call), unlike every other test in this section.
+    assert len(captured_prompts) == 1
+    assert result["final_answer"] == "Hi there!"
+
+
+@run_async
+async def test_grounded_claim_with_real_attempts_accepted_immediately():
+    """A final answer that's actually backed by the real attempts must go through on the first
+    try, with the grounding check's own single extra call correctly reporting grounded=true."""
+    captured_prompts = []
+    responses = [
+        _llm_response(action="final", answer="The login bug was fixed in PR #101."),
+        _llm_response(grounded=True, unsupported_claims=[]),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            return "unused"
+
+        result = await aw.run_react_loop(
+            question="which PR fixed the login bug?",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+            initial_attempts=[{
+                "purpose": "List PRs", "action_desc": "list_pull_requests()",
+                "observation": "#101 — Fix login bug (merged, by jack, updated 2026-01-01)",
+            }],
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert len(captured_prompts) == 2
+    assert result["final_answer"] == "The login bug was fixed in PR #101."
+    assert GROUNDING_CHECK_MARKER in captured_prompts[1]
+
+
+@run_async
+async def test_forced_final_on_last_step_skips_the_grounding_check():
+    """The last step's forced "final" must be accepted as-is, same as every other mechanical
+    gate — there are no more steps left to force a correction on, so rejecting would just
+    produce nothing instead of an honest (if unverified) answer."""
+    captured_prompts = []
+    responses = [
+        _llm_response(action="query", purpose="List PRs", tool_action="list_pull_requests", args={}),
+        _llm_response(action="final", answer="PR #999, 'Add quantum caching', fixed the bug."),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            return "#101 — Fix login bug (merged, by jack, updated 2026-01-01)"
+
+        result = await aw.run_react_loop(
+            question="which PR fixed the login bug?",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=2,  # forces the 2nd step's "final" to be the forced last step
+            node_name="test_node",
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert len(captured_prompts) == 2
+    assert result["final_answer"] == "PR #999, 'Add quantum caching', fixed the bug."
+
+
+# ---------------------------------------------------------------------------
 # Batching independent actions ("queries") — built after the extensive
 # diagnostic loop in docs/coding-agent-roadmap.md (Sections 4b-4j), where
 # every real trace burned most of a turn's step budget reading files one at a
@@ -1002,6 +1315,8 @@ async def test_batched_queries_execute_concurrently_not_sequentially():
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
         return responses.pop(0)
 
     orig = aw.lite_llm.ainvoke
@@ -1053,6 +1368,8 @@ async def test_batch_items_emit_batch_index_and_size_but_single_actions_do_not()
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
         return responses.pop(0)
 
     emitted = []
@@ -1117,6 +1434,8 @@ async def test_batch_rejects_non_batchable_action_but_still_runs_the_others():
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
         return responses.pop(0)
 
     orig = aw.lite_llm.ainvoke
@@ -1169,6 +1488,8 @@ async def test_batch_containing_the_stuck_tool_is_rejected_entirely():
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
         return responses.pop(0)
 
     orig = aw.lite_llm.ainvoke
@@ -1217,6 +1538,8 @@ async def test_batched_truncated_read_still_blocks_a_premature_final():
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
         return responses.pop(0)
 
     orig = aw.lite_llm.ainvoke
@@ -1263,6 +1586,8 @@ async def test_single_item_queries_list_still_executes_correctly():
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
         return responses.pop(0)
 
     orig = aw.lite_llm.ainvoke
@@ -1305,6 +1630,8 @@ async def test_batch_ignored_entirely_when_no_batchable_actions_configured():
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
         return responses.pop(0)
 
     orig = aw.lite_llm.ainvoke
@@ -1349,6 +1676,8 @@ async def test_batch_size_beyond_cap_is_dropped_with_its_own_error():
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
         return responses.pop(0)
 
     orig = aw.lite_llm.ainvoke
@@ -1396,6 +1725,8 @@ async def test_exact_repeat_of_a_successful_action_is_skipped_not_re_executed():
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
         return responses.pop(0)
 
     act_calls = []
@@ -1435,6 +1766,8 @@ async def test_repeat_with_different_args_is_not_treated_as_redundant():
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
         return responses.pop(0)
 
     act_calls = []
@@ -1474,6 +1807,8 @@ async def test_repeat_of_a_failed_action_is_not_treated_as_redundant():
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
         return responses.pop(0)
 
     act_calls = []
@@ -1513,6 +1848,8 @@ async def test_redundant_repeat_inside_a_batch_is_skipped_but_others_still_run()
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
         return responses.pop(0)
 
     act_calls = []
@@ -1578,6 +1915,8 @@ async def test_wrong_start_line_guess_gets_a_corrective_note_pointing_at_the_rea
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
         return responses.pop(0)
 
     async def act(decision):
@@ -1622,6 +1961,8 @@ async def test_correct_start_line_gets_no_corrective_note():
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
         return responses.pop(0)
 
     async def act(decision):

@@ -81,10 +81,11 @@ from backend.utils.agent_utils import (
     _classify_symbol_line,
     _VISUAL_INSPECTION_RE, _mentions_visual_inspection,
     _AUDIT_TASK_RE, _is_audit_style_task, _AUDIT_TASK_SEARCH_NUDGE,
+    _find_readme_path, _build_readme_context, _README_MAX_CHARS,
     _ARCH_MAP_MAX_FILES_SCANNED, _ARCH_MAP_MAX_FILE_BYTES, _ARCH_MAP_MAX_ENTRIES,
     _ARCH_MAP_PY_EXTENSION, _ARCH_MAP_JS_EXTENSIONS, _JS_IMPORT_RE,
     _extract_python_imports, _extract_js_imports, _is_internal_python_import,
-    _repo_top_level_segments, _build_architecture_map,
+    _import_scope_key, _repo_top_level_segments, _build_architecture_map,
     resolve_recent_mention, safe_emit_event,
 )
 from backend.services.react_loop import run_react_loop, _MAX_BATCH_SIZE
@@ -205,10 +206,27 @@ TOOL_AGENT_CAPABILITY_DENIAL_WATCHLIST = [
 # for: "find every file that reads GITHUB_TOKEN" needs a guaranteed-complete answer, not a
 # best-effort one, since a plan built on a silently-partial result set is worse than one that
 # admits it doesn't know. search_literal instead fetches the real file tree and greps actual
-# fetched blob content — slower (one API call per candidate file) but exhaustive by construction.
-_SEARCH_LITERAL_MAX_FILE_BYTES = 200_000
+# fetched blob content — exhaustive by construction, and its blob fetches run concurrently (see
+# _SEARCH_LITERAL_FETCH_CONCURRENCY) instead of one request at a time.
+#
+# _SEARCH_LITERAL_MAX_TOTAL_SCAN_BYTES replaces a former flat per-file byte cap. That design
+# permanently excluded any single file over the cap from every future scan, no matter how much
+# budget the call actually had to spare — a real production trace (docs/coding-agent-roadmap.md,
+# Section 12) showed this tool confidently report "no occurrences found, exhaustively scanned N
+# of N" for a symbol that genuinely existed, in a file that had quietly grown past the cap. The
+# files most likely to exceed any fixed per-file cap are exactly the largest, most central,
+# most-referenced ones — the ones an audit-style task is most likely to actually need — so a
+# structural exclusion by size was penalizing the wrong files. This is a TOTAL bytes-scanned
+# budget for the whole call instead: candidates are still considered in their natural (tree)
+# order, and a file is skipped only if scanning it would push the running total over budget —
+# a single huge file just consumes more of the shared budget for itself rather than being
+# permanently blacklisted, and a later, smaller file that still fits still gets scanned even if
+# an earlier huge one didn't fit. Any file skipped this way is reported honestly (see
+# budget_note below) as "not reached this call," not silently dropped.
+_SEARCH_LITERAL_MAX_TOTAL_SCAN_BYTES = 8_000_000
 _SEARCH_LITERAL_MAX_FILES_SCANNED = 300
 _SEARCH_LITERAL_MAX_MATCHES = 50
+_SEARCH_LITERAL_FETCH_CONCURRENCY = 8
 _SEARCH_LITERAL_SKIP_EXTENSIONS = (
     ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp",
     ".woff", ".woff2", ".ttf", ".eot",
@@ -2363,85 +2381,107 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 )
             return "\n\n".join(parts) if parts else "No matches."
 
-        def _search_literal(term: str):
+        async def _fetch_blob(item: dict):
+            # One blob fetch, offloaded to a thread so a batch of these can genuinely run
+            # concurrently via asyncio.gather instead of one request at a time — the same
+            # asyncio.to_thread + asyncio.gather primitive already used for the top-level
+            # batched-actions path (run_react_loop's "queries" batching), pointed at this loop's
+            # own blob fetches instead of the model's tool calls.
+            try:
+                res = await asyncio.to_thread(
+                    requests.get, f"{api_base}/repos/{repo}/git/blobs/{item.get('sha')}", headers=headers
+                )
+            except Exception:
+                return item, None
+            if res.status_code != 200:
+                return item, None
+            return item, res.json()
+
+        async def _search_literal(term: str):
             # Exhaustive alternative to search_code — see the module-level comment above
-            # _SEARCH_LITERAL_MAX_FILE_BYTES for why this exists. Fetches the real tree, then
-            # actually fetches and greps candidate file content instead of trusting GitHub's
-            # search index to be complete. Deliberately slower (one request per file) — use
-            # search_code first; reach for this only when completeness itself is what matters
-            # (e.g. "find every place this env var/config key is read" before proposing a plan).
+            # _SEARCH_LITERAL_MAX_TOTAL_SCAN_BYTES for why this exists. Fetches the real tree,
+            # then actually fetches and greps candidate file content (concurrently, in capped
+            # batches) instead of trusting GitHub's search index to be complete. Slower than
+            # search_code even with concurrency — use search_code first; reach for this only when
+            # completeness itself is what matters (e.g. "find every place this env var/config key
+            # is read" before proposing a plan).
             if not term:
                 return "ERROR: no term given"
-            items = _fetch_repo_tree_items()
+            items = await asyncio.to_thread(_fetch_repo_tree_items)
             if isinstance(items, str):
                 return items
             extension_ok = [
                 item for item in items
                 if not item.get("path", "").lower().endswith(_SEARCH_LITERAL_SKIP_EXTENSIONS)
-            ]
-            # A real production trace (docs/coding-agent-roadmap.md, Section 12) showed this tool
-            # confidently report "no occurrences found, exhaustively scanned N of N candidate
-            # files" for a symbol that genuinely exists — in agent_workflow.py itself, which had
-            # quietly grown past _SEARCH_LITERAL_MAX_FILE_BYTES over the course of this session's
-            # own additions and was silently excluded from "candidates" before the count was even
-            # taken. Tracked separately so the response can say so explicitly instead of reporting
-            # a false completeness guarantee.
-            oversized = [item for item in extension_ok if item.get("size", 0) > _SEARCH_LITERAL_MAX_FILE_BYTES]
-            candidates = [
-                item for item in extension_ok
-                if item.get("size", 0) <= _SEARCH_LITERAL_MAX_FILE_BYTES
             ][:_SEARCH_LITERAL_MAX_FILES_SCANNED]
+
+            # Greedy first-fit against a TOTAL bytes budget, in the tree's own natural order —
+            # not a sort by size. A file is skipped only if scanning it would push the running
+            # total over budget; a smaller file later in the list still gets scanned even if an
+            # earlier huge one didn't fit, and nothing is excluded by size alone. See the
+            # constant's own comment for why this replaced a flat per-file cap.
+            to_scan: list = []
+            skipped_over_budget: list = []
+            running_total = 0
+            for item in extension_ok:
+                size = item.get("size", 0)
+                if running_total + size <= _SEARCH_LITERAL_MAX_TOTAL_SCAN_BYTES:
+                    to_scan.append(item)
+                    running_total += size
+                else:
+                    skipped_over_budget.append(item)
 
             matches = []
             scanned = 0
-            for item in candidates:
+            for batch_start in range(0, len(to_scan), _SEARCH_LITERAL_FETCH_CONCURRENCY):
                 if len(matches) >= _SEARCH_LITERAL_MAX_MATCHES:
                     break
-                blob_res = requests.get(
-                    f"{api_base}/repos/{repo}/git/blobs/{item.get('sha')}", headers=headers
-                )
-                if blob_res.status_code != 200:
-                    continue
-                scanned += 1
-                blob = blob_res.json()
-                if blob.get("encoding") != "base64":
-                    continue
-                try:
-                    text = base64.b64decode(blob.get("content", "")).decode("utf-8", errors="ignore")
-                except Exception:
-                    continue
-                for line_no, line in enumerate(text.splitlines(), start=1):
-                    if term in line:
-                        matches.append(f"{item.get('path')}:{line_no}: {line.strip()}")
-                        if len(matches) >= _SEARCH_LITERAL_MAX_MATCHES:
-                            break
+                batch = to_scan[batch_start:batch_start + _SEARCH_LITERAL_FETCH_CONCURRENCY]
+                batch_results = await asyncio.gather(*(_fetch_blob(item) for item in batch))
+                for item, blob in batch_results:
+                    if blob is None:
+                        continue
+                    scanned += 1
+                    if blob.get("encoding") != "base64":
+                        continue
+                    try:
+                        text = base64.b64decode(blob.get("content", "")).decode("utf-8", errors="ignore")
+                    except Exception:
+                        continue
+                    for line_no, line in enumerate(text.splitlines(), start=1):
+                        if term in line:
+                            matches.append(f"{item.get('path')}:{line_no}: {line.strip()}")
+                            if len(matches) >= _SEARCH_LITERAL_MAX_MATCHES:
+                                break
 
             truncation_note = (
                 f" (stopped early at {_SEARCH_LITERAL_MAX_MATCHES} matches — there may be more; "
                 "narrow the term if you need to see past this)" if len(matches) >= _SEARCH_LITERAL_MAX_MATCHES
                 else ""
             )
-            oversized_note = ""
-            if oversized:
-                oversized_paths = sorted(item.get("path", "") for item in oversized)
-                shown = ", ".join(oversized_paths[:10])
-                more = f" (+{len(oversized_paths) - 10} more)" if len(oversized_paths) > 10 else ""
-                oversized_note = (
-                    f" WARNING: {len(oversized)} file(s) exceeded the "
-                    f"{_SEARCH_LITERAL_MAX_FILE_BYTES}-byte scan cap and were NOT searched — this "
-                    f"is NOT a guaranteed-complete answer if your target could be in one of them: "
-                    f"{shown}{more}. Read those directly instead."
+            budget_note = ""
+            if skipped_over_budget:
+                skipped_paths = sorted(item.get("path", "") for item in skipped_over_budget)
+                shown = ", ".join(skipped_paths[:10])
+                more = f" (+{len(skipped_paths) - 10} more)" if len(skipped_paths) > 10 else ""
+                budget_note = (
+                    f" WARNING: {len(skipped_over_budget)} file(s) were not reached this call "
+                    f"(the {_SEARCH_LITERAL_MAX_TOTAL_SCAN_BYTES}-byte total scan budget ran out "
+                    f"before reaching them — NOT a permanent exclusion, just this call's cutoff) "
+                    f"and this is NOT a guaranteed-complete answer if your target could be in one "
+                    f"of them: {shown}{more}. Read those directly, or re-run search_literal if "
+                    f"you need them specifically covered."
                 )
             if not matches:
                 return (
                     f"No occurrences of {term!r} found — exhaustively scanned {scanned} of "
-                    f"{len(candidates)} candidate files (skipped binaries/lockfiles/oversized "
-                    f"files). This is a real, complete answer for the files scanned, not an "
-                    f"index-based guess.{oversized_note}"
+                    f"{len(to_scan)} candidate files (skipped binaries/lockfiles). This is a "
+                    f"real, complete answer for the files scanned, not an index-based "
+                    f"guess.{budget_note}"
                 )
             return (
-                f"Exhaustively scanned {scanned} of {len(candidates)} candidate files — "
-                f"{len(matches)} matching line(s){truncation_note}:{oversized_note}\n" + "\n".join(matches)
+                f"Exhaustively scanned {scanned} of {len(to_scan)} candidate files — "
+                f"{len(matches)} matching line(s){truncation_note}:{budget_note}\n" + "\n".join(matches)
             )
 
         def _run_tests(test_commands: str, branch: str = None):
@@ -2536,11 +2576,11 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             "- search_literal — args: term (an exact string/identifier — e.g. an env var or "
             "config key name); unlike search_code (which queries GitHub's search index and is "
             "NOT guaranteed complete — capped results, indexing lag), this actually fetches "
-            "and greps real file content across the whole repo, so it is a guaranteed-complete "
-            "answer for the files it scans. Slower than search_code (one request per candidate "
-            "file) — use search_code first, and reach for this specifically when you are about "
-            "to state or rely on 'every place X is used/read' being complete, such as before "
-            "proposing a cross-file refactor plan",
+            "and greps real file content across the whole repo (concurrently, not one file at a "
+            "time), so it is a guaranteed-complete answer for the files it scans. Still slower "
+            "than search_code — use search_code first, and reach for this specifically when you "
+            "are about to state or rely on 'every place X is used/read' being complete, such as "
+            "before proposing a cross-file refactor plan",
             "- diff_branches — args: base (branch name), head (branch name)",
             "- list_commits — args: branch (branch name), limit (max number of commits, integer)",
             "- list_pull_requests — args: state (optional — 'open', 'closed', or 'all', defaults "
@@ -2729,6 +2769,12 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                         return "No matching files found."
                     return "\n".join(f"- [{f['id']}] {f['name']} ({f['mimeType']}, modified {f.get('modifiedTime', '?')})" for f in results)
                 return await asyncio.to_thread(read_drive_file_fn, token, args.get("file_id"))
+            if tool_action == "search_literal":
+                # Dedicated branch, not folded into _dispatch_github below — _search_literal is
+                # itself async now (its blob fetches run concurrently via asyncio.gather), so it
+                # must be awaited directly rather than run inside _dispatch_github's synchronous
+                # catch-all, which is offloaded to a worker thread as a whole.
+                return await _search_literal(args.get("term"))
             if tool_action == "run_python":
                 # run_python_sandboxed always returns {"output", "error"} and never raises —
                 # normalized to this loop's own "ERROR: ..." string convention (used by every
@@ -2750,8 +2796,6 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     return _find_file(args.get("query"))
                 if tool_action == "trace_symbol":
                     return _trace_symbol(args.get("symbol"))
-                if tool_action == "search_literal":
-                    return _search_literal(args.get("term"))
                 if tool_action == "diff_branches":
                     return _diff_branches(args.get("base"), args.get("head"))
                 if tool_action == "list_commits":
@@ -2767,16 +2811,21 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
 
         architecture_map = ""
         if is_audit_task:
-            architecture_map = _AUDIT_TASK_SEARCH_NUDGE
             await safe_emit_event(
                 "trace_detail",
                 {
                     "node": "tool_agent_node",
                     "title": "Building architecture map...",
-                    "detail": "Scanning internal imports across the repo before investigating.",
+                    "detail": "Reading the project README and scanning internal imports before investigating.",
                 }
             )
             tree_items = await asyncio.to_thread(_fetch_repo_tree_items)
+            if isinstance(tree_items, list):
+                # README first — real documented project context before the more tactical
+                # import-graph/search-tool guidance below, same "inject it, don't rely on the
+                # model remembering to seek it out" reasoning as everything else in this block.
+                architecture_map = await asyncio.to_thread(_build_readme_context, tree_items, _fetch_file_content)
+            architecture_map += _AUDIT_TASK_SEARCH_NUDGE
             if isinstance(tree_items, list):
                 architecture_map += await asyncio.to_thread(_build_architecture_map, tree_items, _fetch_file_content)
 

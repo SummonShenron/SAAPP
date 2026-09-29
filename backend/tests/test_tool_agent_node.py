@@ -30,6 +30,14 @@ def _llm_response(**payload):
     return SimpleNamespace(content=json.dumps(payload))
 
 
+# A substring unique to GROUNDING_CHECK_PROMPT (constraints.py) — see the matching constant/
+# comment in test_react_loop_retry_enforcement.py. Only needed here where a test's fake_ainvoke
+# indexes/pops a fixed `responses` list AND asserts an exact captured_prompts count — most of this
+# file's fake_ainvoke definitions always return the same canned "final" regardless of call count,
+# which the grounding check already treats as ungrounded-claims-free without any special handling.
+GROUNDING_CHECK_MARKER = "REAL TOOL OBSERVATIONS GATHERED THIS TURN"
+
+
 def _http_response(status_code, json_data=None, text=""):
     resp = Mock()
     resp.status_code = status_code
@@ -2290,18 +2298,67 @@ async def test_search_literal_no_matches_says_so_explicitly(monkeypatch):
 
 
 @run_async
-async def test_search_literal_warns_when_a_candidate_was_too_big_to_scan(monkeypatch):
-    """Real production gap (docs/coding-agent-roadmap.md, Section 12): agent_workflow.py itself
-    grew past _SEARCH_LITERAL_MAX_FILE_BYTES this session and got silently excluded from
-    "candidates" — the tool then confidently reported "no occurrences found, exhaustively
-    scanned N of N candidate files" for a symbol that genuinely exists in that exact file. The
-    observation fed back into the loop must now say explicitly when a file was skipped for size."""
+async def test_search_literal_scans_a_file_that_would_have_exceeded_the_old_per_file_cap(monkeypatch):
+    """The exact regression this fix closes (docs/coding-agent-roadmap.md, Sections 12 & 14): a
+    file's real content must actually get searched as long as the call's TOTAL scan budget can
+    afford it — a single large file (previously permanently excluded by a flat per-file cap
+    regardless of the call's actual remaining budget) is no longer excluded by size alone."""
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    repo_resp = _http_response(200, {"default_branch": "main"})
+    large_size = 500_000  # would have been permanently excluded under the old 200KB-per-file cap
+    tree_resp = _http_response(200, {"tree": [
+        {"path": "backend/services/agent_workflow.py", "type": "blob", "size": large_size, "sha": "sha1"},
+    ]})
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        if "/git/trees/" in url:
+            return tree_resp
+        if "/git/blobs/" in url:
+            return _http_response(200, {"encoding": "base64", "content": _b64("def _format_react_attempts():\n    pass\n")})
+        if "/contents/" in url:
+            return _http_response(200, {"content": _b64("import os\n")})
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+
+    captured_prompts = []
+    responses = [
+        _llm_response(action="query", purpose="Search", tool_action="search_literal", args={"term": "_format_react_attempts"}),
+        _llm_response(action="final", answer="done"),
+    ]
+
+    async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+    monkeypatch.setattr(aw.lite_llm_deep, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("find every occurrence of _format_react_attempts"))
+
+    assert len(captured_prompts) == 2
+    assert "backend/services/agent_workflow.py:1: def _format_react_attempts" in captured_prompts[1]
+    assert "exceeded the" not in captured_prompts[1]
+
+
+@run_async
+async def test_search_literal_reports_files_not_reached_when_budget_exhausted(monkeypatch):
+    """The total scan budget replaced the flat per-file cap, but a genuinely exhausted budget
+    must still be disclosed honestly — the files left out are reported as 'not reached this
+    call' rather than silently dropped, and explicitly NOT framed as a permanent exclusion."""
+    monkeypatch.setattr(aw, "_SEARCH_LITERAL_MAX_TOTAL_SCAN_BYTES", 150)
     monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
     monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
     repo_resp = _http_response(200, {"default_branch": "main"})
     tree_resp = _http_response(200, {"tree": [
         {"path": "small.py", "type": "blob", "size": 100, "sha": "sha1"},
-        {"path": "backend/services/agent_workflow.py", "type": "blob", "size": aw._SEARCH_LITERAL_MAX_FILE_BYTES + 1, "sha": "sha2"},
+        {"path": "big.py", "type": "blob", "size": 200, "sha": "sha2"},
     ]})
 
     def fake_get(url, headers=None, params=None):
@@ -2325,6 +2382,8 @@ async def test_search_literal_warns_when_a_candidate_was_too_big_to_scan(monkeyp
     ]
 
     async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
         captured_prompts.append(prompt)
         return responses[len(captured_prompts) - 1]
 
@@ -2334,24 +2393,61 @@ async def test_search_literal_warns_when_a_candidate_was_too_big_to_scan(monkeyp
     await aw.tool_agent_node(_state("find every occurrence of _format_react_attempts"))
 
     assert len(captured_prompts) == 2
-    assert "exceeded the" in captured_prompts[1]
-    assert "backend/services/agent_workflow.py" in captured_prompts[1]
-    assert "NOT searched" in captured_prompts[1]
+    assert "not reached this call" in captured_prompts[1]
+    assert "big.py" in captured_prompts[1]
+    assert "NOT a permanent exclusion" in captured_prompts[1]
 
 
-def test_search_literal_skips_oversized_and_binary_files():
-    items = [
-        {"path": "small.py", "type": "blob", "size": 100, "sha": "a"},
-        {"path": "huge.py", "type": "blob", "size": aw._SEARCH_LITERAL_MAX_FILE_BYTES + 1, "sha": "b"},
-        {"path": "image.png", "type": "blob", "size": 100, "sha": "c"},
-        {"path": "yarn.lock", "type": "blob", "size": 100, "sha": "d"},
+@run_async
+async def test_search_literal_blob_fetches_run_concurrently(monkeypatch):
+    """Proves the parallelization itself, not just correctness: several candidate files' blob
+    fetches must overlap in time via asyncio.gather, not run one request at a time — the whole
+    point of pointing PR #73's batching primitive at this loop's own fetches."""
+    import time
+
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    repo_resp = _http_response(200, {"default_branch": "main"})
+    file_count = 6  # fits in one _SEARCH_LITERAL_FETCH_CONCURRENCY (8) batch
+    tree_resp = _http_response(200, {"tree": [
+        {"path": f"file{i}.py", "type": "blob", "size": 100, "sha": f"sha{i}"} for i in range(file_count)
+    ]})
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        if "/git/trees/" in url:
+            return tree_resp
+        if "/git/blobs/" in url:
+            time.sleep(0.2)
+            return _http_response(200, {"encoding": "base64", "content": _b64("nothing interesting here\n")})
+        if "/contents/" in url:
+            return _http_response(200, {"content": _b64("import os\n")})
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+
+    responses = [
+        _llm_response(action="query", purpose="Search", tool_action="search_literal", args={"term": "nonexistent"}),
+        _llm_response(action="final", answer="done"),
     ]
-    candidates = [
-        item for item in items
-        if item.get("size", 0) <= aw._SEARCH_LITERAL_MAX_FILE_BYTES
-        and not item.get("path", "").lower().endswith(aw._SEARCH_LITERAL_SKIP_EXTENSIONS)
-    ]
-    assert [c["path"] for c in candidates] == ["small.py"]
+
+    async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
+        return responses.pop(0)
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+    monkeypatch.setattr(aw.lite_llm_deep, "ainvoke", fake_ainvoke)
+
+    start = time.monotonic()
+    await aw.tool_agent_node(_state("find every occurrence of nonexistent"))
+    elapsed = time.monotonic() - start
+
+    # 6 sequential 0.2s blob fetches would take >= 1.2s; real concurrency (all 6 fit in one
+    # gather batch) keeps this well under that.
+    assert elapsed < 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -2488,6 +2584,35 @@ def test_repo_top_level_segments_includes_dirs_and_root_file_stems():
     assert segments == {"backend", "local", "app.py", "app"}
 
 
+def test_import_scope_key_disambiguates_relative_imports_by_directory():
+    # The actual bug this guards: the bare string '.utils' is ambiguous repo-wide — it resolves
+    # relative to whichever file imports it, so the same string in two different directories
+    # names two completely different real modules.
+    key_a = aw._import_scope_key("backend/services/agent_workflow.py", ".utils")
+    key_b = aw._import_scope_key("frontend/components/Foo.tsx", ".utils")
+    assert key_a != key_b
+    assert key_a == "backend/services::.utils"
+    assert key_b == "frontend/components::.utils"
+
+
+def test_import_scope_key_same_directory_same_key():
+    # Two files in the SAME directory importing the same relative module really do refer to the
+    # same real target — must still collapse into one reverse-map entry, not over-disambiguate.
+    key_a = aw._import_scope_key("backend/services/agent_workflow.py", ".utils")
+    key_b = aw._import_scope_key("backend/services/react_loop.py", ".utils")
+    assert key_a == key_b
+
+
+def test_import_scope_key_leaves_absolute_imports_unprefixed():
+    # An absolute import (a real top-level package name) has no such ambiguity — it's the exact
+    # same output as before this fix, so the normal (non-relative) case stays just as readable.
+    assert aw._import_scope_key("app.py", "backend.services.github_service") == "backend.services.github_service"
+
+
+def test_import_scope_key_handles_root_level_importing_file():
+    assert aw._import_scope_key("app.py", ".utils") == "(repo root)::.utils"
+
+
 def test_build_architecture_map_builds_forward_and_reverse_graph():
     tree_items = [
         {"path": "app.py", "size": 10, "sha": "s1"},
@@ -2509,6 +2634,39 @@ def test_build_architecture_map_builds_forward_and_reverse_graph():
     assert " os <-" not in result
 
 
+def test_build_architecture_map_does_not_conflate_same_named_relative_imports_across_directories():
+    """The actual regression this guards (docs/coding-agent-roadmap.md, Section 16): two files in
+    completely different directories both write `from .utils import x` — before the fix, the
+    reverse map's bare-string key would have merged them into one 'imported by: both files' entry
+    even though each one's `.utils` names a totally different real module. Each directory's
+    `.utils` must land in its own separate reverse-map entry, naming only its own real importer."""
+    tree_items = [
+        {"path": "backend/services/agent_workflow.py", "size": 10, "sha": "s1"},
+        {"path": "backend/services/utils.py", "size": 10, "sha": "s2"},
+        {"path": "frontend/components/Foo.tsx", "size": 10, "sha": "s3"},
+        {"path": "frontend/components/utils.ts", "size": 10, "sha": "s4"},
+    ]
+    file_contents = {
+        "backend/services/agent_workflow.py": "from .utils import helper\n",
+        "backend/services/utils.py": "import os\n",
+        "frontend/components/Foo.tsx": "import { helper } from './utils';\n",
+        "frontend/components/utils.ts": "export function helper() {}\n",
+    }
+
+    def fake_fetch(path):
+        return file_contents[path], None
+
+    result = aw._build_architecture_map(tree_items, fake_fetch)
+
+    # Each directory's ".utils"/"./utils" gets its OWN reverse-map entry, naming only its own
+    # real importer — not merged with the unrelated other directory's same-named import.
+    assert "backend/services::.utils <- imported by: backend/services/agent_workflow.py" in result
+    assert "frontend/components::./utils <- imported by: frontend/components/Foo.tsx" in result
+    # The bug this guards: neither entry lists the OTHER directory's importer.
+    assert "backend/services::.utils <- imported by: backend/services/agent_workflow.py, frontend" not in result
+    assert "frontend/components::./utils <- imported by: frontend/components/Foo.tsx, backend" not in result
+
+
 def test_build_architecture_map_skips_files_with_no_internal_imports():
     tree_items = [{"path": "app.py", "size": 10, "sha": "s1"}]
 
@@ -2525,6 +2683,115 @@ def test_build_architecture_map_skips_fetch_errors_without_raising():
         return None, "ERROR: could not fetch app.py (404)"
 
     assert aw._build_architecture_map(tree_items, fake_fetch) == ""
+
+
+# ---------------------------------------------------------------------------
+# README-first context for audit-style tasks (Section 17) — real documented project context
+# injected before the more tactical import-graph/search-tool guidance, same "inject it, don't
+# rely on the model remembering to seek it out" reasoning as the architecture map above.
+# ---------------------------------------------------------------------------
+
+def test_find_readme_path_finds_root_level_readme():
+    tree_items = [{"path": "backend/README.md"}, {"path": "README.md"}, {"path": "app.py"}]
+    assert aw._find_readme_path(tree_items) == "README.md"
+
+
+def test_find_readme_path_ignores_nested_readmes():
+    # Root-level only, deliberately — a nested README (e.g. a subpackage's own) isn't the
+    # whole-project context this exists to surface.
+    tree_items = [{"path": "backend/services/README.md"}, {"path": "app.py"}]
+    assert aw._find_readme_path(tree_items) is None
+
+
+def test_find_readme_path_none_when_no_readme_present():
+    tree_items = [{"path": "app.py"}, {"path": "backend/services/agent_workflow.py"}]
+    assert aw._find_readme_path(tree_items) is None
+
+
+def test_build_readme_context_includes_real_content():
+    tree_items = [{"path": "README.md"}]
+
+    def fake_fetch(path):
+        return "# SAAPP\n\nA LangGraph-based RAG chatbot.\n", None
+
+    result = aw._build_readme_context(tree_items, fake_fetch)
+    assert "README.md" in result
+    assert "A LangGraph-based RAG chatbot." in result
+
+
+def test_build_readme_context_truncates_long_readmes():
+    tree_items = [{"path": "README.md"}]
+    long_content = "x" * (aw._README_MAX_CHARS + 500)
+
+    def fake_fetch(path):
+        return long_content, None
+
+    result = aw._build_readme_context(tree_items, fake_fetch)
+    assert "truncated" in result
+    assert len(result) < len(long_content) + 500  # genuinely cut short, not the whole thing
+
+
+def test_build_readme_context_empty_when_no_readme_in_tree():
+    assert aw._build_readme_context([{"path": "app.py"}], lambda path: ("unused", None)) == ""
+
+
+def test_build_readme_context_empty_on_fetch_error():
+    tree_items = [{"path": "README.md"}]
+
+    def fake_fetch(path):
+        return None, "ERROR: could not fetch README.md (404)"
+
+    assert aw._build_readme_context(tree_items, fake_fetch) == ""
+
+
+def test_build_readme_context_empty_for_blank_readme():
+    tree_items = [{"path": "README.md"}]
+    assert aw._build_readme_context(tree_items, lambda path: ("   \n", None)) == ""
+
+
+@run_async
+async def test_audit_task_readme_is_injected_before_the_search_nudge(monkeypatch):
+    """Full regression test through the real tool_agent_node path: a repo with a root README
+    must have its real content injected into architecture_map, ordered before the search_literal
+    nudge and the import graph — README-first, matching the real reasoning order."""
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    repo_resp = _http_response(200, {"default_branch": "main"})
+    tree_resp = _http_response(200, {"tree": [
+        {"path": "README.md", "type": "blob", "size": 10, "sha": "s0"},
+        {"path": "app.py", "type": "blob", "size": 10, "sha": "s1"},
+    ]})
+    file_contents = {
+        "README.md": "# SAAPP\n\nA LangGraph-based RAG chatbot.\n",
+        "app.py": "import os\n",
+    }
+
+    def fake_get(url, headers=None, params=None):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        if "/git/trees/" in url:
+            return tree_resp
+        if "/contents/" in url:
+            path = url.split("/contents/", 1)[1]
+            return _http_response(200, {"content": _b64(file_contents[path])})
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+
+    captured_kwargs = {}
+
+    async def fake_run_react_loop(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"final_answer": "done", "attempts": [], "show_work": False}
+
+    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+
+    await aw.tool_agent_node(_state("scan the repo — tell me every file that touches process_pr_summary"))
+
+    architecture_map = captured_kwargs["architecture_map"]
+    assert "A LangGraph-based RAG chatbot." in architecture_map
+    assert architecture_map.index("A LangGraph-based RAG chatbot.") < architecture_map.index("AUDIT TASK DETECTED")
 
 
 @run_async

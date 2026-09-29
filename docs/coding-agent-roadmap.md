@@ -1668,6 +1668,194 @@ last.
 
 ---
 
+## 14. The reward evaluator can't catch fabrication — it's one layer too late by design (fixed, built directly)
+
+External code review (asked to look for what still lets the agent fabricate instead of
+verifying) traced the actual pipeline: `tool_agent_node`'s `run_react_loop` produces
+`final_answer` + `attempts` (the real tool observations) as separate things; `content_to_format`
+then folds `final_answer` (plus, only if the model itself sets `show_work=True`, a dump of
+`attempts`) into one string that becomes `voice_payload["data"]` via `formatter_node`. A second
+LLM call (the Voice Composer, in `app.py`) rewrites that `data` into the actual persona response,
+and only THEN does `evaluate_response` (`reward_evaluator.py`) run — with a prompt that explicitly
+says "Judge strictly against the DATA... not against outside knowledge" (`constraints.py`).
+
+So the reward evaluator is a faithfulness checker for the persona-rewrite step ("did the Voice
+Composer stay true to the data it was handed"), not a grounding checker for the investigation
+itself. If `run_react_loop` invents a fact in its own `final_answer`, that fabrication becomes
+"the DATA" by the time the evaluator ever sees it — the Voice Composer faithfully repeats it, and
+the evaluator passes it, correctly by its own design, because the response really is consistent
+with what it was given. The fabrication happens one node upstream of where the only grounding
+check in the whole pipeline runs, and by construction that check cannot look further upstream than
+the data it's handed. Worse: `show_work` is the model's OWN call, and it correlates backwards —
+on exactly the questions it's confident enough to skip showing its work, `data` is just the
+unverified `final_answer` with nothing to cross-check it against even in principle.
+
+This is the general case Section 8's `_final_diff_disagrees_with_fetched_content` doesn't cover —
+that catches one specific, mechanically-checkable shape (a fabricated diff hunk); an arbitrary
+prose claim (a function name, a specific value, a "such-and-such exists" assertion) has no
+reliable string/regex check and genuinely needs a second model's judgment instead.
+
+**Fix shipped**, in the only place `final_answer` and `attempts` still exist as separate things —
+inside `run_react_loop` itself (`backend/services/react_loop.py`), before either ever gets
+flattened into `content_to_format`, exactly the same layer Section 8's diff check already lives
+in:
+- `GROUNDING_CHECK_PROMPT` (`constraints.py`) — a second, independent LLM call comparing a
+  proposed final answer against the real observations gathered this turn, instructed to flag only
+  specific checkable claims (a named entity, a value, an existence assertion) not backed by the
+  observations — explicitly told NOT to flag a fair synthesis, a labeled inference, or an honest
+  "couldn't find X," and to err toward NOT flagging when in doubt (a noisy grounding check that
+  cries wolf on reasonable summaries would be worse than the fabrication it's meant to catch).
+- `_check_final_answer_grounding(final_answer, attempts, llm)` (`agent_utils.py`) — runs that
+  check, fail-open on any error (a broken checker must never be able to block every future
+  answer), and skipped entirely when `attempts` is empty (nothing to ground a claim in yet, so a
+  purely conversational "final" never pays the extra LLM-call cost).
+- Wired into `run_react_loop` as the same budget-limited-rejection shape as every other mechanical
+  gate in this loop (capability-denial, ungrounded-diff, stuck-action): reject once, inject a
+  corrective notice naming the specific unsupported claim(s), force one more real step — then let
+  a second attempt through even if it was a false positive, so a genuinely correct answer never
+  loops forever on a bad grounding-check call.
+
+**Real test-suite ripple, not a design flaw but worth recording:** this adds a genuine extra
+`llm.ainvoke()` call on every non-forced "final" that has real attempts — which is nearly every
+existing `run_react_loop`/`tool_agent_node` test in the suite that reaches an accepted answer.
+Rather than hand-editing every affected test's canned-response list/index (dozens of tests across
+`test_react_loop_retry_enforcement.py` and `test_tool_agent_node.py`), each test's `fake_ainvoke`
+now recognizes the grounding check's own prompt (a substring unique to `GROUNDING_CHECK_PROMPT`)
+and short-circuits it as "grounded" without consuming a slot from that test's own response
+list — keeps every existing test focused on what it was actually asserting. New tests added
+specifically for the check itself: `_check_final_answer_grounding`'s own unit tests
+(`test_agent_utils.py` — skips when no attempts, returns claims when flagged, fails open on an
+LLM error or unparseable response) and full `run_react_loop` integration tests
+(`test_react_loop_retry_enforcement.py` — rejected-once-then-corrected, budget-limited on a
+second fabrication, skipped entirely for a zero-attempt conversational final, accepted
+immediately when actually grounded, and skipped on the forced-final last step same as every
+other gate).
+
+---
+
+## 15. `search_literal` parallelized, and its oversized-file exclusion replaced with a total-bytes budget (fixed, built directly)
+
+External code review flagged `search_literal`'s blob-fetch loop as a genuine discovery-speed
+bottleneck: `for item in candidates: requests.get(...)`, one HTTP round trip at a time, up to
+300 candidate files — potentially dozens of seconds to a couple minutes for one tool call, on
+the one tool whose entire reason for existing is being the trustworthy, exhaustive alternative to
+`search_code`'s flaky hosted index. `run_react_loop`'s own top-level batching (Section 5,
+`asyncio.gather` over independent actions) was built for exactly this shape of problem but had
+never been pointed at this loop's OWN fetches, only at the model's top-level tool calls.
+
+The same review also named a second, compounding problem in the same function: files over the
+flat `_SEARCH_LITERAL_MAX_FILE_BYTES` (200KB) cap were permanently excluded from every future
+scan — the real incident this shipped to fix (Section 12) — and the files most likely to exceed
+any fixed per-file cap are exactly the largest, most central, most-referenced files, the ones an
+audit-style task is most likely to actually need. Disclosure (the existing `oversized_note`
+warning) wasn't a fix, just an honest admission of the gap.
+
+**Fix shipped**, both changes in the same function since they touch the same code and the same
+session of work:
+- **Parallelized fetches**: a new `_fetch_blob(item)` helper wraps one blob fetch in
+  `asyncio.to_thread`, and `_search_literal` (now `async def`, moved out of `_dispatch_github`'s
+  synchronous catch-all into its own dedicated branch in `_act` — the same tier as
+  `list_google_calendar_events`/the Gmail/Drive actions, since it needs to be awaited directly)
+  runs candidates through `asyncio.gather` in capped batches of
+  `_SEARCH_LITERAL_FETCH_CONCURRENCY` (8) instead of one at a time.
+- **Total-bytes budget instead of a per-file blacklist**: `_SEARCH_LITERAL_MAX_TOTAL_SCAN_BYTES`
+  (8MB) replaces `_SEARCH_LITERAL_MAX_FILE_BYTES` entirely. Candidates are still considered in
+  their natural tree order (no sort-by-size); a greedy first-fit adds each one to the "will scan"
+  list only if doing so wouldn't push the running total over budget — a single huge file just
+  consumes more of the shared budget for itself, and a smaller file later in the list still gets
+  scanned even if an earlier huge one didn't fit. Anything genuinely left out is reported as "not
+  reached this call" (explicitly NOT a permanent exclusion) rather than silently dropped, same
+  honesty principle as the disclosure it replaces.
+
+**Tests**: rewrote the two tests that exercised the old per-file cap directly (one duplicated the
+old filtering formula as a standalone assertion — deleted rather than updated, since duplicating
+the real algorithm in a second place is exactly the kind of thing that silently drifts; the other
+became a genuine regression test for the fix). Added: a file at 500KB (over the OLD cap) is now
+actually scanned and its match found; a genuinely budget-exhausted call reports the skipped
+file(s) honestly with the new wording; and a concurrency proof (6 blob fetches that each take
+0.2s complete in well under 1.2s, mirroring Section 5's own timing-based proof for the top-level
+batching path). Full suite green — 565 passed, same pre-existing unrelated
+`test_voice_composer.py` failure.
+
+**Deferred, per the agreed priority order**: raising/removing the file-COUNT cap
+(`_SEARCH_LITERAL_MAX_FILES_SCANNED`, still 300) and the architecture map's relative-import
+conflation bug (a latent, not-yet-triggered issue the same review flagged) — next up, not bundled
+into this change.
+
+---
+
+## 16. Architecture map's reverse-import graph could conflate unrelated modules across directories (fixed, built directly)
+
+The same external code review that flagged Section 15's gaps also named a third, latent one:
+`_build_architecture_map`'s reverse graph (`imported_by`) keys on a relative import's literal
+string (Python's `.utils`, JS/TS's `./api`) rather than resolving it — a deliberate, documented
+tradeoff (`_extract_python_imports`'s own comment) to avoid building a real module-resolver. The
+review's own framing checked only Python and reported no relative imports currently in use, so it
+called this latent/not-yet-triggered. Checking further while fixing it: the JS/TS side of the same
+function only ever keeps an import as "internal" when it starts with `.` (`if i.startswith(".")`)
+— meaning literally every internal JS/TS edge in the reverse map has ALWAYS been a relative import,
+and this repo's frontend genuinely has multiple same-named relative imports (`./utils`, etc.) in
+different directories today. This wasn't a hypothetical future risk for the JS side — it was
+already producing incorrectly-merged reverse-map entries in real runs, just never surfaced because
+nobody had compared the map's claims against the real per-directory import graph.
+
+**Fix shipped:** `_import_scope_key(importing_path, import_str)` (`agent_utils.py`) — for a
+relative import, returns `f"{importer_dir}::{import_str}"` instead of the bare string; for an
+absolute import (unambiguous repo-wide already, e.g. `backend.services.foo`), returns it
+unchanged, so the common/normal case renders exactly as it did before. `_build_architecture_map`
+now keys `imported_by` through this function instead of the raw import string — deliberately only
+the REVERSE map; the forward map (`imports_by_file`, "FILE -> ITS INTERNAL IMPORTS") keeps the raw
+string exactly as written in that file, since a reader already knows which file's imports those
+are and there's no ambiguity in that direction. Still not a real module resolver — this scopes by
+directory to stop two unrelated modules from colliding into one entry, it does not resolve either
+one to its actual target file, matching the existing documented tradeoff.
+
+**Tests:** unit tests for `_import_scope_key` itself (disambiguates across directories, collapses
+correctly within the SAME directory, leaves absolute imports unprefixed, handles a root-level
+importing file) plus a full `_build_architecture_map` regression test with two files in different
+directories both writing `from .utils import x` / `import ... from './utils'` — confirms each
+directory's entry lists only its own real importer, never the other's. `_import_scope_key`
+re-exported into `agent_workflow.py`'s namespace alongside the other moved architecture-map
+helpers, matching Section 13's existing re-export convention. Full suite green — 570 passed, same
+pre-existing unrelated `test_voice_composer.py` failure.
+
+---
+
+## 17. README-first context for audit-style tasks (done, built directly)
+
+Last item on the agreed priority order before the two big deferred bets (local checkout swap,
+parallel sub-loops) — cheap, low-risk, no dependencies on anything above. A cross-file
+refactor/audit question benefits from the project's own documented purpose and conventions before
+diving into individual files, the same reasoning that already motivated the architecture map
+(Section 4c) and the search_literal nudge: a capability/context the model must remember to seek
+out on its own gets skipped under pressure, so this rides the same mechanical-injection pattern
+instead of relying on it to think to read README.md for itself.
+
+**Shipped:** `_find_readme_path(tree_items)` / `_build_readme_context(tree_items, fetch_content)`
+(`agent_utils.py`) — root-level only, deliberately (a repo's own top-level README is the one doc
+almost guaranteed to describe what the whole project actually is; a docs/ subfolder's structure
+varies too much project to project to guess at without real signal, and this is meant to be a
+cheap, safe default, not an attempt to discover every doc in the repo). Checks a handful of common
+README filename variants, fetches its real content (via the same `fetch_content` primitive the
+architecture map already uses), truncates at `_README_MAX_CHARS` (6000) with an honest note if cut
+short, and returns "" (not an error) when there's no README, the fetch fails, or it's blank —
+missing documentation isn't a problem worth surfacing to the model, just nothing extra to add.
+
+Wired into `tool_agent_node`'s existing `is_audit_task` block, ordered FIRST — before the
+search_literal nudge and the import graph — so the model gets real project context before the more
+tactical guidance, matching the actual reasoning order (understand what this is, then how to
+search it, then what depends on what).
+
+**Tests:** unit tests for both helpers (finds a root README, ignores a nested one, real content
+included, truncation applied and disclosed, empty on no-README/fetch-error/blank-content) plus a
+full `tool_agent_node` regression test confirming real README content lands in `architecture_map`
+ordered before the search nudge. Confirmed the three existing audit-task tests (none of whose fake
+trees include a README) still pass unchanged — `_find_readme_path` returns `None` for them, so no
+extra fetch is even attempted. Full suite green — 579 passed, same pre-existing unrelated
+`test_voice_composer.py` failure.
+
+---
+
 ## Operational — automatic checkpoint retention (done)
 
 **Shipped:** `backend/services/checkpoint_retention.py` —
@@ -1679,6 +1867,31 @@ Wired into `app.py`'s `lifespan` via the existing `spawn_background_task`
 helper, cancelled cleanly on shutdown. 5 new tests in
 `backend/tests/test_checkpoint_retention.py`. Original incident notes below,
 kept for context.
+
+**Recurrence (second incident) — the per-thread floor alone never bounds total storage.**
+The keep-last-3-per-thread logic above correctly bounds any ONE thread's growth (the
+original incident: one runaway dev thread with 915 checkpoints), but every conversation
+ever created keeps its floor of 3 checkpoints forever — total storage is roughly
+`3 × (every thread_id ever created, all-time, cumulative)`, a number that only grows as
+usage grows, with no decay. The quota refilled a second time purely from thread-COUNT
+growth, with the per-thread pruning working exactly as designed the whole time. There was
+also a latent scaling bug in the pruning pass itself: it used `checkpoints.distinct("thread_id")`
+to enumerate threads, then one `find()` per thread — `distinct()` returns every distinct value
+in a single ~16MB-capped BSON reply, a real risk once distinct thread_ids run into the
+thousands, and a failure there would have been swallowed by the loop's blanket
+`except Exception: logger.exception(...)` (silently retried every 24h, forever).
+
+**Fix shipped:** two changes to `prune_old_checkpoints`. (1) Replaced the
+`distinct()` + N-`find()`-queries loop with a single `$sort` + `$group`-with-`$push`
+aggregation (`allowDiskUse=True`) — scopes each response document to one thread's own
+checkpoints instead of pulling every distinct thread_id into one array, and drops the N
+round-trips entirely. (2) Added a second, independent axis: `max_age_days`
+(`CHECKPOINT_RETENTION_MAX_AGE_DAYS` env var, default 90) unconditionally deletes anything
+older than the cutoff — derived from a timestamp via `ObjectId.from_datetime()`, no schema
+change needed — even a thread's last few checkpoints still under its own per-thread floor.
+This is the axis that actually caps total growth against all-time thread count; the
+per-thread floor alone structurally cannot. 3 new tests covering the age axis specifically
+(deletes-within-floor, disabled via `max_age_days<=0`, keeps-anything-newer-than-cutoff).
 
 **Incident this session:** the Atlas cluster hit its 512MB storage quota and
 started rejecting all writes app-wide (new signups, uploads, memory saves —
@@ -1696,15 +1909,10 @@ confirmed via a live write test afterward. Old checkpoints are only needed for
 LangGraph's time-travel/replay of past turns, not for continuing a conversation —
 keeping the last few per thread preserves resumability without unbounded growth.
 
-**Still needed — this will silently recur without it:** an automatic pruning
-step (e.g. a scheduled job, or prune-on-write triggered periodically) that keeps
-only the last N checkpoints per `thread_id` going forward, so this doesn't
-require another manual cluster-wide diagnosis next time it creeps up. Rough
-shape: reuse the exact keep-last-N-per-thread query used for tonight's manual
-cleanup, run on a schedule (daily/weekly) or opportunistically (e.g. after every
-Kth checkpoint write for a given thread). Open question: what's the right N —
-tonight used 3 as a safe manual-cleanup default; the real automated policy might
-want to key retention off something more meaningful (e.g. time-based: keep
-everything from the last 7 days regardless of count, prune anything older) rather
-than a flat per-thread count, since a single very active thread (like the one
-that caused this) would otherwise still grow unbounded within its "last N."
+**Resolved** by the automatic pruning step described above the incident notes —
+this section originally named the wrong specific worry (one very active thread
+growing unbounded within its "last N," which the per-thread floor alone does
+correctly bound) and missed the one that actually caused the recurrence
+(all-time thread-COUNT growth, which no flat per-thread count can ever bound).
+See "Recurrence (second incident)" above for the actual fix — a real age-based
+cutoff alongside the per-thread floor, not just a bigger N.
