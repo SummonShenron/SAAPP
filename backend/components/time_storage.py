@@ -66,7 +66,8 @@ def add_time_entry(payload: TimeEntryCreate) -> TimeEntry:
             requests.post(
                 f"{os.getenv('PAAPP_BASE_URL', 'http://localhost:8000')}/api/sync-google",
                 json={"activity": entry.activity, "date": entry.date, "duration": entry.duration_minutes},
-                headers={"x-saapp": "true"}
+                headers={"x-saapp": "true"},
+                timeout=10,
             )
             logger.info(f"Sync triggered for event: {entry.activity}")
         except Exception as e:

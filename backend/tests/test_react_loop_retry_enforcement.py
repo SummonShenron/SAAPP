@@ -28,6 +28,13 @@ def _llm_response(**payload):
 # actually asserting instead of all needing their own bespoke grounded-response bookkeeping.
 GROUNDING_CHECK_MARKER = "REAL TOOL OBSERVATIONS GATHERED THIS TURN"
 
+# A substring unique to IDIOM_GROUNDING_CHECK_PROMPT specifically (both it and
+# GROUNDING_CHECK_PROMPT share the "REAL TOOL OBSERVATIONS..." marker above, since they're
+# siblings asking different questions about the same attempts) — lets a test give the idiom
+# check its OWN distinct canned response instead of always falling through to the generic
+# "grounded" short-circuit every other prompt gets.
+IDIOM_CHECK_MARKER = "PROPOSED CODE is genuinely tailored"
+
 
 @run_async
 async def test_run_react_loop_uses_the_passed_llm_not_the_default():
@@ -1034,8 +1041,11 @@ async def test_diff_grounded_in_real_read_is_accepted_immediately():
 
 @run_async
 async def test_diff_for_a_brand_new_file_is_never_flagged():
-    """A `new file mode` diff has nothing pre-existing to verify — must never be rejected even
-    with zero prior read_repo_file attempts for that path."""
+    """A `new file mode` diff has nothing pre-existing to verify — must never be rejected by the
+    diff-grounding check specifically, even with zero prior read_repo_file attempts for that
+    exact path. Seeded with one unrelated successful precedent-research attempt so the separate,
+    broader no_precedent_research gate (any code proposal needs SOME real research this turn,
+    new file or not) doesn't also fire here — this test is about the diff check's own scope."""
     new_file_answer = (
         "```diff\n"
         "diff --git a/backend/new_thing.py b/backend/new_thing.py\n"
@@ -1073,6 +1083,11 @@ async def test_diff_for_a_brand_new_file_is_never_flagged():
             act=act,
             max_iterations=5,
             node_name="test_node",
+            initial_attempts=[{
+                "purpose": "Look at an existing helper for conventions",
+                "action_desc": "read_repo_file(path=backend/services/other_thing.py)",
+                "observation": "def existing_helper():\n    return 1\n",
+            }],
         )
     finally:
         aw.lite_llm.ainvoke = orig
@@ -1287,6 +1302,318 @@ async def test_forced_final_on_last_step_skips_the_grounding_check():
 
     assert len(captured_prompts) == 2
     assert result["final_answer"] == "PR #999, 'Add quantum caching', fixed the bug."
+
+
+# ---------------------------------------------------------------------------
+# The second, distinct grounding axis _check_final_answer_grounding is structurally forbidden
+# from covering: not "is any claim false" but "is this code actually derived from what was
+# found, or generic/exampleish boilerplate that would look the same regardless." Two gates:
+# a cheap mechanical one (no_precedent_research — any code proposal needs SOME real research
+# this turn), and an LLM judge (idiom grounding) that classifies WHY ungrounded code is
+# ungrounded, since the two causes need different corrective nudges.
+# ---------------------------------------------------------------------------
+
+@run_async
+async def test_no_precedent_research_gate_rejects_code_with_zero_research_then_accepts():
+    """The cheap, mechanical gate: a 'final' proposing code with ZERO successful read_repo_file/
+    search_code/search_literal/find_file result this turn must be rejected once, forcing real
+    research, before a corrected answer (now backed by a real read) is accepted."""
+    code_answer = "```python\ndef helper():\n    return 1\n```"
+    captured_prompts = []
+    responses = [
+        _llm_response(action="final", answer=code_answer),
+        _llm_response(action="query", purpose="Look at an existing helper", tool_action="read_repo_file", args={"path": "x.py"}),
+        _llm_response(action="final", answer=code_answer),
+    ]
+
+    async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            return "def existing_helper():\n    return 1\n"
+
+        result = await aw.run_react_loop(
+            question="add a new helper function",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert len(captured_prompts) == 3
+    assert result["final_answer"] == code_answer
+    assert "haven't actually looked at any real code" in captured_prompts[1]
+
+
+@run_async
+async def test_no_precedent_research_gate_rejection_is_budget_limited():
+    code_answer = "```python\ndef helper(): pass\n```"
+    captured_prompts = []
+    responses = [
+        _llm_response(action="final", answer=code_answer),
+        _llm_response(action="final", answer=code_answer),
+    ]
+
+    async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            return "unused"
+
+        result = await aw.run_react_loop(
+            question="add a helper",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert len(captured_prompts) == 2
+    assert result["final_answer"] == code_answer
+
+
+@run_async
+async def test_no_precedent_research_gate_prevents_a_wasted_idiom_check_call():
+    """Gate ordering matters for cost: the cheap mechanical gate must run BEFORE the expensive
+    idiom LLM judge — zero attempts plus a code proposal should be caught mechanically, without
+    ever spending the extra LLM call the idiom judge would otherwise cost."""
+    idiom_check_calls = {"n": 0}
+    code_answer = "```python\ndef foo(): pass\n```"
+    captured_prompts = []
+    responses = [
+        _llm_response(action="final", answer=code_answer),
+        _llm_response(action="final", answer="Never mind, here's a plain answer with no code."),
+    ]
+
+    async def fake_ainvoke(prompt):
+        if IDIOM_CHECK_MARKER in prompt:
+            idiom_check_calls["n"] += 1
+            return _llm_response(grounded=True)
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            return "unused"
+
+        await aw.run_react_loop(
+            question="add a helper",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert idiom_check_calls["n"] == 0
+
+
+@run_async
+async def test_idiom_grounding_rejects_real_example_ignored_with_specific_notice():
+    """The compliance-problem branch: a real precedent WAS read and the proposed code ignored
+    it — the corrective notice must name that specific precedent, not just repeat 'be more
+    grounded' in the abstract."""
+    generic_answer = "```python\ndef send_email(to, subject, body):\n    smtplib.send(...)\n```"
+    corrected_answer = "```python\ndef send_email(to, subject, body):\n    # follows _execute_send_email's real pattern\n    ...\n```"
+    captured_prompts = []
+    responses = [
+        _llm_response(action="final", answer=generic_answer),
+        _llm_response(action="final", answer=corrected_answer),
+    ]
+
+    async def fake_ainvoke(prompt):
+        if IDIOM_CHECK_MARKER in prompt:
+            return _llm_response(
+                grounded=False, reason_category="real_example_ignored",
+                reason="backend/services/agent_workflow.py's _execute_send_email already shows the real send pattern.",
+            )
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            return "unused"
+
+        result = await aw.run_react_loop(
+            question="add a send_email helper",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+            initial_attempts=[{
+                "purpose": "Read the existing send pattern",
+                "action_desc": "read_repo_file(path=backend/services/agent_workflow.py)",
+                "observation": "def _execute_send_email(...):\n    ...\n",
+            }],
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert len(captured_prompts) == 2
+    assert result["final_answer"] == corrected_answer
+    assert "_execute_send_email" in captured_prompts[1]
+    assert "actual template" in captured_prompts[1]
+
+
+@run_async
+async def test_idiom_grounding_rejects_no_real_example_found_with_search_hint():
+    """The discovery-problem branch: nothing comparable was ever found — the corrective notice
+    must point toward searching more, not name a precedent that doesn't exist."""
+    generic_answer = "```python\ndef register_new_tool(name): pass\n```"
+    corrected_answer = "```python\ndef register_new_tool(name):\n    # modeled on the real WRITE_ACTIONS registry entries\n    pass\n```"
+    captured_prompts = []
+    responses = [
+        _llm_response(action="final", answer=generic_answer),
+        _llm_response(action="final", answer=corrected_answer),
+    ]
+
+    async def fake_ainvoke(prompt):
+        if IDIOM_CHECK_MARKER in prompt:
+            return _llm_response(
+                grounded=False, reason_category="no_real_example_found",
+                reason="No existing tool_action registration was ever read this turn.",
+            )
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            return "unused"
+
+        result = await aw.run_react_loop(
+            question="add a new tool action",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+            initial_attempts=[{
+                "purpose": "Look at something unrelated",
+                "action_desc": "read_repo_file(path=README.md)",
+                "observation": "# SAAPP\nA chatbot.\n",
+            }],
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert len(captured_prompts) == 2
+    assert result["final_answer"] == corrected_answer
+    assert "No existing tool_action registration" in captured_prompts[1]
+    assert "Search for and read a real" in captured_prompts[1]
+
+
+@run_async
+async def test_idiom_grounding_rejection_is_budget_limited():
+    generic_answer = "```python\ndef foo(): pass\n```"
+    captured_prompts = []
+    responses = [
+        _llm_response(action="final", answer=generic_answer),
+        _llm_response(action="final", answer=generic_answer),
+    ]
+
+    async def fake_ainvoke(prompt):
+        if IDIOM_CHECK_MARKER in prompt:
+            return _llm_response(grounded=False, reason_category="no_real_example_found", reason="nothing comparable found")
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            return "unused"
+
+        result = await aw.run_react_loop(
+            question="add a helper",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+            initial_attempts=[{
+                "purpose": "read something", "action_desc": "read_repo_file(path=x.py)", "observation": "def x(): pass\n",
+            }],
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert len(captured_prompts) == 2
+    assert result["final_answer"] == generic_answer
+
+
+@run_async
+async def test_idiom_grounded_code_with_real_precedent_accepted_immediately():
+    """False-positive guard: code that's actually derived from a real precedent must go through
+    on the first try."""
+    code_answer = "```python\ndef send_email(to, subject, body):\n    # follows _execute_send_email's real pattern\n    ...\n```"
+    captured_prompts = []
+    responses = [_llm_response(action="final", answer=code_answer)]
+
+    async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        async def act(decision):
+            return "unused"
+
+        result = await aw.run_react_loop(
+            question="add a send_email helper",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=5,
+            node_name="test_node",
+            initial_attempts=[{
+                "purpose": "Read the existing send pattern",
+                "action_desc": "read_repo_file(path=backend/services/agent_workflow.py)",
+                "observation": "def _execute_send_email(...):\n    ...\n",
+            }],
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert len(captured_prompts) == 1
+    assert result["final_answer"] == code_answer
 
 
 # ---------------------------------------------------------------------------

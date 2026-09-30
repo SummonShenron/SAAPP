@@ -1704,8 +1704,14 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                       style={{
                         position: "absolute",
                         bottom: "45px",
-                        left: "0",
+                        // Anchored from the right, not the left: .icon-row-overlay pins this
+                        // button flush against the screen's right edge (right: 0.75rem), so a
+                        // fixed-width box anchored at left:0 grows rightward straight off-screen
+                        // on mobile. Anchoring from the right instead grows it leftward, into the
+                        // actual available space, regardless of viewport width.
+                        right: "0",
                         width: "200px",
+                        maxWidth: "calc(100vw - 24px)",
                         maxHeight: "260px",
                         background: isEmbedded ? "#121316" : "#121824",
                         border: isEmbedded ? "1px solid rgba(0, 242, 254, 0.4)" : "1px solid #334155",

@@ -99,6 +99,7 @@ class GoogleCalendarOAuth:
         """Exchanges the authorization code, fetches the connected account's email, and returns a
         plain dict shaped for google_calendar_utils.save_connection(username, **result)."""
         flow = self._flow(state, code_verifier)
+        self._allow_insecure_transport_for_local_dev()
         flow.fetch_token(authorization_response=authorization_response)
         credentials = flow.credentials
 
@@ -199,6 +200,19 @@ class GoogleCalendarOAuth:
                 logger.warning("[google_calendar_oauth] Unexpected revoke response for %s: %s", username, response.status_code)
         except requests.RequestException:
             logger.warning("[google_calendar_oauth] Revoke request failed for %s — proceeding to delete the local record anyway.", username)
+
+    def _allow_insecure_transport_for_local_dev(self) -> None:
+        """oauthlib refuses to even PARSE a non-https authorization response URI — a client-side
+        safety check against leaking a token over plaintext, correct for a real deployment, but
+        it also fires for legitimate http://localhost testing, which Google itself explicitly
+        allows as a registered redirect URI for exactly this purpose (this is oauthlib's own
+        defensive check, not a Google requirement). Scoped narrowly to when GOOGLE_REDIRECT_URI
+        is actually a loopback address, so this can never silently weaken the real check for a
+        genuine https:// production redirect URI — the env var oauthlib itself checks
+        (OAUTHLIB_INSECURE_TRANSPORT) is otherwise left untouched."""
+        redirect_uri = os.getenv("GOOGLE_REDIRECT_URI") or ""
+        if redirect_uri.startswith(("http://localhost", "http://127.0.0.1")):
+            os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
     def _fernet(self) -> Fernet:
         key = os.getenv("TOKEN_ENCRYPTION_KEY")

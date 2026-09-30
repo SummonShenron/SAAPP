@@ -18,6 +18,9 @@ from backend.utils.agent_utils import (
     _UnsafeActionRequested,
     _READ_FILE_DEFAULT_LINE_WINDOW,
     _check_final_answer_grounding,
+    _check_idiom_grounding,
+    _final_answer_has_code_block,
+    _has_successful_code_precedent_research,
     _format_react_attempts,
     _final_diff_disagrees_with_fetched_content,
     _is_empty_observation,
@@ -160,6 +163,33 @@ async def run_react_loop(
     attempts yet (nothing to ground a claim in), so a purely conversational "final" never pays this
     extra LLM-call's cost.
 
+    `_check_final_answer_grounding` catches FALSE claims — something stated as fact that never
+    appeared in attempts. Its own prompt explicitly says not to flag a reasonable synthesis or a
+    plainly-labeled inference. That leaves a real, separate gap: generic, exampleish proposed code
+    that isn't factually wrong about anything (it doesn't claim a function exists that doesn't,
+    doesn't misquote a value) but also isn't actually derived from anything real this turn — it's
+    boilerplate that would look identical whether the model had read the repo or read nothing at
+    all. No amount of tuning the existing check catches this, since by design it's only allowed to
+    object to false statements — "ungrounded but not false" is exactly the gap it's told to leave
+    alone. Two more gates close it, same budget-limited-rejection shape as everything above, wired
+    in as their own independent checks rather than folded into the existing one (conflating "is
+    this true" with "is this tailored" would make a single check worse at both):
+    a cheap, mechanical gate first — `_has_successful_code_precedent_research` requires at least
+    one real, non-error, non-empty read_repo_file/search_code/search_literal/find_file result in
+    `attempts` before a "final" containing a code block (`_final_answer_has_code_block`) is
+    accepted; reject once, forcing an actual look at real code before proposing an implementation,
+    with no LLM call needed. Then `_check_idiom_grounding` — a second, independent LLM judge
+    asking a genuinely different question than `_check_final_answer_grounding`'s ("would this code
+    look the same if the model had never seen these real files?", not "is any claim in it false")
+    — classifies WHY ungrounded code is ungrounded, since the two causes need different corrective
+    nudges: `no_real_example_found` (a discovery problem — nothing comparable ever turned up this
+    turn, so the notice should point toward searching more specifically) versus
+    `real_example_ignored` (a compliance problem — a real precedent WAS read and the proposed code
+    didn't use it, so the notice names that specific file/function as the template to actually
+    follow, not just repeats "be more grounded" in the abstract). The mechanical gate matters even
+    with the LLM judge in place: it's what keeps `_check_idiom_grounding` from ever running against
+    an empty `attempts` list with nothing real to compare against.
+
     An extensive diagnostic loop (docs/coding-agent-roadmap.md, Sections 4b-4j) showed every one
     of those real traces burn most of a turn's step budget reading files or searching one at a
     time, well before ever reasoning about them — a genuinely multi-file investigation needs N
@@ -238,6 +268,12 @@ async def run_react_loop(
     ungrounded_claim_reject_count = 0
     MAX_UNGROUNDED_CLAIM_REJECTIONS = 1
     pending_ungrounded_claim_notice: str | None = None
+    no_precedent_research_reject_count = 0
+    MAX_NO_PRECEDENT_RESEARCH_REJECTIONS = 1
+    pending_no_precedent_research_notice: str | None = None
+    idiom_grounding_reject_count = 0
+    MAX_IDIOM_GROUNDING_REJECTIONS = 1
+    pending_idiom_grounding_notice: str | None = None
 
     for step in range(max_iterations):
         forced_final = step == max_iterations - 1
@@ -317,6 +353,12 @@ async def run_react_loop(
         if pending_ungrounded_claim_notice:
             question_for_step += f"\n\n({pending_ungrounded_claim_notice})"
             pending_ungrounded_claim_notice = None
+        if pending_no_precedent_research_notice:
+            question_for_step += f"\n\n({pending_no_precedent_research_notice})"
+            pending_no_precedent_research_notice = None
+        if pending_idiom_grounding_notice:
+            question_for_step += f"\n\n({pending_idiom_grounding_notice})"
+            pending_idiom_grounding_notice = None
 
         prompt = prompt_template.format(
             question=question_for_step,
@@ -410,6 +452,51 @@ async def run_react_loop(
                     "real action before answering again, or remove/qualify them as unverified — do "
                     "not restate them as fact without real evidence from this turn."
                 )
+                continue
+        if action == "final" and not forced_final and no_precedent_research_reject_count < MAX_NO_PRECEDENT_RESEARCH_REJECTIONS:
+            answer_text = decision.get("answer") or ""
+            if _final_answer_has_code_block(answer_text) and not _has_successful_code_precedent_research(attempts):
+                # Cheap, mechanical, no LLM call — a "final" proposing code with zero real,
+                # non-error, non-empty read_repo_file/search_code/search_literal/find_file result
+                # this turn means nothing real was ever actually looked at to model the code on.
+                # Also what keeps _check_idiom_grounding below from ever running against an empty
+                # attempts list with nothing real to compare against.
+                no_precedent_research_reject_count += 1
+                pending_no_precedent_research_notice = (
+                    "Your answer includes code, but you haven't actually looked at any real code "
+                    "in this repo this turn (no successful read_repo_file/search_code/"
+                    "search_literal/find_file result yet). Go find and read something comparable "
+                    "in the real repo before proposing an implementation — do not write code from "
+                    "general knowledge of how a project 'like this' is usually structured."
+                )
+                continue
+        if action == "final" and not forced_final and idiom_grounding_reject_count < MAX_IDIOM_GROUNDING_REJECTIONS:
+            answer_text = decision.get("answer") or ""
+            idiom_issue = await _check_idiom_grounding(answer_text, attempts, llm)
+            if idiom_issue:
+                # The distinct axis _check_final_answer_grounding is structurally forbidden from
+                # covering: not "is any claim false" but "is this code actually derived from what
+                # you found, or generic/exampleish boilerplate that would look the same either
+                # way." The two reason_categories need genuinely different corrective nudges — a
+                # discovery problem (nothing comparable was ever found) versus a compliance
+                # problem (a real precedent WAS read and got ignored) — so the notice itself
+                # differs, not just the fact of rejection.
+                idiom_grounding_reject_count += 1
+                if idiom_issue["reason_category"] == "real_example_ignored":
+                    pending_idiom_grounding_notice = (
+                        "Your proposed code doesn't actually follow a real pattern you already "
+                        f"read this turn: {idiom_issue['reason']} Rewrite it using that as your "
+                        "actual template — not generic inspiration — matching its real "
+                        "structure, naming, and error handling."
+                    )
+                else:
+                    pending_idiom_grounding_notice = (
+                        "Your proposed code looks generic/exampleish rather than genuinely "
+                        f"derived from this repo's real code: {idiom_issue['reason']} Search for "
+                        "and read a real, comparable implementation in this repo before "
+                        "proposing code again — don't invent a plausible-looking equivalent from "
+                        "scratch."
+                    )
                 continue
         if action == "final":
             final_answer = decision.get("answer") or "I wasn't able to find a conclusive answer."

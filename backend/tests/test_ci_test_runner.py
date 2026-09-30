@@ -81,7 +81,7 @@ def test_run_repo_tests_success_returns_conclusion_and_url(monkeypatch):
     _patch_no_sleep(monkeypatch)
     run = {"id": 555, "html_url": "https://github.com/SummonShenron/SAAPP/actions/runs/555", "created_at": _now_iso()}
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/runs") and params and params.get("event") == "workflow_dispatch":
             return _http_response(200, {"workflow_runs": [run]})
         if url.endswith("/actions/runs/555"):
@@ -101,7 +101,7 @@ def test_run_repo_tests_failure_includes_log_excerpt(monkeypatch):
     _patch_no_sleep(monkeypatch)
     run = {"id": 777, "html_url": "https://github.com/SummonShenron/SAAPP/actions/runs/777", "created_at": _now_iso()}
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/runs") and params and params.get("event") == "workflow_dispatch":
             return _http_response(200, {"workflow_runs": [run]})
         if url.endswith("/actions/runs/777"):
@@ -137,7 +137,7 @@ def test_run_repo_tests_times_out_if_never_completes(monkeypatch):
     _patch_no_sleep(monkeypatch)
     run = {"id": 111, "html_url": "https://github.com/SummonShenron/SAAPP/actions/runs/111", "created_at": _now_iso()}
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/runs") and params and params.get("event") == "workflow_dispatch":
             return _http_response(200, {"workflow_runs": [run]})
         if url.endswith("/actions/runs/111"):
@@ -196,11 +196,11 @@ def test_run_python_snippet_dispatches_with_python_snippet_input_not_test_comman
     run = {"id": 42, "html_url": "https://github.com/SummonShenron/SAAPP/actions/runs/42", "created_at": _now_iso()}
     captured_payload = {}
 
-    def fake_post(url, headers=None, json=None):
+    def fake_post(url, headers=None, json=None, **kwargs):
         captured_payload.update(json or {})
         return _http_response(204)
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/runs") and params and params.get("event") == "workflow_dispatch":
             return _http_response(200, {"workflow_runs": [run]})
         if url.endswith("/actions/runs/42"):
@@ -225,7 +225,7 @@ def test_run_python_snippet_success_always_includes_printed_output(monkeypatch):
     _patch_no_sleep(monkeypatch)
     run = {"id": 88, "html_url": "https://github.com/SummonShenron/SAAPP/actions/runs/88", "created_at": _now_iso()}
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/runs") and params and params.get("event") == "workflow_dispatch":
             return _http_response(200, {"workflow_runs": [run]})
         if url.endswith("/actions/runs/88"):
@@ -249,7 +249,7 @@ def test_run_python_snippet_failure_includes_traceback(monkeypatch):
     _patch_no_sleep(monkeypatch)
     run = {"id": 99, "html_url": "https://github.com/SummonShenron/SAAPP/actions/runs/99", "created_at": _now_iso()}
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/runs") and params and params.get("event") == "workflow_dispatch":
             return _http_response(200, {"workflow_runs": [run]})
         if url.endswith("/actions/runs/99"):

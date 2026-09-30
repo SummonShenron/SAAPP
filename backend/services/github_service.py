@@ -7,6 +7,8 @@ from backend.components.constraints import PR_REVIEW_PROMPT
 
 logger = logging.getLogger("SASS Logger")
 
+_GITHUB_API_TIMEOUT_SECONDS = 15
+
 # Helper with automatic exponential retry
 @retry(
     stop=stop_after_attempt(3),
@@ -38,7 +40,7 @@ def process_pr_summary(repo: str, pr_number: int):
     # 1. Fetch changed files
     files_url = f"{api_base}/repos/{repo}/pulls/{pr_number}/files"
     logger.info(f"Requesting PR files from GitHub: {files_url}")
-    files_res = requests.get(files_url, headers=headers)
+    files_res = requests.get(files_url, headers=headers, timeout=_GITHUB_API_TIMEOUT_SECONDS)
 
     if files_res.status_code != 200:
         logger.error(f"Failed to fetch PR files (HTTP {files_res.status_code}): {files_res.text}")
@@ -88,7 +90,7 @@ def process_pr_summary(repo: str, pr_number: int):
     payload = {"body": f"**Sonic Assistant PR Overview**\n\n{comment_body}"}
 
     logger.info(f"Posting review comment to GitHub repository {repo} PR #{pr_number}...")
-    post_res = requests.post(comment_url, headers=headers, json=payload)
+    post_res = requests.post(comment_url, headers=headers, json=payload, timeout=_GITHUB_API_TIMEOUT_SECONDS)
 
     if post_res.status_code == 201:
         comment_url_posted = post_res.json().get("html_url")

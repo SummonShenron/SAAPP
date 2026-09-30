@@ -1856,6 +1856,67 @@ extra fetch is even attempted. Full suite green — 579 passed, same pre-existin
 
 ---
 
+## 18. "Tailored vs exampleish" — a second, distinct grounding axis the existing check can't cover (fixed, built directly)
+
+Real, ongoing frustration reported after Section 14 shipped: the agent still writes generic,
+exampleish code — "here's how you'd implement this" rather than something tailored to this
+specific repo — even after actually reading relevant real files first. External review traced why
+`_check_final_answer_grounding` (Section 14) structurally cannot catch this: its own prompt
+explicitly says not to flag "a reasonable synthesis," "general reasoning," or a plainly-labeled
+inference. Generic boilerplate usually isn't factually WRONG about anything — it doesn't claim a
+function exists that doesn't, doesn't misquote a value — it just doesn't reuse anything real from
+what was actually gathered. That's a different axis entirely ("is this actually derived from what
+you found" vs. "is this true"), and no amount of tuning the existing check closes it, since by
+design it's only allowed to object to false statements.
+
+**Two new gates, wired in as their own independent checks** (not folded into the existing one —
+conflating "is this true" with "is this tailored" would make a single check worse at both), same
+budget-limited-rejection shape as every other mechanical gate in `run_react_loop`:
+
+- **`_has_successful_code_precedent_research`/`_final_answer_has_code_block`** (`agent_utils.py`)
+  — a cheap, mechanical gate with no LLM call: a "final" answer containing a code block must have
+  at least one real, non-error, non-empty `read_repo_file`/`search_code`/`search_literal`/
+  `find_file` result in `attempts` this turn, or it's rejected once, forcing an actual look before
+  proposing an implementation. Also what keeps the LLM judge below from ever running against an
+  empty `attempts` list with nothing real to compare against.
+- **`_check_idiom_grounding`** (`agent_utils.py`, `IDIOM_GROUNDING_CHECK_PROMPT` in
+  `constraints.py`) — a second, independent LLM judge asking a genuinely different question than
+  Section 14's check: "would this code look the same if the model had never seen these real
+  files?" not "is any claim in it false?" Classifies WHY ungrounded code is ungrounded, since the
+  two causes need different corrective nudges: `no_real_example_found` (a discovery problem —
+  nothing comparable ever turned up, so the notice points toward searching more specifically) vs.
+  `real_example_ignored` (a compliance problem — a real precedent WAS read and the proposed code
+  didn't use it, so the notice names that specific file/function as the actual template to follow,
+  not just "be more grounded" in the abstract — the same lesson as the capability-denial
+  watchlist: a concrete pointer to something the model already has is much harder to route around
+  than a vague instruction). "End of the response, not mid-loop" was the framing this needed to
+  satisfy — already true by construction, since like every other gate here it only ever fires when
+  the model proposes `action == "final"`, never during intermediate investigation steps.
+
+**Deferred, deliberately** (per the same review): classifying real-world traces by
+`reason_category` to actually measure the no-discovery vs. ignored-precedent split rather than
+guessing — worth doing once this has real production signal, not before.
+
+**Real test-suite ripple, smaller than Section 14's**: both new prompts share
+`GROUNDING_CHECK_PROMPT`'s "REAL TOOL OBSERVATIONS GATHERED THIS TURN" opening line by design, so
+every existing test's marker-based short-circuit (added in Section 14) transparently neutralizes
+the new idiom-check call too, for free — only one existing test needed a real change
+(`test_diff_for_a_brand_new_file_is_never_flagged`, which had zero real attempts by design and
+now legitimately trips the new mechanical gate; fixed by seeding one unrelated precedent-research
+attempt, since that test is about the diff-check's own scope, not this new gate). Caught a real
+bug while writing the new tests' *rejection* paths specifically (not just the pass-through case):
+the test marker `"genuinely tailored to this specific repository"` silently never matched, because
+the actual prompt string wraps that exact phrase across a line break inside the triple-quoted
+prompt constant — a rejection-path test that only checked "was it accepted" would have passed
+anyway, silently proving nothing. Fixed by shortening the marker to a phrase guaranteed to sit on
+one line. Added 31 unit tests (`test_agent_utils.py`) and 7 integration tests
+(`test_react_loop_retry_enforcement.py` — reject-then-correct for both gates, budget-limited on
+each, gate-ordering/cost-avoidance proof that the mechanical gate prevents a wasted LLM call, and
+an accepted-immediately false-positive guard). Full suite green — 602 passed, same pre-existing
+unrelated `test_voice_composer.py` failure.
+
+---
+
 ## Operational — automatic checkpoint retention (done)
 
 **Shipped:** `backend/services/checkpoint_retention.py` —

@@ -23,6 +23,7 @@ import requests
 
 logger = logging.getLogger("SASS Logger")
 
+_GITHUB_API_TIMEOUT_SECONDS = 15
 WORKFLOW_FILE = "patchy-tests.yml"
 DISPATCH_LOOKUP_RETRIES = 6
 DISPATCH_LOOKUP_DELAY_SECONDS = 2
@@ -64,12 +65,12 @@ def _fetch_run_log(repo: str, run_id: int, headers: dict, api_base: str) -> str:
     point of running a snippet, pass or fail). Never raises — returns "" on any problem, since the
     verdict itself (returned by the caller regardless) is the part that always matters."""
     try:
-        jobs_res = requests.get(f"{api_base}/repos/{repo}/actions/runs/{run_id}/jobs", headers=headers)
+        jobs_res = requests.get(f"{api_base}/repos/{repo}/actions/runs/{run_id}/jobs", headers=headers, timeout=_GITHUB_API_TIMEOUT_SECONDS)
         jobs = jobs_res.json().get("jobs", [])
         if not jobs:
             return ""
         job_id = jobs[0]["id"]
-        log_res = requests.get(f"{api_base}/repos/{repo}/actions/jobs/{job_id}/logs", headers=headers)
+        log_res = requests.get(f"{api_base}/repos/{repo}/actions/jobs/{job_id}/logs", headers=headers, timeout=_GITHUB_API_TIMEOUT_SECONDS)
         if log_res.status_code != 200:
             return ""
         return f"Log excerpt (last {_FAILURE_LOG_TAIL_CHARS} chars):\n{log_res.text[-_FAILURE_LOG_TAIL_CHARS:]}"
@@ -90,7 +91,7 @@ def _dispatch_and_wait(
     dispatch_url = f"{api_base}/repos/{repo}/actions/workflows/{WORKFLOW_FILE}/dispatches"
     dispatch_time = time.time()
     try:
-        res = requests.post(dispatch_url, headers=headers, json={"ref": branch, "inputs": inputs})
+        res = requests.post(dispatch_url, headers=headers, json={"ref": branch, "inputs": inputs}, timeout=_GITHUB_API_TIMEOUT_SECONDS)
     except Exception as e:
         return f"ERROR: could not dispatch the workflow: {e}"
     if res.status_code != 204:
@@ -104,6 +105,7 @@ def _dispatch_and_wait(
             list_res = requests.get(
                 runs_url, headers=headers,
                 params={"branch": branch, "event": "workflow_dispatch", "per_page": 5},
+                timeout=_GITHUB_API_TIMEOUT_SECONDS,
             )
         except Exception:
             continue
@@ -129,7 +131,7 @@ def _dispatch_and_wait(
     elapsed = DISPATCH_LOOKUP_RETRIES * DISPATCH_LOOKUP_DELAY_SECONDS
     while elapsed < max_wait_seconds:
         try:
-            status_res = requests.get(run_status_url, headers=headers)
+            status_res = requests.get(run_status_url, headers=headers, timeout=_GITHUB_API_TIMEOUT_SECONDS)
         except Exception as e:
             return f"ERROR: could not check run status: {e}"
         if status_res.status_code != 200:

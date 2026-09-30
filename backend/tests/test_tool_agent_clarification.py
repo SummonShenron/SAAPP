@@ -40,7 +40,7 @@ def _http_response(status_code, json_data=None, text=""):
 def _setup_github_repo(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
     monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
-    monkeypatch.setattr(aw.requests, "get", lambda url, headers=None, params=None: _http_response(200, {"default_branch": "main"}))
+    monkeypatch.setattr(aw.requests, "get", lambda url, headers=None, params=None, **kwargs: _http_response(200, {"default_branch": "main"}))
     monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
 
 
@@ -137,7 +137,7 @@ async def test_tool_agent_node_clarification_includes_steps_so_far(monkeypatch):
     monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
     monkeypatch.setattr(
         aw.requests, "get",
-        lambda url, headers=None, params=None: (
+        lambda url, headers=None, params=None, **kwargs: (
             _http_response(200, {"default_branch": "main"}) if url.endswith("/repos/SummonShenron/SAAPP")
             else _http_response(200, {"tree": [{"path": "a.py", "type": "blob"}, {"path": "b.py", "type": "blob"}]})
         ),

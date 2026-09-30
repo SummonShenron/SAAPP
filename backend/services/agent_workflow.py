@@ -3,6 +3,7 @@ import asyncio
 import base64
 import os
 import re
+import threading
 import uuid
 import json
 from typing import List, Any, Dict, Optional
@@ -89,6 +90,9 @@ from backend.utils.agent_utils import (
     resolve_recent_mention, safe_emit_event,
 )
 from backend.services.react_loop import run_react_loop, _MAX_BATCH_SIZE
+from backend.services.repo_checkout import (
+    RepoCheckoutError, fetch_and_extract_checkout, cleanup_checkout,
+)
 from backend.utils.insight_utils import (
     # Productivity-insights analytics moved out of this file (docs/coding-agent-roadmap.md,
     # Section 13) — a self-contained module for activity_classifier_node/pattern_detector_node/
@@ -199,6 +203,14 @@ TOOL_AGENT_CAPABILITY_DENIAL_WATCHLIST = [
         "- run_mongo_query —",
     ),
 ]
+
+# A real production trace: a user asked about a genuinely unreachable repo and the very first
+# GitHub call this loop ever makes (_get_default_branch's own repo-info fetch) hung with no
+# explicit timeout — requests' own default is to wait forever on a connect that never completes,
+# not fail fast. Every GitHub REST call in this file shares this one timeout instead of each
+# guessing its own value; tarball downloads (repo_checkout.py) are a real exception with their
+# own longer, separate timeout, since a whole-repo download is a fundamentally bigger transfer.
+_GITHUB_API_TIMEOUT_SECONDS = 15
 
 # search_code rides GitHub's hosted /search/code index — capped at 20 results per query, subject
 # to indexing lag, and explicitly not guaranteed complete by GitHub's own docs. That's fine for
@@ -1428,7 +1440,8 @@ def paapp_node(state: GraphState) -> GraphState:
                 requests.post(
                     f"{PAAPP_BASE_URL}/api/headless-chat",
                     headers={"x-saapp": "true"},
-                    json={"username": username, "question": f"sync event {entry_payload.activity}"}
+                    json={"username": username, "question": f"sync event {entry_payload.activity}"},
+                    timeout=10,
                 )
                 logger.info(f"[PAAPP] Sync trigger request sent to headless API.")
             except Exception:
@@ -1489,13 +1502,14 @@ def paapp_node(state: GraphState) -> GraphState:
 def call_paapp_chat(username: str, question: str) -> dict:
     url = f"{PAAPP_BASE_URL}/api/headless-chat"
     r = requests.post(
-    url,
-    headers={"x-saapp": "true"},
-    json={
-        "username": username,
-        "question": question
-    }
-)
+        url,
+        headers={"x-saapp": "true"},
+        json={
+            "username": username,
+            "question": question
+        },
+        timeout=30,
+    )
     r.raise_for_status()
     return r.json()
 
@@ -2006,7 +2020,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             # kept retrying list_repo_tree, unable to diagnose a bad premise it never saw. None
             # lets the caller retry against a known-good repo instead of guessing a branch for one
             # that doesn't exist.
-            repo_res = requests.get(f"{api_base}/repos/{repo}", headers=headers)
+            repo_res = requests.get(f"{api_base}/repos/{repo}", headers=headers, timeout=_GITHUB_API_TIMEOUT_SECONDS)
             if repo_res.status_code != 200:
                 logger.warning(
                     "[tool_agent_node] Could not fetch repo metadata for %r (status %s).",
@@ -2095,6 +2109,53 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
         _turn_tree_cache: dict = {}
         _turn_file_cache: dict = {}
 
+        # Local repo checkout (backend/services/repo_checkout.py) — turn-scoped, same lifetime
+        # and cleanup pattern as browser_session_holder above. "attempted" guards against
+        # retrying a failed tarball fetch on every single subsequent tool call this turn; once
+        # it's been tried once (success or failure), the result is reused for the rest of the
+        # turn, same as _turn_tree_cache/_turn_file_cache only ever caching successes.
+        checkout_holder: dict = {"handle": None, "attempted": False}
+        checkout_lock = threading.Lock()
+
+        def _get_checkout():
+            # Deliberately plain/sync, not async — every real caller (_fetch_repo_tree_items,
+            # _fetch_file_content, and transitively _list_tree/_find_file/_search_literal) is
+            # already a sync function invoked via asyncio.to_thread at its own call site (the
+            # same established convention as _fetch_repo_tree_items's own blocking requests.get
+            # today), so a blocking call here never touches the event loop. Making this async
+            # instead would force list_repo_tree/find_file out of _dispatch_github's sync
+            # catch-all into their own dedicated _act branches for no real benefit.
+            #
+            # The lock is load-bearing, not defensive: a batched "queries" step (react_loop.py)
+            # runs several actions concurrently via asyncio.gather, each on its own thread via
+            # asyncio.to_thread. Without serializing here, two threads can both read
+            # attempted=False before either sets it, each launching its own full tarball
+            # download of the same repo at once — observed in production as multiple
+            # simultaneous codeload.github.com downloads saturating the connection. Holding the
+            # lock across the whole fetch means concurrent callers block and reuse the one
+            # result instead of each redundantly re-fetching.
+            with checkout_lock:
+                if checkout_holder["attempted"]:
+                    return checkout_holder["handle"]
+                checkout_holder["attempted"] = True
+                try:
+                    handle = fetch_and_extract_checkout(repo, default_branch, headers, api_base)
+                except Exception:
+                    # Catches RepoCheckoutError (the expected failure shape) but deliberately not
+                    # narrowed to it — this is a pure speed optimization layered on top of an
+                    # already-working API path, so ANY unexpected failure here (a truly malformed
+                    # response, a library-level surprise) must degrade to that existing path
+                    # rather than take down the whole turn.
+                    logger.exception("[tool_agent_node] local checkout fetch failed — falling back to the GitHub API.")
+                    return None
+                # Local-mode and API-mode deliberately produce identical observation text (see
+                # the contract-preservation tests in test_tool_agent_node.py), so this is the only
+                # place that ever says which path actually ran — without it, a successful checkout
+                # is silent and indistinguishable from the API path in the logs.
+                logger.info("[tool_agent_node] local checkout ready at %s — using it for this turn's repo reads.", handle.root)
+                checkout_holder["handle"] = handle
+                return handle
+
         async def _get_browser_session() -> BrowserSession:
             if browser_session_holder["session"] is None:
                 ws_endpoint = os.getenv("BROWSERLESS_WS_ENDPOINT")
@@ -2109,6 +2170,8 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             exec(code, {"__builtins__": exec_builtins}, local_scope)
             return local_scope.get("result", None)
 
+        _CHECKOUT_EXCLUDE_DIR_NAMES = ("node_modules", "dist", "__pycache__")
+
         def _fetch_repo_tree_items():
             # Shared by _fetch_repo_paths and _search_literal — a single real fetch of every
             # blob this repo actually has (path, size, sha), so both path-only consumers and
@@ -2117,15 +2180,34 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             # cached, so a transient failure doesn't get "stuck" for the rest of the turn.
             if "items" in _turn_tree_cache:
                 return _turn_tree_cache["items"]
+            checkout = _get_checkout()
+            if checkout is not None:
+                # sha is None here (no git blob object to reference) — nothing in local mode
+                # needs it, since search_literal's local branch reads files directly instead of
+                # fetching a blob by sha through the API.
+                root = Path(checkout.root)
+                items = [
+                    {
+                        "path": path.relative_to(root).as_posix(),
+                        "size": path.stat().st_size,
+                        "type": "blob",
+                        "sha": None,
+                    }
+                    for path in root.rglob("*")
+                    if path.is_file()
+                    and not any(exclude in path.relative_to(root).as_posix() for exclude in _CHECKOUT_EXCLUDE_DIR_NAMES)
+                ]
+                _turn_tree_cache["items"] = items
+                return items
             tree_url = f"{api_base}/repos/{repo}/git/trees/{default_branch}?recursive=1"
-            res = requests.get(tree_url, headers=headers)
+            res = requests.get(tree_url, headers=headers, timeout=_GITHUB_API_TIMEOUT_SECONDS)
             if res.status_code != 200:
                 return f"ERROR: could not fetch tree ({res.status_code})"
             tree_items = res.json().get("tree", [])
             items = [
                 item for item in tree_items
                 if item.get("type") == "blob"
-                and not any(exclude in item.get("path", "") for exclude in ["node_modules", "dist", "__pycache__"])
+                and not any(exclude in item.get("path", "") for exclude in _CHECKOUT_EXCLUDE_DIR_NAMES)
             ]
             _turn_tree_cache["items"] = items
             return items
@@ -2183,8 +2265,28 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             # Cached per turn (see _turn_file_cache above) — only successes are cached.
             if path in _turn_file_cache:
                 return _turn_file_cache[path], None
+            checkout = _get_checkout()
+            if checkout is not None:
+                # path comes straight from a model-supplied tool_action arg — the Contents API
+                # this replaces was inherently safe against a "../../etc/passwd"-style path
+                # (GitHub just 404s on it, never touches this server's own disk), but a local
+                # file read is NOT, unless resolved-path containment is checked explicitly. Same
+                # is_relative_to guard _extract_tarball_safely uses against a malicious tarball
+                # member, applied here against a malicious/malformed requested path instead.
+                root = Path(checkout.root).resolve()
+                local_path = (root / path).resolve()
+                if not local_path.is_relative_to(root):
+                    return None, f"ERROR: {path} is not a valid path in this repo"
+                if not local_path.is_file():
+                    return None, f"ERROR: {path} not found in this repo"
+                try:
+                    decoded = local_path.read_text(encoding="utf-8", errors="replace")
+                except Exception:
+                    return None, f"ERROR: could not decode {path}"
+                _turn_file_cache[path] = decoded
+                return decoded, None
             file_url = f"{api_base}/repos/{repo}/contents/{path}"
-            res = requests.get(file_url, headers=headers)
+            res = requests.get(file_url, headers=headers, timeout=_GITHUB_API_TIMEOUT_SECONDS)
             if res.status_code != 200:
                 return None, f"ERROR: could not fetch {path} ({res.status_code})"
             file_data = res.json()
@@ -2272,7 +2374,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 limit = 10
             res = requests.get(
                 f"{api_base}/repos/{repo}/commits", headers=headers,
-                params={"sha": branch, "per_page": limit},
+                params={"sha": branch, "per_page": limit}, timeout=_GITHUB_API_TIMEOUT_SECONDS,
             )
             if res.status_code != 200:
                 return f"ERROR: could not fetch commits ({res.status_code})"
@@ -2293,6 +2395,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             res = requests.get(
                 f"{api_base}/repos/{repo}/pulls", headers=headers,
                 params={"state": state_filter, "sort": "updated", "direction": "desc", "per_page": limit},
+                timeout=_GITHUB_API_TIMEOUT_SECONDS,
             )
             if res.status_code != 200:
                 return f"ERROR: could not fetch pull requests ({res.status_code})"
@@ -2314,6 +2417,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 f"{api_base}/search/code",
                 headers={**headers, "Accept": "application/vnd.github.text-match+json"},
                 params={"q": f"{query} repo:{repo}", "per_page": 20},
+                timeout=_GITHUB_API_TIMEOUT_SECONDS,
             )
             if res.status_code != 200:
                 return f"ERROR: could not search code ({res.status_code})"
@@ -2433,26 +2537,55 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
 
             matches = []
             scanned = 0
-            for batch_start in range(0, len(to_scan), _SEARCH_LITERAL_FETCH_CONCURRENCY):
-                if len(matches) >= _SEARCH_LITERAL_MAX_MATCHES:
-                    break
-                batch = to_scan[batch_start:batch_start + _SEARCH_LITERAL_FETCH_CONCURRENCY]
-                batch_results = await asyncio.gather(*(_fetch_blob(item) for item in batch))
-                for item, blob in batch_results:
-                    if blob is None:
-                        continue
-                    scanned += 1
-                    if blob.get("encoding") != "base64":
-                        continue
-                    try:
-                        text = base64.b64decode(blob.get("content", "")).decode("utf-8", errors="ignore")
-                    except Exception:
-                        continue
-                    for line_no, line in enumerate(text.splitlines(), start=1):
-                        if term in line:
-                            matches.append(f"{item.get('path')}:{line_no}: {line.strip()}")
-                            if len(matches) >= _SEARCH_LITERAL_MAX_MATCHES:
-                                break
+
+            def _grep_text(item: dict, text: str) -> None:
+                nonlocal scanned
+                scanned += 1
+                for line_no, line in enumerate(text.splitlines(), start=1):
+                    if term in line:
+                        matches.append(f"{item.get('path')}:{line_no}: {line.strip()}")
+                        if len(matches) >= _SEARCH_LITERAL_MAX_MATCHES:
+                            break
+
+            checkout = _get_checkout()
+            if checkout is not None:
+                # No concurrency/network-latency machinery needed here — local disk reads have
+                # no per-file round trip to hide. One asyncio.to_thread call offloads the whole
+                # blocking walk+grep, same convention as every other blocking loop in this file.
+                def _scan_local():
+                    nonlocal scanned
+                    root = Path(checkout.root)
+                    for item in to_scan:
+                        if len(matches) >= _SEARCH_LITERAL_MAX_MATCHES:
+                            break
+                        try:
+                            text = (root / item["path"]).read_text(encoding="utf-8", errors="ignore")
+                        except Exception:
+                            # Same "attempted it, counts as scanned" convention as the API
+                            # branch's own encoding/decode-failure paths.
+                            scanned += 1
+                            continue
+                        _grep_text(item, text)
+
+                await asyncio.to_thread(_scan_local)
+            else:
+                for batch_start in range(0, len(to_scan), _SEARCH_LITERAL_FETCH_CONCURRENCY):
+                    if len(matches) >= _SEARCH_LITERAL_MAX_MATCHES:
+                        break
+                    batch = to_scan[batch_start:batch_start + _SEARCH_LITERAL_FETCH_CONCURRENCY]
+                    batch_results = await asyncio.gather(*(_fetch_blob(item) for item in batch))
+                    for item, blob in batch_results:
+                        if blob is None:
+                            continue
+                        if blob.get("encoding") != "base64":
+                            scanned += 1
+                            continue
+                        try:
+                            text = base64.b64decode(blob.get("content", "")).decode("utf-8", errors="ignore")
+                        except Exception:
+                            scanned += 1
+                            continue
+                        _grep_text(item, text)
 
             truncation_note = (
                 f" (stopped early at {_SEARCH_LITERAL_MAX_MATCHES} matches — there may be more; "
@@ -2990,6 +3123,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     await browser_session.close()
                 except Exception:
                     logger.exception("[tool_agent_node] failed to close browser session cleanly.")
+            cleanup_checkout(checkout_holder.get("handle"))
 
         final_answer = loop_result["final_answer"]
         attempts = loop_result["attempts"]
@@ -3025,14 +3159,14 @@ def resolve_pr_number(user_msg: str, repo: str, headers: dict, api_base: str) ->
     # 1. Handle "latest / last / newest / most recent"
     if any(word in msg_lower for word in ["latest", "most recent", "last", "newest", "recent"]):
         logger.info(f"Fetching most recent PR for {repo}...")
-        res = requests.get(f"{api_base}/repos/{repo}/pulls?state=all&sort=created&direction=desc&per_page=1", headers=headers)
+        res = requests.get(f"{api_base}/repos/{repo}/pulls?state=all&sort=created&direction=desc&per_page=1", headers=headers, timeout=_GITHUB_API_TIMEOUT_SECONDS)
         if res.status_code == 200 and res.json():
             return res.json()[0].get("number")
 
     # 2. Handle "first / oldest / initial"
     if any(word in msg_lower for word in ["first", "oldest", "initial"]):
         logger.info(f"Fetching initial/first PR for {repo}...")
-        res = requests.get(f"{api_base}/repos/{repo}/pulls?state=all&sort=created&direction=asc&per_page=1", headers=headers)
+        res = requests.get(f"{api_base}/repos/{repo}/pulls?state=all&sort=created&direction=asc&per_page=1", headers=headers, timeout=_GITHUB_API_TIMEOUT_SECONDS)
         if res.status_code == 200 and res.json():
             return res.json()[0].get("number")
 
@@ -3064,12 +3198,12 @@ def resolve_pr_number(user_msg: str, repo: str, headers: dict, api_base: str) ->
 
     if target_idx is not None:
         # Check if direct PR #target_idx exists on GitHub
-        check_res = requests.get(f"{api_base}/repos/{repo}/pulls/{target_idx}", headers=headers)
+        check_res = requests.get(f"{api_base}/repos/{repo}/pulls/{target_idx}", headers=headers, timeout=_GITHUB_API_TIMEOUT_SECONDS)
         if check_res.status_code == 200:
             return target_idx
 
         # Otherwise, fetch list by creation index (1-based index)
-        res = requests.get(f"{api_base}/repos/{repo}/pulls?state=all&sort=created&direction=asc&per_page=100", headers=headers)
+        res = requests.get(f"{api_base}/repos/{repo}/pulls?state=all&sort=created&direction=asc&per_page=100", headers=headers, timeout=_GITHUB_API_TIMEOUT_SECONDS)
         if res.status_code == 200 and res.json():
             prs = res.json()
             if 1 <= target_idx <= len(prs):
@@ -3125,7 +3259,7 @@ async def pr_summarizer_node(state: GraphState) -> dict:
                 return None, None
 
             files_url = f"{api_base}/repos/{repo}/pulls/{pr_num}/files"
-            files_res = requests.get(files_url, headers=headers)
+            files_res = requests.get(files_url, headers=headers, timeout=_GITHUB_API_TIMEOUT_SECONDS)
             return pr_num, files_res
 
         pr_number, files_res = await asyncio.to_thread(_fetch_pr_data)
@@ -3210,7 +3344,7 @@ def fetch_branch_diff_summary(repo: str, base: str, head: str) -> str:
         "Accept": "application/vnd.github+json"
     }
     
-    res = requests.get(url, headers=headers)
+    res = requests.get(url, headers=headers, timeout=_GITHUB_API_TIMEOUT_SECONDS)
     if res.status_code != 200:
         return "No diff context available."
     
@@ -3305,14 +3439,14 @@ def _execute_create_pr(username: str, details: dict) -> str:
     payload = {"title": title, "body": body or "Automated Pull Request", "head": head_branch, "base": base_branch}
 
     logger.info(f"[execute_write_node:create_pr] Firing GitHub API POST to {api_url}")
-    res = requests.post(api_url, headers=headers, json=payload)
+    res = requests.post(api_url, headers=headers, json=payload, timeout=_GITHUB_API_TIMEOUT_SECONDS)
 
     if res.status_code == 201:
         pr_data = res.json()
         pr_url, pr_num = pr_data.get("html_url"), pr_data.get("number")
         merge_url = f"https://api.github.com/repos/{repo}/pulls/{pr_num}/merge"
         merge_payload = {"commit_title": f"Merge pull request #{pr_num} from {head_branch}", "merge_method": "squash"}
-        merge_res = requests.put(merge_url, headers=headers, json=merge_payload)
+        merge_res = requests.put(merge_url, headers=headers, json=merge_payload, timeout=_GITHUB_API_TIMEOUT_SECONDS)
         if merge_res.status_code == 200:
             return f"**Pull Request Created and Merged Successfully!** \n\n[View Merged PR #{pr_num} on GitHub]({pr_url})"
         return (
@@ -3400,7 +3534,7 @@ def _execute_create_issue(username: str, details: dict) -> str:
     payload = {"title": title, "body": body or "Automated issue"}
 
     logger.info(f"[execute_write_node:create_issue] Firing GitHub API POST to {api_url}")
-    res = requests.post(api_url, headers=headers, json=payload)
+    res = requests.post(api_url, headers=headers, json=payload, timeout=_GITHUB_API_TIMEOUT_SECONDS)
 
     if res.status_code == 201:
         issue_data = res.json()
