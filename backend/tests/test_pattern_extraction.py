@@ -28,7 +28,7 @@ async def test_extract_user_patterns_skips_when_not_enough_facts(monkeypatch):
     mock_ainvoke = AsyncMock()
     monkeypatch.setattr(mc.lite_llm, "ainvoke", mock_ainvoke)
 
-    result = await mc.extract_user_patterns(db=None, username="jack")
+    result = await mc.extract_user_patterns(db=None, vector_store=None, username="jack")
 
     assert result["status"] == "skipped"
     assert result["reason"] == "not_enough_facts"
@@ -47,7 +47,7 @@ async def test_extract_user_patterns_saves_each_returned_pattern(monkeypatch):
     mock_save_user_fact = Mock()
     monkeypatch.setattr(mc, "save_user_fact", mock_save_user_fact)
 
-    result = await mc.extract_user_patterns(db=None, username="jack")
+    result = await mc.extract_user_patterns(db=None, vector_store=None, username="jack")
 
     assert result["status"] == "completed"
     assert result["patterns_saved"] == 2
@@ -68,7 +68,7 @@ async def test_extract_user_patterns_empty_patterns_list_saves_nothing(monkeypat
     mock_save_user_fact = Mock()
     monkeypatch.setattr(mc, "save_user_fact", mock_save_user_fact)
 
-    result = await mc.extract_user_patterns(db=None, username="jack")
+    result = await mc.extract_user_patterns(db=None, vector_store=None, username="jack")
 
     assert result["status"] == "completed"
     assert result["patterns_saved"] == 0
@@ -85,7 +85,7 @@ async def test_extract_user_patterns_malformed_llm_response_falls_back_gracefull
     mock_save_user_fact = Mock()
     monkeypatch.setattr(mc, "save_user_fact", mock_save_user_fact)
 
-    result = await mc.extract_user_patterns(db=None, username="jack")
+    result = await mc.extract_user_patterns(db=None, vector_store=None, username="jack")
 
     assert result["status"] == "error"
     mock_save_user_fact.assert_not_called()
@@ -101,7 +101,7 @@ async def test_extract_user_patterns_ignores_non_string_entries(monkeypatch):
     mock_save_user_fact = Mock()
     monkeypatch.setattr(mc, "save_user_fact", mock_save_user_fact)
 
-    result = await mc.extract_user_patterns(db=None, username="jack")
+    result = await mc.extract_user_patterns(db=None, vector_store=None, username="jack")
 
     assert result["patterns_saved"] == 1
     mock_save_user_fact.assert_called_once()
@@ -142,8 +142,8 @@ async def test_extract_user_patterns_real_save_user_fact_dedupes_repeated_patter
         })))
     )
 
-    await mc.extract_user_patterns(db=None, username="jack")
-    await mc.extract_user_patterns(db=None, username="jack")
+    await mc.extract_user_patterns(db=None, vector_store=None, username="jack")
+    await mc.extract_user_patterns(db=None, vector_store=None, username="jack")
 
     saved = memory_utils.load_user_facts("jack", category="pattern")
     assert len(saved) == 1

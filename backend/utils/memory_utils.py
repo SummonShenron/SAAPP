@@ -11,6 +11,7 @@ from backend.utils.db_utils import get_db
 from backend.utils.embedding_utils import embed_text, cosine_similarity
 from backend.components.constraints import FACT_CONFLICT_PROMPT, GOAL_STATUS_PROMPT
 from backend.models.models import lite_llm
+from backend.services.memory_search import flag_stale_chunks_for_superseded_fact
 
 logger = logging.getLogger("SASS Logger")
 
@@ -83,7 +84,8 @@ def load_user_facts(username: str, category: Optional[str] = None) -> List[UserF
 
 
 def save_user_facts(username: str, facts: List[UserFact]) -> None:
-    """Saves the full fact list to MongoDB and mirrors it to the local JSON fallback."""
+    """Saves the full fact list to MongoDB, or to the local JSON fallback when Mongo isn't
+    configured — mirroring load_user_facts' own either/or (not both) source of truth."""
     facts_dicts = [f.dict() for f in facts]
 
     db = get_db()
@@ -93,10 +95,10 @@ def save_user_facts(username: str, facts: List[UserFact]) -> None:
             {"$set": {"facts": facts_dicts}},
             upsert=True,
         )
-
-    path = _get_user_file(username)
-    with open(path, "w") as f:
-        json.dump(facts_dicts, f, indent=2)
+    else:
+        path = _get_user_file(username)
+        with open(path, "w") as f:
+            json.dump(facts_dicts, f, indent=2)
 
 
 def find_similar_fact(facts: List[UserFact], fact_text: str) -> Optional[UserFact]:
@@ -173,7 +175,7 @@ def _judge_goal_status(existing_fact: str, new_fact: str) -> str:
         return "active"
 
 
-def _effective_confidence(fact: "UserFact", now: datetime) -> float:
+def effective_confidence(fact: "UserFact", now: datetime) -> float:
     """Read-time-only decay — never mutates stored confidence, always reflects current trust.
     Identity facts are foundational rather than time-sensitive, so they never decay."""
     if fact.category == "identity":
@@ -201,7 +203,7 @@ def _prune_excess_facts(facts: List["UserFact"], protect_id: Optional[str] = Non
     now = datetime.now(timezone.utc)
     protected = [f for f in facts if f.category == "identity" or f.id == protect_id]
     other = [f for f in facts if f.category != "identity" and f.id != protect_id]
-    other.sort(key=lambda f: _effective_confidence(f, now), reverse=True)
+    other.sort(key=lambda f: effective_confidence(f, now), reverse=True)
 
     keep_count = max(MAX_STORED_FACTS - len(protected), 0)
     kept_other = other[:keep_count]
@@ -220,6 +222,7 @@ def save_user_fact(
     category: str = "preference",
     source: str = "explicit",
     confidence: float = 1.0,
+    memory_vector_store=None,
 ) -> UserFact:
     """Saves a durable fact for a user, using embedding similarity + an LLM judgment call to
     detect near-duplicates and contradictions (superseding the old fact) instead of a naive
@@ -261,6 +264,11 @@ def save_user_fact(
                 new_status = _judge_goal_status(existing.fact, fact_text)
                 if new_status in ("achieved", "abandoned"):
                     existing.goal_status = new_status
+            # Capture the old embedding NOW — this is the last point at which existing.embedding
+            # still describes what's being superseded, right before it's overwritten below. A
+            # stale compacted chunk that still says the OLD thing can otherwise get "genuinely
+            # recalled" right alongside the corrected fact with nothing to arbitrate between them.
+            flag_stale_chunks_for_superseded_fact(memory_vector_store, username, existing.embedding)
         existing.fact = fact_text
         # Corrects category drift on every re-observation instead of freezing whichever category
         # the fact happened to get on its very first (possibly inconsistent) extraction — this is
@@ -381,7 +389,9 @@ def fetch_goal_nudge_context(username: str) -> str:
         return ""
 
 
-def fetch_relevant_user_facts(username: str, question: str, limit: int = 5) -> str:
+def fetch_relevant_user_facts(
+    username: str, question: str, limit: int = 5, precomputed_embedding: Optional[List[float]] = None
+) -> str:
     """
     Builds a short "known about this user" context block for passive injection into every
     generation prompt, mirroring app_utils.fetch_relevant_corrections. Identity facts are
@@ -389,6 +399,12 @@ def fetch_relevant_user_facts(username: str, question: str, limit: int = 5) -> s
     question isn't about it); remaining slots go to whichever facts are most relevant to the
     current question by embedding similarity weighted by confidence (reinforced/fresh facts
     outrank decayed ones at equal similarity), falling back to recency if that's unavailable.
+
+    precomputed_embedding lets a caller that's already embedded this exact question elsewhere
+    this turn (e.g. retrieve_relevant_memory_context, called with the same question string when
+    a turn is classified "conversational") pass it in instead of paying for a second real
+    embed_text call against the same text — same model/dimensionality as embed_text uses, so the
+    vectors are directly comparable.
     """
     try:
         facts = load_user_facts(username)
@@ -400,12 +416,14 @@ def fetch_relevant_user_facts(username: str, question: str, limit: int = 5) -> s
         other_facts = [f for f in facts if f.category != "identity"]
         remaining_slots = max(limit - len(identity_facts), 0)
 
-        question_embedding = embed_text(question) if question else None
+        question_embedding = precomputed_embedding
+        if question_embedding is None:
+            question_embedding = embed_text(question) if question else None
         if question_embedding is not None:
             scored = [
                 (
                     (cosine_similarity(question_embedding, f.embedding) if f.embedding else -1.0)
-                    * _effective_confidence(f, now),
+                    * effective_confidence(f, now),
                     f,
                 )
                 for f in other_facts
@@ -419,7 +437,7 @@ def fetch_relevant_user_facts(username: str, question: str, limit: int = 5) -> s
             # (oldest-first) order. Confidence is a secondary key after recency.
             ranked_other = sorted(
                 reversed(other_facts),
-                key=lambda f: (f.updated_at, _effective_confidence(f, now)),
+                key=lambda f: (f.updated_at, effective_confidence(f, now)),
                 reverse=True,
             )
 

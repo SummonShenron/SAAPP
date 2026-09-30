@@ -3,6 +3,7 @@ import { useState } from "react";
 import { LandingPage } from "./pages/LandingPage";
 import { ChatPage } from "./pages/Chat";
 import { SelfServicePage } from "./pages/SelfService";
+import { MemoryPage } from "./pages/Memory";
 import { IntegrationsPage } from "./pages/Integrations";
 import { PrivacyPage } from "./pages/Privacy";
 import { TermsPage } from "./pages/Terms";
@@ -75,6 +76,7 @@ function App() {
       />
         {/* <Route path="/time-tracking" element={<TimeWorkspace />} /> */}
         <Route path="/self-service" element={<SelfServicePage />} />
+        <Route path="/memory" element={<MemoryPage />} />
         <Route path="/integrations" element={<IntegrationsPage />} />
         {/* <Route path="/taskboard" element={<Taskboard />} />
         <Route path="/insights" element={<InsightsPage/>} /> */}

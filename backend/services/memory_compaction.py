@@ -137,7 +137,7 @@ def _get_last_pattern_extraction(db, username: str) -> Optional[dict]:
     )
 
 
-async def extract_user_patterns(db, username: str) -> dict:
+async def extract_user_patterns(db, vector_store, username: str) -> dict:
     """Analyzes a user's accumulated facts as a whole to find recurring higher-level patterns
     (e.g. "consistently gravitates toward agent systems, workflow engines, operational
     tooling") — an observation that only emerges by looking across several distinct facts
@@ -180,7 +180,7 @@ async def extract_user_patterns(db, username: str) -> dict:
     patterns_saved = 0
     for pattern_text in patterns:
         if isinstance(pattern_text, str) and pattern_text.strip():
-            save_user_fact(username, pattern_text, category="pattern", source="pattern")
+            save_user_fact(username, pattern_text, category="pattern", source="pattern", memory_vector_store=vector_store)
             patterns_saved += 1
 
     result = {"status": "completed", "fact_count": len(facts), "patterns_saved": patterns_saved}
@@ -260,7 +260,10 @@ async def _run_compaction(
             for fact in summarized["facts"]:
                 fact_text = fact.get("fact") if isinstance(fact, dict) else None
                 if fact_text:
-                    save_user_fact(username, fact_text, category=fact.get("category") or "preference", source="inferred")
+                    save_user_fact(
+                        username, fact_text, category=fact.get("category") or "preference", source="inferred",
+                        memory_vector_store=vector_store,
+                    )
                     facts_promoted += 1
 
         singletons_promoted = 0
@@ -341,7 +344,7 @@ async def maybe_trigger_meta_compaction(db, vector_store, username: str, thresho
             await compact_meta_memory(db, vector_store, username)
             # Reuse this same "enough has accumulated to warrant a deeper pass" checkpoint to
             # also look for recurring patterns across the user's accumulated facts.
-            await extract_user_patterns(db, username)
+            await extract_user_patterns(db, vector_store, username)
     except Exception:
         logger.exception("[MemoryCompaction] Failed to check/trigger meta-compaction for %s", username)
 

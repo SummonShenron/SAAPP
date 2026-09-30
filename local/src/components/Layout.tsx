@@ -131,6 +131,7 @@ if (typeof window !== 'undefined') {
           </span>
           <span onClick={() => navigate("/chat")}>Chat</span>
           <span onClick={() => navigate("/self-service")}>Self Service</span>
+          {!isGuestPrincipal(getEffectivePrincipal()) && <span onClick={() => navigate("/memory")}>Memory</span>}
           {!isGuestPrincipal(getEffectivePrincipal()) && <span onClick={() => navigate("/integrations")}>Integrations</span>}
           {/* {isAdmin && <span onClick={() => navigate("/time-tracking")}>Time Tracking</span>}
           <span onClick={() => navigate("/taskboard")}>Taskboard</span>
@@ -166,6 +167,7 @@ if (typeof window !== 'undefined') {
           <div className="mobile-drawer-links">
             <span onClick={() => handleNavClick("/chat")}>Chat Workspace</span>
             <span onClick={() => handleNavClick("/self-service")}>Self Service</span>
+            {!isGuestPrincipal(getEffectivePrincipal()) && <span onClick={() => handleNavClick("/memory")}>Memory</span>}
             {!isGuestPrincipal(getEffectivePrincipal()) && <span onClick={() => handleNavClick("/integrations")}>Integrations</span>}
             {isAdmin && <span onClick={() => handleNavClick("/time-tracking")}>⏱ Time Tracking</span>}
             <span onClick={() => handleNavClick("/taskboard")}>Taskboard</span>

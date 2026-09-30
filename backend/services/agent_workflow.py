@@ -890,7 +890,10 @@ async def memory_save_node(state: GraphState, memory_vector_store=None) -> dict:
         except Exception:
             logger.exception("[MemorySave] Fact extraction failed, storing raw message.")
 
-        saved = save_user_fact(username, fact_text, category=category, source="explicit")
+        saved = save_user_fact(
+            username, fact_text, category=category, source="explicit",
+            memory_vector_store=memory_vector_store,
+        )
         embed_and_store_memory_chunk(
             memory_vector_store, username, saved.fact,
             source_type="manual", source_ref=state.get("session_id")

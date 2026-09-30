@@ -160,7 +160,7 @@ async def test_compact_user_memory_inserts_before_deleting_and_promotes_facts(mo
     monkeypatch.setattr(mc, "embed_and_store_memory_chunk", fake_embed)
 
     promoted_facts = []
-    monkeypatch.setattr(mc, "save_user_fact", lambda username, fact, category, source: promoted_facts.append((username, fact, category, source)))
+    monkeypatch.setattr(mc, "save_user_fact", lambda username, fact, category, source, memory_vector_store=None: promoted_facts.append((username, fact, category, source)))
 
     result = await mc.compact_user_memory(fake_db, vector_store=object(), username="jack")
 
@@ -427,7 +427,7 @@ async def test_pattern_extraction_cooldown_blocks_recent_rerun_with_few_new_fact
     llm_mock = AsyncMock()
     monkeypatch.setattr(mc.lite_llm, "ainvoke", llm_mock)
 
-    result = await mc.extract_user_patterns(fake_db, "jack")
+    result = await mc.extract_user_patterns(fake_db, object(), "jack")
 
     assert result == {"status": "skipped", "reason": "cooldown", "fact_count": mc.MIN_FACTS_FOR_PATTERN_EXTRACTION + 1}
     llm_mock.assert_not_called()
@@ -447,7 +447,7 @@ async def test_pattern_extraction_cooldown_allows_rerun_after_interval_expires(m
         AsyncMock(return_value=SimpleNamespace(content=json.dumps({"patterns": []})))
     )
 
-    result = await mc.extract_user_patterns(fake_db, "jack")
+    result = await mc.extract_user_patterns(fake_db, object(), "jack")
 
     assert result["status"] == "completed"
 
@@ -465,7 +465,7 @@ async def test_pattern_extraction_cooldown_allows_rerun_with_enough_new_facts(mo
         AsyncMock(return_value=SimpleNamespace(content=json.dumps({"patterns": []})))
     )
 
-    result = await mc.extract_user_patterns(fake_db, "jack")
+    result = await mc.extract_user_patterns(fake_db, object(), "jack")
 
     assert result["status"] == "completed"
 
@@ -479,6 +479,6 @@ async def test_pattern_extraction_no_prior_run_has_no_cooldown(monkeypatch):
         AsyncMock(return_value=SimpleNamespace(content=json.dumps({"patterns": []})))
     )
 
-    result = await mc.extract_user_patterns(fake_db, "jack")
+    result = await mc.extract_user_patterns(fake_db, object(), "jack")
 
     assert result["status"] == "completed"

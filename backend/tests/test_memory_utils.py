@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -225,6 +226,34 @@ def test_fetch_relevant_user_facts_ranks_by_relevance_to_question(monkeypatch):
     assert "Enjoys hiking on weekends." not in context
 
 
+def test_fetch_relevant_user_facts_uses_precomputed_embedding_without_reembedding(monkeypatch):
+    """A caller that already embedded this turn's question elsewhere (retrieve_relevant_memory_
+    context, given the same question string) can pass that vector straight through — this must
+    skip the real embed_text call entirely, not just accept the parameter and ignore it."""
+    vectors = {
+        "Loves discussing Python programming.": [1.0, 0.0],
+        "Enjoys hiking on weekends.": [0.0, 1.0],
+    }
+    embed_calls = []
+
+    def _tracking_embed(text):
+        embed_calls.append(text)
+        return vectors.get(text.strip(), [0.5, 0.5])
+
+    monkeypatch.setattr(memory_utils, "embed_text", _tracking_embed)
+
+    memory_utils.save_user_fact("jack", "Enjoys hiking on weekends.", category="trait")
+    memory_utils.save_user_fact("jack", "Loves discussing Python programming.", category="trait")
+    embed_calls.clear()  # only care about calls made during fetch_relevant_user_facts itself
+
+    context = memory_utils.fetch_relevant_user_facts(
+        "jack", "tell me about python best practices", limit=1, precomputed_embedding=[1.0, 0.0]
+    )
+
+    assert "Loves discussing Python programming." in context
+    assert embed_calls == []
+
+
 def test_fetch_relevant_user_facts_falls_back_to_recency_when_question_empty():
     memory_utils.save_user_fact("jack", "Older fact.", category="trait")
     memory_utils.save_user_fact("jack", "Newer fact.", category="trait")
@@ -253,24 +282,24 @@ def _make_fact(category="trait", confidence=1.0, days_old=0, fact_id="test-id", 
     )
 
 
-def test_effective_confidence_no_decay_at_zero_days():
+def testeffective_confidence_no_decay_at_zero_days():
     fact = _make_fact(confidence=1.0, days_old=0)
-    assert memory_utils._effective_confidence(fact, datetime.now(timezone.utc)) == pytest.approx(1.0, abs=0.01)
+    assert memory_utils.effective_confidence(fact, datetime.now(timezone.utc)) == pytest.approx(1.0, abs=0.01)
 
 
-def test_effective_confidence_halves_at_one_half_life():
+def testeffective_confidence_halves_at_one_half_life():
     fact = _make_fact(confidence=1.0, days_old=memory_utils.FACT_CONFIDENCE_HALF_LIFE_DAYS)
-    assert memory_utils._effective_confidence(fact, datetime.now(timezone.utc)) == pytest.approx(0.5, rel=0.05)
+    assert memory_utils.effective_confidence(fact, datetime.now(timezone.utc)) == pytest.approx(0.5, rel=0.05)
 
 
-def test_effective_confidence_quarters_at_two_half_lives():
+def testeffective_confidence_quarters_at_two_half_lives():
     fact = _make_fact(confidence=1.0, days_old=2 * memory_utils.FACT_CONFIDENCE_HALF_LIFE_DAYS)
-    assert memory_utils._effective_confidence(fact, datetime.now(timezone.utc)) == pytest.approx(0.25, rel=0.05)
+    assert memory_utils.effective_confidence(fact, datetime.now(timezone.utc)) == pytest.approx(0.25, rel=0.05)
 
 
-def test_effective_confidence_identity_never_decays():
+def testeffective_confidence_identity_never_decays():
     fact = _make_fact(category="identity", confidence=1.0, days_old=365)
-    assert memory_utils._effective_confidence(fact, datetime.now(timezone.utc)) == 1.0
+    assert memory_utils.effective_confidence(fact, datetime.now(timezone.utc)) == 1.0
 
 
 def test_save_user_fact_duplicate_reinforces_confidence():
@@ -307,6 +336,53 @@ def test_save_user_fact_supersede_resets_confidence_to_baseline(monkeypatch):
     superseded = memory_utils.save_user_fact("jack", "prefers dark mode ui.", category="trait", confidence=0.7)
     assert superseded.id == "seed-id"
     assert superseded.confidence == 0.7  # resets to the passed-in baseline, not accumulated
+
+
+def test_save_user_fact_supersede_flags_stale_chunks(monkeypatch):
+    old_embedding = memory_utils.embed_text("Prefers dark mode UI.")
+    seeded = _make_fact(confidence=0.9, fact_id="seed-id", embedding=old_embedding)
+    seeded.fact = "Prefers dark mode UI."
+    memory_utils.save_user_facts("jack", [seeded])
+
+    monkeypatch.setattr(
+        memory_utils.lite_llm, "invoke",
+        Mock(return_value=SimpleNamespace(content=json.dumps({"action": "supersede"})))
+    )
+    flag_mock = Mock(return_value=0)
+    monkeypatch.setattr(memory_utils, "flag_stale_chunks_for_superseded_fact", flag_mock)
+    sentinel_store = object()
+
+    # Same normalized bucket as the seeded fact (see test_save_user_fact_supersede_resets_
+    # confidence_to_baseline's own comment) — the mocked LLM judgment above is what decides
+    # "supersede" here, not the wording; embedding similarity just needs to clear the threshold
+    # so that judgment call gets made at all.
+    memory_utils.save_user_fact(
+        "jack", "prefers dark mode ui.", category="trait", memory_vector_store=sentinel_store
+    )
+
+    flag_mock.assert_called_once_with(sentinel_store, "jack", old_embedding)
+
+
+def test_save_user_fact_duplicate_does_not_flag_stale_chunks(monkeypatch):
+    seeded = _make_fact(confidence=0.5, fact_id="seed-id", embedding=memory_utils.embed_text("Prefers dark mode UI."))
+    seeded.fact = "Prefers dark mode UI."
+    memory_utils.save_user_facts("jack", [seeded])
+
+    flag_mock = Mock(return_value=0)
+    monkeypatch.setattr(memory_utils, "flag_stale_chunks_for_superseded_fact", flag_mock)
+
+    memory_utils.save_user_fact("jack", "prefers dark mode ui.", category="trait")
+
+    flag_mock.assert_not_called()
+
+
+def test_save_user_fact_new_fact_does_not_flag_stale_chunks(monkeypatch):
+    flag_mock = Mock(return_value=0)
+    monkeypatch.setattr(memory_utils, "flag_stale_chunks_for_superseded_fact", flag_mock)
+
+    memory_utils.save_user_fact("jack", "Brand new fact nobody has said before.", category="trait")
+
+    flag_mock.assert_not_called()
 
 
 def test_fetch_relevant_user_facts_prefers_fresh_over_decayed_at_equal_similarity(monkeypatch):
@@ -587,3 +663,26 @@ def test_fetch_goal_nudge_context_never_raises_on_internal_error(monkeypatch):
     monkeypatch.setattr(memory_utils, "find_stale_goal_to_nudge", _boom)
 
     assert memory_utils.fetch_goal_nudge_context("jack") == ""
+
+
+# ---------------------------------------------------------------------------
+# save_user_facts: the local JSON fallback must only ever be written when Mongo
+# is unavailable, never as an unconditional mirror of every Mongo-backed save.
+# ---------------------------------------------------------------------------
+
+def test_save_user_facts_does_not_write_json_when_mongo_is_used(monkeypatch, tmp_path):
+    fake_collection = Mock()
+    fake_db = {"user_memory_facts": fake_collection}
+    monkeypatch.setattr(memory_utils, "get_db", lambda: fake_db)
+
+    memory_utils.save_user_facts("jack", [])
+
+    fake_collection.update_one.assert_called_once()
+    assert not os.path.exists(memory_utils._get_user_file("jack"))
+
+
+def test_save_user_facts_writes_json_only_when_mongo_unavailable(tmp_path):
+    # isolated_memory_dir already forces get_db() to None for every test in this file.
+    memory_utils.save_user_facts("jack", [])
+
+    assert os.path.exists(memory_utils._get_user_file("jack"))
