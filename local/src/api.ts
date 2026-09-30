@@ -511,6 +511,65 @@ export async function deleteConversation(sessionId: string): Promise<any> {
 }
 
 /**
+ * List the current user's saved memory facts
+ */
+export interface UserFact {
+  id: string;
+  username: string;
+  category: string;
+  fact: string;
+  source: "explicit" | "inferred" | "pattern";
+  confidence: number;
+  effective_confidence: number;
+  created_at: string;
+  updated_at: string;
+  active: boolean;
+  goal_status: string | null;
+  last_nudged_at: string | null;
+}
+
+export async function listMemoryFacts(): Promise<UserFact[]> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/memory`, {
+    headers: { ...authHeaders }
+  });
+  if (!res.ok) {
+    throw new Error("Failed to load memory.");
+  }
+  return res.json();
+}
+
+/**
+ * Delete one memory fact
+ */
+export async function deleteMemoryFact(factId: string): Promise<any> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/memory/${encodeURIComponent(factId)}`, {
+    method: "DELETE",
+    headers: { ...authHeaders }
+  });
+  if (!res.ok) {
+    throw new Error("Failed to delete memory fact.");
+  }
+  return res.json();
+}
+
+/**
+ * Clear all memory facts for the current user
+ */
+export async function clearMemoryFacts(): Promise<any> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/memory`, {
+    method: "DELETE",
+    headers: { ...authHeaders }
+  });
+  if (!res.ok) {
+    throw new Error("Failed to clear memory.");
+  }
+  return res.json();
+}
+
+/**
  * Dev utility login validator
  */
 export async function verifyIdentity(username: string): Promise<boolean> {
@@ -739,6 +798,9 @@ export const api = {
   listConversations,
   getConversation,
   deleteConversation,
+  listMemoryFacts,
+  deleteMemoryFact,
+  clearMemoryFacts,
   getRagMode,
   updateRagMode,
   getDeepThinking,

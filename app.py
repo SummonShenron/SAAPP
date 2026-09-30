@@ -78,9 +78,11 @@ from backend.utils.memory_utils import (
     load_user_facts,
     delete_user_fact,
     delete_all_user_facts,
+    effective_confidence,
 )
 from backend.services.memory_compaction import compact_user_memory, compact_meta_memory
 from backend.services.memory_search import retrieve_relevant_memory_context
+from backend.utils.embedding_utils import embed_text
 from backend.utils.user_settings_utils import (
     get_user_rag_mode, set_user_rag_mode, VALID_RAG_MODES,
     get_user_deep_thinking_mode, set_user_deep_thinking_mode,
@@ -744,7 +746,12 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # Announce LLM generation start
             yield f"data: {json.dumps({'event': 'node_progress', 'node': 'formatter_node', 'title': 'Formatting output structure...', 'detail': f'Synthesizing final answer for {question[:30]}...'})}\n\n"
             guardrail_context = fetch_relevant_corrections(username, question)
-            memory_context = fetch_relevant_user_facts(username, question)
+            # Computed once and threaded through both fact + semantic memory recall below — they
+            # embed the identical question string this turn, and re-embedding it a second time
+            # (the semantic recall call, further down) would be a genuinely free duplicate
+            # network round trip to the embeddings API for no behavior change.
+            question_embedding = embed_text(question) if question else None
+            memory_context = fetch_relevant_user_facts(username, question, precomputed_embedding=question_embedding)
             goal_nudge_context = fetch_goal_nudge_context(username)
 
             if guardrail_context:
@@ -775,7 +782,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
 
             if source_type == "conversational":
                 semantic_memory_context = retrieve_relevant_memory_context(
-                    services.get("user_memory_vector_store"), username, question
+                    services.get("user_memory_vector_store"), username, question,
+                    precomputed_embedding=question_embedding,
                 )
                 if semantic_memory_context:
                     prompt = prompt + semantic_memory_context
@@ -1463,7 +1471,8 @@ async def store_feedback(
 async def list_memory(current_user = Depends(get_current_user)):
     username = current_user.get("sub")
     facts = load_user_facts(username)
-    return [f.dict() for f in facts]
+    now = datetime.now(timezone.utc)
+    return [{**f.dict(), "effective_confidence": effective_confidence(f, now)} for f in facts]
 
 
 @app.delete("/api/memory/{fact_id}")
