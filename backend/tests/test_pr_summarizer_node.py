@@ -35,7 +35,7 @@ async def test_pr_summarizer_resolves_repo_from_an_earlier_correction_turn(monke
 
     requested_urls = []
 
-    def fake_requests_get(url, headers=None, params=None):
+    def fake_requests_get(url, headers=None, params=None, **kwargs):
         requested_urls.append(url)
         if "/repos/owner/second-repo/pulls/3" in url and "files" not in url:
             return pr_direct_resp
@@ -69,7 +69,7 @@ async def test_pr_summarizer_resolves_pr_number_from_an_earlier_turn(monkeypatch
 
     requested_urls = []
 
-    def fake_requests_get(url, headers=None, params=None):
+    def fake_requests_get(url, headers=None, params=None, **kwargs):
         requested_urls.append(url)
         if url.endswith("/repos/SummonShenron/SAAPP/pulls/7") :
             return pr_direct_resp

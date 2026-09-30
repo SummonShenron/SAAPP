@@ -1,13 +1,17 @@
 import asyncio
 import functools
 import json
+import os
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import pytest
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, AIMessage
 
 from backend.services import agent_workflow as aw
+from backend.services import repo_checkout as rc
 
 
 def run_async(fn):
@@ -87,7 +91,7 @@ def _setup_github_repo(monkeypatch, tree_items=None):
     repo_resp = _http_response(200, {"default_branch": "main"})
     tree_resp = _http_response(200, {"tree": tree_items or []})
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
         if tree_items is not None and "/git/trees/" in url:
@@ -116,7 +120,7 @@ async def test_bad_extracted_repo_falls_back_to_default_and_notifies_model(monke
     monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
     monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/functions/diffs"):
             return _http_response(404, {"message": "Not Found"})
         if url.endswith("/repos/SummonShenron/SAAPP"):
@@ -151,7 +155,7 @@ async def test_genuinely_inaccessible_repo_warns_instead_of_looping_silently(mon
     monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
     monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return _http_response(404, {"message": "Not Found"})
         raise AssertionError(f"Unexpected GET: {url}")
@@ -353,7 +357,7 @@ async def test_list_pull_requests_returns_formatted_results(monkeypatch):
          "merged_at": "2025-12-30T00:00:00Z", "user": {"login": "jack"}, "updated_at": "2025-12-30T00:00:00Z"},
     ])
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
         if url.endswith("/repos/SummonShenron/SAAPP/pulls"):
@@ -640,7 +644,7 @@ async def test_non_admin_action_menu_never_includes_mongo(monkeypatch):
     option, not just be rejected if they somehow ask for it."""
     monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
     monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
-    monkeypatch.setattr(aw.requests, "get", lambda url, headers=None, params=None: _http_response(200, {"default_branch": "main"}))
+    monkeypatch.setattr(aw.requests, "get", lambda url, headers=None, params=None, **kwargs: _http_response(200, {"default_branch": "main"}))
     monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
 
     captured_prompts = []
@@ -660,7 +664,7 @@ async def test_non_admin_action_menu_never_includes_mongo(monkeypatch):
 async def test_admin_action_menu_includes_mongo(monkeypatch):
     monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])
     monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
-    monkeypatch.setattr(aw.requests, "get", lambda url, headers=None, params=None: _http_response(200, {"default_branch": "main"}))
+    monkeypatch.setattr(aw.requests, "get", lambda url, headers=None, params=None, **kwargs: _http_response(200, {"default_branch": "main"}))
     monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
     monkeypatch.setattr(aw, "get_db", lambda: _FakeDB({"user_memory_facts": _FakeCollection()}))
 
@@ -683,7 +687,7 @@ async def test_non_admin_cannot_execute_mongo_action_even_if_returned(monkeypatc
     conversation), execution is still blocked for non-admins."""
     monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
     monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
-    monkeypatch.setattr(aw.requests, "get", lambda url, headers=None, params=None: _http_response(200, {"default_branch": "main"}))
+    monkeypatch.setattr(aw.requests, "get", lambda url, headers=None, params=None, **kwargs: _http_response(200, {"default_branch": "main"}))
     monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
 
     responses = [
@@ -931,7 +935,7 @@ async def test_show_work_false_omits_the_steps_footer(monkeypatch):
     monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
     monkeypatch.setattr(
         aw.requests, "get",
-        lambda url, headers=None, params=None: (
+        lambda url, headers=None, params=None, **kwargs: (
             _http_response(200, {"default_branch": "main"}) if url.endswith("/repos/SummonShenron/SAAPP")
             else _http_response(200, {"tree": [{"path": "app.py", "type": "blob"}]})
         ),
@@ -953,7 +957,7 @@ async def test_show_work_true_includes_the_steps_footer(monkeypatch):
     monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
     monkeypatch.setattr(
         aw.requests, "get",
-        lambda url, headers=None, params=None: (
+        lambda url, headers=None, params=None, **kwargs: (
             _http_response(200, {"default_branch": "main"}) if url.endswith("/repos/SummonShenron/SAAPP")
             else _http_response(200, {"tree": [{"path": "app.py", "type": "blob"}]})
         ),
@@ -1061,7 +1065,7 @@ async def test_explicit_repo_in_current_message_overrides_pinned_repo(monkeypatc
     monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
     requested_repos = []
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         requested_repos.append(url)
         return _http_response(200, {"default_branch": "main"})
 
@@ -1085,7 +1089,7 @@ async def test_pinned_repo_used_when_current_message_names_none(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
     requested_repos = []
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         requested_repos.append(url)
         return _http_response(200, {"default_branch": "main"})
 
@@ -1133,7 +1137,7 @@ async def test_github_action_self_corrects_after_wrong_file(monkeypatch):
     wrong_file_resp = _http_response(200, {"content": _b64("not it")})
     right_file_resp = _http_response(200, {"content": _b64("def get_current_user(): ...")})
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
         if url.endswith("/contents/app.py"):
@@ -1190,7 +1194,7 @@ async def test_read_repo_file_truncation_includes_definition_index(monkeypatch):
     repo_resp = _http_response(200, {"default_branch": "main"})
     file_resp = _http_response(200, {"content": _b64(big_content)})
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
         if url.endswith("/contents/backend/services/agent_workflow.py"):
@@ -1263,7 +1267,7 @@ async def test_definition_index_survives_even_with_many_top_level_defs(monkeypat
     repo_resp = _http_response(200, {"default_branch": "main"})
     file_resp = _http_response(200, {"content": _b64(big_content)})
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
         if url.endswith("/contents/backend/services/agent_workflow.py"):
@@ -1352,7 +1356,7 @@ async def test_final_after_truncated_read_is_rejected_once_then_accepted(monkeyp
     repo_resp = _http_response(200, {"default_branch": "main"})
     file_resp = _http_response(200, {"content": _b64(big_content)})
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
         if url.endswith("/contents/backend/services/agent_workflow.py"):
@@ -1392,7 +1396,7 @@ async def test_final_rejected_again_if_the_retry_read_is_still_incomplete(monkey
     repo_resp = _http_response(200, {"default_branch": "main"})
     file_resp = _http_response(200, {"content": _b64(big_content)})
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
         if url.endswith("/contents/backend/services/agent_workflow.py"):
@@ -1432,7 +1436,7 @@ async def test_read_repo_file_start_line_jumps_past_the_truncation_point(monkeyp
     repo_resp = _http_response(200, {"default_branch": "main"})
     file_resp = _http_response(200, {"content": _b64(big_content)})
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
         if url.endswith("/contents/backend/services/agent_workflow.py"):
@@ -1472,7 +1476,7 @@ async def test_read_repo_file_start_line_past_end_of_file_is_error(monkeypatch):
     _setup_github_repo(monkeypatch)
     monkeypatch.setattr(
         aw.requests, "get",
-        lambda url, headers=None, params=None: (
+        lambda url, headers=None, params=None, **kwargs: (
             _http_response(200, {"default_branch": "main"}) if url.endswith("/repos/SummonShenron/SAAPP")
             else _http_response(200, {"content": _b64("just a few lines\nof real content\n")})
         ),
@@ -1518,7 +1522,7 @@ async def test_read_repo_file_same_path_twice_only_fetches_once(monkeypatch):
     file_resp = _http_response(200, {"content": _b64("def get_current_user(): ...")})
     contents_fetch_count = {"n": 0}
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
         if url.endswith("/contents/app.py"):
@@ -1551,7 +1555,7 @@ async def test_repo_tree_only_fetched_once_across_multiple_actions(monkeypatch):
     ]})
     tree_fetch_count = {"n": 0}
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
         if "/git/trees/" in url:
@@ -1642,7 +1646,7 @@ async def test_stack_trace_escalates_from_repo_to_web_search(monkeypatch):
     repo_resp = _http_response(200, {"default_branch": "main"})
     file_resp = _http_response(200, {"content": _b64("def connect(): pass  # no obvious bug here")})
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
         if url.endswith("/contents/backend/utils/db_utils.py"):
@@ -1978,7 +1982,7 @@ async def test_find_file_surfaces_a_near_match_search_code_would_miss(monkeypatc
         {"path": "local/src/pages/Chat.tsx", "type": "blob"},
     ]})
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
         if "/git/trees/" in url:
@@ -2128,7 +2132,7 @@ async def test_trace_symbol_sorts_write_and_read_sites(monkeypatch):
         },
     ]})
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
         if url.endswith("/search/code"):
@@ -2170,7 +2174,7 @@ async def test_trace_symbol_no_matches(monkeypatch):
     repo_resp = _http_response(200, {"default_branch": "main"})
     search_resp = _http_response(200, {"items": []})
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
         if url.endswith("/search/code"):
@@ -2216,7 +2220,7 @@ async def test_search_literal_finds_every_occurrence_across_files(monkeypatch):
         "sha3": "body { color: red; }\n",
     }
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
         if "/git/trees/" in url:
@@ -2271,7 +2275,7 @@ async def test_search_literal_no_matches_says_so_explicitly(monkeypatch):
         {"path": "app.py", "type": "blob", "size": 100, "sha": "sha1"},
     ]})
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
         if "/git/trees/" in url:
@@ -2311,7 +2315,7 @@ async def test_search_literal_scans_a_file_that_would_have_exceeded_the_old_per_
         {"path": "backend/services/agent_workflow.py", "type": "blob", "size": large_size, "sha": "sha1"},
     ]})
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
         if "/git/trees/" in url:
@@ -2361,7 +2365,7 @@ async def test_search_literal_reports_files_not_reached_when_budget_exhausted(mo
         {"path": "big.py", "type": "blob", "size": 200, "sha": "sha2"},
     ]})
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
         if "/git/trees/" in url:
@@ -2413,7 +2417,7 @@ async def test_search_literal_blob_fetches_run_concurrently(monkeypatch):
         {"path": f"file{i}.py", "type": "blob", "size": 100, "sha": f"sha{i}"} for i in range(file_count)
     ]})
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
         if "/git/trees/" in url:
@@ -2448,6 +2452,322 @@ async def test_search_literal_blob_fetches_run_concurrently(monkeypatch):
     # 6 sequential 0.2s blob fetches would take >= 1.2s; real concurrency (all 6 fit in one
     # gather batch) keeps this well under that.
     assert elapsed < 1.0
+
+
+# ---------------------------------------------------------------------------
+# Local repo checkout (backend/services/repo_checkout.py) — replaces the per-file GitHub API
+# calls behind list_repo_tree/read_repo_file/find_file/search_literal with one tarball fetch +
+# local disk reads, falling back to the existing API path on any failure. Contract-preservation
+# is the load-bearing requirement here: react_loop.py's retry-nudge/truncation-detection logic
+# pattern-matches on these functions' exact return shapes, so a checkout-backed call must produce
+# output indistinguishable from the API-backed one.
+# ---------------------------------------------------------------------------
+
+def _make_fake_checkout(tmp_path, files: dict) -> "rc.CheckoutHandle":
+    """Builds a real local directory (files: {relative_path: content}) and wraps it in a real
+    CheckoutHandle, exactly like a real extracted tarball would look — root is a real directory
+    one level inside tempdir, matching fetch_and_extract_checkout's own unwrapping contract."""
+    tempdir = tmp_path / "saapp_checkout_fake"
+    root = tempdir / "owner-repo-abc123"
+    root.mkdir(parents=True)
+    for rel_path, content in files.items():
+        full_path = root / rel_path
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        full_path.write_text(content, encoding="utf-8")
+    return rc.CheckoutHandle(root=str(root), tempdir=str(tempdir))
+
+
+@run_async
+async def test_read_repo_file_identical_whether_checkout_or_api_backed(monkeypatch, tmp_path):
+    handle = _make_fake_checkout(tmp_path, {"app.py": "import os\ntoken = os.getenv('X')\n"})
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    monkeypatch.setattr(aw, "fetch_and_extract_checkout", lambda *a, **k: handle)
+
+    repo_resp = _http_response(200, {"default_branch": "main"})
+
+    def fake_get(url, headers=None, params=None, **kwargs):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        raise AssertionError(f"Unexpected GET (should have used the local checkout instead): {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+
+    responses = [
+        _llm_response(action="query", purpose="Read app.py", tool_action="read_repo_file", args={"path": "app.py"}),
+        _llm_response(action="final", answer="done"),
+    ]
+
+    async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
+        return responses.pop(0)
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    captured_prompts = []
+
+    async def capturing_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return await fake_ainvoke(prompt)
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", capturing_ainvoke)
+
+    await aw.tool_agent_node(_state("what does app.py do?"))
+
+    # Same "URL: ...\n<content>" shape read_repo_file always produces from the API path.
+    assert any("import os" in p and "token = os.getenv" in p for p in captured_prompts)
+
+
+@run_async
+async def test_read_repo_file_rejects_a_path_that_escapes_the_checkout(monkeypatch, tmp_path):
+    """A model-supplied path is not inherently trustworthy the way the old API-only design was
+    (GitHub's Contents API just 404s on a '../' path, never touching this server's own disk) —
+    a local read must validate containment explicitly."""
+    handle = _make_fake_checkout(tmp_path, {"app.py": "import os\n"})
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    monkeypatch.setattr(aw, "fetch_and_extract_checkout", lambda *a, **k: handle)
+    _setup_github_repo(monkeypatch)
+
+    responses = [
+        _llm_response(action="query", purpose="Read a suspicious path", tool_action="read_repo_file", args={"path": "../../../../etc/passwd"}),
+        _llm_response(action="final", answer="done"),
+    ]
+
+    captured_prompts = []
+
+    async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
+        captured_prompts.append(prompt)
+        return responses[len(captured_prompts) - 1]
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("read ../../../../etc/passwd"))
+
+    assert any("not a valid path in this repo" in p for p in captured_prompts)
+
+
+@run_async
+async def test_search_literal_finds_matches_via_local_checkout(monkeypatch, tmp_path):
+    handle = _make_fake_checkout(tmp_path, {
+        "backend/services/github_service.py": "import os\ntoken = os.getenv(\"GITHUB_TOKEN\")\n",
+        "local/src/index.css": "body { color: red; }\n",
+    })
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    monkeypatch.setattr(aw, "fetch_and_extract_checkout", lambda *a, **k: handle)
+
+    repo_resp = _http_response(200, {"default_branch": "main"})
+
+    def fake_get(url, headers=None, params=None, **kwargs):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        if "/contents/" in url:
+            # The architecture map's own separate fetch, unrelated to search_literal itself.
+            return _http_response(200, {"content": _b64("import os\n")})
+        raise AssertionError(f"Unexpected GET (should have used the local checkout instead): {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+
+    responses = [
+        _llm_response(action="query", purpose="Find every usage", tool_action="search_literal", args={"term": "GITHUB_TOKEN"}),
+        _llm_response(action="final", answer="Found it."),
+    ]
+
+    async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
+        return responses.pop(0)
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+    monkeypatch.setattr(aw.lite_llm_deep, "ainvoke", fake_ainvoke)
+
+    result = await aw.tool_agent_node(_state("find every place GITHUB_TOKEN is read"))
+
+    assert "Found it" in result["content_to_format"]
+
+
+@run_async
+async def test_checkout_fetch_failure_falls_back_to_the_api_path(monkeypatch):
+    """The graceful-degrade contract: any failure fetching/extracting the checkout must be
+    invisible to the rest of the turn — the existing API path runs exactly as it does today."""
+    monkeypatch.setattr(aw, "fetch_and_extract_checkout", Mock(side_effect=rc.RepoCheckoutError("tarball download failed (500)")))
+    # A non-empty tree — an empty list_repo_tree result would trip react_loop's own unrelated
+    # empty-result retry-nudge, which isn't what this test is checking.
+    _setup_github_repo(monkeypatch, tree_items=[{"path": "app.py", "type": "blob", "size": 10, "sha": "abc"}])
+
+    responses = [
+        _llm_response(action="query", purpose="List the repo", tool_action="list_repo_tree", args={}),
+        _llm_response(action="final", answer="done", show_work=False),
+    ]
+
+    async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
+        return responses.pop(0)
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    result = await aw.tool_agent_node(_state("list the repo"))
+
+    assert result["content_to_format"] == "done"
+
+
+@run_async
+async def test_checkout_is_only_attempted_once_per_turn_even_after_failure(monkeypatch):
+    """A failed checkout must not retry on every single subsequent tool call this turn — it
+    fails closed once, and every other action this turn just uses the API path directly."""
+    fetch_mock = Mock(side_effect=rc.RepoCheckoutError("boom"))
+    monkeypatch.setattr(aw, "fetch_and_extract_checkout", fetch_mock)
+    _setup_github_repo(monkeypatch, tree_items=[])
+
+    responses = [
+        _llm_response(action="query", purpose="List the repo", tool_action="list_repo_tree", args={}),
+        _llm_response(action="query", purpose="Find a file", tool_action="find_file", args={"query": "agent workflow"}),
+        _llm_response(action="final", answer="done"),
+    ]
+
+    async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
+        return responses.pop(0)
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("investigate the repo"))
+
+    fetch_mock.assert_called_once()
+
+
+@run_async
+async def test_get_checkout_is_race_safe_under_batched_concurrent_actions(monkeypatch, tmp_path):
+    """Regression: a batched 'queries' step (see
+    test_tool_agent_node_executes_a_real_batch_of_independent_reads) runs several actions
+    concurrently via asyncio.gather, each on its own thread via asyncio.to_thread. Without a lock
+    around the check-then-fetch in _get_checkout, two threads could both see attempted=False
+    before either set it, each launching its own full tarball download of the same repo at once —
+    observed in production as simultaneous codeload.github.com downloads saturating the user's
+    connection. The fetch must happen exactly once no matter how many concurrent actions need it."""
+    handle = _make_fake_checkout(tmp_path, {"a.py": "A_CONTENT\n", "b.py": "B_CONTENT\n"})
+    fetch_calls = []
+
+    def slow_fetch(*a, **k):
+        fetch_calls.append(1)
+        time.sleep(0.05)
+        return handle
+
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setattr(aw, "fetch_and_extract_checkout", slow_fetch)
+    _setup_github_repo(monkeypatch)
+
+    responses = [
+        _llm_response(action="query", purpose="Read both independent files at once", queries=[
+            {"tool_action": "read_repo_file", "args": {"path": "a.py"}, "purpose": "Read a.py"},
+            {"tool_action": "read_repo_file", "args": {"path": "b.py"}, "purpose": "Read b.py"},
+        ]),
+        _llm_response(action="final", answer="Both files read: A_CONTENT and B_CONTENT."),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("compare a.py and b.py"))
+
+    assert len(fetch_calls) == 1
+    assert "A_CONTENT" in result["content_to_format"]
+    assert "B_CONTENT" in result["content_to_format"]
+
+
+@run_async
+async def test_checkout_is_cleaned_up_after_a_successful_turn(monkeypatch, tmp_path):
+    handle = _make_fake_checkout(tmp_path, {"app.py": "import os\n"})
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    monkeypatch.setattr(aw, "fetch_and_extract_checkout", lambda *a, **k: handle)
+    _setup_github_repo(monkeypatch)
+
+    responses = [
+        _llm_response(action="query", purpose="List the repo", tool_action="list_repo_tree", args={}),
+        _llm_response(action="final", answer="done"),
+    ]
+
+    async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
+        return responses.pop(0)
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    assert os.path.exists(handle.tempdir)
+    await aw.tool_agent_node(_state("list the repo"))
+    assert not os.path.exists(handle.tempdir)
+
+
+@run_async
+async def test_checkout_is_cleaned_up_even_when_the_turn_raises_mid_loop(monkeypatch, tmp_path):
+    """Mirrors the same guarantee browser_session_holder's cleanup already relies on
+    (run_react_loop wrapped in try/finally) — but asserted directly here rather than just
+    implicitly trusted, per the heavier test bar this feature needs. Runs one real tool call
+    first (establishing the checkout via the real _get_checkout lazily), then simulates the
+    loop crashing on its next step — the checkout must still be cleaned up."""
+    handle = _make_fake_checkout(tmp_path, {"app.py": "import os\n"})
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    monkeypatch.setattr(aw, "fetch_and_extract_checkout", lambda *a, **k: handle)
+    _setup_github_repo(monkeypatch, tree_items=[])
+
+    async def fake_run_react_loop(**kwargs):
+        # Exercises one real tool call through the real `act` callback (establishing the
+        # checkout via the real, lazy _get_checkout), then simulates the loop itself crashing —
+        # an exception that escapes run_react_loop uncaught, the exact shape tool_agent_node's
+        # own outer try/finally exists to survive.
+        await kwargs["act"]({"tool_action": "list_repo_tree", "args": {}, "purpose": "test"})
+        raise RuntimeError("simulated mid-loop crash")
+
+    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+
+    assert os.path.exists(handle.tempdir)
+    with pytest.raises(RuntimeError):
+        await aw.tool_agent_node(_state("list the repo"))
+    assert not os.path.exists(handle.tempdir)
+
+
+@run_async
+async def test_two_sequential_turns_each_get_their_own_isolated_checkout(monkeypatch, tmp_path):
+    handle_a = _make_fake_checkout(tmp_path / "a", {"app.py": "# repo a\n"})
+    handle_b = _make_fake_checkout(tmp_path / "b", {"app.py": "# repo b\n"})
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    _setup_github_repo(monkeypatch)
+
+    def _responses():
+        return [
+            _llm_response(action="query", purpose="List the repo", tool_action="list_repo_tree", args={}),
+            _llm_response(action="final", answer="done"),
+        ]
+
+    def _make_fake_ainvoke(responses):
+        async def fake_ainvoke(prompt):
+            if GROUNDING_CHECK_MARKER in prompt:
+                return _llm_response(grounded=True, unsupported_claims=[])
+            return responses.pop(0)
+        return fake_ainvoke
+
+    monkeypatch.setattr(aw, "fetch_and_extract_checkout", lambda *a, **k: handle_a)
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", _make_fake_ainvoke(_responses()))
+    await aw.tool_agent_node(_state("list the repo"))
+    assert not os.path.exists(handle_a.tempdir)  # cleaned up before the next turn even starts
+
+    monkeypatch.setattr(aw, "fetch_and_extract_checkout", lambda *a, **k: handle_b)
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", _make_fake_ainvoke(_responses()))
+    await aw.tool_agent_node(_state("list the repo"))
+    assert not os.path.exists(handle_b.tempdir)
+
+    # Neither turn's checkout ever leaked into the other's.
+    assert handle_a.tempdir != handle_b.tempdir
 
 
 # ---------------------------------------------------------------------------
@@ -2766,7 +3086,7 @@ async def test_audit_task_readme_is_injected_before_the_search_nudge(monkeypatch
         "app.py": "import os\n",
     }
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
         if "/git/trees/" in url:
@@ -2808,7 +3128,7 @@ async def test_audit_task_gets_architecture_map_injected_into_prompt(monkeypatch
         "backend/services/github_service.py": "import os\n",
     }
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
         if "/git/trees/" in url:
@@ -2877,7 +3197,7 @@ async def test_audit_task_gets_search_literal_nudge_even_if_tree_fetch_fails(mon
     repo_resp = _http_response(200, {"default_branch": "main"})
     tree_error_resp = _http_response(404, text="not found")
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
         if "/git/trees/" in url:
@@ -3041,7 +3361,7 @@ async def test_tool_agent_node_executes_a_real_batch_of_independent_reads(monkey
     monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
     repo_resp = _http_response(200, {"default_branch": "main"})
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, **kwargs):
         if url.endswith("/repos/SummonShenron/SAAPP"):
             return repo_resp
         if url.endswith("/contents/a.py"):

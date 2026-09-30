@@ -34,7 +34,7 @@ def _http_response(status_code, json_data=None, text=""):
 # ---------------------------------------------------------------------------
 
 def test_propose_write_node_create_pr_resolves_repo_from_an_earlier_turn(monkeypatch):
-    monkeypatch.setattr(aw.requests, "get", lambda url, headers=None, params=None: Mock(status_code=404, text="not found"))
+    monkeypatch.setattr(aw.requests, "get", lambda url, headers=None, params=None, **kwargs: Mock(status_code=404, text="not found"))
     monkeypatch.setattr(
         aw, "get_chat_llm",
         lambda username: SimpleNamespace(invoke=lambda prompt: _llm_json(
@@ -728,7 +728,7 @@ async def test_propose_send_email_incomplete_args_short_circuits(monkeypatch):
 async def test_mongo_write_proposal_to_execution_end_to_end(monkeypatch):
     monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])
     monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
-    monkeypatch.setattr(aw.requests, "get", lambda url, headers=None, params=None: _http_response(200, {"default_branch": "main"}))
+    monkeypatch.setattr(aw.requests, "get", lambda url, headers=None, params=None, **kwargs: _http_response(200, {"default_branch": "main"}))
     monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
 
     class _FakeCollection:

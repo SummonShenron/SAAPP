@@ -93,6 +93,70 @@ def test_build_connection_raises_if_no_scopes_granted(monkeypatch):
         gco.GoogleCalendarOAuth().build_connection("https://.../callback?code=abc", "state-1", "verifier-1")
 
 
+# ---------------------------------------------------------------------------
+# _allow_insecure_transport_for_local_dev — oauthlib refuses to even PARSE a non-https
+# authorization response (InsecureTransportError), a real crash hit testing locally against
+# http://localhost, where Google itself explicitly allows a loopback redirect URI for testing —
+# this is oauthlib's own client-side safety check, not something Google requires. Scoped
+# narrowly to an actual loopback GOOGLE_REDIRECT_URI so it can never weaken the real check for a
+# genuine https:// production redirect URI.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _clean_oauthlib_env_var():
+    # Production code sets this via os.environ directly (not monkeypatch, since it's a real
+    # runtime behavior change, not a test fixture) — monkeypatch can't auto-revert a mutation it
+    # didn't make itself, so every test in this section must clean up explicitly or the var leaks
+    # into every other test in the same process.
+    original = os.environ.pop("OAUTHLIB_INSECURE_TRANSPORT", None)
+    yield
+    if original is None:
+        os.environ.pop("OAUTHLIB_INSECURE_TRANSPORT", None)
+    else:
+        os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = original
+
+
+def test_allows_insecure_transport_for_localhost_redirect_uri(monkeypatch):
+    monkeypatch.setenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/calendar/callback")
+
+    gco.GoogleCalendarOAuth()._allow_insecure_transport_for_local_dev()
+
+    assert os.environ.get("OAUTHLIB_INSECURE_TRANSPORT") == "1"
+
+
+def test_allows_insecure_transport_for_loopback_ip_redirect_uri(monkeypatch):
+    monkeypatch.setenv("GOOGLE_REDIRECT_URI", "http://127.0.0.1:8000/api/calendar/callback")
+
+    gco.GoogleCalendarOAuth()._allow_insecure_transport_for_local_dev()
+
+    assert os.environ.get("OAUTHLIB_INSECURE_TRANSPORT") == "1"
+
+
+def test_does_not_touch_insecure_transport_for_a_real_https_redirect_uri():
+    # The autouse `oauth_env` fixture already sets a real https:// GOOGLE_REDIRECT_URI.
+    gco.GoogleCalendarOAuth()._allow_insecure_transport_for_local_dev()
+
+    assert "OAUTHLIB_INSECURE_TRANSPORT" not in os.environ
+
+
+def test_build_connection_calls_the_local_dev_check(monkeypatch):
+    """Integration-level: build_connection must actually invoke the check, not just have it
+    exist unused — this is the exact real crash (InsecureTransportError from flow.fetch_token)
+    this whole fix closes."""
+    monkeypatch.setenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/calendar/callback")
+    credentials = _fake_credentials()
+    fake_flow = SimpleNamespace(fetch_token=lambda authorization_response: None, credentials=credentials)
+    monkeypatch.setattr(gco.GoogleCalendarOAuth, "_flow", lambda self, state=None, code_verifier=None: fake_flow)
+    monkeypatch.setattr(
+        gco.requests, "get",
+        lambda url, headers=None, timeout=None: SimpleNamespace(status_code=200, json=lambda: {"email": "jack@example.com"}),
+    )
+
+    gco.GoogleCalendarOAuth().build_connection("http://localhost:8000/api/calendar/callback?code=abc", "state-1", "verifier-1")
+
+    assert os.environ.get("OAUTHLIB_INSECURE_TRANSPORT") == "1"
+
+
 def test_get_valid_access_token_returns_token_without_refresh_when_not_expired(monkeypatch):
     fernet = Fernet(os.environ["TOKEN_ENCRYPTION_KEY"].encode())
     doc = {

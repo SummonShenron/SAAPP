@@ -25,7 +25,7 @@ def get_clerk_public_key():
         # You can find this in your Clerk Dashboard under "JWT Templates" 
         # or "API Keys" -> "Issuer"
         jwks_url = f"{os.environ.get('CLERK_ISSUER')}/.well-known/jwks.json"
-        _cached_jwks = requests.get(jwks_url).json()
+        _cached_jwks = requests.get(jwks_url, timeout=10).json()
     return _cached_jwks
 
 async def get_current_user(request: Request):
