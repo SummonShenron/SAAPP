@@ -173,6 +173,26 @@ def test_classify_intent_detects_clarification_reply():
     assert intent == "resume_tool_agent"
 
 
+def test_classify_intent_resumes_on_paused_code_plan():
+    state = {
+        "messages": [
+            SimpleNamespace(type="human", content="fix the bug"),
+            SimpleNamespace(type="ai", content="Before I draft the full implementation..."),
+            SimpleNamespace(type="human", content="yes, go ahead"),
+        ],
+        "paused_code_plan": {
+            "original_question": "fix the bug",
+            "attempts": [],
+            "files": [{"path": "app.py", "reason": "fix it here"}],
+            "summary": "Patch app.py.",
+        },
+    }
+
+    intent = aw.classify_intent("yes, go ahead", state=state)
+
+    assert intent == "resume_tool_agent"
+
+
 def test_classify_intent_does_not_resume_without_paused_clarification_in_state():
     """The old mechanism (scanning the previous message for card-marker text) is gone —
     rendered text alone, with nothing in state, must not trigger a resume."""
@@ -241,3 +261,81 @@ async def test_tool_agent_node_resumes_with_recovered_attempts(monkeypatch):
     assert "SummonShenron/SAAPP" in captured_prompts[0]
     # Consumed — must not linger into a hypothetical turn 3.
     assert result["paused_clarification"] is None
+
+
+# ---------------------------------------------------------------------------
+# Full resume: an approved or rejected multi-file code plan resumes the SAME investigation
+# thread (paused_code_plan), mirroring paused_clarification's own resume mechanism above but
+# branching on APPROVAL_PATTERN/REJECTION_PATTERN instead of treating every reply as an answer.
+# ---------------------------------------------------------------------------
+
+@run_async
+async def test_tool_agent_node_resumes_after_code_plan_approval(monkeypatch):
+    _setup_github_repo(monkeypatch)
+
+    original_question = "fix the bug across these files"
+    user_reply = HumanMessage(content="yes, go ahead")
+
+    captured_prompts = []
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return _llm_response(action="final", answer="Here's the real implementation.")
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    turn2_state = _state(
+        messages=[user_reply],
+        paused_code_plan={
+            "original_question": original_question,
+            "attempts": [{
+                "purpose": "Read the file", "action_desc": "read_repo_file(path=app.py)",
+                "observation": "URL: ...\nimport os\n",
+            }],
+            "files": [{"path": "app.py", "reason": "fix the bug here"}],
+            "summary": "Patch the bug in app.py.",
+        },
+    )
+    result = await aw.tool_agent_node(turn2_state)
+
+    assert result["relevance_grade"] == "tool_agent"
+    assert "Here's the real implementation" in result["content_to_format"]
+    # The recovered attempt from the proposal turn shows up in the very first resumed prompt.
+    assert "Read the file" in captured_prompts[0]
+    assert "fix the bug across these files" in captured_prompts[0]
+    assert "user approved it" in captured_prompts[0]
+    assert "Proceed to draft the complete, real implementation" in captured_prompts[0]
+    # Consumed — must not linger into a hypothetical later turn.
+    assert result["paused_code_plan"] is None
+
+
+@run_async
+async def test_tool_agent_node_resumes_after_code_plan_rejection(monkeypatch):
+    _setup_github_repo(monkeypatch)
+
+    original_question = "fix the bug across these files"
+    user_reply = HumanMessage(content="no, don't touch app.py, use a different approach")
+
+    captured_prompts = []
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return _llm_response(action="final", answer="Revised plan noted.")
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    turn2_state = _state(
+        messages=[user_reply],
+        paused_code_plan={
+            "original_question": original_question,
+            "attempts": [],
+            "files": [{"path": "app.py", "reason": "fix the bug here"}],
+            "summary": "Patch the bug in app.py.",
+        },
+    )
+    result = await aw.tool_agent_node(turn2_state)
+
+    assert "did NOT approve it" in captured_prompts[0]
+    assert "no, don't touch app.py, use a different approach" in captured_prompts[0]
+    assert "do not draft the full implementation yet" in captured_prompts[0]
+    assert result["paused_code_plan"] is None

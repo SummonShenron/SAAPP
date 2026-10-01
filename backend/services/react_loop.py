@@ -564,7 +564,7 @@ async def run_react_loop(
                 trace_payload["batch_size"] = batch_size
             await safe_emit_event("trace_detail", trace_payload)
             if is_unsafe(sub_decision):
-                raise _UnsafeActionRequested(sub_decision)
+                raise _UnsafeActionRequested(sub_decision, attempts)
             try:
                 observation = act(sub_decision)
                 if asyncio.iscoroutine(observation):

@@ -13,6 +13,7 @@ from backend.components.constraints import MEMORY_TURN_SUMMARY_PROMPT
 from backend.services.memory_search import embed_and_store_memory_chunk
 from backend.services.memory_compaction import maybe_trigger_compaction
 from backend.utils.db_utils import get_db, resolve_service_registry_repo
+from backend.utils.embedding_utils import embed_text, cosine_similarity
 from fastapi import HTTPException
 import subprocess
 import sys
@@ -20,6 +21,10 @@ import sys
 logger = logging.getLogger("SASS Logger")
 DEFAULT_TARGET_REPO = os.getenv("DEFAULT_TARGET_REPO", "SummonShenron/SAAPP")
 LEGACY_INGEST_SECRET = os.getenv("ERRAGENT_INGEST_SECRET", "")
+# Same "is this actually relevant, semantically" role as memory_search.py's
+# DEFAULT_RECALL_SIMILARITY_THRESHOLD, independently tunable since this matches a whole past
+# question against a new one rather than a fact/chunk against a question.
+CORRECTION_SIMILARITY_THRESHOLD = float(os.getenv("CORRECTION_SIMILARITY_THRESHOLD", "0.75"))
 
 # def sync_run_script(script_path):
 #     """Synchronous function to run the script via subprocess."""
@@ -234,8 +239,67 @@ def save_correction(username: str, user_prompt: str, bad_response: str, reason: 
         "reason": reason,
         "tag": tag,
         "rating": rating,
+        "embedding": embed_text(user_prompt),
         "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     })
+
+
+def _fetch_relevant_corrections_by_substring(db, username: str, question: str) -> tuple:
+    """The original matching mechanism — a literal substring match on the first 30 characters of
+    the question. Kept only as a fallback for when embedding generation is unavailable (mirrors
+    save_user_fact's own embeddings-unavailable fallback in memory_utils.py), since it only ever
+    surfaces a past correction when a future question is worded almost identically."""
+    clean_prompt = question.strip()[:30]
+    if not clean_prompt:
+        return [], []
+
+    pattern = re.compile(re.escape(clean_prompt), re.IGNORECASE)
+
+    past_negatives = list(db["corrections"].find({
+        "username": username,
+        "rating": {"$ne": "positive"},
+        "user_prompt": pattern
+    }).limit(2))
+
+    past_positives = list(db["corrections"].find({
+        "username": username,
+        "rating": "positive",
+        "user_prompt": pattern
+    }).limit(1))
+
+    return past_negatives, past_positives
+
+
+def _fetch_relevant_corrections_by_embedding(db, username: str, question_embedding) -> tuple:
+    """Semantic matching — the same embed_text + cosine_similarity pattern
+    fetch_relevant_user_facts (memory_utils.py) already uses, so a differently-phrased but
+    semantically identical question actually surfaces a past mistake instead of needing
+    near-identical wording. Negatives and positives are ranked independently (not a single
+    overall ranking then split), matching the original substring version's own independence
+    between the two categories. Corrections saved before this change have no stored embedding
+    and are simply skipped, the same way memory_utils._find_best_embedding_match skips facts
+    with no embedding — nothing to migrate, they just age out as newer corrections accumulate."""
+    all_corrections = list(db["corrections"].find({"username": username}))
+    if not all_corrections:
+        return [], []
+
+    def _ranked(rating_filter) -> list:
+        scored = []
+        for corr in all_corrections:
+            if not rating_filter(corr.get("rating")):
+                continue
+            embedding = corr.get("embedding")
+            if not embedding:
+                continue
+            sim = cosine_similarity(question_embedding, embedding)
+            if sim >= CORRECTION_SIMILARITY_THRESHOLD:
+                scored.append((sim, corr))
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [corr for _, corr in scored]
+
+    past_negatives = _ranked(lambda r: r != "positive")[:2]
+    past_positives = _ranked(lambda r: r == "positive")[:1]
+    return past_negatives, past_positives
 
 
 def fetch_relevant_corrections(username: str, question: str) -> str:
@@ -244,26 +308,13 @@ def fetch_relevant_corrections(username: str, question: str) -> str:
         return ""
 
     try:
-        # 1. Take a clean slice of the user prompt
-        clean_prompt = question.strip()[:30]
-        if not clean_prompt:
-            return ""
-
-        # 2. Use re.compile so PyMongo handles BSON regex encoding natively
-        pattern = re.compile(re.escape(clean_prompt), re.IGNORECASE)
-
-        # 3. Fetch BOTH from the single 'corrections' collection
-        past_negatives = list(db["corrections"].find({
-            "username": username,
-            "rating": {"$ne": "positive"},
-            "user_prompt": pattern
-        }).limit(2))
-
-        past_positives = list(db["corrections"].find({
-            "username": username,
-            "rating": "positive",
-            "user_prompt": pattern
-        }).limit(1)) # Limit 1 to avoid bloating the prompt
+        question_embedding = embed_text(question.strip())
+        if question_embedding is not None:
+            past_negatives, past_positives = _fetch_relevant_corrections_by_embedding(db, username, question_embedding)
+        else:
+            # Embeddings unavailable for some reason — fall back to the old substring check
+            # rather than surfacing nothing at all.
+            past_negatives, past_positives = _fetch_relevant_corrections_by_substring(db, username, question)
 
         # If nothing is found, return empty string
         if not past_negatives and not past_positives:

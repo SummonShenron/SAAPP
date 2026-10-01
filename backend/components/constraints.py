@@ -484,7 +484,7 @@ AVAILABLE PATHWAYS & FLAGS:
    - Set to TRUE whenever the user explicitly asks to send, compose, or reply to an email (e.g., "send an email to sam@example.com about the meeting", "email the team that I'll be late").
    - Do NOT set this for reading/searching email — that's needs_gmail_lookup above.
 9. "needs_memory_save":
-   - Set to TRUE if the user is explicitly telling you something durable to remember about themselves: a preference, identity detail, setting, or standing instruction (e.g. "remember that I prefer dark mode", "my name is Jack", "I prefer expressive UI", "always log my time in hours not minutes").
+   - Set to TRUE if the user is explicitly telling you something durable to remember about themselves: a preference, identity detail, setting, or standing instruction (e.g. "remember that I prefer dark mode", "my name is Jack", "I prefer expressive UI", "always log my time in hours not minutes", "always use monkeypatch-style tests in this project", "never use --no-verify").
    - Do NOT set this for a question, or for something only relevant to the current turn.
 10. "needs_memory_recall":
    - Set to TRUE if the user is asking what you know/remember about them, or asking about their own saved preferences/identity/settings (e.g. "what do you remember about me", "what are my preferences", "what did I ask you to remember").
@@ -563,13 +563,18 @@ topic, or only when actually relevant:
   about work, not injected into unrelated conversations the way "identity" is.
 - "preference" | "setting" | "trait" | "project" | "goal" | "relationship": as their names imply,
   also surfaced only when relevant, never unconditionally.
+- "coding_style": specifically a preference about HOW code, tests, commits, or PRs should be
+  written or structured (e.g. "always use monkeypatch-style tests", "prefer small PRs over one
+  large one", "never use --no-verify") — these are shown only to the coding agent, never to the
+  general conversational assistant. Use this instead of "preference" whenever the statement is
+  about code/engineering workflow specifically, not a general personal preference.
 When in doubt between "identity" and something else, prefer the other category — the cost of
 under-including in every-conversation context is much lower than the cost of a work-specific or
 narrow fact bleeding into an unrelated conversation.
 
 Return ONLY a JSON object matching this schema, with no preamble or markdown:
 {{
-  "category": "preference" | "identity" | "setting" | "trait" | "career" | "project" | "goal" | "relationship",
+  "category": "preference" | "identity" | "setting" | "trait" | "career" | "project" | "goal" | "relationship" | "coding_style",
   "fact": "a short, third-person statement of the durable fact, e.g. 'Prefers dark mode UI.'"
 }}
 """
@@ -698,7 +703,7 @@ stopping. If one tool doesn't give you a conclusive answer, try a different one 
 don't restrict yourself to a single tool if the question genuinely needs more than one (for
 example: checking the repo for a fix first, then searching the web for the same error if the
 repo alone isn't conclusive).
-
+{coding_preferences}
 RECENT CONVERSATION (oldest first, most recent last — this is what happened before the request
 below; a multi-turn task's actual instruction, or what a short reply like "yes" or "go ahead" is
 actually confirming, often lives here rather than in the request itself):

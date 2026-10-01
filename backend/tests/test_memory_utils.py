@@ -263,6 +263,41 @@ def test_fetch_relevant_user_facts_falls_back_to_recency_when_question_empty():
     assert "Older fact." not in context
 
 
+def test_fetch_coding_preferences_returns_empty_when_none_saved():
+    assert memory_utils.fetch_coding_preferences("jack") == ""
+
+
+def test_fetch_coding_preferences_only_includes_coding_style_category():
+    memory_utils.save_user_fact("jack", "Always use monkeypatch-style tests.", category="coding_style")
+    memory_utils.save_user_fact("jack", "Prefers dark mode UI.", category="preference")
+
+    context = memory_utils.fetch_coding_preferences("jack")
+
+    assert "KNOWN CODING PREFERENCES" in context
+    assert "Always use monkeypatch-style tests." in context
+    assert "Prefers dark mode UI." not in context
+
+
+def test_fetch_coding_preferences_ranks_by_confidence_not_question_relevance():
+    low = _make_fact(category="coding_style", confidence=0.2, fact_id="low")
+    low.fact = "Prefer small PRs."
+    high = _make_fact(category="coding_style", confidence=0.9, fact_id="high")
+    high.fact = "Never use --no-verify."
+    memory_utils.save_user_facts("jack", [low, high])
+
+    context = memory_utils.fetch_coding_preferences("jack", limit=1)
+
+    # Unlike fetch_relevant_user_facts, this never takes a question — every coding-style fact
+    # applies regardless of what's currently being asked, so ranking is purely by confidence.
+    assert "Never use --no-verify." in context
+    assert "Prefer small PRs." not in context
+
+
+def test_fetch_coding_preferences_never_raises_on_internal_error(monkeypatch):
+    monkeypatch.setattr(memory_utils, "load_user_facts", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert memory_utils.fetch_coding_preferences("jack") == ""
+
+
 def test_facts_are_scoped_per_username():
     memory_utils.save_user_fact("jack", "Jack's fact.", category="preference")
     memory_utils.save_user_fact("alice", "Alice's fact.", category="preference")
@@ -426,6 +461,46 @@ def test_prune_excess_facts_noop_under_cap(monkeypatch):
 
 def test_prune_excess_facts_drops_lowest_confidence_first(monkeypatch):
     monkeypatch.setattr(memory_utils, "MAX_STORED_FACTS", 2)
+    high = _make_fact(fact_id="high", confidence=1.0)
+    mid = _make_fact(fact_id="mid", confidence=0.5)
+    low = _make_fact(fact_id="low", confidence=0.1)
+
+    result = memory_utils._prune_excess_facts([low, mid, high])
+
+    assert {f.id for f in result} == {"high", "mid"}
+
+
+def test_prune_excess_facts_archives_dropped_facts_when_db_available(monkeypatch):
+    """Pruning must never be a true, unrecoverable delete — a dropped fact is archived to a
+    separate collection first, so an eviction from the capped hot store is recoverable."""
+    monkeypatch.setattr(memory_utils, "MAX_STORED_FACTS", 2)
+    archived_docs = []
+    fake_archive_collection = Mock()
+    fake_archive_collection.insert_many = Mock(side_effect=lambda docs: archived_docs.extend(docs))
+    fake_db = {memory_utils.FACT_ARCHIVE_COLLECTION: fake_archive_collection}
+    monkeypatch.setattr(memory_utils, "get_db", lambda: fake_db)
+
+    high = _make_fact(fact_id="high", confidence=1.0)
+    mid = _make_fact(fact_id="mid", confidence=0.5)
+    low = _make_fact(fact_id="low", confidence=0.1)
+
+    memory_utils._prune_excess_facts([low, mid, high])
+
+    fake_archive_collection.insert_many.assert_called_once()
+    assert len(archived_docs) == 1
+    assert archived_docs[0]["id"] == "low"
+    assert "archived_at" in archived_docs[0]
+
+
+def test_prune_excess_facts_archive_failure_does_not_block_pruning(monkeypatch):
+    """Archiving is a best-effort safety net, not a precondition — a failed archive write must
+    never stop the fact from still being pruned out of the live, capped store."""
+    monkeypatch.setattr(memory_utils, "MAX_STORED_FACTS", 2)
+    fake_archive_collection = Mock()
+    fake_archive_collection.insert_many = Mock(side_effect=Exception("write failed"))
+    fake_db = {memory_utils.FACT_ARCHIVE_COLLECTION: fake_archive_collection}
+    monkeypatch.setattr(memory_utils, "get_db", lambda: fake_db)
+
     high = _make_fact(fact_id="high", confidence=1.0)
     mid = _make_fact(fact_id="mid", confidence=0.5)
     low = _make_fact(fact_id="low", confidence=0.1)

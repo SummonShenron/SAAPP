@@ -1032,6 +1032,11 @@ div:has(.portal-body) {
 .theme-shadow .circle-icon-button {
   border: none;
 }
+
+.feedback-actions .circle-icon-button:hover:not(:disabled) {
+  transform: scale(1.1);
+  box-shadow: none;
+}
 .circle-icon-button:hover:not(:disabled) {
   transform: translateY(-2px);
   box-shadow: var(--shadow-hover);

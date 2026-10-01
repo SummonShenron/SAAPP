@@ -243,9 +243,17 @@ def _truncate_observation(observation) -> str:
 
 class _UnsafeActionRequested(Exception):
     """Raised by run_react_loop when is_unsafe() flags a step, so the calling node can
-    build its own tool-specific approval-required response instead of the loop guessing."""
-    def __init__(self, decision: dict):
+    build its own tool-specific approval-required response instead of the loop guessing.
+
+    attempts carries whatever the loop had accumulated before this step, the same way
+    _ClarificationNeeded does below — needed by any unsafe action whose approval must resume the
+    SAME investigation thread (e.g. propose_code_plan, approved then continuing on to draft the
+    real implementation) rather than dispatch a one-shot external action whose content was
+    already fully composed before the approval card (propose_append_target_doc/
+    propose_send_email don't read this field, and don't need to)."""
+    def __init__(self, decision: dict, attempts: list | None = None):
         self.decision = decision
+        self.attempts = attempts or []
 
 
 class _ClarificationNeeded(Exception):

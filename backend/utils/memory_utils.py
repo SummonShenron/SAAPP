@@ -23,6 +23,8 @@ VALID_CATEGORIES = {
     "preference", "identity", "setting", "trait",
     "career", "project", "goal", "relationship",
     "pattern",  # a synthesized observation across several facts, not an atomic fact itself
+    "coding_style",  # how THIS user likes code/tests/PRs written — see fetch_coding_preferences;
+                      # injected into the coding agent's own prompt, not the voice composer's.
 }
 FACT_SIMILARITY_THRESHOLD = float(os.getenv("FACT_SIMILARITY_THRESHOLD", "0.80"))
 FACT_REINFORCEMENT_INCREMENT = float(os.getenv("FACT_REINFORCEMENT_INCREMENT", "0.15"))
@@ -36,6 +38,10 @@ GOAL_NUDGE_INTERVAL_DAYS = float(os.getenv("GOAL_NUDGE_INTERVAL_DAYS", "14"))
 # Mongo's 16MB single-document limit for a long-lived heavy account. Capping it keeps that
 # structurally impossible rather than just unlikely.
 MAX_STORED_FACTS = int(os.getenv("MAX_STORED_FACTS", "400"))
+# A separate, deliberately uncapped collection (one document per archived fact, not another
+# growing array) — so pruning a fact out of the hot MAX_STORED_FACTS-bounded store never
+# destroys it outright, only moves it out of active recall. Recoverable, not just logged.
+FACT_ARCHIVE_COLLECTION = "user_memory_fact_archive"
 
 
 class UserFact(BaseModel):
@@ -190,13 +196,31 @@ def effective_confidence(fact: "UserFact", now: datetime) -> float:
     return fact.confidence * (0.5 ** (days_since_update / FACT_CONFIDENCE_HALF_LIFE_DAYS))
 
 
+def _archive_dropped_facts(dropped: List["UserFact"]) -> None:
+    """Pruning never truly destroys a fact — it's archived here first, so an eviction from the
+    hot capped store is always recoverable rather than silently permanent. Best-effort: if Mongo
+    isn't configured or the write fails, the fact is still dropped from the live store (archiving
+    is a safety net on top of pruning, not a precondition for it)."""
+    db = get_db()
+    if db is None or not dropped:
+        return
+    try:
+        db[FACT_ARCHIVE_COLLECTION].insert_many([
+            {**f.dict(), "archived_at": datetime.now(timezone.utc).isoformat()}
+            for f in dropped
+        ])
+    except Exception:
+        logger.exception("[MemoryUtils] Failed to archive %d pruned fact(s).", len(dropped))
+
+
 def _prune_excess_facts(facts: List["UserFact"], protect_id: Optional[str] = None) -> List["UserFact"]:
     """Keeps the store at or under MAX_STORED_FACTS so it can never approach Mongo's 16MB
     single-document limit. Identity facts are never pruned (foundational, and naturally small
     in number — see fetch_relevant_user_facts' same treatment); `protect_id` additionally
     shields whichever fact save_user_fact just touched, so telling it something never results
     in that exact fact being evicted in the same call. Among everything else, the
-    lowest-effective-confidence facts (most decayed / least reinforced) go first."""
+    lowest-effective-confidence facts (most decayed / least reinforced) go first — and whatever
+    gets evicted is archived, not deleted outright (see _archive_dropped_facts)."""
     if len(facts) <= MAX_STORED_FACTS:
         return facts
 
@@ -207,12 +231,13 @@ def _prune_excess_facts(facts: List["UserFact"], protect_id: Optional[str] = Non
 
     keep_count = max(MAX_STORED_FACTS - len(protected), 0)
     kept_other = other[:keep_count]
-    dropped = len(other) - len(kept_other)
-    if dropped > 0:
+    dropped = other[keep_count:]
+    if dropped:
         logger.info(
             "[MemoryUtils] Pruned %d lowest-confidence fact(s) for a user to stay under the "
-            "%d-fact cap.", dropped, MAX_STORED_FACTS,
+            "%d-fact cap (archived, not deleted).", len(dropped), MAX_STORED_FACTS,
         )
+        _archive_dropped_facts(dropped)
     return protected + kept_other
 
 
@@ -449,4 +474,29 @@ def fetch_relevant_user_facts(
         return f"\n\nKNOWN USER CONTEXT (use naturally, do not restate unless relevant):\n{lines}\n"
     except Exception:
         logger.exception("[MEMORY WARNING] Could not fetch user facts for %s", username)
+        return ""
+
+
+def fetch_coding_preferences(username: str, limit: int = 10) -> str:
+    """Sibling to fetch_relevant_user_facts, for the coding agent's own prompt (TOOL_AGENT_PROMPT)
+    rather than the voice composer's. "coding_style" facts ("always use monkeypatch-style tests",
+    "never use --no-verify", "prefer small PRs") apply to every coding task regardless of what
+    the current question is about — the same always-relevant treatment identity facts get in
+    fetch_relevant_user_facts — so this surfaces all of them (ranked by effective confidence, not
+    by relevance to the current question) rather than running a per-question similarity search."""
+    try:
+        facts = load_user_facts(username, category="coding_style")
+        if not facts:
+            return ""
+
+        now = datetime.now(timezone.utc)
+        ranked = sorted(facts, key=lambda f: effective_confidence(f, now), reverse=True)[:limit]
+
+        lines = "\n".join(f"- {f.fact}" for f in ranked)
+        return (
+            "\n\nKNOWN CODING PREFERENCES (how this user likes code/tests/PRs written — follow "
+            f"these the same way you would an explicit instruction):\n{lines}\n"
+        )
+    except Exception:
+        logger.exception("[MEMORY WARNING] Could not fetch coding preferences for %s", username)
         return ""
