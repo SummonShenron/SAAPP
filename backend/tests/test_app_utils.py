@@ -7,6 +7,29 @@ from backend.utils import app_utils
 from backend.utils.app_utils import collect_kb_images, _serialize_messages, save_correction, fetch_relevant_corrections
 
 
+def _fake_embed(text):
+    """Deterministic stand-in for embedding_utils.embed_text (same convention as
+    test_memory_utils.py's own _fake_embed): near-identical text (normalized case/whitespace)
+    maps to the identical vector; distinct phrases land in different buckets with overwhelming
+    probability for the handful of short strings used in these tests."""
+    if not text or not text.strip():
+        return None
+    normalized = text.strip().lower()
+    bucket = hash(normalized) % 9973
+    vector = [0.0] * 9973
+    vector[bucket] = 1.0
+    return vector
+
+
+def _similar_embed(_text):
+    """A fixed, shared vector — stands in for two genuinely different phrasings that are
+    nonetheless semantically similar (what _fake_embed's own hash-bucket scheme can't express,
+    since it only maps near-identical text to the same vector)."""
+    vector = [0.0] * 9973
+    vector[42] = 1.0
+    return vector
+
+
 def test_collect_kb_images_returns_empty_for_no_image_docs():
     docs = [Document(page_content="plain text", metadata={"source": "doc.pdf"})]
     assert collect_kb_images(docs) == []
@@ -111,6 +134,7 @@ class _FakeDB:
 def test_save_correction_persists_rating_field(monkeypatch):
     fake_db = _FakeDB()
     monkeypatch.setattr(app_utils, "get_db", lambda: fake_db)
+    monkeypatch.setattr(app_utils, "embed_text", _fake_embed)
 
     save_correction("jack", "What is the refund policy?", "We don't do refunds.", "Wrong, we do 30-day refunds.", "hallucination", rating="positive")
 
@@ -121,6 +145,7 @@ def test_save_correction_persists_rating_field(monkeypatch):
 def test_save_correction_defaults_to_negative_rating(monkeypatch):
     fake_db = _FakeDB()
     monkeypatch.setattr(app_utils, "get_db", lambda: fake_db)
+    monkeypatch.setattr(app_utils, "embed_text", _fake_embed)
 
     save_correction("jack", "What is the refund policy?", "We don't do refunds.", "Wrong, we do 30-day refunds.", "hallucination")
 
@@ -133,12 +158,28 @@ def test_save_correction_noop_when_db_unavailable(monkeypatch):
     save_correction("jack", "question", "bad answer", "reason", "other")
 
 
-def test_fetch_relevant_corrections_surfaces_positive_example(monkeypatch):
+def test_save_correction_stores_an_embedding(monkeypatch):
     fake_db = _FakeDB()
     monkeypatch.setattr(app_utils, "get_db", lambda: fake_db)
+    monkeypatch.setattr(app_utils, "embed_text", _fake_embed)
+
+    save_correction("jack", "What is the refund policy?", "We don't do refunds.", "Wrong.", "hallucination")
+
+    assert fake_db.corrections.docs[0]["embedding"] == _fake_embed("What is the refund policy?")
+
+
+def test_fetch_relevant_corrections_surfaces_positive_example_for_differently_worded_question(monkeypatch):
+    """The actual bug this upgrade fixes: the old literal-30-char-prefix matcher could never
+    surface this, since the two questions below share no common prefix at all despite asking the
+    same thing. _similar_embed stands in for "semantically identical, worded completely
+    differently" — real embeddings would score these as similar; the hash-bucket _fake_embed
+    scheme used elsewhere in this file can't express that, only near-identical text can."""
+    fake_db = _FakeDB()
+    monkeypatch.setattr(app_utils, "get_db", lambda: fake_db)
+    monkeypatch.setattr(app_utils, "embed_text", _similar_embed)
 
     save_correction(
-        "jack", "What is the refund policy for orders?",
+        "jack", "Can I send back something I bought a month ago?",
         "We offer a 30-day no-questions-asked refund window.",
         "Matches the documented policy exactly.", "other", rating="positive",
     )
@@ -149,12 +190,13 @@ def test_fetch_relevant_corrections_surfaces_positive_example(monkeypatch):
     assert "30-day no-questions-asked refund window" in context
 
 
-def test_fetch_relevant_corrections_surfaces_negative_guardrail(monkeypatch):
+def test_fetch_relevant_corrections_surfaces_negative_guardrail_for_differently_worded_question(monkeypatch):
     fake_db = _FakeDB()
     monkeypatch.setattr(app_utils, "get_db", lambda: fake_db)
+    monkeypatch.setattr(app_utils, "embed_text", _similar_embed)
 
     save_correction(
-        "jack", "What is the refund policy for orders?",
+        "jack", "Can I send back something I bought a month ago?",
         "We never offer refunds under any circumstances.",
         "Contradicts the documented 30-day policy.", "hallucination", rating="negative",
     )
@@ -165,8 +207,63 @@ def test_fetch_relevant_corrections_surfaces_negative_guardrail(monkeypatch):
     assert "PREFERRED EXAMPLES" not in context
 
 
+def test_fetch_relevant_corrections_ignores_dissimilar_corrections(monkeypatch):
+    fake_db = _FakeDB()
+    monkeypatch.setattr(app_utils, "get_db", lambda: fake_db)
+    monkeypatch.setattr(app_utils, "embed_text", _fake_embed)
+
+    save_correction(
+        "jack", "What's the weather like today?",
+        "It's sunny.", "Not relevant to refunds.", "other", rating="positive",
+    )
+
+    context = fetch_relevant_corrections("jack", "What is the refund policy for orders over $50?")
+
+    assert context == ""
+
+
+def test_fetch_relevant_corrections_skips_corrections_saved_before_the_embedding_upgrade(monkeypatch):
+    """A correction saved before this change has no "embedding" field at all — it must be
+    skipped cleanly during semantic matching, not crash the whole lookup."""
+    fake_db = _FakeDB()
+    fake_db.corrections.docs.append({
+        "id": "legacy-1", "username": "jack", "user_prompt": "What is the refund policy for orders?",
+        "bad_response": "We never offer refunds.", "reason": "Wrong.", "tag": "hallucination",
+        "rating": "negative", "created_at": "2025-01-01T00:00:00+00:00",
+        # No "embedding" key — simulates a pre-upgrade document.
+    })
+    monkeypatch.setattr(app_utils, "get_db", lambda: fake_db)
+    monkeypatch.setattr(app_utils, "embed_text", _similar_embed)
+
+    context = fetch_relevant_corrections("jack", "What is the refund policy for orders over $50?")
+
+    assert context == ""
+
+
+def test_fetch_relevant_corrections_falls_back_to_substring_match_when_embeddings_unavailable(monkeypatch):
+    """Mirrors save_user_fact's own embeddings-unavailable fallback (memory_utils.py) — if
+    embed_text returns None, the original literal-prefix matching still runs rather than
+    surfacing nothing at all."""
+    fake_db = _FakeDB()
+    monkeypatch.setattr(app_utils, "get_db", lambda: fake_db)
+    monkeypatch.setattr(app_utils, "embed_text", lambda text: None)
+
+    save_correction(
+        "jack", "What is the refund policy for orders?",
+        "We offer a 30-day no-questions-asked refund window.",
+        "Matches the documented policy exactly.", "other", rating="positive",
+    )
+
+    # Shares the same ~30-character prefix as the saved prompt — the substring fallback's own
+    # matching contract, unchanged from before this upgrade.
+    context = fetch_relevant_corrections("jack", "What is the refund policy for orders over $50?")
+
+    assert "PREFERRED EXAMPLES" in context
+
+
 def test_fetch_relevant_corrections_returns_empty_when_nothing_matches(monkeypatch):
     fake_db = _FakeDB()
     monkeypatch.setattr(app_utils, "get_db", lambda: fake_db)
+    monkeypatch.setattr(app_utils, "embed_text", _fake_embed)
 
     assert fetch_relevant_corrections("jack", "Completely unrelated question about weather") == ""

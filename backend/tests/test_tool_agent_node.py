@@ -100,6 +100,11 @@ def _setup_github_repo(monkeypatch, tree_items=None):
 
     monkeypatch.setattr(aw.requests, "get", fake_get)
     monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+    # Every tool_agent_node call resolves the user's directory groups near the start regardless
+    # of which action is ultimately tested — without this, a test that doesn't separately mock
+    # it falls through to a real, now-blocked MongoDB connection (see conftest.py's
+    # block_real_db_calls) rather than the harmless default every test here actually wants.
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
     return fake_get
 
 
@@ -725,8 +730,8 @@ async def test_non_admin_action_menu_never_includes_run_repo_tests(monkeypatch):
 
 @run_async
 async def test_admin_action_menu_includes_run_repo_tests(monkeypatch):
-    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])
     _setup_github_repo(monkeypatch)
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])
     monkeypatch.setattr(aw, "get_db", lambda: _FakeDB({"user_memory_facts": _FakeCollection()}))
 
     captured_prompts = []
@@ -761,8 +766,8 @@ async def test_non_admin_cannot_execute_run_repo_tests_even_if_returned(monkeypa
 
 @run_async
 async def test_run_repo_tests_dispatches_with_repo_and_default_branch(monkeypatch):
-    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])
     _setup_github_repo(monkeypatch)
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])
     monkeypatch.setattr(aw, "get_db", lambda: _FakeDB({"user_memory_facts": _FakeCollection()}))
 
     fake_run_tests = Mock(return_value="Test run SUCCESS: https://github.com/SummonShenron/SAAPP/actions/runs/1")
@@ -811,8 +816,8 @@ async def test_non_admin_action_menu_never_includes_run_snippet(monkeypatch):
 
 @run_async
 async def test_admin_action_menu_includes_run_snippet(monkeypatch):
-    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])
     _setup_github_repo(monkeypatch)
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])
     monkeypatch.setattr(aw, "get_db", lambda: _FakeDB({"user_memory_facts": _FakeCollection()}))
 
     captured_prompts = []
@@ -835,8 +840,8 @@ async def test_run_snippet_menu_text_forbids_hand_rolled_stand_ins(monkeypatch):
     # modified code — looks like verification in the trace, proves nothing. Reviewed and rejected
     # a self-drive attempt at this fix that fabricated a nonexistent CONSTRAINTS dict in
     # constraints.py; the real menu text lives inline here in agent_workflow.py.
-    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])
     _setup_github_repo(monkeypatch)
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])
     monkeypatch.setattr(aw, "get_db", lambda: _FakeDB({"user_memory_facts": _FakeCollection()}))
 
     captured_prompts = []
@@ -874,8 +879,8 @@ async def test_non_admin_cannot_execute_run_snippet_even_if_returned(monkeypatch
 
 @run_async
 async def test_run_snippet_dispatches_with_repo_default_branch_and_code(monkeypatch):
-    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])
     _setup_github_repo(monkeypatch)
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])
     monkeypatch.setattr(aw, "get_db", lambda: _FakeDB({"user_memory_facts": _FakeCollection()}))
 
     fake_run_snippet = Mock(return_value="Snippet run SUCCESS: https://github.com/SummonShenron/SAAPP/actions/runs/1\nthe function returned 42")
@@ -906,8 +911,8 @@ async def test_run_snippet_dispatches_with_repo_default_branch_and_code(monkeypa
 
 @run_async
 async def test_mongo_action_correct_collection_first_try(monkeypatch):
-    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])
     _setup_github_repo(monkeypatch)
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])
     monkeypatch.setattr(aw, "get_db", lambda: _FakeDB({"user_memory_facts": _FakeCollection([{"fact": "a"}, {"fact": "b"}])}))
 
     responses = [
@@ -1106,8 +1111,8 @@ async def test_pinned_repo_used_when_current_message_names_none(monkeypatch):
 
 @run_async
 async def test_mongo_unsafe_write_triggers_approval(monkeypatch):
-    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])
     _setup_github_repo(monkeypatch)
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Global_Admins"])
     monkeypatch.setattr(aw, "get_db", lambda: _FakeDB({"tasks": _FakeCollection()}))
 
     responses = [
@@ -3206,6 +3211,7 @@ async def test_audit_task_gets_search_literal_nudge_even_if_tree_fetch_fails(mon
 
     monkeypatch.setattr(aw.requests, "get", fake_get)
     monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
 
     captured_kwargs = {}
 
@@ -3252,6 +3258,47 @@ async def test_history_is_threaded_into_tool_agent_prompt(monkeypatch):
     await aw.tool_agent_node(state)
 
     assert "click the chat widget icon" in captured_kwargs["prompt_template"]
+
+
+@run_async
+async def test_coding_preferences_are_threaded_into_tool_agent_prompt(monkeypatch):
+    _setup_github_repo(monkeypatch)
+    monkeypatch.setattr(
+        aw, "fetch_coding_preferences",
+        lambda username: "\n\nKNOWN CODING PREFERENCES (...):\n- Never use --no-verify.\n",
+    )
+    captured_kwargs = {}
+
+    async def fake_run_react_loop(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"final_answer": "done", "attempts": [], "show_work": False}
+
+    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+
+    await aw.tool_agent_node(_state("fix the failing test"))
+
+    assert "KNOWN CODING PREFERENCES" in captured_kwargs["prompt_template"]
+    assert "Never use --no-verify." in captured_kwargs["prompt_template"]
+
+
+@run_async
+async def test_no_coding_preferences_leaves_no_placeholder_artifact(monkeypatch):
+    """When there's nothing to inject, the {coding_preferences} placeholder must actually be
+    replaced with the empty string — not left as a literal unresolved placeholder in the prompt
+    the model sees."""
+    _setup_github_repo(monkeypatch)
+    monkeypatch.setattr(aw, "fetch_coding_preferences", lambda username: "")
+    captured_kwargs = {}
+
+    async def fake_run_react_loop(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"final_answer": "done", "attempts": [], "show_work": False}
+
+    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+
+    await aw.tool_agent_node(_state("fix the failing test"))
+
+    assert "{coding_preferences}" not in captured_kwargs["prompt_template"]
 
 
 @run_async

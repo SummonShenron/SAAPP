@@ -781,3 +781,72 @@ async def test_mongo_write_proposal_to_execution_end_to_end(monkeypatch):
     assert result["relevance_grade"] == "action_complete"
     assert "Executed Successfully" in result["content_to_format"]
     assert result["pending_action"] is None
+
+
+# ---------------------------------------------------------------------------
+# propose_code_plan — pauses before the expensive drafting pass for a multi-file code
+# proposal, mirroring propose_append_target_doc/propose_send_email's "discovered mid-loop"
+# approval-card shape, but resuming the SAME investigation thread on approval (see
+# paused_code_plan) rather than dispatching a one-shot external action.
+# ---------------------------------------------------------------------------
+
+@run_async
+async def test_propose_code_plan_builds_approval_card_and_pauses_state(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: [])
+
+    from backend.tests.test_tool_agent_node import _setup_github_repo, _llm_response, _state
+
+    _setup_github_repo(monkeypatch)
+
+    responses = [
+        _llm_response(
+            action="query", purpose="Propose the fix plan",
+            tool_action="propose_code_plan",
+            args={
+                "files": [
+                    {"path": "backend/services/agent_workflow.py", "reason": "add the new branch"},
+                    {"path": "backend/services/react_loop.py", "reason": "thread the new field through"},
+                ],
+                "summary": "Add a new unsafe action and a resume path for it.",
+            },
+        ),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("fix the bug across these files"))
+
+    assert result["pending_action"] is None
+    assert result["relevance_grade"] == "hitl_approval_required"
+    paused = result["paused_code_plan"]
+    assert [f["path"] for f in paused["files"]] == [
+        "backend/services/agent_workflow.py", "backend/services/react_loop.py",
+    ]
+    assert paused["summary"] == "Add a new unsafe action and a resume path for it."
+    assert paused["attempts"] == []
+    assert "Before I draft the full implementation" in result["content_to_format"]
+    assert "backend/services/agent_workflow.py" in result["content_to_format"]
+    assert "Add a new unsafe action and a resume path for it." in result["content_to_format"]
+
+
+@run_async
+async def test_propose_code_plan_with_no_files_short_circuits(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: [])
+
+    from backend.tests.test_tool_agent_node import _setup_github_repo, _llm_response, _state
+
+    _setup_github_repo(monkeypatch)
+
+    responses = [
+        _llm_response(
+            action="query", purpose="Propose the fix plan",
+            tool_action="propose_code_plan", args={"files": [], "summary": "Nothing to touch yet."},
+        ),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("fix the bug"))
+
+    assert result["pending_action"] is None
+    assert result.get("paused_code_plan") is None
+    assert result["relevance_grade"] == "conversational"
+    assert "Approval Required" not in result["content_to_format"]

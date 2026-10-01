@@ -58,6 +58,11 @@ class GraphState(TypedDict):
     # the one field deliberately exempted from reset_transient_state's per-turn reset, so it
     # survives across turns via the checkpointer instead of being re-derived from rendered card
     # text (see tool_agent_node's _ClarificationNeeded handling and classify_intent's resume check)
+    paused_code_plan: Optional[Dict[str, Any]]  # {"original_question", "attempts", "files", "summary"} —
+    # same deliberate reset_transient_state exemption as paused_clarification, for the same
+    # reason: survives across turns via the checkpointer so approving a proposed multi-file code
+    # plan resumes the SAME investigation thread instead of starting over (see tool_agent_node's
+    # propose_code_plan handling and classify_intent's resume check)
 
 # def route_user_query(state: GraphState) -> str:
 #     """

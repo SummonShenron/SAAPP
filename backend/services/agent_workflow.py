@@ -43,7 +43,7 @@ from backend.components.constraints import (
     DRAFT_SEND_EMAIL_PROMPT,
     MEMORY_EXTRACTION_PROMPT
 )
-from backend.utils.memory_utils import save_user_fact, load_user_facts
+from backend.utils.memory_utils import save_user_fact, load_user_facts, fetch_coding_preferences
 from backend.services.memory_search import embed_and_store_memory_chunk, retrieve_user_memory
 from backend.components.time_storage import add_time_entry, TimeEntryCreate
 from backend.components import taskboard
@@ -268,8 +268,9 @@ def ensure_workflow_keys(state: GraphState) -> GraphState:
 # turn's input state from whatever was checkpointed on a PRIOR turn, however many turns back
 # that was (verified against LangGraph's own Pregel loop). app.py's initial_state never sets
 # most of these, so without this reset they'd all leak across turns the moment a checkpointer
-# was attached. paused_clarification is the one deliberate exception — it's the only field
-# meant to survive, so it's the only transient GraphState field NOT listed here.
+# was attached. paused_clarification and paused_code_plan are the deliberate exceptions —
+# these are the only fields meant to survive, so they're the only transient GraphState fields
+# NOT listed here.
 _TRANSIENT_STATE_DEFAULTS: Dict[str, Any] = {
     "coordinator_intent": "",
     "coordinator_plan": [],
@@ -522,6 +523,14 @@ def classify_intent(message: str, state: dict = None) -> str:
     # leaves alone, so it survives from the turn that raised it into this one.
     if state.get("paused_clarification"):
         logger.debug("Detected paused_clarification in state — resuming tool_agent")
+        return "resume_tool_agent"
+
+    # Same mechanism as paused_clarification just above, for an approved/rejected multi-file
+    # code-change plan (see propose_code_plan's _UnsafeActionRequested handling in
+    # tool_agent_node) — reuses the same "resume_tool_agent" destination since tool_agent_node's
+    # own resume logic is what actually branches on which paused field is present.
+    if state.get("paused_code_plan"):
+        logger.debug("Detected paused_code_plan in state — resuming tool_agent")
         return "resume_tool_agent"
 
     pending_action = state.get("pending_action") or {}
@@ -1978,6 +1987,35 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             )
             state["paused_clarification"] = None
 
+        # Resuming an approved (or rejected) code-change plan: state["paused_code_plan"] (same
+        # deliberate reset_transient_state exemption as paused_clarification above) carries the
+        # proposed file list and the attempts already made, so approval resumes the SAME
+        # investigation thread to draft the real implementation instead of starting over — see
+        # propose_code_plan's _UnsafeActionRequested handling further down this function.
+        paused_plan = state.get("paused_code_plan")
+        if paused_plan:
+            resumed_attempts = paused_plan.get("attempts", [])
+            original_question = paused_plan.get("original_question", msg)
+            files_desc = ", ".join(f.get("path", "?") for f in paused_plan.get("files", []))
+            reply_clean = msg.lower().strip().strip("!.,")
+            # Ambiguous or outright-rejecting replies both go to the "revise" branch — only a
+            # clear, unambiguous approval proceeds to the expensive drafting pass.
+            approved = bool(APPROVAL_PATTERN.search(reply_clean)) and not REJECTION_PATTERN.search(reply_clean)
+            if approved:
+                msg = (
+                    f"{original_question}\n\n(You previously proposed a plan to touch: "
+                    f"{files_desc}, and the user approved it. Proceed to draft the complete, real "
+                    f"implementation now as your final answer — do not propose the plan again.)"
+                )
+            else:
+                msg = (
+                    f"{original_question}\n\n(You previously proposed a plan to touch: "
+                    f"{files_desc}. The user did NOT approve it as written — they said: "
+                    f"\"{msg}\". Revise your plan or ask a clarifying question; do not draft the "
+                    f"full implementation yet.)"
+                )
+            state["paused_code_plan"] = None
+
         # Resolve the repo BEFORE folding in attached/pasted code — arbitrary pasted content
         # can contain its own "word/word"-shaped substrings that would otherwise hijack
         # repo detection. Priority: an explicit repo mention in the message the user just sent
@@ -2788,14 +2826,26 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             "never see this action offered. This ALWAYS requires the user's approval before "
             "anything is sent — call it only once, with your finished draft, not as a way to "
             "iterate.",
+            "- propose_code_plan — args: files (a list of {\"path\", \"reason\"} objects for every "
+            "existing file your answer will propose changes to), summary (one or two sentences on "
+            "your overall approach). Use this INSTEAD OF 'final' whenever your answer is about to "
+            "propose code changes spanning 2 or more existing files — list what you plan to touch "
+            "and why, and wait for the user's confirmation before drafting the actual "
+            "implementation. Do not use this for a single-file suggestion, a conceptual "
+            "explanation, or code that doesn't touch this repo's real files — only when you're "
+            "about to commit to a specific real multi-file change.",
         ])
         actions_menu = "\n".join(menu_lines)
         prompt_template = TOOL_AGENT_PROMPT.replace("{actions_menu}", actions_menu.replace("{", "{{").replace("}", "}}"))
         prompt_template = prompt_template.replace("{history}", formatted_history.replace("{", "{{").replace("}", "}}"))
         prompt_template = prompt_template.replace("{batchable_actions}", ", ".join(sorted(TOOL_AGENT_BATCHABLE_ACTIONS)))
+        coding_preferences = fetch_coding_preferences(username)
+        prompt_template = prompt_template.replace(
+            "{coding_preferences}", coding_preferences.replace("{", "{{").replace("}", "}}")
+        )
 
         def _is_unsafe(decision: dict) -> bool:
-            if decision.get("tool_action") in {"propose_append_target_doc", "propose_send_email"}:
+            if decision.get("tool_action") in {"propose_append_target_doc", "propose_send_email", "propose_code_plan"}:
                 return True  # inherently a write — no keyword scan needed, unlike run_mongo_query
             if decision.get("tool_action") != "run_mongo_query":
                 return False
@@ -3078,6 +3128,50 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                         "generation": approval_message,
                         "content_to_format": approval_message,
                         "messages": new_messages,
+                    }
+
+                if e.decision.get("tool_action") == "propose_code_plan":
+                    plan_args = e.decision.get("args") or {}
+                    files = plan_args.get("files") or []
+                    summary = (plan_args.get("summary") or "").strip()
+                    if not files:
+                        incomplete_message = (
+                            "I need at least one file before proposing a plan — could you clarify "
+                            "what you're trying to change?"
+                        )
+                        new_messages = list(state.get("messages", [])) + [AIMessage(content=incomplete_message)]
+                        return {
+                            **state,
+                            "pending_action": None,
+                            "relevance_grade": "conversational",
+                            "generation": incomplete_message,
+                            "content_to_format": incomplete_message,
+                            "messages": new_messages,
+                        }
+                    file_lines = "\n".join(
+                        f"- `{f.get('path', '?')}` — {f.get('reason', 'no reason given')}" for f in files
+                    )
+                    summary_line = (
+                        f"Before I draft the full implementation, here's my plan:\n\n"
+                        f"**Files I plan to touch:**\n{file_lines}\n\n**Approach:** {summary}"
+                    )
+                    approval_message = (
+                        "**Approval Required**\n\n"
+                        f"{summary_line}\n\n"
+                        "*Please Approve, Modify parameters, or Reject this action.*"
+                    )
+                    new_messages = list(state.get("messages", [])) + [AIMessage(content=approval_message)]
+                    return {
+                        **state,
+                        "pending_action": None,
+                        "relevance_grade": "hitl_approval_required",
+                        "generation": approval_message,
+                        "content_to_format": approval_message,
+                        "messages": new_messages,
+                        "paused_code_plan": {
+                            "original_question": msg, "attempts": e.attempts,
+                            "files": files, "summary": summary,
+                        },
                     }
 
                 drafted_code = (e.decision.get("args") or {}).get("code", "") or ""
