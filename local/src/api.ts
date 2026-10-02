@@ -570,6 +570,63 @@ export async function clearMemoryFacts(): Promise<any> {
 }
 
 /**
+ * Connected local folder: a read-only server-side snapshot of the folder the user picked, which
+ * Sonic reads instead of GitHub's copy (see localWorkspace.ts for the browser side).
+ */
+export interface LocalWorkspaceStatus {
+  connected: boolean;
+  name?: string;
+  file_count?: number;
+  total_bytes?: number;
+  synced_at?: number;
+}
+
+export interface LocalWorkspaceSyncResult {
+  accepted: number;
+  rejected: { path: string; reason: string }[];
+  file_count: number;
+  total_bytes: number;
+}
+
+export async function getLocalWorkspaceStatus(): Promise<LocalWorkspaceStatus> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/local-workspace`, { headers: { ...authHeaders } });
+  if (!res.ok) {
+    throw new Error("Failed to check the connected folder.");
+  }
+  return res.json();
+}
+
+export async function syncLocalWorkspaceBatch(batch: {
+  name: string;
+  reset: boolean;
+  files: { path: string; content: string }[];
+  deleted: string[];
+}): Promise<LocalWorkspaceSyncResult> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/local-workspace/sync`, {
+    method: "POST",
+    headers: { ...authHeaders },
+    body: JSON.stringify(batch)
+  });
+  if (!res.ok) {
+    throw new Error(res.status === 403 ? "Sign in to connect a local folder." : "Failed to sync the folder.");
+  }
+  return res.json();
+}
+
+export async function disconnectLocalWorkspace(): Promise<void> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/local-workspace`, {
+    method: "DELETE",
+    headers: { ...authHeaders }
+  });
+  if (!res.ok) {
+    throw new Error("Failed to disconnect the folder.");
+  }
+}
+
+/**
  * Dev utility login validator
  */
 export async function verifyIdentity(username: string): Promise<boolean> {

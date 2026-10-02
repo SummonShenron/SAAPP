@@ -45,6 +45,8 @@ from backend.components.constraints import (
 )
 from backend.utils.memory_utils import save_user_fact, load_user_facts, fetch_coding_preferences
 from backend.utils.emotion_utils import merge_emotional_state
+from backend.services.local_workspace import get_workspace_handle, workspace_status
+from backend.services.local_edits import validate_edit_proposal
 from backend.services.memory_search import embed_and_store_memory_chunk, retrieve_user_memory
 from backend.components.time_storage import add_time_entry, TimeEntryCreate
 from backend.components import taskboard
@@ -80,6 +82,7 @@ from backend.utils.agent_utils import (
     _format_observation_for_footer, _format_react_attempts, _format_attempts_steps,
     _FILE_EXTENSION_RE, _PATH_TOKEN_SPLIT_RE, _CAMEL_BOUNDARY_RE,
     _FUZZY_MATCH_CUTOFF, _FUZZY_MATCH_LIMIT, _tokenize_for_fuzzy_match, _fuzzy_path_score,
+    fuzzy_query_tokens,
     _classify_symbol_line,
     _VISUAL_INSPECTION_RE, _mentions_visual_inspection,
     _AUDIT_TASK_RE, _is_audit_style_task, _AUDIT_TASK_SEARCH_NUDGE,
@@ -92,7 +95,7 @@ from backend.utils.agent_utils import (
 )
 from backend.services.react_loop import run_react_loop, _MAX_BATCH_SIZE
 from backend.services.repo_checkout import (
-    RepoCheckoutError, fetch_and_extract_checkout, cleanup_checkout,
+    RepoCheckoutError, fetch_and_extract_checkout, cleanup_checkout, find_declarations_in_checkout,
 )
 from backend.utils.insight_utils import (
     # Productivity-insights analytics moved out of this file (docs/coding-agent-roadmap.md,
@@ -177,6 +180,10 @@ TOOL_AGENT_STUCK_ACTION_REDIRECTS = {
 # real slow CI dispatches that must never run concurrently with anything else (see _is_unsafe and
 # the admin gates in _act), and every browser_* action is inherently stateful/sequential — a click
 # depends on whatever page a prior navigate actually loaded, so "independent" never applies to them.
+# Menu entries that query GitHub's hosted index of the committed branch — withheld whenever the user
+# has a local folder connected, since that index can't see the folder's (often uncommitted) code.
+_GITHUB_INDEX_ACTIONS_PREFIXES = ("- search_code", "- trace_symbol")
+
 TOOL_AGENT_BATCHABLE_ACTIONS = frozenset({
     "list_repo_tree", "read_repo_file", "search_code", "find_file", "trace_symbol",
     "search_literal", "diff_branches", "list_commits", "list_pull_requests", "web_search", "run_python",
@@ -2131,9 +2138,30 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 logger.exception("Failed to list collections; proceeding without Mongo schema.")
                 mongo_schema = "(unable to list collections)"
 
+        # A connected local folder (backend/services/local_workspace.py) takes the tarball's place
+        # for this turn's repo reads — checked once up front so the schema can tell the model its
+        # reads reflect the user's live working tree rather than GitHub's default branch.
+        local_workspace_handle = get_workspace_handle(username)
         schema_parts = [f"repo={repo}", f"default_branch={default_branch}"]
         if repo_resolution_note:
             schema_parts.append(repo_resolution_note)
+        if local_workspace_handle is not None:
+            workspace_name = workspace_status(username).get("name", "local folder")
+            schema_parts.append(
+                f"LOCAL WORKSPACE: file reads, tree listings, find_file and search_literal this turn "
+                f"run against the user's connected local folder '{workspace_name}' — their live "
+                f"working tree, including uncommitted changes — not GitHub's {default_branch} "
+                f"branch. Treat what you read there as the code as it is right now. History, "
+                f"branch diff and pull request actions still query GitHub; search_code and "
+                f"trace_symbol are not offered because GitHub's index cannot see this folder — "
+                f"use search_literal to find where something is defined or used. "
+                f"WHEN THE USER ASKS YOU TO MAKE A CHANGE (add, edit, fix, update, rename, "
+                f"implement, move...) to files in this folder, do the work by calling "
+                f"propose_local_edits once you've read what you need — the diff card it shows, "
+                f"with its Apply button, IS the user's confirmation step. Never reply with only "
+                f"a description of the change or ask 'would you like me to apply this?' in "
+                f"chat: that leaves them with nothing to click."
+            )
         if is_admin:
             schema_parts.append(f"mongodb_collections={mongo_schema}")
         schema = ", ".join(schema_parts)
@@ -2188,6 +2216,8 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             # simultaneous codeload.github.com downloads saturating the connection. Holding the
             # lock across the whole fetch means concurrent callers block and reuse the one
             # result instead of each redundantly re-fetching.
+            if local_workspace_handle is not None:
+                return local_workspace_handle
             with checkout_lock:
                 if checkout_holder["attempted"]:
                     return checkout_holder["handle"]
@@ -2294,7 +2324,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             paths = _fetch_repo_paths()
             if isinstance(paths, str):
                 return paths
-            query_tokens = _tokenize_for_fuzzy_match(query)
+            query_tokens = fuzzy_query_tokens(query)
             if not query_tokens:
                 return "ERROR: no usable query tokens"
             scored = [
@@ -2848,6 +2878,34 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             "explanation, or code that doesn't touch this repo's real files — only when you're "
             "about to commit to a specific real multi-file change.",
         ])
+        if local_workspace_handle is not None:
+            # GitHub's hosted search index only covers the committed default branch, so for code
+            # that exists only in the user's folder it answers "No matches" — observed costing four
+            # full model round trips in one turn. search_literal greps the folder itself.
+            menu_lines = [line for line in menu_lines if not line.startswith(_GITHUB_INDEX_ACTIONS_PREFIXES)]
+            menu_lines.append(
+                "- propose_local_edits — args: summary (one or two sentences on what the edits do and "
+                "why), edits (a list of edit objects: {\"path\", \"old_string\", \"new_string\"} "
+                "replaces the ONE exact occurrence of old_string in an existing file, or "
+                "{\"path\", \"content\"} creates a NEW file). Available because the user "
+                "connected a local folder. This changes nothing by itself: the user sees a diff "
+                "with an Apply button and decides, and can undo it afterwards. Use it INSTEAD of "
+                "pasting code in your final answer whenever the user asks you to make, apply, or "
+                "implement a change to files in their folder. Copy old_string EXACTLY from the "
+                "file as you read it this turn, with its original indentation, and include enough "
+                "surrounding lines that it matches exactly once. Propose every edit for the "
+                "request in ONE call. If it returns an error, fix the edits it names and call it "
+                "again with the complete corrected list. Call it exactly like any other action, "
+                "as a \"query\" step — for example: {\"action\": \"query\", \"purpose\": \"Add the "
+                "requested line to the README\", \"tool_action\": \"propose_local_edits\", "
+                "\"args\": {\"summary\": \"Add a hello world line to the README\", \"edits\": "
+                "[{\"path\": \"README.md\", \"old_string\": \"<the file's last line, copied "
+                "exactly>\", \"new_string\": \"<that same last line>\\n\\nHello world\"}]}}. It is "
+                "an action you RUN before answering, never a field inside a \"final\" answer. "
+                "Only after it succeeds, give a short final answer saying what you proposed and "
+                "why: don't repeat the code, and don't say it has been applied — it hasn't until "
+                "the user presses Apply."
+            )
         actions_menu = "\n".join(menu_lines)
         prompt_template = TOOL_AGENT_PROMPT.replace("{actions_menu}", actions_menu.replace("{", "{{").replace("}", "}}"))
         prompt_template = prompt_template.replace("{history}", formatted_history.replace("{", "{{").replace("}", "}}"))
@@ -2857,6 +2915,20 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             "{coding_preferences}", coding_preferences.replace("{", "{{").replace("}", "}}")
         )
 
+        async def _lookup_existing_declarations(names: list) -> dict:
+            # Whole-repo view for run_react_loop's "your code redeclares something that already
+            # exists" gate. Only possible with a local checkout (the API fallback has no cheap way
+            # to scan every file), in which case the gate simply doesn't run — never a new
+            # failure mode. _get_checkout() may block on a first-time download, so it runs in a
+            # thread like every other blocking checkout access in this function.
+            def _scan() -> dict:
+                handle = _get_checkout()
+                if handle is None:
+                    return {}
+                return find_declarations_in_checkout(handle.root, names)
+
+            return await asyncio.to_thread(_scan)
+
         def _is_unsafe(decision: dict) -> bool:
             if decision.get("tool_action") in {"propose_append_target_doc", "propose_send_email", "propose_code_plan"}:
                 return True  # inherently a write — no keyword scan needed, unlike run_mongo_query
@@ -2865,9 +2937,47 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             code = ((decision.get("args") or {}).get("code") or "").lower()
             return any(kw in code for kw in unsafe_keywords)
 
+        async def _propose_local_edits(args: dict) -> str:
+            # Validates against the folder's snapshot exactly as the browser will later apply the
+            # edits, then hands the user a diff card (streamed as a custom event, like
+            # browser_live_view) — nothing is written here or anywhere on the server.
+            result = await asyncio.to_thread(
+                validate_edit_proposal, args.get("edits"), lambda path: _fetch_file_content(path)[0]
+            )
+            if not result["ok"]:
+                return (
+                    "ERROR: these edits could not be applied cleanly, so nothing was proposed:\n- "
+                    + "\n- ".join(result["errors"])
+                    + "\nFix them and call propose_local_edits again with the complete corrected list."
+                )
+            await safe_emit_event("local_edit_proposal", {
+                "proposal_id": uuid.uuid4().hex,
+                "summary": str(args.get("summary") or "")[:500],
+                "folder": workspace_status(username).get("name", "local folder"),
+                "files": result["files"],
+                "edits": result["edits"],
+            })
+            return (
+                f"Proposed {len(result['edits'])} edit(s) across {len(result['files'])} file(s): "
+                + ", ".join(f["path"] for f in result["files"])
+                + ". The user now sees a diff with an Apply button; nothing has been changed yet. "
+                "Give a short final answer on what you proposed and why."
+            )
+
         async def _act(decision: dict):
             tool_action = decision.get("tool_action")
             args = decision.get("args") or {}
+
+            if local_workspace_handle is not None and tool_action in {"search_code", "trace_symbol"}:
+                return (
+                    f"ERROR: {tool_action} queries GitHub's index of the committed branch and cannot "
+                    f"see the user's connected local folder — use search_literal (exact text or "
+                    f"identifier) or find_file (file names) instead."
+                )
+            if tool_action == "propose_local_edits":
+                if local_workspace_handle is None:
+                    return "ERROR: no local folder is connected, so there is nothing to propose edits against"
+                return await _propose_local_edits(args)
 
             if tool_action == "run_mongo_query":
                 if not is_admin:
@@ -3050,6 +3160,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     capability_denial_watchlist=TOOL_AGENT_CAPABILITY_DENIAL_WATCHLIST,
                     architecture_map=architecture_map,
                     batchable_actions=TOOL_AGENT_BATCHABLE_ACTIONS,
+                    declaration_lookup=_lookup_existing_declarations,
                 )
             except _UnsafeActionRequested as e:
                 if e.decision.get("tool_action") == "propose_append_target_doc":

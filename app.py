@@ -82,6 +82,12 @@ from backend.utils.memory_utils import (
 )
 from backend.services.memory_compaction import compact_user_memory, compact_meta_memory
 from backend.services.memory_search import retrieve_relevant_memory_context
+from backend.services.local_workspace import (
+    apply_sync as apply_local_workspace_sync,
+    clear_workspace as clear_local_workspace,
+    is_guest_username,
+    workspace_status as local_workspace_status,
+)
 from backend.utils.embedding_utils import embed_text
 from backend.utils.emotion_utils import build_emotional_context
 from backend.utils.user_settings_utils import (
@@ -230,6 +236,16 @@ class ChatRequest(BaseModel):
     affiliate: str 
     attachments: list[Attachment] | None = None
     session_id: str | None = None
+
+class LocalWorkspaceFile(BaseModel):
+    path: str
+    content: str
+
+class LocalWorkspaceSync(BaseModel):
+    name: str
+    reset: bool = False
+    files: list[LocalWorkspaceFile] = []
+    deleted: list[str] = []
 
 class EventCreate(BaseModel):
     activity: str
@@ -682,6 +698,13 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     if kind == "on_custom_event" and event.get("name") == "browser_live_view":
                         data = event.get("data", {})
                         yield f"data: {json.dumps({'event': 'browser_live_view', 'url': data.get('url', '')})}\n\n"
+                        await asyncio.sleep(0.01)
+
+                    # A validated set of edits Sonic proposes to the user's connected local folder
+                    # (backend/services/local_edits.py). The browser renders it as a diff card and
+                    # applies it only when the user presses Apply.
+                    if kind == "on_custom_event" and event.get("name") == "local_edit_proposal":
+                        yield f"data: {json.dumps({'event': 'local_edit_proposal', **event.get('data', {})})}\n\n"
                         await asyncio.sleep(0.01)
 
                     # Catch Final State when the graph finishes (Look for the final dictionary output)
@@ -1493,6 +1516,32 @@ async def clear_memory(current_user = Depends(get_current_user)):
     username = current_user.get("sub")
     delete_all_user_facts(username)
     return {"status": "cleared"}
+
+
+@app.get("/api/local-workspace")
+async def get_local_workspace(current_user = Depends(get_current_user)):
+    return await asyncio.to_thread(local_workspace_status, current_user.get("sub"))
+
+
+@app.post("/api/local-workspace/sync")
+async def sync_local_workspace(payload: LocalWorkspaceSync, current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    if is_guest_username(username):
+        raise HTTPException(status_code=403, detail="Connecting a local folder requires signing in.")
+    return await asyncio.to_thread(
+        apply_local_workspace_sync,
+        username,
+        payload.name,
+        [f.dict() for f in payload.files],
+        payload.deleted,
+        payload.reset,
+    )
+
+
+@app.delete("/api/local-workspace")
+async def disconnect_local_workspace(current_user = Depends(get_current_user)):
+    await asyncio.to_thread(clear_local_workspace, current_user.get("sub"))
+    return {"status": "disconnected"}
 
 
 @app.post("/api/memory/compact")

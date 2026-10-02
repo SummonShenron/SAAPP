@@ -156,6 +156,93 @@ def test_build_emotional_context_present_for_a_significant_negative_state():
     assert "never mention you're tracking it" in context
 
 
+def _fresh(valence="distressed", intensity=0.8, need="none"):
+    return {**_state(valence, intensity), "read_this_turn": True, "need": need}
+
+
+def test_context_for_a_fresh_low_message_asks_for_a_fuller_listening_reply_not_a_shorter_one():
+    context = eu.build_emotional_context(_fresh("low", 0.7), NOW)
+    assert "fuller, unhurried reply" in context
+    assert "takes priority over mirroring" in context  # beats the persona's match-their-terseness rule
+    assert "no headers or bullet lists" in context
+    assert "brief" not in context.lower()  # never trims length for distress
+    assert "never mention you're tracking it" in context
+
+
+@pytest.mark.parametrize("need,expected", [
+    ("venting", "want to be heard"),
+    ("solving", "real help"),
+    ("reassurance", "steadiness"),
+    ("distraction", "break from it"),
+    ("none", "follow their lead"),
+])
+def test_context_for_a_fresh_low_message_adapts_to_what_the_user_needs(need, expected):
+    assert expected in eu.build_emotional_context(_fresh("distressed", 0.8, need), NOW)
+
+
+def test_context_unknown_need_is_treated_as_none():
+    assert "follow their lead" in eu.build_emotional_context(_fresh("low", 0.7, "fix-it"), NOW)
+
+
+def test_context_for_a_fresh_frustrated_message_is_direct_without_groveling():
+    context = eu.build_emotional_context(_fresh("frustrated", 0.7), NOW)
+    assert "without grovelling" in context
+    assert "lead with the fix" in context
+    assert "fuller, unhurried" not in context
+
+
+def test_context_carried_onto_a_later_topic_stays_gentle_and_never_applies_a_stale_need():
+    carried = {**_state("distressed", 0.8, turns_since=2), "read_this_turn": False, "need": "venting"}
+    context = eu.build_emotional_context(carried, NOW)
+    assert "gentle" in context
+    assert "still be weighing" in context
+    assert "want to be heard" not in context
+
+
+def test_context_for_carried_frustration_is_low_fluff():
+    carried = {**_state("frustrated", 0.8, turns_since=1), "read_this_turn": False}
+    assert "low-fluff" in eu.build_emotional_context(carried, NOW)
+
+
+# ---------------------------------------------------------------------------
+# merge: what this message wants is recorded for THIS turn only
+# ---------------------------------------------------------------------------
+
+def test_merge_records_need_and_marks_the_reading_as_this_turn():
+    merged = eu.merge_emotional_state(None, {"valence": "low", "intensity": 0.6, "need": "venting"}, NOW)
+    assert merged["need"] == "venting"
+    assert merged["read_this_turn"] is True
+
+
+def test_merge_unrecognized_need_becomes_none():
+    merged = eu.merge_emotional_state(None, {"valence": "low", "intensity": 0.6, "need": "fix-it"}, NOW)
+    assert merged["need"] == "none"
+
+
+def test_merge_neutral_turn_carries_the_feeling_but_clears_need_and_this_turn():
+    prior = {**_state("distressed", 0.8), "read_this_turn": True, "need": "venting"}
+    merged = eu.merge_emotional_state(prior, {"valence": "neutral", "intensity": 0.0}, NOW)
+    assert merged["valence"] == "distressed"
+    assert merged["read_this_turn"] is False
+    assert merged["need"] == "none"
+
+
+def test_merge_weaker_follow_up_still_updates_this_turns_need_while_keeping_the_stronger_prior():
+    """Distressed (venting), then a weaker 'ok so what should I do?': the feeling carried is still
+    the stronger one, but the reply must now be about solving."""
+    prior = {**_state("distressed", 0.9), "read_this_turn": True, "need": "venting"}
+    merged = eu.merge_emotional_state(prior, {"valence": "low", "intensity": 0.3, "need": "solving"}, NOW)
+    assert merged["valence"] == "distressed"
+    assert merged["intensity"] == 0.9
+    assert merged["need"] == "solving"
+    assert merged["read_this_turn"] is True
+
+
+def test_frustrated_counts_as_negative_polarity_for_recovery_overrides():
+    prior = _state("frustrated", 0.8)
+    assert eu.merge_emotional_state(prior, {"valence": "positive", "intensity": 0.6}, NOW)["valence"] == "positive"
+
+
 # ---------------------------------------------------------------------------
 # build_voice_prompt wiring
 # ---------------------------------------------------------------------------

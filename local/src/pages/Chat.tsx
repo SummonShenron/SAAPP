@@ -1,10 +1,16 @@
 import React, { useEffect, useState, useRef } from 'react';
 import swooshLogoImg from '../assets/white_swoosh.png';
-import { Filters } from '../components/Filters';
+import { useAffiliateScope } from '../hooks/useAffiliateScope';
+import { useLocalWorkspace } from '../hooks/useLocalWorkspace';
+import LocalEditCard from '../components/LocalEditCard';
+import LocalFolderConsent from '../components/LocalFolderConsent';
+import { hasLocalFolderConsent, recordLocalFolderConsent } from '../localWorkspace';
+import type { ApplyResult, UndoResult } from '../localEdits';
+import type { EditProposal } from '../localEditsCore';
 import ConversationsBlade from '../components/ConversationsBlade';
 import OptionWheel, { type OptionWheelItem } from '../components/OptionWheel';
 import { getDynamicExampleQuestions } from '../utils/Example_List';
-import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, type KnowledgeBase } from '../api';
+import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type KnowledgeBase } from '../api';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -26,6 +32,7 @@ interface Message {
   feedback?: 'like' | 'dislike' | null;
   images?: MessageImage[];
   liveBrowserUrl?: string; // view-only browserless.io LiveURL — see browser_live_view handling
+  editProposal?: EditProposal; // diff card for edits proposed to the connected local folder
 }
 
 const IMAGE_EXTENSION_MIME: Record<string, string> = {
@@ -106,6 +113,11 @@ interface ChatMessageListProps {
   handleSendMessageRef: React.MutableRefObject<(text: string, attachments: { filename: string; content: string }[]) => void>;
   handleFeedbackRef: React.MutableRefObject<(messageId: string, choice: 'like' | 'dislike') => void>;
   getTokenRef: React.MutableRefObject<(() => Promise<string | null>) | undefined>;
+  canEditLocal: boolean;
+  localEditActionsRef: React.MutableRefObject<{
+    apply: (proposal: EditProposal) => Promise<ApplyResult>;
+    undo: (proposalId: string) => Promise<UndoResult>;
+  }>;
 }
 
 // Fenced code blocks only (react-markdown routes inline `code` spans through a separate,
@@ -173,6 +185,7 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
 const ChatMessageList = React.memo(function ChatMessageList({
   messages, hasChatted, loading, agentStatus, latestStepTitle, theme, isEmbedded,
   chatWindowRef, messagesEndRef, attachmentsRef, handleSendMessageRef, handleFeedbackRef, getTokenRef,
+  canEditLocal, localEditActionsRef,
 }: ChatMessageListProps) {
   if (!hasChatted) return null;
 
@@ -180,7 +193,9 @@ const ChatMessageList = React.memo(function ChatMessageList({
     <div
       className="chat-window"
       ref={chatWindowRef}
-      style={isEmbedded ? undefined : { maxHeight: 'calc(100vh - 380px)', overflowY: 'auto' }}
+      // 310px = the previous 380px minus the ~70px the old <Filters /> row (plus its gap) used to
+      // occupy below the input; leaving it at 380 left that space empty under the input.
+      style={isEmbedded ? undefined : { maxHeight: 'calc(100vh - 310px)', overflowY: 'auto' }}
     >
       {messages
         .filter(msg => !(hasChatted && msg.sender === 'system'))
@@ -307,6 +322,15 @@ const ChatMessageList = React.memo(function ChatMessageList({
                   {cleanContent}
                 </ReactMarkdown>
               </div>
+
+              {msg.editProposal && (
+                <LocalEditCard
+                  proposal={msg.editProposal}
+                  canApply={canEditLocal}
+                  onApply={proposal => localEditActionsRef.current.apply(proposal)}
+                  onUndo={proposalId => localEditActionsRef.current.undo(proposalId)}
+                />
+              )}
 
               {/* Clickable Follow-Up Suggestion Button */}
               {msg.sender === 'ai' && followUp && !loading && (
@@ -478,6 +502,15 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [ragMode, setRagMode] = useState<string>('strict');
   const [deepThinking, setDeepThinking] = useState<boolean>(false);
   const [allowedAffiliates, setAllowedAffiliates] = useState<KnowledgeBase[]>([]);
+  const { fetchingScope } = useAffiliateScope({
+    enabled: !isEmbedded,
+    selectedAffiliate,
+    setSelectedAffiliate,
+    setAllowedAffiliates,
+  });
+  // Connected local folder: Sonic reads this instead of GitHub's copy. Not offered to guests (every
+  // guest shares one identity) or in embed mode.
+  const workspace = useLocalWorkspace({ enabled: !isEmbedded && !isGuestPrincipal(principal) });
   const [userEmail, setUserEmail] = useState<string>('');
   const [agentStatus, setAgentStatus] = useState<string>('');
   const [agentPath, setAgentPath] = useState<string[]>([]);
@@ -540,6 +573,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [feedbackReason, setFeedbackReason] = useState<string>('');
   const [feedbackTag, setFeedbackTag] = useState<string>('hallucination');
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [showFolderConsent, setShowFolderConsent] = useState(false);
   const [conversationsRefreshKey, setConversationsRefreshKey] = useState(0);
   const [isMobileTraceOpen, setIsMobileTraceOpen] = useState(false);
   const [latestStepTitle, setLatestStepTitle] = useState("");
@@ -556,6 +590,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [showTooltip, setShowTooltip] = useState(false);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const [showOverflowWheel, setShowOverflowWheel] = useState(false);
+  const [showScopePicker, setShowScopePicker] = useState(false);
 
   const [targetRepo, setTargetRepo] = useState<string>("");
   const [showRepoBanner, setShowRepoBanner] = useState(false);
@@ -1103,6 +1138,9 @@ useEffect(() => {
     abortControllerRef.current = controller;
 
     try {
+      // Pushes only what changed in the connected folder since the last message (a no-op when none
+      // is connected). Never throws, so a sync problem can't block the message itself.
+      await workspace.ensureSynced();
       await api.sendChatMessage(
         principal,
         textToSend,
@@ -1141,6 +1179,25 @@ useEffect(() => {
                   const lastIndex = updated.length - 1;
                   if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
                     updated[lastIndex] = { ...updated[lastIndex], liveBrowserUrl: payload.url };
+                  }
+                  return updated;
+                });
+              }
+              if (payload.event === 'local_edit_proposal' && Array.isArray(payload.edits)) {
+                // A validated set of edits to the connected local folder, shown as a diff card on
+                // the in-progress AI bubble. Nothing is written until the user presses Apply.
+                const proposal: EditProposal = {
+                  proposal_id: payload.proposal_id,
+                  summary: payload.summary ?? '',
+                  folder: payload.folder ?? '',
+                  files: payload.files ?? [],
+                  edits: payload.edits,
+                };
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const lastIndex = updated.length - 1;
+                  if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
+                    updated[lastIndex] = { ...updated[lastIndex], editProposal: proposal };
                   }
                   return updated;
                 });
@@ -1294,10 +1351,12 @@ useEffect(() => {
 const handleSendMessageRef = useRef(handleSendMessage);
 const handleFeedbackRef = useRef(handleFeedback);
 const getTokenRef = useRef(getToken);
+const localEditActionsRef = useRef({ apply: workspace.applyEdits, undo: workspace.undoEdits });
 useEffect(() => {
   handleSendMessageRef.current = handleSendMessage;
   handleFeedbackRef.current = handleFeedback;
   getTokenRef.current = getToken;
+  localEditActionsRef.current = { apply: workspace.applyEdits, undo: workspace.undoEdits };
 });
 
 const sendFeedbackPayload = async (
@@ -1368,7 +1427,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
 
   // Secondary footer actions, tucked behind the "..." overflow button and
   // surfaced through the OptionWheel popover instead of their own icons.
-  const overflowItems: OptionWheelItem[] = [
+  const baseOverflowItems: OptionWheelItem[] = [
     {
       label: 'Help',
       icon: (
@@ -1431,7 +1490,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
     }
   ];
 
-  const runOverflowAction = (index: number) => {
+  const runBaseOverflowAction = (index: number) => {
     switch (index) {
       case 0:
         setShowTooltip(v => !v);
@@ -1455,6 +1514,113 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
         break;
     }
     setShowOverflowWheel(false);
+  };
+
+  // Workspace settings that used to live in the always-visible <Filters /> row. They sit at the
+  // top of the same overflow menu; entries pair each menu item with its own handler so the
+  // combined list below never depends on hardcoded indexes (the row is hidden in embed mode, so
+  // the number of entries varies). keepOpen lets the on/off toggles be tapped without the menu
+  // closing each time.
+  const settingsGlyph = (children: React.ReactNode) => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      {children}
+    </svg>
+  );
+  const settingsLocked = loading || principal === 'guest_bty';
+  const scopeLabel = allowedAffiliates.find(a => a.id === selectedAffiliate)?.display_name
+    || (selectedAffiliate !== 'All' ? selectedAffiliate : 'None');
+  const folderGlyph = settingsGlyph(<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />);
+  const workspaceEntries: { item: OptionWheelItem; run: () => void; keepOpen?: boolean }[] = !workspace.supported ? [] : [
+    workspace.status === 'disconnected'
+      ? {
+          item: { label: 'Connect local folder', disabled: loading, icon: folderGlyph },
+          // First time in this browser: say what gets uploaded before opening the picker.
+          run: () => {
+            if (hasLocalFolderConsent()) void workspace.connect();
+            else setShowFolderConsent(true);
+          },
+        }
+      : workspace.status === 'needs-permission'
+        ? { item: { label: `Reconnect folder: ${workspace.folderName}`, disabled: loading, icon: folderGlyph }, run: () => { void workspace.reconnect(); } }
+        : workspace.status === 'syncing'
+          ? { item: { label: 'Syncing folder…', disabled: true, icon: folderGlyph }, run: () => {}, keepOpen: true }
+          : workspace.status === 'error'
+            ? { item: { label: `Folder sync failed (retry): ${workspace.message ?? 'unknown error'}`.slice(0, 60), disabled: loading, icon: folderGlyph }, run: () => { void workspace.resync(); } }
+            : {
+                item: {
+                  label: `Folder: ${workspace.folderName}${workspace.fileCount !== null ? ` · ${workspace.fileCount} files` : ''}`,
+                  disabled: loading,
+                  icon: folderGlyph,
+                },
+                run: () => { void workspace.resync(); },
+              },
+    ...(workspace.status === 'disconnected' ? [] : [{
+      item: { label: 'Disconnect folder', disabled: loading, icon: folderGlyph },
+      run: () => { void workspace.disconnect(); },
+    }]),
+    // Survives reloads (the saved originals live in IndexedDB), so a change applied earlier can
+    // always be reverted even after its diff card is gone from the chat.
+    ...(workspace.lastEdit && workspace.canEdit ? [{
+      item: {
+        label: `Undo last applied edit (${workspace.lastEdit.fileCount} file${workspace.lastEdit.fileCount === 1 ? '' : 's'})`,
+        disabled: loading,
+        icon: folderGlyph,
+      },
+      run: () => {
+        const edit = workspace.lastEdit;
+        if (!edit) return;
+        void workspace.undoEdits(edit.id).then(result => {
+          if (!result.ok) window.alert(result.errors.join('\n'));
+        });
+      },
+    }] : []),
+  ];
+  const settingsEntries: { item: OptionWheelItem; run: () => void; keepOpen?: boolean }[] = isEmbedded ? [] : [
+    ...workspaceEntries,
+    {
+      item: {
+        label: fetchingScope ? 'Scope: loading…' : `Scope: ${scopeLabel}`,
+        disabled: loading || fetchingScope || allowedAffiliates.length === 0,
+        icon: settingsGlyph(<><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></>),
+      },
+      // Opens its own picker popup (rendered next to the overflow popover) instead of cycling
+      // through scopes one click at a time.
+      run: () => {
+        setShowOverflowWheel(false);
+        setShowScopePicker(true);
+      },
+      keepOpen: true,
+    },
+    {
+      item: {
+        label: `Open Answers: ${ragMode === 'open' ? 'On' : 'Off'}`,
+        disabled: settingsLocked,
+        icon: settingsGlyph(<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />),
+      },
+      run: () => handleRagModeChange(ragMode === 'open' ? 'strict' : 'open'),
+      keepOpen: true,
+    },
+    {
+      item: {
+        label: `Deep Thinking: ${deepThinking ? 'On' : 'Off'}`,
+        disabled: settingsLocked,
+        icon: settingsGlyph(<><circle cx="12" cy="12" r="9" /><path d="M12 8v4l2.5 2.5" /></>),
+      },
+      run: () => handleDeepThinkingChange(!deepThinking),
+      keepOpen: true,
+    },
+  ];
+
+  const overflowItems: OptionWheelItem[] = [...settingsEntries.map(e => e.item), ...baseOverflowItems];
+
+  const runOverflowAction = (index: number) => {
+    const entry = settingsEntries[index];
+    if (!entry) {
+      runBaseOverflowAction(index - settingsEntries.length);
+      return;
+    }
+    entry.run();
+    if (!entry.keepOpen) setShowOverflowWheel(false);
   };
 
   return (
@@ -1506,6 +1672,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           handleSendMessageRef={handleSendMessageRef}
           handleFeedbackRef={handleFeedbackRef}
           getTokenRef={getTokenRef}
+          canEditLocal={workspace.canEdit}
+          localEditActionsRef={localEditActionsRef}
         />
 
         {/* 3. INPUT AREA & FOOTER */}
@@ -1516,6 +1684,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               @media (min-width: 768px) {
                 .mobile-trace-pill-container {
                   display: none !important;
+                  z-index: 1;
                 }
               }
             `}</style>
@@ -1676,10 +1845,16 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                 <div style={{ position: "relative" }}>
                   <button
                     type="button"
-                    className={`circle-icon-button ${showOverflowWheel ? 'trace-active' : ''}`}
-                    onClick={() => setShowOverflowWheel(v => !v)}
+                    className={`circle-icon-button ${showOverflowWheel || showScopePicker ? 'trace-active' : ''}`}
+                    onClick={() => {
+                      if (showScopePicker) {
+                        setShowScopePicker(false);
+                        return;
+                      }
+                      setShowOverflowWheel(v => !v);
+                    }}
                     title="More actions"
-                    style={showOverflowWheel ? {
+                    style={showOverflowWheel || showScopePicker ? {
                       background: '#3b82f6',
                       border: '1px solid #3b82f6',
                       boxShadow: '0 0 8px rgba(99, 102, 241, 0.5)'
@@ -1712,7 +1887,11 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                         right: "0",
                         width: "200px",
                         maxWidth: "calc(100vw - 24px)",
-                        maxHeight: "260px",
+                        // Scrolls instead of spilling: unconstrained, a list taller than this box
+                        // overflows downward and lands on top of the "..." button, so closing the
+                        // menu would click whichever item (e.g. Delete) ended up under it.
+                        maxHeight: "min(440px, calc(100vh - 160px))",
+                        overflowY: "auto",
                         background: isEmbedded ? "#121316" : "#121824",
                         border: isEmbedded ? "1px solid rgba(0, 242, 254, 0.4)" : "1px solid #334155",
                         borderRadius: "12px",
@@ -1730,6 +1909,45 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                         textColor="#94a3b8"
                         activeColor="#f8fafc"
                         onActivate={index => runOverflowAction(index)}
+                      />
+                    </div>
+                  )}
+
+                  {showScopePicker && (
+                    <div
+                      className="chat-scope-picker-popover"
+                      style={{
+                        position: "absolute",
+                        bottom: "45px",
+                        right: "0",
+                        width: "220px",
+                        maxWidth: "calc(100vw - 24px)",
+                        maxHeight: "min(320px, calc(100vh - 160px))",
+                        overflowY: "auto",
+                        background: isEmbedded ? "#121316" : "#121824",
+                        border: isEmbedded ? "1px solid rgba(0, 242, 254, 0.4)" : "1px solid #334155",
+                        borderRadius: "12px",
+                        boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.5)",
+                        zIndex: 100,
+                        padding: "6px",
+                      }}
+                    >
+                      <div style={{ padding: "4px 8px 6px", fontSize: "0.7rem", letterSpacing: "0.05em", textTransform: "uppercase", color: "#64748b" }}>
+                        Active security scope
+                      </div>
+                      <OptionWheel
+                        items={allowedAffiliates.map(a => ({
+                          label: `${a.id === selectedAffiliate ? "✓ " : ""}${a.display_name}`,
+                        }))}
+                        columnLayout
+                        fontSize={0.85}
+                        textColor="#94a3b8"
+                        activeColor="#f8fafc"
+                        onActivate={index => {
+                          const chosen = allowedAffiliates[index];
+                          if (chosen) setSelectedAffiliate(chosen.id);
+                          setShowScopePicker(false);
+                        }}
                       />
                     </div>
                   )}
@@ -1825,19 +2043,6 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               </div>
             </div>
           </form>
-          {!isEmbedded && (
-            <Filters
-              selectedAffiliate={selectedAffiliate}
-              setSelectedAffiliate={setSelectedAffiliate}
-              loadingChat={loading}
-              allowedAffiliates={allowedAffiliates}
-              setAllowedAffiliates={setAllowedAffiliates}
-              ragMode={ragMode}
-              onRagModeChange={handleRagModeChange}
-              deepThinking={deepThinking}
-              onDeepThinkingChange={handleDeepThinkingChange}
-            />
-          )}
         </footer>
 
         {/* --- CONVERSATIONS BLADE (Root Level, mirrors Help panel's slide-in) --- */}
@@ -2045,6 +2250,16 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               ))}
             </div>
           </aside>
+        )}
+        {showFolderConsent && (
+          <LocalFolderConsent
+            onCancel={() => setShowFolderConsent(false)}
+            onAccept={() => {
+              recordLocalFolderConsent();
+              setShowFolderConsent(false);
+              void workspace.connect();
+            }}
+          />
         )}
         {showClearConfirm && (
           <div style={{

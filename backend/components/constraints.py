@@ -512,8 +512,9 @@ CLASSIFICATION RULES:
 
 11. "emotional_state":
    - Rate the user's emotional state as shown by their latest message, read in the context of the conversation history (a short neutral question right after a vulnerable disclosure is still the same person — but report only what this message and its immediate context actually show).
-   - "valence": one of "distressed", "low", "neutral", "positive", "excited". "intensity": 0.0-1.0, where 1.0 is acute distress or elation.
-   - Use "neutral" with intensity 0.0 when there is no real emotional signal — do not guess. Never infer emotion from topic alone (asking about a layoff, a bug, or a diagnosis is not itself distress).
+   - "valence": one of "distressed", "low", "frustrated", "neutral", "positive", "excited". "intensity": 0.0-1.0, where 1.0 is acute distress, anger, or elation. "frustrated" is irritation or anger, including at the assistant or at something not working.
+   - "need": what this message seems to want from the reply, one of "venting" (wants to be heard, not fixed), "solving" (wants concrete help with a problem), "reassurance", "distraction" (wants a break from it), or "none". Judge it from this message in context, not from the topic.
+   - Use "neutral" with intensity 0.0 and need "none" when there is no real emotional signal — do not guess. Never infer emotion from topic alone (asking about a layoff, a bug, or a diagnosis is not itself distress).
 
 CONVERSATION HISTORY:
 {history}
@@ -544,7 +545,7 @@ Return ONLY a JSON object matching this schema:
   "needs_gmail_lookup": false,
   "needs_drive_lookup": false,
   "needs_send_email": false,
-  "emotional_state": {{"valence": "neutral", "intensity": 0.0}}
+  "emotional_state": {{"valence": "neutral", "intensity": 0.0, "need": "none"}}
 }}
 """
 
@@ -797,6 +798,15 @@ style — rather than writing whatever the most common/generic way to do it in P
 TypeScript would be. This is the same "fetch it this loop, don't answer from a general impression
 of how a project like this is organized" discipline as citing a real function, just applied to
 the shape of new code instead of to the names inside it.
+
+Proposing a change to an existing file has one more requirement: before you write the change,
+search_literal every identifier it will add, replace, move, or remove (a component, function,
+constant, prop, or state name) so you see EVERY place it already exists and is used — not just
+the part of a file you happened to read. Reading a large file in line ranges is not a substitute:
+a range can easily skip the very block that matters (an existing `overflowItems` array, a
+`runAction` switch, a component's other call sites), and code proposed without having seen it
+tends to duplicate it, drop what it contained, or break its other callers. If your change
+replaces something that exists, read the existing version first and carry forward what should stay.
 
 The same fetch-it-this-loop rule applies just as much to claiming something does NOT exist or
 ISN'T wired up yet ("there's no X", "Y currently doesn't happen") as it does to claiming something
