@@ -81,11 +81,10 @@ export const getAuthHeaders = async (): Promise<Record<string, string>> => {
   if (isGuestPrincipal(principal)) {
     token = principal === 'guest_bty' ? 'guest-bty-token' : 'guest-sandbox-token';
   } else {
-    token = await window.Clerk?.session?.getToken();
-  }
-
-  if (!token) {
-    token = localStorage.getItem("guest_token");
+    // The backend only trusts an email principal when it's backed by a verified Clerk JWT, so
+    // wait for Clerk to finish loading rather than sending the email with no token. No guest_token
+    // fallback here: a stale one from an earlier guest visit must not turn a signed-in user into the guest.
+    token = await (await waitForClerk())?.session?.getToken();
   }
 
   if (token) {
