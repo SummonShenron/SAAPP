@@ -14,6 +14,8 @@ import logging
 from backend.models.models import lite_llm
 from backend.utils.agent_utils import (
     _CAPABILITY_DENIAL_RE,
+    _extract_declared_names,
+    _find_unseen_existing_declarations,
     _ClarificationNeeded,
     _UnsafeActionRequested,
     _READ_FILE_DEFAULT_LINE_WINDOW,
@@ -60,6 +62,7 @@ async def run_react_loop(
     capability_denial_watchlist: list | None = None,
     architecture_map: str = "",
     batchable_actions: frozenset | None = None,
+    declaration_lookup=None,
 ) -> dict:
     """Generic Reason -> Act -> Observe -> Decide loop shared by every iterative tool
     (MongoDB, GitHub search, ...). Each step asks the model for the next action given
@@ -274,6 +277,9 @@ async def run_react_loop(
     idiom_grounding_reject_count = 0
     MAX_IDIOM_GROUNDING_REJECTIONS = 1
     pending_idiom_grounding_notice: str | None = None
+    duplicate_declaration_reject_count = 0
+    MAX_DUPLICATE_DECLARATION_REJECTIONS = 1
+    pending_duplicate_declaration_notice: str | None = None
 
     for step in range(max_iterations):
         forced_final = step == max_iterations - 1
@@ -359,6 +365,9 @@ async def run_react_loop(
         if pending_idiom_grounding_notice:
             question_for_step += f"\n\n({pending_idiom_grounding_notice})"
             pending_idiom_grounding_notice = None
+        if pending_duplicate_declaration_notice:
+            question_for_step += f"\n\n({pending_duplicate_declaration_notice})"
+            pending_duplicate_declaration_notice = None
 
         prompt = prompt_template.format(
             question=question_for_step,
@@ -377,6 +386,19 @@ async def run_react_loop(
             break
 
         action = decision.get("action")
+        # A model sometimes labels a step "final" while naming the tool it wants to run — observed
+        # with propose_local_edits, sent as {"action": "final", "tool_action": ..., "args": ...} and
+        # no answer text. A "final" with no answer is meaningless, and honoring it threw the tool
+        # call away and ended the turn with "I wasn't able to find a conclusive answer". The intent
+        # is plainly a query, so run it as one.
+        if (
+            action == "final" and not forced_final
+            and not str(decision.get("answer") or "").strip()
+            and (decision.get("tool_action") or decision.get("queries"))
+        ):
+            logger.info("[%s] step %s: 'final' with no answer but a tool call — treating it as a query.", node_name, step + 1)
+            decision = {**decision, "action": "query"}
+            action = "query"
         if action == "final" and not forced_final and truncated_unresolved_tools:
             # Unconditional — no budget check, unlike the ERROR/empty case below. A real
             # production trace showed the model exhaust the ENTIRE deep-thinking retry budget
@@ -470,6 +492,37 @@ async def run_react_loop(
                     "general knowledge of how a project 'like this' is usually structured."
                 )
                 continue
+        if (
+            action == "final" and not forced_final and declaration_lookup is not None
+            and duplicate_declaration_reject_count < MAX_DUPLICATE_DECLARATION_REJECTIONS
+        ):
+            answer_text = decision.get("answer") or ""
+            declared_names = _extract_declared_names(answer_text)
+            if declared_names:
+                # Cheap and mechanical (no LLM call), so it runs before the LLM-judged idiom check
+                # below — a rejection here skips that call for this pass. Catches the observed
+                # failure of proposing `const overflowItems = [...]` as if new when one already
+                # existed in a region of the file the model never read: whole-repo lookup (via the
+                # caller's declaration_lookup), but only objects when the model hasn't actually
+                # seen the existing declaration, so a legitimate "here's the updated X" passes.
+                try:
+                    existing = await declaration_lookup(declared_names)
+                    unseen = _find_unseen_existing_declarations(existing, attempts)
+                except Exception:
+                    logger.exception("[%s] declaration lookup failed — skipping the check (fail-open).", node_name)
+                    unseen = []
+                if unseen:
+                    duplicate_declaration_reject_count += 1
+                    listing = "; ".join(f"`{u['name']}` at {u['path']}:{u['line']}" for u in unseen)
+                    pending_duplicate_declaration_notice = (
+                        f"Your code declares something that already exists in this repo, and you "
+                        f"haven't looked at the existing version this turn: {listing}. Read that "
+                        "code (read_repo_file around that line) before answering again, then make "
+                        "your change build on its real current contents — if you're replacing it, "
+                        "say so explicitly and keep whatever it contains that should stay, rather "
+                        "than presenting the declaration as new."
+                    )
+                    continue
         if action == "final" and not forced_final and idiom_grounding_reject_count < MAX_IDIOM_GROUNDING_REJECTIONS:
             answer_text = decision.get("answer") or ""
             idiom_issue = await _check_idiom_grounding(answer_text, attempts, llm)

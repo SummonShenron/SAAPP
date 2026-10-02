@@ -81,11 +81,10 @@ export const getAuthHeaders = async (): Promise<Record<string, string>> => {
   if (isGuestPrincipal(principal)) {
     token = principal === 'guest_bty' ? 'guest-bty-token' : 'guest-sandbox-token';
   } else {
-    token = await window.Clerk?.session?.getToken();
-  }
-
-  if (!token) {
-    token = localStorage.getItem("guest_token");
+    // The backend only trusts an email principal when it's backed by a verified Clerk JWT, so
+    // wait for Clerk to finish loading rather than sending the email with no token. No guest_token
+    // fallback here: a stale one from an earlier guest visit must not turn a signed-in user into the guest.
+    token = await (await waitForClerk())?.session?.getToken();
   }
 
   if (token) {
@@ -567,6 +566,63 @@ export async function clearMemoryFacts(): Promise<any> {
     throw new Error("Failed to clear memory.");
   }
   return res.json();
+}
+
+/**
+ * Connected local folder: a read-only server-side snapshot of the folder the user picked, which
+ * Sonic reads instead of GitHub's copy (see localWorkspace.ts for the browser side).
+ */
+export interface LocalWorkspaceStatus {
+  connected: boolean;
+  name?: string;
+  file_count?: number;
+  total_bytes?: number;
+  synced_at?: number;
+}
+
+export interface LocalWorkspaceSyncResult {
+  accepted: number;
+  rejected: { path: string; reason: string }[];
+  file_count: number;
+  total_bytes: number;
+}
+
+export async function getLocalWorkspaceStatus(): Promise<LocalWorkspaceStatus> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/local-workspace`, { headers: { ...authHeaders } });
+  if (!res.ok) {
+    throw new Error("Failed to check the connected folder.");
+  }
+  return res.json();
+}
+
+export async function syncLocalWorkspaceBatch(batch: {
+  name: string;
+  reset: boolean;
+  files: { path: string; content: string }[];
+  deleted: string[];
+}): Promise<LocalWorkspaceSyncResult> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/local-workspace/sync`, {
+    method: "POST",
+    headers: { ...authHeaders },
+    body: JSON.stringify(batch)
+  });
+  if (!res.ok) {
+    throw new Error(res.status === 403 ? "Sign in to connect a local folder." : "Failed to sync the folder.");
+  }
+  return res.json();
+}
+
+export async function disconnectLocalWorkspace(): Promise<void> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/local-workspace`, {
+    method: "DELETE",
+    headers: { ...authHeaders }
+  });
+  if (!res.ok) {
+    throw new Error("Failed to disconnect the folder.");
+  }
 }
 
 /**

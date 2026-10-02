@@ -3446,3 +3446,27 @@ def test_tool_agent_prompt_documents_the_real_batchable_actions():
     assert "{batchable_actions}" not in filled
     assert "read_repo_file" in filled
     assert batchable_text in filled
+
+
+# ---------------------------------------------------------------------------
+# find_file ranking: score by coverage of ALL query tokens, not the single best token. Observed:
+# a query of "local_workspace.py" scored 1.00 for every file with "local" in its path
+# (local_start.ps1, local/package.json, ...), burying the real backend/services/local_workspace.py.
+# ---------------------------------------------------------------------------
+
+def test_find_file_ranks_the_file_matching_every_query_token_above_one_matching_a_single_token():
+    from backend.utils.agent_utils import fuzzy_query_tokens
+
+    tokens = fuzzy_query_tokens("local_workspace.py")
+    exact = aw._fuzzy_path_score(tokens, "backend/services/local_workspace.py")
+    partial = aw._fuzzy_path_score(tokens, "local_start.ps1")
+
+    assert tokens == {"local", "workspace"}  # the ".py" extension is not a token
+    assert exact == 1.0
+    assert partial < 0.8
+    assert exact > partial
+
+
+def test_fuzzy_single_token_queries_score_as_before():
+    tokens = aw._tokenize_for_fuzzy_match("navbar")
+    assert aw._fuzzy_path_score(tokens, "local/src/components/menu-navigator.tsx") >= aw._FUZZY_MATCH_CUTOFF

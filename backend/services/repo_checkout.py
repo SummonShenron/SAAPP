@@ -54,6 +54,9 @@ class CheckoutHandle(NamedTuple):
     # actually removes. Kept separate from `root` since `root` alone isn't the real allocation
     # boundary once the wrapper directory is unwrapped.
     tempdir: str
+    # False for a handle onto a directory that outlives the turn (a user's connected local-folder
+    # snapshot — see local_workspace.py) so cleanup_checkout never deletes it.
+    owned: bool = True
 
 
 def fetch_and_extract_checkout(repo: str, ref: str, headers: dict, api_base: str) -> CheckoutHandle:
@@ -132,6 +135,54 @@ def _extract_tarball_safely(fileobj, dest_dir: str) -> None:
 def cleanup_checkout(handle: CheckoutHandle | None) -> None:
     """Removes the checkout's real temp allocation. Safe to call with None, or with a handle
     whose directory is already gone."""
-    if handle is None:
+    if handle is None or not handle.owned:
         return
     shutil.rmtree(handle.tempdir, ignore_errors=True)
+
+
+_DECLARATION_SCAN_EXTENSIONS = {".py", ".ts", ".tsx", ".js", ".jsx"}
+_DECLARATION_SCAN_SKIP_DIRS = {"node_modules", "dist", "build", "__pycache__", ".git", ".venv", "venv"}
+_DECLARATION_SCAN_MAX_FILE_BYTES = 500_000
+_DECLARATION_KEYWORDS = r"(?:const|let|var|function|class|interface|type|enum|def)"
+
+
+def find_declarations_in_checkout(root: str, names: list, max_per_name: int = 5) -> dict:
+    """One pass over a local checkout looking for lines that DECLARE any of `names` (JS/TS
+    const/let/var/function/class/interface/type/enum, or Python def/class). Returns
+    {name: [{"path", "line", "text"}, ...]} for names found, each capped at max_per_name. Used by
+    the "your code redeclares something that already exists" gate in run_react_loop, which needs
+    to see the WHOLE repo, not just the line ranges the model happened to read. Never raises —
+    an unreadable file is skipped, and an empty/invalid input returns {}."""
+    import re
+
+    names = [n for n in names if isinstance(n, str) and n.isidentifier()]
+    if not names or not root:
+        return {}
+    pattern = re.compile(
+        rf"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?{_DECLARATION_KEYWORDS}\s+({'|'.join(re.escape(n) for n in names)})\b"
+    )
+    found: dict = {}
+    root_path = Path(root)
+    for path in root_path.rglob("*"):
+        if path.suffix not in _DECLARATION_SCAN_EXTENSIONS:
+            continue
+        if any(part in _DECLARATION_SCAN_SKIP_DIRS for part in path.relative_to(root_path).parts):
+            continue
+        try:
+            if not path.is_file() or path.stat().st_size > _DECLARATION_SCAN_MAX_FILE_BYTES:
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for line_no, line in enumerate(text.splitlines(), start=1):
+            match = pattern.match(line)
+            if not match:
+                continue
+            hits = found.setdefault(match.group(1), [])
+            if len(hits) < max_per_name:
+                hits.append({
+                    "path": path.relative_to(root_path).as_posix(),
+                    "line": line_no,
+                    "text": line.strip(),
+                })
+    return found

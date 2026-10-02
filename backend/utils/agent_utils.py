@@ -413,6 +413,62 @@ def _has_successful_code_precedent_research(attempts: list) -> bool:
     return False
 
 
+# Declarations in a proposed code block that might collide with something already in the repo.
+# Names this generic are declared in dozens of unrelated places, so a hit on one says nothing
+# about "the" existing thing being redeclared — excluded outright rather than judged case by case.
+_DECLARED_NAME_RE = re.compile(
+    r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?"
+    r"(?:const|let|var|function|class|interface|type|enum|def)\s+([A-Za-z_$][\w$]*)",
+    re.MULTILINE,
+)
+_GENERIC_DECLARED_NAMES = frozenset({
+    "result", "results", "response", "request", "data", "value", "values", "props", "state",
+    "index", "items", "item", "error", "event", "handler", "callback", "options", "config",
+    "params", "args", "kwargs", "default", "main", "test", "setup", "helper", "wrapper",
+    "render", "update", "create", "delete", "submit", "change", "click",
+})
+_MIN_DECLARED_NAME_LENGTH = 6
+_MAX_DECLARED_NAMES_CHECKED = 12
+# A name already declared in more places than this is a common idiom, not "the" existing thing.
+_MAX_EXISTING_LOCATIONS = 3
+
+
+def _extract_declared_names(final_answer: str) -> list:
+    """Distinct, non-generic identifiers the answer's code blocks DECLARE (const/function/class/
+    def/...), in first-seen order, capped. Only looks inside fenced code blocks."""
+    names: list = []
+    for block in _CODE_BLOCK_RE.findall(final_answer or ""):
+        for match in _DECLARED_NAME_RE.finditer(block):
+            name = match.group(1)
+            if (
+                len(name) >= _MIN_DECLARED_NAME_LENGTH
+                and name.lower() not in _GENERIC_DECLARED_NAMES
+                and name not in names
+            ):
+                names.append(name)
+                if len(names) >= _MAX_DECLARED_NAMES_CHECKED:
+                    return names
+    return names
+
+
+def _find_unseen_existing_declarations(existing: dict, attempts: list) -> list:
+    """From {name: [{"path","line","text"}, ...]} (declarations that already exist in the repo),
+    returns the ones the model has NOT actually looked at this turn: [{"name","path","line"}]. A
+    declaration counts as seen if its exact line appears in any attempt's observation — so a
+    legitimate "here is the updated X" answer passes once the model read the original X, and only
+    a redeclaration made without ever having seen what's already there is flagged."""
+    observations = [(a.get("observation") or "") for a in attempts]
+    unseen = []
+    for name, locations in (existing or {}).items():
+        if not locations or len(locations) > _MAX_EXISTING_LOCATIONS:
+            continue
+        if any(loc["text"] and any(loc["text"] in obs for obs in observations) for loc in locations):
+            continue
+        first = locations[0]
+        unseen.append({"name": name, "path": first["path"], "line": first["line"]})
+    return unseen
+
+
 async def _check_idiom_grounding(final_answer: str, attempts: list, llm) -> dict | None:
     """The second, distinct check "tailored vs exampleish" needs, since _check_final_answer_
     grounding is structurally forbidden from flagging this (its own prompt tells it not to flag
@@ -509,23 +565,34 @@ def _tokenize_for_fuzzy_match(text: str) -> set:
     return tokens
 
 
+def fuzzy_query_tokens(query: str) -> set:
+    """Tokens for a find_file query. A trailing file extension is dropped first (a query of
+    "local_workspace.py" means the file local_workspace, and "py" would otherwise be a token no
+    path ever matches, since paths are scored with their own extension already stripped)."""
+    return _tokenize_for_fuzzy_match(_FILE_EXTENSION_RE.sub("", query.strip()))
+
+
 def _fuzzy_path_score(query_tokens: set, path: str) -> float:
-    """Best similarity between any query token and any token in `path` (folder names and
-    filename, extension stripped) — an exact token match short-circuits to 1.0, otherwise
-    falls back to difflib's character-level ratio so near-misses (navbar/navigator, singular
-    vs. plural) still score usefully instead of an all-or-nothing exact match."""
+    """How well `path` (folder names and filename, extension stripped) covers the query: each
+    query token is matched to its best path token — an exact match is 1.0, otherwise difflib's
+    character-level ratio so near-misses (navbar/navigator, singular vs. plural) still score
+    usefully — and the score is the average across ALL query tokens. Averaging matters: scoring
+    by the single best token gave 1.0 to every file sharing one word with the query, so a search
+    for "local_workspace.py" ranked local_start.ps1 and every other "local*" file level with the
+    real local_workspace.py, burying it."""
     path_tokens = _tokenize_for_fuzzy_match(_FILE_EXTENSION_RE.sub("", path))
-    if not path_tokens:
+    if not path_tokens or not query_tokens:
         return 0.0
-    best = 0.0
+    per_token = []
     for query_token in query_tokens:
+        best = 0.0
         for path_token in path_tokens:
             if query_token == path_token:
-                return 1.0
-            ratio = difflib.SequenceMatcher(None, query_token, path_token).ratio()
-            if ratio > best:
-                best = ratio
-    return best
+                best = 1.0
+                break
+            best = max(best, difflib.SequenceMatcher(None, query_token, path_token).ratio())
+        per_token.append(best)
+    return sum(per_token) / len(per_token)
 
 
 # trace_symbol's write-vs-read classification — regex-based (not a real parser) by design, to

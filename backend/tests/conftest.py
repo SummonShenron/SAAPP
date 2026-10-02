@@ -87,3 +87,10 @@ def block_real_llm_calls(monkeypatch):
             )
 
     monkeypatch.setattr("backend.models.models.LazyLLM._ensure_initialized", _blocked)
+
+
+@pytest.fixture(autouse=True)
+def isolate_local_workspace_dir(monkeypatch, tmp_path):
+    """Points the local-folder snapshot store at a per-test temp directory, so no test can ever
+    read (or leave behind) a real snapshot in the system temp dir."""
+    monkeypatch.setattr("backend.services.local_workspace.WORKSPACE_BASE_DIR", tmp_path / "local_workspaces")
