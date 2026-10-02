@@ -237,6 +237,7 @@ def build_voice_prompt(
     question: str,
     affiliate_override: str = "",
     insight: str = "",
+    emotional_context: str = "",
 ) -> str:
     """Composes the single unified final-answer prompt used by every response path (RAG,
     conversational, web search, code interpreter, GitHub search, PR summary) — one persona,
@@ -251,6 +252,8 @@ def build_voice_prompt(
             "\nWHAT YOU REMEMBER / JUST DID (weave this naturally into your reply, don't ignore "
             f"it or treat it as separate from the rest of the conversation):\n{insight}\n"
         )
+    if emotional_context:
+        sections.append(emotional_context)
     sections.append(f"\nCONVERSATION HISTORY:\n{history}\n\nCURRENT USER INPUT:\n{question}\n\nASSISTANT RESPONSE:\n")
     sections.append(FOLLOW_UP_CONSTRAINT)
     return "\n".join(sections)
@@ -507,6 +510,11 @@ CLASSIFICATION RULES:
     - If the user asks to see, write, or continue drafting code for something just discussed that touches this project's actual files, functions, or architecture (e.g. "what would the agent_workflow code look like", "show me the code for that node", "how would you implement this in X"), set "needs_github_search": true — even though it reads as a continuation of an earlier turn's conversation, not a brand-new question.
     - This is NOT satisfied by an earlier turn in this same conversation having already looked at the repo — a prior investigation may not have covered the exact function/file this specific code now needs to reference correctly, and a real function's name or signature can only be trusted from a fetch, never from what an earlier answer implied or what seems plausible.
 
+11. "emotional_state":
+   - Rate the user's emotional state as shown by their latest message, read in the context of the conversation history (a short neutral question right after a vulnerable disclosure is still the same person — but report only what this message and its immediate context actually show).
+   - "valence": one of "distressed", "low", "neutral", "positive", "excited". "intensity": 0.0-1.0, where 1.0 is acute distress or elation.
+   - Use "neutral" with intensity 0.0 when there is no real emotional signal — do not guess. Never infer emotion from topic alone (asking about a layoff, a bug, or a diagnosis is not itself distress).
+
 CONVERSATION HISTORY:
 {history}
 
@@ -535,7 +543,8 @@ Return ONLY a JSON object matching this schema:
   "needs_calendar_lookup": false,
   "needs_gmail_lookup": false,
   "needs_drive_lookup": false,
-  "needs_send_email": false
+  "needs_send_email": false,
+  "emotional_state": {{"valence": "neutral", "intensity": 0.0}}
 }}
 """
 

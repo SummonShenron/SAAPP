@@ -186,3 +186,39 @@ async def test_paused_clarification_isolated_across_threads(monkeypatch):
     )
 
     assert thread_b_result.get("paused_clarification") is None
+
+
+@run_async
+async def test_emotional_state_survives_a_topic_change_and_stays_scoped_to_its_session(monkeypatch):
+    """emotional_state is the other deliberate reset_transient_state exemption (alongside
+    paused_clarification/paused_code_plan): a distressed turn followed by a neutral topic change
+    in the SAME session must still carry the feeling forward (via the real reasoner_node ->
+    coordinator path), while a different thread must never see it."""
+    def _flags_with_emotion(valence, intensity, **flag_overrides):
+        flags = json.loads(_reasoner_flags(**flag_overrides).content)
+        flags["emotional_state"] = {"valence": valence, "intensity": intensity}
+        return SimpleNamespace(content=json.dumps(flags))
+
+    checkpointer = InMemorySaver()
+    graph = _build_graph(checkpointer, {})
+    config_a = {"configurable": {"thread_id": "session-a"}}
+    config_b = {"configurable": {"thread_id": "session-b"}}
+
+    monkeypatch.setattr(
+        aw.lite_llm, "ainvoke",
+        AsyncMock(side_effect=[
+            _flags_with_emotion("distressed", 0.8, needs_conversation=True),  # session A, turn 1
+            _flags_with_emotion("neutral", 0.0, needs_github_search=True),     # session A, turn 2 (topic change)
+            _flags_with_emotion("neutral", 0.0, needs_conversation=True),      # session B, turn 1
+        ]),
+    )
+
+    turn1 = await graph.ainvoke(_base_state("I got really bad news today and I'm struggling"), config=config_a)
+    assert turn1["emotional_state"]["valence"] == "distressed"
+
+    turn2 = await graph.ainvoke(_base_state("anyway, how does the retry logic work?"), config=config_a)
+    assert turn2["emotional_state"]["valence"] == "distressed"
+    assert turn2["emotional_state"]["turns_since"] == 1
+
+    other_session = await graph.ainvoke(_base_state("hello there"), config=config_b)
+    assert other_session["emotional_state"] is None

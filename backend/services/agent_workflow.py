@@ -15,7 +15,7 @@ from functools import partial
 from pathlib import Path
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from backend.components.time_storage import load_user_time
 from backend.models.attachment import Attachment
@@ -44,6 +44,7 @@ from backend.components.constraints import (
     MEMORY_EXTRACTION_PROMPT
 )
 from backend.utils.memory_utils import save_user_fact, load_user_facts, fetch_coding_preferences
+from backend.utils.emotion_utils import merge_emotional_state
 from backend.services.memory_search import embed_and_store_memory_chunk, retrieve_user_memory
 from backend.components.time_storage import add_time_entry, TimeEntryCreate
 from backend.components import taskboard
@@ -268,9 +269,9 @@ def ensure_workflow_keys(state: GraphState) -> GraphState:
 # turn's input state from whatever was checkpointed on a PRIOR turn, however many turns back
 # that was (verified against LangGraph's own Pregel loop). app.py's initial_state never sets
 # most of these, so without this reset they'd all leak across turns the moment a checkpointer
-# was attached. paused_clarification and paused_code_plan are the deliberate exceptions —
-# these are the only fields meant to survive, so they're the only transient GraphState fields
-# NOT listed here.
+# was attached. paused_clarification, paused_code_plan and emotional_state are the deliberate
+# exceptions — these are the only fields meant to survive, so they're the only transient
+# GraphState fields NOT listed here.
 _TRANSIENT_STATE_DEFAULTS: Dict[str, Any] = {
     "coordinator_intent": "",
     "coordinator_plan": [],
@@ -818,7 +819,19 @@ async def reasoner_node(state: GraphState) -> GraphState:
             flags = json.loads(clean_json)
 
         except Exception:
+            flags = None
             logger.exception("[Reasoner] LLM classification failed, using fallback rules.")
+
+        # Pulled out of the flags dict (which stays boolean-only for routing) and merged with the
+        # carried, decayed prior — a classification failure or missing key reads as neutral, which
+        # leaves a still-significant prior in place rather than erasing it.
+        emotion_reading = flags.pop("emotional_state", None) if isinstance(flags, dict) else None
+        state["emotional_state"] = merge_emotional_state(
+            state.get("emotional_state"), emotion_reading, datetime.now(timezone.utc)
+        )
+        logger.info("[Reasoner] Emotional state: %s", state["emotional_state"])
+
+        if flags is None:
             # Fallback to standard false flags if JSON parsing fails
             flags = {
                 "needs_retrieval": False,

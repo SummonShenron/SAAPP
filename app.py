@@ -83,6 +83,7 @@ from backend.utils.memory_utils import (
 from backend.services.memory_compaction import compact_user_memory, compact_meta_memory
 from backend.services.memory_search import retrieve_relevant_memory_context
 from backend.utils.embedding_utils import embed_text
+from backend.utils.emotion_utils import build_emotional_context
 from backend.utils.user_settings_utils import (
     get_user_rag_mode, set_user_rag_mode, VALID_RAG_MODES,
     get_user_deep_thinking_mode, set_user_deep_thinking_mode,
@@ -732,6 +733,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 question=final_state.get("original_question", question),
                 affiliate_override=get_affiliate_override(requested_affiliate),
                 insight=payload.get("insight") or "",
+                emotional_context=build_emotional_context(
+                    final_state.get("emotional_state"), datetime.now(timezone.utc)
+                ),
             )
             if kb_images:
                 # The composer has no innate way to know an image will actually be rendered
