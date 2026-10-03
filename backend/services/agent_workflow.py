@@ -43,7 +43,7 @@ from backend.components.constraints import (
     DRAFT_SEND_EMAIL_PROMPT,
     MEMORY_EXTRACTION_PROMPT
 )
-from backend.utils.memory_utils import save_user_fact, load_user_facts, fetch_coding_preferences
+from backend.utils.memory_utils import save_user_fact, load_user_facts, fetch_coding_preferences, fact_for_state
 from backend.utils.emotion_utils import merge_emotional_state
 from backend.services.local_workspace import get_workspace_handle, workspace_status
 from backend.services.local_edits import validate_edit_proposal
@@ -934,7 +934,7 @@ async def memory_save_node(state: GraphState, memory_vector_store=None) -> dict:
         # acknowledge the save AND still respond to the rest of the user's message, instead
         # of the reply being nothing but a canned confirmation line.
         confirmation = f"A new fact was just saved to memory: \"{saved.fact}\". Acknowledge this naturally and briefly, then respond to the rest of the user's message normally."
-        state["memory_facts"] = [saved.dict()]
+        state["memory_facts"] = [fact_for_state(saved)]
         state["raw_generation"] = confirmation
         state["content_to_format"] = confirmation
         state["insight_answer"] = confirmation
@@ -966,7 +966,7 @@ def memory_recall_node(state: GraphState, memory_vector_store=None) -> dict:
         question = state["messages"][-1].content.strip() if state.get("messages") else ""
 
         facts = load_user_facts(username)
-        state["memory_facts"] = [f.dict() for f in facts]
+        state["memory_facts"] = [fact_for_state(f) for f in facts]
 
         semantic_hits = retrieve_user_memory(memory_vector_store, username, question, top_k=4)
         state["memory_hits"] = [h.page_content for h in semantic_hits]

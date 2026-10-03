@@ -60,6 +60,15 @@ class UserFact(BaseModel):
     last_nudged_at: Optional[str] = None  # None until find_stale_goal_to_nudge first surfaces it
 
 
+def fact_for_state(fact: UserFact) -> dict:
+    """A fact as it should appear in graph state: everything except its embedding. The embedding
+    (~12-15KB as JSON) is only ever used for similarity matching inside this module, but anything
+    in graph state is re-saved in EVERY checkpoint — 345 facts' embeddings made each checkpoint
+    ~3.5MB, and with one checkpoint per graph step that alone filled the 512MB Atlas quota in a
+    day. Nothing reads state["memory_facts"] back for the embeddings."""
+    return fact.model_dump(exclude={"embedding"})
+
+
 def _get_user_file(username: str) -> str:
     return os.path.join(DATA_DIR, f"{username}.json")
 

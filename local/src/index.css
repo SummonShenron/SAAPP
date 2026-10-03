@@ -1110,6 +1110,9 @@ div:has(.portal-body) {
   cursor: not-allowed;
 }
 
+.mobile-trace-pill{
+  z-index:5
+}
 .icon-button:hover:not(:disabled) {
   opacity: 0.8;
   transform: translateY(-1px);
