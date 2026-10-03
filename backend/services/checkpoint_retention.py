@@ -122,6 +122,45 @@ def prune_old_checkpoints(
     return summary
 
 
+def prune_thread_checkpoints(thread_id: str, keep_per_thread: int = DEFAULT_KEEP_PER_THREAD) -> dict:
+    """Keeps only the `keep_per_thread` most recent checkpoints of ONE thread, deleting the rest
+    with their checkpoint_writes — the same rule as prune_old_checkpoints, scoped to the
+    conversation that just ran. Called after every chat turn: the daily/startup pass alone only
+    bounds storage right after it runs, and a single busy day on one long thread (one checkpoint
+    per graph step, each carrying the whole conversation) was enough to fill the Atlas quota
+    before the next pass. Never raises — a failure here must not affect the reply."""
+    try:
+        db = get_db()
+        if db is None:
+            return {"skipped": True, "reason": "USE_DB not enabled"}
+        ckpt_db = db.client[CHECKPOINT_DB_NAME]
+        checkpoints = ckpt_db[CHECKPOINTS_COLLECTION]
+        writes = ckpt_db[CHECKPOINT_WRITES_COLLECTION]
+        stale = list(
+            checkpoints.find({"thread_id": thread_id}, {"checkpoint_id": 1}).sort("_id", -1).skip(keep_per_thread)
+        )
+        if not stale:
+            return {"skipped": False, "deleted_checkpoints": 0, "deleted_checkpoint_writes": 0}
+        deleted_checkpoints = checkpoints.delete_many({"_id": {"$in": [d["_id"] for d in stale]}}).deleted_count
+        deleted_writes = writes.delete_many(
+            {"thread_id": thread_id, "checkpoint_id": {"$in": [d["checkpoint_id"] for d in stale]}}
+        ).deleted_count
+        summary = {
+            "skipped": False,
+            "deleted_checkpoints": deleted_checkpoints,
+            "deleted_checkpoint_writes": deleted_writes,
+        }
+        logger.info("[checkpoint_retention] per-turn prune of %s: %s", thread_id, summary)
+        return summary
+    except Exception:
+        logger.exception("[checkpoint_retention] per-turn prune failed for %s", thread_id)
+        return {"skipped": True, "reason": "error"}
+
+
+async def prune_thread_checkpoints_async(thread_id: str, keep_per_thread: int = DEFAULT_KEEP_PER_THREAD) -> dict:
+    return await asyncio.to_thread(prune_thread_checkpoints, thread_id, keep_per_thread)
+
+
 async def run_checkpoint_retention_loop(
     interval_seconds: float = DEFAULT_INTERVAL_SECONDS,
     keep_per_thread: int = DEFAULT_KEEP_PER_THREAD,

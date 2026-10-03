@@ -118,7 +118,7 @@ from backend.services.orchestrator import startup_services
 from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, verify_paapp_access, load_directory, seed_guest_tasks, make_personal_kb_id, resolve_kb_display_names
 from backend.utils.db_utils import get_db, save_error_event, test_connection
 from backend.auth.isolation_auth import get_current_user, record_login_event
-from backend.services.checkpoint_retention import run_checkpoint_retention_loop
+from backend.services.checkpoint_retention import run_checkpoint_retention_loop, prune_thread_checkpoints_async
 from contextlib import asynccontextmanager
 from settings import DB_DIR
 from backend.components.time_storage import TimeEntryCreate, add_time_entry, load_user_time, clear_user_time, TimeEntry, save_user_time
@@ -911,6 +911,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             chat_sessions[history_key].append(ai_message)
             save_conversation_turn(username, session_id, chat_sessions[history_key])
             spawn_background_task(index_conversation_turn(services.get("user_memory_vector_store"), username, question, full_response, session_id))
+            # Bounds this conversation's checkpoint history right now rather than waiting for the daily pass.
+            spawn_background_task(prune_thread_checkpoints_async(history_key))
             log_timings(relevance_grade, "ok")
             logger.info("--- End of token stream ---")
 

@@ -1707,7 +1707,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                     color: '#cbd5e1',
                     cursor: 'pointer',
                     backdropFilter: 'blur(8px)',
-                    zIndex: 50
+                    
                   }}
                 >
                   <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#6366f1', display: 'inline-block' }} />

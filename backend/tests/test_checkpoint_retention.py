@@ -23,6 +23,10 @@ class _FakeCursor:
         self._docs.sort(key=lambda d: d[key], reverse=(direction == -1))
         return self
 
+    def skip(self, n):
+        self._docs = self._docs[n:]
+        return self
+
     def __iter__(self):
         return iter(self._docs)
 
@@ -271,3 +275,52 @@ async def test_retention_loop_calls_prune_and_survives_a_failure(monkeypatch):
 
     # 3 real prune attempts happened (one failed, loop kept going) before we stopped it.
     assert call_count["n"] == 3
+
+
+# ---------------------------------------------------------------------------
+# prune_thread_checkpoints — runs after every chat turn. Observed: the daily/startup pass alone let
+# one busy thread write 353 checkpoints (~480MB with their writes) between passes and fill the quota.
+# ---------------------------------------------------------------------------
+
+def test_per_turn_prune_keeps_only_the_newest_n_of_that_thread_and_leaves_other_threads_alone(monkeypatch):
+    docs = [_ckpt(i, "a", f"a-{i}") for i in range(10)] + [_ckpt(100 + i, "b", f"b-{i}") for i in range(8)]
+    writes_docs = [{"checkpoint_id": f"a-{i}", "thread_id": "a"} for i in range(10)]
+    db, checkpoints, writes = _fake_db(docs, writes_docs)
+    monkeypatch.setattr(cr, "get_db", lambda: db)
+
+    summary = cr.prune_thread_checkpoints("a", keep_per_thread=3)
+
+    assert summary["deleted_checkpoints"] == 7
+    assert summary["deleted_checkpoint_writes"] == 7
+    assert sorted(d["_id"] for d in checkpoints.docs if d["thread_id"] == "a") == [7, 8, 9]
+    assert len([d for d in checkpoints.docs if d["thread_id"] == "b"]) == 8  # untouched, even though > 3
+    assert sorted(w["checkpoint_id"] for w in writes.docs) == ["a-7", "a-8", "a-9"]
+
+
+def test_per_turn_prune_is_a_no_op_for_a_thread_within_its_floor(monkeypatch):
+    db, checkpoints, _ = _fake_db([_ckpt(i, "a", f"a-{i}") for i in range(3)], [])
+    monkeypatch.setattr(cr, "get_db", lambda: db)
+
+    assert cr.prune_thread_checkpoints("a", keep_per_thread=3)["deleted_checkpoints"] == 0
+    assert len(checkpoints.docs) == 3
+
+
+def test_per_turn_prune_skips_without_a_database_and_never_raises(monkeypatch):
+    monkeypatch.setattr(cr, "get_db", lambda: None)
+    assert cr.prune_thread_checkpoints("a")["skipped"] is True
+
+    def boom():
+        raise RuntimeError("mongo down")
+
+    monkeypatch.setattr(cr, "get_db", boom)
+    assert cr.prune_thread_checkpoints("a") == {"skipped": True, "reason": "error"}
+
+
+@run_async
+async def test_per_turn_prune_async_wrapper_runs_the_same_prune(monkeypatch):
+    db, checkpoints, _ = _fake_db([_ckpt(i, "a", f"a-{i}") for i in range(6)], [])
+    monkeypatch.setattr(cr, "get_db", lambda: db)
+
+    summary = await cr.prune_thread_checkpoints_async("a", keep_per_thread=2)
+
+    assert summary["deleted_checkpoints"] == 4
