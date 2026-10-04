@@ -23,8 +23,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
-from backend.components import taskboard
-from backend.utils.taskboard_utils import require_taskboard_admin, is_taskboard_admin_for_user
 from backend.models.models import llm, get_stream_llm
 from backend.models.attachment import Attachment
 from backend.services.github_service import process_pr_summary
@@ -32,7 +30,6 @@ from backend.services.github_service import process_pr_summary
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_community.vectorstores import Chroma
-from backend.components.time_storage import TimeEntry
 from backend.components.constraints import (
     format_docs,
     build_voice_prompt,
@@ -44,16 +41,19 @@ from backend.components.constraints import (
 from backend.services.search import discover_workspace_documents
 from local_function_app.function_app import run_ingestion_pipeline, HOT_FOLDER_DIR
 from backend.state.graph_state import GraphState
-from backend.services.insights_workflow import create_insight_workflow
 from backend.utils.app_utils import (
     save_conversation_turn,
     load_user_conversations,
+    load_user_conversation,
+    list_user_conversation_summaries,
+    paginate_messages,
+    load_session_messages,
+    sync_session_messages,
+    DEFAULT_CONVERSATION_PAGE_SIZE,
+    MAX_CONVERSATION_PAGE_SIZE,
     delete_user_conversation,
     format_history_as_text,
     chat_sessions,
-    get_db_dependency,
-    serialize_doc,
-    load_chat_history,
     fetch_relevant_corrections,
     save_correction,
     extract_target_repo,
@@ -116,13 +116,12 @@ from backend.utils.fallback_utils import rewrite_fallback
 from backend.services.reward_evaluator import evaluate_response, build_correction_prompt, REWARD_EVAL_SOURCE_TYPES
 from backend.logging.sass_logger import setup_logging
 from backend.services.orchestrator import startup_services
-from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, verify_paapp_access, load_directory, seed_guest_tasks, make_personal_kb_id, resolve_kb_display_names
+from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, load_directory, make_personal_kb_id, resolve_kb_display_names
 from backend.utils.db_utils import get_db, save_error_event, test_connection
 from backend.auth.isolation_auth import get_current_user, record_login_event
 from backend.services.checkpoint_retention import run_checkpoint_retention_loop, prune_thread_checkpoints_async
 from contextlib import asynccontextmanager
 from settings import DB_DIR
-from backend.components.time_storage import TimeEntryCreate, add_time_entry, load_user_time, clear_user_time, TimeEntry, save_user_time
 import aiohttp
 import aiohttp.resolver
 import settings
@@ -158,12 +157,8 @@ if sys.platform == "win32":
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global chat_sessions
-    # This runs once when the server starts
-    try:
-        logger.info("Loading chat history from database...")
-        chat_sessions = load_chat_history()
-    except Exception as e:
-        logger.exception("Error loading chat history: %s", e)
+    # This runs once when the server starts. Chat transcripts are NOT warm-loaded here: each
+    # conversation is read from the store the first time it's used (see secure_chat).
     retention_task = spawn_background_task(run_checkpoint_retention_loop())
     if get_db() is not None:
         ensure_calendar_indexes()
@@ -180,7 +175,6 @@ app.add_middleware(
         "http://127.0.0.1:8080", 
         "http://localhost:8080",
         "http://localhost:5173",
-        "https://paapp-u2l9.onrender.com",
         "https://sonicassistant.com",
         "https://www.sonicassistant.com/"
     ],
@@ -213,7 +207,6 @@ logger = setup_logging()  # Initialize the logger from backend/logging/sass_logg
 erragent.install(logger)
 logger.info("--- BOOTING SECURE KNOWLEDGE ASSISTANT ---")
 services = startup_services()
-insight_workflow = services["insight_workflow"]
 chat_sessions = {}
 
 # Holds strong references to fire-and-forget background tasks (e.g. index_conversation_turn).
@@ -247,13 +240,6 @@ class LocalWorkspaceSync(BaseModel):
     reset: bool = False
     files: list[LocalWorkspaceFile] = []
     deleted: list[str] = []
-
-class EventCreate(BaseModel):
-    activity: str
-    start_time: str
-    date: str
-    notes: str = ""
-    type: str = "event"
 
 class RagModeUpdate(BaseModel):
     rag_mode: str
@@ -399,7 +385,6 @@ def get_me(request: Request, current_user: dict = Depends(get_current_user)):
                 "username": safe_username,
                 "groups": [
                     "Affiliate_A", "Affiliate_B", "Affiliate_C",
-                    "PAAPP_Admins", "Taskboard_Admins",
                     personal_kb_id, f"{personal_kb_id} Ingesters",
                 ],
                 "personal_kb": {
@@ -528,9 +513,6 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     graph_config = {"configurable": {"thread_id": history_key}}
     t_auth_start = time.perf_counter()
     
-    if not verify_paapp_access(username):
-        return {"message": "Access denied: You are not authorized to use PAAPP integrations."}
-
     # ---------- Auth Authorization Boundary ----------
     web_triggers = ["search the web", "search online", "search google", "web search", "look up online"]
     force_web_search = any(kw in question.lower() for kw in web_triggers)
@@ -560,7 +542,10 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     # The full transcript in chat_sessions[history_key] is kept durable (it's what gets
     # persisted per-conversation); only a bounded recent window is fed to the LLM/graph.
     if history_key not in chat_sessions:
-        chat_sessions[history_key] = []
+        chat_sessions[history_key] = load_session_messages(username, session_id)
+    else:
+        # Another backend instance sharing this database may have saved since we last looked.
+        sync_session_messages(username, session_id, chat_sessions[history_key])
     chat_sessions[history_key].append(HumanMessage(content=question))
 
     messages_state = chat_sessions[history_key][-10:]
@@ -1238,21 +1223,23 @@ async def delete_document(
 @app.get("/api/conversations")
 async def list_conversations(current_user = Depends(get_current_user)):
     username = current_user.get("sub")
-    conversations = load_user_conversations(username)
-    conversations.sort(key=lambda c: c.get("updated_at", ""), reverse=True)
-    return [
-        {"session_id": c["session_id"], "title": c["title"], "updated_at": c["updated_at"]}
-        for c in conversations
-    ]
+    return list_user_conversation_summaries(username)
 
 @app.get("/api/conversations/{session_id}")
-async def get_conversation(session_id: str, current_user = Depends(get_current_user)):
+async def get_conversation(
+    session_id: str,
+    limit: int = Query(DEFAULT_CONVERSATION_PAGE_SIZE, ge=1, le=MAX_CONVERSATION_PAGE_SIZE),
+    before: int | None = Query(None, ge=0),
+    current_user = Depends(get_current_user),
+):
+    """One page of a conversation, newest messages by default. `start`/`total` in the response let
+    the client request the previous page with `before=start`."""
     username = current_user.get("sub")
-    conversations = load_user_conversations(username)
-    for convo in conversations:
-        if convo["session_id"] == session_id:
-            return {"session_id": convo["session_id"], "title": convo["title"], "messages": convo["messages"]}
-    raise HTTPException(status_code=404, detail="Conversation not found")
+    convo = load_user_conversation(username, session_id)
+    if convo is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    page = paginate_messages(convo.get("messages", []), limit=limit, before=before)
+    return {"session_id": convo["session_id"], "title": convo.get("title", ""), **page}
 
 @app.delete("/api/conversations/{session_id}")
 async def remove_conversation(session_id: str, current_user = Depends(get_current_user)):
@@ -1262,226 +1249,6 @@ async def remove_conversation(session_id: str, current_user = Depends(get_curren
         raise HTTPException(status_code=404, detail="Conversation not found")
     await _delete_checkpoint_thread(username, session_id)
     return {"status": "deleted", "session_id": session_id}
-
-@app.get("/admin/paapp")
-def access_paapp_data(current_user = Depends(get_current_user)):
-    # 1. Identity is handled by get_current_user (Clerk JWT)
-    username = current_user.get("sub")
-    
-    # 2. Use your existing logic from isolation_kb_utils.py
-    allowed = verify_paapp_access(username)
-    
-    logger.info("is-paapp-admin for %s -> %s", username, allowed)
-    
-    return {"allowed": allowed}
-
-TIME_ENTRIES: dict[str, list[TimeEntry]] = {}  # key: username, value: list of entries
-@app.get("/api/time/list")
-def saapp_list_time(current_user = Depends(get_current_user)):
-    username = current_user.get("sub")
-    return load_user_time(username)
-
-@app.delete("/api/time/clear")
-def saapp_clear_time(current_user = Depends(get_current_user)):
-    clear_user_time(current_user.get("sub"))
-    return {"status": "cleared"}
-
-@app.post("/api/time/log")
-async def log_time(
-    entry: TimeEntryCreate, 
-    current_user = Depends(get_current_user)
-):
-    try:
-        new_entry = TimeEntry(
-            id=str(uuid.uuid4()),
-            username=current_user.get("sub"),  # Overriding the payload with verified ID
-            activity=entry.activity,
-            duration_hours=entry.duration_hours,
-            duration_minutes=entry.duration_minutes,
-            date=entry.date,
-            created_at=datetime.now(timezone.utc).isoformat(),
-            notes=entry.notes,
-            type=entry.type
-        )
-        add_time_entry(new_entry)
-        return {"status": "ok"}
-    except Exception:
-        traceback.print_exc() 
-        raise HTTPException(status_code=500, detail="Check terminal for traceback")
-
-@app.delete("/api/time/delete")
-async def delete_time_entry(id: str, current_user = Depends(get_current_user)):
-    username = current_user.get("sub")
-    entries = load_user_time(username)
-    new_data = [entry for entry in entries if entry.id != id]
-    save_user_time(username, new_data) 
-    return {"status": "ok", "deleted": id}
-
-@app.delete("/api/events/delete")
-async def delete_event(id: str, current_user = Depends(get_current_user)):
-    db = get_db()
-    if db is None:
-        raise HTTPException(status_code=500, detail="Database connection unavailable")
-        
-    # The database query strictly limits deletion to the active user's documents
-    result = db["events"].delete_one({"_id": ObjectId(id), "username": current_user.get("sub")})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Event not found")
-    return {"status": "deleted", "id": id}
-
-@app.post("/api/events/create")
-async def create_event(
-    event: EventCreate, 
-    current_user = Depends(get_current_user)
-):
-    username = current_user.get("sub")
-    db = get_db()
-    
-    # Convert Pydantic model to a dictionary
-    event_dict = event.dict() 
-    event_dict["username"] = username # Attach the user from the token
-    
-    # Insert into database
-    result = db["events"].insert_one(event_dict)
-    
-    # Fetch it back to return the full object with ID
-    inserted_doc = db["events"].find_one({"_id": result.inserted_id})
-    
-    return serialize_doc(inserted_doc)
-
-@app.post("/api/events/log")
-async def saapp_log_event(
-    entry: TimeEntryCreate, 
-    db = Depends(get_db_dependency),
-    current_user = Depends(get_current_user)
-):
-    new_entry = {
-        "id": str(uuid.uuid4()), 
-        "username": current_user.sub, # Override with verified session
-        "activity": entry.activity,
-        "duration_hours": entry.duration_hours,
-        "duration_minutes": entry.duration_minutes,
-        "date": entry.date,
-        "notes": entry.notes,
-        "type": "event",
-        "created_at": datetime.now(timezone.utc).isoformat()
-    }
-
-    db["events"].insert_one(new_entry)
-    return {"status": "ok"}
-
-@app.get("/api/events/list")
-def saapp_list_events(current_user = Depends(get_current_user)):
-    username = current_user.get("sub")
-    db = get_db()
-    if db is None:
-        raise HTTPException(status_code=500, detail="Database connection unavailable")
-    
-    events = list(db["events"].find({"username": username}))
-    
-    for e in events:
-        e["id"] = str(e["_id"]) 
-        e.pop("_id", None)      
-        
-    return events
-
-@app.get("/api/tasks")
-def get_tasks(current_user = Depends(get_current_user)):
-    db = get_db()
-    
-    # Query ONLY tasks owned by the active logged-in user
-    tasks = list(db["tasks"].find({"username": current_user.get("sub")}))
-    
-    # If a guest logs in and has no tasks yet, seed 3 mock ones for them!
-    if not tasks and current_user.get("sub") == "guest-recruiter@example.com":
-        seed_guest_tasks(db, current_user.get("sub"))
-        tasks = list(db["tasks"].find({"username": current_user.get("sub")}))
-        
-    for t in tasks:
-        t["id"] = str(t["_id"])
-        t.pop("_id", None)
-    return tasks
-
-# @app.get("/api/tasks")
-# def get_tasks(current_user = Depends(get_current_user)): # SECURED: Added auth check
-#     db = get_db()
-#     if db is None:
-#         raise HTTPException(status_code=500, detail="Database connection unavailable")
-        
-#     tasks = list(db.get("tasks").find({}))
-#     for t in tasks:
-#         # Add the string version
-#         t["id"] = str(t["_id"])
-        
-#         # CRITICAL: Strip out the raw ObjectId
-#         t.pop("_id", None)
-        
-#     return tasks
-
-@app.post("/api/tasks")
-def create_task(task_data: dict, current_user = Depends(get_current_user)):
-    db = get_db()
-    # Add the username to the new task to ensure data isolation
-    task_data["username"] = current_user.get("sub")
-    
-    result = db["tasks"].insert_one(task_data)
-    task_data["id"] = str(result.inserted_id)
-    task_data.pop("_id", None)
-    
-    return task_data
-
-@app.put("/api/tasks/{task_id}")
-def update_task_lane(task_id: str, payload: dict, current_user = Depends(get_current_user)):
-    db = get_db() # Get the database connection
-    if db is None:
-        raise HTTPException(status_code=500, detail="Database connection unavailable")
-    update_data = {k: v for k, v in payload.items() if k in ["lane", "title", "description"]}
-    result = db["tasks"].update_one({"_id": ObjectId(task_id)}, {"$set": update_data})
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Task not found")
-    return {"status": "ok"}
-
-@app.delete("/api/tasks/{task_id}")
-def delete_task(task_id: str, current_user: dict = Depends(get_current_user)):
-    db = get_db()
-    username = current_user.get("sub")
-    
-    # 1. Attempt to handle both ObjectId and string IDs
-    query_id = task_id
-    if len(task_id) == 24:
-        try:
-            query_id = ObjectId(task_id)
-        except errors.InvalidId:
-            pass # Keep as string if it's not a valid ObjectId
-
-    # 2. Add debug logging to see exactly what you are querying
-    print(f"DEBUG: Deleting task with ID: {query_id} (Type: {type(query_id)}) for user: {username}")
-    
-    result = db["tasks"].delete_one({
-        "_id": query_id,
-        "username": username
-    })
-    
-    if result.deleted_count == 0:
-        # 3. Log what happened if nothing was found
-        print(f"DEBUG: No task found with ID {query_id} for user {username}")
-        raise HTTPException(status_code=404, detail="Task not found or unauthorized")
-        
-    return {"status": "deleted", "id": task_id}
-
-@app.get("/api/insights")
-def get_insights(current_user = Depends(get_current_user)): 
-    username = current_user.get("sub")
-    
-    state = {
-        "messages": [], 
-        "username": username
-    }
-    logger.info(f"Triggering insight workflow for user: {state['username']}")
-    result = insight_workflow.invoke(state)
-    
-    logger.info(f"Final graph result dictionary:{result}")    
-    return result.get("insights", [])
 
 @app.post("/api/chat/feedback")
 async def store_feedback(

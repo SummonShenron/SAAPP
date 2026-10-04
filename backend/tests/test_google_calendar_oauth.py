@@ -1,3 +1,4 @@
+import datetime
 import os
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -163,6 +164,7 @@ def test_get_valid_access_token_returns_token_without_refresh_when_not_expired(m
         "access_token_encrypted": fernet.encrypt(b"still-valid-token").decode(),
         "refresh_token_encrypted": fernet.encrypt(b"refresh-tok").decode(),
         "scopes": ["calendar.events"],
+        "expires_at": datetime.datetime.utcnow() + datetime.timedelta(minutes=30),
     }
     monkeypatch.setattr("backend.utils.google_calendar_utils.get_encrypted_tokens", lambda username: doc)
 
@@ -171,6 +173,103 @@ def test_get_valid_access_token_returns_token_without_refresh_when_not_expired(m
 
     token = gco.GoogleCalendarOAuth().get_valid_access_token("jack")
     assert token == "still-valid-token"
+
+
+def _real_credentials_spy(monkeypatch, refreshed_token="fresh-token"):
+    """Uses the REAL google-auth Credentials (so its own `expired` logic runs) with only the network
+    refresh stubbed out — the earlier tests mocked Credentials wholesale with `expired` hardcoded,
+    which is exactly why a missing `expiry=` went unnoticed."""
+    calls = {"refreshed": 0, "persisted": None}
+
+    def fake_refresh(self, request):
+        calls["refreshed"] += 1
+        self.token = refreshed_token
+        self.expiry = datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+
+    monkeypatch.setattr(gco.Credentials, "refresh", fake_refresh)
+    monkeypatch.setattr(
+        "backend.utils.google_calendar_utils.update_tokens",
+        lambda username, **kwargs: calls.__setitem__("persisted", kwargs),
+    )
+    return calls
+
+
+def _stored_doc(fernet, expires_at, with_refresh=True):
+    return {
+        "access_token_encrypted": fernet.encrypt(b"stored-token").decode(),
+        "refresh_token_encrypted": fernet.encrypt(b"refresh-tok").decode() if with_refresh else None,
+        "scopes": ["calendar.events"],
+        "expires_at": expires_at,
+    }
+
+
+def test_expired_stored_token_is_refreshed_and_persisted(monkeypatch):
+    # The real failure: a token stored two days ago was returned as-is, Google answered 401, and the
+    # calendar call died with "credentials do not contain the necessary fields to refresh".
+    fernet = Fernet(os.environ["TOKEN_ENCRYPTION_KEY"].encode())
+    doc = _stored_doc(fernet, datetime.datetime.utcnow() - datetime.timedelta(days=2))
+    monkeypatch.setattr("backend.utils.google_calendar_utils.get_encrypted_tokens", lambda username: doc)
+    calls = _real_credentials_spy(monkeypatch)
+
+    token = gco.GoogleCalendarOAuth().get_valid_access_token("jack")
+
+    assert token == "fresh-token"
+    assert calls["refreshed"] == 1
+    assert fernet.decrypt(calls["persisted"]["access_token_encrypted"].encode()) == b"fresh-token"
+
+
+def test_unexpired_stored_token_is_returned_without_a_network_refresh(monkeypatch):
+    fernet = Fernet(os.environ["TOKEN_ENCRYPTION_KEY"].encode())
+    doc = _stored_doc(fernet, datetime.datetime.utcnow() + datetime.timedelta(minutes=30))
+    monkeypatch.setattr("backend.utils.google_calendar_utils.get_encrypted_tokens", lambda username: doc)
+    calls = _real_credentials_spy(monkeypatch)
+
+    assert gco.GoogleCalendarOAuth().get_valid_access_token("jack") == "stored-token"
+    assert calls["refreshed"] == 0
+
+
+def test_timezone_aware_and_iso_string_expiries_are_understood(monkeypatch):
+    fernet = Fernet(os.environ["TOKEN_ENCRYPTION_KEY"].encode())
+    monkeypatch.setattr(
+        "backend.utils.google_calendar_utils.get_encrypted_tokens",
+        lambda username: _stored_doc(fernet, datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=3)),
+    )
+    calls = _real_credentials_spy(monkeypatch)
+    assert gco.GoogleCalendarOAuth().get_valid_access_token("jack") == "fresh-token"
+    assert calls["refreshed"] == 1
+
+    future_iso = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=30)).isoformat()
+    monkeypatch.setattr(
+        "backend.utils.google_calendar_utils.get_encrypted_tokens",
+        lambda username: _stored_doc(fernet, future_iso),
+    )
+    calls = _real_credentials_spy(monkeypatch)
+    assert gco.GoogleCalendarOAuth().get_valid_access_token("jack") == "stored-token"
+    assert calls["refreshed"] == 0
+
+
+def test_unknown_expiry_refreshes_instead_of_trusting_a_possibly_stale_token(monkeypatch):
+    fernet = Fernet(os.environ["TOKEN_ENCRYPTION_KEY"].encode())
+    for unknown in (None, "not-a-date"):
+        monkeypatch.setattr(
+            "backend.utils.google_calendar_utils.get_encrypted_tokens",
+            lambda username, u=unknown: _stored_doc(fernet, u),
+        )
+        calls = _real_credentials_spy(monkeypatch)
+        assert gco.GoogleCalendarOAuth().get_valid_access_token("jack") == "fresh-token"
+        assert calls["refreshed"] == 1
+
+
+def test_expired_token_with_no_refresh_token_asks_the_user_to_reconnect(monkeypatch):
+    fernet = Fernet(os.environ["TOKEN_ENCRYPTION_KEY"].encode())
+    doc = _stored_doc(fernet, datetime.datetime.utcnow() - datetime.timedelta(days=2), with_refresh=False)
+    monkeypatch.setattr("backend.utils.google_calendar_utils.get_encrypted_tokens", lambda username: doc)
+    deleted = []
+    monkeypatch.setattr("backend.utils.google_calendar_utils.delete_connection", deleted.append)
+
+    with pytest.raises(gco.GoogleCalendarConnectionError, match="reconnect required"):
+        gco.GoogleCalendarOAuth().get_valid_access_token("jack")
+    assert deleted == ["jack"]
 
 
 def test_get_valid_access_token_raises_with_no_connection(monkeypatch):
@@ -202,6 +301,71 @@ def test_get_valid_access_token_self_heals_on_revoked_grant(monkeypatch):
     assert deleted["called_with"] == "jack"
 
 
+def _expired_doc_with_failing_refresh(monkeypatch, error):
+    fernet = Fernet(os.environ["TOKEN_ENCRYPTION_KEY"].encode())
+    doc = _stored_doc(fernet, datetime.datetime.utcnow() - datetime.timedelta(days=2))
+    monkeypatch.setattr("backend.utils.google_calendar_utils.get_encrypted_tokens", lambda username: doc)
+    deleted = []
+    monkeypatch.setattr("backend.utils.google_calendar_utils.delete_connection", deleted.append)
+
+    def _raise(self, request):
+        raise error
+
+    monkeypatch.setattr(gco.Credentials, "refresh", _raise)
+    return deleted
+
+
+def test_a_real_revoked_grant_deletes_the_connection(monkeypatch):
+    from google.auth.exceptions import RefreshError
+
+    error = RefreshError("invalid_grant: Token has been expired or revoked.", {"error": "invalid_grant"})
+    deleted = _expired_doc_with_failing_refresh(monkeypatch, error)
+
+    with pytest.raises(gco.GoogleCalendarConnectionError, match="no longer valid") as raised:
+        gco.GoogleCalendarOAuth().get_valid_access_token("jack")
+
+    assert not isinstance(raised.value, gco.GoogleCalendarTemporaryError)
+    assert deleted == ["jack"]
+
+
+def test_a_revoked_grant_is_recognised_from_the_response_body_alone(monkeypatch):
+    from google.auth.exceptions import RefreshError
+
+    deleted = _expired_doc_with_failing_refresh(monkeypatch, RefreshError("Bad Request", {"error": "invalid_grant"}))
+
+    with pytest.raises(gco.GoogleCalendarConnectionError):
+        gco.GoogleCalendarOAuth().get_valid_access_token("jack")
+    assert deleted == ["jack"]
+
+
+@pytest.mark.parametrize("error", [
+    ConnectionError("network unreachable"),
+    TimeoutError("timed out"),
+    Exception("503 Service Unavailable"),
+])
+def test_a_transient_refresh_failure_keeps_the_connection(monkeypatch, error):
+    deleted = _expired_doc_with_failing_refresh(monkeypatch, error)
+
+    with pytest.raises(gco.GoogleCalendarTemporaryError, match="still saved"):
+        gco.GoogleCalendarOAuth().get_valid_access_token("jack")
+
+    assert deleted == []  # the user is NOT forced to re-consent over a network blip
+
+
+def test_a_misconfigured_client_secret_does_not_delete_the_users_connection(monkeypatch):
+    from google.auth.exceptions import RefreshError
+
+    deleted = _expired_doc_with_failing_refresh(
+        monkeypatch, RefreshError("invalid_client: Unauthorized", {"error": "invalid_client"})
+    )
+
+    with pytest.raises(gco.GoogleCalendarTemporaryError):
+        gco.GoogleCalendarOAuth().get_valid_access_token("jack")
+    assert deleted == []
+
+
+def test_temporary_error_is_still_a_connection_error_for_handlers_that_only_know_the_base():
+    assert issubclass(gco.GoogleCalendarTemporaryError, gco.GoogleCalendarConnectionError)
 def test_revoke_is_a_noop_without_an_existing_connection(monkeypatch):
     monkeypatch.setattr("backend.utils.google_calendar_utils.get_encrypted_tokens", lambda username: None)
     mock_post = Mock()

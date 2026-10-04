@@ -134,3 +134,33 @@ def test_build_agent_plan_send_email_with_gmail_lookup_routes_to_tool_agent_firs
     plan = build_agent_plan("send_email", state)
     assert "propose_write" not in plan["agents"]
     assert "tool_agent" in plan["agents"]
+
+
+# ---- Retired PAAPP / taskboard / insights features ------------------------------------------
+
+def test_schedule_and_productivity_words_no_longer_route_to_retired_intents():
+    # "schedule"/"plan my day" used to return "task_paapp" and words like "most"/"trend"/"tasks"
+    # used to return "insight" (a substring match, so "almost" hit it too). Neither intent has a
+    # destination any more.
+    for message in ("plan my day", "I almost forgot what I scheduled", "what are the most popular dishes",
+                    "show me my tasks", "any trends in the data"):
+        assert classify_intent(message) not in {"task_paapp", "insight"}, message
+
+
+def test_reasoner_prompt_no_longer_offers_the_paapp_flag():
+    from backend.components.constraints import REASONER_PROMPT
+    assert "paapp" not in REASONER_PROMPT.lower()
+
+
+def test_no_paapp_agent_is_dispatchable():
+    from backend.services import agent_workflow as aw
+    assert "paapp" not in aw._AGENT_NODE_MAP
+    assert "paapp_node" not in aw._PLAN_DESTINATIONS
+
+
+def test_a_stray_needs_paapp_flag_from_the_model_is_ignored():
+    # An old checkpoint or a model that still emits the flag must not break routing or invent an agent.
+    state = {"reasoner_flags": {"needs_paapp": True, "needs_conversation": True}, "messages": []}
+    plan = build_agent_plan("conversational", state)
+    assert "paapp" not in plan["agents"]
+    assert plan["agents"] == ["conversational", "formatter"]

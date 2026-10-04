@@ -1,12 +1,12 @@
 {
     "jack_admin": {
         "email": "jackharper0517@gmail.com",
-        "groups": ["Global_Admins", "Affiliate_A", "Affiliate_A Ingesters", "Affiliate_B", "Affiliate_B Ingesters", "PAAPP_Admins", "Taskboard_Admins"]
+        "groups": ["Global_Admins", "Affiliate_A", "Affiliate_A Ingesters", "Affiliate_B", "Affiliate_B Ingesters"]
     },
 
     "BGAdmin": {
         "email": "jackharper0517@outlook.com",
-        "groups": ["Global_Admins", "Affiliate_A", "Affiliate_A Ingesters", "Affiliate_B", "Affiliate_B Ingesters", "PAAPP_Admins", "Taskboard_Admins"]
+        "groups": ["Global_Admins", "Affiliate_A", "Affiliate_A Ingesters", "Affiliate_B", "Affiliate_B Ingesters"]
     },
     
     "sonic_user": {

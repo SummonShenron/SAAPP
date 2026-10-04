@@ -438,7 +438,7 @@ Analyze the user's latest input alongside the conversation history and classify 
 
 AVAILABLE PATHWAYS & FLAGS:
 1. "needs_code_interpreter":
-   - Set to TRUE if the user is asking to query, search, aggregate, or fetch data from MongoDB or database collections (e.g., tasks, login_logs, users).
+   - Set to TRUE if the user is asking to query, search, aggregate, or fetch data from MongoDB or database collections (e.g., corrections, login_logs, users).
    - Set to TRUE if the user is asking a follow-up question about a previously executed database query or asking how a database result was calculated (e.g., "how did you get that result?", "show me the code used").
    - Set to TRUE if the user wants something actually computed, calculated, or run as code rather than answered from memory or general knowledge (e.g., "calculate the 50th Fibonacci number", "what's 17% of 340", "sort this list for me", "run this snippet and tell me what it prints") — a real, sandboxed Python execution tool is available for this, it isn't limited to database queries.
 
@@ -450,12 +450,7 @@ AVAILABLE PATHWAYS & FLAGS:
 
 4. "follow_up_intent": 
    - Set to TRUE ONLY if the user's message is an explicit continuation or modifier of the immediately preceding turn (e.g., "show me the code for that", "explain that function further", "what about line 20?"). 
-   - Set to FALSE if the user is asking an entirely new question or introducing a new component/feature (e.g., asking about PAAPP after discussing search), even if it's part of the same conversation.
-
-5. "needs_paapp":
-    - Set to TRUE only for personal productivity operations: logging time, tracking activity, or taskboard operations.
-    - Do NOT set this for customer-facing booking/help-center questions.
-    - Do NOT set this for scheduling/viewing/editing a real Google Calendar event — that's needs_create_calendar_event/needs_update_calendar_event below, a separate native capability, not PAAPP.
+   - Set to FALSE if the user is asking an entirely new question or introducing a new component/feature (e.g., asking about the calendar after discussing search), even if it's part of the same conversation.
 
 6. "needs_github_search":
    - Set to TRUE if the user is asking about the code repo, github repo, source code, system architecture, implementation details, or how a feature works under the hood for the project (including product aliases like "Sonic Assistant" or repository "SummonShenron/SAAPP").
@@ -471,12 +466,12 @@ AVAILABLE PATHWAYS & FLAGS:
    - Do NOT set this for a Pull Request request (that's needs_create_pr) or a general question about the repo (that's needs_github_search).
 8c. "needs_create_calendar_event":
    - Set to TRUE whenever the user asks to schedule, add, create, or book a meeting/event/call/appointment on their Google Calendar (e.g., "schedule a call with Sam tomorrow at 2pm", "add lunch with Sarah to my calendar", "book a 30 minute meeting Friday morning").
-   - This is a real Google Calendar write, distinct from needs_paapp (SAAPP's own internal time-log/task tracking) and from needs_retrieval's booking/help-center disambiguation above.
+   - This is a real Google Calendar write, distinct from needs_retrieval's booking/help-center disambiguation below.
 8d. "needs_update_calendar_event":
    - Set to TRUE whenever the user asks to move, reschedule, rename, or otherwise change an existing Google Calendar event (e.g., "move my 2pm meeting to 3pm", "reschedule the call with Sam to Friday", "rename my 10am event").
 8e. "needs_calendar_lookup":
    - Set to TRUE whenever the user asks to check, view, or list what's on their real Google Calendar, or asks about their availability (e.g., "what's on my calendar tomorrow", "am I free Friday afternoon", "do I have any meetings today").
-   - Do NOT set this for needs_paapp's internal time-log/task tracking, or for needs_create_calendar_event/needs_update_calendar_event (those are writes, this is read-only).
+   - Do NOT set this for needs_create_calendar_event/needs_update_calendar_event (those are writes, this is read-only).
 8f. "needs_gmail_lookup":
    - Set to TRUE whenever the user asks to check, search, read, or summarize their real Gmail inbox (e.g., "what are the job-related emails in my inbox", "check for an email from X", "summarize my unread emails").
    - Also set this TRUE for a request that ultimately ends in a write elsewhere (e.g. "check for my report email and update my document") — the task starts as a Gmail read here, the same way a database write starts from needs_code_interpreter before anything is actually written.
@@ -487,7 +482,7 @@ AVAILABLE PATHWAYS & FLAGS:
    - Set to TRUE whenever the user explicitly asks to send, compose, or reply to an email (e.g., "send an email to sam@example.com about the meeting", "email the team that I'll be late").
    - Do NOT set this for reading/searching email — that's needs_gmail_lookup above.
 9. "needs_memory_save":
-   - Set to TRUE if the user is explicitly telling you something durable to remember about themselves: a preference, identity detail, setting, or standing instruction (e.g. "remember that I prefer dark mode", "my name is Jack", "I prefer expressive UI", "always log my time in hours not minutes", "always use monkeypatch-style tests in this project", "never use --no-verify").
+   - Set to TRUE if the user is explicitly telling you something durable to remember about themselves: a preference, identity detail, setting, or standing instruction (e.g. "remember that I prefer dark mode", "my name is Jack", "I prefer expressive UI", "always answer in short bullet points", "always use monkeypatch-style tests in this project", "never use --no-verify").
    - Do NOT set this for a question, or for something only relevant to the current turn.
 10. "needs_memory_recall":
    - Set to TRUE if the user is asking what you know/remember about them, or asking about their own saved preferences/identity/settings (e.g. "what do you remember about me", "what are my preferences", "what did I ask you to remember").
@@ -495,9 +490,8 @@ CLASSIFICATION RULES:
 - If the user asks "how did you get that result?" or "can you show me the query?", set "needs_code_interpreter": true and "follow_up_intent": true.
 - Do NOT classify questions about previous code or database outputs as purely conversational.
 - IMPORTANT DISAMBIGUATION FOR BOOKING/SCHEDULING:
-    - If the user asks how to book/schedule/reserve a session/consultation/appointment/program (for example: "how can i schedule a session"), classify as knowledge retrieval, not PAAPP.
-    - For these booking questions set "needs_retrieval": true and "needs_paapp": false.
-    - PAAPP should only be true when the user is clearly managing their own productivity data (time logs, personal calendar, personal tasks).
+    - If the user asks how to book/schedule/reserve a session/consultation/appointment/program (for example: "how can i schedule a session"), classify as knowledge retrieval, not a calendar action.
+    - For these booking questions set "needs_retrieval": true and leave the calendar flags false.
 - IMPORTANT DISAMBIGUATION FOR ATTACHED IMAGES/FILES:
     - If the user asks whether you can see, view, or describe an image or file they just attached (e.g., "can you see the image", "what does this screenshot show", "do you see what I attached"), set "needs_conversation": true and "needs_code_interpreter": false.
     - Attachment content is already provided to you as context for this turn — this is never a database query, even if the conversation was previously discussing the codebase or database.
@@ -517,6 +511,7 @@ CLASSIFICATION RULES:
    - Rate the user's emotional state as shown by their latest message, read in the context of the conversation history (a short neutral question right after a vulnerable disclosure is still the same person — but report only what this message and its immediate context actually show).
    - "valence": one of "distressed", "low", "frustrated", "neutral", "positive", "excited". "intensity": 0.0-1.0, where 1.0 is acute distress, anger, or elation. "frustrated" is irritation or anger, including at the assistant or at something not working.
    - "need": what this message seems to want from the reply, one of "venting" (wants to be heard, not fixed), "solving" (wants concrete help with a problem), "reassurance", "distraction" (wants a break from it), or "none". Judge it from this message in context, not from the topic.
+   - "gist": when the valence is not neutral, a very short (at most 12 words) plain description of WHAT they are going through, taken from their own words and this conversation (e.g. "a breakup; Tina ended things tonight", "dreading a performance review"). Use "" when neutral. If this message is only a continuation and doesn't restate the cause, still describe the cause if the recent history makes it clear.
    - Use "neutral" with intensity 0.0 and need "none" when there is no real emotional signal — do not guess. Never infer emotion from topic alone (asking about a layoff, a bug, or a diagnosis is not itself distress).
 
 CONVERSATION HISTORY:
@@ -534,7 +529,6 @@ Return ONLY a JSON object matching this schema:
   "needs_conversation": false,
   "needs_memory_save": false,
   "needs_memory_recall": false,
-  "needs_paapp": false,
   "follow_up_intent": false,
   "needs_web_search": false,
   "needs_code_interpreter": false,
@@ -548,7 +542,7 @@ Return ONLY a JSON object matching this schema:
   "needs_gmail_lookup": false,
   "needs_drive_lookup": false,
   "needs_send_email": false,
-  "emotional_state": {{"valence": "neutral", "intensity": 0.0, "need": "none"}}
+  "emotional_state": {{"valence": "neutral", "intensity": 0.0, "need": "none", "gist": ""}}
 }}
 """
 
@@ -689,26 +683,6 @@ the same direction — do not invent a pattern from a single fact, and do not re
 verbatim as if it were a pattern. Return an empty array if nothing genuinely recurs.
 """
 
-INSIGHT_QUERY_PROMPT = """
-You classify user questions about their activity logs, tasks, calendar, and productivity.
-
-    Question: {question}
-
-    Return JSON with:
-    - type: one of [
-        "top_category",
-        "busiest_day",
-        "productivity_window",
-        "streaks",
-        "category_trend",
-        "task_aging",
-        "task_velocity",
-        "calendar_load",
-        "weekday_pattern"
-    ]
-    - time_range: optional ("last_week", "this_month", "today", "all_time")
-    - category: optional
-"""
 TOOL_AGENT_PROMPT = """
 You are Sonic Assistant's tool-using research agent. You can take multiple steps — pick one
 action, observe the REAL result, then decide what to do next — instead of guessing once and

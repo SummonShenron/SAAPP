@@ -17,12 +17,10 @@ from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
-from backend.components.time_storage import load_user_time
 from backend.models.attachment import Attachment
 from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langchain_core.documents import Document
-from settings import PAAPP_BASE_URL
 from backend.services.search import get_secure_retriever
 from backend.models.models import get_chat_llm, lite_llm, lite_llm_deep
 from backend.state import graph_db
@@ -48,14 +46,12 @@ from backend.utils.emotion_utils import merge_emotional_state
 from backend.services.local_workspace import get_workspace_handle, workspace_status
 from backend.services.local_edits import validate_edit_proposal
 from backend.services.memory_search import embed_and_store_memory_chunk, retrieve_user_memory
-from backend.components.time_storage import add_time_entry, TimeEntryCreate
-from backend.components import taskboard
 from backend.state.graph_state import GraphState, route_after_grading
 from langgraph.graph import StateGraph, START, END
 from backend.utils.db_utils import get_db
 from backend.utils.user_settings_utils import get_user_timezone, get_user_target_doc_id
 from backend.utils.google_calendar_utils import CALENDAR_LOCKED_USERS, get_connection_status as get_calendar_connection_status, has_granted_scope
-from backend.services.google_calendar_oauth import GoogleCalendarOAuth, GoogleCalendarConnectionError
+from backend.services.google_calendar_oauth import GoogleCalendarOAuth, GoogleCalendarConnectionError, GoogleCalendarTemporaryError
 from backend.services.google_calendar_service import list_events_for_day, create_event, update_event, find_event_by_summary_on_day
 from backend.services.google_gmail_service import search_messages, get_message_detail, get_attachment_text, send_message
 from backend.services.google_docs_service import append_text as append_doc_text
@@ -97,21 +93,6 @@ from backend.utils.agent_utils import (
 from backend.services.react_loop import run_react_loop, _MAX_BATCH_SIZE
 from backend.services.repo_checkout import (
     RepoCheckoutError, fetch_and_extract_checkout, cleanup_checkout, find_declarations_in_checkout,
-)
-from backend.utils.insight_utils import (
-    # Productivity-insights analytics moved out of this file (docs/coding-agent-roadmap.md,
-    # Section 13) — a self-contained module for activity_classifier_node/pattern_detector_node/
-    # trend_analyzer_node/insight_generator_node, which stay here as the actual graph nodes and
-    # import everything else back under its original name.
-    CATEGORY_KEYWORDS, classify_text,
-    detect_time_patterns, detect_task_patterns, detect_calendar_patterns,
-    compute_daily_totals, compute_category_trends, compute_streaks,
-    compute_task_velocity, compute_calendar_load_trends,
-    generate_time_insights, generate_task_insights, generate_calendar_insights,
-    llm_json_call, interpret_insight_question, run_insight_query,
-    answer_top_category, answer_busiest_day, answer_productivity_window, answer_streaks,
-    answer_category_trend, answer_task_aging, answer_task_velocity, answer_calendar_load,
-    answer_weekday_pattern,
 )
 
 
@@ -298,10 +279,7 @@ def ensure_workflow_keys(state: GraphState) -> GraphState:
 # `None` uniformly. That distinction is load-bearing: setting a key to None makes it PRESENT in
 # state, so a downstream `state.get("user_decision", "").lower()` no longer falls back to ""
 # (the key exists now) and would crash on None instead — caught by the test suite the first
-# time this ran for real. snapshot/classified/analysis_output/patterns/trends/insights are
-# deliberately NOT listed: they belong exclusively to the separate insights_workflow.py graph
-# (a different compiled graph, no checkpointer, invoked independently via /api/insights) —
-# nothing in THIS graph's nodes ever writes them, so there's nothing here to resurrect.
+# time this ran for real.
 #
 # Only meaningful now that create_workflow() can be compiled with a real checkpointer: once a
 # checkpointer + thread_id is used, LangGraph silently resurrects any channel absent from a
@@ -404,7 +382,6 @@ _AGENT_NODE_MAP = {
     "conversational": "conversational_node",
     "formatter": "formatter_node",
     "summarizer": "summarizer_node",
-    "paapp": "paapp_node",
     "memory_save": "memory_save_node",
     "memory_recall": "memory_recall_node",
     "tool_agent": "tool_agent_node",
@@ -611,10 +588,8 @@ def classify_intent(message: str, state: dict = None) -> str:
     # Checked before "pull request"/"pr" matching below since "issue" is unambiguous on its own.
     if re.search(r'\b(?:create|open|file|submit|draft)\s+(?:an?\s+)?(?:issue|bug report)\b', msg):
         return "create_issue"
-    # Checked BEFORE both the "schedule" -> task_paapp catch and the "calendar" -> insight catch
-    # below, the same way create_pr/create_issue are checked above the generic patterns they'd
-    # otherwise be swallowed by — a real Google Calendar write, not SAAPP's own internal
-    # time-log/insights feature or the (deprecated) PAAPP service. Deliberately does NOT match on
+    # Checked before the generic patterns below, the same way create_pr/create_issue are checked
+    # above the generic patterns they'd otherwise be swallowed by. Deliberately does NOT match on
     # a bare "google calendar" mention alone — "what's on my google calendar today" is a read, not
     # a write, and must not be swallowed here (it falls through to the "google calendar" ->
     # tool_agent check a few lines down instead).
@@ -644,8 +619,6 @@ def classify_intent(message: str, state: dict = None) -> str:
     if re.search(r'\b(review pr|pull request|pr summary)\b', msg):
         return "pr_summary"
     # 3. General operational intents
-    if "plan my day" in msg or "schedule" in msg:
-        return "task_paapp"
     if "summarize" in msg or "tl;dr" in msg:
         return "summarize"
     if any(w in msg for w in ["find", "lookup", "policy", "docs", "search"]):
@@ -659,14 +632,6 @@ def classify_intent(message: str, state: dict = None) -> str:
         return "memory"
     if any(w in msg for w in ["bullet", "report", "format this"]):
         return "format"
-
-    if any(phrase in msg for phrase in [
-        "what did i do", "what was my", "how much time", "how many",
-        "most", "least", "trend", "trends", "pattern", "patterns",
-        "streak", "productivity", "calendar", "logs", "tasks",
-        "insight", "analyze", "review my week", "review my day", "review my month"
-    ]):
-        return "insight"
 
     return "conversational"
 
@@ -771,8 +736,6 @@ def build_agent_plan(intent: str, state: dict) -> dict:
         agents.append("rewriter")
     if flags.get("needs_summary"):
         agents.append("summarizer")
-    if flags.get("needs_paapp"):
-        agents.append("paapp")
     # Mongo/GitHub/web/calendar/Gmail/Drive all fold into one multi-tool agent — any of these
     # flags routes there, and the model itself decides which tool(s) the question actually needs.
     if (
@@ -880,7 +843,6 @@ async def reasoner_node(state: GraphState) -> GraphState:
                 "needs_conversation": True,  # Safe default to avoid triggering unintended actions
                 "needs_memory_save": False,
                 "needs_memory_recall": False,
-                "needs_paapp": False,
                 "follow_up_intent": False,
                 "needs_web_search": False,
                 "needs_code_interpreter": False,
@@ -1281,18 +1243,7 @@ def formatter_node(state: GraphState) -> dict:
         )
         return state
 
-def insight_formatter_node(state: dict) -> dict:
-    """
-    Passes the structured insights array directly to the endpoint 
-    instead of converting it into a chatbot string.
-    """
-    username = state.get("username")
-    insights = state.get("insights", [])
 
-    return {
-        "insights": insights,
-        "username": username
-    }
 # ============================================================
 # CONVERSATIONAL NODE (sync - pass-through for stream)
 # ============================================================
@@ -1476,424 +1427,6 @@ def rewrite_query_node(state: GraphState) -> dict:
                 }
             )
             return state
-
-# ============================================================
-# PAAPP NODE (sync)
-# ============================================================
-
-def paapp_node(state: GraphState) -> GraphState:
-    msg = state["messages"][-1].content
-    username = state.get("username", "default_user")
-    state = ensure_workflow_keys(state)
-    workflow_name = state["workflowName"]
-    request_id = state["requestId"]
-    node_name = "paapp_node"
-    with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
-        node_input = state.copy()
-        try:
-            response = call_paapp_chat(username, msg)
-        except Exception:
-            logger.exception("PAAPP communication error.")
-            fallback = "PAAPP communication error: see logs for traceback"
-            state["raw_generation"] = fallback
-            state["content_to_format"] = fallback
-            return state
-
-        intent = response.get("intent")
-
-        # DEBUG: Always log what the API sends so we can see if the tool name matches
-        logger.info(f"DEBUG: PAAPP intent received: {intent}")
-
-        # --- 1. HANDLE CALENDAR EVENT ---
-        if intent and intent.get("tool") == "create_google_calendar_event":
-            entry_payload = TimeEntryCreate(
-                username=username,
-                activity=str(intent.get("summary", "Untitled Event")),
-                duration_hours=float(intent.get("duration_minutes", 0)) / 60,
-                duration_minutes=int(intent.get("duration_minutes", 0)),
-                date=str(intent.get("start_time_iso", "").split("T")[0]),
-                notes="",
-                type="event"
-            )
-
-            # Save locally (MongoDB + Mirror)
-            add_time_entry(entry_payload)
-            logger.info(f"[PAAPP] Successfully mirrored calendar event locally for {username}")
-
-            # FIX: Restore Sync by re-pinging the headless API (The "Zero-Import" Handshake)
-            try:
-                requests.post(
-                    f"{PAAPP_BASE_URL}/api/headless-chat",
-                    headers={"x-saapp": "true"},
-                    json={"username": username, "question": f"sync event {entry_payload.activity}"},
-                    timeout=10,
-                )
-                logger.info(f"[PAAPP] Sync trigger request sent to headless API.")
-            except Exception:
-                logger.exception("[PAAPP] Sync trigger failed.")
-
-            # FIX: Update state['snapshot'] so the UI updates without a refresh
-            if "snapshot" in state:
-                state["snapshot"]["calendar"] = load_user_calendar_events(username)
-
-        # --- 2. HANDLE LOG TIME ---
-        if intent and intent.get("tool") == "log_time":
-            try:
-                entry_payload = TimeEntryCreate(
-                    username=username,
-                    activity=str(intent.get("activity", "Unknown Activity")),
-                    duration_hours=float(intent.get("minutes", 0)) / 60,
-                    duration_minutes=int(intent.get("minutes", 0)),
-                    date=str(intent.get("date_iso")),
-                    notes=str(intent.get("notes", "No description provided")),
-                    type="log"
-                )
-
-                add_time_entry(entry_payload)
-                logger.info(f"[PAAPP] Successfully logged time locally for {username}")
-
-                # FIX: Update state['snapshot'] for logs too
-                if "snapshot" in state:
-                    state["snapshot"]["logs"] = load_user_time(username)
-
-            except Exception:
-                logger.exception("[PAAPP] Time log failed.")
-                state["raw_generation"] = "Time log failed: see logs for traceback"
-                return state
-
-        # --- 3. RETURN RESPONSE ---
-        if isinstance(response, str):
-            try:
-                response = json.loads(response)
-            except:
-                pass
-        node_output = state.copy()
-        logger.info(
-            "node executed",
-            extra={
-                "service": "SAAPP",
-                "erragent_context": {
-                    "input": node_input,
-                    "output": node_output,
-                }
-            }
-        )
-        message = response.get("message", "PAAPP returned no message.")
-        state["raw_generation"] = message
-        state["content_to_format"] = message
-        return state
-
-
-def call_paapp_chat(username: str, question: str) -> dict:
-    url = f"{PAAPP_BASE_URL}/api/headless-chat"
-    r = requests.post(
-        url,
-        headers={"x-saapp": "true"},
-        json={
-            "username": username,
-            "question": question
-        },
-        timeout=30,
-    )
-    r.raise_for_status()
-    return r.json()
-
-# ============================================================
-# Data Snapshot Node
-# ============================================================
-def load_user_calendar_events(username: str):
-    """
-    Reads mirrored calendar events created by PAAPP.
-    These live in: saapp_data/time/<username>_events.json
-    """
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    events_path = os.path.join(project_root, "saapp_data", "time", f"{username}_events.json")
-
-    if not os.path.exists(events_path):
-        return []
-
-    try:
-        with open(events_path, "r") as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"Error reading calendar events: {e}")
-        return []
-
-
-def data_snapshot_node(state: dict) -> dict:
-    username = state.get("username")
-    logger.info(f"DATA SNAPSHOT - Fetching data for user: {username}")
-
-    # --- Logs ---
-    logs = load_user_time(username)
-    logger.info(f"DATA SNAPSHOT - Raw Logs Found: {len(logs) if logs else 0}")
-
-    # --- Taskboard (UPDATED FOR MONGO) ---
-    db = get_db()
-    all_tasks = list(db["tasks"].find({"username": username})) if db is not None else []
-    
-    # Strip the raw ObjectId to prevent serialization crashes in the graph
-    for t in all_tasks:
-        t["id"] = str(t["_id"])
-        t.pop("_id", None)
-    
-    # Filter the single list into the expected structure
-    taskboard_data = {
-        "backlog": [t for t in all_tasks if t.get("lane") == "backlog"],
-        "in_progress": [t for t in all_tasks if t.get("lane") == "in_progress"],
-        "completed": [t for t in all_tasks if t.get("lane") == "completed"]
-    }
-    
-    logger.info(
-        f"DATA SNAPSHOT - Tasks Found -> Backlog: {len(taskboard_data['backlog'])}, "
-        f"In Progress: {len(taskboard_data['in_progress'])}, "
-        f"Completed: {len(taskboard_data['completed'])}"
-    )
-
-    # --- Calendar (local mirror) ---
-    calendar_events = load_user_calendar_events(username)
-    logger.info(f"DATA SNAPSHOT - Calendar Events Found: {len(calendar_events) if calendar_events else 0}")
-
-    # --- Directory (optional) ---
-    directory = load_directory()
-    user_entry = directory.get(username, {})
-    user_groups = user_entry.get("groups", [])
-
-    snapshot = {
-        "calendar": calendar_events,
-        "logs": logs,
-        "taskboard": taskboard_data,
-        "groups": user_groups,
-        "timestamp": datetime.utcnow().isoformat()
-    }
-
-    return { **state, "snapshot": snapshot }
-
-# ============================================================
-# Activity Classifier Node
-# ============================================================
-
-# --- Main Node ------------------------------------------------
-
-def activity_classifier_node(state: dict) -> dict:
-    """
-    Takes the snapshot and classifies logs, tasks, and calendar events
-    into meaningful activity categories.
-    """
-
-    snapshot = state.get("snapshot", {})
-    username = state.get("username")
-
-    # --- Logs --------------------------------------------------
-    logs = snapshot.get("logs", [])
-    classified_logs = []
-
-    for entry in logs:
-        category = classify_text(entry.activity)
-        classified_logs.append({
-            "id": entry.id,
-            "activity": entry.activity,
-            "category": category,
-            "duration_hours": entry.duration_hours,
-            "duration_minutes": entry.duration_minutes,
-            "date": entry.date,
-            "type": entry.type,
-        })
-
-    # --- Taskboard --------------------------------------------
-    tb = snapshot.get("taskboard", {})
-    classified_tasks = {
-        "backlog": [],
-        "in_progress": [],
-        "completed": []
-    }
-
-    for lane in ["backlog", "in_progress", "completed"]:
-        for task in tb.get(lane, []):
-            title = task.get("title", "")
-            category = classify_text(title)
-            classified_tasks[lane].append({
-                **task,
-                "category": category
-            })
-
-    # --- Calendar ----------------------------------------------
-    calendar_events = snapshot.get("calendar", [])
-    classified_calendar = []
-
-    for event in calendar_events:
-        title = event.get("activity", "")
-        category = classify_text(title)
-        classified_calendar.append({
-            **event,
-            "category": category
-        })
-
-    # --- Output -------------------------------------------------
-    classified_snapshot = {
-        "classified_logs": classified_logs,
-        "classified_tasks": classified_tasks,
-        "classified_calendar": classified_calendar,
-        "timestamp": snapshot.get("timestamp")
-    }
-
-    return { **state, "classified": classified_snapshot }
-
-# ============================================================
-# Pattern Detector Node
-# ============================================================
-
-def pattern_detector_node(state: dict) -> dict:
-    """
-    Reads the classified snapshot and extracts behavioral patterns.
-    """
-
-    classified = state.get("classified", {})
-    logs = classified.get("classified_logs", [])
-    tasks = classified.get("classified_tasks", {})
-    calendar = classified.get("classified_calendar", [])
-
-    patterns = {
-        "time_patterns": detect_time_patterns(logs),
-        "task_patterns": detect_task_patterns(tasks),
-        "calendar_patterns": detect_calendar_patterns(calendar),
-        "timestamp": datetime.utcnow().isoformat()
-    }
-
-    return { **state, "patterns": patterns }
-
-# ============================================================
-# Trend Analyzer Node
-# ============================================================
-
-def trend_analyzer_node(state: dict) -> dict:
-    """
-    Computes temporal trends from logs, tasks, and calendar with explicit data step logging.
-    """
-    snapshot = state.get("snapshot", {})
-    username = state.get("username")
-    
-    logs = snapshot.get("logs", [])
-    tb = snapshot.get("taskboard", {})
-    calendar_events = snapshot.get("calendar", [])
-    
-    logger.info(f"TREND ANALYZER - Incoming Raw Logs Count: {len(logs)}")
-    logger.info(f"TREND ANALYZER - Incoming Raw Tasks Count: {sum(len(tb.get(k, [])) for k in tb)}")
-    logger.info(f"TREND ANALYZER - Incoming Raw Calendar Count: {len(calendar_events)}")
-
-    # --- Process Logs ---
-    classified_logs = []
-    for entry in logs:
-        # FIX: Check if it's a dict first. If not, safely use getattr for the Pydantic model.
-        activity_text = entry.get("activity", "") if isinstance(entry, dict) else getattr(entry, "activity", str(entry))
-        
-        # Test classification call
-        try:
-            category = classify_text(activity_text) or "Uncategorized"
-        except Exception as ce:
-            logger.error(f"TREND ANALYZER - classify_text failed on log: {str(ce)}")
-            category = "Uncategorized"
-            
-        classified_logs.append({
-            "id": getattr(entry, "id", None),
-            "activity": activity_text,
-            "category": category,
-            "duration_hours": getattr(entry, "duration_hours", 0),
-            "duration_minutes": getattr(entry, "duration_minutes", 0),
-            "date": getattr(entry, "date", ""),
-            "type": getattr(entry, "type", "log"),
-        })
-    logger.info(f"TREND ANALYZER - Successfully Classified Logs Count: {len(classified_logs)}")
-
-    # --- Process Tasks ---
-    classified_tasks = {"backlog": [], "in_progress": [], "completed": []}
-    for lane in ["backlog", "in_progress", "completed"]:
-        for task in tb.get(lane, []):
-            title = task.get("title", "")
-            try:
-                cat = classify_text(title) or "Uncategorized"
-            except Exception:
-                cat = "Uncategorized"
-            classified_tasks[lane].append({**task, "category": cat})
-    logger.info(f"TREND ANALYZER - Successfully Classified Tasks Count: {sum(len(classified_tasks[k]) for k in classified_tasks)}")
-
-    # --- Process Calendar ---
-    classified_calendar = []
-    for event in calendar_events:
-        title = event.get("activity", event.get("title", ""))
-        try:
-            cat = classify_text(title) or "Uncategorized"
-        except Exception:
-            cat = "Uncategorized"
-        classified_calendar.append({**event, "category": cat})
-    logger.info(f"TREND ANALYZER - Successfully Classified Calendar Count: {len(classified_calendar)}")
-
-    # --- Compute Trends & Patterns ---
-    daily_totals = compute_daily_totals(classified_logs)
-    category_trends = compute_category_trends(classified_logs)
-    streaks = compute_streaks(daily_totals)
-    task_velocity = compute_task_velocity(classified_tasks)
-    calendar_trends = compute_calendar_load_trends(classified_calendar)
-
-    trends = {
-        "daily_totals": daily_totals,
-        "category_trends": category_trends,
-        "streaks": streaks,
-        "task_velocity": task_velocity,
-        "calendar_trends": calendar_trends,
-        "timestamp": datetime.utcnow().isoformat()
-    }
-
-    patterns = {
-        "time_patterns": detect_time_patterns(classified_logs),
-        "task_patterns": detect_task_patterns(classified_tasks),
-        "calendar_patterns": detect_calendar_patterns(classified_calendar),
-        "timestamp": datetime.utcnow().isoformat()
-    }
-
-    logger.info(f"ANALYZER OUTPUT PATTERNS: {patterns}")
-
-    return {
-        **state,
-        "analysis_output": patterns
-    }
-
-
-
-def insight_generator_node(state: dict) -> dict:
-    """
-    Converts patterns + trends into readable insights.
-    """
-
-    # Extract analysis output
-    analysis = state.get("analysis_output", {})
-
-    # Extract classified tasks
-    classified_tasks = state.get("classified", {}).get("classified_tasks", {})
-
-    # Initialize insights list
-    insights = []
-
-    # -----------------------------
-    # EXISTING INSIGHTS
-    # -----------------------------
-    patterns = {
-        "time_patterns": analysis.get("time_patterns", {}),
-        "task_patterns": analysis.get("task_patterns", {}),
-        "calendar_patterns": analysis.get("calendar_patterns", {})
-    }
-
-    # Time-based insights
-    insights.extend(generate_time_insights(patterns, analysis))
-
-    # Taskboard insights
-    insights.extend(generate_task_insights(patterns, analysis))
-
-    # Calendar insights
-    insights.extend(generate_calendar_insights(patterns, analysis))
-
-    return { **state, "insights": insights }
-
 
 # ============================================================
 # SHARED REACT-LOOP INFRASTRUCTURE (Mongo/GitHub/web all fold into tool_agent_node below)
@@ -2911,11 +2444,8 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             f"{', '.join(sorted(SAFE_IMPORT_ALLOWLIST))}. Use this for calculations, data "
             "shaping, or checking your own logic — not for anything requiring I/O.)",
             "- list_google_calendar_events — args: date (YYYY-MM-DD); lists events on the "
-            "CURRENT USER's own connected Google Calendar for that day. This is NOT the same "
-            "thing as the user's logged time entries/tasks (that's a separate internal feature, "
-            "surfaced elsewhere as insights) — use this only when the user is actually asking "
-            "about their real Google Calendar. Returns an error telling the user to connect "
-            "their calendar under Integrations if they haven't yet.",
+            "CURRENT USER's own connected Google Calendar for that day. Returns an error "
+            "telling the user to connect their calendar under Integrations if they haven't yet.",
             "- search_gmail — args: query (real Gmail search syntax, e.g. "
             "'has:attachment subject:report', 'from:someone@example.com'), max_results "
             "(optional, default 10); returns a short list of matching emails "
@@ -3113,6 +2643,8 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     return "ERROR: Google Calendar is not available for this account"
                 try:
                     token = await asyncio.to_thread(GoogleCalendarOAuth().get_valid_access_token, username)
+                except GoogleCalendarTemporaryError as error:
+                    return f"ERROR: {error}"
                 except GoogleCalendarConnectionError:
                     return "ERROR: No Google Calendar connected for this user. Connect it under Integrations first."
                 date_arg = args.get("date") or datetime.now().strftime("%Y-%m-%d")
@@ -3130,6 +2662,8 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     return "ERROR: Gmail is not available for this account"
                 try:
                     token = await asyncio.to_thread(GoogleCalendarOAuth().get_valid_access_token, username)
+                except GoogleCalendarTemporaryError as error:
+                    return f"ERROR: {error}"
                 except GoogleCalendarConnectionError:
                     return "ERROR: No Google account connected for this user. Connect it under Integrations first."
                 if not has_granted_scope(username, "https://www.googleapis.com/auth/gmail.readonly"):
@@ -3155,6 +2689,8 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     return "ERROR: Google Drive is not available for this account"
                 try:
                     token = await asyncio.to_thread(GoogleCalendarOAuth().get_valid_access_token, username)
+                except GoogleCalendarTemporaryError as error:
+                    return f"ERROR: {error}"
                 except GoogleCalendarConnectionError:
                     return "ERROR: No Google account connected for this user. Connect it under Integrations first."
                 if not has_granted_scope(username, "https://www.googleapis.com/auth/drive"):
@@ -4476,7 +4012,6 @@ def create_workflow(vector_store, user_memory_vector_store=None, checkpointer=No
     workflow.add_node("coordinator_node", coordinator_node)
     workflow.add_node("summarizer_node", summarizer_node)
     workflow.add_node("formatter_node", formatter_node)
-    workflow.add_node("paapp_node", paapp_node)
     workflow.add_node("tool_agent_node", tool_agent_node)
     workflow.add_node("pr_summary", pr_summarizer_node)
     workflow.add_node("propose_write_node", propose_write_node)
@@ -4490,7 +4025,7 @@ def create_workflow(vector_store, user_memory_vector_store=None, checkpointer=No
     # ["memory_save", "retriever"]) actually run every queued step instead of silently dropping
     # everything after the first (see plan_continue_router's docstring for the history).
     for plan_driven_node in (
-        "paapp_node", "memory_save_node", "memory_recall_node", "summarizer_node",
+        "memory_save_node", "memory_recall_node", "summarizer_node",
         "tool_agent_node", "pr_summary", "propose_write_node", "execute_write_node",
         "conversational_node",
     ):

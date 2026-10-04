@@ -99,8 +99,19 @@ function mapServerMessage(m: any): Message {
   };
 }
 
+// Only the newest page of a conversation is fetched and rendered up front — every message is a full
+// ReactMarkdown + syntax-highlighter render, so a long thread used to freeze the page on load.
+// Older pages come in on demand. The localStorage copy (rewritten as the reply streams) is capped
+// to the same window; the server keeps the full transcript.
+const HISTORY_PAGE_SIZE = 100;
+const LOCAL_CACHE_MESSAGE_CAP = 100;
+const LOCAL_CACHE_WRITE_DEBOUNCE_MS = 400;
+
 interface ChatMessageListProps {
   messages: Message[];
+  earlierCount: number;
+  loadingEarlier: boolean;
+  loadEarlierRef: React.MutableRefObject<() => void>;
   hasChatted: boolean;
   loading: boolean;
   agentStatus: string;
@@ -183,7 +194,7 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
 // direct function props, so a skipped re-render here never risks calling a stale closure over
 // sessionId/principal/etc — the same class of bug fixed earlier for attachmentsRef.
 const ChatMessageList = React.memo(function ChatMessageList({
-  messages, hasChatted, loading, agentStatus, latestStepTitle, theme, isEmbedded,
+  messages, earlierCount, loadingEarlier, loadEarlierRef, hasChatted, loading, agentStatus, latestStepTitle, theme, isEmbedded,
   chatWindowRef, messagesEndRef, attachmentsRef, handleSendMessageRef, handleFeedbackRef, getTokenRef,
   canEditLocal, localEditActionsRef,
 }: ChatMessageListProps) {
@@ -197,6 +208,26 @@ const ChatMessageList = React.memo(function ChatMessageList({
       // occupy below the input; leaving it at 380 left that space empty under the input.
       style={isEmbedded ? undefined : { maxHeight: 'calc(100vh - 310px)', overflowY: 'auto' }}
     >
+      {earlierCount > 0 && (
+        <button
+          type="button"
+          onClick={() => loadEarlierRef.current()}
+          disabled={loadingEarlier}
+          style={{
+            alignSelf: 'center',
+            margin: '0.25rem auto 0.75rem',
+            padding: '4px 14px',
+            borderRadius: '999px',
+            background: 'rgba(51, 65, 85, 0.6)',
+            border: '1px solid #475569',
+            color: '#cbd5e1',
+            fontSize: '0.8rem',
+            cursor: loadingEarlier ? 'default' : 'pointer',
+          }}
+        >
+          {loadingEarlier ? 'Loading…' : `Load earlier messages (${earlierCount} more)`}
+        </button>
+      )}
       {messages
         .filter(msg => !(hasChatted && msg.sender === 'system'))
         .map(msg => {
@@ -452,18 +483,12 @@ const getNodeLabel = (nodeName: string): string => {
     case 'formatter_node': return 'Formatting output structure...';
     case 'conversational_node': return 'Generating response...';
     case 'generate_node': return 'Collecting rings and generating tokens...';
-    case 'paapp_node': return 'Processing schedule and task data...';
     case 'web_search_node': return 'Searching the web for real-time info...';
     case 'code_interpreter_node': return 'Executing query in code interpreter...';
     case 'github_search': return 'Searching GitHub repositories...';
     case 'pr_summary': return 'Analyzing pull request changes...';
     case 'draft_pr_node': return 'Drafting pull request...';
     case 'execute_pr_node': return 'Executing pull request action...';
-    case 'snapshot_node': return 'Taking analytical data snapshot...';
-    case 'classifier_node': return 'Classifying activity patterns...';
-    case 'pattern_node': return 'Detecting behavioral patterns...';
-    case 'trend_node': return 'Analyzing metrics and trends...';
-    case 'insight_query_node': return 'Synthesizing data insights...';
     case 'reward_evaluator': return 'Reconsidering that answer...';
     default: return nodeName ? `Processing step: ${nodeName}` : 'Collecting rings and tokens...';
   }
@@ -708,10 +733,17 @@ useEffect(() => {
   // copy once we know which conversation we're on, so switching devices doesn't show an
   // outdated transcript. A 404 here just means this conversation hasn't been saved server-side
   // yet (e.g. brand new) — keep whatever's already showing locally in that case.
+  // `historyStart` = how many saved messages sit before the first one loaded (0 = whole thread shown).
+  const [historyStart, setHistoryStart] = useState<number>(0);
+  const [loadingEarlier, setLoadingEarlier] = useState<boolean>(false);
+  const skipAutoScrollRef = useRef(false);
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
+
   useEffect(() => {
     if (!principal || !sessionId) return;
     let cancelled = false;
-    api.getConversation(sessionId)
+    api.getConversation(sessionId, { limit: HISTORY_PAGE_SIZE })
       .then((conversation) => {
         if (cancelled) return;
         const serverMessages: Message[] = (conversation.messages || [])
@@ -719,6 +751,7 @@ useEffect(() => {
           .map(mapServerMessage);
         if (serverMessages.length > 0) {
           setMessages(serverMessages);
+          setHistoryStart(conversation.start ?? 0);
           setHasChatted(serverMessages.some(m => m.sender === 'user'));
         }
       })
@@ -882,6 +915,7 @@ useEffect(() => {
     setMessages([
       { id: genId(), sender: 'system', text: `What would you like to find out about, ${principal}?` }
     ]);
+    setHistoryStart(0);
     setSelectedAffiliate(isEmbedded ? embedAffiliate : 'All');
     setAgentStatus('');
     setAgentPath([]);
@@ -907,6 +941,7 @@ useEffect(() => {
     setMessages([
       { id: genId(), sender: 'system', text: `What would you like to find out about, ${principal}?` }
     ]);
+    setHistoryStart(0);
     setHasChatted(false);
     setAttachments([]);
     setAttachedFiles([]);
@@ -919,12 +954,13 @@ useEffect(() => {
       return;
     }
     try {
-      const conversation = await api.getConversation(newSessionId);
+      const conversation = await api.getConversation(newSessionId, { limit: HISTORY_PAGE_SIZE });
       const restored: Message[] = (conversation.messages || [])
         .filter((m: any) => m.type !== 'system')
         .map(mapServerMessage);
       localStorage.setItem(`conversation-id-${principal}`, newSessionId);
       setSessionId(newSessionId);
+      setHistoryStart(conversation.start ?? 0);
       setMessages(restored.length ? restored : [
         { id: genId(), sender: 'system', text: `What would you like to find out about, ${principal}?` }
       ]);
@@ -935,6 +971,36 @@ useEffect(() => {
       console.error("Failed to load conversation:", e);
     } finally {
       setShowConversations(false);
+    }
+  };
+
+  // Prepends the page of saved messages just before the ones on screen. The smooth scroll-to-bottom
+  // that normally fires when the message count changes is skipped here, and the viewport is held
+  // on the message the user was looking at so the older ones simply appear above it.
+  const loadEarlierRef = useRef<() => void>(() => {});
+  loadEarlierRef.current = async () => {
+    if (loadingEarlier || historyStart <= 0) return;
+    const requestedFor = sessionId;
+    setLoadingEarlier(true);
+    try {
+      const page = await api.getConversation(requestedFor, { limit: HISTORY_PAGE_SIZE, before: historyStart });
+      if (requestedFor !== sessionIdRef.current) return;
+      const earlier: Message[] = (page.messages || [])
+        .filter((m: any) => m.type !== 'system')
+        .map(mapServerMessage);
+      const win = chatWindowRef.current;
+      const prevHeight = win?.scrollHeight ?? 0;
+      const prevTop = win?.scrollTop ?? 0;
+      skipAutoScrollRef.current = true;
+      setMessages(prev => [...earlier, ...prev]);
+      setHistoryStart(page.start);
+      requestAnimationFrame(() => {
+        if (win) win.scrollTop = prevTop + (win.scrollHeight - prevHeight);
+      });
+    } catch (e) {
+      console.error("Failed to load earlier messages:", e);
+    } finally {
+      setLoadingEarlier(false);
     }
   };
 
@@ -1004,8 +1070,23 @@ useEffect(() => {
     URL.revokeObjectURL(url);
   };
 
+  // This effect runs on every streamed token, and serializing a whole long thread each time is
+  // what made replies stutter. Write only the newest window, at most once per debounce interval,
+  // and flush any pending write when the tab is hidden or the component unmounts so nothing is lost.
   useEffect(() => {
-    localStorage.setItem(chatStorageKey, JSON.stringify(messages));
+    const write = () => {
+      try {
+        localStorage.setItem(chatStorageKey, JSON.stringify(messages.slice(-LOCAL_CACHE_MESSAGE_CAP)));
+      } catch (e) {
+        console.warn("Could not cache the conversation locally:", e);
+      }
+    };
+    const timer = window.setTimeout(write, LOCAL_CACHE_WRITE_DEBOUNCE_MS);
+    window.addEventListener('pagehide', write);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('pagehide', write);
+    };
   }, [messages, chatStorageKey]);
 
   useEffect(() => {
@@ -1029,6 +1110,12 @@ useEffect(() => {
     prevMessageCountRef.current = messages.length;
     const justFinishedLoading = prevLoadingRef.current && !loading;
     prevLoadingRef.current = loading;
+
+    // Older messages were just prepended (loadEarlier) — not a new message; keep the viewport put.
+    if (skipAutoScrollRef.current) {
+      skipAutoScrollRef.current = false;
+      return;
+    }
 
     if (isNewMessage) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -1660,6 +1747,9 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
         {/* 2. CHAT MESSAGES WINDOW */}
         <ChatMessageList
           messages={messages}
+          earlierCount={historyStart}
+          loadingEarlier={loadingEarlier}
+          loadEarlierRef={loadEarlierRef}
           hasChatted={hasChatted}
           loading={loading}
           agentStatus={agentStatus}
@@ -2112,7 +2202,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
 
               <div style={{ fontSize: '0.8rem', color: '#cbd5e1', marginBottom: '0.75rem', fontFamily: 'monospace' }}>
                 {traceSteps.length
-                  ? traceSteps.map(step => step.title).join(' → ')
+                  ? 'Tracing request...'
                   : 'Waiting for the first execution step...'}
               </div>
 
@@ -2211,7 +2301,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
 
             <div style={{ fontSize: '0.8rem', color: '#cbd5e1', marginBottom: '0.75rem', fontFamily: 'monospace' }}>
               {traceSteps.length
-                ? traceSteps.map(step => step.title).join(' → ')
+                ? 'Tracing request...'
                 : 'Waiting for the first execution step...'}
             </div>
 

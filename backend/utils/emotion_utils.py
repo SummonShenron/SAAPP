@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
@@ -7,8 +8,12 @@ from typing import Any, Dict, Optional, Tuple
 # attuned to a feeling after the topic changes, then relaxes as it plausibly passes. Pure
 # functions, no I/O — same read-time-decay approach as memory_utils.effective_confidence (the
 # stored intensity is never mutated, the current value is always computed fresh).
-EMOTION_HALF_LIFE_MINUTES = float(os.getenv("EMOTION_HALF_LIFE_MINUTES", "45"))
-EMOTION_TURN_DECAY = float(os.getenv("EMOTION_TURN_DECAY", "0.9"))
+#
+# Defaults are deliberately slow: a real upset (a breakup, a bad diagnosis) is not over in ten
+# messages or half an hour, and measured against the real reasoner the previous 45 min / 0.9 per
+# turn dropped acute distress below the injection threshold after about ten messages.
+EMOTION_HALF_LIFE_MINUTES = float(os.getenv("EMOTION_HALF_LIFE_MINUTES", "90"))
+EMOTION_TURN_DECAY = float(os.getenv("EMOTION_TURN_DECAY", "0.93"))
 EMOTION_INJECTION_THRESHOLD = float(os.getenv("EMOTION_INJECTION_THRESHOLD", "0.2"))
 # A new reading of the opposite polarity must clear this bar to override a prior feeling that
 # hasn't decayed yet — a passing "haha" shouldn't instantly erase real distress, but a clear
@@ -16,6 +21,11 @@ EMOTION_INJECTION_THRESHOLD = float(os.getenv("EMOTION_INJECTION_THRESHOLD", "0.
 EMOTION_OPPOSITE_OVERRIDE_MIN = float(os.getenv("EMOTION_OPPOSITE_OVERRIDE_MIN", "0.3"))
 # Below this, a carried-forward prior is dropped entirely rather than lingering as noise.
 _EMOTION_DROP_BELOW = 0.05
+# The reply right after the topic changes gets one short, specific acknowledgement that the feeling
+# hasn't been forgotten; every reply after that only keeps the calmer register (acknowledging it
+# again and again reads as nagging).
+EMOTION_TOUCH_MAX_TURNS = int(os.getenv("EMOTION_TOUCH_MAX_TURNS", "1"))
+_GIST_MAX_CHARS = 120
 
 NEGATIVE_VALENCES = {"distressed", "low", "frustrated"}
 POSITIVE_VALENCES = {"positive", "excited"}
@@ -51,6 +61,20 @@ def normalize_reading(raw: Any) -> Tuple[str, float]:
     if valence == "neutral" or intensity == 0.0:
         return "neutral", 0.0
     return valence, intensity
+
+
+def normalize_gist(raw: Any) -> str:
+    """A short note of WHAT the person is going through, as read off their own words ("a breakup;
+    Tina ended things tonight"). The prompt only ever sees the last few messages, so without this
+    the carried feeling was just a mood label with no content to stay attuned *to*. Bounded and
+    flattened to a single line before it goes anywhere near a prompt."""
+    if not isinstance(raw, dict):
+        return ""
+    gist = raw.get("gist")
+    if not isinstance(gist, str):
+        return ""
+    gist = re.sub(r"\s+", " ", gist).strip().strip("\"'")
+    return gist[:_GIST_MAX_CHARS].rstrip()
 
 
 def normalize_need(raw: Any) -> str:
@@ -91,6 +115,7 @@ def merge_emotional_state(
     # distressed and now asks "ok so what should I do?" is still emotional, but now wants solving.
     read_this_turn = valence != "neutral"
     need = normalize_need(reading_raw) if read_this_turn else "none"
+    gist = normalize_gist(reading_raw) if read_this_turn else ""
 
     def _carry_forward() -> Optional[Dict[str, Any]]:
         if not prior or prior_eff < _EMOTION_DROP_BELOW:
@@ -112,11 +137,16 @@ def merge_emotional_state(
         "turns_since": 0,
         "read_this_turn": True,
         "need": need,
+        "gist": gist,
     }
     if not prior or prior_eff < _EMOTION_DROP_BELOW:
         return replace
 
     prior_polarity = _polarity(str(prior.get("valence", "neutral")))
+    # Same kind of feeling continuing but this message gave no fresh description: keep what we knew
+    # it was about rather than forgetting the cause the moment the model stops restating it.
+    if not gist and _polarity(valence) == prior_polarity:
+        replace["gist"] = str(prior.get("gist") or "")
     if _polarity(valence) != prior_polarity and prior_polarity != 0:
         return replace if intensity >= EMOTION_OPPOSITE_OVERRIDE_MIN else _carry_forward()
     return replace if intensity >= prior_eff else _carry_forward()
@@ -168,12 +198,39 @@ _FRUSTRATED_NOW = (
     "anything that went wrong on your side, and keep a steady tone that is neither defensive "
     "nor cheerful.\n"
 )
-_LOW_CARRIED = (
-    "earlier in this conversation the user seemed {valence}, and that may still be weighing on "
-    "them even though the topic has changed. Answer the new question properly, but stay gentle "
-    "and attuned: keep the warmth, don't snap into a brisk or chipper register, and don't go "
-    "clipped. A brief, natural human touch is fine if it fits; don't force a callback. Let your "
-    "tone follow theirs as it shifts.\n"
+# Carried onto a later, unrelated question. Measured against the real model, an abstract "stay
+# gentle and attuned" had NO visible effect on the reply (same "let's dive in", same bold bullet
+# lists as with no emotional context at all), so these name the concrete behaviors instead, and say
+# outright that they outrank the persona's match-their-energy rule. {about} is the reasoner's gist.
+_LOW_CARRIED_OUTRANKS = (
+    "This takes priority over the guidance in your voice description about matching their energy "
+    "or being playful, expressive, or upbeat.\n"
+)
+_LOW_CARRIED_TOUCH = (
+    "earlier in this conversation the user seemed {valence}; they opened up about something painful{about}. They've now "
+    "moved on to a different question, but that doesn't mean the feeling is gone; it may still be "
+    "weighing on them. " + _LOW_CARRIED_OUTRANKS +
+    "For this reply, stay gentle and steady:\n"
+    "- Begin with ONE short sentence, light and specific to what happened (a handful of words, "
+    "not a recap of the story), that shows it hasn't slipped your mind and that you're glad to "
+    "help with something else. It must not be a question. Never use stock comfort lines such as "
+    "\"I'm here for you\", \"I'm right here with you\", \"I've got you\" or \"take your mind "
+    "off\". Skip this sentence only if your previous reply in the history already did something "
+    "similar.\n"
+    "- Then answer the actual question fully and well, in a calm, steady register: no \"let's dive "
+    "in\", no exclamation marks, no emoji, no cheerleading.\n"
+    "- Prefer plain, warm prose over bullet lists and bold headings unless the content truly needs "
+    "a list.\n"
+    "- Don't bring the painful topic up again beyond that single sentence; they chose to move on, "
+    "so follow them.\n"
+)
+_LOW_CARRIED_REGISTER = (
+    "earlier in this conversation the user seemed {valence} after opening up about something painful{about}, and it may "
+    "still be weighing on them even though they've moved on to other things. " + _LOW_CARRIED_OUTRANKS +
+    "Stay gentle and steady without making anything of it: a calm, warm register, no \"let's dive "
+    "in\", no exclamation marks, no emoji, no cheerleading, plain prose over bullet lists unless "
+    "the content truly needs one. Don't bring the painful topic up; just let the steadiness show. "
+    "If they return to it or their mood changes, follow them.\n"
 )
 _FRUSTRATED_CARRIED = (
     "earlier in this conversation the user seemed frustrated. Keep things direct and low-fluff, "
@@ -203,5 +260,9 @@ def build_emotional_context(state: Optional[Dict[str, Any]], now: datetime) -> s
     if valence in NEGATIVE_VALENCES:
         if fresh:
             return _CONTEXT_HEADER + _LOW_BASE.format(valence=valence) + _LOW_NEED[need]
-        return _CONTEXT_HEADER + _LOW_CARRIED.format(valence=valence)
+        gist = str(state.get("gist") or "").strip()
+        about = f" ({gist})" if gist else ""
+        turns = int(state.get("turns_since", 0) or 0)
+        block = _LOW_CARRIED_TOUCH if turns <= EMOTION_TOUCH_MAX_TURNS else _LOW_CARRIED_REGISTER
+        return _CONTEXT_HEADER + block.format(valence=valence, about=about)
     return _CONTEXT_HEADER + _POSITIVE.format(valence=valence)

@@ -5,7 +5,6 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langgraph.checkpoint.mongodb import MongoDBSaver
 from backend.utils.logo import print_logo
 from backend.services.agent_workflow import create_workflow
-from backend.services.insights_workflow import create_insight_workflow
 from backend.services.memory_search import get_user_memory_vector_store
 from backend.utils.db_utils import get_db
 from fastapi import HTTPException
@@ -75,18 +74,11 @@ def startup_services():
         logger.critical(f"Failed to compile LangGraph workflow: {e}")
         compiled_workflow = None
 
-    try:
-        insight_workflow = create_insight_workflow()
-        logger.info("Compiled Insight Workflow successfully")
-    except Exception as e:
-        logger.critical(f"Failed to compile Insight workflow: {e}")
-        insight_workflow = None
-        
+
     return {
         "user_directory": user_directory,
         "vector_store": vector_store,
         "user_memory_vector_store": user_memory_vector_store,
         "compiled_workflow": compiled_workflow,
-        "insight_workflow": insight_workflow,
         "checkpointer": checkpointer,
     }

@@ -54,7 +54,7 @@ async def test_write_action_survives_real_graph_execution_into_propose_write_nod
         AsyncMock(return_value=SimpleNamespace(content=json.dumps({
             "needs_retrieval": False, "needs_rewrite": False, "needs_summary": False,
             "needs_formatting": False, "needs_conversation": False, "needs_memory_save": False,
-            "needs_memory_recall": False, "needs_paapp": False, "follow_up_intent": False,
+            "needs_memory_recall": False, "follow_up_intent": False,
             "needs_web_search": False, "needs_code_interpreter": False, "needs_github_search": False,
             "needs_pr_summary": False, "needs_create_pr": True, "needs_create_issue": False,
         })))
@@ -106,14 +106,14 @@ async def test_approval_works_across_two_truly_independent_turns(monkeypatch):
             SimpleNamespace(content=json.dumps({
                 "needs_retrieval": False, "needs_rewrite": False, "needs_summary": False,
                 "needs_formatting": False, "needs_conversation": False, "needs_memory_save": False,
-                "needs_memory_recall": False, "needs_paapp": False, "follow_up_intent": False,
+                "needs_memory_recall": False, "follow_up_intent": False,
                 "needs_web_search": False, "needs_code_interpreter": False, "needs_github_search": False,
                 "needs_pr_summary": False, "needs_create_pr": True, "needs_create_issue": False,
             })),
             SimpleNamespace(content=json.dumps({
                 "needs_retrieval": False, "needs_rewrite": False, "needs_summary": False,
                 "needs_formatting": False, "needs_conversation": False, "needs_memory_save": False,
-                "needs_memory_recall": False, "needs_paapp": False, "follow_up_intent": True,
+                "needs_memory_recall": False, "follow_up_intent": True,
                 "needs_web_search": False, "needs_code_interpreter": False, "needs_github_search": False,
                 "needs_pr_summary": False, "needs_create_pr": False, "needs_create_issue": False,
             })),
