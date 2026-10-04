@@ -1090,21 +1090,10 @@ useEffect(() => {
   // This effect runs on every streamed token, and serializing a whole long thread each time is
   // what made replies stutter. Write only the newest window, at most once per debounce interval,
   // and flush any pending write when the tab is hidden or the component unmounts so nothing is lost.
-  //
-  // A photo's instant preview is the whole image as base64 text (a ~1 MB phone photo is ~1.5 MB of
-  // string), which on its own can exceed a phone browser's ~5 MB localStorage limit. Before the
-  // write was guarded, that threw inside this effect and blanked the entire page on send, while the
-  // message itself still went through. Previews are therefore never cached; the saved copy comes
-  // back from the server with a durable fileId when the conversation next loads.
   useEffect(() => {
     const write = () => {
       try {
-        const cacheable = messages.slice(-LOCAL_CACHE_MESSAGE_CAP).map(m =>
-          m.images
-            ? { ...m, images: m.images.map(img => ({ filename: img.filename, fileId: img.fileId })) }
-            : m
-        );
-        localStorage.setItem(chatStorageKey, JSON.stringify(cacheable));
+        localStorage.setItem(chatStorageKey, JSON.stringify(messages.slice(-LOCAL_CACHE_MESSAGE_CAP)));
       } catch (e) {
         console.warn("Could not cache the conversation locally:", e);
       }
