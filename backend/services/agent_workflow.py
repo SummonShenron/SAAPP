@@ -91,6 +91,7 @@ from backend.utils.agent_utils import (
     resolve_recent_mention, safe_emit_event,
 )
 from backend.services.react_loop import run_react_loop, _MAX_BATCH_SIZE
+from backend.services import steering
 from backend.services.repo_checkout import (
     RepoCheckoutError, fetch_and_extract_checkout, cleanup_checkout, find_declarations_in_checkout,
 )
@@ -2766,6 +2767,21 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
         # runs — normal completion falls through to the finally before continuing on to build
         # final_answer; both exception handlers return from inside the inner try/except, and the
         # finally still runs before either return completes.
+        # Lets the user redirect this run with a message sent while it is working (see
+        # backend/services/steering.py); it is applied at the next step boundary.
+        steering_key = f"{username}::{state.get('session_id')}"
+
+        async def _on_steering_applied(messages, step_number):
+            await safe_emit_event("steer_applied", {"count": len(messages), "messages": messages, "step": step_number})
+            await safe_emit_event(
+                "trace_detail",
+                {
+                    "node": "tool_agent_node",
+                    "title": "Steering received",
+                    "detail": f"Changing course: {messages[-1][:140]}",
+                },
+            )
+
         try:
             try:
                 loop_result = await run_react_loop(
@@ -2789,6 +2805,8 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     # mid-file read can't produce a fabricated edit — don't force reading to EOF.
                     partial_read_windows_ok=local_workspace_handle is not None,
                     required_action=_LOCAL_EDIT_REQUIRED_ACTION if edit_turn else None,
+                    steering_source=lambda: steering.drain(steering_key),
+                    on_steering_applied=_on_steering_applied,
                 )
             except _UnsafeActionRequested as e:
                 if e.decision.get("tool_action") == "propose_append_target_doc":
@@ -2966,6 +2984,9 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     "paused_clarification": {"original_question": msg, "attempts": e.attempts},
                 }
         finally:
+            # Past this point nothing can act on a steer; later ones are told "too late" and the
+            # browser sends them as the next message instead.
+            steering.stop_accepting(steering_key)
             browser_session = browser_session_holder.get("session")
             if browser_session is not None:
                 try:

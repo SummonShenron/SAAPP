@@ -231,6 +231,10 @@ class ChatRequest(BaseModel):
     attachments: list[Attachment] | None = None
     session_id: str | None = None
 
+class SteerRequest(BaseModel):
+    session_id: str
+    message: str
+
 class LocalWorkspaceFile(BaseModel):
     path: str
     content: str
@@ -684,6 +688,13 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                         yield f"data: {json.dumps(node_progress_payload)}\n\n"
                         await asyncio.sleep(0.01)
 
+                    # The tool agent folded one or more mid-run steering messages into its work
+                    # (backend/services/steering.py) — lets the browser mark them as taken into account.
+                    if kind == "on_custom_event" and event.get("name") == "steer_applied":
+                        data = event.get("data", {})
+                        yield f"data: {json.dumps({'event': 'steer_applied', 'count': data.get('count', 0), 'step': data.get('step')})}\n\n"
+                        await asyncio.sleep(0.01)
+
                     # A view-only browserless.io LiveURL, emitted once tool_agent_node's browser_*
                     # actions actually open a session — lets the frontend embed a real-time watch
                     # link in the in-progress chat bubble (see backend/services/browser_tool.py).
@@ -916,9 +927,20 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             log_timings(final_state.get("relevance_grade", "unknown"), "error")
             yield f"data: {json.dumps({'event': 'trace', 'title': 'Execution error', 'detail': str(e), 'status': 'active'})}\n\n"
 
+    async def steerable_stream():
+        # Registered for the whole turn so POST /api/chat/steer has somewhere to deliver messages.
+        run = steering.open_run(history_key, chat_sessions[history_key])
+        try:
+            async for chunk in token_streamer():
+                yield chunk
+        finally:
+            leftover = steering.close_run(history_key, run)
+            if leftover:
+                logger.info("[steering] %d steer(s) were never consumed for %s; the browser re-sends them.", len(leftover), history_key)
+
     logger.info(f"Initializing secured token stream for {username}")
     return StreamingResponse(
-        token_streamer(),
+        steerable_stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -926,6 +948,17 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             "Connection": "keep-alive",
         },
     )
+
+@app.post("/api/chat/steer")
+async def steer_chat(request: SteerRequest, current_user = Depends(get_current_user)):
+    """Queues a message into the turn that is currently running for this conversation, to be applied
+    at the agent's next step. Anything but "queued" means it could not be applied; the browser then
+    sends it as a normal follow-up message."""
+    username = current_user.get("sub")
+    session_id = request.session_id.strip()
+    status = steering.submit(f"{username}::{session_id}", request.message)
+    return {"status": status}
+
 
 async def _delete_checkpoint_thread(username: str, session_id: str) -> None:
     """Deletes a conversation's checkpointed graph state (if a checkpointer is configured) —

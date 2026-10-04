@@ -33,7 +33,16 @@ interface Message {
   images?: MessageImage[];
   liveBrowserUrl?: string; // view-only browserless.io LiveURL — see browser_live_view handling
   editProposal?: EditProposal; // diff card for edits proposed to the connected local folder
+  // A message sent while Sonic was already working, meant to change what it does next.
+  steer?: 'queued' | 'applied' | 'deferred' | 'dropped';
 }
+
+const STEER_STATUS_LABEL: Record<NonNullable<Message['steer']>, string> = {
+  queued: "waiting for Sonic's next step",
+  applied: 'taken into account',
+  deferred: 'will send when this finishes',
+  dropped: 'not applied',
+};
 
 const IMAGE_EXTENSION_MIME: Record<string, string> = {
   png: 'image/png',
@@ -238,7 +247,9 @@ const ChatMessageList = React.memo(function ChatMessageList({
 
           return (
             <div key={msg.id} className={`message-bubble ${msg.sender}`}>
-              <div className="message-sender">{msg.sender.toUpperCase()}</div>
+              <div className="message-sender">
+                {msg.steer ? `STEERING · ${STEER_STATUS_LABEL[msg.steer]}` : msg.sender.toUpperCase()}
+              </div>
               {msg.images && msg.images.length > 0 && (
                 <div className="message-attachment-images">
                   {msg.images.map((img, idx) =>
@@ -611,6 +622,12 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   // still lands with genuine context about what was interrupted, without needing any new
   // concurrency/signaling infrastructure between an in-flight request and a new one.
   const abortControllerRef = useRef<AbortController | null>(null);
+  // Messages sent to steer the turn that is running. `applied` flips when the backend reports it
+  // folded them into the agent's work; whatever is still unapplied when the turn ends is re-sent
+  // as an ordinary message so a steer is never lost.
+  const steerLogRef = useRef<{ id: string; text: string; applied: boolean }[]>([]);
+  const pendingResendRef = useRef<{ id: string; text: string }[]>([]);
+  const [resendTick, setResendTick] = useState(0);
 
   const [showTooltip, setShowTooltip] = useState(false);
   const tooltipRef = useRef<HTMLDivElement>(null);
@@ -1223,6 +1240,7 @@ useEffect(() => {
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
+    let stoppedByUser = false;
 
     try {
       // Pushes only what changed in the connected folder since the last message (a no-op when none
@@ -1256,6 +1274,21 @@ useEffect(() => {
                 });
                 if (!isProcessingQueue.current) {
                   processNodeQueue();
+                }
+              }
+              if (payload.event === 'steer_applied') {
+                // The agent folded this many queued steering messages into its work (oldest first).
+                const count = Number(payload.count) || 0;
+                const appliedIds: string[] = [];
+                for (const entry of steerLogRef.current) {
+                  if (appliedIds.length >= count) break;
+                  if (!entry.applied) {
+                    entry.applied = true;
+                    appliedIds.push(entry.id);
+                  }
+                }
+                if (appliedIds.length) {
+                  setMessages(prev => prev.map(m => (appliedIds.includes(m.id) ? { ...m, steer: 'applied' } : m)));
                 }
               }
               if (payload.event === 'browser_live_view' && payload.url) {
@@ -1383,6 +1416,7 @@ useEffect(() => {
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
+        stoppedByUser = true;
         // A deliberate Stop, not a failure — leave whatever partial text already streamed in
         // place rather than showing a scary error over it.
         setMessages(prev => {
@@ -1404,6 +1438,21 @@ useEffect(() => {
         ]);
       }
     } finally {
+      // Steers that were queued but never applied (this turn had no work phase, or it ended first)
+      // go out as ordinary messages once the turn is over. A deliberate Stop drops them instead.
+      const unapplied = steerLogRef.current.filter(entry => !entry.applied);
+      steerLogRef.current = [];
+      if (unapplied.length) {
+        if (stoppedByUser) {
+          const droppedIds = unapplied.map(entry => entry.id);
+          setMessages(prev => prev.map(m => (droppedIds.includes(m.id) ? { ...m, steer: 'dropped' } : m)));
+        } else {
+          const ids = unapplied.map(entry => entry.id);
+          setMessages(prev => prev.map(m => (ids.includes(m.id) ? { ...m, steer: 'deferred' } : m)));
+          pendingResendRef.current.push(...unapplied.map(({ id, text }) => ({ id, text })));
+        }
+      }
+      if (stoppedByUser) pendingResendRef.current = [];
       abortControllerRef.current = null;
       setLoading(false);
       setAgentStatus('');
@@ -1415,9 +1464,57 @@ useEffect(() => {
     abortControllerRef.current?.abort();
   };
 
+  // Sends a message to the turn that is running instead of waiting for it to finish. It shows up
+  // above the in-progress reply (the stream handlers only ever update the LAST message, so it must
+  // not go after it) and is applied at the agent's next step.
+  const handleSteer = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const id = genId();
+    setInput('');
+    setMessages(prev => {
+      const last = prev.length - 1;
+      const bubble: Message = { id, sender: 'user', text: trimmed, steer: 'queued' };
+      return last >= 0 && prev[last].sender === 'ai'
+        ? [...prev.slice(0, last), bubble, prev[last]]
+        : [...prev, bubble];
+    });
+    steerLogRef.current.push({ id, text: trimmed, applied: false });
+
+    let status = 'error';
+    try {
+      status = (await api.steerChat(sessionId, trimmed)).status;
+    } catch (err) {
+      console.warn("Steering request failed; it will be sent as a normal message instead.", err);
+    }
+    if (status !== 'queued') {
+      // Nothing could act on it (no running turn, work phase already over, ...): send it as the next
+      // message as soon as the current turn is done.
+      steerLogRef.current = steerLogRef.current.filter(entry => entry.id !== id);
+      setMessages(prev => prev.map(m => (m.id === id ? { ...m, steer: 'deferred' } : m)));
+      pendingResendRef.current.push({ id, text: trimmed });
+      setResendTick(t => t + 1);
+    }
+  };
+
+  // Re-sends deferred steers one at a time, only once the previous turn has fully finished and the
+  // component has re-rendered with loading=false (so the send handler is not a stale closure).
+  useEffect(() => {
+    if (loading) return;
+    const next = pendingResendRef.current.shift();
+    if (!next) return;
+    setMessages(prev => prev.filter(m => m.id !== next.id));
+    handleSendMessageRef.current(next.text, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, resendTick]);
+
   const onSubmitForm = (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
+    if (loading) {
+      handleSteer(input);
+      return;
+    }
     handleSendMessage(input, attachmentsRef.current);
   };
 
@@ -1913,7 +2010,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
             <div className="chat-input-wrapper">
               <textarea
                 className="chat-textarea"
-                placeholder={chatPlaceholder}
+                placeholder={loading ? "Steer Sonic while it works..." : chatPlaceholder}
                 value={input}
                 onChange={(e) => {
                   setInput(e.target.value);
@@ -1927,7 +2024,6 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                   }
                 }}
                 onPaste={handlePastedImage}
-                disabled={loading}
                 rows={2}
               />
 
@@ -2113,13 +2209,13 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                 </button>
 
                 <button
-                  type={loading ? "button" : "submit"}
+                  type={loading && !input.trim() ? "button" : "submit"}
                   className="circle-icon-button"
-                  onClick={loading ? stopGeneration : undefined}
+                  onClick={loading && !input.trim() ? stopGeneration : undefined}
                   disabled={!loading && !input.trim()}
-                  title={loading ? "Stop generating" : "Send"}
+                  title={loading ? (input.trim() ? "Steer Sonic" : "Stop generating") : "Send"}
                 >
-                  {loading ? (
+                  {loading && !input.trim() ? (
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                       <rect x="6" y="6" width="12" height="12" rx="2" />
                     </svg>

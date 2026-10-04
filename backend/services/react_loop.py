@@ -29,6 +29,7 @@ from backend.utils.agent_utils import (
     _parse_agent_json,
     _truncate_observation,
     find_mismatched_start_line_note,
+    format_steering_notes,
     parse_definition_index_from_observation,
     safe_emit_event,
 )
@@ -64,6 +65,10 @@ async def run_react_loop(
     declaration_lookup=None,
     partial_read_windows_ok: bool = False,
     required_action: dict | None = None,
+    steering_source=None,
+    on_steering_applied=None,
+    steering_extra_steps: int = 2,
+    steering_max_extra_steps: int = 8,
 ) -> dict:
     """Generic Reason -> Act -> Observe -> Decide loop shared by every iterative tool
     (MongoDB, GitHub search, ...). Each step asks the model for the next action given
@@ -79,6 +84,13 @@ async def run_react_loop(
     starting from zero. `llm` defaults to lite_llm; deep thinking mode passes lite_llm_deep
     instead, so a wider step/nudge budget also comes with more carefully reasoned individual
     step decisions rather than just more of them.
+
+    `steering_source` (a zero-arg callable returning newly arrived user messages) lets the user
+    redirect the work while it runs: it is polled at the start of every step and again right after
+    each model decision. Messages stay in every later step's prompt, each one grants a couple of
+    extra steps (bounded by `steering_max_extra_steps`) since a redirect usually needs new work, and
+    a decision made while one was arriving is discarded and re-made with it. `on_steering_applied`
+    (async, called with the new messages and the step number) lets the caller announce it.
 
     A prompt-level instruction alone isn't enough to stop the model from giving up right after
     a failed OR empty action even when steps remain — it already has evidence of that ("never
@@ -303,8 +315,39 @@ async def run_react_loop(
     MAX_DUPLICATE_DECLARATION_REJECTIONS = 1
     pending_duplicate_declaration_notice: str | None = None
 
-    for step in range(max_iterations):
-        forced_final = step == max_iterations - 1
+    steering_notes: list = []
+    steering_extra_used = 0
+    budget = max_iterations
+
+    async def _absorb_steering(step_number: int) -> bool:
+        """Pulls any newly arrived steering messages into the run. True when there were some."""
+        nonlocal budget, steering_extra_used
+        if steering_source is None:
+            return False
+        new_messages = [str(m) for m in (steering_source() or []) if str(m).strip()]
+        if not new_messages:
+            return False
+        steering_notes.extend(new_messages)
+        grant = max(min(steering_extra_steps * len(new_messages), steering_max_extra_steps - steering_extra_used), 0)
+        budget += grant
+        steering_extra_used += grant
+        logger.info(
+            "[%s] step %s: %d steering message(s) received (+%d step(s), budget now %d).",
+            node_name, step_number, len(new_messages), grant, budget,
+        )
+        if on_steering_applied is not None:
+            try:
+                await on_steering_applied(new_messages, step_number)
+            except Exception:
+                logger.exception("[%s] on_steering_applied callback failed.", node_name)
+        return True
+
+    step = -1
+    while step + 1 < budget:
+        step += 1
+        # Before forced_final is computed: a steer arriving now can extend the budget.
+        await _absorb_steering(step + 1)
+        forced_final = step == budget - 1
         # Shown on every step with an outstanding failure or empty result, not just once —
         # only the actual rejection of a premature "final" below is budget-limited (via
         # retry_nudge_count), so the model still sees the reminder if it takes an unrelated
@@ -328,7 +371,7 @@ async def run_react_loop(
             and stuck_action_streak["count"] >= stuck_redirect_entry[0]
         )
 
-        question_for_step = question
+        question_for_step = question + format_steering_notes(steering_notes)
         if forced_final:
             question_for_step += (
                 "\n\n(You have used all your steps. You MUST return "
@@ -417,6 +460,13 @@ async def run_react_loop(
         except Exception:
             logger.exception("[%s] step %s failed to produce a usable decision.", node_name, step + 1)
             break
+
+        if await _absorb_steering(step + 1):
+            # The user redirected the work while this decision was being made, so it was made
+            # without that guidance. Discard it rather than act on (or conclude from) a plan they
+            # just changed; the next step re-decides with the steering in the prompt.
+            logger.info("[%s] step %s: decision discarded — steering arrived while it was being made.", node_name, step + 1)
+            continue
 
         action = decision.get("action")
         # A model sometimes labels a step "final" while naming the tool it wants to run — observed
@@ -813,10 +863,11 @@ async def run_react_loop(
     if final_answer is None:
         # Loop ran out of steps without an explicit final action — force one last honest
         # synthesis instead of silently returning the last raw observation.
+        await _absorb_steering(len(attempts))
         try:
             prompt = prompt_template.format(
                 question=(
-                    f"{question}\n\n(You are out of steps. You MUST return action=\"final\" now, "
+                    f"{question}{format_steering_notes(steering_notes)}\n\n(You are out of steps. You MUST return action=\"final\" now, "
                     "honestly summarizing what you tried and found — never invent an answer "
                     "beyond what the attempts above actually show.)"
                 ),
