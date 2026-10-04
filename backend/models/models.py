@@ -42,9 +42,11 @@ class LazyLLM:
         timeout=30,
         thinking_level=None,   # Gemini 3.5+: 'minimal', 'low', 'medium', 'high'
         thinking_budget=None,  # Gemini 2.5: token count (e.g., 0, 1024)
+        fallback_thinking_level=None,  # thinking level for the fallback client (None = its default)
     ):
         self.model_name = model_name
         self.fallback_model = fallback_model
+        self.fallback_thinking_level = fallback_thinking_level
         self.temperature = temperature
         self.max_retries = max_retries
         self.timeout = timeout
@@ -83,6 +85,8 @@ class LazyLLM:
                     "request_timeout": self.timeout,
                     "streaming": True,
                 }
+                if self.fallback_thinking_level is not None:
+                    fallback_kwargs["thinking_level"] = self.fallback_thinking_level
                 fallback = ChatGoogleGenerativeAI(**fallback_kwargs)
                 self._real_llm = primary.with_fallbacks([fallback])
             else:
@@ -152,10 +156,17 @@ llm = LazyLLM(
 )
 
 # 2. Fast Utility LLM (For document grading, query rewriting, classification)
+# The lite models drive every ReAct step. A real turn hit five 504s in a row on flash-lite (each
+# costing the 30s timeout twice over via the internal retry, ~235s total) and every one became a
+# "high traffic" note instead of a decision. So: no internal retry on the primary (a stuck call
+# costs one timeout, not two), and fall back to the bigger model — which is on a different quota
+# pool — only when the primary fails, so normal turns still cost what they did.
 lite_llm = LazyLLM(
     model_name="gemini-3.1-flash-lite",
+    fallback_model="gemini-3.5-flash",
+    fallback_thinking_level="minimal",
     temperature=0.2,
-    max_retries=1,
+    max_retries=0,
 )
 
 # 2b. Deep-thinking variant of the fast utility LLM — same fast/cheap model, with native
@@ -166,8 +177,10 @@ lite_llm = LazyLLM(
 # in LazyLLM's docstring doesn't hold here).
 lite_llm_deep = LazyLLM(
     model_name="gemini-3.1-flash-lite",
+    fallback_model="gemini-3.5-flash",
+    fallback_thinking_level="low",  # the primary is the one that's slow at "high"; keep the rescue fast
     temperature=0.2,
-    max_retries=1,
+    max_retries=0,
     thinking_level="high",
 )
 

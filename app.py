@@ -88,6 +88,7 @@ from backend.services.local_workspace import (
     is_guest_username,
     workspace_status as local_workspace_status,
 )
+from backend.utils.agent_utils import is_stale_capability_denial, scrub_stale_capability_denials
 from backend.utils.embedding_utils import embed_text
 from backend.utils.emotion_utils import build_emotional_context
 from backend.utils.user_settings_utils import (
@@ -563,6 +564,12 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     chat_sessions[history_key].append(HumanMessage(content=question))
 
     messages_state = chat_sessions[history_key][-10:]
+    # With a local folder connected, earlier "I can't write files" replies are false — and a thread
+    # full of them teaches the model to keep saying it. Only what the model sees is changed; the
+    # saved transcript is untouched.
+    folder_connected = bool(local_workspace_status(username).get("connected"))
+    if folder_connected:
+        messages_state = scrub_stale_capability_denials(messages_state)
 
     request_id = uuid.uuid4().hex
     initial_state: GraphState = {
@@ -910,7 +917,10 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 ai_message.additional_kwargs["kb_images"] = kb_images
             chat_sessions[history_key].append(ai_message)
             save_conversation_turn(username, session_id, chat_sessions[history_key])
-            spawn_background_task(index_conversation_turn(services.get("user_memory_vector_store"), username, question, full_response, session_id))
+            # A false "I can't edit files" reply would otherwise be remembered and recalled into
+            # later prompts as if it were a fact (a real memory chunk did exactly that).
+            if not (folder_connected and is_stale_capability_denial(full_response)):
+                spawn_background_task(index_conversation_turn(services.get("user_memory_vector_store"), username, question, full_response, session_id))
             # Bounds this conversation's checkpoint history right now rather than waiting for the daily pass.
             spawn_background_task(prune_thread_checkpoints_async(history_key))
             log_timings(relevance_grade, "ok")

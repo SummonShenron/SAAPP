@@ -5,7 +5,7 @@
 // contents, so an edit made after the snapshot is caught instead of silently clobbered.
 
 export type EditOp =
-  | { type: 'replace'; path: string; old_string: string; new_string: string }
+  | { type: 'replace'; path: string; old_string: string; new_string: string; replace_all?: boolean }
   | { type: 'create'; path: string; content: string };
 
 export interface EditProposalFile {
@@ -67,6 +67,7 @@ export function applyReplace(
   content: string,
   oldString: string,
   newString: string,
+  replaceAll = false,
 ): { ok: true; content: string } | { ok: false; error: string } {
   const { text, crlf } = toLf(content);
   const oldLf = oldString.replace(/\r\n/g, '\n');
@@ -75,10 +76,13 @@ export function applyReplace(
   if (oldLf === newLf) return { ok: false, error: 'old_string and new_string are identical' };
   const first = text.indexOf(oldLf);
   if (first === -1) return { ok: false, error: 'the text to replace is no longer in the file' };
-  if (text.indexOf(oldLf, first + 1) !== -1) {
+  const matchesSeveral = text.indexOf(oldLf, first + 1) !== -1;
+  if (matchesSeveral && !replaceAll) {
     return { ok: false, error: 'the text to replace now matches more than one place in the file' };
   }
-  const replaced = text.slice(0, first) + newLf + text.slice(first + oldLf.length);
+  const replaced = replaceAll
+    ? text.split(oldLf).join(newLf)
+    : text.slice(0, first) + newLf + text.slice(first + oldLf.length);
   return { ok: true, content: crlf ? replaced.replace(/\n/g, '\r\n') : replaced };
 }
 
@@ -117,7 +121,7 @@ export async function planEdits(
       errors.push(`${label}: the file no longer exists`);
       continue;
     }
-    const result = applyReplace(current, op.old_string, op.new_string);
+    const result = applyReplace(current, op.old_string, op.new_string, op.replace_all === true);
     if (result.ok) working.set(op.path, result.content);
     else errors.push(`${label}: ${result.error}`);
   }

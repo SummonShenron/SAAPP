@@ -680,6 +680,106 @@ async def test_unresolved_truncation_rejects_final_beyond_the_normal_retry_budge
     assert len(act_calls) == 2
 
 
+async def _run_window_read_then_final(partial_read_windows_ok):
+    # A real trace: the model located the line it needs, read a small window mid-way through a
+    # 2444-line file (which always ends in "N more lines below"), then tried to finish.
+    responses = [
+        _llm_response(action="query", purpose="Read the target lines", tool_action="read_repo_file",
+                      args={"path": "Chat.tsx", "start_line": 1905, "line_count": 15}),
+        _llm_response(action="final", answer="Proposed the edit."),
+        _llm_response(action="final", answer="Proposed the edit."),
+        _llm_response(action="final", answer="Proposed the edit."),
+    ]
+    call_index = {"n": 0}
+
+    async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
+        response = responses[min(call_index["n"], len(responses) - 1)]
+        call_index["n"] += 1
+        return response
+
+    act_calls = []
+
+    async def act(decision):
+        act_calls.append(decision)
+        return "URL: x\nLines 1905-1919 of 2444 total:\n... [525 more lines below — re-call with a higher start_line to keep reading]"
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        result = await aw.run_react_loop(
+            question="change the trace header text",
+            schema="repo=x",
+            prompt_template="{question} | {schema} | {attempts}",
+            act=act,
+            max_iterations=4,
+            node_name="test_node",
+            partial_read_windows_ok=partial_read_windows_ok,
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+    return result, act_calls
+
+
+@run_async
+async def test_deliberate_mid_file_window_is_not_an_unfinished_read_when_edits_are_validated():
+    result, act_calls = await _run_window_read_then_final(partial_read_windows_ok=True)
+
+    assert result["final_answer"] == "Proposed the edit."
+    assert len(act_calls) == 1  # no forced re-reads toward the end of the file
+
+
+@run_async
+async def test_mid_file_window_still_counts_as_unfinished_by_default():
+    result, act_calls = await _run_window_read_then_final(partial_read_windows_ok=False)
+
+    # The strict rule is unchanged for everyone who doesn't opt in: every "final" is rejected until
+    # the loop is forced to conclude on its last step.
+    assert result["final_answer"] is not None
+    assert len(act_calls) == 1
+    assert result["attempts"][0]["observation"].count("more lines below") == 1
+
+
+@run_async
+async def test_truncated_read_without_start_line_still_counts_even_when_windows_are_ok():
+    responses = [
+        _llm_response(action="query", purpose="Read the file", tool_action="read_repo_file", args={"path": "big.py"}),
+        _llm_response(action="final", answer="Premature."),
+        _llm_response(action="query", purpose="Read on", tool_action="read_repo_file", args={"path": "big.py", "start_line": 999}),
+        _llm_response(action="final", answer="Grounded."),
+    ]
+    call_index = {"n": 0}
+
+    async def fake_ainvoke(prompt):
+        if GROUNDING_CHECK_MARKER in prompt:
+            return _llm_response(grounded=True, unsupported_claims=[])
+        response = responses[call_index["n"]]
+        call_index["n"] += 1
+        return response
+
+    act_calls = []
+
+    async def act(decision):
+        act_calls.append(decision)
+        if (decision.get("args") or {}).get("start_line"):
+            return "URL: x\nLines 999-1050 of 1050 total:\n...(end)"
+        return "URL: x\n... [truncated — this file has 1050 lines; re-call with a start_line]"
+
+    orig = aw.lite_llm.ainvoke
+    aw.lite_llm.ainvoke = fake_ainvoke
+    try:
+        result = await aw.run_react_loop(
+            question="investigate big.py", schema="repo=x", prompt_template="{question} | {schema} | {attempts}",
+            act=act, max_iterations=6, node_name="test_node", partial_read_windows_ok=True,
+        )
+    finally:
+        aw.lite_llm.ainvoke = orig
+
+    assert result["final_answer"] == "Grounded."
+    assert len(act_calls) == 2  # the premature final was rejected; the unfinished read is still enforced
+
+
 @run_async
 async def test_second_consecutive_error_does_not_trigger_a_second_nudge():
     """A genuinely doomed action (still failing after the forced retry) must still get an

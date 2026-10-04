@@ -6,6 +6,7 @@ import re
 from datetime import datetime
 
 from langchain_core.callbacks.manager import adispatch_custom_event
+from langchain_core.messages import AIMessage
 
 from backend.components.constraints import GROUNDING_CHECK_PROMPT, IDIOM_GROUNDING_CHECK_PROMPT
 
@@ -276,8 +277,9 @@ class _ClarificationNeeded(Exception):
 # domain knowledge the caller (tool_agent_node) supplies via capability_denial_watchlist, the
 # same config-driven shape as stuck_action_redirects.
 _CAPABILITY_DENIAL_RE = re.compile(
-    r"\b(i (?:don'?t|do not) (?:actually |currently )?have\b|i can'?t\b|i'?m not able to\b|"
-    r"i lack\b|no access to\b|i (?:don'?t|do not) have access\b)",
+    r"\b(i (?:don'?t|do not) (?:actually |currently )?have\b|i can'?t\b|i cannot\b|i'?m not able to\b|"
+    r"i (?:am|'m) (?:not able|unable) to\b|i (?:am|'m) only (?:able|allowed) to (?:read|view|search)\b|"
+    r"read-only\b|i lack\b|no access to\b|i (?:don'?t|do not) have access\b)",
     re.IGNORECASE,
 )
 
@@ -876,3 +878,126 @@ def _build_architecture_map(tree_items: list, fetch_content) -> str:
         "FILE -> ITS INTERNAL IMPORTS:\n" + "\n".join(forward_lines) +
         "\n\nINTERNAL MODULE -> IMPORTED BY:\n" + "\n".join(reverse_lines)
     )
+
+
+# ---------------------------------------------------------------------------
+# Local-folder editing: recognising an edit request, and keeping stale "I can't write" replies
+# from teaching the model that it can't. Everything here is mechanical on purpose — a prompt line
+# saying "you can edit files" kept losing to many turns of the model's own earlier refusals.
+# ---------------------------------------------------------------------------
+
+# The longer verbs have no trailing \b on purpose: people type "updatethe trace-sidebar" (a real
+# message) and still mean it. The short ones keep it so "add" doesn't match "address".
+_EDIT_VERB_RE = re.compile(
+    r"\b(?:change|modify|update|replace|rename|remove|delete|insert|refactor|rewrite|implement|"
+    r"create|adjust|apply|tweak)|\b(?:edit|fix|add|move|swap|make|write)\b",
+    re.IGNORECASE,
+)
+# Something code-shaped to act on. A bare verb ("make your replies shorter", "update my memory")
+# isn't an edit request; a verb plus a file name / UI element / code term is.
+_CODE_TARGET_RE = re.compile(
+    r"\b[\w./-]+\.(?:py|tsx?|jsx?|css|json|md|html|ya?ml|toml|sh|ps1)\b|"
+    r"\b(?:file|function|component|class|css|stylesheet|line|lines|code|button|header|sidebar|panel|"
+    r"menu|navbar|banner|endpoint|route|test|tests|variable|import|prop|style|color|colour|label|"
+    r"icon|tooltip|modal|loader|spinner|readme|hero)\b",
+    re.IGNORECASE,
+)
+# "do it", "go ahead", "yes please apply that", "ugh just make the change" — a confirmation or
+# command with no target of its own, which only means "edit" given what came just before.
+_EDIT_CONFIRMATION_RE = re.compile(
+    r"^\W*(?:(?:yes|yep|yeah|ok|okay|sure|please|pls|ugh|come on|just|now)\W+)*"
+    r"(?:do it|go ahead|apply(?: it| that| this| the change| the changes)?|"
+    r"make (?:the|that|those|this) (?:change|edit|update|fix)s?|make it so|proceed|ship it|"
+    r"fix it|change it|edit it|update it|why (?:won'?t|wont|don'?t|dont) you (?:just )?(?:do|make|apply|change|edit))",
+    re.IGNORECASE,
+)
+# A previous assistant reply that offered to make a change, or said it couldn't.
+_OFFERED_OR_DENIED_EDIT_RE = re.compile(
+    r"(?:would you like me to|want me to|shall i|should i|do you want me to)[^.?!]{0,80}"
+    r"\b(?:make|apply|update|change|edit|modify|implement|go ahead)\b|"
+    r"\b(?:copy (?:and|&) paste|paste (?:this|the|it)|replace (?:those|these|the) (?:two )?lines)\b|"
+    r"\b(?:i (?:can'?t|cannot|don'?t have|do not have|am unable to|'m unable to|lack)|"
+    r"i (?:am|'m) only able to)\b[^.]{0,200}\b(?:write|edit|apply|modify|change|read and search)\b",
+    re.IGNORECASE,
+)
+_STALE_DENIAL_RE = re.compile(
+    r"\bi (?:can'?t|cannot|don'?t have|do not have|am unable to|'m unable to|lack|am not able to|'m not able to)\b"
+    r"[^.]{0,200}\b(?:write|edit|apply|modify|writing|physically|file-writing|write/edit)\b|"
+    r"\bi (?:am|'m) only able to (?:read|view|search)\b|"
+    r"\bonly (?:have )?the ability to read and search\b",
+    re.IGNORECASE,
+)
+
+
+def _message_text(message) -> str:
+    content = getattr(message, "content", message)
+    if isinstance(content, list):
+        content = "".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in content)
+    return str(content or "")
+
+
+def _is_human(message) -> bool:
+    return getattr(message, "type", "") == "human"
+
+
+def looks_like_edit_request(messages) -> bool:
+    """True when the user's latest message is asking for a code/file change — either directly
+    (an edit verb plus a code-shaped target: "change the header text in Chat.tsx") or as a
+    confirmation of one ("do it", "yes apply that", "why won't you just make the change") that
+    follows an earlier edit request or an assistant reply that offered/refused one. Deliberately
+    conservative on bare verbs: "make your replies shorter" and "update my memory" are not edits."""
+    if not messages:
+        return False
+    humans = [m for m in messages if _is_human(m)]
+    if not humans:
+        return False
+    last = _message_text(humans[-1]).strip()
+    if not last:
+        return False
+
+    def explicit(text: str) -> bool:
+        return bool(_EDIT_VERB_RE.search(text) and _CODE_TARGET_RE.search(text))
+
+    if explicit(last):
+        return True
+    previous_ai = next((_message_text(m) for m in reversed(messages) if not _is_human(m)), "")
+    words = len(last.split())
+    if words > 40:
+        return False
+    # The whole window, not just the last few messages: after several "make the change" /
+    # "APPLY THE CHANGE" in a row (the real thread) the original, explicit request is further back.
+    recent_explicit = any(explicit(_message_text(m)) for m in humans[:-1])
+    is_confirmation = bool(_EDIT_CONFIRMATION_RE.search(last))
+    # A scrubbed refusal (see scrub_stale_capability_denials) still counts as "the assistant
+    # refused" — the scrub runs before this check, so the placeholder is all that's left of it.
+    ai_offered_or_denied = (
+        bool(_OFFERED_OR_DENIED_EDIT_RE.search(previous_ai)) or previous_ai.strip() == _SCRUBBED_DENIAL_PLACEHOLDER
+    )
+    if is_confirmation and words <= 14 and (recent_explicit or ai_offered_or_denied):
+        return True
+    # A longer complaint at a refusal ("you CAN apply the change but are refusing to") right after
+    # the assistant offered or refused an edit that the user had explicitly asked for.
+    return ai_offered_or_denied and recent_explicit and bool(_EDIT_VERB_RE.search(last))
+
+
+def is_stale_capability_denial(text: str) -> bool:
+    """An assistant reply claiming it can't write/edit files (or can only read and search)."""
+    return bool(_STALE_DENIAL_RE.search(text or ""))
+
+
+_SCRUBBED_DENIAL_PLACEHOLDER = "(I hadn't made that change yet.)"
+
+
+def scrub_stale_capability_denials(messages):
+    """A copy of `messages` with earlier assistant replies that denied being able to edit files
+    swapped for a neutral placeholder. With a local folder connected those replies are false, and a
+    thread full of them teaches the model to keep saying it — the exact pattern observed. New
+    message objects are built so the persisted transcript is never altered; only what the model
+    sees changes."""
+    scrubbed = []
+    for message in messages:
+        if not _is_human(message) and is_stale_capability_denial(_message_text(message)):
+            scrubbed.append(AIMessage(content=_SCRUBBED_DENIAL_PLACEHOLDER))
+        else:
+            scrubbed.append(message)
+    return scrubbed

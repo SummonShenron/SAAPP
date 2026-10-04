@@ -41,11 +41,13 @@ def _not_found_hint(content_lf: str, old_lf: str) -> str:
     return " Not even its first line appears in this file — you may be quoting the wrong file or stale code."
 
 
-def apply_replace(content: str, old: str, new: str) -> Tuple[Optional[str], Optional[str]]:
-    """Replaces the one exact occurrence of `old` in `content` with `new`, returning
-    (new_content, None) or (None, error). Matching ignores CRLF vs LF (the model only ever sees
-    one), and a CRLF file stays CRLF. The browser applies edits with the same rules (see
-    local/src/localEditsCore.ts) — keep the two in step."""
+def apply_replace(
+    content: str, old: str, new: str, replace_all: bool = False
+) -> Tuple[Optional[str], Optional[str]]:
+    """Replaces the one exact occurrence of `old` in `content` with `new` (or, with `replace_all`,
+    every occurrence), returning (new_content, None) or (None, error). Matching ignores CRLF vs LF
+    (the model only ever sees one), and a CRLF file stays CRLF. The browser applies edits with the
+    same rules (see local/src/localEditsCore.ts) — keep the two in step."""
     content_lf, crlf = _to_lf(content)
     old_lf = old.replace("\r\n", "\n")
     new_lf = new.replace("\r\n", "\n")
@@ -56,12 +58,13 @@ def apply_replace(content: str, old: str, new: str) -> Tuple[Optional[str], Opti
     count = content_lf.count(old_lf)
     if count == 0:
         return None, "old_string was not found in the file." + _not_found_hint(content_lf, old_lf)
-    if count > 1:
+    if count > 1 and not replace_all:
         return None, (
-            f"old_string matches {count} places in the file; include more surrounding lines so it "
-            f"matches exactly one."
+            f"old_string matches {count} places in the file; either include more surrounding lines "
+            f"so it matches exactly one, or — if EVERY one of the {count} should change — add "
+            f"\"replace_all\": true to this edit."
         )
-    result = content_lf.replace(old_lf, new_lf, 1)
+    result = content_lf.replace(old_lf, new_lf) if replace_all else content_lf.replace(old_lf, new_lf, 1)
     return (result.replace("\n", "\r\n") if crlf else result), None
 
 
@@ -154,12 +157,16 @@ def validate_edit_proposal(edits: Any, read_file: Callable[[str], Optional[str]]
                 f"{{path, content}}; to edit an existing one, check the path with find_file first"
             )
         else:
-            replaced, error = apply_replace(working[path], old, new)
+            replace_all = op.get("replace_all") is True
+            replaced, error = apply_replace(working[path], old, new, replace_all)
             if error:
                 errors.append(f"{label}: {error}")
             else:
                 working[path] = replaced
-                normalized.append({"type": "replace", "path": path, "old_string": old, "new_string": new})
+                normalized_op = {"type": "replace", "path": path, "old_string": old, "new_string": new}
+                if replace_all:
+                    normalized_op["replace_all"] = True
+                normalized.append(normalized_op)
 
     touched = [path for path in working if working[path] != original[path]]
     if len(touched) > MAX_EDIT_FILES:

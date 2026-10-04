@@ -48,6 +48,9 @@ const BATCH_MAX_FILES = 300;
 const SKIP_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', '__pycache__', '.venv', 'venv', '.next', 'coverage',
   'chroma_db', 'index-db',
+  // Claude Code's duplicate repo checkouts (.claude/worktrees) — keep in step with
+  // backend/services/local_workspace.py's _SKIPPED_DIR_NAMES.
+  '.claude',
 ]);
 const TEXT_EXTENSIONS = new Set([
   'py', 'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'json', 'md', 'mdx', 'css', 'scss', 'html', 'htm',

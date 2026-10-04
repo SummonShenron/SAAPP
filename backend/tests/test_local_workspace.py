@@ -65,6 +65,21 @@ def test_unsafe_and_secret_paths_are_rejected_without_aborting_the_batch(tmp_pat
     assert not (stored / ".env").exists()
 
 
+def test_claude_worktree_duplicates_are_not_snapshotted():
+    # A stale full copy of the repo under .claude/worktrees doubled the file count and put a second,
+    # differently-numbered Chat.tsx in front of the model.
+    result = _sync([
+        _file("local/src/pages/Chat.tsx"),
+        _file(".claude/worktrees/abc123/local/src/pages/Chat.tsx"),
+        _file(".claude/launch.json", "{}"),
+    ])
+
+    assert result["accepted"] == 1
+    assert {r["path"] for r in result["rejected"]} == {
+        ".claude/worktrees/abc123/local/src/pages/Chat.tsx", ".claude/launch.json",
+    }
+
+
 def test_env_template_files_are_allowed():
     result = _sync([_file(".env.example", "API_KEY=changeme")])
     assert result["accepted"] == 1

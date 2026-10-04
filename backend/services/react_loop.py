@@ -63,6 +63,8 @@ async def run_react_loop(
     architecture_map: str = "",
     batchable_actions: frozenset | None = None,
     declaration_lookup=None,
+    partial_read_windows_ok: bool = False,
+    required_action: dict | None = None,
 ) -> dict:
     """Generic Reason -> Act -> Observe -> Decide loop shared by every iterative tool
     (MongoDB, GitHub search, ...). Each step asks the model for the next action given
@@ -265,6 +267,27 @@ async def run_react_loop(
     capability_denial_reject_count = 0
     MAX_CAPABILITY_DENIAL_REJECTIONS = 1
     pending_capability_denial_notice: str | None = None
+    # `required_action` ({"tool_action", "nudge", "final_notice", optional "nudge_after_step" /
+    # "max_final_rejections"}): for a turn where the user asked for something that can ONLY be
+    # satisfied by one specific action (a connected-folder edit request needs propose_local_edits —
+    # reading, searching and explaining never make the change). Real traces ended with the model
+    # re-reading files, pasting a snippet, or announcing it "couldn't" write, with the tool sitting
+    # in its menu the whole time. Prose telling it to use the tool kept losing to the model's own
+    # momentum, so this is mechanical: once it has read something and still hasn't acted, every step
+    # is told to act; and a "final" that never used the action is rejected (bounded, so a genuinely
+    # unanswerable request still gets an honest final eventually).
+    required_action_final_rejects = 0
+    pending_required_action_notice: str | None = None
+
+    def _required_action_done() -> bool:
+        if not required_action:
+            return True
+        prefix = f"{required_action['tool_action']}("
+        return any(
+            str(a.get("action_desc", "")).startswith(prefix) and not str(a.get("observation", "")).startswith("ERROR")
+            for a in attempts
+        )
+
     ungrounded_diff_reject_count = 0
     MAX_UNGROUNDED_DIFF_REJECTIONS = 1
     pending_ungrounded_diff_notice: str | None = None
@@ -353,6 +376,17 @@ async def run_react_loop(
         if pending_capability_denial_notice:
             question_for_step += f"\n\n({pending_capability_denial_notice})"
             pending_capability_denial_notice = None
+        if required_action and not forced_final and not _required_action_done():
+            has_read_something = any(
+                str(a.get("action_desc", "")).startswith("read_repo_file(")
+                and not str(a.get("observation", "")).startswith("ERROR")
+                for a in attempts
+            )
+            if has_read_something and step >= required_action.get("nudge_after_step", 3):
+                question_for_step += f"\n\n({required_action['nudge']})"
+        if pending_required_action_notice:
+            question_for_step += f"\n\n({pending_required_action_notice})"
+            pending_required_action_notice = None
         if pending_ungrounded_diff_notice:
             question_for_step += f"\n\n({pending_ungrounded_diff_notice})"
             pending_ungrounded_diff_notice = None
@@ -413,6 +447,21 @@ async def run_react_loop(
             # actual rejection), not just when the nudge was shown, so a detour in between
             # (e.g. it lists the repo tree first) doesn't spend the budget for free.
             retry_nudge_count += 1
+            continue
+        if (
+            action == "final"
+            and not forced_final
+            and required_action
+            and not _required_action_done()
+            and required_action_final_rejects < required_action.get("max_final_rejections", 2)
+        ):
+            required_action_final_rejects += 1
+            pending_required_action_notice = required_action["final_notice"]
+            logger.info(
+                "[%s] step %s: 'final' without %s on a turn that requires it — rejected (%s/%s).",
+                node_name, step + 1, required_action["tool_action"], required_action_final_rejects,
+                required_action.get("max_final_rejections", 2),
+            )
             continue
         if action == "final" and not forced_final and capability_denial_watchlist and capability_denial_reject_count < MAX_CAPABILITY_DENIAL_REJECTIONS:
             answer_text = decision.get("answer") or ""
@@ -635,6 +684,19 @@ async def run_react_loop(
                 args_signature = json.dumps(args or {}, sort_keys=True, default=str)
                 prior_args_signature = unretried_inconclusive_tools.get(tool_action_name)
                 is_unresolved_truncation = _mentions_unresolved_truncation(observation)
+                if (
+                    is_unresolved_truncation
+                    and partial_read_windows_ok
+                    and (args or {}).get("start_line")
+                    and "truncated — this file has" not in observation
+                ):
+                    # A deliberate mid-file window ("lines 1905-1919 of 2444") always ends with
+                    # "N more lines below", so under the strict rule it could never count as
+                    # finished short of reading to EOF — a real trace had the model re-read Chat.tsx
+                    # for 13 steps and never reach propose_local_edits. Only callers whose proposed
+                    # changes are validated mechanically against the real file (a connected local
+                    # folder) opt in; a read with NO start_line that got cut off still counts.
+                    is_unresolved_truncation = False
                 still_failing = (
                     observation.startswith("ERROR")
                     or _is_empty_observation(observation)

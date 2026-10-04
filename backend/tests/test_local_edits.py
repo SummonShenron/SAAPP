@@ -255,3 +255,61 @@ async def test_github_index_tools_are_still_offered_without_a_connected_folder(m
 
     assert "- search_code" in captured["prompt_template"]
     assert "- trace_symbol" in captured["prompt_template"]
+
+
+@run_async
+async def test_trace_says_the_turn_is_reading_from_the_connected_folder_and_that_edits_are_possible(monkeypatch):
+    _connect_folder()
+
+    _, _, emit = await _drive_turn(monkeypatch, [])
+
+    details = [c.args[1]["detail"] for c in emit.call_args_list if c.args[0] == "trace_detail" and c.args[1].get("title") == "Reading from"]
+    assert len(details) == 1
+    assert "local-rag" in details[0] and "edits can be proposed" in details[0]
+
+
+@run_async
+async def test_trace_says_github_read_only_when_no_folder_is_connected_on_the_server(monkeypatch):
+    _, _, emit = await _drive_turn(monkeypatch, [])
+
+    details = [c.args[1]["detail"] for c in emit.call_args_list if c.args[0] == "trace_detail" and c.args[1].get("title") == "Reading from"]
+    assert len(details) == 1
+    assert "GitHub" in details[0] and "no local folder connected" in details[0]
+
+
+# ---------------------------------------------------------------------------
+# replace_all: observed — asked to change text that appears in two identical blocks, the model
+# flailed trying to craft a unique anchor for each. An edit may now say replace_all to change every
+# occurrence (same rules as a single replace otherwise).
+# ---------------------------------------------------------------------------
+
+def test_replace_all_changes_every_occurrence_and_keeps_crlf():
+    result, error = le.apply_replace("a x\r\nb x\r\nc\r\n", "x", "Y", replace_all=True)
+    assert error is None
+    assert result == "a Y\r\nb Y\r\nc\r\n"
+
+
+def test_without_replace_all_a_repeated_match_is_rejected_and_the_error_mentions_the_option():
+    _, error = le.apply_replace("x and x", "x", "y")
+    assert "matches 2 places" in error and "replace_all" in error
+
+
+def test_replace_all_still_requires_at_least_one_match():
+    _, error = le.apply_replace("nothing here", "x", "y", replace_all=True)
+    assert "not found" in error
+
+
+def test_a_replace_all_edit_validates_and_is_marked_in_the_normalized_edit():
+    files = {"a.ts": "const t = 'Waiting';\n...\nconst u = 'Waiting';\n"}
+    result = le.validate_edit_proposal(
+        [{"path": "a.ts", "old_string": "'Waiting'", "new_string": "'Tracing request'", "replace_all": True}],
+        files.get,
+    )
+    assert result["ok"] is True
+    assert result["edits"][0]["replace_all"] is True
+    assert result["files"][0]["additions"] == 2 and result["files"][0]["deletions"] == 2
+
+
+def test_a_plain_edit_does_not_carry_a_replace_all_marker():
+    result = le.validate_edit_proposal([_replace("src/app.py", "'hi ' + name", "'yo ' + name")], _read)
+    assert "replace_all" not in result["edits"][0]

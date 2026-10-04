@@ -2008,6 +2008,53 @@ async def test_find_file_surfaces_a_near_match_search_code_would_miss(monkeypatc
     assert "menu-navigator.tsx" in result["content_to_format"]
 
 
+async def _find_file_result(monkeypatch, query, paths):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    repo_resp = _http_response(200, {"default_branch": "main"})
+    tree_resp = _http_response(200, {"tree": [{"path": p, "type": "blob"} for p in paths]})
+
+    def fake_get(url, headers=None, params=None, **kwargs):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        if "/git/trees/" in url:
+            return tree_resp
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+    responses = [
+        _llm_response(action="query", purpose="Find it", tool_action="find_file", args={"query": query}),
+        _llm_response(action="final", answer="done"),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+    result = await aw.tool_agent_node(_state("find it"))
+    return result["content_to_format"]
+
+
+@run_async
+async def test_find_file_with_only_weak_matches_points_to_search_literal(monkeypatch):
+    """A real trace burned 8 steps re-running find_file on a CSS class name ("trace-sidebar"):
+    no path is named like it, so the closest paths were noise and nothing said so."""
+    text = await _find_file_result(
+        monkeypatch, "trace-sidebar",
+        ["backend/services/memory_search.py", "backend/services/search.py", "local/src/pages/Chat.tsx"],
+    )
+
+    assert "weak matches" in text
+    assert "search_literal" in text
+
+
+@run_async
+async def test_find_file_with_a_strong_match_gets_no_hint(monkeypatch):
+    text = await _find_file_result(
+        monkeypatch, "Chat.tsx", ["local/src/pages/Chat.tsx", "backend/services/search.py"],
+    )
+
+    assert "Chat.tsx" in text
+    assert "weak matches" not in text
+
+
 @run_async
 async def test_find_file_no_query_is_error(monkeypatch):
     _setup_github_repo(monkeypatch)
@@ -2254,6 +2301,43 @@ async def test_search_literal_finds_every_occurrence_across_files(monkeypatch):
     result = await aw.tool_agent_node(_state("find every place GITHUB_TOKEN is read"))
 
     assert "github_service.py" in result["content_to_format"] or "Found every usage" in result["content_to_format"]
+
+
+@run_async
+async def test_search_literal_is_case_insensitive_and_prints_the_real_casing(monkeypatch):
+    """A real trace searched the user's lowercase "waiting for the first execution step" for a
+    string that is really "Waiting for…", got 'No occurrences', and concluded the text didn't
+    exist."""
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
+    repo_resp = _http_response(200, {"default_branch": "main"})
+    tree_resp = _http_response(200, {"tree": [
+        {"path": "local/src/pages/Chat.tsx", "type": "blob", "size": 100, "sha": "sha1"},
+    ]})
+
+    def fake_get(url, headers=None, params=None, **kwargs):
+        if url.endswith("/repos/SummonShenron/SAAPP"):
+            return repo_resp
+        if "/git/trees/" in url:
+            return tree_resp
+        if "/git/blobs/" in url:
+            return _http_response(200, {"encoding": "base64", "content": _b64("a\n  : 'Waiting for the first execution step...'}\n")})
+        raise AssertionError(f"Unexpected GET: {url}")
+
+    monkeypatch.setattr(aw.requests, "get", fake_get)
+    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
+    responses = [
+        _llm_response(action="query", purpose="Find the text", tool_action="search_literal", args={"term": "waiting for the first execution step"}),
+        _llm_response(action="final", answer="Found it."),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+    monkeypatch.setattr(aw.lite_llm_deep, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("where is the trace panel text"))
+
+    text = result["content_to_format"]
+    assert "Chat.tsx:2: : 'Waiting for the first execution step...'}" in text
+    assert "No occurrences" not in text
 
 
 @run_async

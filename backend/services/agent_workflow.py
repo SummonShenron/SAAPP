@@ -83,6 +83,7 @@ from backend.utils.agent_utils import (
     _FILE_EXTENSION_RE, _PATH_TOKEN_SPLIT_RE, _CAMEL_BOUNDARY_RE,
     _FUZZY_MATCH_CUTOFF, _FUZZY_MATCH_LIMIT, _tokenize_for_fuzzy_match, _fuzzy_path_score,
     fuzzy_query_tokens,
+    looks_like_edit_request,
     _classify_symbol_line,
     _VISUAL_INSPECTION_RE, _mentions_visual_inspection,
     _AUDIT_TASK_RE, _is_audit_style_task, _AUDIT_TASK_SEARCH_NUDGE,
@@ -210,6 +211,14 @@ TOOL_AGENT_CAPABILITY_DENIAL_WATCHLIST = [
         re.compile(r'\b(mongo(?:db)?|the database)\b', re.IGNORECASE),
         "- run_mongo_query —",
     ),
+    # Observed with a connected local folder: asked to make a change, the model replied "I am only
+    # able to read and search your files, I cannot write the changes" and described the edit in
+    # prose — propose_local_edits was in the menu the whole time. The menu substring below only
+    # exists in the prompt when a folder is connected, so this never fires otherwise.
+    (
+        re.compile(r'\b(writ(?:e|ing)|edit(?:ing)?|modif(?:y|ying)|chang(?:e|es|ing)|apply|updat(?:e|ing)|files?)\b', re.IGNORECASE),
+        "- propose_local_edits —",
+    ),
 ]
 
 # A real production trace: a user asked about a genuinely unreachable repo and the very first
@@ -245,6 +254,29 @@ _GITHUB_API_TIMEOUT_SECONDS = 15
 # budget_note below) as "not reached this call," not silently dropped.
 _SEARCH_LITERAL_MAX_TOTAL_SCAN_BYTES = 8_000_000
 _SEARCH_LITERAL_MAX_FILES_SCANNED = 300
+# find_file's best score below this means nothing is really named like the query (see _find_file).
+_FIND_FILE_WEAK_MATCH_SCORE = 0.7
+
+# Passed to run_react_loop as `required_action` on a turn where the user asked for a change and a
+# local folder is connected (see tool_agent_node's edit_turn).
+_LOCAL_EDIT_REQUIRED_ACTION = {
+    "tool_action": "propose_local_edits",
+    "nudge_after_step": 3,
+    "max_final_rejections": 2,
+    "nudge": (
+        "The user asked for a CHANGE, a local folder is connected, and you have already read what "
+        "you need. Reading and explaining do not make the change — your next action must be "
+        "propose_local_edits, with old_string copied EXACTLY from what you just read. Do not keep "
+        "re-reading or searching, and do not paste code for the user to apply themselves."
+    ),
+    "final_notice": (
+        "You tried to finish without calling propose_local_edits, but the user asked for a change "
+        "and their local folder IS connected — you CAN make it, right now. Do not say you can't "
+        "write files, do not paste a snippet for them to apply, and do not ask permission: call "
+        "propose_local_edits (the user sees a diff with an Apply button, which is the confirmation). "
+        "If you haven't found the exact lines yet, read them first, then propose."
+    ),
+}
 _SEARCH_LITERAL_MAX_MATCHES = 50
 _SEARCH_LITERAL_FETCH_CONCURRENCY = 8
 _SEARCH_LITERAL_SKIP_EXTENSIONS = (
@@ -864,6 +896,27 @@ async def reasoner_node(state: GraphState) -> GraphState:
                 "needs_send_email": False,
             }
 
+        # Mechanical backstop for the classifier. A real thread had the reasoner file a short,
+        # frustrated "make the change" as plain conversation (which has no tools at all), even
+        # with a prompt rule against exactly that. When a local folder is connected and the
+        # message is an edit request — or a confirmation of one — the tool agent runs, whatever
+        # the classifier said. Left alone when another node already owns the request.
+        _other_action_flags = (
+            "needs_create_pr", "needs_create_issue", "needs_create_calendar_event",
+            "needs_update_calendar_event", "needs_calendar_lookup", "needs_gmail_lookup",
+            "needs_drive_lookup", "needs_send_email", "needs_pr_summary",
+        )
+        if (
+            isinstance(flags, dict)
+            and not flags.get("needs_github_search")
+            and not any(flags.get(k) for k in _other_action_flags)
+            and workspace_status(state.get("username"))["connected"]
+            and looks_like_edit_request(state.get("messages", []))
+        ):
+            logger.info("[Reasoner] Edit request with a connected local folder — routing to the tool agent.")
+            flags["needs_github_search"] = True
+            flags["follow_up_intent"] = True
+            flags["needs_conversation"] = False
         logger.info(f"[Reasoner] Flags: {flags}")
         state["reasoner_flags"] = flags
         logger.info("--- REASONER NODE END ---")
@@ -2142,9 +2195,27 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
         # for this turn's repo reads — checked once up front so the schema can tell the model its
         # reads reflect the user's live working tree rather than GitHub's default branch.
         local_workspace_handle = get_workspace_handle(username)
+        # A connected folder AND a message that asks for a change (directly, or as "do it" /
+        # "why won't you just make the change" after an earlier request or refusal): the only way
+        # to satisfy it is propose_local_edits, so the loop is told so mechanically — see
+        # run_react_loop's required_action.
+        edit_turn = local_workspace_handle is not None and looks_like_edit_request(state.get("messages", []))
+        if edit_turn:
+            logger.info("[tool_agent_node] edit request with a connected local folder — propose_local_edits is required this turn.")
         schema_parts = [f"repo={repo}", f"default_branch={default_branch}"]
         if repo_resolution_note:
             schema_parts.append(repo_resolution_note)
+        # Always says where this turn's repo reads come from, in the trace panel, so "it didn't know
+        # about my folder" can be diagnosed at a glance: the folder snapshot, or GitHub.
+        if local_workspace_handle is not None:
+            ws_status = workspace_status(username)
+            source_note = (
+                f"your local folder '{ws_status.get('name', 'local folder')}' "
+                f"({ws_status.get('file_count', '?')} files) — edits can be proposed"
+            )
+        else:
+            source_note = f"GitHub {repo}@{default_branch} (no local folder connected on the server) — read-only"
+        await safe_emit_event("trace_detail", {"node": "tool_agent_node", "title": "Reading from", "detail": source_note})
         if local_workspace_handle is not None:
             workspace_name = workspace_status(username).get("name", "local folder")
             schema_parts.append(
@@ -2335,7 +2406,17 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             if not scored:
                 return "No similar file paths found."
             scored.sort(key=lambda pair: pair[1], reverse=True)
-            return "\n".join(f"{path} (similarity {score:.2f})" for path, score in scored[:_FUZZY_MATCH_LIMIT])
+            result = "\n".join(f"{path} (similarity {score:.2f})" for path, score in scored[:_FUZZY_MATCH_LIMIT])
+            if scored[0][1] < _FIND_FILE_WEAK_MATCH_SCORE:
+                # A real trace burned 8 steps re-running find_file on a CSS class / identifier
+                # ("trace-sidebar"): those live INSIDE a file, so no path is named like them and
+                # the closest-looking paths are noise. Say so, instead of leaving it to guess.
+                result += (
+                    "\n(These are weak matches. If none of them is clearly the file you want, no file "
+                    "is named like that — a class name, identifier or piece of UI text lives INSIDE "
+                    "a file, so use search_literal with that exact text to find which file has it.)"
+                )
+            return result
 
         def _fetch_file_content(path: str):
             # Raw decoded file text, with no URL/truncation formatting applied — the primitive
@@ -2621,12 +2702,17 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
 
             matches = []
             scanned = 0
+            term_lower = term.lower()
 
             def _grep_text(item: dict, text: str) -> None:
                 nonlocal scanned
                 scanned += 1
                 for line_no, line in enumerate(text.splitlines(), start=1):
-                    if term in line:
+                    # Case-insensitive (like grep -i): a real trace searched the user's lowercase
+                    # "waiting for the first execution step" for a string that's really
+                    # "Waiting for…", got "No occurrences", and then wrongly concluded the text
+                    # didn't exist in the repo. Matches are still printed with their real casing.
+                    if term_lower in line.lower():
                         matches.append(f"{item.get('path')}:{line_no}: {line.strip()}")
                         if len(matches) >= _SEARCH_LITERAL_MAX_MATCHES:
                             break
@@ -2691,9 +2777,9 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 )
             if not matches:
                 return (
-                    f"No occurrences of {term!r} found — exhaustively scanned {scanned} of "
-                    f"{len(to_scan)} candidate files (skipped binaries/lockfiles). This is a "
-                    f"real, complete answer for the files scanned, not an index-based "
+                    f"No occurrences of {term!r} found (case-insensitive) — exhaustively scanned "
+                    f"{scanned} of {len(to_scan)} candidate files (skipped binaries/lockfiles). "
+                    f"This is a real, complete answer for the files scanned, not an index-based "
                     f"guess.{budget_note}"
                 )
             return (
@@ -2893,7 +2979,8 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 "pasting code in your final answer whenever the user asks you to make, apply, or "
                 "implement a change to files in their folder. Copy old_string EXACTLY from the "
                 "file as you read it this turn, with its original indentation, and include enough "
-                "surrounding lines that it matches exactly once. Propose every edit for the "
+                "surrounding lines that it matches exactly once — or, when the same text should "
+                "change in EVERY place it appears, add \"replace_all\": true to that edit. Propose every edit for the "
                 "request in ONE call. If it returns an error, fix the edits it names and call it "
                 "again with the complete corrected list. Call it exactly like any other action, "
                 "as a \"query\" step — for example: {\"action\": \"query\", \"purpose\": \"Add the "
@@ -3161,6 +3248,11 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     architecture_map=architecture_map,
                     batchable_actions=TOOL_AGENT_BATCHABLE_ACTIONS,
                     declaration_lookup=_lookup_existing_declarations,
+                    # With a connected folder, a proposed edit is checked against the real file
+                    # (exact-once match) on the server and again in the browser, so a deliberate
+                    # mid-file read can't produce a fabricated edit — don't force reading to EOF.
+                    partial_read_windows_ok=local_workspace_handle is not None,
+                    required_action=_LOCAL_EDIT_REQUIRED_ACTION if edit_turn else None,
                 )
             except _UnsafeActionRequested as e:
                 if e.decision.get("tool_action") == "propose_append_target_doc":
@@ -3348,6 +3440,21 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
 
         final_answer = loop_result["final_answer"]
         attempts = loop_result["attempts"]
+        if edit_turn and not any(
+            str(a.get("action_desc", "")).startswith("propose_local_edits(")
+            and not str(a.get("observation", "")).startswith("ERROR")
+            for a in attempts
+        ):
+            # The turn asked for a change and ended without one. Whatever the model wrote, the
+            # reader must not come away believing edits are impossible — they aren't, it just ran
+            # out of road. Appended as plain data so the voice stage can't contradict it.
+            final_answer = (
+                f"{final_answer}\n\nNOTE (authoritative): the user's local folder "
+                f"'{workspace_status(username).get('name', 'local folder')}' IS connected and edits CAN "
+                "be proposed — this turn simply ended before a proposal was made. Do not tell the "
+                "user you lack the ability to edit files; say the search ran out of steps and "
+                "suggest they send the request again (naming the file helps)."
+            )
 
         # The live trace panel already shows every step in real time — repeating it in the chat
         # message itself is only worth doing when the model says the receipt genuinely adds

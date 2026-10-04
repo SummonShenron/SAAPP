@@ -50,6 +50,11 @@ _GUEST_USERNAMES = {"guest-recruiter@example.com", "guest_bty@bty.local", "guest
 # trusts the client — secrets and vendored/build directories are refused here regardless.
 _SKIPPED_DIR_NAMES = {
     "node_modules", ".git", "dist", "build", "__pycache__", ".venv", "venv", ".next", "coverage",
+    "chroma_db", "index-db",
+    # Claude Code keeps full duplicate checkouts of the repo under .claude/worktrees. Snapshotting
+    # them doubles the file count (crowding real files out of search_literal's scan cap) and puts a
+    # second, differently-numbered copy of every file in front of the model.
+    ".claude",
 }
 _BLOCKED_FILE_PATTERNS = (
     ".env", ".env.*", "*.env", "*.pem", "*.key", "*.p12", "*.pfx", "id_rsa", "id_dsa", "id_ecdsa",
