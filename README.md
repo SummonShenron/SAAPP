@@ -89,16 +89,6 @@ Once the initial configuration is complete, you can bypass dependency checks to 
 
 PowerShell
 ./local_start.ps1
-Optional: Enable Admin Features with PAAPP
-SAAPP can run entirely on its own for chat and RAG workloads. However, to unlock the full admin feature set (including calendar tools, sticky notes, time tracking, and multi-agent workflows), you can run the PAAPP headless agent locally:
-
-Bash
-git clone [https://github.com/SummonShenron/PAAPP](https://github.com/SummonShenron/PAAPP)
-cd PAAPP
-pip install -r requirements.txt
-uvicorn local_agent.headless_app:app --reload --port 8000
-SAAPP automatically detects PAAPP via http://127.0.0.1:8000/api/headless-chat.
-
 Automated Data Ingestion Pipelines
 The project implements a two-tiered data pipeline architecture to separate initial system bootstrapping from runtime data adjustments:
 

@@ -50,7 +50,7 @@ def _reasoner_flags(**overrides):
     flags = {
         "needs_retrieval": False, "needs_rewrite": False, "needs_summary": False,
         "needs_formatting": False, "needs_conversation": False, "needs_memory_save": False,
-        "needs_memory_recall": False, "needs_paapp": False, "follow_up_intent": False,
+        "needs_memory_recall": False, "follow_up_intent": False,
         "needs_web_search": False, "needs_code_interpreter": False, "needs_github_search": False,
         "needs_pr_summary": False, "needs_create_pr": False, "needs_create_issue": False,
     }

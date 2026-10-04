@@ -11,6 +11,7 @@ stays unit-testable in isolation (mock Flow/Credentials/requests, no Mongo neede
 whatever persisted state they already fetched and are responsible for persisting whatever this
 module returns.
 """
+import datetime
 import logging
 import os
 import secrets
@@ -22,6 +23,30 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 
 logger = logging.getLogger("SASS Logger")
+
+
+def _is_revoked_grant(error: BaseException) -> bool:
+    """True only when Google's token endpoint said the grant itself is invalid. google-auth raises
+    RefreshError for these with the response body in its args, and the text carries the code too."""
+    if "invalid_grant" in str(error):
+        return True
+    return any(isinstance(arg, dict) and arg.get("error") == "invalid_grant" for arg in getattr(error, "args", ()))
+
+
+def _as_naive_utc(value) -> datetime.datetime | None:
+    """google-auth compares `Credentials.expiry` against a *naive* UTC now, so a stored expiry has to
+    be naive UTC. Mongo hands back naive datetimes already; an aware one (or an ISO string, from the
+    JSON fallback) is converted. Anything unusable is None, meaning "expiry unknown"."""
+    if isinstance(value, str):
+        try:
+            value = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if not isinstance(value, datetime.datetime):
+        return None
+    if value.tzinfo is not None:
+        value = value.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+    return value
 
 # This is SAAPP's one combined Google grant, not calendar-only despite the module/constant name —
 # Drive, Docs, and Gmail were added later in the same session and bundled into this same OAuth
@@ -56,6 +81,12 @@ class GoogleCalendarConnectionError(Exception):
     refresh that failed because the grant was revoked. Callers (tool_agent_node's read action,
     the create/update_calendar_event write actions) catch this and surface a plain, actionable
     "connect your calendar first" message rather than a raw stack trace."""
+
+
+class GoogleCalendarTemporaryError(GoogleCalendarConnectionError):
+    """A token refresh failed for a reason that says nothing about the grant (network error, Google
+    outage). The stored connection is intact, so callers must NOT tell the user to reconnect. A
+    subclass so any handler that only catches the base class still catches it."""
 
 
 class GoogleCalendarOAuth:
@@ -141,6 +172,7 @@ class GoogleCalendarOAuth:
         fernet = self._fernet()
         refresh_token_encrypted = doc.get("refresh_token_encrypted")
         original_refresh_token = fernet.decrypt(refresh_token_encrypted.encode()).decode() if refresh_token_encrypted else None
+        expiry = _as_naive_utc(doc.get("expires_at"))
         credentials = Credentials(
             token=fernet.decrypt(doc["access_token_encrypted"].encode()).decode(),
             refresh_token=original_refresh_token,
@@ -148,21 +180,33 @@ class GoogleCalendarOAuth:
             client_id=os.getenv("GOOGLE_CLIENT_ID"),
             client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
             scopes=doc.get("scopes"),
+            # Without this, `credentials.expired` is always False (no expiry to compare against), so
+            # an hour-old access token was handed out as if valid, Google answered 401, and the
+            # calendar call died on a bare Credentials that has nothing to refresh with.
+            expiry=expiry,
         )
 
-        if credentials.expired:
+        # An unknown expiry can't be trusted either — refresh rather than gamble on a stale token.
+        if credentials.expired or expiry is None:
             if not credentials.refresh_token:
                 google_calendar_utils.delete_connection(username)
                 raise GoogleCalendarConnectionError(f"Google Calendar connection expired for {username}; reconnect required")
             try:
                 credentials.refresh(Request())
             except Exception as error:
-                # A revoked grant surfaces here as a token-refresh failure (Google returns
-                # invalid_grant) — treat any refresh failure as "connection is dead" rather than
-                # trying to distinguish exact error bodies, and self-heal by deleting the stale
-                # record so it stops reporting connected: true.
-                google_calendar_utils.delete_connection(username)
-                raise GoogleCalendarConnectionError(f"Google Calendar connection for {username} is no longer valid: {error}") from error
+                # Only Google saying the grant itself is dead (invalid_grant: revoked, or expired
+                # after long disuse) means the connection is gone — self-heal by deleting the stale
+                # record so it stops reporting connected: true. Anything else (network failure,
+                # Google 5xx, a misconfigured client secret) says nothing about the grant, and
+                # deleting the connection over it would force the user to re-consent for no reason.
+                if _is_revoked_grant(error):
+                    google_calendar_utils.delete_connection(username)
+                    raise GoogleCalendarConnectionError(f"Google Calendar connection for {username} is no longer valid: {error}") from error
+                logger.warning("[google_calendar_oauth] Token refresh failed for %s without a revoked grant; keeping the connection: %r", username, error)
+                raise GoogleCalendarTemporaryError(
+                    "Google couldn't be reached to refresh the Google connection just now. "
+                    "The connection is still saved — try again in a moment."
+                ) from error
 
             # Google only sends a new refresh_token back on rotation, which is rare for this grant
             # type — only re-encrypt and overwrite it if it actually changed from what we started

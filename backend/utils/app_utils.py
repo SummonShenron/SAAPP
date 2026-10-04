@@ -32,18 +32,6 @@ CORRECTION_SIMILARITY_THRESHOLD = float(os.getenv("CORRECTION_SIMILARITY_THRESHO
 #     subprocess.run([sys.executable, script_path], check=True)
 
 chat_sessions = {}
-def serialize_doc(doc):
-    if doc and "_id" in doc:
-        doc["id"] = str(doc["_id"])
-        del doc["_id"]
-    return doc
-
-# Add this function to your app.py
-def get_db_dependency():
-    db = get_db()
-    if db is None:
-        raise HTTPException(status_code=500, detail="Database connection unavailable")
-    return db
 
 CONVERSATIONS_DIR = os.path.join("saapp_data", "conversations")
 
@@ -98,6 +86,10 @@ def collect_kb_images(docs) -> list:
     return images
 
 
+DEFAULT_CONVERSATION_PAGE_SIZE = 100
+MAX_CONVERSATION_PAGE_SIZE = 500
+
+
 def load_user_conversations(username: str) -> list:
     """Loads all of a user's conversation threads from MongoDB, falling back to JSON."""
     db = get_db()
@@ -114,6 +106,104 @@ def load_user_conversations(username: str) -> list:
             return []
 
 
+def load_user_conversation(username: str, session_id: str) -> dict | None:
+    """One thread (with its messages). Unlike load_user_conversations, Mongo only ships this one
+    document instead of every thread the user has ever had."""
+    db = get_db()
+    if db is not None:
+        return db["conversations"].find_one({"username": username, "session_id": session_id}, {"_id": 0})
+    return next((c for c in load_user_conversations(username) if c.get("session_id") == session_id), None)
+
+
+def list_user_conversation_summaries(username: str) -> list:
+    """Title/timestamp rows for the conversations panel, newest first. Mongo's projection keeps the
+    message arrays — by far the bulk of each document — out of the response entirely."""
+    db = get_db()
+    if db is not None:
+        rows = list(db["conversations"].find(
+            {"username": username}, {"_id": 0, "session_id": 1, "title": 1, "updated_at": 1}
+        ))
+    else:
+        rows = load_user_conversations(username)
+    summaries = [
+        {"session_id": c["session_id"], "title": c.get("title", ""), "updated_at": c.get("updated_at", "")}
+        for c in rows
+    ]
+    summaries.sort(key=lambda c: c["updated_at"], reverse=True)
+    return summaries
+
+
+def paginate_messages(messages: list, limit: int | None = None, before: int | None = None) -> dict:
+    """Newest-first paging over a transcript: the `limit` messages ending just before index `before`
+    (default: the end), returned in chronological order with `start`/`total` so a client can ask for
+    the previous page by passing `before=start`."""
+    total = len(messages)
+    limit = min(max(limit or DEFAULT_CONVERSATION_PAGE_SIZE, 1), MAX_CONVERSATION_PAGE_SIZE)
+    end = total if before is None else min(max(before, 0), total)
+    start = max(end - limit, 0)
+    return {"messages": messages[start:end], "start": start, "total": total}
+
+
+def _deserialize_messages(raw_messages: list) -> list:
+    messages = []
+    for msg in raw_messages or []:
+        m_type = msg.get("type")
+        content = msg.get("content", "")
+        if m_type == "human": messages.append(HumanMessage(content=content))
+        elif m_type == "ai": messages.append(AIMessage(content=content))
+        elif m_type == "system": messages.append(SystemMessage(content=content))
+    return messages
+
+
+class TranscriptMessages(list):
+    """A process's in-memory copy of one saved conversation, remembering how many of its leading
+    messages are already stored. save_conversation_turn appends only what comes after that point,
+    so a copy that has fallen behind the database (another backend instance sharing the same Mongo
+    saved in the meantime) can never overwrite what the other instance wrote — the old
+    replace-the-whole-transcript save did exactly that and silently deleted a morning's messages."""
+    persisted: int = 0
+
+
+def load_session_messages(username: str, session_id: str) -> "TranscriptMessages":
+    """The saved transcript of one conversation as LangChain messages (empty if it's brand new).
+    Loaded on first use per conversation instead of warm-starting every user's every thread at boot."""
+    convo = load_user_conversation(username, session_id)
+    transcript = TranscriptMessages(_deserialize_messages(convo.get("messages", [])) if convo else [])
+    transcript.persisted = len(transcript)
+    return transcript
+
+
+def sync_session_messages(username: str, session_id: str, transcript: "TranscriptMessages") -> None:
+    """Brings an already-loaded in-memory transcript up to date with the database before a turn, so
+    messages saved by another backend instance are neither missing from the model's context nor at
+    risk of being overwritten. One tiny aggregate per turn (a message count, no message data); the
+    missing tail is fetched only when the counts differ. Local, unsaved messages stay at the end."""
+    db = get_db()
+    if db is None or not isinstance(transcript, TranscriptMessages):
+        return
+    match = {"username": username, "session_id": session_id}
+    sizes = list(db["conversations"].aggregate([
+        {"$match": match},
+        {"$project": {"_id": 0, "n": {"$size": {"$ifNull": ["$messages", []]}}}},
+    ]))
+    remote = sizes[0]["n"] if sizes else 0
+    if remote == transcript.persisted:
+        return
+    unsaved = list(transcript[transcript.persisted:])
+    if remote > transcript.persisted:
+        doc = db["conversations"].find_one(
+            match, {"_id": 0, "messages": {"$slice": [transcript.persisted, remote - transcript.persisted]}}
+        ) or {}
+        transcript[:] = list(transcript[:transcript.persisted]) + _deserialize_messages(doc.get("messages", [])) + unsaved
+        transcript.persisted = remote
+        logger.info("Synced %s::%s: picked up messages saved elsewhere (now %d stored).", username, session_id, remote)
+        return
+    # Fewer stored than we believed: the conversation was cleared or deleted elsewhere. The database wins.
+    fresh = load_session_messages(username, session_id)
+    transcript[:] = list(fresh) + unsaved
+    transcript.persisted = fresh.persisted
+
+
 def save_user_conversations(username: str, conversations: list) -> None:
     """Mirrors a user's full conversation list to the local JSON fallback."""
     with open(_get_conversations_file_path(username), "w") as f:
@@ -122,15 +212,27 @@ def save_user_conversations(username: str, conversations: list) -> None:
 
 def save_conversation_turn(username: str, session_id: str, messages: list) -> dict:
     """
-    Upserts ONE conversation thread's message list, auto-titling it from the first human
-    message. Replaces the old save_chat_history(), which rewrote every session for every
-    user on every single turn.
-    """
+    Upserts ONE conversation thread, auto-titling it from the first human message.
+
+    With Mongo as the store and a TranscriptMessages list, only the messages not yet stored are
+    appended ($push), never the whole list rewritten: a stale in-memory copy then can't delete what
+    another process saved. A plain list (or one shorter than what is stored, i.e. an intentional
+    clear) still replaces the whole transcript, as before."""
     serialized_messages = _serialize_messages(messages)
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-    all_conversations = load_user_conversations(username)
-    existing = next((c for c in all_conversations if c.get("session_id") == session_id), None)
+    db = get_db()
+    # With Mongo as the store, only this thread's title/created_at are needed — not every thread's
+    # full message list — and the local JSON mirror (rewritten in full on every turn) is skipped.
+    # The JSON file is only the store when there is no database.
+    if db is not None:
+        all_conversations = None
+        existing = db["conversations"].find_one(
+            {"username": username, "session_id": session_id}, {"_id": 0, "title": 1, "created_at": 1}
+        )
+    else:
+        all_conversations = load_user_conversations(username)
+        existing = next((c for c in all_conversations if c.get("session_id") == session_id), None)
 
     title = existing.get("title") if existing else None
     if not title:
@@ -146,17 +248,31 @@ def save_conversation_turn(username: str, session_id: str, messages: list) -> di
         "messages": serialized_messages,
     }
 
-    db = get_db()
     if db is not None:
-        db["conversations"].update_one(
-            {"username": username, "session_id": session_id},
-            {"$set": doc},
-            upsert=True,
-        )
+        match = {"username": username, "session_id": session_id}
+        append_only = isinstance(messages, TranscriptMessages) and messages.persisted <= len(serialized_messages)
+        if append_only:
+            delta = serialized_messages[messages.persisted:]
+            update = {
+                "$set": {"updated_at": now},
+                "$setOnInsert": {"title": title, "created_at": doc["created_at"]},
+            }
+            if delta:
+                update["$push"] = {"messages": {"$each": delta}}
+            else:
+                update["$setOnInsert"]["messages"] = []
+            db["conversations"].update_one(match, update, upsert=True)
+        else:
+            db["conversations"].update_one(match, {"$set": doc}, upsert=True)
+        if isinstance(messages, TranscriptMessages):
+            messages.persisted = len(serialized_messages)
+        return doc
 
     remaining = [c for c in all_conversations if c.get("session_id") != session_id]
     remaining.append(doc)
     save_user_conversations(username, remaining)
+    if isinstance(messages, TranscriptMessages):
+        messages.persisted = len(serialized_messages)
     return doc
 
 
@@ -178,41 +294,6 @@ def delete_user_conversation(username: str, session_id: str) -> bool:
     save_user_conversations(username, remaining)
     return True
 
-
-def load_chat_history() -> dict:
-    """Warm-starts the in-memory chat_sessions dict (keyed 'username::session_id') at boot."""
-    db = get_db()
-    raw_docs = []
-
-    if db is not None:
-        raw_docs = list(db["conversations"].find({}, {"_id": 0, "username": 1, "session_id": 1, "messages": 1}))
-    elif os.path.isdir(CONVERSATIONS_DIR):
-        for filename in os.listdir(CONVERSATIONS_DIR):
-            if not filename.endswith(".json"):
-                continue
-            with open(os.path.join(CONVERSATIONS_DIR, filename), "r") as f:
-                try:
-                    raw_docs.extend(json.load(f))
-                except Exception:
-                    continue
-
-    sessions = {}
-    for doc in raw_docs:
-        username = doc.get("username")
-        session_id = doc.get("session_id")
-        if not username or not session_id:
-            continue
-        messages = []
-        for msg in doc.get("messages", []):
-            m_type = msg.get("type")
-            content = msg.get("content", "")
-            if m_type == "human": messages.append(HumanMessage(content=content))
-            elif m_type == "ai": messages.append(AIMessage(content=content))
-            elif m_type == "system": messages.append(SystemMessage(content=content))
-        sessions[f"{username}::{session_id}"] = messages
-
-    logger.info("Restored %d chat sessions from the conversations store.", len(sessions))
-    return sessions
 
 def format_history_as_text(messages) -> str:
     """Formats the LangChain history array into a clean text transcript block for the prompt."""

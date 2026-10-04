@@ -59,7 +59,7 @@ def _reasoner_flags(**overrides):
     flags = {
         "needs_retrieval": False, "needs_rewrite": False, "needs_summary": False,
         "needs_formatting": False, "needs_conversation": False, "needs_memory_save": False,
-        "needs_memory_recall": False, "needs_paapp": False, "follow_up_intent": False,
+        "needs_memory_recall": False, "follow_up_intent": False,
         "needs_web_search": False, "needs_code_interpreter": False, "needs_github_search": False,
         "needs_pr_summary": False, "needs_create_pr": False, "needs_create_issue": False,
     }
@@ -69,11 +69,11 @@ def _reasoner_flags(**overrides):
 
 @run_async
 async def test_plan_continuation_executes_every_queued_agent(monkeypatch):
-    """Two independent reasoner flags (needs_memory_save + needs_paapp) both firing must run
+    """Two independent reasoner flags (needs_memory_save + needs_summary) both firing must run
     BOTH agents in sequence, not just the first."""
     monkeypatch.setattr(
         aw.lite_llm, "ainvoke",
-        AsyncMock(return_value=_reasoner_flags(needs_memory_save=True, needs_paapp=True)),
+        AsyncMock(return_value=_reasoner_flags(needs_memory_save=True, needs_summary=True)),
     )
 
     executed = []
@@ -82,26 +82,26 @@ async def test_plan_continuation_executes_every_queued_agent(monkeypatch):
         executed.append("memory_save")
         return state
 
-    def stub_paapp(state):
-        executed.append("paapp")
+    def stub_summarizer(state):
+        executed.append("summarizer")
         return state
 
     workflow = StateGraph(GraphState)
     workflow.add_node("coordinator_node", aw.coordinator_node)
     workflow.add_node("memory_save_node", stub_memory_save)
-    workflow.add_node("paapp_node", stub_paapp)
+    workflow.add_node("summarizer_node", stub_summarizer)
     workflow.add_node("formatter_node", lambda s: s)
     _register_stub_nodes_for_plan_destinations(workflow)
     workflow.add_edge(START, "coordinator_node")
     workflow.add_conditional_edges("coordinator_node", aw.coordinator_router, aw._PLAN_DESTINATIONS)
     workflow.add_conditional_edges("memory_save_node", aw.plan_continue_router, aw._PLAN_DESTINATIONS)
-    workflow.add_conditional_edges("paapp_node", aw.plan_continue_router, aw._PLAN_DESTINATIONS)
+    workflow.add_conditional_edges("summarizer_node", aw.plan_continue_router, aw._PLAN_DESTINATIONS)
     workflow.add_edge("formatter_node", END)
     graph = workflow.compile()
 
     await graph.ainvoke(_base_state("do a thing"))
 
-    assert executed == ["memory_save", "paapp"]
+    assert executed == ["memory_save", "summarizer"]
 
 
 @run_async

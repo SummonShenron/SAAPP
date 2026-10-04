@@ -22,7 +22,6 @@ export const PrivacyPage: React.FC = () => {
           <li><strong>Account identity:</strong> when you sign in, we receive your email address and a unique account identifier from our authentication provider (Clerk).</li>
           <li><strong>Conversation data:</strong> the messages you send the assistant, and the assistant's responses, so we can maintain conversation history and answer follow-up questions.</li>
           <li><strong>Documents you upload:</strong> if you use the Self Service knowledge-base feature, uploaded files are processed and indexed so the assistant can answer questions about them.</li>
-          <li><strong>Productivity data:</strong> if you use time-tracking, task, or calendar features, we store the entries you create.</li>
           <li><strong>Guest sessions:</strong> a "guest" sandbox mode is available that does not require a real account; guest sessions share a temporary, non-personal identity and are not tied to any individual.</li>
         </ul>
 

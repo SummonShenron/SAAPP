@@ -55,7 +55,9 @@ def make_personal_kb_id(clerk_id: str) -> str:
     return f"kb_{digest}"
 
 # Role/administrative groups that live in the same flat `groups` list as KB-access groups but
-# are never themselves a knowledge base to show as a query-scope option.
+# are never themselves a knowledge base to show as a query-scope option. PAAPP_Admins and
+# Taskboard_Admins are retired roles, kept here only because existing user records still carry
+# them — without this they'd show up as bogus knowledge bases in the scope picker.
 _NON_KB_ROLE_GROUPS = {"Global_Admins", "PAAPP_Admins", "Taskboard_Admins"}
 
 def get_accessible_affiliates(username: str, user_directory: dict) -> dict:
@@ -92,40 +94,3 @@ def verify_user_ingest_access(username: str, affiliate: str) -> bool:
         return True    
     required_ingester_group = f"{affiliate} Ingesters"
     return required_ingester_group in user_groups
-
-def verify_paapp_access(username: str) -> bool:
-    user_groups = load_user_directory_groups(username)
-    # Global Admins always have access
-    if "Global_Admins" in user_groups:
-        return True
-    # PAAPP-specific admin group
-    return "PAAPP_Admins" in user_groups
-
-def seed_guest_tasks(db, username: str):
-    """
-    Auto-populates the MongoDB tasks collection with interactive, 
-    sandbox data for the guest recruiter.
-    """
-    mock_tasks = [
-        {
-            "username": username,
-            "lane": "todo",
-            "title": "Review Jack's Resume 📄",
-            "description": "Download his resume from the Chat tab or ask the AI assistant about his qualifications."
-        },
-        {
-            "username": username,
-            "lane": "in_progress",
-            "title": "Test RAG Engine 🤖",
-            "description": "Go to the Chat page and ask: 'What technologies did Jack use to build this app?'"
-        },
-        {
-            "username": username,
-            "lane": "done",
-            "title": "Schedule a Chat ☕",
-            "description": "Reach out to Jack to set up a technical pairing session or virtual coffee."
-        }
-    ]
-    
-    # Batch insert the mock tasks into MongoDB
-    db["tasks"].insert_many(mock_tasks)

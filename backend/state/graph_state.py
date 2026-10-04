@@ -24,14 +24,8 @@ class GraphState(TypedDict):
     loop_count: int                 # Rewrite loop counter
     original_question: str          # First question before rewrites
     attachment_summaries: List[str] # Summary of user attached content
-    coordinator_intent: str         # e.g. "retrieve", "summarize", "paapp", etc.
+    coordinator_intent: str         # e.g. "retrieve", "summarize", etc.
     coordinator_plan: List[str]     # ordered list of agents to run
-    snapshot: Optional[Dict[str, Any]]
-    classified: Optional[Dict[str, Any]]
-    analysis_output: Optional[Dict[str, Any]]
-    patterns: Optional[Dict[str, Any]]
-    trends: Optional[Dict[str, Any]]
-    insights: Optional[List[Dict[str, Any]]]
     content_to_format: Optional[str]
     raw_generation: Optional[str]
     code_approval_status: Optional[str]
@@ -58,7 +52,7 @@ class GraphState(TypedDict):
     # the one field deliberately exempted from reset_transient_state's per-turn reset, so it
     # survives across turns via the checkpointer instead of being re-derived from rendered card
     # text (see tool_agent_node's _ClarificationNeeded handling and classify_intent's resume check)
-    emotional_state: Optional[Dict[str, Any]]  # {"valence", "intensity", "updated_at", "turns_since"} —
+    emotional_state: Optional[Dict[str, Any]]  # {"valence", "intensity", "updated_at", "turns_since", "need", "gist"} —
     # session-scoped, decaying read of the user's emotional state (see backend/utils/
     # emotion_utils.py); deliberately exempt from reset_transient_state so it survives across
     # topic changes via the checkpointer, which is keyed by session.

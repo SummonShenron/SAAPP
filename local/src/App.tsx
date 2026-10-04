@@ -9,9 +9,6 @@ import { PrivacyPage } from "./pages/Privacy";
 import { TermsPage } from "./pages/Terms";
 import { Layout } from "../src/components/Layout";
 import { api } from "./api";
-import { TimeWorkspace } from "./pages/Time"
-import { Taskboard } from "./pages/Taskboard"
-import InsightsPage from "./pages/InsightsPage";
 
 function App() {
   const navigate = useNavigate();
@@ -74,13 +71,9 @@ function App() {
         path="/chat"
         element={<ChatPage theme={theme} toggleTheme={toggleTheme} />}
       />
-        {/* <Route path="/time-tracking" element={<TimeWorkspace />} /> */}
         <Route path="/self-service" element={<SelfServicePage />} />
         <Route path="/memory" element={<MemoryPage />} />
         <Route path="/integrations" element={<IntegrationsPage />} />
-        {/* <Route path="/taskboard" element={<Taskboard />} />
-        <Route path="/insights" element={<InsightsPage/>} /> */}
-
       </Route>
       {/* Catch-all */}
       <Route path="*" element={<Navigate to="/" replace />} />

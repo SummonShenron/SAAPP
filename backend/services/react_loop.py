@@ -2,9 +2,8 @@
 tool_agent_node-style caller in backend/services/agent_workflow.py.
 
 Moved out as part of the incremental agent_workflow.py split (docs/coding-agent-roadmap.md,
-Section 13) — unlike the plain helper functions already moved to backend/utils/agent_utils.py
-and backend/utils/insight_utils.py, this is a genuine standalone engine (parameterized entirely
-via the `act`/`is_unsafe` callbacks, not a closure over any node's local state), so it gets its
+Section 13) — unlike the plain helper functions already moved to backend/utils/agent_utils.py, this is a genuine standalone engine (parameterized
+entirely via the `act`/`is_unsafe` callbacks, not a closure over any node's local state), so it gets its
 own service module rather than a "utils" file.
 """
 import asyncio

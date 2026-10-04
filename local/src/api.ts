@@ -145,25 +145,6 @@ export async function logLogin(): Promise<void> {
     console.error("Failed to transmit login log event:", err);
   }
 }
-/**
- * Check PAAPP admin access (calls backend endpoint).
- */
-export async function isPaappAdmin(clerkId: string): Promise<boolean> {
-  try {
-    const authHeaders = await getAuthHeaders();
-    // Corrected path: Removed the redundant ${BASE_URL}
-    const res = await fetch(
-      `${BASE_URL}/admin/paapp?clerk_id=${encodeURIComponent(clerkId)}`, 
-      { headers: { ...authHeaders } }
-    );
-    if (!res.ok) return false;
-    const data = await res.json();
-    return Boolean(data.allowed);
-  } catch (err) {
-    console.error("isPaappAdmin check failed", err);
-    return false;
-  }
-}
 export interface KnowledgeBase {
   id: string;
   display_name: string;
@@ -480,12 +461,29 @@ export async function listConversations(): Promise<ConversationSummary[]> {
   return res.json();
 }
 
+export interface ConversationPage {
+  session_id: string;
+  title: string;
+  messages: any[];
+  /** Index (in the full saved transcript) of the first message in this page; 0 means nothing earlier. */
+  start: number;
+  total: number;
+}
+
 /**
- * Fetch one conversation thread's full message history
+ * Fetch one page of a conversation thread — the newest `limit` messages by default, or the `limit`
+ * messages just before index `before` to page backwards (pass the previous page's `start`).
  */
-export async function getConversation(sessionId: string): Promise<{ session_id: string; title: string; messages: any[] }> {
+export async function getConversation(
+  sessionId: string,
+  opts: { limit?: number; before?: number } = {}
+): Promise<ConversationPage> {
   const authHeaders = await getAuthHeaders();
-  const res = await fetch(`${BASE_URL}/api/conversations/${encodeURIComponent(sessionId)}`, {
+  const params = new URLSearchParams();
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  if (opts.before !== undefined) params.set("before", String(opts.before));
+  const query = params.toString();
+  const res = await fetch(`${BASE_URL}/api/conversations/${encodeURIComponent(sessionId)}${query ? `?${query}` : ""}`, {
     headers: { ...authHeaders }
   });
   if (!res.ok) {
@@ -785,70 +783,12 @@ export const api = {
   // Optional: Redirect the user to the landing page immediately
   window.location.href = "/";
 },
-  getTasks: async () => {
-    const authHeaders = await getAuthHeaders();
-    const response = await fetch(`${BASE_URL}/api/tasks`, {
-      headers: { ...authHeaders }
-    });
-    if (!response.ok) throw new Error("Failed to fetch tasks");
-    return response.json();
-  },
-  
-  updateTask: async (taskId: string, updates: any, username: string) => {
-    const authHeaders = await getAuthHeaders();
-    console.log("DEBUG: Sending Auth Headers:", authHeaders);
-    const response = await fetch(`${BASE_URL}/api/tasks/${taskId}`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        ...authHeaders
-      },
-      body: JSON.stringify(updates),
-    });
-    if (!response.ok) throw new Error("Failed to update task on backend");
-    return response.json();
-  },
-  
-  createTask: async (task: any, username: string) => {
-    const authHeaders = await getAuthHeaders();
-    const response = await fetch(`${BASE_URL}/api/tasks`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...authHeaders
-      },
-      body: JSON.stringify(task),
-    });
-    if (!response.ok) throw new Error("Failed to save task");
-    return response.json();
-  },
-
-  deleteTask: async (taskId: string, username: string) => {
-    const authHeaders = await getAuthHeaders();
-    const response = await fetch(`${BASE_URL}/api/tasks/${taskId}`, {
-      method: "DELETE",
-      headers: { ...authHeaders }
-    });
-    if (!response.ok) throw new Error("Failed to delete task");
-    return response.json();
-  },
-  
-  getInsights(username: string) {
-    return getAuthHeaders().then(authHeaders => {
-      // Changed from a relative URL to absolute URL to avoid production routing bugs
-      return fetch(`${BASE_URL}/api/insights?username=${username}`, {
-        headers: { ...authHeaders }
-      }).then(r => r.json());
-    });
-  },
-  
   getAffiliates,
   getUserGroups,
   getIngestedDocuments,
   uploadDocuments,
   deleteDocument,
   verifyIdentity,
-  isPaappAdmin,
   uploadAttachment,
   sendChatMessage,
   listConversations,

@@ -340,3 +340,125 @@ async def test_reasoner_classification_failure_keeps_prior_state_and_uses_safe_f
 
     assert result["reasoner_flags"]["needs_conversation"] is True
     assert result["emotional_state"]["valence"] == "low"
+
+
+# ---------------------------------------------------------------------------
+# Carrying the feeling across a topic change: the gist, the one-time acknowledgement, the decay.
+# Measured against the real model, the old abstract "stay gentle" block changed nothing visible in
+# the reply, so these pin the concrete behaviors that did.
+# ---------------------------------------------------------------------------
+
+def _carried(turns_since, gist="a breakup; Tina ended things tonight", valence="distressed", intensity=0.8):
+    return {**_state(valence, intensity, turns_since=turns_since), "read_this_turn": False, "need": "solving", "gist": gist}
+
+
+def test_normalize_gist_flattens_trims_and_bounds_what_goes_into_a_prompt():
+    assert eu.normalize_gist({"gist": '  "a breakup;\n Tina ended\tthings"  '}) == "a breakup; Tina ended things"
+    assert len(eu.normalize_gist({"gist": "x" * 500})) <= 120
+
+
+@pytest.mark.parametrize("raw", [None, "gist", {"gist": None}, {"gist": 7}, {"gist": ["a"]}, {}])
+def test_normalize_gist_ignores_anything_that_is_not_a_string(raw):
+    assert eu.normalize_gist(raw) == ""
+
+
+def test_merge_stores_the_gist_with_a_new_reading():
+    merged = eu.merge_emotional_state(None, {"valence": "distressed", "intensity": 0.8, "gist": "a breakup"}, NOW)
+    assert merged["gist"] == "a breakup"
+
+
+def test_merge_neutral_turn_keeps_the_gist_so_the_cause_survives_a_topic_change():
+    prior = {**_state("distressed", 0.8), "gist": "a breakup"}
+    merged = eu.merge_emotional_state(prior, {"valence": "neutral", "intensity": 0.0}, NOW)
+    assert merged["gist"] == "a breakup"
+
+
+def test_merge_stronger_same_kind_reading_without_a_gist_keeps_what_it_was_about():
+    prior = {**_state("low", 0.5), "gist": "a performance plan at work"}
+    merged = eu.merge_emotional_state(prior, {"valence": "distressed", "intensity": 0.9}, NOW)
+    assert merged["valence"] == "distressed"
+    assert merged["gist"] == "a performance plan at work"
+
+
+def test_merge_a_recovery_does_not_inherit_the_old_painful_gist():
+    prior = {**_state("distressed", 0.4), "gist": "a breakup"}
+    merged = eu.merge_emotional_state(prior, {"valence": "positive", "intensity": 0.8}, NOW)
+    assert merged["valence"] == "positive"
+    assert merged["gist"] == ""
+
+
+def test_first_reply_after_the_shift_gets_one_specific_acknowledgement_and_a_calm_register():
+    context = eu.build_emotional_context(_carried(turns_since=1), NOW)
+    assert "(a breakup; Tina ended things tonight)" in context
+    assert "ONE short sentence" in context
+    assert "not a recap" in context
+    assert "I've got you" in context  # named as a stock line to avoid, not used
+    assert "no \"let's dive in\"" in context and "no exclamation marks" in context and "no emoji" in context
+    assert "plain, warm prose" in context
+    assert "never mention you're tracking it" in context
+
+
+def test_the_carried_block_says_it_outranks_the_personas_match_their_energy_rule():
+    # Abstract wording had no effect on the real model; saying outright that this wins over the
+    # persona's "be playful/expressive back" is what changed the reply.
+    assert "takes priority over the guidance in your voice description" in eu.build_emotional_context(_carried(1), NOW)
+    assert "takes priority over the guidance in your voice description" in eu.build_emotional_context(_carried(3), NOW)
+
+
+def test_later_replies_only_keep_the_register_and_do_not_acknowledge_it_again():
+    context = eu.build_emotional_context(_carried(turns_since=2), NOW)
+    assert "ONE short sentence" not in context
+    assert "Don't bring the painful topic up" in context
+    assert "no exclamation marks" in context
+    assert "(a breakup; Tina ended things tonight)" in context
+
+
+def test_the_one_time_acknowledgement_window_is_configurable(monkeypatch):
+    monkeypatch.setattr(eu, "EMOTION_TOUCH_MAX_TURNS", 3)
+    assert "ONE short sentence" in eu.build_emotional_context(_carried(turns_since=3), NOW)
+    assert "ONE short sentence" not in eu.build_emotional_context(_carried(turns_since=4), NOW)
+
+
+def test_carried_block_without_a_gist_has_no_dangling_parenthesis():
+    context = eu.build_emotional_context(_carried(turns_since=1, gist=""), NOW)
+    assert "painful. They've" in context
+    assert "()" not in context
+
+
+def test_acute_distress_survives_ten_ordinary_messages():
+    # Regression: with the old 45 min / 0.9-per-message defaults a 0.8 reading fell to the injection
+    # threshold after about ten messages, i.e. the attunement ended while the person was still raw.
+    state = _state("distressed", 0.8, minutes_ago=30, turns_since=10)
+    assert eu.effective_intensity(state, NOW) > eu.EMOTION_INJECTION_THRESHOLD * 1.4
+    assert eu.build_emotional_context({**state, "read_this_turn": False}, NOW) != ""
+
+
+def test_it_still_fades_eventually_rather_than_lingering_all_session():
+    state = _state("distressed", 0.8, minutes_ago=60 * 6, turns_since=40)
+    assert eu.build_emotional_context({**state, "read_this_turn": False}, NOW) == ""
+
+
+def test_reasoner_prompt_asks_for_a_gist():
+    from backend.components.constraints import REASONER_PROMPT
+    assert '"gist"' in REASONER_PROMPT
+
+
+@run_async
+async def test_reasoner_carries_the_gist_through_a_neutral_topic_change(monkeypatch):
+    monkeypatch.setattr(
+        aw.lite_llm, "ainvoke",
+        AsyncMock(side_effect=[
+            _flags_response(valence="distressed", intensity=0.9, need="venting", gist="Tina broke up with the user tonight"),
+            _flags_response(valence="neutral", intensity=0.0, need="none", gist=""),
+        ]),
+    )
+    first = await aw.reasoner_node({"messages": [HumanMessage(content="tina broke up with me")]})
+    second = await aw.reasoner_node({
+        "messages": [HumanMessage(content="anyway, how does the retry logic work?")],
+        "emotional_state": first["emotional_state"],
+    })
+
+    assert second["emotional_state"]["gist"] == "Tina broke up with the user tonight"
+    assert second["emotional_state"]["turns_since"] == 1
+    assert "Tina broke up" in eu.build_emotional_context(second["emotional_state"], datetime.now(timezone.utc))
+

@@ -324,6 +324,32 @@ async def test_list_google_calendar_events_reports_no_connection(monkeypatch):
 
 
 @run_async
+async def test_calendar_read_with_a_temporary_google_failure_does_not_say_to_reconnect(monkeypatch):
+    _setup_github_repo(monkeypatch)
+
+    class _FakeOAuth:
+        def get_valid_access_token(self, username):
+            raise aw.GoogleCalendarTemporaryError("Google couldn't be reached. The connection is still saved — try again in a moment.")
+
+    monkeypatch.setattr(aw, "GoogleCalendarOAuth", _FakeOAuth)
+
+    captured_prompts = []
+    responses = [
+        _llm_response(action="query", purpose="Check calendar", tool_action="list_google_calendar_events", args={"date": "2026-06-21"}),
+        _llm_response(action="final", answer="Done.", show_work=True),
+    ]
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses.pop(0)
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    await aw.tool_agent_node(_state("what's on my google calendar tomorrow?"))
+
+    assert any("still saved" in p for p in captured_prompts)
+    assert not any("Connect it under Integrations" in p for p in captured_prompts)
+@run_async
 async def test_list_google_calendar_events_blocks_locked_guest_identity(monkeypatch):
     _setup_github_repo(monkeypatch)
     monkeypatch.setattr(aw, "CALENDAR_LOCKED_USERS", {"guest_bty"})

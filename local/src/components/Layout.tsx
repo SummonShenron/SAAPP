@@ -14,7 +14,6 @@ interface LayoutProps {
 export function Layout({ theme, toggleTheme }: LayoutProps) {
   const { isLoaded, isSignedIn } = useAuth();
   const navigate = useNavigate();
-  const [isAdmin, setIsAdmin] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [closing, setClosing] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -68,21 +67,6 @@ if (typeof window !== 'undefined') {
     }
   };
 
-  // 2. RUN BACKEND CHECKS AFTER GUEST SESSION IS INJECTED
-  useEffect(() => {
-    if (!isLoaded) return;
-    
-    const hasAuth = isSignedIn || !!localStorage.getItem('guest_token') || isEmbedded;
-    if (!hasAuth) return;
-
-    const username = localStorage.getItem("principal") || (isEmbedded ? "guest_bty" : "");
-    if (username) {
-      api.isPaappAdmin(username)
-        .then(setIsAdmin)
-        .catch((err) => console.warn("Admin check skipped for guest:", err));
-    }
-  }, [isLoaded, isSignedIn, isEmbedded]);
-
   // Auto-show the help/onboarding overlay once, the first time a user ever signs in — the
   // embed iframe never renders it at all (see the isEmbedded early return below), so skip the
   // check entirely there rather than fetching a setting nothing will use.
@@ -133,9 +117,6 @@ if (typeof window !== 'undefined') {
           <span onClick={() => navigate("/self-service")}>Self Service</span>
           {!isGuestPrincipal(getEffectivePrincipal()) && <span onClick={() => navigate("/memory")}>Memory</span>}
           {!isGuestPrincipal(getEffectivePrincipal()) && <span onClick={() => navigate("/integrations")}>Integrations</span>}
-          {/* {isAdmin && <span onClick={() => navigate("/time-tracking")}>Time Tracking</span>}
-          <span onClick={() => navigate("/taskboard")}>Taskboard</span>
-          <span onClick={() => navigate("/insights")}>Insights</span> */}
           <span onClick={toggleHelp}>Help</span>
           <span onClick={handleLogout} className="nav-exit">Disconnect</span>
         </div>
@@ -169,9 +150,6 @@ if (typeof window !== 'undefined') {
             <span onClick={() => handleNavClick("/self-service")}>Self Service</span>
             {!isGuestPrincipal(getEffectivePrincipal()) && <span onClick={() => handleNavClick("/memory")}>Memory</span>}
             {!isGuestPrincipal(getEffectivePrincipal()) && <span onClick={() => handleNavClick("/integrations")}>Integrations</span>}
-            {isAdmin && <span onClick={() => handleNavClick("/time-tracking")}>⏱ Time Tracking</span>}
-            <span onClick={() => handleNavClick("/taskboard")}>Taskboard</span>
-            <span onClick={() => handleNavClick("/insights")}>Insights</span>
             <span onClick={() => { toggleHelp(); setMobileMenuOpen(false); }}>Help Panel</span>
           </div>
         </div>
