@@ -41,6 +41,7 @@ from backend.components.constraints import (
 from backend.services.search import discover_workspace_documents
 from local_function_app.function_app import run_ingestion_pipeline, HOT_FOLDER_DIR
 from backend.state.graph_state import GraphState
+from backend.services import steering
 from backend.utils.app_utils import (
     save_conversation_turn,
     load_user_conversations,
