@@ -3580,3 +3580,32 @@ def test_find_file_ranks_the_file_matching_every_query_token_above_one_matching_
 def test_fuzzy_single_token_queries_score_as_before():
     tokens = aw._tokenize_for_fuzzy_match("navbar")
     assert aw._fuzzy_path_score(tokens, "local/src/components/menu-navigator.tsx") >= aw._FUZZY_MATCH_CUTOFF
+
+
+@run_async
+async def test_a_steer_queued_for_the_running_turn_reaches_the_agents_prompt_and_the_transcript(monkeypatch):
+    from backend.services import steering
+    _setup_github_repo(monkeypatch)
+    state = _state("find the login flow")
+    key = f"{state['username']}::{state.get('session_id')}"
+    transcript = [HumanMessage(content="find the login flow")]
+    run = steering.open_run(key, transcript)
+    assert steering.submit(key, "actually look at the signup flow instead") == "queued"
+
+    captured = []
+
+    async def fake_ainvoke(prompt):
+        captured.append(prompt)
+        return _llm_response(action="final", answer="Looked at signup.", show_work=False)
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+
+    result = await aw.tool_agent_node(state)
+
+    assert "USER STEERING" in captured[0] and "actually look at the signup flow instead" in captured[0]
+    assert [m.content for m in transcript] == ["find the login flow", "actually look at the signup flow instead"]
+    assert "Looked at signup." in result["content_to_format"]
+    # Once the work phase is over the endpoint must say so, so the browser sends it as a new message.
+    assert steering.submit(key, "too late now") == "too_late"
+    steering.close_run(key, run)
+

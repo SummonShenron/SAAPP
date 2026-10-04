@@ -670,6 +670,24 @@ export async function uploadAttachment(username: string, sessionId: string, file
 /**
  * Send streaming chat events
  */
+/**
+ * Queues a message into the turn Sonic is currently working on, to be applied at its next step.
+ * Anything other than "queued" means it could not be applied (no running turn, the work phase is
+ * already over, or the queue is full); the caller then sends it as a normal follow-up instead.
+ */
+export async function steerChat(sessionId: string, message: string): Promise<{ status: string }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/chat/steer`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ session_id: sessionId, message }),
+  });
+  if (!res.ok) {
+    throw new Error("Failed to send steering message.");
+  }
+  return res.json();
+}
+
 export async function sendChatMessage(
   username: string,
   question: string,
@@ -791,6 +809,7 @@ export const api = {
   verifyIdentity,
   uploadAttachment,
   sendChatMessage,
+  steerChat,
   listConversations,
   getConversation,
   deleteConversation,

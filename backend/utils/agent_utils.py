@@ -1001,3 +1001,21 @@ def scrub_stale_capability_denials(messages):
         else:
             scrubbed.append(message)
     return scrubbed
+
+
+def format_steering_notes(notes: list) -> str:
+    """The prompt block for messages the user sent while the agent was already working (see
+    backend/services/steering.py). They are listed oldest first and kept in every later step's
+    prompt, since the model has no other memory of them between steps."""
+    if not notes:
+        return ""
+    numbered = "\n".join(f"{i}. {note}" for i, note in enumerate(notes, 1))
+    return (
+        "\n\nUSER STEERING: the user sent the following while you were already working on this "
+        "(oldest first). They update the task. Where they conflict with the request above or with "
+        "your plan so far, follow the steering. Keep any work already done that is still valid "
+        "rather than redoing it, and change your NEXT action to reflect it. If the user says to "
+        "stop or is no longer interested, return action=\"final\" and say so briefly.\n"
+        + numbered
+    )
+
