@@ -60,6 +60,7 @@ from backend.services.python_sandbox import run_python_sandboxed, SAFE_IMPORT_AL
 from backend.services.browser_tool import (
     BrowserSession, browser_navigate, browser_read_text, browser_click, browser_type, browser_screenshot,
 )
+from backend.services.url_reader import read_url
 from backend.services.ci_test_runner import run_repo_tests, run_python_snippet, DEFAULT_MAX_WAIT_SECONDS as CI_TEST_RUN_MAX_WAIT_SECONDS
 from backend.utils.normalize_utils import ensure_str
 from backend.utils.agent_utils import (
@@ -163,6 +164,9 @@ TOOL_AGENT_STUCK_ACTION_REDIRECTS = {
 # real slow CI dispatches that must never run concurrently with anything else (see _is_unsafe and
 # the admin gates in _act), and every browser_* action is inherently stateful/sequential — a click
 # depends on whatever page a prior navigate actually loaded, so "independent" never applies to them.
+# read_url IS batchable even though its fallback uses the turn's one shared browser session: its
+# plain-HTTP fast path is stateless, and only the rare real-browser fallback is serialized, by a
+# per-turn asyncio.Lock inside url_reader.read_url (the same shape as the repo_checkout.py tarball fix).
 # Menu entries that query GitHub's hosted index of the committed branch — withheld whenever the user
 # has a local folder connected, since that index can't see the folder's (often uncommitted) code.
 _GITHUB_INDEX_ACTIONS_PREFIXES = ("- search_code", "- trace_symbol")
@@ -170,6 +174,7 @@ _GITHUB_INDEX_ACTIONS_PREFIXES = ("- search_code", "- trace_symbol")
 TOOL_AGENT_BATCHABLE_ACTIONS = frozenset({
     "list_repo_tree", "read_repo_file", "search_code", "find_file", "trace_symbol",
     "search_literal", "diff_branches", "list_commits", "list_pull_requests", "web_search", "run_python",
+    "read_url",
 })
 # The actual per-step concurrency cap (_MAX_BATCH_SIZE) lives alongside run_react_loop itself now
 # (backend/services/react_loop.py) — nothing outside that loop needs it.
@@ -1790,6 +1795,9 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
         # "live_view_emitted" guards the browser_live_view custom event below so it only ever
         # fires once per turn, the moment a LiveURL first becomes available.
         browser_session_holder: dict = {"session": None, "live_view_emitted": False}
+        # Serializes read_url's browser fallback — the one place a batched (concurrent) action can
+        # touch that single shared session. See url_reader.read_url.
+        browser_fallback_lock = asyncio.Lock()
 
         # Per-turn caches — _fetch_repo_tree_items was previously called fresh by every one of
         # _fetch_repo_paths/_find_file/_search_literal, and _read_file re-fetched from GitHub
@@ -1857,6 +1865,15 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 timeout_ms = int(os.getenv("BROWSER_TOOL_TIMEOUT_SECONDS", "20")) * 1000
                 browser_session_holder["session"] = BrowserSession(ws_endpoint, timeout_ms)
             return browser_session_holder["session"]
+
+        async def _announce_live_view_once(session: BrowserSession) -> None:
+            # Fires once, the moment a LiveURL first becomes available — lets the frontend embed a
+            # real-time (view-only) watch link in the chat bubble, via the exact same custom-event
+            # pipe trace_detail already uses. Shared by browser_navigate and read_url's browser
+            # fallback, either of which may be the first to open the session.
+            if session.live_url and not browser_session_holder["live_view_emitted"]:
+                browser_session_holder["live_view_emitted"] = True
+                await safe_emit_event("browser_live_view", {"url": session.live_url})
 
         def _run_mongo_code(code: str):
             local_scope = {"db": db, "username": username, "result": None}
@@ -2429,12 +2446,23 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             "recently-updated real pull requests on this repo ({number, title, state, author, "
             "updated_at}). Use this for 'the last N pull requests' — list_commits only covers "
             "commit history, not PRs.",
-            "- web_search — args: query (the exact search query string to run)",
+            "- web_search — args: query (the exact search query string to run); returns links and "
+            "snippets that may be stale or wrong — call read_url on a result to read what the page "
+            "actually says",
+            "- read_url — args: url (an http(s) URL); returns the real text content of that page. "
+            "This is the DEFAULT way to read what a page says — a documentation page, an article, "
+            "a web_search hit, a URL the user mentioned. It tries a cheap plain fetch first and "
+            "only opens a real browser if the page needs one, so it is fast and cheap; several "
+            "read_url calls can be batched in one step. Use browser_navigate instead only when you "
+            "need to SEE how a page renders or INTERACT with it",
             "- browser_navigate — args: url (a fully-qualified http(s) URL); loads it in a real "
             "headless browser and returns its title/final URL — call this before any other "
-            "browser_* action",
+            "browser_* action. Use it for visual or interactive work (how a page renders, "
+            "clicking, typing, screenshots); to simply read what a page says, use read_url "
+            "instead — it is cheaper and usually enough",
             "- browser_read_text — no args; returns the visible text of the CURRENTLY loaded "
-            "page — the cheap way to see what a live page actually says; prefer this over "
+            "page, after browser_navigate — the cheap way to see what a live page actually says "
+            "while you are already driving it; prefer this over "
             "browser_screenshot unless the visual appearance itself matters",
             "- browser_click — args: text (the visible label of the button/link to click) on "
             "the CURRENTLY loaded page — use browser_read_text first if unsure what's clickable",
@@ -2618,6 +2646,8 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 search = DuckDuckGoSearchAPIWrapper()
                 results = await asyncio.to_thread(search.results, query, max_results=3)
                 return [r for r in results if isinstance(r, dict)] if results else []
+            if tool_action == "read_url":
+                return await read_url(args.get("url"), _get_browser_session, browser_fallback_lock, _announce_live_view_once)
             if tool_action in {
                 "browser_navigate", "browser_read_text", "browser_click", "browser_type", "browser_screenshot"
             }:
@@ -2627,12 +2657,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     return f"ERROR: {e}"
                 if tool_action == "browser_navigate":
                     result = await browser_navigate(session, args.get("url"))
-                    # Fires once, the moment a LiveURL first becomes available — lets the
-                    # frontend embed a real-time (view-only) watch link in the chat bubble,
-                    # via the exact same custom-event pipe trace_detail already uses.
-                    if session.live_url and not browser_session_holder["live_view_emitted"]:
-                        browser_session_holder["live_view_emitted"] = True
-                        await safe_emit_event("browser_live_view", {"url": session.live_url})
+                    await _announce_live_view_once(session)
                     return result
                 if tool_action == "browser_read_text":
                     return await browser_read_text(session)
