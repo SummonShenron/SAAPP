@@ -99,8 +99,8 @@ export function MiniPatchy({ working = false, cheer = 0, energy = 'open' }: Mini
       type="button"
       className={`mp-root mp-${mood} mp-e-${energy}`}
       onClick={poke}
-      title={laughing ? 'Hehe!' : energy === 'subdued' ? 'Patchy' : 'Poke Patchy!'}
-      aria-label={energy === 'subdued' ? 'Patchy, the mascot.' : 'Patchy, the mascot. Poke him.'}
+      title={laughing ? 'Hehe!' : energy === 'subdued' ? 'SAAPP' : 'Poke SAAPP!'}
+      aria-label={energy === 'subdued' ? 'SAAPP, the mascot.' : 'SAAPP, the mascot. Poke him.'}
     >
       <svg viewBox="0 0 100 102" width={WIDTH} height={HEIGHT} fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
         {/* A check pops off the laptop when he finishes */}

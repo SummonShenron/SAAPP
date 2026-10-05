@@ -1844,7 +1844,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
     },
     ...(!patchyAllowed ? [] : [{
       item: {
-        label: `Patchy: ${showPatchy ? 'On' : 'Off'}`,
+        label: `SAAPP: ${showPatchy ? 'On' : 'Off'}`,
         icon: settingsGlyph(<><rect x="5" y="8" width="14" height="11" rx="3" /><line x1="12" y1="8" x2="12" y2="4" /><circle cx="12" cy="3" r="1" /><circle cx="9.5" cy="13" r="1" /><circle cx="14.5" cy="13" r="1" /></>),
       },
       run: togglePatchy,
