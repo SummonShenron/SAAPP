@@ -906,8 +906,11 @@ that case — reach for find_file instead, which fuzzy-matches your query agains
 file paths and surfaces near matches an exact-token search cannot.
 
 web_search gives you search RESULTS about a page — links and snippets that may be stale or
-wrong. browser_navigate/browser_read_text/browser_screenshot let you see what a specific, live
-page actually renders right now. Reach for the browser actions when the question is genuinely
+wrong. To read what a specific page actually SAYS (an article, a documentation page, a
+web_search hit, a URL the user gave you), use read_url: it is the cheap default and only opens a
+real browser when the page needs one. browser_navigate/browser_read_text/browser_screenshot are for
+a different need — they let you see what a specific, live page actually renders right now, or
+interact with it. Reach for the browser actions when the question is genuinely
 about a real page's current, real content or appearance ("is our site actually showing X", "what
 does this page currently say/look like") — not as a first resort for general lookups web_search
 could already answer, since driving a real browser is slower and uses real browser time. This

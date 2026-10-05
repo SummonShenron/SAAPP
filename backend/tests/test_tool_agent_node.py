@@ -3609,3 +3609,137 @@ async def test_a_steer_queued_for_the_running_turn_reaches_the_agents_prompt_and
     assert steering.submit(key, "too late now") == "too_late"
     steering.close_run(key, run)
 
+
+
+# ---------------------------------------------------------------------------
+# read_url: the cheap general "read what this page says" action (backend/services/url_reader.py).
+# Dispatch, menu framing, batching, and sharing the turn's one browser session with browser_*.
+# ---------------------------------------------------------------------------
+
+@run_async
+async def test_read_url_dispatches_with_the_turns_shared_session_getter_and_lock(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("BROWSERLESS_WS_ENDPOINT", "wss://fake-endpoint")
+    _FakeBrowserSession.instances = []
+    monkeypatch.setattr(aw, "BrowserSession", _FakeBrowserSession)
+    _setup_github_repo(monkeypatch)
+
+    fake_read = AsyncMock(return_value="URL: https://docs.example.com/retry\nRetries use exponential backoff.")
+    monkeypatch.setattr(aw, "read_url", fake_read)
+    responses = [
+        _llm_response(action="query", purpose="Read the docs page", tool_action="read_url", args={"url": "https://docs.example.com/retry"}),
+        _llm_response(action="final", answer="The docs say retries use exponential backoff."),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("what do the retry docs say?"))
+
+    fake_read.assert_awaited_once()
+    url, get_session, lock, on_ready = fake_read.call_args.args
+    assert url == "https://docs.example.com/retry"
+    assert isinstance(lock, asyncio.Lock)
+    assert callable(on_ready)
+    # The getter is the same one browser_* uses: calling it twice gives one session, constructed once.
+    assert (await get_session()) is (await get_session())
+    assert len(_FakeBrowserSession.instances) == 1
+    assert "exponential backoff" in result["content_to_format"]
+
+
+@run_async
+async def test_a_batch_of_read_urls_runs_concurrently(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    _setup_github_repo(monkeypatch)
+    state = {"in_flight": 0, "max": 0}
+
+    async def fake_read(url, *_):
+        state["in_flight"] += 1
+        state["max"] = max(state["max"], state["in_flight"])
+        await asyncio.sleep(0.05)
+        state["in_flight"] -= 1
+        return f"URL: {url}\ncontent of {url}"
+
+    monkeypatch.setattr(aw, "read_url", fake_read)
+    responses = [
+        _llm_response(action="query", purpose="Read both reference pages at once", queries=[
+            {"tool_action": "read_url", "args": {"url": "https://a.example.com/x"}, "purpose": "Read a"},
+            {"tool_action": "read_url", "args": {"url": "https://b.example.com/y"}, "purpose": "Read b"},
+        ]),
+        _llm_response(action="final", answer="Read content of https://a.example.com/x and content of https://b.example.com/y."),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    result = await aw.tool_agent_node(_state("compare those two pages"))
+
+    assert state["max"] == 2
+    assert "content of https://a.example.com/x" in result["content_to_format"]
+
+
+@run_async
+async def test_read_url_fallback_announces_the_live_view_once_even_alongside_browser_navigate(monkeypatch):
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("BROWSERLESS_WS_ENDPOINT", "wss://fake-endpoint")
+    _FakeBrowserSession.instances = []
+    monkeypatch.setattr(aw, "BrowserSession", _FakeBrowserSession)
+    _setup_github_repo(monkeypatch)
+    live_url = "https://production-sfo.browserless.io/live/index.html?i=abc"
+
+    async def fake_read(url, get_session, lock, on_ready):
+        session = await get_session()
+        session.live_url = live_url  # the fallback just opened the session
+        await on_ready(session)
+        await on_ready(session)  # a second fallback in the same turn
+        return f"URL: {url}\nrendered"
+
+    async def fake_navigate(session, url):
+        return f"Navigated to {url}."
+
+    monkeypatch.setattr(aw, "read_url", fake_read)
+    monkeypatch.setattr(aw, "browser_navigate", fake_navigate)
+    fake_emit = AsyncMock()
+    monkeypatch.setattr(aw, "safe_emit_event", fake_emit)
+    responses = [
+        _llm_response(action="query", purpose="Read the app", tool_action="read_url", args={"url": "https://app.example.com"}),
+        _llm_response(action="query", purpose="Now look at it", tool_action="browser_navigate", args={"url": "https://app.example.com"}),
+        _llm_response(action="final", answer="Done."),
+    ]
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+
+    await aw.tool_agent_node(_state("read then inspect the app"))
+
+    live_calls = [c for c in fake_emit.call_args_list if c.args[0] == "browser_live_view"]
+    assert len(live_calls) == 1 and live_calls[0].args[1] == {"url": live_url}
+    assert len(_FakeBrowserSession.instances) == 1
+
+
+@run_async
+async def test_menu_frames_read_url_as_the_default_for_reading_and_the_browser_for_seeing(monkeypatch):
+    """read_url and browser_navigate serve two different needs; the menu must say so, or the model
+    treats them as two options for the same job and the cheap one goes unused."""
+    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
+    monkeypatch.setenv("BROWSERLESS_WS_ENDPOINT", "wss://fake-endpoint")
+    _setup_github_repo(monkeypatch)
+    captured = []
+
+    async def fake_ainvoke(prompt):
+        captured.append(prompt)
+        return _llm_response(action="final", answer="ok")
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
+    await aw.tool_agent_node(_state("what does https://docs.example.com/retry say?"))
+
+    prompt = captured[0]
+    assert "- read_url —" in prompt
+    read_entry = prompt[prompt.index("- read_url —"):prompt.index("- browser_navigate —")]
+    assert "DEFAULT way to read what a page says" in read_entry
+    assert "SEE how a page renders or INTERACT" in read_entry
+    nav_entry = prompt[prompt.index("- browser_navigate —"):prompt.index("- browser_read_text —")]
+    assert "use read_url" in nav_entry
+    web_entry = prompt[prompt.index("- web_search —"):prompt.index("- read_url —")]
+    assert "read_url" in web_entry
+    # The capability watchlist's menu-line proof for the browser must still match.
+    assert "- browser_navigate —" in prompt
+
+
+def test_read_url_is_batchable_but_browser_actions_stay_sequential():
+    assert "read_url" in aw.TOOL_AGENT_BATCHABLE_ACTIONS
+    assert not any(a.startswith("browser_") for a in aw.TOOL_AGENT_BATCHABLE_ACTIONS)
