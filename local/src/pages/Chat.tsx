@@ -8,6 +8,7 @@ import { hasLocalFolderConsent, recordLocalFolderConsent } from '../localWorkspa
 import type { ApplyResult, UndoResult } from '../localEdits';
 import type { EditProposal } from '../localEditsCore';
 import ConversationsBlade from '../components/ConversationsBlade';
+import MiniPatchy, { type PatchyEnergy } from '../components/MiniPatchy';
 import OptionWheel, { type OptionWheelItem } from '../components/OptionWheel';
 import { getDynamicExampleQuestions } from '../utils/Example_List';
 import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type KnowledgeBase } from '../api';
@@ -628,6 +629,27 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const steerLogRef = useRef<{ id: string; text: string; applied: boolean }[]>([]);
   const pendingResendRef = useRef<{ id: string; text: string }[]>([]);
   const [resendTick, setResendTick] = useState(0);
+  // Bumped each time a turn finishes normally, so the pixel Patchy by the input can hop.
+  const [patchyCheer, setPatchyCheer] = useState(0);
+  // Patchy is on by default; the "..." menu can hide him. Remembered per browser (storage can be
+  // blocked, so a failed read/write just means the default / a non-sticky choice).
+  const [showPatchy, setShowPatchy] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('showPatchy') !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  // The energy ceiling the backend says is in force for this conversation (it follows the user's own
+  // emotional state); Patchy's mood mirrors it. Resets when the conversation does.
+  const [patchyEnergy, setPatchyEnergy] = useState<PatchyEnergy>('open');
+  const togglePatchy = () => {
+    setShowPatchy(prev => {
+      const next = !prev;
+      try { localStorage.setItem('showPatchy', String(next)); } catch { /* not persisted */ }
+      return next;
+    });
+  };
 
   const [showTooltip, setShowTooltip] = useState(false);
   const tooltipRef = useRef<HTMLDivElement>(null);
@@ -937,6 +959,7 @@ useEffect(() => {
     setAgentStatus('');
     setAgentPath([]);
     setHasChatted(false);
+    setPatchyEnergy('open');
     setAttachments([]);
     setAttachedFiles([]);
     setConversationsRefreshKey(k => k + 1);
@@ -960,6 +983,7 @@ useEffect(() => {
     ]);
     setHistoryStart(0);
     setHasChatted(false);
+    setPatchyEnergy('open');
     setAttachments([]);
     setAttachedFiles([]);
     setShowConversations(false);
@@ -982,6 +1006,8 @@ useEffect(() => {
         { id: genId(), sender: 'system', text: `What would you like to find out about, ${principal}?` }
       ]);
       setHasChatted(restored.some(m => m.sender === 'user'));
+      // The carried feeling belongs to the conversation just left; the next message re-reads it.
+      setPatchyEnergy('open');
       setAttachments([]);
       setAttachedFiles([]);
     } catch (e) {
@@ -1052,6 +1078,7 @@ useEffect(() => {
     Array.from(files).forEach(addAttachmentFile);
   };
 
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const handlePastedImage = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = e.clipboardData?.items;
     if (!items) return;
@@ -1087,6 +1114,11 @@ useEffect(() => {
     URL.revokeObjectURL(url);
   };
 
+  useEffect(() => {
+    if (inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, []);
   // This effect runs on every streamed token, and serializing a whole long thread each time is
   // what made replies stutter. Write only the newest window, at most once per debounce interval,
   // and flush any pending write when the tab is hidden or the component unmounts so nothing is lost.
@@ -1287,6 +1319,9 @@ useEffect(() => {
                   processNodeQueue();
                 }
               }
+              if (payload.event === 'emotion') {
+                setPatchyEnergy(payload.tier === 'subdued' || payload.tier === 'easing' ? payload.tier : 'open');
+              }
               if (payload.event === 'steer_applied') {
                 // The agent folded this many queued steering messages into its work (oldest first).
                 const count = Number(payload.count) || 0;
@@ -1466,6 +1501,7 @@ useEffect(() => {
       if (stoppedByUser) pendingResendRef.current = [];
       abortControllerRef.current = null;
       setLoading(false);
+      if (!stoppedByUser) setPatchyCheer(c => c + 1);
       setAgentStatus('');
       postPatchyStatus('done');
     }
@@ -1722,6 +1758,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
     </svg>
   );
   const settingsLocked = loading || principal === 'guest_bty';
+  // Patchy isn't offered to the BTY guest at all (no mascot, no menu toggle).
+  const patchyAllowed = !isEmbedded && principal !== 'guest_bty';
   const scopeLabel = allowedAffiliates.find(a => a.id === selectedAffiliate)?.display_name
     || (selectedAffiliate !== 'All' ? selectedAffiliate : 'None');
   const folderGlyph = settingsGlyph(<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />);
@@ -1804,6 +1842,14 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
       run: () => handleDeepThinkingChange(!deepThinking),
       keepOpen: true,
     },
+    ...(!patchyAllowed ? [] : [{
+      item: {
+        label: `Patchy: ${showPatchy ? 'On' : 'Off'}`,
+        icon: settingsGlyph(<><rect x="5" y="8" width="14" height="11" rx="3" /><line x1="12" y1="8" x2="12" y2="4" /><circle cx="12" cy="3" r="1" /><circle cx="9.5" cy="13" r="1" /><circle cx="14.5" cy="13" r="1" /></>),
+      },
+      run: togglePatchy,
+      keepOpen: true,
+    }]),
   ];
 
   const overflowItems: OptionWheelItem[] = [...settingsEntries.map(e => e.item), ...baseOverflowItems];
@@ -2019,7 +2065,9 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
             />
 
             <div className="chat-input-wrapper">
+              {patchyAllowed && showPatchy && <MiniPatchy working={loading} cheer={patchyCheer} energy={patchyEnergy} />}
               <textarea
+                ref={inputRef}
                 className="chat-textarea"
                 placeholder={loading ? "Steer Sonic while it works..." : chatPlaceholder}
                 value={input}

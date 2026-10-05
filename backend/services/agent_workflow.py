@@ -42,14 +42,14 @@ from backend.components.constraints import (
     MEMORY_EXTRACTION_PROMPT
 )
 from backend.utils.memory_utils import save_user_fact, load_user_facts, fetch_coding_preferences, fact_for_state
-from backend.utils.emotion_utils import merge_emotional_state
+from backend.utils.emotion_utils import energy_tier, merge_emotional_state
 from backend.services.local_workspace import get_workspace_handle, workspace_status
 from backend.services.local_edits import validate_edit_proposal
 from backend.services.memory_search import embed_and_store_memory_chunk, retrieve_user_memory
 from backend.state.graph_state import GraphState, route_after_grading
 from langgraph.graph import StateGraph, START, END
 from backend.utils.db_utils import get_db
-from backend.utils.user_settings_utils import get_user_timezone, get_user_target_doc_id
+from backend.utils.user_settings_utils import get_user_timezone, get_user_target_doc_id, resolve_github_token
 from backend.utils.google_calendar_utils import CALENDAR_LOCKED_USERS, get_connection_status as get_calendar_connection_status, has_granted_scope
 from backend.services.google_calendar_oauth import GoogleCalendarOAuth, GoogleCalendarConnectionError, GoogleCalendarTemporaryError
 from backend.services.google_calendar_service import list_events_for_day, create_event, update_event, find_event_by_summary_on_day
@@ -833,6 +833,8 @@ async def reasoner_node(state: GraphState) -> GraphState:
             state.get("emotional_state"), emotion_reading, datetime.now(timezone.utc)
         )
         logger.info("[Reasoner] Emotional state: %s", state["emotional_state"])
+        # Which energy ceiling is now in force, so the UI's mascot can follow it.
+        await safe_emit_event("emotion", {"tier": energy_tier(state["emotional_state"], datetime.now(timezone.utc))})
 
         if flags is None:
             # Fallback to standard false flags if JSON parsing fails
@@ -1652,7 +1654,9 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 "alone just because it looks plausible.)"
             )
 
-        token = os.getenv("GITHUB_TOKEN")
+        # The user's own GitHub token if they supplied one, else the shared server token. Every
+        # GitHub call this turn (reads, searches, CI test runs via `headers`) uses this one value.
+        token = resolve_github_token(username, purpose="tool_agent_turn", repo=repo)
         headers = {"Authorization": f"Bearer {token}", "Accept": "vnd.github+json"}
         api_base = "https://api.github.com"
         gh_base = "https://github.com"
@@ -2063,7 +2067,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
         def _diff_branches(base: str, head: str):
             if not base or not head:
                 return "ERROR: base and head branches are required"
-            return fetch_branch_diff_summary(repo, base, head)
+            return fetch_branch_diff_summary(repo, base, head, token=token)
 
         def _list_commits(branch: str, limit):
             branch = branch or default_branch
@@ -3122,7 +3126,7 @@ async def pr_summarizer_node(state: GraphState) -> dict:
         repo = state.get("repo") or resolve_recent_mention(
             state.get("messages", []), lambda c: extract_github_repo(c, fallback=None)
         ) or "SummonShenron/SAAPP"
-        token = os.getenv("GITHUB_TOKEN")
+        token = resolve_github_token(state.get("username"), purpose="pr_summary", repo=repo)
         headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json"
@@ -3220,9 +3224,10 @@ async def pr_summarizer_node(state: GraphState) -> dict:
             "relevance_grade": "pr_summary"
         }
 
-def fetch_branch_diff_summary(repo: str, base: str, head: str) -> str:
-    """Fetches recent commit messages and changed files between two branches."""
-    token = os.getenv("GITHUB_TOKEN")
+def fetch_branch_diff_summary(repo: str, base: str, head: str, token: str | None = None) -> str:
+    """Fetches recent commit messages and changed files between two branches. `token` is the caller's
+    resolved GitHub token (their own or the shared one); only when omitted does it read the env var."""
+    token = token or os.getenv("GITHUB_TOKEN")
     url = f"https://api.github.com/repos/{repo}/compare/{base}...{head}"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -3285,7 +3290,10 @@ def _draft_create_pr(state: GraphState) -> tuple[dict, str]:
         base_branch = state.get("base_branch", "main")
 
     logger.info(f"[propose_write_node:create_pr] Fetching real branch diff for {repo}: {base_branch} <- {head_branch}")
-    diff_context = fetch_branch_diff_summary(repo, base_branch, head_branch)
+    diff_context = fetch_branch_diff_summary(
+        repo, base_branch, head_branch,
+        token=resolve_github_token(state.get("username"), purpose="draft_create_pr", repo=repo),
+    )
 
     try:
         formatted_prompt = DRAFT_PR_PROMPT.format(
@@ -3318,7 +3326,7 @@ def _execute_create_pr(username: str, details: dict) -> str:
     repo, title, body = details.get("repo"), details.get("title"), details.get("body")
     head_branch, base_branch = details.get("head_branch"), details.get("base_branch")
 
-    token = os.getenv("GITHUB_TOKEN")
+    token = resolve_github_token(username, purpose="create_pr", repo=repo)
     api_url = f"https://api.github.com/repos/{repo}/pulls"
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
     payload = {"title": title, "body": body or "Automated Pull Request", "head": head_branch, "base": base_branch}
@@ -3413,7 +3421,7 @@ def _draft_create_issue(state: GraphState) -> tuple[dict, str]:
 
 def _execute_create_issue(username: str, details: dict) -> str:
     repo, title, body = details.get("repo"), details.get("title"), details.get("body")
-    token = os.getenv("GITHUB_TOKEN")
+    token = resolve_github_token(username, purpose="create_issue", repo=repo)
     api_url = f"https://api.github.com/repos/{repo}/issues"
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
     payload = {"title": title, "body": body or "Automated issue"}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { api, getEffectivePrincipal, isGuestPrincipal, type CalendarConnectionStatus } from '../api';
+import { api, getEffectivePrincipal, isGuestPrincipal, type CalendarConnectionStatus, type GitHubTokenStatus } from '../api';
 import '../pages/__styles__/SelfService.css';
 
 // Reads query params off the hash fragment (HashRouter — see local/src/main.tsx — puts the route
@@ -30,10 +30,56 @@ export const IntegrationsPage: React.FC = () => {
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [redirectBanner, setRedirectBanner] = useState<{ success: boolean; message: string } | null>(null);
+  const [githubTokenInput, setGithubTokenInput] = useState('');
+  const [githubStatus, setGithubStatus] = useState<GitHubTokenStatus>({ configured: false, last4: null, github_login: null });
+  const [savingToken, setSavingToken] = useState(false);
+  const [tokenSaveMessage, setTokenSaveMessage] = useState<{ success: boolean; message: string } | null>(null);
 
   const [targetDocInput, setTargetDocInput] = useState('');
   const [savingDoc, setSavingDoc] = useState(false);
   const [docSaveMessage, setDocSaveMessage] = useState<{ success: boolean; message: string } | null>(null);
+  // The server only ever reports WHETHER a token is saved (and its last 4 characters), so the field
+  // is never pre-filled and a saved token can't be read back out of the page.
+  const refreshGitHubToken = async () => {
+    try {
+      setGithubStatus(await api.getGitHubToken());
+    } catch (err) {
+      console.error('Failed to fetch GitHub token setting:', err);
+    }
+  };
+
+  const handleSaveGitHubToken = async () => {
+    setSavingToken(true);
+    setTokenSaveMessage(null);
+    try {
+      const status = await api.updateGitHubToken(githubTokenInput.trim());
+      setGithubStatus(status);
+      setGithubTokenInput('');
+      setTokenSaveMessage({
+        success: true,
+        message: status.github_login ? `Verified with GitHub as ${status.github_login} and saved.` : 'GitHub token saved.',
+      });
+    } catch (err) {
+      setTokenSaveMessage({ success: false, message: err instanceof Error && err.message ? err.message : 'Failed to save GitHub token.' });
+    } finally {
+      setSavingToken(false);
+    }
+  };
+
+  const handleRemoveGitHubToken = async () => {
+    if (!window.confirm('Remove your GitHub token? Sonic will go back to the shared server token.')) return;
+    setSavingToken(true);
+    setTokenSaveMessage(null);
+    try {
+      setGithubStatus(await api.updateGitHubToken(null));
+      setGithubTokenInput('');
+      setTokenSaveMessage({ success: true, message: 'GitHub token removed.' });
+    } catch (err) {
+      setTokenSaveMessage({ success: false, message: err instanceof Error && err.message ? err.message : 'Failed to remove GitHub token.' });
+    } finally {
+      setSavingToken(false);
+    }
+  };
 
   const refreshStatus = async () => {
     try {
@@ -68,9 +114,10 @@ export const IntegrationsPage: React.FC = () => {
       setRedirectBanner({ success: false, message });
     }
 
-    Promise.all([refreshStatus(), refreshTargetDoc()]).finally(() => setLoading(false));
+    Promise.all([refreshStatus(), refreshTargetDoc(), refreshGitHubToken()]).finally(() => setLoading(false));
   }, []);
 
+  
   const handleConnect = async () => {
     setConnecting(true);
     setRedirectBanner(null);
@@ -210,6 +257,60 @@ export const IntegrationsPage: React.FC = () => {
             )}
           </section>
         )}
+        {!isGuest && (
+          <section className="service-card">
+            <div className="card-badge">GITHUB TOKEN</div>
+            <h2>GitHub Token</h2>
+            <p className="card-description">
+              Your own personal access token, so Sonic can read, review and open pull requests and issues on
+              your repositories as you. It is verified with GitHub, stored encrypted, and never shown again after
+              you save it. Without one, Sonic uses the shared server token.
+            </p>
+
+            {githubStatus.configured && (
+              <div className="status-banner success">
+                Token saved (ends in …{githubStatus.last4})
+                {githubStatus.github_login ? ` — connected as ${githubStatus.github_login}` : ''}
+              </div>
+            )}
+
+            <div className="form-group">
+              <input
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                value={githubTokenInput}
+                onChange={(e) => setGithubTokenInput(e.target.value)}
+                placeholder={githubStatus.configured ? 'Paste a new token to replace it' : 'ghp_… or github_pat_…'}
+                style={{ width: '100%', boxSizing: 'border-box' }}
+              />
+            </div>
+            <button
+              className="action-button"
+              onClick={handleSaveGitHubToken}
+              disabled={savingToken || !githubTokenInput.trim()}
+            >
+              {savingToken ? 'Working…' : githubStatus.configured ? 'Replace token' : 'Save token'}
+            </button>
+            {githubStatus.configured && (
+              <button
+                className="action-button"
+                onClick={handleRemoveGitHubToken}
+                disabled={savingToken}
+                style={{ marginLeft: 8 }}
+              >
+                Remove
+              </button>
+            )}
+
+            {tokenSaveMessage && (
+              <div className={`status-banner ${tokenSaveMessage.success ? 'success' : 'error'}`}>
+                {tokenSaveMessage.message}
+              </div>
+            )}
+          </section>
+        )}
+        
       </div>
     </div>
   );

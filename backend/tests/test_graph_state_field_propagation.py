@@ -59,7 +59,7 @@ async def test_write_action_survives_real_graph_execution_into_propose_write_nod
             "needs_pr_summary": False, "needs_create_pr": True, "needs_create_issue": False,
         })))
     )
-    monkeypatch.setattr(aw, "fetch_branch_diff_summary", lambda repo, base, head: "Commits (0):\n\nFiles Changed (0):\n")
+    monkeypatch.setattr(aw, "fetch_branch_diff_summary", lambda repo, base, head, **_: "Commits (0):\n\nFiles Changed (0):\n")
     monkeypatch.setattr(
         aw, "get_chat_llm",
         lambda username: SimpleNamespace(invoke=lambda prompt: SimpleNamespace(content=json.dumps({
@@ -119,7 +119,7 @@ async def test_approval_works_across_two_truly_independent_turns(monkeypatch):
             })),
         ])
     )
-    monkeypatch.setattr(aw, "fetch_branch_diff_summary", lambda repo, base, head: "Commits (0):\n\nFiles Changed (0):\n")
+    monkeypatch.setattr(aw, "fetch_branch_diff_summary", lambda repo, base, head, **_: "Commits (0):\n\nFiles Changed (0):\n")
     monkeypatch.setattr(
         aw, "get_chat_llm",
         lambda username: SimpleNamespace(invoke=lambda prompt: SimpleNamespace(content=json.dumps({

@@ -66,6 +66,47 @@ export interface MeResponse {
   groups: string[];
 }
 
+/** What the server tells the browser about a user's own GitHub token: never the token itself. */
+export interface GitHubTokenStatus {
+  configured: boolean;
+  last4: string | null;
+  github_login: string | null;
+}
+
+async function readErrorDetail(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = await res.json();
+    if (typeof body?.detail === "string" && body.detail) return body.detail;
+  } catch {
+    // not JSON; use the generic message
+  }
+  return fallback;
+}
+
+export async function getGitHubToken(): Promise<GitHubTokenStatus> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/github-token`, {
+    headers: { ...authHeaders }
+  });
+  if (!res.ok) throw new Error(await readErrorDetail(res, "Failed to fetch GitHub token setting."));
+  return res.json();
+}
+
+/** Saves a token (the server verifies it with GitHub first), or removes it when `token` is null. */
+export async function updateGitHubToken(token: string | null): Promise<GitHubTokenStatus> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/github-token`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders
+    },
+    body: JSON.stringify({ token })
+  });
+  if (!res.ok) throw new Error(await readErrorDetail(res, "Failed to update GitHub token setting."));
+  return res.json();
+}
+
 /**
  * Security Helper: Generates authorization headers.
  * It checks if they are logged in as a guest, or requests a fresh JWT from Clerk's global instance.
@@ -774,6 +815,7 @@ export async function sendChatMessage(
 export const api = {
   
   getMe: async (username: string) => {
+
     const authHeaders = await getAuthHeaders();
     const response = await fetch(`${BASE_URL}/api/me`, {
       method: "GET",
@@ -802,6 +844,8 @@ export const api = {
   window.location.href = "/";
 },
   getAffiliates,
+  getGitHubToken,
+  updateGitHubToken,
   getUserGroups,
   getIngestedDocuments,
   uploadDocuments,

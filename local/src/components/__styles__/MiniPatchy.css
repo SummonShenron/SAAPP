@@ -1,0 +1,195 @@
+/* A small Patchy sitting on the top-right edge of the chat input, with a laptop. The SVG is 100x102 units
+   at 0.58px per unit; the torso's bottom (y 86) rests on the input's top edge and his blocky legs dangle
+   over the field, tapping up and down. */
+.mp-root {
+  position: absolute;
+  right: 12px;
+  bottom: calc(100% - 9px);
+  z-index: 3;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  line-height: 0;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  /* The SVG's empty margins shouldn't swallow clicks meant for the input; only Patchy himself is poke-able. */
+  pointer-events: none;
+  /* idle: Patchy's own cyan */
+  --mp-accent: #38c2de;
+  --mp-leg: 0.5s; /* half a cycle of the leg taps */
+}
+
+.mp-root svg > * { pointer-events: auto; }
+
+/* The chat input area styles every <button> inside it (blue background, lift and shadow on hover/press).
+   Patchy is a button in there but isn't one of those, so cancel all of it. */
+.chat-input-area button.mp-root,
+.chat-input-area button.mp-root:hover:not(:disabled),
+.chat-input-area button.mp-root:active:not(:disabled) {
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+}
+
+.mp-root:focus-visible {
+  outline: 2px dashed var(--mp-accent);
+  outline-offset: 2px;
+}
+
+.mp-root .mp-accent { fill: var(--mp-accent); }
+.mp-root .mp-stroke-accent { stroke: var(--mp-accent); }
+
+.mp-working { --mp-accent: #eab308; } /* the same yellow the full-size Patchy uses for "analyzing" */
+.mp-done    { --mp-accent: #22c55e; }
+.mp-laugh   { --mp-accent: #ec4899; }
+
+/* ---- idle: blocky legs tapping up and down in turn, a head tilt, a pulsing antenna, a blink ---- */
+.mp-leg { animation: mp-leg-tap var(--mp-leg) ease-in-out infinite alternate; }
+.mp-leg-r { animation-delay: calc(var(--mp-leg) * -1); }
+@keyframes mp-leg-tap {
+  from { transform: translateY(0); }
+  to { transform: translateY(-5px); }
+}
+.mp-working { --mp-leg: 0.28s; }
+.mp-done, .mp-laugh { --mp-leg: 0.16s; }
+
+/* The original Patchy's head tilt */
+.mp-head { transform-origin: 50px 54px; animation: mp-tilt 7s ease-in-out infinite; }
+@keyframes mp-tilt {
+  0%, 50%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-7deg); }
+  75% { transform: rotate(5deg); }
+}
+
+.mp-antenna { animation: mp-pulse 2s ease-in-out infinite; }
+@keyframes mp-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.mp-eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: mp-blink 4.2s infinite;
+}
+@keyframes mp-blink {
+  0%, 45%, 52%, 100% { transform: scaleY(1); }
+  48% { transform: scaleY(0.08); }
+}
+
+/* Code lines and a blinking cursor on the laptop's screen */
+.mp-line { transform-box: fill-box; transform-origin: left center; }
+.mp-cursor { animation: mp-cursor 1s steps(1) infinite; }
+@keyframes mp-cursor {
+  0%, 49.99% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+/* ---- working: looking down at the laptop, hands tapping, code building line by line ---- */
+.mp-working .mp-head { animation: mp-look-down 0.4s ease-out forwards; }
+@keyframes mp-look-down { to { transform: rotate(4deg) translateY(1.5px); } }
+.mp-working .mp-eyes { animation: mp-glance 0.4s ease-out forwards, mp-blink 4.2s infinite 0.4s; }
+@keyframes mp-glance { to { transform: translateY(2px); } }
+
+.mp-working .mp-hand-l { animation: mp-tap 0.28s ease-in-out infinite alternate; }
+.mp-working .mp-hand-r { animation: mp-tap 0.28s ease-in-out 0.14s infinite alternate; }
+@keyframes mp-tap {
+  from { transform: translateY(0); }
+  to { transform: translateY(-2px); }
+}
+
+.mp-working .mp-line { animation: mp-code 1.2s steps(6) infinite; }
+.mp-working .mp-line-2 { animation-delay: 0.4s; }
+.mp-working .mp-line-3 { animation-delay: 0.8s; }
+@keyframes mp-code {
+  0% { transform: scaleX(0.1); }
+  100% { transform: scaleX(1); }
+}
+
+.mp-working .mp-antenna { animation-duration: 0.6s; }
+
+/* ---- energy follows the user's emotional state (see MiniPatchy.tsx) ---- */
+/* easing: a small lift has been shown, so gentler, not flat */
+.mp-e-easing { --mp-leg: 1.1s; }
+.mp-e-easing.mp-idle { --mp-accent: #5fb4cf; }
+.mp-e-easing.mp-done .mp-bob { animation: mp-hop-small 0.5s ease-out 2; }
+@keyframes mp-hop-small {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+.mp-e-easing.mp-laugh .mp-bob { animation-duration: 0.5s; }
+
+/* subdued: low or frustrated with no lift yet, so quiet and steady */
+.mp-e-subdued.mp-idle { --mp-accent: #7f9cc9; }
+.mp-e-subdued.mp-working { --mp-accent: #c4a94f; }
+.mp-e-subdued.mp-done { --mp-accent: #6fb58a; }
+.mp-e-subdued .mp-leg { animation: none; }
+.mp-e-subdued .mp-antenna { animation-duration: 4s; }
+.mp-e-subdued.mp-working .mp-antenna { animation-duration: 1.6s; }
+/* Head tilted toward you, swaying a little: attentive and concerned */
+.mp-e-subdued.mp-idle .mp-head { animation: mp-concern 6s ease-in-out infinite; }
+@keyframes mp-concern {
+  0%, 100% { transform: rotate(2deg); }
+  50% { transform: rotate(6deg); }
+}
+/* Wide open eyes, a touch larger: he is watching you, not drifting */
+.mp-e-subdued .mp-eyes { transform-box: fill-box; transform-origin: center; }
+.mp-e-subdued.mp-idle .mp-eyes { transform: scale(1.12); animation: mp-blink-wide 5s infinite; }
+@keyframes mp-blink-wide {
+  0%, 45%, 52%, 100% { transform: scale(1.12); }
+  48% { transform: scale(1.12, 0.08); }
+}
+.mp-e-subdued.mp-working .mp-hand-l,
+.mp-e-subdued.mp-working .mp-hand-r { animation-duration: 0.5s; }
+.mp-e-subdued.mp-working .mp-line { animation-duration: 2.2s; }
+.mp-e-subdued.mp-done .mp-bob { animation: mp-nod 0.9s ease-in-out 1; }
+.mp-soft .mp-bob { animation: mp-nod 1s ease-in-out 1; }
+@keyframes mp-nod {
+  0%, 100% { transform: translateY(0); }
+  40% { transform: translateY(1.5px); }
+}
+
+/* ---- done: a check pops off the laptop and he hops ---- */
+.mp-done .mp-bob { animation: mp-hop 0.4s ease-out 3; }
+@keyframes mp-hop {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+.mp-sent { animation: mp-send 1.3s ease-out forwards; transform-box: fill-box; transform-origin: center; }
+@keyframes mp-send {
+  0% { transform: translate(0, 0) scale(0.6); opacity: 0; }
+  15% { opacity: 1; }
+  100% { transform: translate(8px, -26px) scale(1); opacity: 0; }
+}
+
+/* ---- poked: giggle ---- */
+.mp-laugh .mp-bob { animation: mp-giggle 0.3s ease-in-out infinite; }
+@keyframes mp-giggle {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  25% { transform: translate(-1px, -2px) rotate(-3deg); }
+  75% { transform: translate(1px, -2px) rotate(3deg); }
+}
+.mp-laugh::after {
+  content: 'hehe!';
+  position: absolute;
+  right: 100%;
+  top: 6px;
+  margin-right: 1px;
+  font: 700 9px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.4px;
+  color: var(--mp-accent);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mp-root *, .mp-root::after { animation: none !important; }
+}
+
+/* The embedded widget (BTY) has its own mini Patchy in the parent page. */
+.bty-embed-container .mp-root { display: none; }
