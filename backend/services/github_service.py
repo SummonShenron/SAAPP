@@ -1,5 +1,6 @@
 import os
 import requests
+from typing import Optional
 import logging
 from tenacity import retry, stop_after_attempt, wait_exponential
 from backend.models.models import lite_llm
@@ -22,13 +23,68 @@ def _call_llm_with_retry(prompt: str):
     return lite_llm.invoke(prompt)
 
 
-def process_pr_summary(repo: str, pr_number: int):
+def validate_github_token(token: str) -> dict:
+    """Asks GitHub who a token belongs to, before it is ever stored. {"valid": True, "login": ...} for a
+    working token, {"valid": False} when GitHub rejects it (401), and {"valid": None} when GitHub can't
+    give a clear answer (unreachable, rate limited), so callers can tell "bad token" from "try again"."""
+    try:
+        response = requests.get(
+            "https://api.github.com/user",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+            timeout=_GITHUB_API_TIMEOUT_SECONDS,
+        )
+    except requests.RequestException:
+        logger.warning("Could not reach GitHub to validate a token.")
+        return {"valid": None, "login": None}
+    if response.status_code == 200:
+        return {"valid": True, "login": response.json().get("login")}
+    if response.status_code == 401:
+        return {"valid": False, "login": None}
+    return {"valid": None, "login": None}
+
+
+class GitHubTokenRejected(ValueError):
+    """GitHub says this token is not valid (wrong, expired or revoked)."""
+
+
+class GitHubUnreachable(RuntimeError):
+    """GitHub couldn't give a clear answer, so the token was NOT stored; the caller can retry."""
+
+
+def verify_and_store_github_token(username: str, token) -> dict:
+    """The one way a user's own GitHub token gets saved: refuse shared identities, refuse anything
+    not shaped like a token, ask GitHub whether it is real (docs/coding-agent-roadmap.md section 4:
+    validated once before it is ever persisted), and only then store it encrypted. An empty token
+    removes the stored one. Returns the safe status the API exposes (never the token)."""
+    from backend.utils.user_settings_utils import (
+        GITHUB_TOKEN_LOCKED_USERS, GitHubTokenInvalid, GitHubTokenNotAllowed,
+        is_plausible_github_token, set_user_github_token,
+    )
+
+    token = (token or "").strip()
+    if username in GITHUB_TOKEN_LOCKED_USERS:
+        # Checked before anything is sent anywhere: a shared identity must never even reach GitHub.
+        raise GitHubTokenNotAllowed("Shared guest identities can't store a personal GitHub token.")
+    if not token:
+        return set_user_github_token(username, None)
+    if not is_plausible_github_token(token):
+        raise GitHubTokenInvalid("That doesn't look like a GitHub token.")
+
+    check = validate_github_token(token)
+    if check["valid"] is False:
+        raise GitHubTokenRejected("GitHub rejected this token. Check that it's correct and hasn't expired or been revoked.")
+    if check["valid"] is None:
+        raise GitHubUnreachable("Couldn't reach GitHub to verify this token right now. Try again in a moment.")
+    return set_user_github_token(username, token, github_login=check["login"])
+
+
+def process_pr_summary(repo: str, pr_number: int, token: Optional[str] = None):
     """Fetches PR diffs, generates an LLM review, and posts it to the target repo's PR."""
     logger.info(f"--- PROCESSING PR SUMMARY FOR {repo} #{pr_number} ---")
 
-    token = os.getenv("GITHUB_TOKEN")
+    token = token or os.getenv("GITHUB_TOKEN")
     if not token:
-        logger.error("GITHUB_TOKEN environment variable is not set!")
+        logger.error("GITHUB_TOKEN is not provided and the environment variable is not set!")
         return
 
     headers = {

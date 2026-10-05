@@ -52,7 +52,7 @@ class GraphState(TypedDict):
     # the one field deliberately exempted from reset_transient_state's per-turn reset, so it
     # survives across turns via the checkpointer instead of being re-derived from rendered card
     # text (see tool_agent_node's _ClarificationNeeded handling and classify_intent's resume check)
-    emotional_state: Optional[Dict[str, Any]]  # {"valence", "intensity", "updated_at", "turns_since", "need", "gist"} —
+    emotional_state: Optional[Dict[str, Any]]  # {"valence", "intensity", "updated_at", "turns_since", "need", "gist", "positive_peak", "lift_this_turn"} —
     # session-scoped, decaying read of the user's emotional state (see backend/utils/
     # emotion_utils.py); deliberately exempt from reset_transient_state so it survives across
     # topic changes via the checkpointer, which is keyed by session.

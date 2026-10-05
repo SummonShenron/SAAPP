@@ -94,3 +94,17 @@ def isolate_local_workspace_dir(monkeypatch, tmp_path):
     """Points the local-folder snapshot store at a per-test temp directory, so no test can ever
     read (or leave behind) a real snapshot in the system temp dir."""
     monkeypatch.setattr("backend.services.local_workspace.WORKSPACE_BASE_DIR", tmp_path / "local_workspaces")
+
+
+@pytest.fixture(autouse=True)
+def isolate_user_settings(monkeypatch, tmp_path_factory):
+    """Every agent turn now looks up the requesting user's own GitHub token, which is a read of their
+    settings record, and each such lookup is audited. Without this default, any test that runs the
+    agent would reach for real MongoDB (blocked above) or a real settings file. Tests that exercise
+    the settings store or the audit trail patch these themselves, and their patch wins."""
+    # Its own temp directory (not inside tmp_path), so tests that assert tmp_path stays empty still hold.
+    settings_dir = tmp_path_factory.mktemp("user_settings")
+    monkeypatch.setattr("backend.utils.user_settings_utils.get_db", lambda: None)
+    monkeypatch.setattr("backend.utils.user_settings_utils.DATA_DIR", str(settings_dir))
+    monkeypatch.setattr("backend.utils.github_audit.get_db", lambda: None)
+

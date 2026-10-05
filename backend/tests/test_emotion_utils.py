@@ -462,3 +462,161 @@ async def test_reasoner_carries_the_gist_through_a_neutral_topic_change(monkeypa
     assert second["emotional_state"]["turns_since"] == 1
     assert "Tina broke up" in eu.build_emotional_context(second["emotional_state"], datetime.now(timezone.utc))
 
+
+# ---------------------------------------------------------------------------
+# The energy ceiling: while a negative feeling is carried, the assistant's own energy is capped at
+# what the user has actually shown since it began, and only the user's own recovery lifts it.
+# ---------------------------------------------------------------------------
+
+def test_merge_a_faint_positive_after_distress_is_remembered_as_the_users_lift():
+    prior = {**_state("distressed", 0.8), "gist": "a breakup"}
+    merged = eu.merge_emotional_state(prior, {"valence": "positive", "intensity": 0.2}, NOW)
+    assert merged["valence"] == "distressed"  # not recovered: the feeling is still being carried
+    assert merged["positive_peak"] == pytest.approx(0.2)
+    assert merged["lift_this_turn"] is True
+
+
+def test_merge_keeps_the_highest_lift_and_never_lowers_it():
+    prior = {**_state("distressed", 0.8), "positive_peak": 0.25}
+    merged = eu.merge_emotional_state(prior, {"valence": "positive", "intensity": 0.15}, NOW)
+    assert merged["positive_peak"] == pytest.approx(0.25)
+    neutral = eu.merge_emotional_state(merged, {"valence": "neutral", "intensity": 0.0}, NOW)
+    assert neutral["positive_peak"] == pytest.approx(0.25)
+    assert neutral["lift_this_turn"] is False
+
+
+def test_merge_a_neutral_turn_alone_never_creates_a_lift():
+    merged = eu.merge_emotional_state(_state("distressed", 0.8), {"valence": "neutral", "intensity": 0.0}, NOW)
+    assert "positive_peak" not in merged
+    assert merged["lift_this_turn"] is False
+
+
+def test_merge_a_new_negative_episode_starts_the_ceiling_over():
+    prior = {**_state("low", 0.4), "positive_peak": 0.25}
+    merged = eu.merge_emotional_state(prior, {"valence": "distressed", "intensity": 0.9}, NOW)
+    assert "positive_peak" not in merged
+
+
+def test_merge_a_real_recovery_ends_the_carried_feeling_which_lifts_the_ceiling():
+    prior = {**_state("distressed", 0.8), "positive_peak": 0.2}
+    merged = eu.merge_emotional_state(prior, {"valence": "positive", "intensity": eu.EMOTION_OPPOSITE_OVERRIDE_MIN}, NOW)
+    assert merged["valence"] == "positive"
+    assert "positive_peak" not in merged
+    context = eu.build_emotional_context(merged, NOW)
+    assert "Keep your own energy" not in context
+
+
+def test_a_lift_against_a_positive_or_other_prior_is_not_recorded():
+    prior = _state("positive", 0.6)
+    merged = eu.merge_emotional_state(prior, {"valence": "distressed", "intensity": 0.2}, NOW)
+    assert "positive_peak" not in merged
+
+
+def test_carried_block_with_no_lift_caps_the_assistants_energy_at_the_users_subdued_level():
+    context = eu.build_emotional_context(_carried(turns_since=3), NOW)
+    assert "Keep your own energy at or below theirs" in context
+    assert "haven't shown any lift" in context
+    assert "however fun the new topic is" in context
+
+
+def test_carried_block_with_a_small_lift_allows_matching_it_but_not_far_above():
+    context = eu.build_emotional_context({**_carried(turns_since=3), "positive_peak": 0.2}, NOW)
+    assert "at or just above theirs, not far above it" in context
+    assert "no hype" in context
+    assert "haven't shown any lift" not in context
+
+
+def test_the_ceiling_has_one_honest_exception_for_a_lift_the_assistant_expects_to_land():
+    for context in (
+        eu.build_emotional_context(_carried(turns_since=1), NOW),
+        eu.build_emotional_context(_carried(turns_since=4), NOW),
+        eu.build_emotional_context({**_carried(turns_since=4), "positive_peak": 0.2}, NOW),
+    ):
+        assert "Go above their level only if you honestly judge it will make their next message more positive" in context
+        assert "Never as a default" in context
+        assert "follow them up" in context
+
+
+def test_a_lifted_message_while_still_carrying_distress_is_not_treated_as_fresh_distress():
+    state = {**_carried(turns_since=1), "read_this_turn": True, "lift_this_turn": True, "positive_peak": 0.2}
+    context = eu.build_emotional_context(state, NOW)
+    assert "just now they've shown a small lift" in context
+    assert "takes priority over the guidance in your voice description" in context
+    assert "ONE short sentence" not in context
+    assert "A fuller, unhurried reply" not in context  # the fresh-distress block
+    assert "at or just above theirs" in context
+
+
+def test_fresh_distress_block_is_unchanged_and_has_no_ceiling_text():
+    context = eu.build_emotional_context(_fresh("distressed", 0.8), NOW)
+    assert "A fuller, unhurried reply" in context
+    assert "Keep your own energy" not in context
+
+
+def test_positive_state_has_no_ceiling():
+    context = eu.build_emotional_context({**_state("positive", 0.6), "read_this_turn": False}, NOW)
+    assert "Keep your own energy" not in context
+
+
+def test_the_ceiling_still_ends_when_the_carried_feeling_decays_away():
+    decayed = {**_carried(turns_since=1), "intensity": 0.1, "positive_peak": 0.2}
+    assert eu.build_emotional_context(decayed, NOW) == ""
+
+
+# ---------------------------------------------------------------------------
+# energy_tier: the label the UI (Patchy's mood) follows. It must agree with what the model is told.
+# ---------------------------------------------------------------------------
+
+def test_energy_tier_is_open_without_a_carried_feeling():
+    assert eu.energy_tier(None, NOW) == "open"
+    assert eu.energy_tier(_state("distressed", 0.5, minutes_ago=eu.EMOTION_HALF_LIFE_MINUTES * 4), NOW) == "open"
+
+
+def test_energy_tier_is_subdued_while_distressed_with_no_lift():
+    assert eu.energy_tier(_state("distressed", 0.8), NOW) == "subdued"
+    assert eu.energy_tier(_state("low", 0.5), NOW) == "subdued"
+
+
+def test_energy_tier_is_subdued_when_frustrated():
+    assert eu.energy_tier(_state("frustrated", 0.7), NOW) == "subdued"
+
+
+def test_energy_tier_is_easing_once_the_user_has_shown_a_small_lift():
+    assert eu.energy_tier({**_state("distressed", 0.8), "positive_peak": 0.2}, NOW) == "easing"
+    assert eu.energy_tier({**_state("distressed", 0.8), "positive_peak": eu.EMOTION_LIFT_FLOOR / 2}, NOW) == "subdued"
+
+
+def test_energy_tier_is_open_for_a_positive_state_or_a_real_recovery():
+    assert eu.energy_tier(_state("positive", 0.6), NOW) == "open"
+    recovered = eu.merge_emotional_state(_state("distressed", 0.8), {"valence": "positive", "intensity": 0.6}, NOW)
+    assert eu.energy_tier(recovered, NOW) == "open"
+
+
+@pytest.mark.parametrize("state", [
+    _state("distressed", 0.8),
+    {**_state("distressed", 0.8), "positive_peak": 0.2},
+    _state("positive", 0.6),
+])
+def test_energy_tier_agrees_with_the_ceiling_text_the_model_gets(state):
+    tier = eu.energy_tier(state, NOW)
+    context = eu.build_emotional_context({**state, "read_this_turn": False}, NOW)
+    assert ("Keep your own energy at or below theirs" in context) == (tier == "subdued")
+    assert ("at or just above theirs" in context) == (tier == "easing")
+    assert ("Keep your own energy" in context) == (tier != "open")
+
+
+@run_async
+async def test_reasoner_tells_the_ui_which_energy_tier_is_in_force(monkeypatch):
+    monkeypatch.setattr(
+        aw.lite_llm, "ainvoke",
+        AsyncMock(return_value=_flags_response(valence="distressed", intensity=0.8)),
+    )
+    emitted = []
+
+    async def capture(name, data):
+        emitted.append((name, data))
+
+    monkeypatch.setattr(aw, "safe_emit_event", capture)
+    await aw.reasoner_node({"messages": [HumanMessage(content="I got some really bad news today")]})
+
+    assert ("emotion", {"tier": "subdued"}) in emitted

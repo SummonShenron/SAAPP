@@ -71,7 +71,10 @@ def _fetch_settings_doc(username: str) -> dict:
     deep_thinking, and target_repo all live on the exact same per-user record."""
     db = get_db()
     if db is not None:
-        return db["user_settings"].find_one({"username": username}) or {}
+        # The encrypted GitHub token is excluded here so it is never loaded by (or leaked through)
+        # the ordinary settings reads on the hot chat path; _fetch_encrypted_github_token is the one
+        # place that asks for it.
+        return db["user_settings"].find_one({"username": username}, {"github_token_encrypted": 0}) or {}
     return _read_local_settings(username)
 
 
@@ -291,3 +294,150 @@ def set_user_has_seen_help(username: str, seen: bool) -> bool:
 
     _write_local_setting(username, "has_seen_help", seen)
     return seen
+
+
+# ---------------------------------------------------------------------------------------------------
+# Per-user GitHub token. Until now the GitHub token was a single global env var (GITHUB_TOKEN) that
+# every user's requests shared. A user can now supply their own personal access token so Sonic reads,
+# summarizes and opens PRs/issues on THEIR repos as them. The token is encrypted at rest (the same
+# TOKEN_ENCRYPTION_KEY the Google tokens use), never written to the local settings file in plaintext,
+# and never sent back to the browser: the API only reports whether one is set and its last four
+# characters. The env var remains a fallback for users who haven't supplied one.
+# ---------------------------------------------------------------------------------------------------
+
+# Shared identities (everyone who uses the guest sandbox or the BTY embed is the SAME user): a token
+# saved against one of them would be used by every visitor, so none may be stored.
+GITHUB_TOKEN_LOCKED_USERS = TOGGLE_LOCKED_USERS | {"guest", "guest-recruiter@example.com"}
+
+# GitHub tokens are ASCII with no whitespace (ghp_..., github_pat_..., gho_..., legacy 40-hex). This
+# only rejects obviously-not-a-token input; whether GitHub accepts it is checked when it is saved.
+_GITHUB_TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-]{20,255}$")
+
+
+class GitHubTokenInvalid(ValueError):
+    """The supplied value is not shaped like a GitHub token."""
+
+
+class GitHubTokenNotAllowed(PermissionError):
+    """This identity is shared between visitors, so it can't hold a personal token."""
+
+
+def _fetch_encrypted_github_token(username: str) -> Optional[str]:
+    """The only read that returns the encrypted token. The filter is on `username` inside the query
+    itself (never fetch a document and then check whose it is), and `username` is always an explicit
+    argument, never ambient state."""
+    db = get_db()
+    if db is not None:
+        doc = db["user_settings"].find_one({"username": username}, {"github_token_encrypted": 1, "_id": 0}) or {}
+        return doc.get("github_token_encrypted")
+    return _read_local_settings(username).get("github_token_encrypted")
+
+
+def is_plausible_github_token(token: Optional[str]) -> bool:
+    return bool(token) and bool(_GITHUB_TOKEN_RE.match(token.strip()))
+
+
+def get_github_token_status(username: str) -> dict:
+    """What the browser is allowed to know: whether a token is set, and its last four characters."""
+    doc = _fetch_settings_doc(username)
+    configured = bool(doc.get("github_token_last4"))
+    return {
+        "configured": configured,
+        "last4": doc.get("github_token_last4") if configured else None,
+        "github_login": doc.get("github_login") if configured else None,
+    }
+
+
+def get_user_github_token(username: str) -> Optional[str]:
+    """The user's own decrypted GitHub token, or None if they haven't set one (or it can't be read)."""
+    if username in GITHUB_TOKEN_LOCKED_USERS:
+        return None
+    from backend.utils.secret_utils import decrypt_secret, SecretStorageNotConfigured
+
+    encrypted = _fetch_encrypted_github_token(username)
+    if not encrypted:
+        return None
+    try:
+        token = decrypt_secret(encrypted)
+    except SecretStorageNotConfigured:
+        logger.warning("A GitHub token is stored for %s but TOKEN_ENCRYPTION_KEY is not usable.", username)
+        return None
+    if token is None:
+        logger.warning("The stored GitHub token for %s could not be decrypted (key changed?).", username)
+    return token
+
+
+def resolve_github_token(username: Optional[str], purpose: str = "unspecified", repo: Optional[str] = None) -> Optional[str]:
+    """The token to use for GitHub calls made on behalf of `username`: their own if they set one,
+    otherwise the shared GITHUB_TOKEN env var (how it worked before per-user tokens existed). Every
+    resolution is audited (who, which kind of token, why, which repo); the token itself never is."""
+    from backend.utils.github_audit import audit_github_token_use
+
+    if username:
+        own = get_user_github_token(username)
+        if own:
+            audit_github_token_use(username, "user", purpose, repo)
+            return own
+    shared = os.getenv("GITHUB_TOKEN") or None
+    if shared:
+        audit_github_token_use(username, "shared", purpose, repo)
+    return shared
+
+
+def set_user_github_token(username: str, token: Optional[str], github_login: Optional[str] = None) -> dict:
+    """Stores (or, with an empty value, clears) the user's own GitHub token, encrypted. Returns the
+    same safe status the API exposes. Raises GitHubTokenNotAllowed for shared identities,
+    GitHubTokenInvalid for something that isn't shaped like a token, and
+    secret_utils.SecretStorageNotConfigured if there is no encryption key to protect it with."""
+    if username in GITHUB_TOKEN_LOCKED_USERS:
+        raise GitHubTokenNotAllowed("Shared guest identities can't store a personal GitHub token.")
+
+    token = (token or "").strip()
+    if token:
+        if not _GITHUB_TOKEN_RE.match(token):
+            raise GitHubTokenInvalid("That doesn't look like a GitHub token.")
+        from backend.utils.secret_utils import encrypt_secret
+
+        fields = {
+            "github_token_encrypted": encrypt_secret(token),
+            "github_token_last4": token[-4:],
+            "github_login": github_login,
+        }
+    else:
+        fields = {"github_token_encrypted": None, "github_token_last4": None, "github_login": None}
+
+    db = get_db()
+    if db is not None:
+        db["user_settings"].update_one({"username": username}, {"$set": fields}, upsert=True)
+    # Only the encrypted form (never the token itself) ever reaches the local settings file.
+    for key, value in fields.items():
+        _write_local_setting(username, key, value)
+    return get_github_token_status(username)
+
+
+def find_github_token_for_repo(repo: str) -> tuple:
+    """For a webhook that names only a repository: (username, token) of a user who pinned that repo
+    as their target AND supplied their own token, or (None, None). If several did, the one whose
+    GitHub login owns the repo is preferred. The shared env token is NOT a fallback here, so callers
+    can tell "a user's token" from "the global one"."""
+    db = get_db()
+    if db is None or not repo:
+        return None, None
+    from backend.utils.secret_utils import decrypt_secret, SecretStorageNotConfigured
+
+    owner = repo.split("/", 1)[0].lower()
+    candidates = list(db["user_settings"].find({
+        "target_repo": {"$regex": f"^{re.escape(repo)}$", "$options": "i"},
+        "github_token_encrypted": {"$exists": True, "$ne": None},
+    }))
+    candidates = [c for c in candidates if c.get("username") not in GITHUB_TOKEN_LOCKED_USERS]
+    candidates.sort(key=lambda c: (str(c.get("github_login") or "").lower() != owner, str(c.get("username"))))
+    for candidate in candidates:
+        try:
+            token = decrypt_secret(candidate["github_token_encrypted"])
+        except SecretStorageNotConfigured:
+            return None, None
+        if token:
+            return candidate.get("username"), token
+    return None, None
+

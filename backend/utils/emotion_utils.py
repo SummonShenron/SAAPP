@@ -25,6 +25,13 @@ _EMOTION_DROP_BELOW = 0.05
 # hasn't been forgotten; every reply after that only keeps the calmer register (acknowledging it
 # again and again reads as nagging).
 EMOTION_TOUCH_MAX_TURNS = int(os.getenv("EMOTION_TOUCH_MAX_TURNS", "1"))
+# Energy ceiling. While a negative feeling is still being carried, the assistant's own energy is
+# capped at what the USER has actually shown since it began: a positive reading weaker than
+# EMOTION_OPPOSITE_OVERRIDE_MIN doesn't end the carried feeling, but is remembered as the user's
+# "lift" so far. A lift at or above this floor counts as a real flicker (a bit of humor, relief);
+# below it, the user has shown nothing and the ceiling is their low level. A reading at or above the
+# override bar ends the carried feeling entirely, which lifts the ceiling — the user's own recovery.
+EMOTION_LIFT_FLOOR = float(os.getenv("EMOTION_LIFT_FLOOR", "0.1"))
 _GIST_MAX_CHARS = 120
 
 NEGATIVE_VALENCES = {"distressed", "low", "frustrated"}
@@ -117,15 +124,21 @@ def merge_emotional_state(
     need = normalize_need(reading_raw) if read_this_turn else "none"
     gist = normalize_gist(reading_raw) if read_this_turn else ""
 
-    def _carry_forward() -> Optional[Dict[str, Any]]:
+    def _carry_forward(lift: float = 0.0) -> Optional[Dict[str, Any]]:
         if not prior or prior_eff < _EMOTION_DROP_BELOW:
             return None
-        return {
+        carried = {
             **prior,
             "turns_since": int(prior.get("turns_since", 0)) + 1,
             "read_this_turn": read_this_turn,
             "need": need,
+            "lift_this_turn": lift > 0.0,
         }
+        # The highest positive the user has shown since the negative feeling began: the ceiling on
+        # the assistant's own energy (see EMOTION_LIFT_FLOOR).
+        if lift > 0.0 or prior.get("positive_peak"):
+            carried["positive_peak"] = max(float(prior.get("positive_peak") or 0.0), lift)
+        return carried
 
     if valence == "neutral":
         return _carry_forward()
@@ -148,7 +161,11 @@ def merge_emotional_state(
     if not gist and _polarity(valence) == prior_polarity:
         replace["gist"] = str(prior.get("gist") or "")
     if _polarity(valence) != prior_polarity and prior_polarity != 0:
-        return replace if intensity >= EMOTION_OPPOSITE_OVERRIDE_MIN else _carry_forward()
+        if intensity >= EMOTION_OPPOSITE_OVERRIDE_MIN:
+            return replace
+        # A weak opposite reading doesn't end the carried feeling; against a negative prior, a weak
+        # positive is the user's first sign of a lift, recorded as the ceiling on our own energy.
+        return _carry_forward(lift=intensity if prior_polarity < 0 and _polarity(valence) > 0 else 0.0)
     return replace if intensity >= prior_eff else _carry_forward()
 
 
@@ -232,6 +249,29 @@ _LOW_CARRIED_REGISTER = (
     "the content truly needs one. Don't bring the painful topic up; just let the steadiness show. "
     "If they return to it or their mood changes, follow them.\n"
 )
+# The ceiling: the assistant's own energy may not rise far above what the user has actually shown
+# since the feeling began, whatever the topic. It's a ceiling on how much energy goes into the
+# reply, with one honest exception: a lift the assistant genuinely expects will land well.
+_CEILING_NO_LIFT = (
+    "Keep your own energy at or below theirs. They haven't shown any lift since, so stay subdued "
+    "and steady: no exclamation marks, no emoji, no burst of enthusiasm, however fun the new topic is.\n"
+)
+_CEILING_SMALL_LIFT = (
+    "Keep your own energy at or just above theirs, not far above it. They've shown a small lift "
+    "since (a flicker of humor or relief), so a touch of warmth or dry lightness that matches it is "
+    "fine; no hype, no exclamation marks, no burst of enthusiasm.\n"
+)
+_CEILING_EXCEPTION = (
+    "Go above their level only if you honestly judge it will make their next message more "
+    "positive, for example one small, gentle joke they would probably smile at. Never as a "
+    "default, because the topic is fun, or to cheer them up for its own sake. When unsure, stay at "
+    "their level. If they lift higher themselves, follow them up.\n"
+)
+_LOW_LIFTING = (
+    "earlier in this conversation the user seemed {valence}{about}, and just now they've shown a "
+    "small lift. Meet it without overshooting it: stay warm and natural, answer what they just "
+    "said, and don't make a thing of the change or of how they felt before. " + _LOW_CARRIED_OUTRANKS
+)
 _FRUSTRATED_CARRIED = (
     "earlier in this conversation the user seemed frustrated. Keep things direct and low-fluff, "
     "get to the point, and don't be chirpy. Let your tone follow theirs as it shifts.\n"
@@ -240,6 +280,29 @@ _POSITIVE = (
     "earlier in this conversation the user seemed {valence}. Let that warmth carry naturally if "
     "it fits, and follow their tone as it shifts.\n"
 )
+
+
+def _lift(state: Dict[str, Any]) -> float:
+    try:
+        return max(float(state.get("positive_peak") or 0.0), 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def energy_tier(state: Optional[Dict[str, Any]], now: datetime) -> str:
+    """Which energy ceiling is in force, as a coarse label the UI can show (Patchy's mood follows it):
+    "subdued" (a negative feeling is carried and the user has shown no lift, or they are frustrated),
+    "easing" (carried, but the user has shown a small lift) or "open" (no cap). Mirrors exactly what
+    build_emotional_context tells the model, so the mascot and the reply never disagree."""
+    if effective_intensity(state, now) < EMOTION_INJECTION_THRESHOLD:
+        return "open"
+    state = state or {}
+    valence = str(state.get("valence", "neutral"))
+    if valence == "frustrated":
+        return "subdued"
+    if valence in NEGATIVE_VALENCES:
+        return "easing" if _lift(state) >= EMOTION_LIFT_FLOOR else "subdued"
+    return "open"
 
 
 def build_emotional_context(state: Optional[Dict[str, Any]], now: datetime) -> str:
@@ -258,11 +321,16 @@ def build_emotional_context(state: Optional[Dict[str, Any]], now: datetime) -> s
     if valence == "frustrated":
         return _CONTEXT_HEADER + (_FRUSTRATED_NOW if fresh else _FRUSTRATED_CARRIED)
     if valence in NEGATIVE_VALENCES:
-        if fresh:
+        # "Fresh" because this message carried a (positive) reading, but the carried feeling is still
+        # negative: that's a lift, not new distress, so it takes the ceiling block below.
+        if fresh and not state.get("lift_this_turn"):
             return _CONTEXT_HEADER + _LOW_BASE.format(valence=valence) + _LOW_NEED[need]
         gist = str(state.get("gist") or "").strip()
         about = f" ({gist})" if gist else ""
         turns = int(state.get("turns_since", 0) or 0)
+        ceiling = (_CEILING_SMALL_LIFT if _lift(state) >= EMOTION_LIFT_FLOOR else _CEILING_NO_LIFT) + _CEILING_EXCEPTION
+        if state.get("lift_this_turn"):
+            return _CONTEXT_HEADER + _LOW_LIFTING.format(valence=valence, about=about) + ceiling
         block = _LOW_CARRIED_TOUCH if turns <= EMOTION_TOUCH_MAX_TURNS else _LOW_CARRIED_REGISTER
-        return _CONTEXT_HEADER + block.format(valence=valence, about=about)
+        return _CONTEXT_HEADER + block.format(valence=valence, about=about) + ceiling
     return _CONTEXT_HEADER + _POSITIVE.format(valence=valence)

@@ -25,7 +25,12 @@ from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from backend.models.models import llm, get_stream_llm
 from backend.models.attachment import Attachment
-from backend.services.github_service import process_pr_summary
+from backend.services.github_service import (
+    process_pr_summary, verify_and_store_github_token, GitHubTokenRejected, GitHubUnreachable,
+)
+from backend.utils.secret_utils import SecretStorageNotConfigured
+from backend.utils.webhook_utils import verify_github_signature
+from backend.utils.github_audit import audit_github_token_use
 # Modernized LangChain Imports
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
@@ -100,6 +105,8 @@ from backend.utils.user_settings_utils import (
     get_user_has_seen_help, set_user_has_seen_help,
     get_user_timezone, set_user_timezone,
     get_user_target_doc_id, set_user_target_doc_id,
+    get_github_token_status, find_github_token_for_repo,
+    GitHubTokenInvalid, GitHubTokenNotAllowed,
 )
 from backend.services.google_drive_service import get_file_metadata as get_drive_file_metadata
 from backend.utils.google_calendar_utils import (
@@ -257,6 +264,9 @@ class TargetRepoUpdate(BaseModel):
 
 class TargetDocUpdate(BaseModel):
     doc_url_or_id: Optional[str] = None
+
+class GitHubTokenUpdate(BaseModel):
+    token: Optional[str] = None
 
 class HasSeenHelpUpdate(BaseModel):
     has_seen_help: bool
@@ -694,6 +704,13 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     if kind == "on_custom_event" and event.get("name") == "steer_applied":
                         data = event.get("data", {})
                         yield f"data: {json.dumps({'event': 'steer_applied', 'count': data.get('count', 0), 'step': data.get('step')})}\n\n"
+                        await asyncio.sleep(0.01)
+
+                    # The reasoner just read this message's emotional state: tell the browser which energy
+                    # ceiling is in force so the mascot's mood follows it (backend/utils/emotion_utils.py).
+                    if kind == "on_custom_event" and event.get("name") == "emotion":
+                        data = event.get("data", {})
+                        yield f"data: {json.dumps({'event': 'emotion', 'tier': data.get('tier', 'open')})}\n\n"
                         await asyncio.sleep(0.01)
 
                     # A view-only browserless.io LiveURL, emitted once tool_agent_node's browser_*
@@ -1436,6 +1453,32 @@ async def update_target_doc_setting(payload: TargetDocUpdate, current_user = Dep
     return {"target_doc_id": saved, "warning": warning}
 
 
+@app.get("/api/settings/github-token")
+async def get_github_token_setting(current_user = Depends(get_current_user)):
+    """Whether this user has their own GitHub token set, and its last four characters. The token
+    itself is never sent back to the browser."""
+    username = current_user.get("sub")
+    return get_github_token_status(username)
+
+
+@app.put("/api/settings/github-token")
+async def update_github_token_setting(payload: GitHubTokenUpdate, current_user = Depends(get_current_user)):
+    """Saves (or, with an empty token, removes) the user's own GitHub token. The token is checked with
+    GitHub first and only stored, encrypted, if GitHub accepts it, so a typo is never saved as if it worked."""
+    username = current_user.get("sub")
+    try:
+        return await asyncio.to_thread(verify_and_store_github_token, username, payload.token)
+    except GitHubTokenNotAllowed as error:
+        raise HTTPException(status_code=403, detail=str(error))
+    except (GitHubTokenInvalid, GitHubTokenRejected) as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except GitHubUnreachable as error:
+        raise HTTPException(status_code=503, detail=str(error))
+    except SecretStorageNotConfigured:
+        logger.error("A GitHub token was submitted but TOKEN_ENCRYPTION_KEY is not usable; nothing was stored.")
+        raise HTTPException(status_code=503, detail="Token storage isn't configured on this server.")
+
+
 @app.get("/api/settings/has-seen-help")
 async def get_has_seen_help_setting(current_user = Depends(get_current_user)):
     username = current_user.get("sub")
@@ -1590,10 +1633,22 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
     Listens for GitHub webhook events and triggers automated PR reviews.
     """
     event = request.headers.get("X-GitHub-Event")
-    
-    # Safely parse JSON payload without throwing a 500 error on empty bodies
+
+    # The raw body is needed to check GitHub's signature, so it is read once and parsed from here.
+    raw_body = await request.body()
+    webhook_secret = os.getenv("GITHUB_WEBHOOK_SECRET")
+    if webhook_secret:
+        if not verify_github_signature(webhook_secret, raw_body, request.headers.get("X-Hub-Signature-256")):
+            logger.warning("Rejected a GitHub webhook with a missing or invalid signature.")
+            raise HTTPException(status_code=401, detail="Invalid webhook signature.")
+    else:
+        logger.warning(
+            "GITHUB_WEBHOOK_SECRET is not set, so /webhooks/github accepts unsigned requests. "
+            "Set it (and the same secret on the GitHub webhook) to reject forged events."
+        )
+
     try:
-        payload = await request.json()
+        payload = json.loads(raw_body or b"{}")
     except Exception:
         payload = {}
 
@@ -1602,7 +1657,12 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
         repo = payload.get("repository", {}).get("full_name")
 
         if pr_number and repo:
-            background_tasks.add_task(process_pr_summary, repo, pr_number)
+            # A user who pinned this repo AND supplied their own token reviews it as themselves
+            # (their token, their audit entry); otherwise the shared server token is used, as before.
+            token_owner, user_token = find_github_token_for_repo(repo)
+            audit_github_token_use(token_owner, "user" if user_token else "shared", "webhook_pr_summary", repo)
+
+            background_tasks.add_task(process_pr_summary, repo, pr_number, user_token)
             logger.info(f"Queued background PR summary job for {repo} #{pr_number}")
             return {"status": "event_queued", "pr_number": pr_number}
 

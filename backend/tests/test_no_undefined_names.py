@@ -24,6 +24,11 @@ CHECKED = [
     "backend/utils/emotion_utils.py",
     "backend/services/google_calendar_oauth.py",
     "backend/services/google_docs_service.py",
+    "backend/services/github_service.py",
+    "backend/utils/user_settings_utils.py",
+    "backend/utils/secret_utils.py",
+    "backend/utils/webhook_utils.py",
+    "backend/utils/github_audit.py",
 ]
 _MODULE_DUNDERS = {"__file__", "__name__", "__doc__", "__builtins__", "__spec__", "__package__", "__path__"}
 

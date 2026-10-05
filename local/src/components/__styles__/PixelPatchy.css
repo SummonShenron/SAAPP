@@ -1,0 +1,110 @@
+/* A tiny 8-bit Patchy perched on the top-right corner of the chat input. His laptop base sits just over
+   the input's top edge, so he looks like he's working on it. */
+.pp-root {
+  position: absolute;
+  right: 28px;
+  bottom: calc(100% - 2px);
+  z-index: 3;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  line-height: 0;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  image-rendering: pixelated;
+  /* idle: Patchy's own cyan */
+  --pp-accent: #38c2de;
+}
+
+.pp-root:focus-visible {
+  outline: 2px dashed var(--pp-accent);
+  outline-offset: 2px;
+}
+
+.pp-root .pp-accent { fill: var(--pp-accent); }
+
+.pp-working { --pp-accent: #eab308; } /* the same yellow the full-size Patchy uses for "analyzing" */
+.pp-done    { --pp-accent: #22c55e; }
+.pp-laugh   { --pp-accent: #ec4899; }
+
+/* ---- idle ---- */
+.pp-bob { animation: pp-bob 2.4s steps(1) infinite; }
+@keyframes pp-bob {
+  0%, 49.99% { transform: translateY(0); }
+  50%, 100% { transform: translateY(-1px); }
+}
+
+.pp-antenna { animation: pp-pulse 1.6s steps(1) infinite; }
+@keyframes pp-pulse {
+  0%, 59.99% { opacity: 1; }
+  60%, 100% { opacity: 0.35; }
+}
+
+/* A blink hides the lower row of the eyes for a moment, so they squint shut. */
+.pp-blink { animation: pp-blink 4.4s steps(1) infinite; }
+@keyframes pp-blink {
+  0%, 93.99% { opacity: 1; }
+  94%, 97.99% { opacity: 0; }
+  98%, 100% { opacity: 1; }
+}
+
+.pp-cursor { animation: pp-cursor 1s steps(1) infinite; }
+@keyframes pp-cursor {
+  0%, 49.99% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+/* ---- working: typing, scrolling code, faster antenna ---- */
+.pp-working .pp-antenna { animation-duration: 0.5s; }
+.pp-working .pp-hand-l { animation: pp-type 0.3s steps(1) infinite; }
+.pp-working .pp-hand-r { animation: pp-type 0.3s steps(1) 0.15s infinite; }
+@keyframes pp-type {
+  0%, 49.99% { transform: translateY(0); }
+  50%, 100% { transform: translateY(-1px); }
+}
+
+.pp-code-frame { opacity: 0; animation: pp-frame 0.8s steps(1) infinite; }
+@keyframes pp-frame {
+  0%, 24.99% { opacity: 1; }
+  25%, 100% { opacity: 0; }
+}
+
+/* ---- done: a quick hop ---- */
+.pp-done .pp-bob { animation: pp-hop 0.4s steps(1) 4; }
+@keyframes pp-hop {
+  0%, 24.99% { transform: translateY(0); }
+  25%, 49.99% { transform: translateY(-2px); }
+  50%, 74.99% { transform: translateY(-3px); }
+  75%, 100% { transform: translateY(-1px); }
+}
+
+/* ---- poked: giggle ---- */
+.pp-laugh .pp-bob { animation: pp-giggle 0.28s steps(1) infinite; }
+@keyframes pp-giggle {
+  0%, 24.99% { transform: translate(0, 0); }
+  25%, 49.99% { transform: translate(-1px, -1px); }
+  50%, 74.99% { transform: translate(0, 0); }
+  75%, 100% { transform: translate(1px, -1px); }
+}
+.pp-laugh::after {
+  content: 'hehe!';
+  position: absolute;
+  right: 100%;
+  top: 2px;
+  margin-right: 2px;
+  font: 700 9px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.5px;
+  color: var(--pp-accent);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pp-root *, .pp-root::after { animation: none !important; }
+  .pp-root .pp-frame-first { opacity: 1; }
+}
+
+/* The embedded widget (BTY) has its own mini Patchy in the parent page. */
+.bty-embed-container .pp-root { display: none; }
