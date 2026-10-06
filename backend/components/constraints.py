@@ -954,36 +954,58 @@ BROWSER_SCREENSHOT_DESCRIBE_PROMPT = (
     "like."
 )
 
-PR_REVIEW_PROMPT = """
-    You are an expert lead engineer performing a Pull Request review for '{repo}'.
-    Review the following changed files and patch diffs:
+# The webhook's PR overview comment and the in-chat PR review share this prompt. Fields: repo,
+# pr_header (title, author's own description, commits, whether tests changed: see
+# backend/utils/pr_context.py), formatted_diffs, fit_note (how much of the PR the model was shown).
+PR_REVIEW_PROMPT = """You are a lead engineer writing the Pull Request overview comment for '{repo}'. Reviewers read it before opening the diff, so it must tell them what this change does, why it exists, and where to look, using only the evidence below.
 
-    {formatted_diffs}
-    Avoid phrasing such as: "the code appears to" -- you should be definitive in your responses, you know what the code does.
-    Provide a concise, professional PR Review comment using the following markdown structure:
-    ### Summary of Changes
-    (2-3 bullet points describing what this PR actually alters or adds)
+PULL REQUEST:
+{pr_header}
 
-    ### Key Areas to Focus On
-    (Specific files or logic paths human reviewers should inspect closely)
+CHANGED FILES AND PATCHES:
+{formatted_diffs}
 
-    ### Potential Risks or Considerations
-    (Any edge cases, missing tests, or performance/security concerns, if any)
-    """
+{fit_note}
 
-DRAFT_PR_PROMPT = """You are an expert software engineer assistant drafting a GitHub Pull Request.
+Rules:
+- Ground every claim in the patches, the commit messages or the author's description above. If something was not shown to you, do not describe it, and never guess at code you were not shown.
+- Be definitive about what the shown code does. No hedging such as "appears to" or "seems to".
+- Lead with the purpose: the author's description and commit messages give the why, the patches give the what. If the description claims something the diff does not show, say so.
+- Be specific: name files, functions, flags and behaviors. Never restate a file name without saying what changed in it.
+- No praise, no filler, and no generic advice that would fit any PR.
+- Risks must be concrete and tied to this diff: a changed signature or contract, a new env var, config or migration, an unhandled error path, an unbounded query, security-sensitive input. If the "Tests changed" line says NONE and source files changed, say that source changed without tests. Write "None found." when there are none; never invent risks.
+- Keep it under about 250 words.
 
-Your job is to analyze the user's request and context to generate a professional Pull Request title and a detailed Markdown description body.
+Use exactly this markdown structure:
+### Summary
+(2-3 sentences: what this PR does and why)
+
+### What changed
+(bullets grouped by area, each saying what changed and in which file(s))
+
+### Where to look
+(2-4 items: the specific file or function, and why it deserves a close read)
+
+### Risks and gaps
+(concrete items, or "None found.")
+
+If you were shown only part of the PR, finish with a "### Not reviewed" section naming what you could not see.
+"""
+
+DRAFT_PR_PROMPT = """You are an expert software engineer drafting a GitHub Pull Request. Write the title and description a reviewer would want to read, using only the evidence provided.
 
 ### Rules:
-1. **Title**: 
-   - Follow Conventional Commits format (e.g., `feat: ...`, `fix: ...`, `refactor: ...`, `docs: ...`, `chore: ...`).
-   - Keep it concise, descriptive, and under 72 characters.
-2. **Body**:
-   - Write clear Markdown.
-   - Include a `### Summary of Changes` section with bullet points.
-   - Include a `### Context & Notes` section if the user provided specific instructions or notes.
-3. **Format**:
+1. **Title**:
+   - Conventional Commits format (`feat`, `fix`, `refactor`, `docs`, `test`, `perf`, `chore`), with an optional scope.
+   - Imperative mood, under 72 characters, naming the actual change rather than the branch.
+2. **Body** (Markdown). Use these sections and omit any that would be empty:
+   - `### Summary`: 1-3 sentences on what this PR does and why. The why comes from the user's request or the commit messages; never invent a motivation.
+   - `### Changes`: bullets grouped by area, each naming what changed and where.
+   - `### Testing`: only what the evidence shows, such as test files added or changed or commands the user mentioned. If no test file changed, say "No tests changed in this PR." Never claim anything was run.
+   - `### Notes for reviewers`: breaking changes, new env vars or config, migrations, follow-ups, risky areas, only when the evidence shows them.
+   If a PR TEMPLATE appears in the context, follow its headings and checklist instead, filling them from the evidence and leaving anything unknown unchecked or marked "n/a".
+3. **Grounding**: every statement must come from the context below. Do not describe code you were not shown, and say so if the diff was only partly shown.
+4. **Format**:
    - You MUST output ONLY a valid JSON object matching the schema below.
    - Do NOT add explanatory text outside the JSON block.
 
@@ -997,7 +1019,7 @@ Your job is to analyze the user's request and context to generate a professional
 ```json
 {{
   "title": "feat(scope): short summary of changes",
-  "body": "### Summary of Changes\\n- Point 1\\n- Point 2\\n\\n### Context & Notes\\n- Details on testing or user request"
+  "body": "### Summary\\nWhat and why.\\n\\n### Changes\\n- Area: what changed (file)\\n\\n### Testing\\n- What the evidence shows\\n\\n### Notes for reviewers\\n- Anything risky or breaking"
 }}
 ```"""
 

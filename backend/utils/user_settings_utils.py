@@ -416,10 +416,15 @@ def set_user_github_token(username: str, token: Optional[str], github_login: Opt
 
 
 def find_github_token_for_repo(repo: str) -> tuple:
-    """For a webhook that names only a repository: (username, token) of a user who pinned that repo
-    as their target AND supplied their own token, or (None, None). If several did, the one whose
-    GitHub login owns the repo is preferred. The shared env token is NOT a fallback here, so callers
-    can tell "a user's token" from "the global one"."""
+    """For a webhook that names only a repository: (username, token) of a user whose own token should
+    act on it, or (None, None). Two kinds of user qualify: one who pinned that repo as their target,
+    or one whose GitHub login OWNS the repo. The second matters because a user typically adds a token
+    once and then wires webhooks on every repo they own, without pinning each of them; matching only on
+    the pin meant the one pinned repo (SAAPP) worked and every other repo of theirs silently got no
+    token once the shared env token was gone. The token of an account that owns the repo is the one
+    that can read and comment on it, so no user's token is ever used on someone else's repo.
+    Preference: owner and pinned, then owner, then pinned only. The shared env token is NOT a fallback
+    here, so callers can tell "a user's token" from "the global one"."""
     db = get_db()
     if db is None or not repo:
         return None, None
@@ -427,11 +432,20 @@ def find_github_token_for_repo(repo: str) -> tuple:
 
     owner = repo.split("/", 1)[0].lower()
     candidates = list(db["user_settings"].find({
-        "target_repo": {"$regex": f"^{re.escape(repo)}$", "$options": "i"},
+        "$or": [
+            {"target_repo": {"$regex": f"^{re.escape(repo)}$", "$options": "i"}},
+            {"github_login": {"$regex": f"^{re.escape(owner)}$", "$options": "i"}},
+        ],
         "github_token_encrypted": {"$exists": True, "$ne": None},
     }))
     candidates = [c for c in candidates if c.get("username") not in GITHUB_TOKEN_LOCKED_USERS]
-    candidates.sort(key=lambda c: (str(c.get("github_login") or "").lower() != owner, str(c.get("username"))))
+
+    def _rank(candidate):
+        is_owner = str(candidate.get("github_login") or "").lower() == owner
+        is_pinned = str(candidate.get("target_repo") or "").lower() == repo.lower()
+        return (not is_owner, not is_pinned, str(candidate.get("username")))
+
+    candidates.sort(key=_rank)
     for candidate in candidates:
         try:
             token = decrypt_secret(candidate["github_token_encrypted"])

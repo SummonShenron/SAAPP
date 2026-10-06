@@ -4,7 +4,7 @@ from typing import Optional
 import logging
 from tenacity import retry, stop_after_attempt, wait_exponential
 from backend.models.models import lite_llm
-from backend.components.constraints import PR_REVIEW_PROMPT
+from backend.utils.pr_context import build_review_prompt
 
 logger = logging.getLogger("SASS Logger")
 
@@ -78,8 +78,85 @@ def verify_and_store_github_token(username: str, token) -> dict:
     return set_user_github_token(username, token, github_login=check["login"])
 
 
+# Marks the overview comment as ours, so a later push updates it in place instead of stacking a new
+# comment for every commit.
+OVERVIEW_MARKER = "<!-- sonic-assistant-pr-overview -->"
+_API_BASE = "https://api.github.com"
+_PAGE_SIZE = 100
+_MAX_FILE_PAGES = 3  # GitHub caps a PR's file list at 3000 entries; 300 is plenty to describe a PR
+
+
+def _github_get(url: str, headers: dict, params: Optional[dict] = None):
+    return requests.get(url, headers=headers, params=params, timeout=_GITHUB_API_TIMEOUT_SECONDS)
+
+
+def fetch_pr_evidence(repo: str, pr_number: int, headers: dict, api_base: str = _API_BASE) -> dict:
+    """Everything a PR description or review is written from: {"pr", "commits", "files", "error"}.
+    The file list is required (error is set, and files is None, when it can't be read); the PR's own
+    title/description and its commits are best effort, because a review is still worth writing without
+    them, just with less to ground the "why" in."""
+    files, error = [], None
+    for page in range(1, _MAX_FILE_PAGES + 1):
+        res = _github_get(f"{api_base}/repos/{repo}/pulls/{pr_number}/files", headers, {"per_page": _PAGE_SIZE, "page": page})
+        if res.status_code != 200:
+            if page == 1:
+                error = f"HTTP {res.status_code}: {res.text}"
+            break
+        batch = res.json()
+        if not isinstance(batch, list):
+            break
+        files.extend(batch)
+        if len(batch) < _PAGE_SIZE:
+            break
+    if error:
+        return {"pr": None, "commits": [], "files": None, "error": error}
+
+    pr, commits = None, []
+    try:
+        pr_res = _github_get(f"{api_base}/repos/{repo}/pulls/{pr_number}", headers)
+        if pr_res.status_code == 200 and isinstance(pr_res.json(), dict):
+            pr = pr_res.json()
+        commits_res = _github_get(f"{api_base}/repos/{repo}/pulls/{pr_number}/commits", headers, {"per_page": _PAGE_SIZE})
+        if commits_res.status_code == 200 and isinstance(commits_res.json(), list):
+            commits = commits_res.json()
+    except requests.RequestException:
+        logger.warning("Could not fetch PR details/commits for %s #%s; reviewing from the files alone.", repo, pr_number)
+    return {"pr": pr, "commits": commits, "files": files, "error": None}
+
+
+def _llm_text(response) -> str:
+    raw_content = getattr(response, "content", response)
+    if isinstance(raw_content, list):
+        blocks = []
+        for block in raw_content:
+            if isinstance(block, str):
+                blocks.append(block)
+            elif isinstance(block, dict) and "text" in block:
+                blocks.append(block["text"])
+        return "\n".join(blocks).strip()
+    return str(raw_content).strip()
+
+
+def _find_overview_comment(repo: str, pr_number: int, headers: dict, api_base: str = _API_BASE):
+    """The overview comment we posted earlier on this PR, if any."""
+    for page in range(1, 4):
+        res = _github_get(f"{api_base}/repos/{repo}/issues/{pr_number}/comments", headers, {"per_page": _PAGE_SIZE, "page": page})
+        if res.status_code != 200:
+            return None
+        batch = res.json()
+        if not isinstance(batch, list):
+            return None
+        for comment in batch:
+            if isinstance(comment, dict) and OVERVIEW_MARKER in (comment.get("body") or ""):
+                return comment
+        if len(batch) < _PAGE_SIZE:
+            break
+    return None
+
+
 def process_pr_summary(repo: str, pr_number: int, token: Optional[str] = None):
-    """Fetches PR diffs, generates an LLM review, and posts it to the target repo's PR."""
+    """Reads a PR (its description, commits and diff), writes an overview, and posts it to the target
+    repo's PR, updating its own earlier comment instead of adding a new one on every push."""
     logger.info(f"--- PROCESSING PR SUMMARY FOR {repo} #{pr_number} ---")
 
     token = token or os.getenv("GITHUB_TOKEN")
@@ -91,66 +168,59 @@ def process_pr_summary(repo: str, pr_number: int, token: Optional[str] = None):
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json"
     }
-    api_base = "https://api.github.com"
+    api_base = _API_BASE
 
-    # 1. Fetch changed files
-    files_url = f"{api_base}/repos/{repo}/pulls/{pr_number}/files"
-    logger.info(f"Requesting PR files from GitHub: {files_url}")
-    files_res = requests.get(files_url, headers=headers, timeout=_GITHUB_API_TIMEOUT_SECONDS)
-
-    if files_res.status_code != 200:
-        logger.error(f"Failed to fetch PR files (HTTP {files_res.status_code}): {files_res.text}")
+    # 1. Gather the evidence
+    logger.info(f"Requesting PR files from GitHub: {api_base}/repos/{repo}/pulls/{pr_number}/files")
+    evidence = fetch_pr_evidence(repo, pr_number, headers, api_base)
+    if evidence["error"]:
+        logger.error(
+            "Failed to fetch PR files for %s #%s (%s). If this is a 404, the token used cannot see this repo: "
+            "save a token under Integrations on the account that owns it (or give the shared token access).",
+            repo, pr_number, evidence["error"],
+        )
         return
+    logger.info(f"Successfully fetched {len(evidence['files'])} changed file(s).")
 
-    changed_files = files_res.json()
-    logger.info(f"Successfully fetched {len(changed_files)} changed file(s).")
-
-    diff_context = []
-    for f in changed_files[:10]:
-        filename = f.get("filename")
-        status = f.get("status")
-        patch = f.get("patch", "No patch available")
-        diff_context.append(f"File: {filename} ({status})\nPatch:\n```diff\n{patch}\n```")
-
-    formatted_diffs = "\n\n".join(diff_context)
-
-    # 2. Format prompt & generate summary with retries
-    if "{diffs}" in PR_REVIEW_PROMPT:
-        review_prompt = PR_REVIEW_PROMPT.format(diffs=formatted_diffs)
-    else:
-        review_prompt = f"{PR_REVIEW_PROMPT}\n\nPull Request Diffs:\n{formatted_diffs}"
-
+    # 2. Write the overview from that evidence, with retries
+    review_prompt, _ctx = build_review_prompt(repo, evidence["pr"], evidence["commits"], evidence["files"])
     try:
         logger.info("Invoking LLM for PR analysis...")
-        review_response = _call_llm_with_retry(review_prompt)
-
-        raw_content = getattr(review_response, "content", review_response)
-        if isinstance(raw_content, list):
-            text_blocks = []
-            for block in raw_content:
-                if isinstance(block, str):
-                    text_blocks.append(block)
-                elif isinstance(block, dict) and "text" in block:
-                    text_blocks.append(block["text"])
-            comment_body = "\n".join(text_blocks).strip()
-        else:
-            comment_body = str(raw_content).strip()
-
+        comment_body = _llm_text(_call_llm_with_retry(review_prompt))
+        if not comment_body:
+            raise ValueError("the model returned an empty overview")
         logger.info("LLM summary generated successfully.")
     except Exception as e:
-        logger.error(f"LLM generation failed after retries: {str(e)}")
-        comment_body = f"Could not generate automated PR summary due to upstream API limits: {str(e)}"
+        # Never post the error into a public PR, and never overwrite a good earlier overview with one.
+        logger.error(f"LLM generation failed after retries; no comment was posted to {repo} #{pr_number}: {str(e)}")
+        return {"repo": repo, "pr_number": pr_number, "status": "summary_failed", "comment_url": None}
 
-    # 3. Post comment to the target repo's PR
-    comment_url = f"{api_base}/repos/{repo}/issues/{pr_number}/comments"
-    payload = {"body": f"**Sonic Assistant PR Overview**\n\n{comment_body}"}
+    # 3. Post the comment, or update the one we posted before
+    head_sha = ((evidence["pr"] or {}).get("head") or {}).get("sha") or ""
+    footer = f"\n\n<sub>Updated for commit `{head_sha[:7]}`</sub>" if head_sha else ""
+    body = f"{OVERVIEW_MARKER}\n**Sonic Assistant PR Overview**\n\n{comment_body}{footer}"
+
+    existing = _find_overview_comment(repo, pr_number, headers, api_base)
+    if existing and existing.get("id"):
+        logger.info(f"Updating the existing overview comment on {repo} #{pr_number}...")
+        patch_res = requests.patch(
+            f"{api_base}/repos/{repo}/issues/comments/{existing['id']}",
+            headers=headers, json={"body": body}, timeout=_GITHUB_API_TIMEOUT_SECONDS,
+        )
+        if patch_res.status_code == 200:
+            posted_url = patch_res.json().get("html_url")
+            logger.info(f"SUCCESS! PR comment updated on {repo}: {posted_url}")
+            return {"repo": repo, "pr_number": pr_number, "status": "comment_updated", "comment_url": posted_url}
+        logger.warning(f"Could not update the existing comment (HTTP {patch_res.status_code}); posting a new one instead.")
 
     logger.info(f"Posting review comment to GitHub repository {repo} PR #{pr_number}...")
-    post_res = requests.post(comment_url, headers=headers, json=payload, timeout=_GITHUB_API_TIMEOUT_SECONDS)
+    post_res = requests.post(
+        f"{api_base}/repos/{repo}/issues/{pr_number}/comments",
+        headers=headers, json={"body": body}, timeout=_GITHUB_API_TIMEOUT_SECONDS,
+    )
 
     if post_res.status_code == 201:
-        comment_url_posted = post_res.json().get("html_url")
-        logger.info(f"SUCCESS! PR comment posted to {repo}: {comment_url_posted}")
+        logger.info(f"SUCCESS! PR comment posted to {repo}: {post_res.json().get('html_url')}")
     else:
         logger.error(f"Failed to post comment to {repo} (HTTP {post_res.status_code}): {post_res.text}")
 
