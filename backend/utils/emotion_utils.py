@@ -39,7 +39,8 @@ POSITIVE_VALENCES = {"positive", "excited"}
 VALID_VALENCES = NEGATIVE_VALENCES | POSITIVE_VALENCES | {"neutral"}
 # What the person seems to want from this reply, as distinct from how they feel. Describes the
 # current message only, so it is never carried forward onto a later turn.
-VALID_NEEDS = {"venting", "solving", "reassurance", "distraction"}
+# "celebration": they are sharing good news (a match, an offer, a result) and want it explored with them.
+VALID_NEEDS = {"venting", "solving", "reassurance", "distraction", "celebration"}
 
 
 def _polarity(valence: str) -> int:
@@ -280,6 +281,24 @@ _POSITIVE = (
     "earlier in this conversation the user seemed {valence}. Let that warmth carry naturally if "
     "it fits, and follow their tone as it shifts.\n"
 )
+# Good news, answered the way a friend who is actually interested would: enthusiasm AND curiosity.
+# Matching someone's excitement without asking anything about it reads as polite, not engaged (the
+# research on how people respond to shared good news calls the engaged kind active-constructive).
+# Concrete behaviors rather than "be curious", for the same reason as the negative-valence blocks.
+_POSITIVE_CELEBRATION = (
+    "the user is sharing something exciting that just happened{about}. Respond like a friend who is "
+    "genuinely interested, not only pleased:\n"
+    "- Be warmly enthusiastic in your own words, specific to what they told you rather than a stock "
+    "\"that's awesome\".\n"
+    "- Be curious about it. Ask ONE specific question about the news itself that a friend would "
+    "really want to know (what drew them to it, who or what it is, what happens next). If it is "
+    "something they could show you, such as a profile, a photo, a message or an offer, invite them to. "
+    "Ask it in the reply itself, not only in the follow-up tag (that tag is just a suggested next "
+    "message the user can click).\n"
+    "- A reply that is only excited, with no real question, is under-engaging even though it sounds "
+    "warm. Never settle for a generic feelings question like \"how are you feeling about it?\".\n"
+    "- Keep it conversational prose, not a list, and don't pile on several questions.\n"
+)
 
 
 def _lift(state: Dict[str, Any]) -> float:
@@ -333,4 +352,7 @@ def build_emotional_context(state: Optional[Dict[str, Any]], now: datetime) -> s
             return _CONTEXT_HEADER + _LOW_LIFTING.format(valence=valence, about=about) + ceiling
         block = _LOW_CARRIED_TOUCH if turns <= EMOTION_TOUCH_MAX_TURNS else _LOW_CARRIED_REGISTER
         return _CONTEXT_HEADER + block.format(valence=valence, about=about) + ceiling
+    if fresh and need == "celebration":
+        gist = str(state.get("gist") or "").strip()
+        return _CONTEXT_HEADER + _POSITIVE_CELEBRATION.format(about=f" ({gist})" if gist else "")
     return _CONTEXT_HEADER + _POSITIVE.format(valence=valence)

@@ -97,6 +97,7 @@ from backend.services.local_workspace import (
 from backend.utils.agent_utils import is_stale_capability_denial, scrub_stale_capability_denials
 from backend.utils.embedding_utils import embed_text
 from backend.utils.emotion_utils import build_emotional_context
+from backend.utils.emotion_checks import emotional_reply_issue, build_emotional_revision_prompt
 from backend.utils.user_settings_utils import (
     get_user_rag_mode, set_user_rag_mode, VALID_RAG_MODES,
     get_user_deep_thinking_mode, set_user_deep_thinking_mode,
@@ -885,6 +886,33 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     yield fallback_chunk
                 log_timings(relevance_grade, "rewrite_fallback")
                 return
+
+            # 4b. EMOTIONAL-NEED CHECK — the reply was written with guidance for what this person
+            # seems to want (to be heard, or to have good news explored with them), but guidance is
+            # only prose. This verifies it was honored (no advice for a venting message, a real
+            # question for shared good news) and regenerates once if not (backend/utils/emotion_checks.py).
+            # Conversational replies only; the data-grounded paths are judged by the reward evaluator.
+            if source_type == "conversational":
+                emotional_issue = emotional_reply_issue(final_state.get("emotional_state"), full_response)
+                if emotional_issue:
+                    revision_prompt, revision_reason = build_emotional_revision_prompt(prompt, full_response, emotional_issue)
+                    logger.info("Emotional-need check failed (%s); regenerating once.", emotional_issue)
+                    yield f"data: {json.dumps({'event': 'node_progress', 'node': 'emotional_check', 'title': 'Adjusting the reply to fit what you need', 'detail': emotional_issue})}\n\n"
+                    yield f"data: {json.dumps({'event': 'regenerate_reset'})}\n\n"
+                    rejected_draft = full_response
+                    full_response = ""
+                    async for chunk in response_llm.astream(revision_prompt):
+                        content = getattr(chunk, "content", "")
+                        if isinstance(content, list):
+                            token = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
+                        else:
+                            token = str(content) if content else ""
+                        if not token:
+                            continue
+                        full_response += token
+                        yield f"data: {json.dumps({'event': 'token', 'text': token})}\n\n"
+                        await asyncio.sleep(0)
+                    logger.info("Emotional-need revision — rejected: %r | revised: %r", rejected_draft[:200], full_response[:200])
 
             # 5. REWARD EVALUATOR & SELF-CORRECTION — judges the response itself (not the
             # documents) and regenerates once, with feedback, if it fails. Capped at one retry;
