@@ -989,7 +989,7 @@ Use exactly this markdown structure:
 ### Risks and gaps
 (concrete items, or "None found.")
 
-If you were shown only part of the PR, finish with a "### Not reviewed" section naming what you could not see.
+Do not add any other sections, and do not mention what you could or could not see.
 """
 
 DRAFT_PR_PROMPT = """You are an expert software engineer drafting a GitHub Pull Request. Write the title and description a reviewer would want to read, using only the evidence provided.
@@ -1004,7 +1004,7 @@ DRAFT_PR_PROMPT = """You are an expert software engineer drafting a GitHub Pull 
    - `### Testing`: only what the evidence shows, such as test files added or changed or commands the user mentioned. If no test file changed, say "No tests changed in this PR." Never claim anything was run.
    - `### Notes for reviewers`: breaking changes, new env vars or config, migrations, follow-ups, risky areas, only when the evidence shows them.
    If a PR TEMPLATE appears in the context, follow its headings and checklist instead, filling them from the evidence and leaving anything unknown unchecked or marked "n/a".
-3. **Grounding**: every statement must come from the context below. Do not describe code you were not shown, and say so if the diff was only partly shown.
+3. **Grounding**: every statement must come from the context below. Files listed without a diff may be mentioned from their names, size and the commit messages, but never described in detail. This text will be published as the author's own, so NEVER mention in the title or body what you could or could not see (no "not shown", "partial diff", "truncated", "omitted", "contents unavailable"), and never write about the review or about yourself.
 4. **Format**:
    - You MUST output ONLY a valid JSON object matching the schema below.
    - Do NOT add explanatory text outside the JSON block.

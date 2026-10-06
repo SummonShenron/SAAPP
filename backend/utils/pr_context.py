@@ -55,6 +55,7 @@ class DiffContext:
     total: int = 0
     noise_skipped: List[str] = field(default_factory=list)
     omitted: List[str] = field(default_factory=list)  # real files left out for budget
+    omitted_detail: List[str] = field(default_factory=list)  # the same, with each file's +/- counts
     truncated_files: List[str] = field(default_factory=list)  # shown, but with the patch cut short
     test_files: List[str] = field(default_factory=list)
     source_files: List[str] = field(default_factory=list)
@@ -98,6 +99,7 @@ def build_diff_context(
         name = f["filename"]
         if len(blocks) >= max_files or used >= total_chars:
             ctx.omitted.append(name)
+            ctx.omitted_detail.append(f"{name} ({_stat(f)})")
             continue
         patch = f.get("patch")
         header = f"File: {name} ({f.get('status', 'modified')}, {_stat(f)})"
@@ -115,7 +117,7 @@ def build_diff_context(
 
     parts = ["\n\n".join(blocks)] if blocks else ["(no readable text changes)"]
     if ctx.omitted:
-        parts.append(f"[{len(ctx.omitted)} more file(s) not shown: " + ", ".join(ctx.omitted[:12]) + (", ..." if len(ctx.omitted) > 12 else "") + "]")
+        parts.append(f"[{len(ctx.omitted)} more changed file(s), diff not included: " + ", ".join(ctx.omitted_detail[:15]) + (", ..." if len(ctx.omitted) > 15 else "") + "]")
     if ctx.noise_skipped:
         parts.append(f"[{len(ctx.noise_skipped)} lockfile/generated/asset file(s) changed and left out: " + ", ".join(ctx.noise_skipped[:8]) + (", ..." if len(ctx.noise_skipped) > 8 else "") + "]")
     ctx.text = "\n\n".join(parts)
@@ -169,14 +171,52 @@ def build_pr_header(pr: Optional[Dict[str, Any]], subjects: List[str], ctx: Diff
 
 
 def fit_note(ctx: DiffContext) -> str:
-    """One line telling the writer exactly how much of the PR it was shown."""
+    """One line telling the OVERVIEW writer how much of the PR it was shown. What it could not read is
+    listed for the reader by coverage_note (in code, not by the model), so the model is told not to
+    narrate it."""
     if ctx.complete:
         return f"You were shown the full diff of all {ctx.shown} reviewed file(s)."
     cut = len(ctx.omitted) + len(ctx.truncated_files)
     return (
-        f"You were shown only part of this PR ({cut} file(s) omitted or cut short). State plainly in the "
-        "output which part you could not review; never describe code you were not shown."
+        f"You were shown only part of this PR ({cut} file(s) omitted or cut short). Never describe code you "
+        "were not shown, and do not write about what you could or could not see: a note listing the files "
+        "that were not fully covered is added to your comment automatically."
     )
+
+
+def draft_fit_note(ctx: DiffContext) -> str:
+    """The same, for a PR description the user will publish under their name: nothing about the
+    tooling's limits may end up in the PR text itself."""
+    if ctx.complete:
+        return ""
+    return (
+        "Some changed files are listed without their full diff. Describe those from their names, their size "
+        "and the commit messages only. Never write in the title or description that any part of the diff was "
+        "unavailable, truncated, omitted or not shown."
+    )
+
+
+def coverage_note(ctx: DiffContext) -> str:
+    """A footnote for the posted overview naming what the model could not fully read, so a reader knows
+    where the overview is thin. Empty when it saw everything."""
+    if ctx.complete:
+        return ""
+    parts = []
+    if ctx.truncated_files:
+        parts.append("diff cut short: " + ", ".join(f"`{n}`" for n in ctx.truncated_files[:8]) + (", ..." if len(ctx.truncated_files) > 8 else ""))
+    if ctx.omitted:
+        parts.append("not read: " + ", ".join(f"`{n}`" for n in ctx.omitted[:8]) + (", ..." if len(ctx.omitted) > 8 else ""))
+    return "<sub>Not fully covered by this overview (" + "; ".join(parts) + ").</sub>"
+
+
+def unescape_flattened_newlines(text: str) -> str:
+    """Repairs a drafted PR title/body whose line breaks arrived as the two characters backslash and n,
+    which GitHub shows literally ("Summary\\nUpdates...### Changes\\n- ..." on one line). Only applied
+    when the text has no real line break at all, so a body that legitimately mentions "\\n" inside code
+    is left alone."""
+    if not text or "\n" in text.strip() or chr(92) + "n" not in text:
+        return text
+    return text.replace(chr(92) + "r" + chr(92) + "n", "\n").replace(chr(92) + "n", "\n").replace(chr(92) + "t", "\t")
 
 
 def build_review_prompt(repo: str, pr: Optional[Dict[str, Any]], commits: Iterable[Dict[str, Any]], files: Iterable[Dict[str, Any]]):

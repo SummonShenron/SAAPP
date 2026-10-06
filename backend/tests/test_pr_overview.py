@@ -252,7 +252,7 @@ def test_the_draft_is_given_commit_subjects_patches_and_a_tests_note(monkeypatch
     assert "File: app.py (modified, +4/-1)" in text and "@@ -1 +1 @@" in text
     assert "LOCK-CHURN" not in text and "lockfile/generated" in text
     assert "Tests changed alongside the source: NONE" in text
-    assert "full diff of all 1" in text
+    assert "shown" not in text.lower().replace("not shown", "")  # nothing about the tooling's limits in a draft's evidence
 
 
 def test_the_draft_follows_the_repos_own_pr_template_when_it_has_one(monkeypatch):
@@ -277,3 +277,20 @@ def test_the_draft_prompt_fills_in_and_asks_for_grounded_sections():
     assert "CTX" in prompt and "open a PR for the retry work" in prompt
     assert "### Summary" in prompt and "### Testing" in prompt and "Never claim anything was run" in prompt
     assert "PR TEMPLATE" in prompt  # told to follow it when present
+
+
+def test_a_partial_diff_gives_the_draft_a_do_not_mention_it_instruction_and_still_lists_the_unshown_files(monkeypatch):
+    files = [{"filename": f"src/f{i}.py", "status": "modified", "additions": 1, "deletions": 0, "patch": "p" * 9000} for i in range(10)]
+    _compare_fake(monkeypatch, files=files)
+    text = aw.fetch_branch_diff_summary("o/r", "main", "feat", token="t")
+    assert "Never write in the title or description" in text
+    assert "diff not included" in text and "(+1/-0)" in text
+
+
+def test_the_webhook_comment_ends_with_a_coverage_footnote_when_the_diff_was_partial(monkeypatch, llm):
+    big = [{"filename": f"src/f{i}.py", "status": "modified", "additions": 1, "deletions": 0, "patch": "p" * 9000} for i in range(10)]
+    gh = _GitHub(monkeypatch, files=big)
+    gs.process_pr_summary(REPO, 7, token="t")
+    body = gh.posts[0][1]["body"]
+    assert "Not fully covered by this overview" in body
+    assert "I was not shown" not in body

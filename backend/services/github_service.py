@@ -4,7 +4,7 @@ from typing import Optional
 import logging
 from tenacity import retry, stop_after_attempt, wait_exponential
 from backend.models.models import lite_llm
-from backend.utils.pr_context import build_review_prompt
+from backend.utils.pr_context import build_review_prompt, coverage_note
 
 logger = logging.getLogger("SASS Logger")
 
@@ -183,7 +183,7 @@ def process_pr_summary(repo: str, pr_number: int, token: Optional[str] = None):
     logger.info(f"Successfully fetched {len(evidence['files'])} changed file(s).")
 
     # 2. Write the overview from that evidence, with retries
-    review_prompt, _ctx = build_review_prompt(repo, evidence["pr"], evidence["commits"], evidence["files"])
+    review_prompt, diff_ctx = build_review_prompt(repo, evidence["pr"], evidence["commits"], evidence["files"])
     try:
         logger.info("Invoking LLM for PR analysis...")
         comment_body = _llm_text(_call_llm_with_retry(review_prompt))
@@ -198,7 +198,8 @@ def process_pr_summary(repo: str, pr_number: int, token: Optional[str] = None):
     # 3. Post the comment, or update the one we posted before
     head_sha = ((evidence["pr"] or {}).get("head") or {}).get("sha") or ""
     footer = f"\n\n<sub>Updated for commit `{head_sha[:7]}`</sub>" if head_sha else ""
-    body = f"{OVERVIEW_MARKER}\n**Sonic Assistant PR Overview**\n\n{comment_body}{footer}"
+    coverage = coverage_note(diff_ctx)
+    body = f"{OVERVIEW_MARKER}\n**Sonic Assistant PR Overview**\n\n{comment_body}" + (f"\n\n{coverage}" if coverage else "") + footer
 
     existing = _find_overview_comment(repo, pr_number, headers, api_base)
     if existing and existing.get("id"):

@@ -72,7 +72,8 @@ def test_the_total_budget_leaves_files_out_and_says_which():
     files = [_file(f"f{i}.py", patch="y" * 900) for i in range(10)]
     ctx = pc.build_diff_context(files, per_file_chars=900, total_chars=2000)
     assert ctx.shown < 10 and ctx.omitted
-    assert f"{len(ctx.omitted)} more file(s) not shown" in ctx.text
+    assert f"{len(ctx.omitted)} more changed file(s), diff not included" in ctx.text
+    assert all(f"({d.split('(')[1]}" in ctx.text for d in ctx.omitted_detail)  # each keeps its +/- size
     assert not ctx.complete
 
 
@@ -157,7 +158,8 @@ def test_a_docs_only_pr_does_not_claim_tests_are_missing():
 def test_the_fit_note_tells_the_writer_how_much_it_saw():
     assert "full diff of all 2" in pc.fit_note(pc.build_diff_context([_file("a.py"), _file("b.py")]))
     partial = pc.fit_note(pc.build_diff_context([_file("a.py", patch="q" * 5000)], per_file_chars=100))
-    assert "only part" in partial and "never describe code you were not shown" in partial
+    assert "only part" in partial and "Never describe code you were not shown" in partial
+    assert "added to your comment automatically" in partial
 
 
 # ---------------------------------------------------------------------------
@@ -179,10 +181,50 @@ def test_the_review_prompt_is_fully_filled_in():
 def test_the_review_prompt_tells_the_model_to_stay_grounded_and_to_say_what_it_could_not_see():
     prompt, _ = pc.build_review_prompt("a/b", None, [], [_file("app.py", patch="q" * 20000)])
     assert "Ground every claim" in prompt
-    assert "Not reviewed" in prompt
     assert "only part of this PR" in prompt
+    # the model is not asked to narrate its own blind spots: a footnote is added in code instead
+    assert "Not reviewed" not in prompt and "do not mention what you could or could not see" in prompt
 
 
 def test_the_review_prompt_works_with_no_pr_details_at_all():
     prompt, _ = pc.build_review_prompt("a/b", None, None, [])
     assert "(no readable text changes)" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Real-PR formatting problems: tooling limits leaking into published text, and flattened line breaks
+# ---------------------------------------------------------------------------
+
+def test_the_coverage_footnote_names_what_the_overview_did_not_fully_read():
+    ctx = pc.build_diff_context([_file("a.py", patch="x" * 500), _file("b.py", patch="y")], per_file_chars=100, max_files=1)
+    note = pc.coverage_note(ctx)
+    assert note.startswith("<sub>") and "Not fully covered" in note
+    assert "diff cut short: `a.py`" in note and "not read: `b.py`" in note
+
+
+def test_there_is_no_footnote_when_everything_was_read():
+    assert pc.coverage_note(pc.build_diff_context([_file("a.py")])) == ""
+
+
+def test_a_drafted_description_is_never_told_to_talk_about_what_it_could_not_see():
+    partial = pc.build_diff_context([_file("a.py", patch="x" * 500)], per_file_chars=100)
+    note = pc.draft_fit_note(partial)
+    assert "Never write in the title or description" in note
+    assert pc.draft_fit_note(pc.build_diff_context([_file("a.py")])) == ""
+
+
+def test_the_draft_prompt_forbids_narrating_the_tooling_limits():
+    from backend.components.constraints import DRAFT_PR_PROMPT
+    assert "NEVER mention in the title or body what you could or could not see" in DRAFT_PR_PROMPT
+    assert "say so if the diff was only partly shown" not in DRAFT_PR_PROMPT  # the instruction that caused the leak
+
+
+def test_a_body_whose_line_breaks_arrived_as_backslash_n_is_repaired():
+    flat = "### Summary" + chr(92) + "nUpdates things." + chr(92) + "n" + chr(92) + "n### Changes" + chr(92) + "n- one" + chr(92) + "n- two"
+    assert pc.unescape_flattened_newlines(flat) == "### Summary\nUpdates things.\n\n### Changes\n- one\n- two"
+
+
+def test_a_body_with_real_line_breaks_is_left_exactly_alone():
+    body = "### Summary\nUses the `" + chr(92) + "n` escape in a regex.\n- point"
+    assert pc.unescape_flattened_newlines(body) == body
+    assert pc.unescape_flattened_newlines("") == "" and pc.unescape_flattened_newlines("plain title") == "plain title"

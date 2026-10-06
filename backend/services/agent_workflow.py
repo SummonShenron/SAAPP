@@ -62,7 +62,7 @@ from backend.services.browser_tool import (
 )
 from backend.services.url_reader import read_url
 from backend.services.github_service import fetch_pr_evidence
-from backend.utils.pr_context import build_review_prompt, build_diff_context, commit_subjects, build_pr_header, fit_note
+from backend.utils.pr_context import build_review_prompt, build_diff_context, commit_subjects, build_pr_header, draft_fit_note, coverage_note, unescape_flattened_newlines
 from backend.services.ci_test_runner import run_repo_tests, run_python_snippet, DEFAULT_MAX_WAIT_SECONDS as CI_TEST_RUN_MAX_WAIT_SECONDS
 from backend.utils.normalize_utils import ensure_str
 from backend.utils.agent_utils import (
@@ -3198,6 +3198,7 @@ async def pr_summarizer_node(state: GraphState) -> dict:
 
         # Same evidence and prompt as the webhook's PR overview comment (backend/utils/pr_context.py).
         review_prompt, _diff_ctx = build_review_prompt(repo, evidence["pr"], evidence["commits"], evidence["files"])
+        review_footnote = coverage_note(_diff_ctx)
 
         try:
             # 3. Use ainvoke for non-blocking LLM review generation
@@ -3217,6 +3218,8 @@ async def pr_summarizer_node(state: GraphState) -> dict:
         except Exception as e:
             comment_body = f"Could not generate automated PR summary: {str(e)}"
 
+        if review_footnote:
+            comment_body = f"{comment_body}\n\n{review_footnote}"
         output_text = f"### PR Review Summary for {repo} #{pr_number}\n\n{comment_body}"
         node_output = state.copy()
         logger.info(
@@ -3279,7 +3282,9 @@ def fetch_branch_diff_summary(repo: str, base: str, head: str, token: str | None
     if header:
         parts.append(header)
     parts.append(f"Files Changed ({ctx.total}):\n{ctx.text}")
-    parts.append(fit_note(ctx))
+    note = draft_fit_note(ctx)
+    if note:
+        parts.append(note)
     template = _fetch_pr_template(repo, headers)
     if template:
         parts.append("PR TEMPLATE (follow its headings and checklist):\n" + template)
@@ -3341,8 +3346,9 @@ def _draft_create_pr(state: GraphState) -> tuple[dict, str]:
         text_content = "".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in raw_content) if isinstance(raw_content, list) else str(raw_content)
         clean_json = text_content.strip().strip("```json").strip("```").strip()
         parsed_json = json.loads(clean_json)
-        title = parsed_json.get("title", f"feat: merge {head_branch} into {base_branch}")
-        body = parsed_json.get("body", "### Summary\n- Automated pull request draft.")
+        title = unescape_flattened_newlines(parsed_json.get("title", f"feat: merge {head_branch} into {base_branch}"))
+        # Seen on a real PR: the whole body arrived as one line with literal backslash-n sequences.
+        body = unescape_flattened_newlines(parsed_json.get("body", "### Summary\n- Automated pull request draft."))
     except Exception:
         logger.exception("Failed to parse LLM PR generation, using fallback.")
         title = f"feat: merge {head_branch} into {base_branch}"
