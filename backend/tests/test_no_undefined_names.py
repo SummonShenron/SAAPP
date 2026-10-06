@@ -31,6 +31,9 @@ CHECKED = [
     "backend/utils/github_audit.py",
     "backend/services/url_reader.py",
     "backend/utils/emotion_checks.py",
+    "backend/utils/pr_context.py",
+    "backend/utils/isolation_kb_utils.py",
+    "backend/utils/personal_kb_backfill.py",
 ]
 _MODULE_DUNDERS = {"__file__", "__name__", "__doc__", "__builtins__", "__spec__", "__package__", "__path__"}
 

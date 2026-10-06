@@ -33,6 +33,10 @@ class _FakeSettingsCollection:
 
     def _matches(self, doc, filt):
         for key, cond in filt.items():
+            if key == "$or":
+                if not any(self._matches(doc, branch) for branch in cond):
+                    return False
+                continue
             value = doc.get(key)
             if isinstance(cond, dict):
                 if "$regex" in cond:
@@ -310,6 +314,49 @@ def test_when_several_users_pinned_the_repo_the_owner_wins(db):
     _save("amy", ALICE_TOKEN, login="acme")
     _pin(db, "amy", "acme/app")
     assert uset.find_github_token_for_repo("acme/app")[0] == "amy"
+
+
+# The real bug: a user saves a token once, pins ONE repo (SAAPP), then wires webhooks on every repo they
+# own. Matching only on the pin meant only the pinned repo ever found a token.
+
+def test_the_owner_of_a_repo_is_used_without_having_to_pin_it(db):
+    _save("jack", ALICE_TOKEN, login="SummonShenron")
+    _pin(db, "jack", "SummonShenron/SAAPP")
+    assert uset.find_github_token_for_repo("SummonShenron/SAAPP") == ("jack", ALICE_TOKEN)
+    # another repo he owns, never pinned:
+    assert uset.find_github_token_for_repo("SummonShenron/Circuit") == ("jack", ALICE_TOKEN)
+    assert uset.find_github_token_for_repo("summonshenron/errAgent") == ("jack", ALICE_TOKEN)
+
+
+def test_an_owners_token_is_not_used_on_a_repo_owned_by_someone_else(db):
+    _save("jack", ALICE_TOKEN, login="SummonShenron")
+    _pin(db, "jack", "SummonShenron/SAAPP")
+    assert uset.find_github_token_for_repo("SomeoneElse/their-repo") == (None, None)
+    assert uset.find_github_token_for_repo("SummonShenron-evil/SAAPP") == (None, None)
+
+
+def test_the_owner_without_a_pin_beats_a_pin_only_user(db):
+    _save("zed", BOB_TOKEN, login="someone-else")
+    _pin(db, "zed", "acme/app")
+    _save("amy", ALICE_TOKEN, login="acme")  # owns acme/app, never pinned it
+    assert uset.find_github_token_for_repo("acme/app")[0] == "amy"
+
+
+def test_a_pinned_collaborator_still_works_when_the_owner_has_no_token(db):
+    _save("zed", BOB_TOKEN, login="collab")
+    _pin(db, "zed", "acme/app")
+    assert uset.find_github_token_for_repo("acme/app") == ("zed", BOB_TOKEN)
+
+
+def test_a_shared_guest_identity_is_never_matched_by_owner_login(db):
+    _save("zed", ALICE_TOKEN, login="acme")
+    db.user_settings.docs.append({
+        "username": "guest",
+        "github_token_encrypted": secret_utils.encrypt_secret(BOB_TOKEN),  # a perfectly decryptable token
+        "github_login": "acme",
+    })
+    # "guest" sorts before "zed", so only the lock keeps the shared identity from winning
+    assert uset.find_github_token_for_repo("acme/anything")[0] == "zed"
 
 
 def test_the_shared_env_token_is_never_returned_by_the_webhook_lookup(db, monkeypatch):

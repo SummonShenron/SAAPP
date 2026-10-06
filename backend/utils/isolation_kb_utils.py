@@ -2,7 +2,8 @@ import os
 import json
 import hashlib
 import logging
-from typing import List, Dict, Any
+from datetime import datetime
+from typing import List, Dict, Any, Optional
 from settings import DIRECTORY_JSON_PATH
 from backend.utils.db_utils import get_db
 
@@ -53,6 +54,82 @@ def make_personal_kb_id(clerk_id: str) -> str:
     username or display name, which two different users could share."""
     digest = hashlib.sha256((clerk_id or "").encode("utf-8")).hexdigest()[:10]
     return f"kb_{digest}"
+
+def personal_kb_groups(kb_id: str) -> List[str]:
+    """The two groups a personal KB is made of: read access (the KB id itself) and write access
+    (the "{id} Ingesters" companion). Both are plain entries in the user's `groups`."""
+    return [kb_id, f"{kb_id} Ingesters"]
+
+
+def new_personal_kb(clerk_id: str, username: str) -> Dict[str, Any]:
+    """The `personal_kb` record stored on a user's directory document."""
+    return {
+        "id": make_personal_kb_id(clerk_id),
+        "display_name": f"{username}'s Knowledge Base",
+        "created_at": datetime.utcnow(),
+    }
+
+
+# One identity shared by every visitor (the recruiter sandbox, the embedded BTY widget): a "personal"
+# knowledge base on it would be shared by all of them, so it is never given one.
+SHARED_IDENTITIES = {"guest", "guest-recruiter@example.com", "guest_bty"}
+
+
+def personal_kb_update(user_doc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The Mongo update that gives an existing directory user the personal KB new users get at first
+    login (see /api/me), or None when there is nothing to do or it can't safely be done. Safe to run
+    any number of times: the id is derived from the Clerk id, so it is always the same, groups are only
+    ever added to, and a user's other groups (roles, shared affiliates) are never touched.
+
+    Not provisioned: shared guest identities (see SHARED_IDENTITIES), and documents with no clerk_id,
+    since the id is derived from it and a placeholder would give every such user the SAME knowledge
+    base; those are provisioned automatically at their next login, once /api/me has recorded one."""
+    if user_doc.get("username") in SHARED_IDENTITIES or user_doc.get("clerk_id") in SHARED_IDENTITIES:
+        return None
+    clerk_id = user_doc.get("clerk_id")
+    if not clerk_id:
+        return None
+
+    existing = user_doc.get("personal_kb") or {}
+    if existing.get("id"):
+        # Already has one; only make sure its access groups are really there (a half-finished earlier run).
+        missing = [g for g in personal_kb_groups(existing["id"]) if g not in (user_doc.get("groups") or [])]
+        if not missing:
+            return None
+        return {"filter": {"_id": user_doc["_id"]}, "update": {"$addToSet": {"groups": {"$each": missing}}}}
+
+    email = user_doc.get("email") or ""
+    username = user_doc.get("username") or (email.split("@")[0] if email else clerk_id)
+    record = new_personal_kb(clerk_id, username)
+    return {
+        "filter": {"_id": user_doc["_id"]},
+        "update": {"$set": {"personal_kb": record}, "$addToSet": {"groups": {"$each": personal_kb_groups(record["id"])}}},
+    }
+
+
+def provision_personal_kbs(db, apply: bool = False) -> Dict[str, Any]:
+    """Gives every existing directory user a personal KB. With apply=False (the default) nothing is
+    written; the report says what would change. Returns {"provisioned": [...], "already": [...],
+    "skipped": [(username, reason), ...]}."""
+    report: Dict[str, Any] = {"provisioned": [], "already": [], "skipped": []}
+    users = db["directory"]
+    for doc in list(users.find({})):
+        label = doc.get("username") or doc.get("email") or str(doc.get("_id"))
+        if doc.get("username") in SHARED_IDENTITIES or doc.get("clerk_id") in SHARED_IDENTITIES:
+            report["skipped"].append((label, "shared guest identity"))
+            continue
+        if not doc.get("clerk_id"):
+            report["skipped"].append((label, "no clerk_id yet; provisioned at their next login"))
+            continue
+        change = personal_kb_update(doc)
+        if change is None:
+            report["already"].append(label)
+            continue
+        if apply:
+            users.update_one(change["filter"], change["update"])
+        report["provisioned"].append(label)
+    return report
+
 
 # Role/administrative groups that live in the same flat `groups` list as KB-access groups but
 # are never themselves a knowledge base to show as a query-scope option. PAAPP_Admins and

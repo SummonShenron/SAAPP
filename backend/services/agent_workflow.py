@@ -61,6 +61,8 @@ from backend.services.browser_tool import (
     BrowserSession, browser_navigate, browser_read_text, browser_click, browser_type, browser_screenshot,
 )
 from backend.services.url_reader import read_url
+from backend.services.github_service import fetch_pr_evidence
+from backend.utils.pr_context import build_review_prompt, build_diff_context, commit_subjects, build_pr_header, fit_note
 from backend.services.ci_test_runner import run_repo_tests, run_python_snippet, DEFAULT_MAX_WAIT_SECONDS as CI_TEST_RUN_MAX_WAIT_SECONDS
 from backend.utils.normalize_utils import ensure_str
 from backend.utils.agent_utils import (
@@ -3172,11 +3174,9 @@ async def pr_summarizer_node(state: GraphState) -> dict:
             if not pr_num:
                 return None, None
 
-            files_url = f"{api_base}/repos/{repo}/pulls/{pr_num}/files"
-            files_res = requests.get(files_url, headers=headers, timeout=_GITHUB_API_TIMEOUT_SECONDS)
-            return pr_num, files_res
+            return pr_num, fetch_pr_evidence(repo, pr_num, headers, api_base)
 
-        pr_number, files_res = await asyncio.to_thread(_fetch_pr_data)
+        pr_number, evidence = await asyncio.to_thread(_fetch_pr_data)
 
         if not pr_number:
             output_text = f"Could not locate the requested Pull Request for `{repo}`. Please specify a PR number (e.g., 'Review PR #2')."
@@ -3187,8 +3187,8 @@ async def pr_summarizer_node(state: GraphState) -> dict:
                 "relevance_grade": "pr_summary"
             }
 
-        if files_res.status_code != 200:
-            output_text = f"Failed to fetch PR #{pr_number} files: {files_res.text}"
+        if evidence["error"]:
+            output_text = f"Failed to fetch PR #{pr_number} files: {evidence['error']}"
             return {
                 **state,
                 "content_to_format": output_text,
@@ -3196,21 +3196,8 @@ async def pr_summarizer_node(state: GraphState) -> dict:
                 "relevance_grade": "pr_summary"
             }
 
-        changed_files = files_res.json()
-        diff_context = []
-        for f in changed_files[:10]:
-            filename = f.get("filename")
-            status = f.get("status")
-            patch = f.get("patch", "No patch available")
-            diff_context.append(f"File: {filename} ({status})\nPatch:\n```diff\n{patch}\n```")
-
-        formatted_diffs = "\n\n".join(diff_context)
-
-        # Generate LLM summary
-        if "{diffs}" in PR_REVIEW_PROMPT:
-            review_prompt = PR_REVIEW_PROMPT.format(diffs=formatted_diffs)
-        else:
-            review_prompt = f"{PR_REVIEW_PROMPT}\n\nPull Request Diffs:\n{formatted_diffs}"
+        # Same evidence and prompt as the webhook's PR overview comment (backend/utils/pr_context.py).
+        review_prompt, _diff_ctx = build_review_prompt(repo, evidence["pr"], evidence["commits"], evidence["files"])
 
         try:
             # 3. Use ainvoke for non-blocking LLM review generation
@@ -3249,30 +3236,54 @@ async def pr_summarizer_node(state: GraphState) -> dict:
             "relevance_grade": "pr_summary"
         }
 
+_PR_TEMPLATE_PATHS = (".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md", "pull_request_template.md")
+_PR_TEMPLATE_MAX_CHARS = 3000
+
+
+def _fetch_pr_template(repo: str, headers: dict) -> str:
+    """The repo's own PR template, if it has one, so a drafted description follows the team's format."""
+    for path in _PR_TEMPLATE_PATHS:
+        try:
+            res = requests.get(f"https://api.github.com/repos/{repo}/contents/{path}", headers=headers, timeout=_GITHUB_API_TIMEOUT_SECONDS)
+            if res.status_code == 200 and isinstance(res.json(), dict) and res.json().get("content"):
+                return base64.b64decode(res.json()["content"]).decode("utf-8", errors="replace")[:_PR_TEMPLATE_MAX_CHARS]
+        except Exception:
+            continue
+    return ""
+
+
 def fetch_branch_diff_summary(repo: str, base: str, head: str, token: str | None = None) -> str:
-    """Fetches recent commit messages and changed files between two branches. `token` is the caller's
-    resolved GitHub token (their own or the shared one); only when omitted does it read the env var."""
+    """The evidence a drafted PR title and description are written from: the commit messages, the
+    changed files with their patches (lockfiles and generated output left out, size-bounded, with a
+    note of anything cut), whether tests changed, and the repo's PR template if it has one. `token` is
+    the caller's resolved GitHub token (their own or the shared one); only when omitted does it read
+    the env var."""
     token = token or os.getenv("GITHUB_TOKEN")
     url = f"https://api.github.com/repos/{repo}/compare/{base}...{head}"
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json"
     }
-    
+
     res = requests.get(url, headers=headers, timeout=_GITHUB_API_TIMEOUT_SECONDS)
     if res.status_code != 200:
         return "No diff context available."
-    
+
     data = res.json()
-    
-    # Extract commit messages
-    commits = [c["commit"]["message"].strip() for c in data.get("commits", [])]
-    # Extract changed filenames
-    files = [f["filename"] for f in data.get("files", [])]
-    
-    summary = f"Commits ({len(commits)}):\n- " + "\n- ".join(commits[:10])
-    summary += f"\n\nFiles Changed ({len(files)}):\n- " + "\n- ".join(files[:15])
-    return summary
+    commits = data.get("commits", [])
+    ctx = build_diff_context(data.get("files", []))
+    subjects = commit_subjects(commits, limit=20)
+
+    parts = [f"Commits ({len(commits)}):\n- " + "\n- ".join(subjects) if subjects else f"Commits ({len(commits)})"]
+    header = build_pr_header(None, [], ctx)  # just the "tests changed" line when there is source
+    if header:
+        parts.append(header)
+    parts.append(f"Files Changed ({ctx.total}):\n{ctx.text}")
+    parts.append(fit_note(ctx))
+    template = _fetch_pr_template(repo, headers)
+    if template:
+        parts.append("PR TEMPLATE (follow its headings and checklist):\n" + template)
+    return "\n\n".join(parts)
 
 def _content_of(msg) -> str:
     return getattr(msg, "content", "") if hasattr(msg, "content") else (msg.get("content", "") if isinstance(msg, dict) else str(msg))

@@ -125,7 +125,7 @@ from backend.utils.fallback_utils import rewrite_fallback
 from backend.services.reward_evaluator import evaluate_response, build_correction_prompt, REWARD_EVAL_SOURCE_TYPES
 from backend.logging.sass_logger import setup_logging
 from backend.services.orchestrator import startup_services
-from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, load_directory, make_personal_kb_id, resolve_kb_display_names
+from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, load_directory, make_personal_kb_id, new_personal_kb, personal_kb_groups, personal_kb_update, resolve_kb_display_names
 from backend.utils.db_utils import get_db, save_error_event, test_connection
 from backend.auth.isolation_auth import get_current_user, record_login_event
 from backend.services.checkpoint_retention import run_checkpoint_retention_loop, prune_thread_checkpoints_async
@@ -393,25 +393,25 @@ def get_me(request: Request, current_user: dict = Depends(get_current_user)):
                 safe_email = email
 
             logger.info(f"[+] Provisioning user record for: {safe_email or safe_username}")
-            personal_kb_id = make_personal_kb_id(clerk_id)
-            personal_kb_display_name = f"{safe_username}'s Knowledge Base"
+            personal_kb = new_personal_kb(clerk_id, safe_username)
             new_user = {
                 "clerk_id": clerk_id,
                 "email": safe_email,
                 "username": safe_username,
-                "groups": [
-                    "Affiliate_A", "Affiliate_B", "Affiliate_C",
-                    personal_kb_id, f"{personal_kb_id} Ingesters",
-                ],
-                "personal_kb": {
-                    "id": personal_kb_id,
-                    "display_name": personal_kb_display_name,
-                    "created_at": datetime.utcnow(),
-                },
+                "groups": ["Affiliate_A", "Affiliate_B", "Affiliate_C", *personal_kb_groups(personal_kb["id"])],
+                "personal_kb": personal_kb,
                 "created_at": datetime.utcnow()
             }
             users_col.insert_one(new_user)
             user_doc = new_user
+        else:
+            # An account from before personal KBs existed: it gets the same one a new user would, the
+            # first time it shows up (personal_kb_update decides whether that applies to this account).
+            provisioning = personal_kb_update(user_doc)
+            if provisioning:
+                logger.info(f"[+] Provisioning a personal knowledge base for existing user: {user_doc.get('email') or user_doc.get('username')}")
+                users_col.update_one(provisioning["filter"], provisioning["update"])
+                user_doc = users_col.find_one({"_id": user_doc["_id"]}) or user_doc
             
         return {
             "username": user_doc.get("username") or (email.split("@")[0] if email else clerk_id),
@@ -1688,6 +1688,14 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
             # A user who pinned this repo AND supplied their own token reviews it as themselves
             # (their token, their audit entry); otherwise the shared server token is used, as before.
             token_owner, user_token = find_github_token_for_repo(repo)
+            if not user_token and not os.getenv("GITHUB_TOKEN"):
+                # Previously this queued a job that failed silently in the background and still told
+                # GitHub "event_queued", so a repo with no usable token looked like it was working.
+                logger.error(
+                    "No GitHub token can act on %s: no user who owns or pinned it has saved a token, and the shared "
+                    "GITHUB_TOKEN is not set. Save a token under Integrations on the account that owns the repo.", repo,
+                )
+                return {"status": "no_token_for_repo", "pr_number": pr_number}
             audit_github_token_use(token_owner, "user" if user_token else "shared", "webhook_pr_summary", repo)
 
             background_tasks.add_task(process_pr_summary, repo, pr_number, user_token)
