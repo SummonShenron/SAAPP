@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { getSonicProfile, SonicProfile } from "../api";
+import { getSonicProfile, type SonicProfile } from "../api";
 
 /** The "About Sonic" topic in the help panel: Sonic's character profile, served by the backend so there is
  *  exactly one place it is written (backend/components/sonic_profile.py). Uses the help panel's own list styling. */
