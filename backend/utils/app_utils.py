@@ -14,6 +14,7 @@ from backend.services.memory_search import embed_and_store_memory_chunk
 from backend.services.memory_compaction import maybe_trigger_compaction
 from backend.utils.db_utils import get_db, resolve_service_registry_repo
 from backend.utils.embedding_utils import embed_text, cosine_similarity
+from backend.utils.time_utils import SENT_AT_KEY, history_gap_marker
 from fastapi import HTTPException
 import subprocess
 import sys
@@ -61,6 +62,8 @@ def _serialize_messages(messages: list) -> list:
             kb_images = additional_kwargs.get("kb_images")
             if kb_images:
                 entry["kb_images"] = kb_images
+            if additional_kwargs.get(SENT_AT_KEY):
+                entry[SENT_AT_KEY] = additional_kwargs[SENT_AT_KEY]
             serialized.append(entry)
     return serialized
 
@@ -149,9 +152,10 @@ def _deserialize_messages(raw_messages: list) -> list:
     for msg in raw_messages or []:
         m_type = msg.get("type")
         content = msg.get("content", "")
-        if m_type == "human": messages.append(HumanMessage(content=content))
-        elif m_type == "ai": messages.append(AIMessage(content=content))
-        elif m_type == "system": messages.append(SystemMessage(content=content))
+        extra = {SENT_AT_KEY: msg[SENT_AT_KEY]} if msg.get(SENT_AT_KEY) else {}
+        if m_type == "human": messages.append(HumanMessage(content=content, additional_kwargs=extra))
+        elif m_type == "ai": messages.append(AIMessage(content=content, additional_kwargs=extra))
+        elif m_type == "system": messages.append(SystemMessage(content=content, additional_kwargs=extra))
     return messages
 
 
@@ -298,7 +302,14 @@ def delete_user_conversation(username: str, session_id: str) -> bool:
 def format_history_as_text(messages) -> str:
     """Formats the LangChain history array into a clean text transcript block for the prompt."""
     formatted = []
+    previous = None
     for msg in messages:
+        if isinstance(msg, (HumanMessage, AIMessage)):
+            # A long pause between two messages is part of what happened, and the text alone hides it.
+            marker = history_gap_marker(previous, msg) if previous is not None else ""
+            if marker:
+                formatted.append(marker)
+            previous = msg
         if isinstance(msg, HumanMessage):
             formatted.append(f"User: {msg.content}")
         elif isinstance(msg, AIMessage):

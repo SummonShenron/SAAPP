@@ -43,6 +43,10 @@ from backend.components.constraints import (
 )
 from backend.utils.memory_utils import save_user_fact, load_user_facts, fetch_coding_preferences, fact_for_state
 from backend.utils.emotion_utils import energy_tier, merge_emotional_state
+from backend.utils.safety_utils import (
+    detect_risk_language, normalize_risk, normalize_support, merge_safety_state, effective_risk, log_safety_event,
+    remember_support, RISK_NONE, _ORDER as _RISK_ORDER,
+)
 from backend.services.local_workspace import get_workspace_handle, workspace_status
 from backend.services.local_edits import validate_edit_proposal
 from backend.services.memory_search import embed_and_store_memory_chunk, retrieve_user_memory
@@ -50,6 +54,7 @@ from backend.state.graph_state import GraphState, route_after_grading
 from langgraph.graph import StateGraph, START, END
 from backend.utils.db_utils import get_db
 from backend.utils.user_settings_utils import get_user_timezone, get_user_target_doc_id, resolve_github_token
+from backend.utils.time_utils import build_agent_time_line, local_today
 from backend.utils.google_calendar_utils import CALENDAR_LOCKED_USERS, get_connection_status as get_calendar_connection_status, has_granted_scope
 from backend.services.google_calendar_oauth import GoogleCalendarOAuth, GoogleCalendarConnectionError, GoogleCalendarTemporaryError
 from backend.services.google_calendar_service import list_events_for_day, create_event, update_event, find_event_by_summary_on_day
@@ -294,7 +299,7 @@ def ensure_workflow_keys(state: GraphState) -> GraphState:
 # turn's input state from whatever was checkpointed on a PRIOR turn, however many turns back
 # that was (verified against LangGraph's own Pregel loop). app.py's initial_state never sets
 # most of these, so without this reset they'd all leak across turns the moment a checkpointer
-# was attached. paused_clarification, paused_code_plan and emotional_state are the deliberate
+# was attached. paused_clarification, paused_code_plan, emotional_state and safety_state are the deliberate
 # exceptions — these are the only fields meant to survive, so they're the only transient
 # GraphState fields NOT listed here.
 _TRANSIENT_STATE_DEFAULTS: Dict[str, Any] = {
@@ -783,6 +788,10 @@ def apply_conditional_skips(plan: Dict[str, Any], state: Dict[str, Any]) -> Dict
 # REASONER NODE (sync)
 # ============================================================
 
+# Strong references to fire-and-forget tasks, so they are not garbage-collected before they finish.
+_background_tasks: set = set()
+
+
 async def reasoner_node(state: GraphState) -> GraphState:
     state = ensure_workflow_keys(state)
     workflow_name = state["workflowName"]
@@ -840,6 +849,31 @@ async def reasoner_node(state: GraphState) -> GraphState:
             state.get("emotional_state"), emotion_reading, datetime.now(timezone.utc)
         )
         logger.info("[Reasoner] Emotional state: %s", state["emotional_state"])
+
+        # Crisis/safety level (backend/utils/safety_utils.py): explicit language is detected here, from the
+        # message itself, so it works even when the classification call above failed; the reasoner's own
+        # read of the message in context can only raise it. The higher of the two is carried forward.
+        _now = datetime.now(timezone.utc)
+        _regex_level = detect_risk_language(msg)
+        _model_level = normalize_risk(emotion_reading)
+        _level = _regex_level if _RISK_ORDER[_regex_level] >= _RISK_ORDER[_model_level] else _model_level
+        _before = effective_risk(state.get("safety_state"), _now)
+        # What they said about the people in their life (the support ladder), when this message said anything.
+        _support_updates, _contact = normalize_support(emotion_reading)
+        _prior_safety = state.get("safety_state")
+        state["safety_state"] = merge_safety_state(_prior_safety, _level, _now, _support_updates, _contact)
+        if _level != RISK_NONE and _RISK_ORDER[_level] >= _RISK_ORDER[_before]:
+            log_safety_event(state.get("username"), _level, "language" if _level == _regex_level else "reasoner")
+        if state["safety_state"]:
+            _prior_support = (_prior_safety or {}).get("support") or {}
+            for _rung, _status in _support_updates.items():
+                if _status == "available" and _prior_support.get(_rung) != _status:
+                    # A person they have is remembered for next time (a blocking embed + dedupe, so off the event loop and not awaited).
+                    _task = asyncio.create_task(asyncio.to_thread(
+                        remember_support, state.get("username"), _rung, _status, _contact,
+                    ))
+                    _background_tasks.add(_task)
+                    _task.add_done_callback(_background_tasks.discard)
         # Which energy ceiling is now in force, so the UI's mascot can follow it.
         await safe_emit_event("emotion", {"tier": energy_tier(state["emotional_state"], datetime.now(timezone.utc))})
 
@@ -2562,6 +2596,9 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
         prompt_template = TOOL_AGENT_PROMPT.replace("{actions_menu}", actions_menu.replace("{", "{{").replace("}", "}}"))
         prompt_template = prompt_template.replace("{history}", formatted_history.replace("{", "{{").replace("}", "}}"))
         prompt_template = prompt_template.replace("{batchable_actions}", ", ".join(sorted(TOOL_AGENT_BATCHABLE_ACTIONS)))
+        prompt_template = prompt_template.replace(
+            "{current_time}", build_agent_time_line(get_user_timezone(username)).replace("{", "{{").replace("}", "}}")
+        )
         coding_preferences = fetch_coding_preferences(username)
         prompt_template = prompt_template.replace(
             "{coding_preferences}", coding_preferences.replace("{", "{{").replace("}", "}}")
@@ -2679,8 +2716,9 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     return f"ERROR: {error}"
                 except GoogleCalendarConnectionError:
                     return "ERROR: No Google Calendar connected for this user. Connect it under Integrations first."
-                date_arg = args.get("date") or datetime.now().strftime("%Y-%m-%d")
                 tz = get_user_timezone(username)
+                # "Today" is the user's today, not the server's (usually UTC, so an evening user got tomorrow).
+                date_arg = args.get("date") or local_today(tz)
                 events = await asyncio.to_thread(list_events_for_day, token, date_arg, tz)
                 if not events:
                     return f"No events found on the connected Google Calendar for {date_arg}."

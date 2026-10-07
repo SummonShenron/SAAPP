@@ -98,6 +98,12 @@ from backend.utils.agent_utils import is_stale_capability_denial, scrub_stale_ca
 from backend.utils.embedding_utils import embed_text
 from backend.utils.emotion_utils import build_emotional_context
 from backend.utils.emotion_checks import emotional_reply_issue, build_emotional_revision_prompt
+from backend.utils.wrapup_utils import is_closing_message, CLOSING_DIRECTIVE, closing_reply_issue, build_closing_revision_prompt
+from backend.utils.safety_utils import (
+    effective_risk, plan_safety_turn, build_safety_revision_prompt, remembered_support_people, CRISIS_RESOURCE_LINE, RISK_NONE,
+)
+from backend.utils.outage_utils import handle_failed_turn
+from backend.utils.time_utils import build_time_context, sent_at, stamp
 from backend.utils.user_settings_utils import (
     get_user_rag_mode, set_user_rag_mode, VALID_RAG_MODES,
     get_user_deep_thinking_mode, set_user_deep_thinking_mode,
@@ -562,7 +568,10 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     else:
         # Another backend instance sharing this database may have saved since we last looked.
         sync_session_messages(username, session_id, chat_sessions[history_key])
-    chat_sessions[history_key].append(HumanMessage(content=question))
+    # When the previous message in this conversation was sent (None for a new conversation or one saved before
+    # messages were stamped), read before this turn's own message goes in, so the reply can tell how long they were away.
+    last_message_at = sent_at(chat_sessions[history_key][-1]) if chat_sessions[history_key] else None
+    chat_sessions[history_key].append(stamp(HumanMessage(content=question)))
 
     messages_state = chat_sessions[history_key][-10:]
     # With a local folder connected, earlier "I can't write files" replies are false — and a thread
@@ -675,7 +684,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     if await http_request.is_disconnected():
                         logger.info(f"[secure_chat] Client disconnected mid-investigation for {history_key}; stopping graph execution.")
                         await event_stream.aclose()
-                        chat_sessions[history_key].append(AIMessage(content="_[Stopped by user before responding]_"))
+                        chat_sessions[history_key].append(stamp(AIMessage(content="_[Stopped by user before responding]_")))
                         save_conversation_turn(username, session_id, chat_sessions[history_key])
                         return
                     kind = event["event"]
@@ -756,7 +765,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 # depends on finding in the PREVIOUS assistant message) never reaches chat_sessions, so a
                 # later "approve" can never find it and always falls through to a fresh proposal instead
                 # of executing.
-                chat_sessions[history_key].append(AIMessage(content=card_text))
+                chat_sessions[history_key].append(stamp(AIMessage(content=card_text)))
                 save_conversation_turn(username, session_id, chat_sessions[history_key])
                 t_first_token = time.perf_counter()
                 log_timings(relevance_grade, "card")
@@ -767,10 +776,27 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # formatter_node into voice_payload — see backend/services/agent_workflow.py).
             payload = final_state.get("voice_payload") or {}
             source_type = payload.get("source_type", "kb_strict")
+            # Crisis/safety level in force for this conversation (backend/utils/safety_utils.py). While one is
+            # active the reply is always a conversational one, whatever route the message took: a person who
+            # says they want to die must never get a knowledge-base refusal, a tool report or a data dump.
+            safety_state = final_state.get("safety_state")
+            risk_level = effective_risk(safety_state, datetime.now(timezone.utc))
+            risk_fresh = bool(safety_state) and bool(safety_state.get("escalated")) and int(safety_state.get("turns_since", 1) or 0) == 0
+            if risk_level != RISK_NONE:
+                source_type = "conversational"
+            # What this turn's reply must do (work through the people in their life first; a human line only
+            # when due), and the people Sonic remembers from earlier conversations to ask about by name.
+            safety_plan = plan_safety_turn(
+                risk_level, risk_fresh, safety_state, format_history_as_text(messages_state), final_state.get("original_question", question),
+                people=await asyncio.to_thread(remembered_support_people, username) if risk_level != RISK_NONE else [],
+            )
             documents_sorted = sorted(documents, key=lambda d: d.metadata.get("priority", False), reverse=True)
-            data = payload.get("data") or format_docs(documents_sorted)
+            data = "" if risk_level != RISK_NONE else (payload.get("data") or format_docs(documents_sorted))
             kb_images = collect_kb_images(documents_sorted) if source_type in ("kb_strict", "kb_open") else []
 
+            emotional_context = safety_plan.context + build_emotional_context(
+                final_state.get("emotional_state"), datetime.now(timezone.utc)
+            )
             prompt = build_voice_prompt(
                 grounding_block=GROUNDING_BLOCKS.get(source_type, KB_STRICT_GROUNDING),
                 data=data,
@@ -778,8 +804,13 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 question=final_state.get("original_question", question),
                 affiliate_override=get_affiliate_override(requested_affiliate),
                 insight=payload.get("insight") or "",
-                emotional_context=build_emotional_context(
-                    final_state.get("emotional_state"), datetime.now(timezone.utc)
+                emotional_context=emotional_context,
+                # With an emotional or safety context in force, the time block stays purely factual and defers to
+                # it: the energy ceiling is decided there, not by how long they were away.
+                time_context=build_time_context(
+                    await asyncio.to_thread(get_user_timezone, username),
+                    last_message_at=last_message_at,
+                    defer_to_emotion=bool(emotional_context),
                 ),
             )
             if kb_images:
@@ -801,7 +832,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # network round trip to the embeddings API for no behavior change.
             question_embedding = embed_text(question) if question else None
             memory_context = fetch_relevant_user_facts(username, question, precomputed_embedding=question_embedding)
-            goal_nudge_context = fetch_goal_nudge_context(username)
+            goal_nudge_context = "" if risk_level != RISK_NONE else fetch_goal_nudge_context(username)
 
             if guardrail_context:
                 prompt = prompt + guardrail_context
@@ -837,6 +868,11 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 if semantic_memory_context:
                     prompt = prompt + semantic_memory_context
                     yield f"data: {json.dumps({'event': 'node_progress', 'node': 'user_memory_recall', 'title': 'Recalling relevant memory', 'detail': 'Found semantically relevant past context.'})}\n\n"
+            # A clearly closing message ("thanks!", "goodnight") gets a directive to close the conversation
+            # instead of fishing for more (backend/utils/wrapup_utils.py); the persona carries the general rule.
+            closing_turn = source_type == "conversational" and risk_level == RISK_NONE and is_closing_message(question)
+            if closing_turn:
+                prompt = prompt + CLOSING_DIRECTIVE
             # 3. STREAM RESPONSE TOKENS FROM LLM
             token_stream = response_llm.astream(prompt)
             async for chunk in token_stream:
@@ -847,7 +883,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     logger.info(f"[secure_chat] Client disconnected mid-response for {history_key}; stopping token stream.")
                     await token_stream.aclose()
                     stopped_note = f"{full_response}\n\n_[Stopped by user]_" if full_response else "_[Stopped by user before responding]_"
-                    chat_sessions[history_key].append(AIMessage(content=stopped_note))
+                    chat_sessions[history_key].append(stamp(AIMessage(content=stopped_note)))
                     save_conversation_turn(username, session_id, chat_sessions[history_key])
                     return
 
@@ -887,17 +923,32 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 log_timings(relevance_grade, "rewrite_fallback")
                 return
 
-            # 4b. EMOTIONAL-NEED CHECK — the reply was written with guidance for what this person
-            # seems to want (to be heard, or to have good news explored with them), but guidance is
-            # only prose. This verifies it was honored (no advice for a venting message, a real
-            # question for shared good news) and regenerates once if not (backend/utils/emotion_checks.py).
-            # Conversational replies only; the data-grounded paths are judged by the reward evaluator.
+            # 4b. REPLY-FIT CHECKS — the reply was written with guidance (what this person seems to want from
+            # it, or that a closing message should be closed rather than extended), but guidance is only
+            # prose. These verify it was honored (backend/utils/emotion_checks.py and wrapup_utils.py) and
+            # regenerate once if not. Conversational replies only; the data-grounded paths are judged by the
+            # reward evaluator.
             if source_type == "conversational":
-                emotional_issue = emotional_reply_issue(final_state.get("emotional_state"), full_response)
-                if emotional_issue:
-                    revision_prompt, revision_reason = build_emotional_revision_prompt(prompt, full_response, emotional_issue)
-                    logger.info("Emotional-need check failed (%s); regenerating once.", emotional_issue)
-                    yield f"data: {json.dumps({'event': 'node_progress', 'node': 'emotional_check', 'title': 'Adjusting the reply to fit what you need', 'detail': emotional_issue})}\n\n"
+                revision_prompt, revision_tag = None, None
+                safety_issue = safety_plan.reply_issue(full_response)
+                emotional_issue = None if safety_plan.active else emotional_reply_issue(final_state.get("emotional_state"), full_response)
+                if safety_issue:
+                    revision_prompt, _ = build_safety_revision_prompt(prompt, full_response, safety_issue)
+                    revision_tag = "safety"
+                    revision_title = "Making sure the reply is right for this moment"
+                elif emotional_issue:
+                    revision_prompt, _ = build_emotional_revision_prompt(prompt, full_response, emotional_issue)
+                    revision_tag = emotional_issue
+                    revision_title = "Adjusting the reply to fit what you need"
+                elif closing_turn:
+                    closing_issue = closing_reply_issue(full_response)
+                    if closing_issue:
+                        revision_prompt, _ = build_closing_revision_prompt(prompt, full_response, closing_issue)
+                        revision_tag = "closing_engagement"
+                        revision_title = "Wrapping up the reply"
+                if revision_prompt:
+                    logger.info("Reply-fit check failed (%s); regenerating once.", revision_tag)
+                    yield f"data: {json.dumps({'event': 'node_progress', 'node': 'reply_fit_check', 'title': revision_title, 'detail': revision_tag})}\n\n"
                     yield f"data: {json.dumps({'event': 'regenerate_reset'})}\n\n"
                     rejected_draft = full_response
                     full_response = ""
@@ -912,7 +963,13 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                         full_response += token
                         yield f"data: {json.dumps({'event': 'token', 'text': token})}\n\n"
                         await asyncio.sleep(0)
-                    logger.info("Emotional-need revision — rejected: %r | revised: %r", rejected_draft[:200], full_response[:200])
+                    logger.info("Reply-fit revision (%s) — rejected: %r | revised: %r", revision_tag, rejected_draft[:200], full_response[:200])
+                # The one element that must not depend on the model getting it right: when a human line is due
+                # (imminent danger, the people in their life exhausted, or they asked) the reply always names a
+                # real one, added in code if the rewrite still left it out.
+                if safety_plan.needs_resource_line(full_response):
+                    full_response += CRISIS_RESOURCE_LINE
+                    yield f"data: {json.dumps({'event': 'token', 'text': CRISIS_RESOURCE_LINE})}\n\n"
 
             # 5. REWARD EVALUATOR & SELF-CORRECTION — judges the response itself (not the
             # documents) and regenerates once, with feedback, if it fails. Capped at one retry;
@@ -954,7 +1011,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     )
 
             yield f"data: {json.dumps({'event': 'final_generation', 'text': full_response})}\n\n"
-            ai_message = AIMessage(content=full_response)
+            ai_message = stamp(AIMessage(content=full_response))
             if kb_images:
                 ai_message.additional_kwargs["kb_images"] = kb_images
             chat_sessions[history_key].append(ai_message)
@@ -971,7 +1028,17 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         except Exception as e:
             logger.error(f"[x] Error in token_streamer loop context: {e}", exc_info=True)
             log_timings(final_state.get("relevance_grade", "unknown"), "error")
-            yield f"data: {json.dumps({'event': 'trace', 'title': 'Execution error', 'detail': str(e), 'status': 'active'})}\n\n"
+            # A spent cap or an overloaded provider used to reach the user as a raw exception string in a trace
+            # line and no reply at all. They now get a plain-language reply (never the exception text), and a
+            # person who had signalled risk gets a human line even though the model is down.
+            failed = handle_failed_turn(
+                e, username,
+                [question, *(m.content for m in chat_sessions[history_key][-10:] if isinstance(m, HumanMessage))],
+                final_state.get("safety_state"),
+            )
+            yield f"data: {json.dumps({'event': 'trace', 'title': 'Execution error', 'detail': 'The request failed on the server.', 'status': 'active'})}\n\n"
+            if not full_response:
+                yield f"data: {json.dumps({'event': 'final_generation', 'text': failed.reply})}\n\n"
 
     async def steerable_stream():
         # Registered for the whole turn so POST /api/chat/steer has somewhere to deliver messages.

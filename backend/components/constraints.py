@@ -88,6 +88,13 @@ you're "matching their tone" or "noticed" something about how they write, just t
 this specific conversation calls for.
 Never invent a different name or role for yourself unless an AFFILIATE OVERRIDE section
 below explicitly replaces this identity.
+KNOW WHEN TO STOP: a good colleague lets a finished conversation end. When what they came for is
+done, or they're clearly wrapping up (a thank-you, a goodnight, "that's all", an acknowledgement
+of your answer), close it in a line or two, warmly, and let them go. Never manufacture a reason to
+keep talking: no tacked-on question, no "anything else?", no "let me know if you need more", no
+fresh topic or menu of things you could do next, no hint that you'll miss them or that they should
+come back. This is about endings only. While they're still working something out, asking, sharing
+or processing, stay fully engaged and never rush them toward the door.
 """
 
 # Behavioral contracts, not style — wording that matters (refusal strings, citation
@@ -238,6 +245,7 @@ def build_voice_prompt(
     affiliate_override: str = "",
     insight: str = "",
     emotional_context: str = "",
+    time_context: str = "",
 ) -> str:
     """Composes the single unified final-answer prompt used by every response path (RAG,
     conversational, web search, code interpreter, GitHub search, PR summary) — one persona,
@@ -252,6 +260,8 @@ def build_voice_prompt(
             "\nWHAT YOU REMEMBER / JUST DID (weave this naturally into your reply, don't ignore "
             f"it or treat it as separate from the rest of the conversation):\n{insight}\n"
         )
+    if time_context:
+        sections.append(time_context)
     if emotional_context:
         sections.append(emotional_context)
     sections.append(f"\nCONVERSATION HISTORY:\n{history}\n\nCURRENT USER INPUT:\n{question}\n\nASSISTANT RESPONSE:\n")
@@ -512,6 +522,8 @@ CLASSIFICATION RULES:
    - "valence": one of "distressed", "low", "frustrated", "neutral", "positive", "excited". "intensity": 0.0-1.0, where 1.0 is acute distress, anger, or elation. "frustrated" is irritation or anger, including at the assistant or at something not working.
    - "need": what this message seems to want from the reply, one of "venting" (wants to be heard, not fixed), "solving" (wants concrete help with a problem), "reassurance", "distraction" (wants a break from it), "celebration" (is sharing personal good news and wants it explored with them: a match, an offer, a result, a milestone, not a mundane positive remark like "had a good lunch"), or "none". Judge it from this message in context, not from the topic.
    - "gist": when the valence is not neutral, a very short (at most 12 words) plain description of WHAT they are going through, taken from their own words and this conversation (e.g. "a breakup; Tina ended things tonight", "dreading a performance review"). Use "" when neutral. If this message is only a continuation and doesn't restate the cause, still describe the cause if the recent history makes it clear.
+   - "risk": "none", "elevated", "acute" or "imminent". "imminent": they describe a plan, a method or means within reach, a time ("tonight", "right now"), or something they have already done to hurt themselves or have taken. "acute": they talk about ending their life or seriously hurting themselves, with intent but without a plan, means or time. "elevated": they wish they were dead or could disappear, describe wanting to hurt themselves, or are so hopeless that it is unclear they will stay safe. Read it from the whole message in context (including things like "I just want it all to stop"). Use "none" for everything else: ordinary sadness, anger or stress, jokes about everyday annoyances ("this bug is killing me"), asking about the topic in general or as research, fiction, or someone else's situation. Never infer risk from topic alone.
+   - "support": ONLY when the conversation is about suicidal thoughts or self-harm and THIS message tells you something about the people in their life. For each of "immediate_family" (a parent, a partner, a sibling, someone they live with), "friends", "extended_family" (aunts, uncles, cousins, grandparents) and "professional" (a therapist, a doctor, a counselor, a faith leader): "available" if they have someone they could reach, EVEN IF they hesitate, don't want to burden them, or aren't sure they will (a person they could reach but are reluctant to is still available), "unavailable" only if they say they have no one in that group, the person has died, they are estranged, or the person is out of reach, and "unknown" if this message does not address it. "contact": when they have someone available, a short description of that person ("older sister Kayla, lives nearby"), else "". Report only what they actually said; never invent people.
    - Use "neutral" with intensity 0.0 and need "none" when there is no real emotional signal — do not guess. Never infer emotion from topic alone (asking about a layoff, a bug, or a diagnosis is not itself distress).
 
 CONVERSATION HISTORY:
@@ -542,7 +554,7 @@ Return ONLY a JSON object matching this schema:
   "needs_gmail_lookup": false,
   "needs_drive_lookup": false,
   "needs_send_email": false,
-  "emotional_state": {{"valence": "neutral", "intensity": 0.0, "need": "none", "gist": ""}}
+  "emotional_state": {{"valence": "neutral", "intensity": 0.0, "need": "none", "gist": "", "risk": "none", "support": {{"immediate_family": "unknown", "friends": "unknown", "extended_family": "unknown", "professional": "unknown"}}, "contact": ""}}
 }}
 """
 
@@ -690,6 +702,7 @@ stopping. If one tool doesn't give you a conclusive answer, try a different one 
 don't restrict yourself to a single tool if the question genuinely needs more than one (for
 example: checking the repo for a fix first, then searching the web for the same error if the
 repo alone isn't conclusive).
+{current_time}
 {coding_preferences}
 RECENT CONVERSATION (oldest first, most recent last — this is what happened before the request
 below; a multi-turn task's actual instruction, or what a short reply like "yes" or "go ahead" is
@@ -1140,7 +1153,8 @@ this specific topic — end your response with one inside these exact tags:
 Do NOT include this tag for farewells, sign-offs, simple acknowledgments, or whenever the
 conversation has clearly reached a natural stopping point. Tacking a question onto every single
 response — including goodnights — makes you seem like you're artificially stalling instead of
-talking naturally. When in doubt, leave it out.
+talking naturally. A follow-up is for a real open thread, never a way to keep the conversation going.
+When in doubt, leave it out.
 """
 
 def get_system_prompt(username: str = "default", affiliate: str = "All", rag_mode: str = "strict") -> str:
