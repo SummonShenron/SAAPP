@@ -36,8 +36,9 @@ const ConversationsBlade: React.FC<ConversationsBladeProps> = ({ activeSessionId
     return () => { cancelled = true; };
   }, [refreshKey]);
 
-  const handleDelete = async (e: React.MouseEvent, sessionId: string) => {
+  const handleDelete = async (e: React.MouseEvent, sessionId: string, title: string) => {
     e.stopPropagation();
+    if (!window.confirm(`Delete "${title || 'this conversation'}"? This can't be undone.`)) return;
     try {
       await api.deleteConversation(sessionId);
       setConversations(prev => prev.filter(c => c.session_id !== sessionId));
@@ -84,7 +85,7 @@ const ConversationsBlade: React.FC<ConversationsBladeProps> = ({ activeSessionId
               type="button"
               className="conversation-delete-btn"
               title="Delete conversation"
-              onClick={(e) => handleDelete(e, c.session_id)}
+              onClick={(e) => handleDelete(e, c.session_id, c.title)}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="3 6 5 6 21 6" />
