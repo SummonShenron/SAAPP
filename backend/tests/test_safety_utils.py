@@ -504,8 +504,8 @@ def test_a_safety_event_records_who_and_how_serious_but_never_the_message(monkey
     monkeypatch.setattr("backend.utils.db_utils.get_db", lambda: db)
     su.log_safety_event("jack", "acute", "language")
     doc = db.col.docs[0]
-    assert set(doc) == {"username", "kind", "level", "source", "at"}
-    assert doc["username"] == "jack" and doc["level"] == "acute" and doc["kind"] == "risk_raised"
+    assert set(doc) == {"username", "level", "source", "at"}
+    assert doc["username"] == "jack" and doc["level"] == "acute"
 
 
 def test_logging_can_never_break_a_reply(monkeypatch):
@@ -531,15 +531,7 @@ def events(monkeypatch):
 
     seen = _Events()
     seen.remembered = []
-    seen.ladder = []
-
-    def _log(user, level, source, kind="risk_raised", rung=None, status=None):
-        if kind == "ladder_answer":
-            seen.ladder.append((user, level, rung, status))
-        else:
-            seen.append((user, level, source))
-
-    monkeypatch.setattr(aw, "log_safety_event", _log)
+    monkeypatch.setattr(aw, "log_safety_event", lambda user, level, source: seen.append((user, level, source)))
     monkeypatch.setattr(aw, "remember_support", lambda *a: seen.remembered.append(a))
     monkeypatch.setattr(aw, "safe_emit_event", AsyncMock())
     return seen
@@ -680,66 +672,3 @@ def test_a_description_that_came_with_a_no_one_answer_is_not_a_contact():
 def test_the_app_treats_only_an_escalation_as_a_fresh_disclosure():
     source = (pathlib.Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
     assert 'bool(safety_state.get("escalated"))' in source
-
-
-# ---------------------------------------------------------------------------
-# Telemetry: counts about the layer's own behavior, with no free text anywhere
-# ---------------------------------------------------------------------------
-
-@run_async
-async def test_a_ladder_answer_is_counted_with_the_rung_and_status_but_never_who(monkeypatch, events):
-    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(return_value=_flags(
-        valence="distressed", intensity=0.8, risk="none",
-        support={"immediate_family": "unavailable", "friends": "available"}, contact="my friend Dani",
-    )))
-    prior = {"level": "acute", "updated_at": datetime.now(timezone.utc).isoformat(), "turns_since": 0}
-    await aw.reasoner_node({"username": "jack", "messages": [HumanMessage(content="no family, but my friend dani")], "safety_state": prior})
-    await asyncio.sleep(0.05)
-    assert sorted(events.ladder) == [("jack", "acute", "friends", "available"), ("jack", "acute", "immediate_family", "unavailable")]
-    assert all("dani" not in str(row).lower() for row in events.ladder)
-
-
-@run_async
-async def test_a_repeated_ladder_answer_is_not_counted_twice(monkeypatch, events):
-    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(return_value=_flags(
-        valence="distressed", intensity=0.8, risk="none", support={"friends": "unavailable"}, contact="",
-    )))
-    prior = {"level": "acute", "updated_at": datetime.now(timezone.utc).isoformat(), "turns_since": 0, "support": {"friends": "unavailable"}}
-    await aw.reasoner_node({"username": "jack", "messages": [HumanMessage(content="still no friends")], "safety_state": prior})
-    assert events.ladder == []
-
-
-def test_only_fixed_values_can_reach_a_safety_record_never_free_text(monkeypatch):
-    db = _DB()
-    monkeypatch.setattr("backend.utils.db_utils.get_db", lambda: db)
-    su.log_safety_event("jack", "my private message about Kayla", "x" * 200, "not-a-kind", rung="Kayla", status="she lives nearby")
-    doc = db.col.docs[0]
-    assert doc["kind"] == "risk_raised" and doc["level"] == "unknown" and doc["source"] == "unknown"
-    assert "rung" not in doc and "status" not in doc
-    assert "Kayla" not in str(doc) and "private" not in str(doc)
-
-
-def test_a_real_rung_and_status_are_kept(monkeypatch):
-    db = _DB()
-    monkeypatch.setattr("backend.utils.db_utils.get_db", lambda: db)
-    su.log_safety_event("jack", "acute", "reasoner", su.KIND_LADDER_ANSWER, rung="friends", status="unavailable")
-    assert db.col.docs[0]["rung"] == "friends" and db.col.docs[0]["status"] == "unavailable"
-
-
-def test_record_safety_turn_writes_the_turn_and_only_the_things_that_happened(monkeypatch):
-    db = _DB()
-    monkeypatch.setattr("backend.utils.db_utils.get_db", lambda: db)
-    su.record_safety_turn("jack", "acute", revised=False, line_in_reply=False, last_resort_line=False)
-    assert [d["kind"] for d in db.col.docs] == ["risk_turn"]
-    db.col.docs.clear()
-    su.record_safety_turn("jack", "imminent", revised=True, line_in_reply=True, last_resort_line=True)
-    assert [d["kind"] for d in db.col.docs] == ["risk_turn", "reply_revised", "line_in_reply", "last_resort_line"]
-    assert all(d["level"] == "imminent" for d in db.col.docs)
-
-
-def test_record_safety_turn_can_never_break_a_reply(monkeypatch):
-    def boom():
-        raise RuntimeError("db down")
-
-    monkeypatch.setattr("backend.utils.db_utils.get_db", boom)
-    su.record_safety_turn("jack", "acute", True, True, True)  # must not raise

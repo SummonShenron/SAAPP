@@ -45,7 +45,7 @@ from backend.utils.memory_utils import save_user_fact, load_user_facts, fetch_co
 from backend.utils.emotion_utils import energy_tier, merge_emotional_state
 from backend.utils.safety_utils import (
     detect_risk_language, normalize_risk, normalize_support, merge_safety_state, effective_risk, log_safety_event,
-    remember_support, RISK_NONE, KIND_LADDER_ANSWER, _ORDER as _RISK_ORDER,
+    remember_support, RISK_NONE, _ORDER as _RISK_ORDER,
 )
 from backend.services.local_workspace import get_workspace_handle, workspace_status
 from backend.services.local_edits import validate_edit_proposal
@@ -867,10 +867,6 @@ async def reasoner_node(state: GraphState) -> GraphState:
         if state["safety_state"]:
             _prior_support = (_prior_safety or {}).get("support") or {}
             for _rung, _status in _support_updates.items():
-                if _prior_support.get(_rung) != _status:
-                    # Which rung they answered and whether someone is there, for the operator's counts (never who).
-                    log_safety_event(state.get("username"), effective_risk(state["safety_state"], _now), "reasoner",
-                                     KIND_LADDER_ANSWER, rung=_rung, status=_status)
                 if _status == "available" and _prior_support.get(_rung) != _status:
                     # A person they have is remembered for next time (a blocking embed + dedupe, so off the event loop and not awaited).
                     _task = asyncio.create_task(asyncio.to_thread(
