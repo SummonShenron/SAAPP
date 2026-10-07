@@ -40,6 +40,7 @@ CHECKED = [
     "backend/utils/time_utils.py",
     "backend/utils/safety_stats.py",
     "backend/utils/example_questions.py",
+    "backend/components/sonic_profile.py",
 ]
 _MODULE_DUNDERS = {"__file__", "__name__", "__doc__", "__builtins__", "__spec__", "__package__", "__path__"}
 

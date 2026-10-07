@@ -453,6 +453,23 @@ export interface CalendarConnectionStatus {
   connected_at: string | null;
 }
 
+export interface SonicProfile {
+  tagline: string;
+  into: string[];
+  prefers: string[];
+  wont: string[];
+  voice: string;
+  note: string;
+}
+
+/** Sonic's character profile, for the help panel's About card. */
+export async function getSonicProfile(): Promise<SonicProfile> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/sonic-profile`, { headers: { ...authHeaders } });
+  if (!res.ok) throw new Error("Failed to fetch Sonic's profile.");
+  return res.json();
+}
+
 /** Welcome-screen questions built from this person's own state (documents, integrations, repo) for one scope. */
 export async function getExampleQuestions(affiliate: string): Promise<string[]> {
   const authHeaders = await getAuthHeaders();

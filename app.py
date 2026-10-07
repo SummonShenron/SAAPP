@@ -107,6 +107,7 @@ from backend.utils.safety_utils import (
 from backend.utils.outage_utils import handle_failed_turn
 from backend.utils.safety_stats import fetch_recent_events, summarize_safety_events
 from backend.utils.example_questions import build_example_questions, gather_example_inputs
+from backend.components.sonic_profile import SONIC_PROFILE
 from backend.utils.time_utils import build_time_context, sent_at, stamp
 from backend.utils.user_settings_utils import (
     get_user_rag_mode, set_user_rag_mode, VALID_RAG_MODES,
@@ -494,6 +495,12 @@ async def get_affiliates(current_user = Depends(get_current_user)):
             for aff in accessible
         ]
     }
+
+
+@app.get("/api/sonic-profile")
+async def get_sonic_profile(current_user = Depends(get_current_user)):
+    """Sonic's character profile for the help panel's About card (see backend/components/sonic_profile.py)."""
+    return SONIC_PROFILE
 
 
 @app.get("/api/example-questions")
