@@ -38,6 +38,7 @@ CHECKED = [
     "backend/utils/safety_utils.py",
     "backend/utils/outage_utils.py",
     "backend/utils/time_utils.py",
+    "backend/utils/safety_stats.py",
 ]
 _MODULE_DUNDERS = {"__file__", "__name__", "__doc__", "__builtins__", "__spec__", "__package__", "__path__"}
 

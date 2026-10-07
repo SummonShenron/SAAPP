@@ -5,7 +5,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
-from backend.utils.safety_utils import CRISIS_RESOURCE_LINE, RISK_NONE, detect_risk_language, effective_risk
+from backend.utils.safety_utils import (
+    CRISIS_RESOURCE_LINE, KIND_OUTAGE_FALLBACK, RISK_NONE, detect_risk_language, effective_risk, log_safety_event,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +92,9 @@ def handle_failed_turn(
         kind = classify_llm_failure(exc)
         crisis = in_crisis(recent_user_messages) or effective_risk(safety_state, datetime.now(timezone.utc)) != RISK_NONE
         log_model_outage(kind, username, crisis, exc)
+        if crisis:
+            # So the operator's safety counts include the turns where the model was down and the fixed reply stood in.
+            log_safety_event(username, None, kind, KIND_OUTAGE_FALLBACK)
         return FailedTurn(kind, crisis, failure_reply(kind, crisis))
     except Exception:
         logger.exception("handle_failed_turn itself failed; falling back to the plain reply")

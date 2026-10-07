@@ -32,6 +32,7 @@ from backend.utils.secret_utils import SecretStorageNotConfigured
 from backend.utils.webhook_utils import verify_github_signature
 from backend.utils.github_audit import audit_github_token_use
 # Modernized LangChain Imports
+# SAAPP upgraded model coding capabilities active
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_community.vectorstores import Chroma
@@ -101,8 +102,10 @@ from backend.utils.emotion_checks import emotional_reply_issue, build_emotional_
 from backend.utils.wrapup_utils import is_closing_message, CLOSING_DIRECTIVE, closing_reply_issue, build_closing_revision_prompt
 from backend.utils.safety_utils import (
     effective_risk, plan_safety_turn, build_safety_revision_prompt, remembered_support_people, CRISIS_RESOURCE_LINE, RISK_NONE,
+    has_crisis_resource, record_safety_turn,
 )
 from backend.utils.outage_utils import handle_failed_turn
+from backend.utils.safety_stats import fetch_recent_events, summarize_safety_events
 from backend.utils.time_utils import build_time_context, sent_at, stamp
 from backend.utils.user_settings_utils import (
     get_user_rag_mode, set_user_rag_mode, VALID_RAG_MODES,
@@ -930,6 +933,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # reward evaluator.
             if source_type == "conversational":
                 revision_prompt, revision_tag = None, None
+                safety_revised, last_resort_line = False, False
                 safety_issue = safety_plan.reply_issue(full_response)
                 emotional_issue = None if safety_plan.active else emotional_reply_issue(final_state.get("emotional_state"), full_response)
                 if safety_issue:
@@ -964,12 +968,19 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                         yield f"data: {json.dumps({'event': 'token', 'text': token})}\n\n"
                         await asyncio.sleep(0)
                     logger.info("Reply-fit revision (%s) — rejected: %r | revised: %r", revision_tag, rejected_draft[:200], full_response[:200])
+                    safety_revised = revision_tag == "safety"
                 # The one element that must not depend on the model getting it right: when a human line is due
                 # (imminent danger, the people in their life exhausted, or they asked) the reply always names a
                 # real one, added in code if the rewrite still left it out.
                 if safety_plan.needs_resource_line(full_response):
                     full_response += CRISIS_RESOURCE_LINE
+                    last_resort_line = True
                     yield f"data: {json.dumps({'event': 'token', 'text': CRISIS_RESOURCE_LINE})}\n\n"
+                if risk_level != RISK_NONE:
+                    # How the safety layer is doing, as counts only (no message text, no names): see safety_stats.py.
+                    await asyncio.to_thread(
+                        record_safety_turn, username, risk_level, safety_revised, has_crisis_resource(full_response), last_resort_line
+                    )
 
             # 5. REWARD EVALUATOR & SELF-CORRECTION — judges the response itself (not the
             # documents) and regenerates once, with feedback, if it fails. Capped at one retry;
@@ -1786,6 +1797,19 @@ def saapp_health_check():
         "version": "1.0.0",
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
+
+@app.get("/api/admin/safety-stats")
+async def get_safety_stats(days: int = Query(7, ge=1, le=180), current_user = Depends(get_current_user)):
+    """Counts of how the crisis safety layer has been behaving (see backend/utils/safety_stats.py): never message
+    text, never names. Global_Admins only."""
+    groups = (load_directory().get(current_user.get("sub")) or {}).get("groups") or []
+    if "Global_Admins" not in groups:
+        raise HTTPException(status_code=403, detail="Admins only.")
+    db = get_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="No database is configured.")
+    events = await asyncio.to_thread(fetch_recent_events, db, days)
+    return summarize_safety_events(events, days=days)
 
 @app.post("/api/synthetic/ask")
 async def synthetic_ask(
