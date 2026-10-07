@@ -1,0 +1,72 @@
+import re
+
+import pytest
+
+from backend.components.constraints import build_voice_prompt
+from backend.components.sonic_profile import SONIC_PROFILE, profile_prompt_block
+
+_EMOJI = re.compile(r"[\U0001F300-\U0001FAFF☀-➿]")
+_ENGAGEMENT = re.compile(r"\b(miss(?:ed)? you|stay (?:a bit|longer|with me)|come back|don't go|keep me company|lonely)\b", re.IGNORECASE)
+_INNER_LIFE_CLAIM = re.compile(r"\bI (?:feel|felt|love|hate|am happy|am sad|suffer|am conscious|am alive)\b", re.IGNORECASE)
+
+
+def _all_lines(profile=SONIC_PROFILE):
+    lines = [profile["tagline"], profile["voice"], profile["note"]]
+    for key in ("into", "prefers", "wont"):
+        lines += profile[key]
+    return lines
+
+
+def test_the_profile_has_the_shape_the_card_and_the_prompt_expect():
+    assert set(SONIC_PROFILE) == {"tagline", "into", "prefers", "wont", "voice", "note"}
+    assert len(SONIC_PROFILE["into"]) >= 3 and len(SONIC_PROFILE["prefers"]) >= 2 and len(SONIC_PROFILE["wont"]) >= 2
+    assert all(isinstance(line, str) and line.strip() for line in _all_lines())
+
+
+def test_it_says_plainly_that_sonic_is_an_ai_and_never_claims_feelings():
+    assert "Sonic is an AI" in SONIC_PROFILE["note"]
+    assert any("claim to have feelings" in w for w in SONIC_PROFILE["wont"])
+    for line in _all_lines():
+        assert not _INNER_LIFE_CLAIM.search(line), line
+
+
+def test_nothing_in_it_is_an_engagement_hook_or_wants_the_users_time():
+    for line in _all_lines():
+        assert not _ENGAGEMENT.search(line), line
+    assert any("conversation" in w and "follow-up" in w for w in SONIC_PROFILE["wont"])
+
+
+def test_no_emoji_or_exclamation_marks_anywhere_in_it():
+    for line in _all_lines():
+        assert "!" not in line and not _EMOJI.search(line), line
+
+
+def test_the_prompt_block_carries_the_profile_and_the_rules_that_keep_it_quiet():
+    block = profile_prompt_block()
+    assert SONIC_PROFILE["tagline"] in block
+    for item in SONIC_PROFILE["into"] + SONIC_PROFILE["prefers"] + SONIC_PROFILE["wont"]:
+        assert item.rstrip(".") in block
+    assert "never recited" in block
+    assert "never outranks the emotional or safety guidance" in block
+    assert "never means wanting the user's time, attention or return" in block
+    assert "claim feelings, needs or consciousness" in block
+    assert "don't flatly deny any inner life either" in block
+    assert "genuinely uncertain whether there is any experience" in block
+    assert "never as emotions" in block
+
+
+def test_the_block_is_small_enough_to_ride_every_prompt():
+    assert len(profile_prompt_block()) < 1800  # about 400 tokens, most of it the guardrail wording
+
+
+def test_every_final_answer_prompt_includes_it_right_after_the_persona():
+    prompt = build_voice_prompt(grounding_block="GROUNDING", data="", history="h", question="q")
+    assert "WHO YOU ARE" in prompt
+    assert prompt.index("WHO YOU ARE") < prompt.index("GROUNDING")
+
+
+def test_a_custom_profile_can_be_rendered_without_touching_the_real_one():
+    custom = {**SONIC_PROFILE, "tagline": "A test tagline.", "into": ["Testing things."]}
+    block = profile_prompt_block(custom)
+    assert "A test tagline." in block and "Testing things." in block
+    assert SONIC_PROFILE["tagline"] not in block

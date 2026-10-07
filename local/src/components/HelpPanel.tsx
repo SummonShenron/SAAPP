@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import "./__styles__/HelpPanel.css"
+import SonicProfileCard from "./SonicProfileCard";
 
 interface HelpPanelProps {
   onClose?: () => void;
@@ -25,6 +26,11 @@ const SECTIONS: HelpTopic[] = [
         <p>It automatically figures out which mode a question needs — you don't have to tell it.</p>
       </>
     ),
+  },
+  {
+    id: "about-sonic",
+    title: "About Sonic",
+    content: <SonicProfileCard />,
   },
     {
     id: "personal_kb",

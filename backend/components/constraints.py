@@ -1,6 +1,7 @@
 import os
 import logging
 import urllib.parse
+from backend.components.sonic_profile import profile_prompt_block
 logger = logging.getLogger("SASS Logger")
 
 BASE_RAG_CONSTRAINTS = """
@@ -250,7 +251,7 @@ def build_voice_prompt(
     """Composes the single unified final-answer prompt used by every response path (RAG,
     conversational, web search, code interpreter, GitHub search, PR summary) — one persona,
     one voice, with only the grounding rules varying by source. See app.py's secure_chat."""
-    sections = [SONIC_ASSISTANT_PERSONA]
+    sections = [SONIC_ASSISTANT_PERSONA, profile_prompt_block()]
     if affiliate_override:
         sections.append(affiliate_override)
     sections.append(grounding_block)
