@@ -169,19 +169,22 @@ lite_llm = LazyLLM(
     max_retries=0,
 )
 
-# 2b. Deep-thinking variant of the fast utility LLM — same fast/cheap model, with native
-# extended reasoning enabled. Used by tool_agent_node's ReAct loop when the user's deep_thinking
-# setting is on: TOOL_AGENT_MAX_ITERATIONS_DEEP and the wider retry-nudge budget only pay off if
-# each individual step's own decision is more carefully reasoned too, not just more numerous —
-# verified live that gemini-3.1-flash-lite genuinely accepts thinking_level (the "3.5+" framing
-# in LazyLLM's docstring doesn't hold here).
+# 2b. Deep-thinking variant for tool_agent_node's ReAct loop, used when the user's deep_thinking
+# setting is on (or the task is an audit): TOOL_AGENT_MAX_ITERATIONS_DEEP and the wider
+# retry-nudge budget only pay off if each individual step's own decision is better, not just more
+# numerous. Experiment: run these steps on the stronger gemini-3.5-flash (at a low thinking level,
+# since "high" there was measured at ~31s to first token) instead of flash-lite, and fall back to
+# flash-lite if it fails. Ordinary (non-deep) turns still use lite_llm above, so the extra cost is
+# confined to deep/audit turns. Env-tunable so it can be compared or reverted without a deploy:
+# set DEEP_REACT_MODEL=gemini-3.1-flash-lite and DEEP_REACT_THINKING=high for the old behavior.
 lite_llm_deep = LazyLLM(
-    model_name="gemini-3.1-flash-lite",
-    fallback_model="gemini-3.5-flash",
-    fallback_thinking_level="low",  # the primary is the one that's slow at "high"; keep the rescue fast
+    model_name=os.getenv("DEEP_REACT_MODEL", "gemini-3.5-flash"),
+    fallback_model=os.getenv("DEEP_REACT_FALLBACK_MODEL", "gemini-3.1-flash-lite"),
+    fallback_thinking_level="low",  # a rescue should be fast
     temperature=0.2,
     max_retries=0,
-    thinking_level="high",
+    timeout=int(os.getenv("DEEP_REACT_TIMEOUT", "45")),
+    thinking_level=os.getenv("DEEP_REACT_THINKING", "low"),
 )
 
 # 3. Dedicated Streaming LLM (Gemini 3.5 with low thinking level for fast TTFT)

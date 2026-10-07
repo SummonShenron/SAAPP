@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 
 from langchain_core.messages import HumanMessage
 
+from backend.utils.time_utils import stamp
+
 logger = logging.getLogger("SASS Logger")
 
 MAX_PENDING_STEERS = 5
@@ -91,7 +93,7 @@ def drain(key: str) -> list:
         messages = list(run.pending)
         run.pending.clear()
         for message in messages:
-            run.transcript.append(HumanMessage(content=message))
+            run.transcript.append(stamp(HumanMessage(content=message)))
         run.applied += len(messages)
     logger.info("[steering] %s: applying %d steering message(s).", key, len(messages))
     return messages
