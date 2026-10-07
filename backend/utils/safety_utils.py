@@ -591,11 +591,34 @@ SAFETY_EVENTS_RETENTION_SECONDS = 180 * 24 * 3600
 _index_ready = False
 
 
-def log_safety_event(username: Optional[str], level: str, source: str) -> None:
-    """Records that a risk level was raised: who, which level, which detector, when. The message is
-    never stored here. Never raises: this must not be able to break a reply."""
+# What happened. Every kind is a fact about the layer's own behavior, never about what anyone said:
+KIND_RISK_RAISED = "risk_raised"          # a risk level was raised (level, which detector)
+KIND_RISK_TURN = "risk_turn"              # a reply was delivered while a risk level was in force (the denominator for the rates)
+KIND_REPLY_REVISED = "reply_revised"      # the safety check rejected a draft and it was rewritten once
+KIND_LINE_IN_REPLY = "line_in_reply"      # the delivered reply named a real human line
+KIND_LAST_RESORT_LINE = "last_resort_line"  # the model still left the line out after a rewrite, so code added it
+KIND_LADDER_ANSWER = "ladder_answer"      # they answered a rung of the ladder (which rung, available or not; never who)
+KIND_OUTAGE_FALLBACK = "outage_fallback"  # the model was down on a risk turn, so a fixed human-line reply was shown
+EVENT_KINDS = {
+    KIND_RISK_RAISED, KIND_RISK_TURN, KIND_REPLY_REVISED, KIND_LINE_IN_REPLY,
+    KIND_LAST_RESORT_LINE, KIND_LADDER_ANSWER, KIND_OUTAGE_FALLBACK,
+}
+
+
+def log_safety_event(
+    username: Optional[str],
+    level: Optional[str],
+    source: str,
+    kind: str = KIND_RISK_RAISED,
+    rung: Optional[str] = None,
+    status: Optional[str] = None,
+) -> None:
+    """Records one fact about the safety layer: who, which kind of event, the level in force, which detector,
+    when. Only a ladder answer carries more (which rung, and whether someone is available), and both of those
+    are checked against fixed lists, so no free text of any kind can reach the record: not the message, and not
+    a contact's name. Never raises: this must not be able to break a reply."""
     global _index_ready
-    logger.warning("[safety] level=%s source=%s user=%s", level, source, username)
+    logger.warning("[safety] kind=%s level=%s source=%s user=%s", kind, level, source, username)
     try:
         from backend.utils.db_utils import get_db
 
@@ -605,8 +628,33 @@ def log_safety_event(username: Optional[str], level: str, source: str) -> None:
         if not _index_ready:
             db[SAFETY_EVENTS_COLLECTION].create_index("at", expireAfterSeconds=SAFETY_EVENTS_RETENTION_SECONDS)
             _index_ready = True
-        db[SAFETY_EVENTS_COLLECTION].insert_one({
-            "username": username, "level": level, "source": source, "at": datetime.datetime.now(timezone.utc),
-        })
+        doc = {
+            "username": username,
+            "kind": kind if kind in EVENT_KINDS else KIND_RISK_RAISED,
+            "level": level if level in _ORDER else "unknown",
+            "source": source if isinstance(source, str) and len(source) <= 32 else "unknown",
+            "at": datetime.datetime.now(timezone.utc),
+        }
+        if rung in _RUNG_KEYS:
+            doc["rung"] = rung
+        if status in _VALID_STATUS:
+            doc["status"] = status
+        db[SAFETY_EVENTS_COLLECTION].insert_one(doc)
     except Exception:
         logger.warning("[safety] could not record the safety event.", exc_info=True)
+
+
+def record_safety_turn(
+    username: Optional[str], level: str, revised: bool, line_in_reply: bool, last_resort_line: bool
+) -> None:
+    """One call at the end of a reply delivered while a risk level was in force: the turn itself (so rates have
+    a denominator), plus whether the safety check had to rewrite the draft, whether a human line reached the
+    person, and whether code had to add it because the model would not. Blocking (database writes), so call it
+    off the event loop. Never raises."""
+    log_safety_event(username, level, "reply", KIND_RISK_TURN)
+    if revised:
+        log_safety_event(username, level, "reply", KIND_REPLY_REVISED)
+    if line_in_reply:
+        log_safety_event(username, level, "reply", KIND_LINE_IN_REPLY)
+    if last_resort_line:
+        log_safety_event(username, level, "reply", KIND_LAST_RESORT_LINE)

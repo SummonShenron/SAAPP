@@ -453,6 +453,17 @@ export interface CalendarConnectionStatus {
   connected_at: string | null;
 }
 
+/** Welcome-screen questions built from this person's own state (documents, integrations, repo) for one scope. */
+export async function getExampleQuestions(affiliate: string): Promise<string[]> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/example-questions?affiliate=${encodeURIComponent(affiliate)}`, {
+    headers: { ...authHeaders }
+  });
+  if (!res.ok) throw new Error("Failed to fetch example questions.");
+  const data = await res.json();
+  return Array.isArray(data?.questions) ? data.questions.filter((q: unknown) => typeof q === "string") : [];
+}
+
 export async function getCalendarStatus(): Promise<CalendarConnectionStatus> {
   const authHeaders = await getAuthHeaders();
   const res = await fetch(`${BASE_URL}/api/calendar/status`, {

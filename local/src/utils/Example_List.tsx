@@ -1,3 +1,5 @@
+import { getExampleQuestions } from '../api';
+
 // 1. Centralized Security Directory Map.
 const AFFILIATE_QUESTION_POOLS: Record<string, string[]> = {
   'Affiliate_A': [
@@ -44,16 +46,32 @@ function shuffledCopy<T>(items: readonly T[]): T[] {
   return shuffled;
 }
 
+const CARD_LIMIT = 6;
+// With "All" selected, questions about the person's own state lead and the demo pools only fill what is left.
+const PERSONAL_LEAD = 4;
+
+/** Questions about this person's own state (their documents, integrations, repo). Never throws: an empty list
+ *  just means the screen falls back to the demo pools. */
+async function fetchPersonalQuestions(affiliate: string): Promise<string[]> {
+  try {
+    return await getExampleQuestions(affiliate);
+  } catch (error) {
+    console.error("Failed to fetch personal example questions:", error);
+    return [];
+  }
+}
+
 /**
- * Dynamically fetches example questions strictly scoped to the user's authorized affiliates.
+ * Example questions for the welcome screen, strictly scoped to the user's authorized affiliates.
+ *
+ * - A knowledge base with a demo pool (Affiliate_A to D) keeps showing that pool.
+ * - A knowledge base without one, such as a user's own, shows questions about their own state, built by the server.
+ * - "All" leads with those personal questions and fills the rest from the demo pools they have access to.
  */
 export async function getDynamicExampleQuestions(
   allowedAffiliates: string[], // Pass authorizations instead of usernames
   affiliate: string
 ): Promise<string[]> {
-  // Retain production async signature & simulate engine latency
-  await new Promise((resolve) => setTimeout(resolve, 250));
-
   if (!allowedAffiliates || allowedAffiliates.length === 0) return [];
 
   try {
@@ -62,13 +80,17 @@ export async function getDynamicExampleQuestions(
       // Build a combined pool using ONLY the affiliates this session has clearance for
       const authorizedPool = allowedAffiliates
         .flatMap(aff => AFFILIATE_QUESTION_POOLS[aff] || []);
-
-      return shuffledCopy(authorizedPool).slice(0, 6);
+      const personal = (await fetchPersonalQuestions(affiliate)).slice(0, PERSONAL_LEAD);
+      const fill = shuffledCopy(authorizedPool).filter(q => !personal.includes(q));
+      return [...personal, ...fill].slice(0, CARD_LIMIT);
     }
 
     // Scenario 2: Target Isolated Tenant Scope
-    const targetedPool = AFFILIATE_QUESTION_POOLS[affiliate] || [];
-    return shuffledCopy(targetedPool).slice(0, 6);
+    const targetedPool = AFFILIATE_QUESTION_POOLS[affiliate];
+    if (targetedPool) return shuffledCopy(targetedPool).slice(0, CARD_LIMIT);
+
+    // Scenario 3: a knowledge base with no demo pool (their own): questions about their own state
+    return (await fetchPersonalQuestions(affiliate)).slice(0, CARD_LIMIT);
 
   } catch (error) {
     console.error("Failed to map affiliate directory vectors to question pools:", error);

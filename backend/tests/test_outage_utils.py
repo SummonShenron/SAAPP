@@ -103,6 +103,20 @@ def test_handle_failed_turn_uses_the_conversations_safety_state_too():
     assert out.crisis and has_crisis_resource(out.reply)
 
 
+def test_a_model_outage_on_a_risk_turn_is_counted_for_the_safety_stats(monkeypatch):
+    seen = []
+    monkeypatch.setattr(ou, "log_safety_event", lambda *a, **k: seen.append((a, k)))
+    ou.handle_failed_turn(RuntimeError("429 quota"), "jack", ["i want to kill myself"])
+    assert seen == [(("jack", None, "quota", "outage_fallback"), {})]
+
+
+def test_an_outage_on_an_ordinary_turn_adds_nothing_to_the_safety_stats(monkeypatch):
+    seen = []
+    monkeypatch.setattr(ou, "log_safety_event", lambda *a, **k: seen.append(a))
+    ou.handle_failed_turn(RuntimeError("429 quota"), "jack", ["can you check the build"])
+    assert seen == []
+
+
 def test_handle_failed_turn_never_raises_even_on_odd_input():
     out = ou.handle_failed_turn(ValueError("x"), "jack", [None, 5, ["list"]], safety_state="garbage")
     assert out.reply
