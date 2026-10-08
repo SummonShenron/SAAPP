@@ -5,6 +5,7 @@ import { ChatPage } from "./pages/Chat";
 import { SelfServicePage } from "./pages/SelfService";
 import { MemoryPage } from "./pages/Memory";
 import { IntegrationsPage } from "./pages/Integrations";
+import { SonicHealthPage } from "./pages/SonicHealth";
 import { PrivacyPage } from "./pages/Privacy";
 import { TermsPage } from "./pages/Terms";
 import { Layout } from "../src/components/Layout";
@@ -74,6 +75,8 @@ function App() {
         <Route path="/self-service" element={<SelfServicePage />} />
         <Route path="/memory" element={<MemoryPage />} />
         <Route path="/integrations" element={<IntegrationsPage />} />
+        {/* Admin only: the server enforces Global_Admins on every endpoint this page calls. */}
+        <Route path="/sonic-health" element={<SonicHealthPage />} />
       </Route>
       {/* Catch-all */}
       <Route path="*" element={<Navigate to="/" replace />} />

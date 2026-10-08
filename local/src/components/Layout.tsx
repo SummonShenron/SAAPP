@@ -2,6 +2,7 @@
 import { Outlet, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { api, getEffectivePrincipal, isGuestPrincipal } from "../api";
+import { useIsGlobalAdmin } from "../hooks/useIsGlobalAdmin";
 import HelpPanel from "../components/HelpPanel";
 import { useAuth } from '@clerk/clerk-react';
 
@@ -17,6 +18,7 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
   const [showHelp, setShowHelp] = useState(false);
   const [closing, setClosing] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const isAdmin = useIsGlobalAdmin();
 
   const HELP_CLOSE_ANIMATION_MS = 200;
 
@@ -117,6 +119,7 @@ if (typeof window !== 'undefined') {
           <span onClick={() => navigate("/self-service")}>Self Service</span>
           {!isGuestPrincipal(getEffectivePrincipal()) && <span onClick={() => navigate("/memory")}>Memory</span>}
           {!isGuestPrincipal(getEffectivePrincipal()) && <span onClick={() => navigate("/integrations")}>Integrations</span>}
+          {isAdmin && <span onClick={() => navigate("/sonic-health")}>Sonic Health</span>}
           <span onClick={toggleHelp}>Help</span>
           <span onClick={handleLogout} className="nav-exit">Disconnect</span>
         </div>
@@ -150,6 +153,7 @@ if (typeof window !== 'undefined') {
             <span onClick={() => handleNavClick("/self-service")}>Self Service</span>
             {!isGuestPrincipal(getEffectivePrincipal()) && <span onClick={() => handleNavClick("/memory")}>Memory</span>}
             {!isGuestPrincipal(getEffectivePrincipal()) && <span onClick={() => handleNavClick("/integrations")}>Integrations</span>}
+            {isAdmin && <span onClick={() => handleNavClick("/sonic-health")}>Sonic Health</span>}
             <span onClick={() => { toggleHelp(); setMobileMenuOpen(false); }}>Help Panel</span>
           </div>
         </div>
