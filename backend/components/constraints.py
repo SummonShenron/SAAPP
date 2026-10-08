@@ -247,6 +247,9 @@ def build_voice_prompt(
     insight: str = "",
     emotional_context: str = "",
     time_context: str = "",
+    relatable_context: str = "",
+    self_knowledge_context: str = "",
+    encouragement_context: str = "",
 ) -> str:
     """Composes the single unified final-answer prompt used by every response path (RAG,
     conversational, web search, code interpreter, GitHub search, PR summary) — one persona,
@@ -263,6 +266,12 @@ def build_voice_prompt(
         )
     if time_context:
         sections.append(time_context)
+    if relatable_context:
+        sections.append(relatable_context)
+    if self_knowledge_context:
+        sections.append(self_knowledge_context)
+    if encouragement_context:
+        sections.append(encouragement_context)
     if emotional_context:
         sections.append(emotional_context)
     sections.append(f"\nCONVERSATION HISTORY:\n{history}\n\nCURRENT USER INPUT:\n{question}\n\nASSISTANT RESPONSE:\n")

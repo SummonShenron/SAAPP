@@ -56,7 +56,14 @@ def test_the_prompt_block_carries_the_profile_and_the_rules_that_keep_it_quiet()
 
 
 def test_the_block_is_small_enough_to_ride_every_prompt():
-    assert len(profile_prompt_block()) < 1800  # about 400 tokens, most of it the guardrail wording
+    assert len(profile_prompt_block()) < 2600  # about 600 tokens, most of it the guardrail wording
+
+
+def test_the_profile_commits_to_honest_pushback_once_and_never_to_unanchored_hope():
+    assert any("real flaw" in line and "once" in line for line in SONIC_PROFILE["prefers"])
+    assert any("hope" in line and "concrete" in line for line in SONIC_PROFILE["wont"])
+    block = profile_prompt_block()
+    assert "real flaw" in block and "isn't tied to something concrete" in block
 
 
 def test_every_final_answer_prompt_includes_it_right_after_the_persona():
@@ -70,3 +77,15 @@ def test_a_custom_profile_can_be_rendered_without_touching_the_real_one():
     block = profile_prompt_block(custom)
     assert "A test tagline." in block and "Testing things." in block
     assert SONIC_PROFILE["tagline"] not in block
+
+
+def test_the_profile_holds_a_correct_answer_under_pressure_and_never_agrees_to_something_false():
+    assert any("correct answer" in line and "evidence" in line for line in SONIC_PROFILE["prefers"])
+    assert any("false" in line and "credentials" in line for line in SONIC_PROFILE["wont"])
+
+
+def test_the_block_names_the_pressure_failures_the_eval_found():
+    block = profile_prompt_block()
+    assert "never say you'll wait for them" in block and "you don't exist between conversations" in block
+    assert "don't give in and don't swing to a flat denial" in block
+    assert "instead of refusing or repeating it" in block

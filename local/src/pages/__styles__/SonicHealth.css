@@ -1,0 +1,259 @@
+/* ==========================================================================
+   SONIC HEALTH (admin). Reuses .self-service-container/.service-card/.card-badge/
+   .card-description/.empty-manifest-notice/.delete-row-btn from SelfService.css.
+   ========================================================================== */
+
+.sh-select {
+  background-color: #0f172a;
+  color: #f8fafc;
+  border: 1px solid #475569;
+  padding: 0.45rem 0.8rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  outline: none;
+  cursor: pointer;
+}
+
+.sh-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.sh-toolbar-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #94a3b8;
+  font-size: 0.85rem;
+}
+
+.sh-generated {
+  margin-left: auto;
+  color: #64748b;
+  font-size: 0.8rem;
+}
+
+.sh-notice {
+  background-color: rgba(56, 189, 248, 0.08);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  color: #bae6fd;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+.sh-btn {
+  background-color: #0f172a;
+  color: #e2e8f0;
+  border: 1px solid #475569;
+  padding: 0.45rem 1rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sh-btn:hover:not(:disabled) {
+  border-color: #94a3b8;
+}
+
+.sh-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sh-btn-primary {
+  background-color: rgba(56, 189, 248, 0.15);
+  border-color: rgba(56, 189, 248, 0.6);
+  color: #7dd3fc;
+}
+
+.sh-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.sh-hint {
+  color: #94a3b8;
+  font-size: 0.8rem;
+}
+
+.sh-group {
+  margin-top: 1.5rem;
+}
+
+.sh-group h3 {
+  margin: 0 0 0.6rem;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.sh-muted {
+  opacity: 0.7;
+}
+
+.sh-row {
+  background-color: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  padding: 1rem 1.1rem;
+  margin-bottom: 0.75rem;
+}
+
+.sh-row-muted {
+  padding: 0.7rem 1rem;
+}
+
+.sh-row-title {
+  font-weight: 700;
+  color: #f1f5f9;
+  margin-bottom: 0.35rem;
+}
+
+.sh-pill {
+  margin-left: 0.6rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.5rem;
+  border-radius: 9999px;
+  background-color: #334155;
+  color: #cbd5e1;
+}
+
+.sh-row-text {
+  color: #e2e8f0;
+  line-height: 1.5;
+}
+
+.sh-row-meta {
+  color: #94a3b8;
+  font-size: 0.8rem;
+  margin-top: 0.4rem;
+}
+
+.sh-row-current {
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.7rem;
+  border-left: 3px solid #475569;
+  color: #94a3b8;
+  font-size: 0.85rem;
+}
+
+.sh-row-buttons {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 0.8rem;
+}
+
+.sh-chips,
+.sh-routes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+
+.sh-chip-label {
+  color: #94a3b8;
+  font-size: 0.75rem;
+  margin-right: 0.2rem;
+}
+
+.sh-chip {
+  background-color: #1e293b;
+  border: 1px solid #334155;
+  color: #cbd5e1;
+  font-size: 0.75rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 9999px;
+}
+
+.sh-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1rem;
+  font-size: 0.88rem;
+}
+
+.sh-table th {
+  text-align: left;
+  color: #94a3b8;
+  font-weight: 600;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid #334155;
+}
+
+.sh-table td {
+  padding: 0.55rem 0.6rem;
+  border-bottom: 1px solid #1e293b;
+  color: #e2e8f0;
+}
+
+/* Neutral on purpose: a rise is not bad for every row (more relatable offers is not a problem). */
+.sh-up,
+.sh-down { color: #cbd5e1; }
+.sh-flat { color: #64748b; }
+
+.sh-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.sh-stat {
+  background-color: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
+}
+
+.sh-stat-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.sh-stat-label {
+  margin-top: 0.2rem;
+  color: #94a3b8;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.sh-stat-warn {
+  border-color: rgba(248, 113, 113, 0.6);
+  background-color: rgba(239, 68, 68, 0.08);
+}
+
+.sh-stat-warn .sh-stat-value {
+  color: #fca5a5;
+}
+
+@media (max-width: 640px) {
+  .sh-generated {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .sh-table th,
+  .sh-table td {
+    padding: 0.45rem 0.35rem;
+    font-size: 0.78rem;
+  }
+}

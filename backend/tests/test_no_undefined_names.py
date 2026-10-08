@@ -41,6 +41,15 @@ CHECKED = [
     "backend/utils/safety_stats.py",
     "backend/utils/example_questions.py",
     "backend/components/sonic_profile.py",
+    "backend/utils/identity_checks.py",
+    "backend/evals/character_eval.py",
+    "backend/utils/self_counters.py",
+    "backend/utils/relatable_utils.py",
+    "backend/utils/self_observations.py",
+    "backend/evals/pressure_scorers.py",
+    "backend/utils/encouragement_utils.py",
+    "backend/utils/admin_utils.py",
+    "backend/utils/sonic_health.py",
 ]
 _MODULE_DUNDERS = {"__file__", "__name__", "__doc__", "__builtins__", "__spec__", "__package__", "__path__"}
 

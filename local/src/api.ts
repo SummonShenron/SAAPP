@@ -470,6 +470,102 @@ export async function getSonicProfile(): Promise<SonicProfile> {
   return res.json();
 }
 
+// ---- Admin: Sonic Health (Global_Admins only; the server enforces it) ----
+
+export interface ObservationEvidence {
+  rate?: number | null;
+  previous_rate?: number | null;
+  denominator?: number | null;
+  [key: string]: unknown;
+}
+
+export interface ObservationView {
+  key: string;
+  state: 'pending' | 'live' | 'expired' | 'retired';
+  applies_to: string[];
+  approved_text: string | null;
+  approved_evidence: ObservationEvidence | null;
+  approved_at: string | null;
+  approved_by: string | null;
+  proposed_text: string | null;
+  proposed_evidence: ObservationEvidence | null;
+  last_confirmed_at: string | null;
+  expires_at: string | null;
+}
+
+export interface CountersSummary {
+  days: number;
+  totals: Record<string, number>;
+  previous_totals: Record<string, number>;
+  rates: Record<string, number | null>;
+  previous_rates: Record<string, number | null>;
+  change: Record<string, number | null>;
+}
+
+export interface SafetySummary {
+  days: number;
+  risk_raised: number;
+  people_with_risk_raised: number;
+  by_level: Record<string, number>;
+  by_detector: Record<string, number>;
+  per_day: Record<string, number>;
+  risk_turns: number;
+  reply_revised: number;
+  revised_rate: number | null;
+  line_in_reply: number;
+  line_rate: number | null;
+  last_resort_line: number;
+  last_resort_rate: number | null;
+  outage_fallbacks: number;
+  ladder: Record<string, Record<string, number>>;
+}
+
+export interface SonicHealth {
+  days: number;
+  generated_at: string;
+  safety: SafetySummary;
+  counters: CountersSummary;
+  observations: ObservationView[];
+}
+
+export interface ReflectionResult {
+  proposed: string[];
+  confirmed: string[];
+  unsupported: string[];
+}
+
+async function adminRequest<T>(path: string, method: 'GET' | 'POST', body?: unknown): Promise<T> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method,
+    headers: { ...authHeaders, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 403) throw new Error('Admins only.');
+  if (!res.ok) {
+    let detail = '';
+    try { detail = (await res.json())?.detail ?? ''; } catch { /* no JSON body */ }
+    throw new Error(typeof detail === 'string' && detail ? detail : `Request failed (${res.status}).`);
+  }
+  return res.json();
+}
+
+export function getSonicHealth(days: number): Promise<SonicHealth> {
+  return adminRequest<SonicHealth>(`/api/admin/sonic-health?days=${encodeURIComponent(days)}`, 'GET');
+}
+
+export function approveObservation(key: string): Promise<{ observations: ObservationView[] }> {
+  return adminRequest(`/api/admin/observations/${encodeURIComponent(key)}/approve`, 'POST');
+}
+
+export function retireObservation(key: string): Promise<{ observations: ObservationView[] }> {
+  return adminRequest(`/api/admin/observations/${encodeURIComponent(key)}/retire`, 'POST');
+}
+
+export function runObservationReflection(days: number): Promise<{ result: ReflectionResult; observations: ObservationView[] }> {
+  return adminRequest('/api/admin/observations/reflect', 'POST', { days });
+}
+
 /** Welcome-screen questions built from this person's own state (documents, integrations, repo) for one scope. */
 export async function getExampleQuestions(affiliate: string): Promise<string[]> {
   const authHeaders = await getAuthHeaders();
@@ -902,5 +998,9 @@ export const api = {
   updateTimezone,
   getCalendarStatus,
   startCalendarConnection,
-  disconnectCalendar
+  disconnectCalendar,
+  getSonicHealth,
+  approveObservation,
+  retireObservation,
+  runObservationReflection
 };

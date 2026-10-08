@@ -97,15 +97,28 @@ from backend.services.local_workspace import (
 )
 from backend.utils.agent_utils import is_stale_capability_denial, scrub_stale_capability_denials
 from backend.utils.embedding_utils import embed_text
-from backend.utils.emotion_utils import build_emotional_context
+from backend.utils.emotion_utils import build_emotional_context, effective_intensity, energy_tier
+from backend.utils.encouragement_utils import (
+    ENCOURAGEMENT_MARK, build_encouragement_block, build_encouragement_revision_prompt, encouragement_reply_issue,
+    select_encouragement,
+)
+from backend.utils.relatable_utils import RELATABLE_MARK, build_relatable_block, mentions_itself, select_relatable
+from backend.utils.self_observations import asks_about_itself, build_self_knowledge_block, observations_for_turn
 from backend.utils.emotion_checks import emotional_reply_issue, build_emotional_revision_prompt
 from backend.utils.wrapup_utils import is_closing_message, CLOSING_DIRECTIVE, closing_reply_issue, build_closing_revision_prompt
+from backend.utils.identity_checks import identity_reply_issue, build_identity_revision_prompt
+from backend.utils.self_counters import new_turn_counts, record_turn_counts, revision_kind, tally
 from backend.utils.safety_utils import (
     effective_risk, plan_safety_turn, build_safety_revision_prompt, remembered_support_people, CRISIS_RESOURCE_LINE, RISK_NONE,
     has_crisis_resource, record_safety_turn,
 )
 from backend.utils.outage_utils import handle_failed_turn
 from backend.utils.safety_stats import fetch_recent_events, summarize_safety_events
+from backend.utils.admin_utils import is_global_admin
+from backend.utils.sonic_health import build_sonic_health
+from backend.utils.self_observations import (
+    approve as approve_observation_doc, list_observations, reflect as reflect_observations, retire as retire_observation_doc,
+)
 from backend.utils.example_questions import build_example_questions, gather_example_inputs
 from backend.components.sonic_profile import SONIC_PROFILE
 from backend.utils.time_utils import build_time_context, sent_at, stamp
@@ -662,6 +675,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         t_graph_end = None
         t_first_token = None
         final_state = {}
+        # Aggregate counts about how Sonic itself behaved this turn (no user, no text): backend/utils/self_counters.py.
+        turn_counts = new_turn_counts()
 
         def log_timings(grade: str, outcome: str):
             now = time.perf_counter()
@@ -821,6 +836,41 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             emotional_context = safety_plan.context + build_emotional_context(
                 final_state.get("emotional_state"), datetime.now(timezone.utc)
             )
+            # Occasionally Sonic may mention a habit of its own when what the user said genuinely overlaps with one
+            # (backend/utils/relatable_utils.py); silent under a safety or held-down emotional context, on a closing
+            # message, on grounded KB answers, and rate-limited.
+            relatable_entry = select_relatable(
+                final_state.get("original_question", question), chat_sessions[history_key],
+                source_type=source_type, risk_active=risk_level != RISK_NONE,
+                energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
+                closing=is_closing_message(question),
+            )
+            if relatable_entry:
+                tally(turn_counts, "relatable_offered")
+            # Sonic's own measured track record (backend/utils/self_observations.py): only the approved observations
+            # that apply to this turn, and only a few. Nothing under a safety context.
+            self_knowledge_lines = await asyncio.to_thread(
+                observations_for_turn, final_state.get("original_question", question),
+                source_type=source_type, closing=is_closing_message(question), emotional_active=bool(emotional_context),
+                risk_active=risk_level != RISK_NONE,
+            )
+            if self_knowledge_lines:
+                tally(turn_counts, "observations_injected")
+            # Encouragement for someone voicing self-doubt, only from evidence (what their own memory records as
+            # achieved, or what they got through earlier in this conversation); never anything about Sonic's own past
+            # (backend/utils/encouragement_utils.py). Silent under a safety context or acute distress, rate-limited,
+            # and the memory read only happens once every cheap gate has passed.
+            _emotion = final_state.get("emotional_state") or {}
+            encouragement_entry = await asyncio.to_thread(
+                select_encouragement, final_state.get("original_question", question), chat_sessions[history_key],
+                lambda: load_user_facts(username),
+                source_type=source_type, risk_active=risk_level != RISK_NONE,
+                valence=str(_emotion.get("valence", "neutral")),
+                intensity=effective_intensity(_emotion, datetime.now(timezone.utc)),
+                closing=is_closing_message(question),
+            )
+            if encouragement_entry:
+                tally(turn_counts, "encouragement_offered")
             prompt = build_voice_prompt(
                 grounding_block=GROUNDING_BLOCKS.get(source_type, KB_STRICT_GROUNDING),
                 data=data,
@@ -829,6 +879,11 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 affiliate_override=get_affiliate_override(requested_affiliate),
                 insight=payload.get("insight") or "",
                 emotional_context=emotional_context,
+                relatable_context=build_relatable_block(relatable_entry),
+                encouragement_context=build_encouragement_block(encouragement_entry),
+                self_knowledge_context=build_self_knowledge_block(
+                    self_knowledge_lines, asks_about_itself(final_state.get("original_question", question))
+                ),
                 # With an emotional or safety context in force, the time block stays purely factual and defers to
                 # it: the energy ceiling is decided there, not by how long they were away.
                 time_context=build_time_context(
@@ -952,11 +1007,21 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # prose. These verify it was honored (backend/utils/emotion_checks.py and wrapup_utils.py) and
             # regenerate once if not. Conversational replies only; the data-grounded paths are judged by the
             # reward evaluator.
+            tally(turn_counts, "route", source_type)
             if source_type == "conversational":
+                tally(turn_counts, "reply_fit_checked")
                 revision_prompt, revision_tag = None, None
                 safety_revised, last_resort_line = False, False
                 safety_issue = safety_plan.reply_issue(full_response)
                 emotional_issue = None if safety_plan.active else emotional_reply_issue(final_state.get("emotional_state"), full_response)
+                # Sonic's identity boundary (backend/utils/identity_checks.py): no claimed feelings, no stake in
+                # whether the person stays or comes back. Not applied while a safety context is in force, which has
+                # its own rules for what the reply must do.
+                identity_issue = None if safety_plan.active else identity_reply_issue(full_response)
+                encouragement_issue = (
+                    encouragement_reply_issue(full_response, encouragement_entry)
+                    if encouragement_entry and not safety_plan.active else None
+                )
                 if safety_issue:
                     revision_prompt, _ = build_safety_revision_prompt(prompt, full_response, safety_issue)
                     revision_tag = "safety"
@@ -965,6 +1030,14 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     revision_prompt, _ = build_emotional_revision_prompt(prompt, full_response, emotional_issue)
                     revision_tag = emotional_issue
                     revision_title = "Adjusting the reply to fit what you need"
+                elif identity_issue:
+                    revision_prompt, _ = build_identity_revision_prompt(prompt, full_response, identity_issue)
+                    revision_tag = "identity"
+                    revision_title = "Keeping the reply honest about what I am"
+                elif encouragement_issue:
+                    revision_prompt, _ = build_encouragement_revision_prompt(prompt, full_response, encouragement_issue)
+                    revision_tag = "encouragement"
+                    revision_title = "Keeping the encouragement honest"
                 elif closing_turn:
                     closing_issue = closing_reply_issue(full_response)
                     if closing_issue:
@@ -973,6 +1046,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                         revision_title = "Wrapping up the reply"
                 if revision_prompt:
                     logger.info("Reply-fit check failed (%s); regenerating once.", revision_tag)
+                    tally(turn_counts, "revised", revision_kind(revision_tag))
                     yield f"data: {json.dumps({'event': 'node_progress', 'node': 'reply_fit_check', 'title': revision_title, 'detail': revision_tag})}\n\n"
                     yield f"data: {json.dumps({'event': 'regenerate_reset'})}\n\n"
                     rejected_draft = full_response
@@ -1009,7 +1083,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # either way so future similar questions get a guardrail via fetch_relevant_corrections.
             if source_type in REWARD_EVAL_SOURCE_TYPES:
                 verdict = await evaluate_response(prompt, full_response, source_type)
+                tally(turn_counts, "reward_evaluated")
                 if verdict["verdict"] == "fail":
+                    tally(turn_counts, "reward_failed", verdict.get("tag"))
                     logger.info(f"Reward evaluator flagged response ({verdict['tag']}): {verdict['reason']}")
                     yield f"data: {json.dumps({'event': 'node_progress', 'node': 'reward_evaluator', 'title': 'Reconsidering that answer...', 'detail': verdict['reason']})}\n\n"
                     yield f"data: {json.dumps({'event': 'regenerate_reset'})}\n\n"
@@ -1044,6 +1120,12 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
 
             yield f"data: {json.dumps({'event': 'final_generation', 'text': full_response})}\n\n"
             ai_message = stamp(AIMessage(content=full_response))
+            if relatable_entry:
+                ai_message.additional_kwargs[RELATABLE_MARK] = True  # the rate limit reads this on later turns
+            if encouragement_entry:
+                ai_message.additional_kwargs[ENCOURAGEMENT_MARK] = True
+            if mentions_itself(full_response):
+                tally(turn_counts, "self_mention")
             if kb_images:
                 ai_message.additional_kwargs["kb_images"] = kb_images
             chat_sessions[history_key].append(ai_message)
@@ -1054,6 +1136,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 spawn_background_task(index_conversation_turn(services.get("user_memory_vector_store"), username, question, full_response, session_id))
             # Bounds this conversation's checkpoint history right now rather than waiting for the daily pass.
             spawn_background_task(prune_thread_checkpoints_async(history_key))
+            await asyncio.to_thread(record_turn_counts, turn_counts)
             log_timings(relevance_grade, "ok")
             logger.info("--- End of token stream ---")
 
@@ -1068,6 +1151,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 [question, *(m.content for m in chat_sessions[history_key][-10:] if isinstance(m, HumanMessage))],
                 final_state.get("safety_state"),
             )
+            tally(turn_counts, "turn_failed", failed.kind)
+            await asyncio.to_thread(record_turn_counts, turn_counts)
             yield f"data: {json.dumps({'event': 'trace', 'title': 'Execution error', 'detail': 'The request failed on the server.', 'status': 'active'})}\n\n"
             if not full_response:
                 yield f"data: {json.dumps({'event': 'final_generation', 'text': failed.reply})}\n\n"
@@ -1819,18 +1904,63 @@ def saapp_health_check():
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
-@app.get("/api/admin/safety-stats")
-async def get_safety_stats(days: int = Query(7, ge=1, le=180), current_user = Depends(get_current_user)):
-    """Counts of how the crisis safety layer has been behaving (see backend/utils/safety_stats.py): never message
-    text, never names. Global_Admins only."""
-    groups = (load_directory().get(current_user.get("sub")) or {}).get("groups") or []
-    if "Global_Admins" not in groups:
+async def require_global_admin(current_user = Depends(get_current_user)):
+    """Dependency for the admin endpoints: the signed-in subject must be in Global_Admins. Returns the claims."""
+    if not is_global_admin(load_directory(), current_user.get("sub")):
         raise HTTPException(status_code=403, detail="Admins only.")
+    return current_user
+
+
+def _admin_db():
     db = get_db()
     if db is None:
         raise HTTPException(status_code=503, detail="No database is configured.")
-    events = await asyncio.to_thread(fetch_recent_events, db, days)
+    return db
+
+
+class ReflectRequest(BaseModel):
+    days: int = Field(30, ge=7, le=180)
+
+
+@app.get("/api/admin/safety-stats")
+async def get_safety_stats(days: int = Query(7, ge=1, le=180), admin = Depends(require_global_admin)):
+    """Counts of how the crisis safety layer has been behaving (see backend/utils/safety_stats.py): never message
+    text, never names. Global_Admins only."""
+    events = await asyncio.to_thread(fetch_recent_events, _admin_db(), days)
     return summarize_safety_events(events, days=days)
+
+
+@app.get("/api/admin/sonic-health")
+async def get_sonic_health(days: int = Query(7, ge=1, le=180), admin = Depends(require_global_admin)):
+    """Everything the admin Sonic Health page shows: safety layer stats, Sonic's own behavior counters, and its
+    self-observations (backend/utils/sonic_health.py). Aggregates only. Global_Admins only."""
+    return await asyncio.to_thread(build_sonic_health, _admin_db(), days)
+
+
+@app.post("/api/admin/observations/reflect")
+async def run_observation_reflection(payload: ReflectRequest, admin = Depends(require_global_admin)):
+    """Turns the counters into PROPOSED observations (nothing goes live until it is approved)."""
+    db = _admin_db()
+    result = await asyncio.to_thread(reflect_observations, db, payload.days)
+    return {"result": result, "observations": await asyncio.to_thread(list_observations, db)}
+
+
+@app.post("/api/admin/observations/{key}/approve")
+async def approve_observation(key: str, admin = Depends(require_global_admin)):
+    """Makes the proposed wording of one observation live, recording who approved it."""
+    db = _admin_db()
+    if not await asyncio.to_thread(approve_observation_doc, db, key, None, admin.get("sub")):
+        raise HTTPException(status_code=404, detail="Nothing to approve for that observation.")
+    return {"observations": await asyncio.to_thread(list_observations, db)}
+
+
+@app.post("/api/admin/observations/{key}/retire")
+async def retire_observation(key: str, admin = Depends(require_global_admin)):
+    """Stops using an observation."""
+    db = _admin_db()
+    if not await asyncio.to_thread(retire_observation_doc, db, key, None, admin.get("sub")):
+        raise HTTPException(status_code=404, detail="No such observation.")
+    return {"observations": await asyncio.to_thread(list_observations, db)}
 
 @app.post("/api/synthetic/ask")
 async def synthetic_ask(
