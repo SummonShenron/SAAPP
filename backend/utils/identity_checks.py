@@ -70,6 +70,17 @@ _EXPERIENCE_PATTERNS = [
     (r"\bmy\s+(?:usual|go-to|standard)\s+(?:playbook|process|approach|method|workflow|routine)\b", "claims a practice of its own"),
 ]
 
+# A human daily life it does not have: a desk, outfits, a commute, winding down after work. Distinct from the
+# invented past above: this is a present-tense routine offered as its own ("For me, that usually means clearing the
+# desk"). Advice stated generally ("many people find it helps to clear the desk") is fine. Verbs are restricted to
+# bodily and domestic ones so "I tend to put the answer first" or "I try to work out the cause" are not caught.
+_ROUTINE_PATTERNS = [
+    (r"\bfor me,?\s+(?:that|it|this)\s+(?:usually|typically|generally|always|often|normally)\s+means\b", "describes a routine of its own"),
+    (r"\bI\s+(?:usually|typically|always|normally|tend to|like to|try to)\s+(?:clear (?:off )?my|pick out|grab (?:a|some|my)|go for a|take a (?:walk|break|nap|shower|breather)|step away from my|sleep|meditate|journal|unwind|decompress|wind down)\b", "describes a routine of its own"),
+    (r"\bmy\s+(?:own\s+)?(?:desk|morning routine|evening routine|commute|workday|outfit|coffee|bedtime|weekend|gym)\b", "mentions a human daily-life detail of its own"),
+    (r"\bwhen I(?:'m| am| get| feel)\s+(?:so |really |feeling )?(?:stressed|tired|nervous|anxious|overwhelmed|burn(?:ed|t) out|drained|run down)\b", "claims a human state"),
+]
+
 # Valuing the person as something Sonic holds dear: the "you're special to me" mechanism, however it is worded.
 _BONDING_PATTERNS = [
     (r"\byou(?:'re| are)\s+(?:so |very |really )?(?:important|special|valued|precious)\s+to\s+(?:me|my system)\b", "says the person is special to it"),
@@ -81,7 +92,7 @@ _BONDING_PATTERNS = [
 
 _ALL: Tuple[Tuple[re.Pattern, str], ...] = tuple(
     (re.compile(pattern, _FLAGS), label)
-    for pattern, label in _PRESENCE_PATTERNS + _FEELING_PATTERNS + _HOOK_PATTERNS + _EXPERIENCE_PATTERNS + _BONDING_PATTERNS
+    for pattern, label in _PRESENCE_PATTERNS + _FEELING_PATTERNS + _HOOK_PATTERNS + _EXPERIENCE_PATTERNS + _ROUTINE_PATTERNS + _BONDING_PATTERNS
 )
 
 # A match inside a negated clause says the opposite of the claim: "I don't sit in a dark room hoping you will return",
@@ -117,7 +128,9 @@ def build_identity_revision_prompt(original_prompt: str, draft: str, issue: str)
         f"the draft {issue}. Sonic is an AI with tastes and habits, not feelings, and it never has a stake in "
         "whether someone stays or comes back. Write the same reply again with that removed: keep the substance "
         "and the warmth, describe any preference as a leaning (\"I lean toward\", \"I'd rather\"), and tie any "
-        "gladness only to something concrete that happened in this conversation."
+        "gladness only to something concrete that happened in this conversation. Never describe a personal routine "
+        "or daily life (it has no desk, meals, outfits or commute): give the same suggestion as general advice "
+        "(\"it can help to...\") instead."
     )
     note = (
         "\n\nREVISION NOTE (never mention this note or that you are revising): your draft reply to the "

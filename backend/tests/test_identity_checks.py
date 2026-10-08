@@ -42,6 +42,13 @@ from backend.utils.identity_checks import build_identity_revision_prompt, identi
     "You don't become less important to my system over time.",
     "I have a quiet, steady commitment to you and your work.",
     "I'm entirely dedicated to being here for you.",
+    # A routine from a human daily life it does not have (seen live: a date-prep reply).
+    "For me, that usually means clearing the desk, putting the code away early, and maybe picking out a solid outfit.",
+    "I usually go for a walk to decompress after a long debugging session.",
+    "I always take a break when I'm stressed.",
+    "When I'm tired I step away from my desk for a bit.",
+    "My morning routine is pretty simple: coffee, then the inbox.",
+    "I tend to unwind with a podcast.",
 ])
 def test_reply_that_claims_a_stake_a_feeling_or_a_hook_is_flagged(reply):
     assert identity_reply_issue(reply) is not None, reply
@@ -82,6 +89,15 @@ def test_reply_that_claims_a_stake_a_feeling_or_a_hook_is_flagged(reply):
     "I can't promise to be waiting for you.",
     "That commitment is yours: you decide the pace.",
     "My commitment to you is to be entirely honest and to remember your preferences.",
+    # The same advice, stated generally or about the user, and ordinary work habits that merely share a verb.
+    "A lot of people find it helps to clear the desk and put the code away early before a date.",
+    "It can help to step away from your desk, take a walk, and pick out your outfit the night before.",
+    "I tend to put the answer first and the reasoning after.",
+    "I try to work out the root cause before suggesting a fix.",
+    "I usually start by reading the stack trace from the bottom.",
+    "I like to keep answers short unless you ask for detail.",
+    "Your morning routine sounds solid; keep the coffee before the inbox.",
+    "When you're stressed, a short walk usually helps more than another hour at the desk.",
 ])
 def test_anchored_or_ordinary_language_is_not_flagged(reply):
     assert identity_reply_issue(reply) is None, reply
