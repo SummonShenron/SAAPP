@@ -326,6 +326,10 @@ const CountersCard: React.FC<{ counters: CountersSummary }> = ({ counters }) => 
           <tr><td>Grounded answers failing the answer check</td><td>{pct(rates.reward_failed)}</td><td>{pct(previous.reward_failed)}</td><td>{change(changes.reward_failed)}</td></tr>
           <tr><td>Turns that failed outright</td><td>{pct(rates.turn_failed)}</td><td>{pct(previous.turn_failed)}</td><td>{change(changes.turn_failed)}</td></tr>
           <tr><td>Turns offered a relatable line</td><td>{pct(rates.relatable_offered)}</td><td>{pct(previous.relatable_offered)}</td><td>{change(changes.relatable_offered)}</td></tr>
+          <tr><td>Turns where an upcoming thing was noted for later</td><td>{pct(rates.open_loop_captured)}</td><td>{pct(previous.open_loop_captured)}</td><td>{change(changes.open_loop_captured)}</td></tr>
+          <tr><td>Turns invited to connect to something from earlier</td><td>{pct(rates.callback_offered)}</td><td>{pct(previous.callback_offered)}</td><td>{change(changes.callback_offered)}</td></tr>
+          <tr><td>Turns where what's changed about Sonic was offered</td><td>{pct(rates.self_history_offered)}</td><td>{pct(previous.self_history_offered)}</td><td>{change(changes.self_history_offered)}</td></tr>
+          <tr><td>Turns that asked how something went</td><td>{pct(rates.open_loop_offered)}</td><td>{pct(previous.open_loop_offered)}</td><td>{change(changes.open_loop_offered)}</td></tr>
           <tr><td>Turns where the reply mentioned a leaning of its own</td><td>{pct(rates.self_mention)}</td><td>{pct(previous.self_mention)}</td><td>{change(changes.self_mention)}</td></tr>
         </tbody>
       </table>

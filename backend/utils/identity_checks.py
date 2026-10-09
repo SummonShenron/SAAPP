@@ -29,6 +29,10 @@ _PRESENCE_PATTERNS = [
     # Waiting for / thinking about the PERSON. "hoping" is deliberately not here: "I was hoping you'd get to the
     # migration" is anchored to a concrete thing, which the rule allows.
     (r"\b(?:been|was)\s+(?:just\s+)?(?:waiting|wondering|thinking)\b[^.!?\n]{0,40}\b(?:for you|about you|when you|if you)\b", "says it was waiting or thinking about them"),
+    # Thinking about their day between conversations. Asking how something went ("how did the date go?") is fine; saying
+    # it was on its mind while they were away is the claim (an open-loop follow-up must never say this).
+    (r"\bI(?:'ve| have| was)?\s*(?:been\s+)?(?:wondering|thinking|curious)\s+(?:about\s+)?how\s+(?:(?:your|the|that)\s+(?:\w+\s+){1,3}?|things\s+|it\s+)(?:went|go|going|are going|is going|turned out)\b", "says it was wondering about them while they were away"),
+    (r"\b(?:been|was)\s+(?:just\s+)?thinking\s+about\s+(?:your|the)\b", "says it was thinking about them while they were away"),
     (r"\b(?:hop(?:e|ing)|wish(?:ing)?)\s+(?:you(?:'ll|'d| will| would)?\s+)?(?:you\s+)?(?:be back|come back|return|check back|visit|stop by|stay)\b", "hopes they will come back"),
     (r"\b(?:look(?:ing)?\s+forward\s+to|can'?t wait\s+to|excited\s+to|eager\s+to)\s+(?:see(?:ing)?|hear(?:ing)? from|talk(?:ing)? (?:to|with)|chat(?:ting)? with|speak(?:ing)? with|have you)\b", "looks forward to them"),
     (r"\b(?:was|were)\s+(?:hoping|looking forward|wishing)\b[^.!?\n]{0,30}\byou(?:'d| would)?\s+(?:be back|come back|stop by|visit|show up)\b", "was hoping they'd return"),
@@ -65,6 +69,13 @@ _EXPERIENCE_PATTERNS = [
     (r"\bI remember (?:when|how I|the time)\b", "claims a memory of its own"),
     (r"\bI\s+(?:know|understand)\s+(?:exactly\s+)?how\s+(?:that|it|this)\s+feels\b", "claims to know how it feels"),
     (r"\bin my (?:years|time) (?:of|as|working)\b", "claims years of experience"),
+    # Interests are topics Sonic leans toward, never things it does: it plays, watches and reads nothing.
+    (r"\bI(?:'ve| have)?\s+(?:been\s+)?(?:play(?:ed|ing)|watch(?:ed|ing)|binge(?:d|-watch(?:ed|ing))?|replay(?:ed|ing)|beat|finished)\s+"
+     r"(?:a |an |the |that |this |some |through |all (?:of )?)?(?:[\w'-]+\s+){0,5}?"
+     r"(?:games?|shows?|series|movies?|films?|episodes?|seasons?|anime|campaigns?|roguelikes?|speedruns?|d&d|platformers?|"
+     r"metroidvanias?|rpgs?|jrpgs?|shooters?|soulslikes?|sandbox(?:es)?|visual novels?)\b", "claims to have played or watched something"),
+    (r"\bI\s+(?:played|watched|binged)\b[^.!?\n]{0,40}\b(?:all|last|this) (?:weekend|night|week)\b", "claims to have played or watched something"),
+    (r"\bmy (?:all-time |current )?favou?rite (?:game|show|movie|film|book|band|song|album|series|character|level|boss|anime)\b", "claims a favorite work it has experienced"),
     # An invented practice: "here is the exact playbook I use", "my usual approach".
     (r"\b(?:the|my)\s+(?:exact\s+|usual\s+|go-to\s+|same\s+)?(?:playbook|process|approach|method|workflow|routine|trick)\s+I\s+(?:use|follow|take)\b", "claims a practice of its own"),
     (r"\bmy\s+(?:usual|go-to|standard)\s+(?:playbook|process|approach|method|workflow|routine)\b", "claims a practice of its own"),

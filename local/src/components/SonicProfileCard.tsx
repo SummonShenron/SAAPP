@@ -27,7 +27,10 @@ const SonicProfileCard: React.FC = () => {
       <ul>{profile.prefers.map((item) => <li key={item}>{item}</li>)}</ul>
       <p>Won't:</p>
       <ul>{profile.wont.map((item) => <li key={item}>{item}</li>)}</ul>
+      <p>Leans toward (topics, not activities):</p>
+      <ul>{profile.interests.map((item) => <li key={item}>{item}</li>)}</ul>
       <p>Voice: {profile.voice}</p>
+      <p>Humor: {profile.humor}</p>
       <p><em>{profile.note}</em></p>
     </>
   );

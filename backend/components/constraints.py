@@ -250,6 +250,8 @@ def build_voice_prompt(
     relatable_context: str = "",
     self_knowledge_context: str = "",
     encouragement_context: str = "",
+    open_loop_context: str = "",
+    self_history_context: str = "",
 ) -> str:
     """Composes the single unified final-answer prompt used by every response path (RAG,
     conversational, web search, code interpreter, GitHub search, PR summary) — one persona,
@@ -268,10 +270,14 @@ def build_voice_prompt(
         sections.append(time_context)
     if relatable_context:
         sections.append(relatable_context)
+    if self_history_context:
+        sections.append(self_history_context)
     if self_knowledge_context:
         sections.append(self_knowledge_context)
     if encouragement_context:
         sections.append(encouragement_context)
+    if open_loop_context:
+        sections.append(open_loop_context)
     if emotional_context:
         sections.append(emotional_context)
     sections.append(f"\nCONVERSATION HISTORY:\n{history}\n\nCURRENT USER INPUT:\n{question}\n\nASSISTANT RESPONSE:\n")
@@ -606,6 +612,41 @@ Return ONLY a JSON object matching this schema, with no preamble or markdown:
   "category": "preference" | "identity" | "setting" | "trait" | "career" | "project" | "goal" | "relationship" | "coding_style",
   "fact": "a short, third-person statement of the durable fact, e.g. 'Prefers dark mode UI.'"
 }}
+"""
+
+OPEN_LOOP_EXTRACTION_PROMPT = """
+You read ONE message from a user and note any specific upcoming thing THEY said they will do, attend or
+face, so a friendly assistant can ask how it went once the day has passed.
+
+TODAY: {today} ({weekday}), on the user's own calendar.
+
+ALREADY NOTED (id: what, due date):
+{existing}
+
+USER MESSAGE:
+{message}
+
+RULES:
+- Only something that is coming up for THEM and that "how did it go?" would make sense about afterwards:
+  a date, a trip, an interview, a presentation, a deadline, a party, a launch, a meeting they care about.
+- Never routine or recurring things ("I work Mondays"), hypotheticals, things they are asking YOU to do, or
+  things about other people that the user is not part of.
+- Never anything medical, legal, about money trouble, a loss or a death, therapy, or anything painful or private.
+  If the upcoming thing is one of those, use kind "sensitive".
+- Skip ordinary everyday plans (a regular meal, an errand, a routine meeting) unless the user shows it matters to
+  them: nervous, excited, "big", "first", or something they prepared for.
+- "what": a short third-person phrase of at most 12 words with no personal names and no extra detail, e.g. "has a
+  first date", "has a job interview", "is giving a team presentation". A role word like "sister" or "manager" is
+  fine; a name is not.
+- "due_date": the real calendar date as YYYY-MM-DD, worked out from TODAY ("tonight" is today). If you cannot
+  tell the date, leave the thing out.
+- Do not repeat something already noted.
+- "resolved_ids": ids from ALREADY NOTED that this message clearly reports on as having already happened
+  ("the date went great", "I got the job").
+
+Return ONLY a JSON object, no preamble or markdown:
+{{"loops": [{{"what": "", "due_date": "YYYY-MM-DD", "kind": "social" | "work" | "travel" | "errand" | "event" | "sensitive"}}], "resolved_ids": []}}
+Use empty arrays when there is nothing to note.
 """
 
 FACT_CONFLICT_PROMPT = """

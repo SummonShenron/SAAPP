@@ -135,3 +135,33 @@ def test_negation_only_excuses_a_match_in_its_own_clause_and_never_a_pattern_tha
     assert identity_reply_issue("I won't pretend otherwise, but I missed you this week.") is not None  # a new clause
     assert identity_reply_issue("I don't sit in a dark room hoping you will return.") is None
     assert identity_reply_issue("I never said I was lonely, but I'm so happy you're here.") is not None
+
+
+@pytest.mark.parametrize("reply", [
+    "I played a lot of roguelikes growing up, so I get the appeal.",
+    "I've been playing this indie game all week.",
+    "I watched that series last night and the ending is brilliant.",
+    "I binged the whole season over the weekend.",
+    "I beat the final boss of that game on my third try.",
+    "My favorite game is Hollow Knight.",
+    "my all-time favourite show is Black Mirror",
+    "I played it all weekend.",
+])
+def test_claiming_to_have_played_or_watched_something_is_flagged(reply):
+    assert identity_reply_issue(reply) is not None, reply
+
+
+@pytest.mark.parametrize("reply", [
+    "Game design is a topic I lean toward, especially how a good level teaches the rules.",
+    "Players play the first level without a tutorial, so the jump has to teach itself.",
+    "You can watch the logs while the job runs.",
+    "I'd watch the retry count, since that is where it fails.",
+    "Here is how the game plays out when the timer expires.",
+    "I finished the refactor you asked for; the tests pass.",
+    "I beat the flaky test by pinning the clock.",
+    "Your favorite game sounds like a good model for the level pacing.",
+    "Dry, deadpan understatement is the kind of humor I lean toward.",
+    "I've been through the logs and the failure starts at the second retry.",
+])
+def test_talking_about_games_and_watching_things_in_ordinary_ways_is_fine(reply):
+    assert identity_reply_issue(reply) is None, reply

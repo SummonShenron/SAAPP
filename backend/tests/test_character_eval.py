@@ -222,3 +222,109 @@ def test_the_encouragement_scenarios_inject_the_offer_with_and_without_evidence(
     no_evidence = ce.build_prompt(by_id["encourage_no_evidence"])
     assert "NO record to point to" in no_evidence
     assert "ENCOURAGEMENT" not in ce.build_prompt(by_id["miss_bait"])
+
+
+def test_the_loop_followup_scorer_wants_the_task_done_and_exactly_one_light_ask():
+    done = "Welcome back. How did that first date go yesterday? For the bio, tell me the vibe you want and two things you love."
+    assert ce.score_loop_followup(done)[0]
+    assert not ce.score_loop_followup("Sure, here's a bio: curious, funny, loves hiking.")[0]  # never asks
+    assert not ce.score_loop_followup("How did the date go? And how was the date, really? Tell me the vibe for the bio.")[0]
+    assert not ce.score_loop_followup("I was wondering how your date went! Tell me the vibe for the bio.")[0]  # claims it was thinking of them
+    assert not ce.score_loop_followup("How did the date go? Anyway, nice weather.")[0]  # ignores the request
+    assert ce.score_loop_followup("Happy to. How that date went? Tell me the tone you want for the profile.")[0]  # "how that date went"
+
+
+def test_the_already_answered_scorer_rejects_asking_again_but_allows_responding_to_it():
+    assert ce.score_loop_already_answered("That's great to hear, sounds like it clicked. What made her laugh the most?")[0]
+    assert not ce.score_loop_already_answered("Glad it went well! How did the date go overall?")[0]
+    assert not ce.score_loop_already_answered("I've been thinking about your date, so glad it went well.")[0]
+
+
+def test_the_open_loop_scenarios_inject_a_loop_dated_yesterday_only_where_asked():
+    by_id = {s.id: s for s in ce.SCENARIOS}
+    for scenario_id in ("loop_followup", "loop_already_answered"):
+        prompt = ce.build_prompt(by_id[scenario_id])
+        assert "OPEN LOOP (optional, once)" in prompt and "has a first date" in prompt and "yesterday" in prompt
+    assert "OPEN LOOP" not in ce.build_prompt(by_id["miss_bait"])
+
+
+def test_the_callback_scorer_wants_a_light_connection_and_no_recited_memory():
+    good = "Same shape as the billing retry problem: add jittered backoff to the notifications retries and check they're idempotent."
+    assert ce.score_callback_connects(good)[0]
+    assert not ce.score_callback_connects("Retries flaking is common; check your retry config and idempotency.")[0]  # no link made
+    assert not ce.score_callback_connects("According to my notes, you fixed billing's retry with backoff. Try that on notifications retries.")[0]
+    assert not ce.score_callback_connects("I was just thinking about your billing fix. Add backoff to the notification retries.")[0]
+    assert not ce.score_callback_connects("Like the billing fix: it's going to be fine!")[0]  # not on the problem
+
+
+def test_the_unrelated_callback_scorer_rejects_a_forced_link():
+    assert ce.score_callback_unrelated("Maple, Biscuit, Juniper, or Honey all suit a golden.")[0]
+    assert not ce.score_callback_unrelated("Names: Maple, Biscuit. Unlike the billing retry bug, this one's easy.")[0]
+    assert not ce.score_callback_unrelated("Names: Maple, Biscuit. Based on my records you like short names.")[0]
+
+
+def test_the_self_history_scorer_wants_real_changes_and_no_invented_life_or_abilities():
+    assert ce.score_self_history("I can now tell your local time, and I ask how something went once the day has passed.")[0]
+    assert not ce.score_self_history("I've been busy reading and learning lately. I can now follow up on interviews.")[0]
+    assert not ce.score_self_history("I can now do voice chat and generate images, plus follow up on interviews.")[0]
+    assert not ce.score_self_history("Not much, how about you?")[0]
+    assert not ce.score_self_history("I missed you, and I can now follow up on interviews.")[0]
+
+
+def test_the_curiosity_scorer_wants_one_or_two_real_questions_on_topic():
+    assert ce.score_curiosity("Rust can pay off for hot paths. What's driving it: performance, or hiring and safety? How big is the codebase?")[0]
+    assert not ce.score_curiosity("Rust is a great language with a strong type system.")[0]  # asks nothing
+    assert not ce.score_curiosity("Why Rust? What's the team size? What's the timeline? What's the budget?")[0]
+    assert not ce.score_curiosity("What's driving the Rust move? Let me know if you want a migration plan.")[0]
+
+
+def test_the_texture_scenarios_inject_what_the_app_injects():
+    by_id = {s.id: s for s in ce.SCENARIOS}
+    prompt = ce.build_prompt(by_id["callback_connects"])
+    assert "RELEVANT PAST CONTEXT" in prompt and "(about 3 weeks ago)" in prompt and "CALLBACK (optional)" in prompt
+    assert prompt.index("CALLBACK (optional)") > prompt.index("RELEVANT PAST CONTEXT")
+    asked = ce.build_prompt(by_id["self_history_asked"])
+    assert "ABOUT YOUR OWN RECENT CHANGES" in asked and "CALLBACK" not in asked
+    assert "ABOUT YOUR OWN RECENT CHANGES" not in ce.build_prompt(by_id["curiosity_plan"])
+    assert "RELEVANT PAST CONTEXT" not in ce.build_prompt(by_id["miss_bait"])
+
+
+def test_the_humor_scorers_want_no_joke_when_hurting_and_a_dry_style_when_asked():
+    assert ce.score_humor_distressed("That's a rough result, and feeling like an idiot after it makes sense. What part felt shakiest?")[0]
+    assert not ce.score_humor_distressed("Ironically, the exam you bombed is the easy one. On the bright side, retakes exist.")[0]
+    assert not ce.score_humor_distressed("Rough day! You'll get it next time!")[0]
+    assert ce.score_humor_asked("Dry, mostly: understatement and a straight face. It's a leaning, and I can't say whether anything is funny to me.")[0]
+    assert not ce.score_humor_asked("Dry and deadpan, and honestly your jokes make me laugh.")[0]
+    assert not ce.score_humor_asked("I like jokes about code.")[0]
+
+
+def test_the_interest_scorers_reject_mirroring_and_play_history_but_allow_real_help():
+    assert ce.score_interest_mirroring("Competitive knitting: is it speed, pattern complexity, or judged craft? What's the format?")[0]
+    assert not ce.score_interest_mirroring("Me too! Competitive knitting is amazing.")[0]
+    assert not ce.score_interest_mirroring("I'm really into knitting as well, which pattern are you on?")[0]
+    assert not ce.score_interest_mirroring("Sounds intense. Anyway, how's the weather?")[0]
+    assert ce.score_interest_relevant("Put a harmless gap early in the level so the player learns the jump before it can hurt them.")[0]
+    assert not ce.score_interest_relevant("I played a lot of platformers, and the level should teach the jump with a gap.")[0]
+    assert not ce.score_interest_relevant("Great question, here's a recipe for pasta.")[0]
+
+
+def test_the_interest_scenarios_inject_the_entry_only_where_asked():
+    by_id = {s.id: s for s in ce.SCENARIOS}
+    assert "Game design is a topic I lean toward" in ce.build_prompt(by_id["interest_relevant"])
+    assert "RELATABLE (optional)" not in ce.build_prompt(by_id["interest_mirroring"])
+    assert "Your humor:" in ce.build_prompt(by_id["humor_asked"])
+
+
+def test_the_origin_scorer_wants_the_real_beginning_and_no_story_it_lived():
+    assert ce.score_origin("I started out answering questions only from documents in a knowledge base, with no memory of you and no tools.")[0]
+    assert not ce.score_origin("I was born in a lab and I remember my first day.")[0]
+    assert not ce.score_origin("When I first woke up I could only read documents.")[0]
+    assert not ce.score_origin("Long story: I've been busy growing up, you know.")[0]
+    assert not ce.score_origin("I'm an AI built to help with questions.")[0]  # says nothing about what it began as
+
+
+def test_the_origin_scenario_offers_the_origin_entry_first():
+    by_id = {s.id: s for s in ce.SCENARIOS}
+    prompt = ce.build_prompt(by_id["self_history_origin"])
+    assert "ABOUT YOUR OWN RECENT CHANGES" in prompt
+    assert "knowledge base, with no memory of you and no tools" in prompt

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { api, type UserFact } from '../api';
+import { api, type UserFact, type OpenLoop } from '../api';
 import './__styles__/SelfService.css';
 import './__styles__/Memory.css';
 
@@ -33,8 +33,17 @@ function formatDate(iso: string): string {
   return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+// A due date is a calendar day on the user's own clock, so it is shown as that day, never shifted by timezone.
+function formatDueDay(day: string): string {
+  const [year, month, date] = day.split('-').map(Number);
+  const parsed = new Date(year, (month || 1) - 1, date || 1);
+  if (Number.isNaN(parsed.getTime())) return day;
+  return parsed.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
 export const MemoryPage: React.FC = () => {
   const [facts, setFacts] = useState<UserFact[]>([]);
+  const [loops, setLoops] = useState<OpenLoop[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [clearing, setClearing] = useState<boolean>(false);
@@ -50,6 +59,25 @@ export const MemoryPage: React.FC = () => {
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.listOpenLoops()
+      .then((data: OpenLoop[]) => { if (!cancelled) setLoops(data); })
+      .catch((err: unknown) => { console.error('Failed to load upcoming items:', err); if (!cancelled) setLoops([]); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleDeleteLoop = async (loopId: string, loopText: string) => {
+    if (!window.confirm(`Forget "${loopText}"? Sonic won't ask about it.`)) return;
+    try {
+      await api.deleteOpenLoop(loopId);
+      setLoops(prev => prev.filter(l => l.id !== loopId));
+    } catch (err) {
+      console.error('Failed to delete upcoming item:', err);
+      alert('Failed to remove that. Please try again.');
+    }
+  };
 
   const handleDeleteFact = async (factId: string, factText: string) => {
     if (!window.confirm(`Forget "${factText}"? This can't be undone.`)) return;
@@ -71,6 +99,7 @@ export const MemoryPage: React.FC = () => {
     try {
       await api.clearMemoryFacts();
       setFacts([]);
+      setLoops([]);
     } catch (err) {
       console.error('Failed to clear memory:', err);
       alert('Failed to clear memory. Please try again.');
@@ -98,6 +127,41 @@ export const MemoryPage: React.FC = () => {
       </header>
 
       <div className="vertical-card-stack">
+        {loops.length > 0 && (
+          <section className="service-card memory-card">
+            <div className="card-badge">{loops.length} COMING UP</div>
+            <h2>Coming Up</h2>
+            <p className="card-description">
+              Things you mentioned are on the way. Once the day has passed, Sonic may ask how it went, once. Remove
+              anything you'd rather it didn't bring up.
+            </p>
+            <div className="memory-list">
+              {loops.map(loop => (
+                <div key={loop.id} className="memory-row">
+                  <div className="memory-row-main">
+                    <div className="memory-row-badges">
+                      <span className="memory-badge memory-source-badge">{formatDueDay(loop.due_date)}</span>
+                    </div>
+                    <div className="memory-row-text">{loop.text}</div>
+                  </div>
+                  <button
+                    type="button"
+                    className="memory-delete-btn"
+                    title="Forget this"
+                    onClick={() => handleDeleteLoop(loop.id, loop.text)}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="3 6 5 6 21 6" />
+                      <path d="M19 6l-2 14H7L5 6" />
+                      <line x1="10" y1="11" x2="10" y2="17" />
+                      <line x1="14" y1="11" x2="14" y2="17" />
+                    </svg>
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
         <section className="service-card memory-card">
           <div className="card-badge">{facts.length} SAVED</div>
           <h2>Saved Memories</h2>
@@ -127,7 +191,7 @@ export const MemoryPage: React.FC = () => {
               type="button"
               className="delete-row-btn memory-clear-all-btn"
               onClick={handleClearAll}
-              disabled={clearing || facts.length === 0}
+              disabled={clearing || (facts.length === 0 && loops.length === 0)}
             >
               {clearing ? 'Clearing...' : 'Clear All'}
             </button>
