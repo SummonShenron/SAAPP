@@ -195,3 +195,44 @@ def test_a_specific_origin_question_ranks_the_matching_entry_first():
     out = pick("how were you built?")
     assert out["mode"] == "asked" and out["entries"][0]["id"] == "multi_step"
     assert pick("how did you start out?")["entries"][0]["id"] == "origin"
+
+
+# ---- the changelog cannot silently drift from the code -------------------------------------------------------------------
+
+_REPO = pathlib.Path(__file__).resolve().parents[2]
+
+
+def _check_requirement(requirement: str):
+    """"path" (the file exists) or "path::text" (the file exists and contains the text)."""
+    path, _, needle = requirement.partition("::")
+    target = _REPO / path
+    if not target.is_file():
+        return f"{path} does not exist"
+    if needle and needle not in target.read_text(encoding="utf-8", errors="replace"):
+        return f"{path} no longer contains {needle!r}"
+    return None
+
+
+def test_every_changelog_entry_points_at_code_that_still_exists():
+    """Sonic states these lines as facts about itself. When a feature is removed or renamed, the entry that claims it must
+    be updated in the same change, and this is what makes that impossible to forget: it fails, naming the entry."""
+    for entry in CHANGELOG:
+        if entry.get("history_only"):
+            assert "requires" not in entry, entry["id"]
+            continue
+        requirements = entry.get("requires")
+        assert requirements and all(isinstance(r, str) for r in requirements), f"{entry['id']} has no `requires`"
+        for requirement in requirements:
+            problem = _check_requirement(requirement)
+            assert problem is None, f"changelog entry {entry['id']!r} is out of date: {problem}. Update or remove the entry."
+
+
+def test_only_a_statement_about_how_it_began_may_skip_the_code_check():
+    skipped = [e["id"] for e in CHANGELOG if e.get("history_only")]
+    assert skipped == ["origin"]
+
+
+def test_the_drift_check_actually_catches_a_missing_file_and_a_missing_symbol():
+    assert _check_requirement("backend/utils/open_loops.py::def select_followup") is None
+    assert "does not exist" in _check_requirement("backend/utils/removed_feature.py")
+    assert "no longer contains" in _check_requirement("backend/utils/open_loops.py::def a_function_that_was_renamed")

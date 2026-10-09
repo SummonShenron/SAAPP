@@ -329,6 +329,8 @@ const CountersCard: React.FC<{ counters: CountersSummary }> = ({ counters }) => 
           <tr><td>Turns where an upcoming thing was noted for later</td><td>{pct(rates.open_loop_captured)}</td><td>{pct(previous.open_loop_captured)}</td><td>{change(changes.open_loop_captured)}</td></tr>
           <tr><td>Turns invited to connect to something from earlier</td><td>{pct(rates.callback_offered)}</td><td>{pct(previous.callback_offered)}</td><td>{change(changes.callback_offered)}</td></tr>
           <tr><td>Turns where what's changed about Sonic was offered</td><td>{pct(rates.self_history_offered)}</td><td>{pct(previous.self_history_offered)}</td><td>{change(changes.self_history_offered)}</td></tr>
+          <tr><td>Messages Sonic started that got a reply</td><td>{pct(rates.initiation_answered)}</td><td>{pct(previous.initiation_answered)}</td><td>{change(changes.initiation_answered)}</td></tr>
+          <tr><td>Messages Sonic started that fell back to the plain template</td><td>{pct(rates.initiation_fallback)}</td><td>{pct(previous.initiation_fallback)}</td><td>{change(changes.initiation_fallback)}</td></tr>
           <tr><td>Turns that asked how something went</td><td>{pct(rates.open_loop_offered)}</td><td>{pct(previous.open_loop_offered)}</td><td>{change(changes.open_loop_offered)}</td></tr>
           <tr><td>Turns where the reply mentioned a leaning of its own</td><td>{pct(rates.self_mention)}</td><td>{pct(previous.self_mention)}</td><td>{change(changes.self_mention)}</td></tr>
         </tbody>

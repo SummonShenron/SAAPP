@@ -624,6 +624,13 @@ div:has(.portal-body) {
   box-shadow: var(--shadow);
 }
 
+/* Shown on a message Sonic wrote on its own when the conversation was opened (the "Message First" setting). */
+.message-initiated-note {
+  font-size: 0.72rem;
+  opacity: 0.7;
+  margin: -0.15rem 0 0.4rem;
+}
+
 .message-sender {
   font-size: 0.7rem;
   font-weight: 700;

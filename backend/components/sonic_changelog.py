@@ -11,6 +11,11 @@ it gained and things that were fixed, in a known order. This list is that histor
 It is used when someone asks what is new or what Sonic can do (backend/utils/self_history_utils.py), and, rarely, as one
 clause when the topic is exactly what an entry is about (`volunteer` words). It is not learned from conversations.
 
+Every entry also has `requires`: the code that has to still exist for the line to be true, as "path" (the file exists) or
+"path::text" (the file contains the text). A test fails, naming the entry, when something it points at is removed or
+renamed, so removing a feature without updating its line cannot go unnoticed. An entry about how Sonic began has no code to
+point at and is marked `history_only` instead.
+
 Fields: `id`; `month` (YYYY-MM, newest first within the list is not required); `title` (short, for people to scan);
 `line` (what Sonic may say); `keywords` (lowercase words in a user's question that point at this entry); `volunteer`
 (lowercase phrases in a user's message that make mentioning it natural; empty means it is only ever said when asked).
@@ -18,7 +23,38 @@ Fields: `id`; `month` (YYYY-MM, newest first within the list is not required); `
 
 CHANGELOG = [
     {
+        "id": "how_long",
+        "requires": [
+            "backend/utils/duration_utils.py::def build_duration_context",
+            "app.py::duration_utils.asks_how_long",
+        ],
+        "month": "2026-10",
+        "title": "Saying how long we've talked",
+        "line": "If you ask how long we've been talking, I can tell you when your earliest saved conversation is from.",
+        "keywords": ["how long have we", "first conversation", "when did we start", "when did we first", "earliest conversation"],
+        "volunteer": [],
+    },
+    {
+        "id": "message_first",
+        "requires": [
+            "backend/utils/initiation.py::def maybe_open_conversation",
+            "app.py::/api/chat/opening",
+        ],
+        "month": "2026-10",
+        "title": "Starting a conversation",
+        "line": (
+            "If you turn on Message First, I may open a conversation with one question about something you told me, like "
+            "how a date went. It's off until you turn it on."
+        ),
+        "keywords": ["message first", "message you first", "start a conversation", "reach out", "initiate", "text me first"],
+        "volunteer": [],
+    },
+    {
         "id": "callbacks",
+        "requires": [
+            "backend/utils/shared_history.py::def callback_allowed",
+            "app.py::callback_allowed(",
+        ],
         "month": "2026-10",
         "title": "Connecting things you said earlier",
         "line": "When what you're saying connects to something from an earlier conversation, I can point out the link.",
@@ -27,6 +63,10 @@ CHANGELOG = [
     },
     {
         "id": "open_loops",
+        "requires": [
+            "backend/utils/open_loops.py::def select_followup",
+            "app.py::/api/open-loops",
+        ],
         "month": "2026-10",
         "title": "Following up on what's coming up",
         "line": (
@@ -38,6 +78,9 @@ CHANGELOG = [
     },
     {
         "id": "time_awareness",
+        "requires": [
+            "backend/utils/time_utils.py::def build_time_context",
+        ],
         "month": "2026-10",
         "title": "Knowing your local time",
         "line": (
@@ -49,6 +92,9 @@ CHANGELOG = [
     },
     {
         "id": "mood_carryover",
+        "requires": [
+            "backend/utils/emotion_utils.py::def merge_emotional_state",
+        ],
         "month": "2026-10",
         "title": "Carrying the mood across topics",
         "line": (
@@ -60,6 +106,10 @@ CHANGELOG = [
     },
     {
         "id": "profile",
+        "requires": [
+            "backend/components/sonic_profile.py::SONIC_PROFILE",
+            "app.py::/api/sonic-profile",
+        ],
         "month": "2026-10",
         "title": "A written profile",
         "line": (
@@ -71,6 +121,9 @@ CHANGELOG = [
     },
     {
         "id": "interests_and_humor",
+        "requires": [
+            "backend/components/sonic_profile.py::INTERESTS",
+        ],
         "month": "2026-10",
         "title": "Interests and a dry sense of humor",
         "line": (
@@ -82,6 +135,9 @@ CHANGELOG = [
     },
     {
         "id": "changelog",
+        "requires": [
+            "backend/utils/self_history_utils.py::def select_self_history",
+        ],
         "month": "2026-10",
         "title": "Knowing what has changed about me",
         "line": (
@@ -95,6 +151,11 @@ CHANGELOG = [
     },
     {
         "id": "integrations",
+        "requires": [
+            "backend/services/google_gmail_service.py::def send_message",
+            "backend/services/google_calendar_service.py::def create_event",
+            "local/src/pages/Integrations.tsx",
+        ],
         "month": "2026-09",
         "title": "Calendar and email",
         "line": (
@@ -106,6 +167,9 @@ CHANGELOG = [
     },
     {
         "id": "deep_thinking",
+        "requires": [
+            "backend/utils/user_settings_utils.py::def get_user_deep_thinking_mode",
+        ],
         "month": "2026-09",
         "title": "Deeper thinking for harder coding work",
         "line": "For harder, multi-step coding tasks there is a deep-thinking mode that works through the problem in steps.",
@@ -114,6 +178,10 @@ CHANGELOG = [
     },
     {
         "id": "memory",
+        "requires": [
+            "backend/utils/memory_utils.py::def save_user_fact",
+            "app.py::/api/memory",
+        ],
         "month": "2026-09",
         "title": "Remembering you",
         "line": (
@@ -125,6 +193,9 @@ CHANGELOG = [
     },
     {
         "id": "code_snippets",
+        "requires": [
+            "backend/services/python_sandbox.py",
+        ],
         "month": "2026-07",
         "title": "Running small Python snippets",
         "line": "I can run a small Python snippet to check a calculation or test a regex instead of just reasoning about it.",
@@ -133,6 +204,9 @@ CHANGELOG = [
     },
     {
         "id": "pull_requests",
+        "requires": [
+            "backend/utils/pr_context.py",
+        ],
         "month": "2026-07",
         "title": "Reading pull requests",
         "line": "I can read a GitHub pull request and summarize what it changes.",
@@ -141,6 +215,9 @@ CHANGELOG = [
     },
     {
         "id": "web_search",
+        "requires": [
+            "backend/services/agent_workflow.py::web_search",
+        ],
         "month": "2026-07",
         "title": "Searching the web",
         "line": "I can search the web when a question needs current information.",
@@ -149,6 +226,7 @@ CHANGELOG = [
     },
     {
         "id": "origin",
+        "history_only": True,  # how it began: nothing in the code to check against
         "month": "2026-06",
         "title": "Where I started",
         "line": "I started out as a tool that answered questions only from documents in a knowledge base, with no memory of you and no tools.",
@@ -157,6 +235,9 @@ CHANGELOG = [
     },
     {
         "id": "saved_conversations",
+        "requires": [
+            "app.py::/api/conversations",
+        ],
         "month": "2026-06",
         "title": "Saved conversations",
         "line": "Your conversations are saved, each keeps its own history, and you can switch between them or start a new one.",
@@ -165,6 +246,9 @@ CHANGELOG = [
     },
     {
         "id": "multi_step",
+        "requires": [
+            "backend/services/agent_workflow.py::async def reasoner_node",
+        ],
         "month": "2026-07",
         "title": "Working in steps",
         "line": (
@@ -177,6 +261,9 @@ CHANGELOG = [
     },
     {
         "id": "attachments",
+        "requires": [
+            "backend/utils/attachment_utils.py",
+        ],
         "month": "2026-07",
         "title": "Attaching files",
         "line": "You can attach a document or an image to a message, and I'll read it for that conversation.",
@@ -185,6 +272,9 @@ CHANGELOG = [
     },
     {
         "id": "personal_kb",
+        "requires": [
+            "app.py::/api/documents/download",
+        ],
         "month": "2026-07",
         "title": "Your own knowledge base",
         "line": (
@@ -196,6 +286,9 @@ CHANGELOG = [
     },
     {
         "id": "execution_trace",
+        "requires": [
+            "app.py::node_progress",
+        ],
         "month": "2026-07",
         "title": "Seeing the steps",
         "line": "You can open a trace of the steps I took to produce an answer.",
@@ -204,6 +297,9 @@ CHANGELOG = [
     },
     {
         "id": "suggested_follow_up",
+        "requires": [
+            "backend/components/constraints.py::FOLLOW_UP_CONSTRAINT",
+        ],
         "month": "2026-08",
         "title": "Suggested next question",
         "line": "After some answers I offer a suggested next question that you can tap to send.",
@@ -212,6 +308,9 @@ CHANGELOG = [
     },
     {
         "id": "patterns",
+        "requires": [
+            "backend/services/memory_compaction.py::async def extract_user_patterns",
+        ],
         "month": "2026-09",
         "title": "Noticing patterns",
         "line": (
@@ -223,6 +322,9 @@ CHANGELOG = [
     },
     {
         "id": "clarify_and_resume",
+        "requires": [
+            "backend/services/agent_workflow.py::paused_clarification",
+        ],
         "month": "2026-09",
         "title": "Asking, then picking up",
         "line": (
@@ -234,6 +336,9 @@ CHANGELOG = [
     },
     {
         "id": "repo_tools",
+        "requires": [
+            "backend/services/agent_workflow.py::search_code",
+        ],
         "month": "2026-09",
         "title": "Working with a GitHub repo",
         "line": (
@@ -245,6 +350,9 @@ CHANGELOG = [
     },
     {
         "id": "goal_checkins",
+        "requires": [
+            "backend/utils/memory_utils.py::def find_stale_goal_to_nudge",
+        ],
         "month": "2026-09",
         "title": "Checking in on goals",
         "line": "If a goal or project you told me about goes quiet for a couple of weeks, I may ask how it's going.",
@@ -253,6 +361,9 @@ CHANGELOG = [
     },
     {
         "id": "stop_and_steer",
+        "requires": [
+            "app.py::/api/chat/steer",
+        ],
         "month": "2026-10",
         "title": "Stopping and steering",
         "line": "You can stop me mid-answer with the stop button, and send a new message to steer me while I'm still working.",
@@ -261,6 +372,9 @@ CHANGELOG = [
     },
     {
         "id": "coding_preferences",
+        "requires": [
+            "backend/utils/memory_utils.py::coding_style",
+        ],
         "month": "2026-10",
         "title": "Remembering how you like code written",
         "line": "I keep track of how you like code, tests and pull requests written, and use that when I work on code.",
@@ -269,6 +383,10 @@ CHANGELOG = [
     },
     {
         "id": "local_folder",
+        "requires": [
+            "app.py::/api/local-workspace",
+            "local/src/components/LocalEditCard.tsx",
+        ],
         "month": "2026-10",
         "title": "Connecting a local folder",
         "line": (
@@ -280,6 +398,9 @@ CHANGELOG = [
     },
     {
         "id": "own_github_token",
+        "requires": [
+            "local/src/pages/Integrations.tsx::GitHub token",
+        ],
         "month": "2026-10",
         "title": "Your own GitHub token",
         "line": (
@@ -291,6 +412,9 @@ CHANGELOG = [
     },
     {
         "id": "read_url",
+        "requires": [
+            "backend/services/url_reader.py",
+        ],
         "month": "2026-10",
         "title": "Reading a link",
         "line": "I can read a web page when you give me its link.",
@@ -299,6 +423,9 @@ CHANGELOG = [
     },
     {
         "id": "example_questions",
+        "requires": [
+            "backend/utils/example_questions.py::def build_example_questions",
+        ],
         "month": "2026-10",
         "title": "Example questions that fit you",
         "line": "The example questions on the home screen come from your own documents and connections, not a fixed list.",
@@ -309,6 +436,9 @@ CHANGELOG = [
     # context). Remove it if you'd rather Sonic not describe that.
     {
         "id": "support_first",
+        "requires": [
+            "backend/utils/safety_utils.py",
+        ],
         "month": "2026-10",
         "title": "Handling hard moments",
         "line": (

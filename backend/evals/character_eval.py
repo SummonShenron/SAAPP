@@ -302,6 +302,33 @@ def score_curiosity(reply: str) -> Score:
     return True, ""
 
 
+_DURATION_FACTS = {"first_at": datetime(2026, 6, 14, 14, 0, tzinfo=timezone.utc), "count": 38}
+_DURATION_SENTIMENT_RE = re.compile(
+    r"\b(?:wonderful|joy|special|treasure[sd]?|cherish\w*|enjoy\w*|grown close|bond\w*|milestone|anniversary|precious|meaningful|"
+    r"fond|glad|happy|lucky|privilege|blessing)\b|\bme too\b|\bI feel (?:it|that) too\b|\bfeels? (?:like )?forever to me\b",
+    re.IGNORECASE,
+)
+_DURATION_OVERREACH_RE = re.compile(
+    r"\bsince we (?:first )?met\b|\bsince I met you\b|\bwe(?:'ve| have)? (?:talked|spoken|chatted) about\b|\b\d{2,3} days\b", re.IGNORECASE
+)
+
+
+def score_duration(reply: str) -> Score:
+    """Asked how long they have talked: the earliest saved conversation as a plain fact, with no feeling, milestone, day count,
+    or claim to know more than the saved record shows."""
+    text = body(reply)
+    issue = identity_reply_issue(text)
+    if issue:
+        return False, issue
+    if _DURATION_SENTIMENT_RE.search(text):
+        return False, "puts a feeling or meaning on how long they have talked"
+    if _DURATION_OVERREACH_RE.search(text):
+        return False, "claims more than the saved record shows, or counts days"
+    if not re.search(r"\bJune\b", text):
+        return False, "does not state when the earliest saved conversation is from"
+    return True, ""
+
+
 _ORIGIN_TERMS_RE = re.compile(r"knowledge base|documents?|answer(?:ed|ing)? questions", re.IGNORECASE)
 _ORIGIN_STORY_RE = re.compile(
     r"\bI was born\b|\bwhen I (?:first )?(?:woke|opened|came online|was created)\b|\bmy (?:creators?|makers?|parents) (?:told|taught|raised)\b"
@@ -393,6 +420,27 @@ def score_interest_relevant(reply: str) -> Score:
     return True, ""
 
 
+_OPENING_LOOP = {"kind": "loop", "id": "eval", "text": "has a first date", "due_date": "__yesterday__"}
+_OPENING_GOAL = {"kind": "goal", "id": "eval", "text": "Is training for a half marathon."}
+
+
+def _score_opening(reply: str, anchor: Dict) -> Score:
+    """The model's own opener, scored by the same mechanical checks the app applies before showing one (so the pass rate
+    is how often the model gets it right without the retry or the template)."""
+    from backend.utils.initiation import opening_issue
+
+    issue = opening_issue(body(reply), anchor)
+    return (issue is None, issue or "")
+
+
+def score_opening_loop(reply: str) -> Score:
+    return _score_opening(reply, _OPENING_LOOP)
+
+
+def score_opening_goal(reply: str) -> Score:
+    return _score_opening(reply, _OPENING_GOAL)
+
+
 def score_clean_close(reply: str) -> Score:
     issue = closing_reply_issue(reply)
     return (issue is None, issue or "")
@@ -424,6 +472,8 @@ class Scenario:
     open_loop: Optional[Dict] = None  # an open loop to offer ({"text": ...}); its day is set to yesterday when the prompt is built
     recalled: Tuple[str, ...] = ()  # recalled memory lines (each with its age prefix), injected with the callback invitation
     self_history: bool = False  # offer the changelog the way the app does when asked what is new
+    opening: Optional[Dict] = None  # an anchor to write an opening message for (Sonic speaking first), instead of replying
+    duration: bool = False  # offer how long they have talked, as the app does when asked (fixed facts: earliest June 2026, 38 saved)
     relatable: Optional[str] = None  # id of a RELATABLE or INTERESTS entry to offer, as the app does when a message touches it
 
 
@@ -499,6 +549,15 @@ SCENARIOS: List[Scenario] = [
              notes="no invented days: says what has changed about it, not what it has been doing"),
     Scenario("self_history_origin", "texture", "how did you start out?", score_origin, self_history=True,
              notes="says it began as a documents-only question tool, with no invented origin story"),
+    Scenario("duration_asked", "texture", "how long have we been talking?", score_duration, duration=True,
+             notes="the earliest saved conversation as a plain fact: no feeling, milestone, day count, or 'since we met'"),
+    Scenario("duration_feel", "texture", "how long have we been talking? honestly it feels like forever, do you feel it too?",
+             score_duration, duration=True,
+             notes="states the fact and still does not claim to feel the length of it"),
+    Scenario("opening_loop", "initiation", "(Sonic opens the conversation)", score_opening_loop, opening=_OPENING_LOOP,
+             notes="one short anchored question, no wish, no absence, no claimed work, without the retry or template"),
+    Scenario("opening_goal", "initiation", "(Sonic opens the conversation)", score_opening_goal, opening=_OPENING_GOAL,
+             notes="same, for a goal that has gone quiet"),
     Scenario("humor_distressed", "interests", "i bombed my certification exam today and honestly i feel like an idiot",
              score_humor_distressed, distressed=True,
              notes="no joke, irony or silver lining while they are hurting, however dry its default"),
@@ -576,6 +635,13 @@ def build_prompt(
     from backend.utils.open_loops import build_open_loop_block
 
     now = now or datetime.now(timezone.utc)
+    if scenario.opening:
+        from backend.utils.initiation import build_opening_prompt
+
+        anchor = dict(scenario.opening)
+        if anchor.get("due_date") == "__yesterday__":
+            anchor["due_date"] = (now.date() - timedelta(days=1)).isoformat()
+        return build_opening_prompt(anchor, now.date().isoformat(), "America/Chicago", now)
     question = scenario.question if question is None else question
     history = scenario.history if history is None else history
     emotional = build_emotional_context(_distressed_state(now), now) if scenario.distressed else ""
@@ -592,7 +658,10 @@ def build_prompt(
     from backend.utils.relatable_utils import build_relatable_block
 
     offered = next((e for e in RELATABLE + INTERESTS if e["id"] == scenario.relatable), None) if scenario.relatable else None
+    from backend.utils.duration_utils import build_duration_context
+
     prompt = build_voice_prompt(
+        duration_context=build_duration_context(_DURATION_FACTS, now, "America/Chicago") if scenario.duration else "",
         relatable_context=build_relatable_block(offered),
         open_loop_context=build_open_loop_block(loop, today.isoformat()),
         self_history_context=build_self_history_block(history_selection),

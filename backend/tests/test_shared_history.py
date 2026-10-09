@@ -87,3 +87,10 @@ def test_the_app_invites_a_callback_only_with_recalled_context_marks_it_and_coun
         assert needle in source, needle
     recall_at = source.index("if semantic_memory_context:")
     assert source.index("if callback_allowed(") > recall_at  # inside the branch where something was recalled
+
+
+def test_a_callback_yields_to_every_other_proactive_item_not_only_an_open_loop():
+    source = (pathlib.Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
+    start = source.index("if callback_allowed(")
+    window = source[start: start + 600]
+    assert "proactive_taken=bool(open_loop_entry or relatable_entry or encouragement_entry or self_history)" in window

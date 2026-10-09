@@ -123,6 +123,8 @@ from backend.utils.example_questions import build_example_questions, gather_exam
 from backend.components.sonic_profile import SONIC_PROFILE
 from backend.utils.time_utils import build_time_context, local_today, sent_at, stamp
 from backend.utils import open_loops as open_loops_utils
+from backend.utils import initiation as initiation_utils
+from backend.utils import duration_utils
 from backend.utils.self_history_utils import SELF_HISTORY_MARK, build_self_history_block, select_self_history
 from backend.utils.shared_history import CALLBACK_MARK, build_callback_block, callback_allowed
 from backend.utils.user_settings_utils import (
@@ -135,6 +137,7 @@ from backend.utils.user_settings_utils import (
     get_user_target_doc_id, set_user_target_doc_id,
     get_github_token_status, find_github_token_for_repo,
     GitHubTokenInvalid, GitHubTokenNotAllowed,
+    TOGGLE_LOCKED_USERS,
 )
 from backend.services.google_drive_service import get_file_metadata as get_drive_file_metadata
 from backend.utils.google_calendar_utils import (
@@ -301,6 +304,12 @@ class HasSeenHelpUpdate(BaseModel):
 
 class TimezoneUpdate(BaseModel):
     timezone: str
+
+class ProactiveOpeningUpdate(BaseModel):
+    enabled: bool
+
+class OpeningRequest(BaseModel):
+    session_id: str
 
 class SaveConversationRequest(BaseModel):
     title: str
@@ -611,6 +620,11 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     # When the previous message in this conversation was sent (None for a new conversation or one saved before
     # messages were stamped), read before this turn's own message goes in, so the reply can tell how long they were away.
     last_message_at = sent_at(chat_sessions[history_key][-1]) if chat_sessions[history_key] else None
+    # Whether this message answers one Sonic opened the conversation with (backend/utils/initiation.py): counted, and the
+    # run of unanswered openings starts over. Only checked when it is true, so ordinary turns cost nothing extra.
+    answers_an_opening = bool(chat_sessions[history_key]) and initiation_utils.is_initiated(chat_sessions[history_key][-1])
+    if answers_an_opening and not is_guest_username(username):
+        await asyncio.to_thread(initiation_utils.answered, username)
     chat_sessions[history_key].append(stamp(HumanMessage(content=question)))
 
     messages_state = chat_sessions[history_key][-10:]
@@ -680,6 +694,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         final_state = {}
         # Aggregate counts about how Sonic itself behaved this turn (no user, no text): backend/utils/self_counters.py.
         turn_counts = new_turn_counts()
+        if answers_an_opening:
+            tally(turn_counts, "initiation_answered")
 
         def log_timings(grade: str, outcome: str):
             now = time.perf_counter()
@@ -824,6 +840,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             safety_state = final_state.get("safety_state")
             risk_level = effective_risk(safety_state, datetime.now(timezone.utc))
             risk_fresh = bool(safety_state) and bool(safety_state.get("escalated")) and int(safety_state.get("turns_since", 1) or 0) == 0
+            if risk_level != RISK_NONE and not is_guest_username(username):
+                # Nothing proactive for a week after, and for as long as, someone is in a safety context.
+                spawn_background_task(asyncio.to_thread(initiation_utils.risk_escalated, username))
             if risk_level != RISK_NONE:
                 source_type = "conversational"
             # What this turn's reply must do (work through the people in their life first; a human line only
@@ -904,6 +923,15 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             )
             if self_history:
                 tally(turn_counts, "self_history_offered")
+            # Only when asked "how long have we been talking?": the earliest saved conversation, as a plain fact with no
+            # feeling or milestone attached (backend/utils/duration_utils.py). Never for guests, whose "we" is many people.
+            duration_context = ""
+            if (source_type == "conversational" and risk_level == RISK_NONE and not is_guest_username(username)
+                    and duration_utils.asks_how_long(final_state.get("original_question", question))):
+                duration_context = duration_utils.build_duration_context(
+                    await asyncio.to_thread(duration_utils.conversation_facts, username), datetime.now(timezone.utc), user_tz,
+                )
+                tally(turn_counts, "duration_offered")
             callback_offered = False
             prompt = build_voice_prompt(
                 grounding_block=GROUNDING_BLOCKS.get(source_type, KB_STRICT_GROUNDING),
@@ -917,6 +945,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 encouragement_context=build_encouragement_block(encouragement_entry),
                 open_loop_context=open_loops_utils.build_open_loop_block(open_loop_entry, today_local),
                 self_history_context=build_self_history_block(self_history),
+                duration_context=duration_context,
                 self_knowledge_context=build_self_knowledge_block(
                     self_knowledge_lines, asks_about_itself(final_state.get("original_question", question))
                 ),
@@ -987,7 +1016,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     if callback_allowed(
                         True, chat_sessions[history_key], source_type=source_type, risk_active=risk_level != RISK_NONE,
                         energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
-                        closing=is_closing_message(question), proactive_taken=bool(open_loop_entry),
+                        closing=is_closing_message(question),
+                        proactive_taken=bool(open_loop_entry or relatable_entry or encouragement_entry or self_history),
                     ):
                         prompt = prompt + build_callback_block()
                         callback_offered = True
@@ -1698,6 +1728,33 @@ async def update_deep_thinking_setting(payload: DeepThinkingUpdate, current_user
     username = current_user.get("sub")
     saved = set_user_deep_thinking_mode(username, payload.deep_thinking)
     return {"deep_thinking": saved}
+
+
+@app.get("/api/settings/proactive-opening")
+async def get_proactive_opening_setting(current_user = Depends(get_current_user)):
+    """Whether Sonic may start a conversation (backend/utils/initiation.py). Off until the user turns it on."""
+    return {"enabled": await asyncio.to_thread(initiation_utils.get_enabled, current_user.get("sub"))}
+
+
+@app.put("/api/settings/proactive-opening")
+async def update_proactive_opening_setting(payload: ProactiveOpeningUpdate, current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    if is_guest_username(username) or username in TOGGLE_LOCKED_USERS:
+        raise HTTPException(status_code=403, detail="Signing in is required to let Sonic message first.")
+    return {"enabled": await asyncio.to_thread(initiation_utils.update_enabled, username, payload.enabled)}
+
+
+@app.post("/api/chat/opening")
+async def open_conversation(payload: OpeningRequest, current_user = Depends(get_current_user)):
+    """Called when the user opens an existing conversation. Usually returns {"message": null}; rarely, Sonic has
+    something anchored to say first, and it is saved into the thread and returned here (backend/utils/initiation.py)."""
+    username = current_user.get("sub")
+    message = await initiation_utils.open_for_request(
+        username, payload.session_id, chat_sessions,
+        load=load_session_messages, sync=sync_session_messages, get_timezone=get_user_timezone,
+        get_llm=get_stream_llm, save=save_conversation_turn, is_guest=is_guest_username(username),
+    )
+    return {"message": message}
 
 
 @app.get("/api/settings/target-repo")

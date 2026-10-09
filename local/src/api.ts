@@ -306,6 +306,46 @@ export async function updateRagMode(ragMode: string): Promise<{ rag_mode: string
 }
 
 /**
+ * Whether Sonic may start a conversation with something anchored to what you told it (off until turned on), and the
+ * call that asks it, once you open an existing conversation, whether it has anything to say first.
+ */
+export async function getProactiveOpening(): Promise<{ enabled: boolean }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/proactive-opening`, { headers: { ...authHeaders } });
+  if (!res.ok) throw new Error("Failed to fetch the message-first setting.");
+  return res.json();
+}
+
+export async function updateProactiveOpening(enabled: boolean): Promise<{ enabled: boolean }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/proactive-opening`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ enabled })
+  });
+  if (!res.ok) throw new Error("Failed to update the message-first setting.");
+  return res.json();
+}
+
+export interface OpeningMessage {
+  type: 'ai';
+  content: string;
+  sent_at?: string;
+  initiated: true;
+}
+
+export async function requestConversationOpening(sessionId: string): Promise<{ message: OpeningMessage | null }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/chat/opening`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ session_id: sessionId })
+  });
+  if (!res.ok) throw new Error("Failed to check for an opening message.");
+  return res.json();
+}
+
+/**
  * Get / set the current user's deep thinking setting — lets the tool agent take more
  * ReAct steps (and reconsider a premature answer more than once) at the cost of latency.
  */
@@ -1024,6 +1064,9 @@ export const api = {
   updateRagMode,
   getDeepThinking,
   updateDeepThinking,
+  getProactiveOpening,
+  updateProactiveOpening,
+  requestConversationOpening,
   getTargetRepo,
   updateTargetRepo,
   getTargetDoc,
