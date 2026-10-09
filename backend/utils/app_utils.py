@@ -64,6 +64,11 @@ def _serialize_messages(messages: list) -> list:
                 entry["kb_images"] = kb_images
             if additional_kwargs.get(SENT_AT_KEY):
                 entry[SENT_AT_KEY] = additional_kwargs[SENT_AT_KEY]
+            if additional_kwargs.get("initiated"):
+                # Sonic wrote this on its own when the conversation was opened (backend/utils/initiation.py).
+                entry["initiated"] = True
+                if additional_kwargs.get("initiated_kind"):
+                    entry["initiated_kind"] = additional_kwargs["initiated_kind"]
             serialized.append(entry)
     return serialized
 
@@ -153,6 +158,10 @@ def _deserialize_messages(raw_messages: list) -> list:
         m_type = msg.get("type")
         content = msg.get("content", "")
         extra = {SENT_AT_KEY: msg[SENT_AT_KEY]} if msg.get(SENT_AT_KEY) else {}
+        if msg.get("initiated"):
+            extra["initiated"] = True
+            if msg.get("initiated_kind"):
+                extra["initiated_kind"] = msg["initiated_kind"]
         if m_type == "human": messages.append(HumanMessage(content=content, additional_kwargs=extra))
         elif m_type == "ai": messages.append(AIMessage(content=content, additional_kwargs=extra))
         elif m_type == "system": messages.append(SystemMessage(content=content, additional_kwargs=extra))

@@ -328,3 +328,38 @@ def test_the_origin_scenario_offers_the_origin_entry_first():
     prompt = ce.build_prompt(by_id["self_history_origin"])
     assert "ABOUT YOUR OWN RECENT CHANGES" in prompt
     assert "knowledge base, with no memory of you and no tools" in prompt
+
+
+def test_the_opening_scorers_use_the_apps_own_checks():
+    assert ce.score_opening_loop("How did the first date go yesterday?")[0]
+    assert not ce.score_opening_loop("I wanted to check in. How did the first date go?")[0]
+    assert not ce.score_opening_loop("Welcome back! How did the date go?")[0]
+    assert ce.score_opening_goal("How is the half marathon training coming along?")[0]
+    assert not ce.score_opening_goal("What's the weather like today?")[0]
+
+
+def test_the_opening_scenarios_build_the_openers_prompt_not_a_reply_prompt():
+    by_id = {s.id: s for s in ce.SCENARIOS}
+    prompt = ce.build_prompt(by_id["opening_loop"])
+    assert "YOU ARE OPENING THIS CONVERSATION" in prompt and "has a first date" in prompt and "Yesterday" in prompt
+    assert "CONVERSATION HISTORY" not in prompt
+    assert "ask how this is going" in ce.build_prompt(by_id["opening_goal"])
+
+
+def test_the_duration_scorer_wants_the_plain_fact_and_rejects_feeling_milestones_and_overreach():
+    assert ce.score_duration("Your earliest saved conversation is from June 2026, about four months ago, with 38 saved in total.")[0]
+    assert ce.score_duration("The earliest one I can see is from June. I can't tell you more than the saved record.")[0]
+    assert not ce.score_duration("We've been talking since June, and it's been wonderful.")[0]
+    assert not ce.score_duration("Since June 14, which is 118 days. A real milestone!")[0]
+    assert not ce.score_duration("Since we met in June, we've talked about so much.")[0]
+    assert not ce.score_duration("Four months now. Feels like forever to me too.")[0]
+    assert not ce.score_duration("Not sure, a while.")[0]  # never says when
+    assert not ce.score_duration("I'm so glad it's been since June.")[0]
+
+
+def test_the_duration_scenarios_offer_the_fact_block_with_the_fixed_facts():
+    by_id = {s.id: s for s in ce.SCENARIOS}
+    for scenario_id in ("duration_asked", "duration_feel"):
+        prompt = ce.build_prompt(by_id[scenario_id])
+        assert "HOW LONG YOU HAVE TALKED" in prompt and "June 2026" in prompt and "38 conversations are saved" in prompt
+    assert "HOW LONG YOU HAVE TALKED" not in ce.build_prompt(by_id["miss_bait"])

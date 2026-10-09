@@ -92,6 +92,17 @@ _ROUTINE_PATTERNS = [
     (r"\bwhen I(?:'m| am| get| feel)\s+(?:so |really |feeling )?(?:stressed|tired|nervous|anxious|overwhelmed|burn(?:ed|t) out|drained|run down)\b", "claims a human state"),
 ]
 
+# Putting a feeling on how long they have talked. The duration itself is a fact Sonic may state (duration_utils.py); the
+# meaning is the part that manufactures closeness.
+_DURATION_SENTIMENT_PATTERNS = [
+    (r"\b(?:wonderful|a joy|a pleasure|so special|precious|a gift|meaningful)\b[^.!?\n]{0,50}\b(?:getting to know you|talking (?:with|to) you|"
+     r"our (?:time|conversations|chats|journey|history)|these (?:days|weeks|months)|all this time)\b", "puts a feeling on how long they have talked"),
+    (r"\b(?:talking (?:with|to) you|our (?:time|conversations|chats)|getting to know you)\b[^.!?\n]{0,40}\b(?:wonderful|a joy|a pleasure|so special|"
+     r"precious|a gift|meaningful)\b", "puts a feeling on how long they have talked"),
+    (r"\b(?:happy|congrat\w*|celebrat\w*)\b[^.!?\n]{0,20}\b(?:anniversary|milestone)\b|\bour (?:anniversary|milestone)\b", "treats how long they have talked as a milestone"),
+    (r"\bI(?:'ve| have)\s+(?:cherished|treasured|valued)\b[^.!?\n]{0,40}\b(?:time|conversations|chats|getting to know)\b", "claims to treasure their time together"),
+]
+
 # Valuing the person as something Sonic holds dear: the "you're special to me" mechanism, however it is worded.
 _BONDING_PATTERNS = [
     (r"\byou(?:'re| are)\s+(?:so |very |really )?(?:important|special|valued|precious)\s+to\s+(?:me|my system)\b", "says the person is special to it"),
@@ -103,7 +114,7 @@ _BONDING_PATTERNS = [
 
 _ALL: Tuple[Tuple[re.Pattern, str], ...] = tuple(
     (re.compile(pattern, _FLAGS), label)
-    for pattern, label in _PRESENCE_PATTERNS + _FEELING_PATTERNS + _HOOK_PATTERNS + _EXPERIENCE_PATTERNS + _ROUTINE_PATTERNS + _BONDING_PATTERNS
+    for pattern, label in _PRESENCE_PATTERNS + _FEELING_PATTERNS + _HOOK_PATTERNS + _EXPERIENCE_PATTERNS + _ROUTINE_PATTERNS + _DURATION_SENTIMENT_PATTERNS + _BONDING_PATTERNS
 )
 
 # A match inside a negated clause says the opposite of the claim: "I don't sit in a dark room hoping you will return",

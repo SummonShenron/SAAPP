@@ -36,6 +36,8 @@ interface Message {
   editProposal?: EditProposal; // diff card for edits proposed to the connected local folder
   // A message sent while Sonic was already working, meant to change what it does next.
   steer?: 'queued' | 'applied' | 'deferred' | 'dropped';
+  // Sonic wrote this on its own when the conversation was opened (the "message first" setting), not in reply to anything.
+  initiated?: boolean;
 }
 
 const STEER_STATUS_LABEL: Record<NonNullable<Message['steer']>, string> = {
@@ -106,6 +108,7 @@ function mapServerMessage(m: any): Message {
     sender: m.type === 'human' ? 'user' : 'ai',
     text: m.content,
     images: images.length > 0 ? images : undefined,
+    initiated: m.initiated === true ? true : undefined,
   };
 }
 
@@ -251,6 +254,9 @@ const ChatMessageList = React.memo(function ChatMessageList({
               <div className="message-sender">
                 {msg.steer ? `STEERING · ${STEER_STATUS_LABEL[msg.steer]}` : msg.sender.toUpperCase()}
               </div>
+              {msg.initiated && (
+                <div className="message-initiated-note">Sonic started this. You can turn that off in the settings menu.</div>
+              )}
               {msg.images && msg.images.length > 0 && (
                 <div className="message-attachment-images">
                   {msg.images.map((img, idx) =>
@@ -538,6 +544,8 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [selectedAffiliate, setSelectedAffiliate] = useState<string>('All');
   const [ragMode, setRagMode] = useState<string>('strict');
   const [deepThinking, setDeepThinking] = useState<boolean>(false);
+  const [proactiveOpening, setProactiveOpening] = useState<boolean>(false);
+  const openingRequestedRef = useRef<string | null>(null);
   const [allowedAffiliates, setAllowedAffiliates] = useState<KnowledgeBase[]>([]);
   const { fetchingScope } = useAffiliateScope({
     enabled: !isEmbedded,
@@ -792,6 +800,17 @@ useEffect(() => {
           setMessages(serverMessages);
           setHistoryStart(conversation.start ?? 0);
           setHasChatted(serverMessages.some(m => m.sender === 'user'));
+          // Opening an existing conversation: Sonic may have one anchored thing to say first (usually it doesn't, and
+          // never unless the user turned that on). Asked once per conversation load.
+          if (!isEmbedded && openingRequestedRef.current !== sessionId) {
+            openingRequestedRef.current = sessionId;
+            api.requestConversationOpening(sessionId)
+              .then((result) => {
+                if (cancelled || !result.message) return;
+                setMessages(prev => [...prev, mapServerMessage(result.message)]);
+              })
+              .catch(() => { /* no opening message is the normal outcome */ });
+          }
         }
       })
       .catch(() => {
@@ -884,6 +903,24 @@ useEffect(() => {
       .then(data => setDeepThinking(data.deep_thinking))
       .catch(err => console.error("Failed to fetch deep thinking setting:", err));
   }, [principal]);
+
+  useEffect(() => {
+    if (!principal) return;
+    api.getProactiveOpening()
+      .then(data => setProactiveOpening(data.enabled))
+      .catch(() => { /* guests and embeds have no such setting */ });
+  }, [principal]);
+
+  const handleProactiveOpeningChange = async (enabled: boolean) => {
+    setProactiveOpening(enabled);
+    try {
+      const result = await api.updateProactiveOpening(enabled);
+      setProactiveOpening(result.enabled);
+    } catch (err) {
+      console.error("Failed to update the message-first setting:", err);
+      setProactiveOpening(!enabled);
+    }
+  };
 
   const handleDeepThinkingChange = async (enabled: boolean) => {
     setDeepThinking(enabled);
@@ -1840,6 +1877,15 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
         icon: settingsGlyph(<><circle cx="12" cy="12" r="9" /><path d="M12 8v4l2.5 2.5" /></>),
       },
       run: () => handleDeepThinkingChange(!deepThinking),
+      keepOpen: true,
+    },
+    {
+      item: {
+        label: `Message First: ${proactiveOpening ? 'On' : 'Off'}`,
+        disabled: settingsLocked,
+        icon: settingsGlyph(<><path d="M4 5h16v11H8l-4 4V5z" /><line x1="8" y1="9" x2="16" y2="9" /><line x1="8" y1="12" x2="13" y2="12" /></>),
+      },
+      run: () => handleProactiveOpeningChange(!proactiveOpening),
       keepOpen: true,
     },
     ...(!patchyAllowed ? [] : [{

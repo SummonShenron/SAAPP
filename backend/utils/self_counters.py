@@ -37,7 +37,7 @@ _GROUPS: Dict[str, tuple] = {
     "reward_failed": REWARD_TAGS,
     "turn_failed": FAILURE_KINDS,
 }
-_PLAIN_KEYS = ("turns_total", "reply_fit_checked", "reward_evaluated", "relatable_offered", "self_mention", "observations_injected", "encouragement_offered", "open_loop_captured", "open_loop_offered", "open_loop_resolved", "callback_offered", "self_history_offered")
+_PLAIN_KEYS = ("turns_total", "reply_fit_checked", "reward_evaluated", "relatable_offered", "self_mention", "observations_injected", "encouragement_offered", "open_loop_captured", "open_loop_offered", "open_loop_resolved", "callback_offered", "self_history_offered", "initiation_offered", "initiation_fallback", "initiation_answered", "duration_offered")
 KEYS = frozenset(
     list(_PLAIN_KEYS) + [f"{group}_{name}" for group, names in _GROUPS.items() for name in names]
 )
@@ -145,6 +145,9 @@ def _rates(totals: Dict[str, int]) -> Dict[str, Optional[float]]:
     rates["open_loop_captured"] = _rate(totals.get("open_loop_captured", 0), turns)
     rates["open_loop_offered"] = _rate(totals.get("open_loop_offered", 0), turns)
     rates["callback_offered"] = _rate(totals.get("callback_offered", 0), turns)
+    # How often a message Sonic started was answered, and how often the template had to stand in for the model.
+    rates["initiation_answered"] = _rate(totals.get("initiation_answered", 0), totals.get("initiation_offered", 0))
+    rates["initiation_fallback"] = _rate(totals.get("initiation_fallback", 0), totals.get("initiation_offered", 0))
     rates["self_history_offered"] = _rate(totals.get("self_history_offered", 0), turns)
     for route in ROUTES:
         rates[f"route_{route}"] = _rate(totals.get(f"route_{route}", 0), turns)
