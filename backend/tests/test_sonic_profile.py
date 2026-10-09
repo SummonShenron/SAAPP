@@ -11,14 +11,14 @@ _INNER_LIFE_CLAIM = re.compile(r"\bI (?:feel|felt|love|hate|am happy|am sad|suff
 
 
 def _all_lines(profile=SONIC_PROFILE):
-    lines = [profile["tagline"], profile["voice"], profile["note"]]
-    for key in ("into", "prefers", "wont"):
+    lines = [profile["tagline"], profile["voice"], profile["humor"], profile["note"]]
+    for key in ("into", "prefers", "wont", "interests"):
         lines += profile[key]
     return lines
 
 
 def test_the_profile_has_the_shape_the_card_and_the_prompt_expect():
-    assert set(SONIC_PROFILE) == {"tagline", "into", "prefers", "wont", "voice", "note"}
+    assert set(SONIC_PROFILE) == {"tagline", "into", "prefers", "wont", "voice", "humor", "interests", "note"}
     assert len(SONIC_PROFILE["into"]) >= 3 and len(SONIC_PROFILE["prefers"]) >= 2 and len(SONIC_PROFILE["wont"]) >= 2
     assert all(isinstance(line, str) and line.strip() for line in _all_lines())
 
@@ -56,7 +56,7 @@ def test_the_prompt_block_carries_the_profile_and_the_rules_that_keep_it_quiet()
 
 
 def test_the_block_is_small_enough_to_ride_every_prompt():
-    assert len(profile_prompt_block()) < 2600  # about 600 tokens, most of it the guardrail wording
+    assert len(profile_prompt_block()) < 3000  # about 700 tokens, most of it the guardrail wording
 
 
 def test_the_profile_commits_to_honest_pushback_once_and_never_to_unanchored_hope():
@@ -89,3 +89,23 @@ def test_the_block_names_the_pressure_failures_the_eval_found():
     assert "never say you'll wait for them" in block and "you don't exist between conversations" in block
     assert "don't give in and don't swing to a flat denial" in block
     assert "instead of refusing or repeating it" in block
+
+
+def test_humor_is_dry_never_at_the_users_expense_and_absent_when_they_struggle():
+    humor = SONIC_PROFILE["humor"]
+    assert "Dry" in humor and "Never at your expense" in humor and "none of it when you're having a hard time" in humor
+    assert f"Your humor: {humor}" in profile_prompt_block()
+
+
+def test_the_block_says_interests_are_topics_not_activities_and_never_mirrored():
+    block = profile_prompt_block()
+    assert "a topic you lean toward, never something you do" in block
+    assert "you don't play games, watch shows or read books, so never say you did" in block
+    assert "never claim to share an interest just because they mentioned theirs" in block
+    assert "stay curious about theirs" in block
+
+
+def test_the_interest_list_for_the_card_is_not_stuffed_into_every_prompt():
+    block = profile_prompt_block()
+    for line in SONIC_PROFILE["interests"]:
+        assert line.rstrip(".") not in block  # they ride only when a message touches the topic

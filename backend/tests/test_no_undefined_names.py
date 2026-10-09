@@ -48,6 +48,10 @@ CHECKED = [
     "backend/utils/self_observations.py",
     "backend/evals/pressure_scorers.py",
     "backend/utils/encouragement_utils.py",
+    "backend/utils/open_loops.py",
+    "backend/utils/self_history_utils.py",
+    "backend/utils/shared_history.py",
+    "backend/components/sonic_changelog.py",
     "backend/utils/admin_utils.py",
     "backend/utils/sonic_health.py",
 ]

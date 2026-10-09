@@ -113,7 +113,7 @@ def test_mentions_itself_spots_stated_leanings(reply, expected):
 def test_the_app_selects_the_line_offers_it_marks_the_reply_and_counts_it():
     source = (pathlib.Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
     for needle in (
-        "relatable_entry = select_relatable(",
+        "relatable_entry = None if open_loop_entry else select_relatable(",
         "relatable_context=build_relatable_block(relatable_entry)",
         "ai_message.additional_kwargs[RELATABLE_MARK] = True",
         'tally(turn_counts, "relatable_offered")',
@@ -122,3 +122,38 @@ def test_the_app_selects_the_line_offers_it_marks_the_reply_and_counts_it():
         "risk_active=risk_level != RISK_NONE",
     ):
         assert needle in source, needle
+
+
+def test_interests_are_offered_through_the_same_gates_as_the_relatable_lines():
+    from backend.components.sonic_profile import INTERESTS
+
+    entry = pick("i'm designing the difficulty curve for my platformer")
+    assert entry and entry["id"] == "game_design" and entry in INTERESTS
+    assert pick("any good sci-fi like asimov?")["id"] == "scifi"
+    assert pick("we're doing a board game night saturday")["id"] == "tabletop"
+    for kwargs in ({"risk_active": True}, {"closing": True}, {"energy_tier": "subdued"}, {"source_type": "kb_strict"}):
+        assert pick("i'm designing the difficulty curve for my platformer", **kwargs) is None
+
+
+def test_the_interests_are_well_formed_in_leaning_language_with_specific_triggers():
+    from backend.components.sonic_profile import INTERESTS
+
+    ids = [e["id"] for e in INTERESTS] + [e["id"] for e in RELATABLE]
+    assert len(ids) == len(set(ids)) and len(INTERESTS) >= 4
+    for entry in INTERESTS:
+        assert entry["triggers"] and all(t == t.lower() for t in entry["triggers"])
+        assert entry["line"].endswith(".") and "!" not in entry["line"]
+        assert identity_reply_issue(entry["line"]) is None, entry["line"]
+        assert "lean" in entry["line"].lower() or "i'd read" in entry["line"].lower(), entry["line"]
+        for banned in ("love", "enjoy", "excited", "favorite", "satisf", "played", "watched", "my hobby"):
+            assert banned not in entry["line"].lower(), (entry["id"], banned)
+        # A bare generic word would fire on ordinary talk ("unity of purpose", "a web portal").
+        for generic in ("unity", "portal", "game", "games", "retro", "funny", "joke", "space"):
+            assert generic not in entry["triggers"], (entry["id"], generic)
+
+
+def test_every_interest_is_also_listed_for_the_about_card_and_no_card_line_claims_an_activity():
+    assert len(SONIC_PROFILE["interests"]) >= 4
+    for line in SONIC_PROFILE["interests"]:
+        assert identity_reply_issue(line) is None and "!" not in line
+        assert not any(w in line.lower() for w in ("i play", "i watch", "my hobby", "favorite", "played", "watched"))

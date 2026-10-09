@@ -6,6 +6,8 @@ from typing import List, Optional
 from langchain_core.documents import Document
 from langchain_mongodb import MongoDBAtlasVectorSearch
 
+from backend.utils.time_utils import describe_gap
+
 logger = logging.getLogger("SASS Logger")
 
 USER_MEMORY_COLLECTION = "user_memory_chunks"
@@ -121,6 +123,24 @@ def retrieve_user_memory(
         return []
 
 
+def _age_prefix(doc: Document, now: Optional[datetime] = None) -> str:
+    """"(about 3 weeks ago) " for a recalled chunk, so a callback can say roughly when without inventing it; "" when the
+    chunk has no usable timestamp (an unknown time is never guessed)."""
+    raw = (getattr(doc, "metadata", None) or {}).get("created_at")
+    if not raw:
+        return ""
+    try:
+        created = datetime.fromisoformat(str(raw))
+    except ValueError:
+        return ""
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    seconds = ((now or datetime.now(timezone.utc)) - created).total_seconds()
+    if seconds < 0:
+        return ""
+    return f"({describe_gap(seconds)} ago) "
+
+
 def retrieve_relevant_memory_context(
     vector_store: Optional[MongoDBAtlasVectorSearch],
     username: str,
@@ -162,7 +182,12 @@ def retrieve_relevant_memory_context(
     if not relevant:
         return ""
 
-    lines = "\n".join(f"- {doc.page_content.strip()}" for doc in relevant)
+    return format_recall_block([f"{_age_prefix(doc)}{doc.page_content.strip()}" for doc in relevant])
+
+
+def format_recall_block(items: List[str]) -> str:
+    """The prompt section for recalled chunks (each item already carries its age prefix, if it has one)."""
+    lines = "\n".join(f"- {item}" for item in items)
     return (
         "\n\nRELEVANT PAST CONTEXT (genuinely recalled from this user's history — weave it in "
         f"naturally if it fits, don't ignore it):\n{lines}\n"

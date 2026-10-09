@@ -459,6 +459,8 @@ export interface SonicProfile {
   prefers: string[];
   wont: string[];
   voice: string;
+  humor: string;
+  interests: string[];
   note: string;
 }
 
@@ -712,6 +714,38 @@ export async function deleteMemoryFact(factId: string): Promise<any> {
   });
   if (!res.ok) {
     throw new Error("Failed to delete memory fact.");
+  }
+  return res.json();
+}
+
+/**
+ * Things the user said are coming up, which Sonic may ask about once afterwards
+ */
+export interface OpenLoop {
+  id: string;
+  text: string;
+  due_date: string; // YYYY-MM-DD, the user's own calendar day
+  kind: string;
+  status: string;
+}
+
+export async function listOpenLoops(): Promise<OpenLoop[]> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/open-loops`, { headers: { ...authHeaders } });
+  if (!res.ok) {
+    throw new Error("Failed to load upcoming items.");
+  }
+  return res.json();
+}
+
+export async function deleteOpenLoop(loopId: string): Promise<any> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/open-loops/${encodeURIComponent(loopId)}`, {
+    method: "DELETE",
+    headers: { ...authHeaders }
+  });
+  if (!res.ok) {
+    throw new Error("Failed to remove that upcoming item.");
   }
   return res.json();
 }
@@ -984,6 +1018,8 @@ export const api = {
   listMemoryFacts,
   deleteMemoryFact,
   clearMemoryFacts,
+  listOpenLoops,
+  deleteOpenLoop,
   getRagMode,
   updateRagMode,
   getDeepThinking,

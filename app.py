@@ -121,7 +121,10 @@ from backend.utils.self_observations import (
 )
 from backend.utils.example_questions import build_example_questions, gather_example_inputs
 from backend.components.sonic_profile import SONIC_PROFILE
-from backend.utils.time_utils import build_time_context, sent_at, stamp
+from backend.utils.time_utils import build_time_context, local_today, sent_at, stamp
+from backend.utils import open_loops as open_loops_utils
+from backend.utils.self_history_utils import SELF_HISTORY_MARK, build_self_history_block, select_self_history
+from backend.utils.shared_history import CALLBACK_MARK, build_callback_block, callback_allowed
 from backend.utils.user_settings_utils import (
     get_user_rag_mode, set_user_rag_mode, VALID_RAG_MODES,
     get_user_deep_thinking_mode, set_user_deep_thinking_mode,
@@ -836,10 +839,26 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             emotional_context = safety_plan.context + build_emotional_context(
                 final_state.get("emotional_state"), datetime.now(timezone.utc)
             )
+            user_tz = await asyncio.to_thread(get_user_timezone, username)
+            today_local = local_today(user_tz)
+            # Something they said was coming up, whose day has now passed, asked about once at the start of a
+            # conversation (backend/utils/open_loops.py). The same gates as the relatable lines, plus: only at the
+            # start of a conversation or after a real pause. It takes the turn's one proactive slot, so it also
+            # suppresses a relatable line (and yields to encouragement, below).
+            open_loop_entry = None
+            if open_loops_utils.open_loops_enabled() and not is_guest_username(username):
+                open_loop_entry = await asyncio.to_thread(
+                    open_loops_utils.select_followup,
+                    lambda: open_loops_utils.load_open_loops(username),
+                    today=today_local, now=datetime.now(timezone.utc), last_message_at=last_message_at,
+                    source_type=source_type, risk_active=risk_level != RISK_NONE,
+                    energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
+                    closing=is_closing_message(question),
+                )
             # Occasionally Sonic may mention a habit of its own when what the user said genuinely overlaps with one
             # (backend/utils/relatable_utils.py); silent under a safety or held-down emotional context, on a closing
             # message, on grounded KB answers, and rate-limited.
-            relatable_entry = select_relatable(
+            relatable_entry = None if open_loop_entry else select_relatable(
                 final_state.get("original_question", question), chat_sessions[history_key],
                 source_type=source_type, risk_active=risk_level != RISK_NONE,
                 energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
@@ -871,6 +890,21 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             )
             if encouragement_entry:
                 tally(turn_counts, "encouragement_offered")
+                open_loop_entry = None  # someone voicing self-doubt gets that, not a "how did it go"
+            if open_loop_entry:
+                tally(turn_counts, "open_loop_offered")
+            # What has changed about Sonic itself (backend/components/sonic_changelog.py): said when asked what's new or
+            # what it can do, and only rarely volunteered, never when another proactive item already took the turn.
+            self_history = select_self_history(
+                final_state.get("original_question", question), chat_sessions[history_key],
+                source_type=source_type, risk_active=risk_level != RISK_NONE,
+                energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
+                closing=is_closing_message(question),
+                proactive_taken=bool(open_loop_entry or relatable_entry or encouragement_entry),
+            )
+            if self_history:
+                tally(turn_counts, "self_history_offered")
+            callback_offered = False
             prompt = build_voice_prompt(
                 grounding_block=GROUNDING_BLOCKS.get(source_type, KB_STRICT_GROUNDING),
                 data=data,
@@ -881,13 +915,15 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 emotional_context=emotional_context,
                 relatable_context=build_relatable_block(relatable_entry),
                 encouragement_context=build_encouragement_block(encouragement_entry),
+                open_loop_context=open_loops_utils.build_open_loop_block(open_loop_entry, today_local),
+                self_history_context=build_self_history_block(self_history),
                 self_knowledge_context=build_self_knowledge_block(
                     self_knowledge_lines, asks_about_itself(final_state.get("original_question", question))
                 ),
                 # With an emotional or safety context in force, the time block stays purely factual and defers to
                 # it: the energy ceiling is decided there, not by how long they were away.
                 time_context=build_time_context(
-                    await asyncio.to_thread(get_user_timezone, username),
+                    user_tz,
                     last_message_at=last_message_at,
                     defer_to_emotion=bool(emotional_context),
                 ),
@@ -911,7 +947,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # network round trip to the embeddings API for no behavior change.
             question_embedding = embed_text(question) if question else None
             memory_context = fetch_relevant_user_facts(username, question, precomputed_embedding=question_embedding)
-            goal_nudge_context = "" if risk_level != RISK_NONE else fetch_goal_nudge_context(username)
+            goal_nudge_context = "" if (risk_level != RISK_NONE or open_loop_entry) else fetch_goal_nudge_context(username)
 
             if guardrail_context:
                 prompt = prompt + guardrail_context
@@ -946,6 +982,16 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 )
                 if semantic_memory_context:
                     prompt = prompt + semantic_memory_context
+                    # Invites one explicit connection to what was recalled (backend/utils/shared_history.py); quiet under
+                    # the same gates as the other proactive items, and rate-limited.
+                    if callback_allowed(
+                        True, chat_sessions[history_key], source_type=source_type, risk_active=risk_level != RISK_NONE,
+                        energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
+                        closing=is_closing_message(question), proactive_taken=bool(open_loop_entry),
+                    ):
+                        prompt = prompt + build_callback_block()
+                        callback_offered = True
+                        tally(turn_counts, "callback_offered")
                     yield f"data: {json.dumps({'event': 'node_progress', 'node': 'user_memory_recall', 'title': 'Recalling relevant memory', 'detail': 'Found semantically relevant past context.'})}\n\n"
             # A clearly closing message ("thanks!", "goodnight") gets a directive to close the conversation
             # instead of fishing for more (backend/utils/wrapup_utils.py); the persona carries the general rule.
@@ -1124,6 +1170,10 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 ai_message.additional_kwargs[RELATABLE_MARK] = True  # the rate limit reads this on later turns
             if encouragement_entry:
                 ai_message.additional_kwargs[ENCOURAGEMENT_MARK] = True
+            if callback_offered:
+                ai_message.additional_kwargs[CALLBACK_MARK] = True
+            if self_history and self_history["mode"] == "volunteer":
+                ai_message.additional_kwargs[SELF_HISTORY_MARK] = True  # only a volunteered mention is rate-limited
             if mentions_itself(full_response):
                 tally(turn_counts, "self_mention")
             if kb_images:
@@ -1134,6 +1184,13 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # later prompts as if it were a fact (a real memory chunk did exactly that).
             if not (folder_connected and is_stale_capability_denial(full_response)):
                 spawn_background_task(index_conversation_turn(services.get("user_memory_vector_store"), username, question, full_response, session_id))
+            # Asked once: an offered loop is closed for good, and anything new they said is noted for later.
+            if open_loop_entry:
+                await asyncio.to_thread(open_loops_utils.mark_asked, username, open_loop_entry["id"])
+            if open_loops_utils.open_loops_enabled() and not is_guest_username(username):
+                spawn_background_task(open_loops_utils.capture_open_loops(
+                    username, question, user_tz, risk_active=risk_level != RISK_NONE,
+                ))
             # Bounds this conversation's checkpoint history right now rather than waiting for the daily pass.
             spawn_background_task(prune_thread_checkpoints_async(history_key))
             await asyncio.to_thread(record_turn_counts, turn_counts)
@@ -1557,7 +1614,22 @@ async def delete_memory_fact(fact_id: str, current_user = Depends(get_current_us
 async def clear_memory(current_user = Depends(get_current_user)):
     username = current_user.get("sub")
     delete_all_user_facts(username)
+    await asyncio.to_thread(open_loops_utils.forget_all_loops, username)
     return {"status": "cleared"}
+
+
+@app.get("/api/open-loops")
+async def list_open_loops(current_user = Depends(get_current_user)):
+    """Things the user said are coming up, which Sonic may ask about once afterwards."""
+    return await asyncio.to_thread(open_loops_utils.upcoming_for_page, current_user.get("sub"))
+
+
+@app.delete("/api/open-loops/{loop_id}")
+async def delete_open_loop(loop_id: str, current_user = Depends(get_current_user)):
+    deleted = await asyncio.to_thread(open_loops_utils.forget_loop, current_user.get("sub"), loop_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="That upcoming item was not found")
+    return {"status": "deleted", "id": loop_id}
 
 
 @app.get("/api/local-workspace")

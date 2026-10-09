@@ -18,7 +18,7 @@ The rate limit reads a marker stamped on Sonic's own earlier messages (RELATABLE
 import re
 from typing import Any, Dict, Iterable, List, Optional
 
-from backend.components.sonic_profile import RELATABLE
+from backend.components.sonic_profile import INTERESTS, RELATABLE
 
 RELATABLE_MARK = "relatable_offered"
 RELATABLE_MIN_GAP = 8  # messages (both sides) that must pass after an offer before another
@@ -58,7 +58,7 @@ def select_relatable(
     if recently_offered(recent_messages):
         return None
     best, best_hits = None, 0
-    for entry in (RELATABLE if entries is None else entries):
+    for entry in (RELATABLE + INTERESTS if entries is None else entries):
         hits = _triggered(user_message, entry.get("triggers", []))
         if hits > best_hits:
             best, best_hits = entry, hits
@@ -72,7 +72,7 @@ def build_relatable_block(entry: Optional[Dict[str, Any]]) -> str:
     return (
         "\nRELATABLE (optional): if, and only if, it fits naturally, you may add ONE short clause about yourself, "
         f"tied to what they just said, along these lines: \"{entry['line']}\" Put it in your own words. Skip it if it "
-        "would interrupt, repeat something you've already said, or feel forced. It is a habit of yours, not a story: "
+        "would interrupt, repeat something you've already said, or feel forced. It is a habit or leaning of yours, not a story or an activity: "
         "never present it as something you went through.\n"
     )
 
