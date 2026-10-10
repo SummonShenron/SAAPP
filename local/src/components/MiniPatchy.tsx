@@ -92,6 +92,7 @@ export function MiniPatchy({ working = false, cheer = 0, energy = 'open' }: Mini
     energy === 'subdued' ? 'M45 43.5 Q50 40.5 55 43.5'
     : energy === 'easing' ? 'M44 41.5 Q50 44.5 56 41.5'
     : mood === 'done' ? 'M41 40 Q50 48 59 40'
+    : working ? 'M43 43 L57 43'
     : 'M43 41 Q50 46 57 41';
 
   return (
@@ -125,15 +126,20 @@ export function MiniPatchy({ working = false, cheer = 0, energy = 'open' }: Mini
           {/* Torso */}
           <rect x="34" y="56" width="32" height="30" rx="7" fill="#121316" stroke="#3A3F4C" strokeWidth="2" />
 
-          {/* The laptop, open with its screen toward us so the coding is visible */}
-          <rect x="36" y="58" width="28" height="19" rx="3" fill="#2C303B" stroke="#B7BECB" strokeWidth="1.2" />
-          <rect x="38.4" y="60.4" width="23.2" height="14.2" rx="1.6" fill="#0C1016" />
-          <rect className="mp-line mp-line-1" x="40.4" y="62.2" width="10" height="2.2" rx="1.1" fill="#4B5163" />
-          <rect className="mp-accent mp-line mp-line-2" x="40.4" y="65.8" width="16" height="2.2" rx="1.1" />
-          <rect className="mp-line mp-line-3" x="40.4" y="69.4" width="8" height="2.2" rx="1.1" fill="#4B5163" />
-          <rect className="mp-accent mp-cursor" x="50" y="69.4" width="2.2" height="2.2" rx="0.5" />
-          <rect x="31" y="76.5" width="38" height="5.5" rx="2.5" fill="#3A3F4C" stroke="#B7BECB" strokeWidth="1.2" />
-          <rect x="46" y="77.2" width="8" height="1.4" rx="0.7" fill="#1F242D" />
+          {/* 3/4 Angled Laptop (Reversed Isometric Direction) */}
+          <polygon points="34,77 64,70 74,76 44,83" fill="#2C303B" stroke="#B7BECB" strokeWidth="1.2" />
+          <polygon points="42,76 58,72 68,76 48,80" fill="#1F242D" />
+
+          <polygon points="48,51 72,58 69,78 45,71" fill="#2C303B" stroke="#B7BECB" strokeWidth="1.2" />
+          <polygon points="50,54 70,60 67,75 47,69" fill="#0C1016" />
+
+          {/* Code Lines on Screen (Reversed Isometric Slope) */}
+          <line className="mp-line mp-line-1" x1="50" y1="60" x2="60" y2="63" stroke="#4B5163" strokeWidth="2" strokeLinecap="round" />
+          <line className="mp-accent mp-line mp-line-2" x1="50" y1="64" x2="64" y2="68" strokeWidth="2" strokeLinecap="round" />
+          <line className="mp-line mp-line-3" x1="50" y1="68.5" x2="58" y2="71" stroke="#4B5163" strokeWidth="2" strokeLinecap="round" />
+          <rect className="mp-accent mp-cursor" x="59" y="68.5" width="2" height="2" fill="var(--mp-accent)" />
+
+
 
           {/* Left arm: shoulder to the laptop's side, ball hand on it */}
           <path d="M24 62 C 16 70, 22 82, 32.5 78.5" stroke="#8E95A2" strokeWidth="4" strokeLinecap="round" fill="none" />
@@ -142,8 +148,8 @@ export function MiniPatchy({ working = false, cheer = 0, energy = 'open' }: Mini
           {/* Right arm: idle, it hangs and waves now and then; otherwise it joins in on the keyboard */}
           {bothHandsOnLaptop ? (
             <>
-              <path d="M76 62 C 84 70, 78 82, 67.5 78.5" stroke="#8E95A2" strokeWidth="4" strokeLinecap="round" fill="none" />
-              <circle className="mp-accent mp-hand mp-hand-r" cx="67.5" cy="78.5" r="3.5" />
+              <path d="M76 62 C 70 70, 62 80, 52 78.5" stroke="#8E95A2" strokeWidth="4" strokeLinecap="round" fill="none" />
+              <circle className="mp-accent mp-hand mp-hand-r" cx="52" cy="78.5" r="3.5" />
             </>
           ) : (
             <>
@@ -190,8 +196,8 @@ export function MiniPatchy({ working = false, cheer = 0, energy = 'open' }: Mini
             ) : (
               <>
                 <g className="mp-eyes">
-                  <circle className="mp-accent" cx="42" cy="35" r="3.5" />
-                  <circle className="mp-accent" cx="58" cy="35" r="3.5" />
+                  <circle className="mp-accent" cx="42" cy={working ? "38" : "35"} r="3.5" />
+                  <circle className="mp-accent" cx="58" cy={working ? "38" : "35"} r="3.5" />
                 </g>
                 {/* Worried brows, inner ends raised: he is concerned, not bored */}
                 {energy === 'subdued' && (

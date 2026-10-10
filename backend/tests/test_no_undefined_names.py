@@ -54,6 +54,10 @@ CHECKED = [
     "backend/components/sonic_changelog.py",
     "backend/utils/admin_utils.py",
     "backend/utils/sonic_health.py",
+    "backend/utils/initiation.py",
+    "backend/utils/duration_utils.py",
+    "backend/utils/log_hygiene.py",
+    "backend/services/ops_incidents.py",
 ]
 _MODULE_DUNDERS = {"__file__", "__name__", "__doc__", "__builtins__", "__spec__", "__package__", "__path__"}
 

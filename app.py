@@ -1138,7 +1138,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                         full_response += token
                         yield f"data: {json.dumps({'event': 'token', 'text': token})}\n\n"
                         await asyncio.sleep(0)
-                    logger.info("Reply-fit revision (%s) — rejected: %r | revised: %r", revision_tag, rejected_draft[:200], full_response[:200])
+                    logger.info("Reply-fit revision (%s) — rejected draft %d chars, revised %d chars.", revision_tag, len(rejected_draft), len(full_response))
                     safety_revised = revision_tag == "safety"
                 # The one element that must not depend on the model getting it right: when a human line is due
                 # (imminent danger, the people in their life exhausted, or they asked) the reply always names a
@@ -1162,7 +1162,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 tally(turn_counts, "reward_evaluated")
                 if verdict["verdict"] == "fail":
                     tally(turn_counts, "reward_failed", verdict.get("tag"))
-                    logger.info(f"Reward evaluator flagged response ({verdict['tag']}): {verdict['reason']}")
+                    logger.info(f"Reward evaluator flagged response ({verdict['tag']}).")
                     yield f"data: {json.dumps({'event': 'node_progress', 'node': 'reward_evaluator', 'title': 'Reconsidering that answer...', 'detail': verdict['reason']})}\n\n"
                     yield f"data: {json.dumps({'event': 'regenerate_reset'})}\n\n"
 
@@ -1190,8 +1190,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                         rating="negative",
                     )
                     logger.info(
-                        "Reward evaluator correction applied — original: %r | corrected: %r",
-                        original_response[:200], full_response[:200],
+                        "Reward evaluator correction applied — original %d chars, corrected %d chars.",
+                        len(original_response), len(full_response),
                     )
 
             yield f"data: {json.dumps({'event': 'final_generation', 'text': full_response})}\n\n"
@@ -1619,7 +1619,7 @@ async def store_feedback(
         tag=payload.tag,
         rating=payload.rating or "negative",
     )
-    logger.info(f"[+] Correction stored for {username} (Tag: {payload.tag}): {payload.reason}")
+    logger.info(f"[+] Correction stored for {username} (Tag: {payload.tag}).")
     return {"status": "success", "message": "Feedback indexed for dynamic self-correction."}
 
 
