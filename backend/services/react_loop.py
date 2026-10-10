@@ -11,6 +11,7 @@ import json
 import logging
 
 from backend.models.models import lite_llm
+from backend.utils.log_hygiene import describe_observation
 from backend.utils.agent_utils import (
     _CAPABILITY_DENIAL_RE,
     _extract_declared_names,
@@ -654,8 +655,8 @@ async def run_react_loop(
             show_work = decision.get("show_work")
             show_work = show_work if isinstance(show_work, bool) else True
             logger.info(
-                "[%s] Step %s: accepted final answer after %s real action(s) — %r",
-                node_name, step + 1, len(attempts), final_answer[:200],
+                "[%s] Step %s: accepted final answer (%d chars) after %s real action(s).",
+                node_name, step + 1, len(final_answer), len(attempts),
             )
             break
 
@@ -789,9 +790,12 @@ async def run_react_loop(
                     stuck_action_streak = {"tool": None, "count": 0}
             args_summary = ", ".join(f"{k}={v}" for k, v in (args or {}).items())
             action_desc = f"{tool_action_name}({args_summary})" if tool_action_name else (args_summary or "")
+            # Tool name, argument NAMES and the result's size, never the arguments or the result: those are the user's own
+            # search terms, calendar, mail, documents and code (backend/utils/log_hygiene.py).
             logger.info(
-                "[%s] Step %s (%s) — action=%s | observation=%r",
-                node_name, step + 1, purpose, action_desc or "(none)", observation[:200],
+                "[%s] Step %s — tool=%s args=%s | observation=%s",
+                node_name, step + 1, tool_action_name or "(none)", ",".join(sorted((args or {}).keys())) or "(none)",
+                describe_observation(observation),
             )
             attempts.append({"purpose": purpose, "action_desc": action_desc, "observation": observation})
 

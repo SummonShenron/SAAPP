@@ -51,5 +51,12 @@ def setup_logging():
         # logging in the same stream. WARNING (not CRITICAL like the fully-silenced libs above)
         # so a genuine API error from this library still surfaces.
         logging.getLogger("google_genai").setLevel(logging.WARNING)
-        
+
+    # Whatever handlers get attached (stderr now, erragent's forwarder after), a record's erragent_context never carries a
+    # node's full conversation state: it is summarized first (backend/utils/log_hygiene.py). Idempotent.
+    from backend.utils.log_hygiene import StateRedactionFilter
+
+    if not any(isinstance(f, StateRedactionFilter) for f in logger.filters):
+        logger.addFilter(StateRedactionFilter())
+
     return logger

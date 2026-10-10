@@ -331,7 +331,7 @@ def save_user_fact(
 
     all_facts = _prune_excess_facts(all_facts, protect_id=result.id)
     save_user_facts(username, all_facts)
-    logger.info("Saved memory fact for %s: [%s] %s", username, category, result.fact)
+    logger.info("Saved memory fact for %s: [%s] (%d chars, id %s)", username, category, len(result.fact), result.id)
     return result
 
 
