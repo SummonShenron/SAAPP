@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import swooshLogoImg from '../assets/white_swoosh.png';
 import { useAffiliateScope } from '../hooks/useAffiliateScope';
 import { useLocalWorkspace } from '../hooks/useLocalWorkspace';
@@ -545,6 +546,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [ragMode, setRagMode] = useState<string>('strict');
   const [deepThinking, setDeepThinking] = useState<boolean>(false);
   const [proactiveOpening, setProactiveOpening] = useState<boolean>(false);
+  const [opsDigest, setOpsDigest] = useState<{ enabled: boolean; available: boolean }>({ enabled: false, available: false });
   const openingRequestedRef = useRef<string | null>(null);
   const [allowedAffiliates, setAllowedAffiliates] = useState<KnowledgeBase[]>([]);
   const { fetchingScope } = useAffiliateScope({
@@ -821,6 +823,18 @@ useEffect(() => {
   }, [sessionId, principal]);
 
   const [input, setInput] = useState<string>('');
+
+  // A page that wants to hand the chat a question (the Investigate button on Sonic Health) passes it as `draft`. It only fills the
+  // box: nothing is sent until the person presses send. The state is cleared so a refresh doesn't fill it again.
+  const routeLocation = useLocation();
+  const routeNavigate = useNavigate();
+  useEffect(() => {
+    const draft = (routeLocation.state as { draft?: unknown } | null)?.draft;
+    if (typeof draft === 'string' && draft.trim()) {
+      setInput(draft);
+      routeNavigate(routeLocation.pathname, { replace: true, state: null });
+    }
+  }, [routeLocation.state, routeLocation.pathname, routeNavigate]);
   const [loading, setLoading] = useState<boolean>(false);
   const [currentExampleQuestions, setCurrentExampleQuestions] = useState<string[]>([]);
   const [loadingCards, setLoadingCards] = useState<boolean>(false);
@@ -910,6 +924,23 @@ useEffect(() => {
       .then(data => setProactiveOpening(data.enabled))
       .catch(() => { /* guests and embeds have no such setting */ });
   }, [principal]);
+
+  useEffect(() => {
+    if (!principal) return;
+    api.getOpsDigest()
+      .then(setOpsDigest)
+      .catch(() => { /* not an admin, or no such setting here: the menu item stays hidden */ });
+  }, [principal]);
+
+  const handleOpsDigestChange = async (enabled: boolean) => {
+    setOpsDigest(prev => ({ ...prev, enabled }));
+    try {
+      setOpsDigest(await api.updateOpsDigest(enabled));
+    } catch (err) {
+      console.error("Failed to update the incident digest setting:", err);
+      setOpsDigest(prev => ({ ...prev, enabled: !enabled }));
+    }
+  };
 
   const handleProactiveOpeningChange = async (enabled: boolean) => {
     setProactiveOpening(enabled);
@@ -1888,6 +1919,15 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
       run: () => handleProactiveOpeningChange(!proactiveOpening),
       keepOpen: true,
     },
+    ...(!opsDigest.available ? [] : [{
+      item: {
+        label: `Incident Digest: ${opsDigest.enabled ? 'On' : 'Off'}`,
+        disabled: settingsLocked,
+        icon: settingsGlyph(<><path d="M12 3l9 16H3L12 3z" /><line x1="12" y1="10" x2="12" y2="14" /><circle cx="12" cy="17" r="0.5" /></>),
+      },
+      run: () => handleOpsDigestChange(!opsDigest.enabled),
+      keepOpen: true,
+    }]),
     ...(!patchyAllowed ? [] : [{
       item: {
         label: `SAAPP: ${showPatchy ? 'On' : 'Off'}`,

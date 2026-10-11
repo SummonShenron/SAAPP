@@ -58,6 +58,8 @@ CHECKED = [
     "backend/utils/duration_utils.py",
     "backend/utils/log_hygiene.py",
     "backend/services/ops_incidents.py",
+    "backend/utils/ops_digest.py",
+    "backend/utils/ops_suggestions.py",
 ]
 _MODULE_DUNDERS = {"__file__", "__name__", "__doc__", "__builtins__", "__spec__", "__package__", "__path__"}
 

@@ -124,6 +124,8 @@ from backend.components.sonic_profile import SONIC_PROFILE
 from backend.utils.time_utils import build_time_context, local_today, sent_at, stamp
 from backend.utils import open_loops as open_loops_utils
 from backend.utils import initiation as initiation_utils
+from backend.utils import ops_digest as ops_digest_utils
+from backend.utils import ops_suggestions as ops_suggestions_utils
 from backend.utils import duration_utils
 from backend.utils.self_history_utils import SELF_HISTORY_MARK, build_self_history_block, select_self_history
 from backend.utils.shared_history import CALLBACK_MARK, build_callback_block, callback_allowed
@@ -2049,6 +2051,40 @@ def _admin_db():
 
 class ReflectRequest(BaseModel):
     days: int = Field(30, ge=7, le=180)
+
+
+@app.get("/api/admin/ops-suggestions")
+async def get_ops_suggestions(admin = Depends(require_global_admin)):
+    """What is worth the admin's attention, worked out from errAgent's incidents and the pending self-observations
+    (backend/utils/ops_suggestions.py). Fixed rules, no model; `incidents` says whether errAgent could be read. Global_Admins only."""
+    return await ops_suggestions_utils.compute(_admin_db())
+
+
+@app.post("/api/admin/ops-suggestions/{key}/{decision}")
+async def decide_ops_suggestion(key: str, decision: str, admin = Depends(require_global_admin)):
+    """Dismiss (hidden 30 days) or snooze (7 days) one suggestion. It comes back afterwards if the data still says so."""
+    if decision not in ("dismiss", "snooze") or not ops_suggestions_utils.valid_key(key):
+        raise HTTPException(status_code=400, detail="Unknown suggestion or decision.")
+    decide = ops_suggestions_utils.dismiss if decision == "dismiss" else ops_suggestions_utils.snooze
+    return {"hidden_until": await asyncio.to_thread(decide, _admin_db(), key, admin.get("sub"))}
+
+
+@app.get("/api/settings/ops-digest")
+async def get_ops_digest_setting(current_user = Depends(get_current_user)):
+    """Whether Sonic tells an admin about new production incidents when a conversation is opened (backend/utils/ops_digest.py).
+    `available` is false for anyone who isn't a Global_Admin, and on a deployment without errAgent reads, so the app can hide it."""
+    username = current_user.get("sub")
+    available = await asyncio.to_thread(ops_digest_utils.available_to, username)
+    enabled = await asyncio.to_thread(ops_digest_utils.get_enabled, username) if available else False
+    return {"enabled": enabled, "available": available}
+
+
+@app.put("/api/settings/ops-digest")
+async def update_ops_digest_setting(payload: ProactiveOpeningUpdate, admin = Depends(require_global_admin)):
+    username = admin.get("sub")
+    if not await asyncio.to_thread(ops_digest_utils.available_to, username):
+        raise HTTPException(status_code=409, detail="errAgent reads are not configured here.")
+    return {"enabled": await asyncio.to_thread(ops_digest_utils.update_enabled, username, payload.enabled), "available": True}
 
 
 @app.get("/api/admin/safety-stats")

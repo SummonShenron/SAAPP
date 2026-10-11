@@ -113,6 +113,24 @@ def clean(value: Any, limit: int, *, keep_newlines: bool = False, defang: bool =
     return text if len(text) <= limit else text[:limit].rstrip() + "…"
 
 
+_ERROR_CLASS_RE = re.compile(r"^\s*([A-Za-z_][\w.]{0,58}(?:Error|Exception|Timeout|Warning))\b")
+_HTTP_STATUS_RE = re.compile(r"\bHTTP\s+([1-5]\d\d)\b", re.IGNORECASE)
+
+
+def error_kind(message: Any) -> str:
+    """A bare error class (TypeError, ConnectionTimeout) or an HTTP status from an incident's message, and nothing else from it:
+    never free text. For anything that puts an incident into a place the model will later read as ordinary conversation (the
+    admin digest, the suggestions), this is the only part of the message that is allowed through."""
+    text = str(message or "")
+    match = _ERROR_CLASS_RE.match(text)
+    if match:
+        return match.group(1)
+    match = _HTTP_STATUS_RE.search(text[:200])
+    if match:
+        return f"HTTP {match.group(1)}"
+    return "an error"
+
+
 def wrap(body: str) -> str:
     return f"{DATA_OPEN}\n{body}\n{DATA_CLOSE}"
 

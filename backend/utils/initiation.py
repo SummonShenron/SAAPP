@@ -157,6 +157,12 @@ def refusal_reason(
     last = state["last_initiated_at"]
     if last and (now - last) < timedelta(hours=MIN_HOURS_BETWEEN):
         return "too_soon"
+    return thread_refusal(transcript, now)
+
+
+def thread_refusal(transcript: List[Any], now: datetime) -> Optional[str]:
+    """The checks about the conversation itself, shared by every message Sonic writes first (the opener here and the admin
+    digest in ops_digest.py): an existing thread, nothing already waiting, and a real pause since the last message."""
     if not any(_type_of(m) == "human" for m in transcript):
         return "new_thread"  # only an existing conversation, so a thread is never started by Sonic's own message
     final = transcript[-1]
@@ -405,18 +411,30 @@ async def open_for_request(
     in-memory transcript the next turn will use) and decides. For a user who hasn't opted in, nothing is loaded at all."""
     import asyncio
 
+    from backend.utils import ops_digest
     from backend.utils.user_settings_utils import TOGGLE_LOCKED_USERS
 
     session_id = (session_id or "").strip()
     if not session_id or is_guest or username in TOGGLE_LOCKED_USERS:
         return None
-    if not await asyncio.to_thread(get_enabled, username):
+    opener_on = await asyncio.to_thread(get_enabled, username)
+    digest_on = await asyncio.to_thread(ops_digest.get_enabled, username)  # a separate, admin-only toggle
+    if not (opener_on or digest_on):
         return None
     key = f"{username}::{session_id}"
     if key not in chat_sessions:
         chat_sessions[key] = load(username, session_id)
     else:
         sync(username, session_id, chat_sessions[key])
+    if digest_on:
+        # First, and never together with the opener: once a digest is waiting, the opener's own "already waiting" gate holds.
+        posted = await ops_digest.maybe_post_digest(
+            username, session_id, chat_sessions[key], save=save, now=now, is_guest=is_guest, db=db,
+        )
+        if posted:
+            return posted
+    if not opener_on:
+        return None
     return await maybe_open_conversation(
         username, session_id, chat_sessions[key],
         tz_name=await asyncio.to_thread(get_timezone, username),
