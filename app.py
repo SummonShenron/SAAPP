@@ -112,7 +112,8 @@ from backend.utils.safety_utils import (
     effective_risk, plan_safety_turn, build_safety_revision_prompt, remembered_support_people, CRISIS_RESOURCE_LINE, RISK_NONE,
     has_crisis_resource, record_safety_turn,
 )
-from backend.utils.outage_utils import handle_failed_turn
+from backend.utils.outage_utils import handle_failed_turn, in_crisis
+from backend.utils.safety_utils import KIND_OUTAGE_FALLBACK, log_safety_event
 from backend.utils.safety_stats import fetch_recent_events, summarize_safety_events
 from backend.utils.admin_utils import is_global_admin
 from backend.utils.sonic_health import build_sonic_health
@@ -124,6 +125,8 @@ from backend.components.sonic_profile import SONIC_PROFILE
 from backend.utils.time_utils import build_time_context, local_today, sent_at, stamp
 from backend.utils import open_loops as open_loops_utils
 from backend.utils import initiation as initiation_utils
+from backend.utils import budget_guard
+from backend.utils import llm_usage
 from backend.utils import ops_digest as ops_digest_utils
 from backend.utils import ops_suggestions as ops_suggestions_utils
 from backend.utils import duration_utils
@@ -206,6 +209,7 @@ async def lifespan(app: FastAPI):
     yield
     # Cleanup tasks would go here
     retention_task.cancel()
+    await asyncio.to_thread(llm_usage.flush)  # whatever the last calls used, before the process goes
     chat_sessions = {}
 # 3. Pass the lifespan to the app
 app = FastAPI(title="Secure RAG Engine API", lifespan=lifespan)
@@ -610,6 +614,12 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     effective_rag_mode = _settings["rag_mode"]
     effective_deep_thinking = _settings["deep_thinking"]
     effective_target_repo = _settings["target_repo"]
+    # The usage budget guard (backend/utils/budget_guard.py). Off, and free, unless a budget is configured. In low-power mode deep
+    # thinking is off whatever the setting says, and the optional extras further down are skipped.
+    budget_state = await asyncio.to_thread(budget_guard.current_state)
+    if not budget_guard.allows("deep_thinking", budget_state):
+        effective_deep_thinking = False
+    is_admin_user = is_global_admin(directory, username)
 
     # ---------- Conversation Memory State Init ----------
     # The full transcript in chat_sessions[history_key] is kept durable (it's what gets
@@ -625,6 +635,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     # Whether this message answers one Sonic opened the conversation with (backend/utils/initiation.py): counted, and the
     # run of unanswered openings starts over. Only checked when it is true, so ordinary turns cost nothing extra.
     answers_an_opening = bool(chat_sessions[history_key]) and initiation_utils.is_initiated(chat_sessions[history_key][-1])
+    answered_kind = initiation_utils.opening_kind(chat_sessions[history_key][-1]) if answers_an_opening else None
     if answers_an_opening and not is_guest_username(username):
         await asyncio.to_thread(initiation_utils.answered, username)
     chat_sessions[history_key].append(stamp(HumanMessage(content=question)))
@@ -645,6 +656,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         "target_scope": target_scope,
         "rag_mode": effective_rag_mode,
         "deep_thinking": effective_deep_thinking,
+        "budget_level": budget_state.get("level"),
         "repo": effective_target_repo,
         "documents": [],
         "relevance_grade": "web_search" if force_web_search else "",
@@ -698,6 +710,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         turn_counts = new_turn_counts()
         if answers_an_opening:
             tally(turn_counts, "initiation_answered")
+            if answered_kind == "interest":
+                tally(turn_counts, "initiation_interest_answered")
 
         def log_timings(grade: str, outcome: str):
             now = time.perf_counter()
@@ -714,6 +728,21 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 (t_first_token - t_auth_start) if t_first_token else -1,
                 now - t_auth_start,
             )
+
+        budget_view = budget_guard.public_view(budget_state, is_admin_user)
+        if budget_view["level"] in (budget_guard.NOTICE, budget_guard.THROTTLED, budget_guard.BLOCKED):
+            yield f"data: {json.dumps({'event': 'budget', **budget_view})}\n\n"
+        if budget_guard.blocked(budget_state):
+            # No model call at all. A person who has signalled risk still gets the human support line, in code.
+            recent_user_messages = [question, *(m.content for m in chat_sessions[history_key][-10:] if isinstance(m, HumanMessage))]
+            crisis = in_crisis(recent_user_messages)
+            if crisis:
+                log_safety_event(username, None, "quota", KIND_OUTAGE_FALLBACK)
+            tally(turn_counts, "turn_failed", "quota")
+            await asyncio.to_thread(record_turn_counts, turn_counts)
+            logger.info("[budget] chat paused by the usage budget (crisis fallback: %s).", crisis)
+            yield f"data: {json.dumps({'event': 'final_generation', 'text': budget_guard.blocked_reply(budget_state.get('resets_at'), crisis)})}\n\n"
+            return
 
         try:
             if settings.LOCAL_DEV:
@@ -1159,7 +1188,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # documents) and regenerates once, with feedback, if it fails. Capped at one retry;
             # whatever comes out is what gets shown, and the failure is logged as a correction
             # either way so future similar questions get a guardrail via fetch_relevant_corrections.
-            if source_type in REWARD_EVAL_SOURCE_TYPES:
+            if source_type in REWARD_EVAL_SOURCE_TYPES and budget_guard.allows("answer_recheck", budget_state):
                 verdict = await evaluate_response(prompt, full_response, source_type)
                 tally(turn_counts, "reward_evaluated")
                 if verdict["verdict"] == "fail":
@@ -1214,18 +1243,19 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             save_conversation_turn(username, session_id, chat_sessions[history_key])
             # A false "I can't edit files" reply would otherwise be remembered and recalled into
             # later prompts as if it were a fact (a real memory chunk did exactly that).
-            if not (folder_connected and is_stale_capability_denial(full_response)):
+            if budget_guard.allows("memory_summaries", budget_state) and not (folder_connected and is_stale_capability_denial(full_response)):
                 spawn_background_task(index_conversation_turn(services.get("user_memory_vector_store"), username, question, full_response, session_id))
             # Asked once: an offered loop is closed for good, and anything new they said is noted for later.
             if open_loop_entry:
                 await asyncio.to_thread(open_loops_utils.mark_asked, username, open_loop_entry["id"])
-            if open_loops_utils.open_loops_enabled() and not is_guest_username(username):
+            if open_loops_utils.open_loops_enabled() and not is_guest_username(username) and budget_guard.allows("open_loops", budget_state):
                 spawn_background_task(open_loops_utils.capture_open_loops(
                     username, question, user_tz, risk_active=risk_level != RISK_NONE,
                 ))
             # Bounds this conversation's checkpoint history right now rather than waiting for the daily pass.
             spawn_background_task(prune_thread_checkpoints_async(history_key))
             await asyncio.to_thread(record_turn_counts, turn_counts)
+            await asyncio.to_thread(llm_usage.flush)  # what this turn's model calls used (backend/utils/llm_usage.py)
             log_timings(relevance_grade, "ok")
             logger.info("--- End of token stream ---")
 
@@ -1242,6 +1272,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             )
             tally(turn_counts, "turn_failed", failed.kind)
             await asyncio.to_thread(record_turn_counts, turn_counts)
+            await asyncio.to_thread(llm_usage.flush)
             yield f"data: {json.dumps({'event': 'trace', 'title': 'Execution error', 'detail': 'The request failed on the server.', 'status': 'active'})}\n\n"
             if not full_response:
                 yield f"data: {json.dumps({'event': 'final_generation', 'text': failed.reply})}\n\n"
@@ -1730,6 +1761,14 @@ async def update_deep_thinking_setting(payload: DeepThinkingUpdate, current_user
     username = current_user.get("sub")
     saved = set_user_deep_thinking_mode(username, payload.deep_thinking)
     return {"deep_thinking": saved}
+
+
+@app.get("/api/budget")
+async def get_budget(current_user = Depends(get_current_user)):
+    """Where the usage budget stands (backend/utils/budget_guard.py): everyone gets the level, what is paused and when it ends;
+    only an admin gets amounts. `level` is "off" when no budget is configured."""
+    state = await asyncio.to_thread(budget_guard.current_state)
+    return budget_guard.public_view(state, is_global_admin(load_directory(), current_user.get("sub")))
 
 
 @app.get("/api/settings/proactive-opening")

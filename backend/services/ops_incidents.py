@@ -345,6 +345,13 @@ OPS_ACTIONS = {
     "check_deploy_status": check_deploy_status,
 }
 
+# The actions that may be run together in one step (the tool agent's "queries" batch). All four only READ, and the first three
+# are independent of one another, so a request like "check the incidents, the logs and the deploy" is ONE step instead of three.
+# Found by measuring a real multi-part request: with these missing from the batchable set, the model kept proposing the batch, had
+# it rejected, and repeated it until the step cap, re-sending a ~8,000-token prompt each time and never reading anything.
+# The names are added to the set (and so to the prompt) only for an admin who can use them, never for anyone else.
+BATCHABLE_ACTIONS = frozenset(OPS_ACTIONS)
+
 # Actions that could carry what was just read somewhere else, or run code, are refused for the rest of a turn once incident data
 # has been read in it (see agent_workflow.py). A fresh message from the admin starts a fresh turn and lifts this.
 #

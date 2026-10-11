@@ -584,12 +584,84 @@ export interface SafetySummary {
   ladder: Record<string, Record<string, number>>;
 }
 
+export interface BudgetDetail {
+  scope: 'day' | 'month';
+  unit: 'usd' | 'tokens';
+  spent: number;
+  limit: number;
+  fraction: number;
+}
+
+/**
+ * Where the usage budget stands (backend/utils/budget_guard.py). Everyone gets `level`, `message`, `paused` and `resets_at`; only an
+ * admin also gets the amounts and percentages. `level` is "off" when no budget is configured.
+ */
+export interface BudgetView {
+  level: 'off' | 'ok' | 'notice' | 'throttled' | 'blocked';
+  message: string;
+  paused: string[];
+  resets_at: string | null;
+  fraction?: number;
+  scope?: 'day' | 'month';
+  unit?: 'usd' | 'tokens';
+  spent?: number;
+  limit?: number;
+  detail?: BudgetDetail[];
+  unpriced_tokens?: number;
+}
+
+export async function getBudget(): Promise<BudgetView> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/budget`, { headers: { ...authHeaders } });
+  if (!res.ok) throw new Error("Failed to fetch the usage budget.");
+  return res.json();
+}
+
+export interface UsageRow {
+  calls: number;
+  input: number;
+  output: number;
+  /** Thinking tokens: a part of `output`, billed as output. */
+  reasoning: number;
+  /** Cached input tokens: a part of `input`, billed at a discount. */
+  cached: number;
+  tokens: number;
+  share: number | null;
+  cache_rate: number | null;
+  thinking_rate: number | null;
+  /** Estimated USD, or null when no price is configured for the model. */
+  cost?: number | null;
+  model?: string;
+  label?: string;
+}
+
+/** Calls answered by a different model than the one the code asked for: "rerouted" (Google answering an older name with a newer
+ * model) or "fallback" (the configured fallback answered because the primary failed). */
+export interface UsageRoute {
+  requested: string;
+  served: string;
+  kind: 'rerouted' | 'fallback';
+  calls: number;
+}
+
+export interface UsageSummary {
+  total: UsageRow;
+  by_model: UsageRow[];
+  by_label: UsageRow[];
+  estimated_cost: number | null;
+  unpriced_models: string[];
+  priced: boolean;
+  routes?: UsageRoute[];
+}
+
 export interface SonicHealth {
   days: number;
   generated_at: string;
   safety: SafetySummary;
   counters: CountersSummary;
   observations: ObservationView[];
+  usage?: UsageSummary;
+  budget?: BudgetView;
 }
 
 export interface ReflectionResult {
@@ -1114,6 +1186,7 @@ export const api = {
   updateProactiveOpening,
   getOpsDigest,
   updateOpsDigest,
+  getBudget,
   requestConversationOpening,
   getTargetRepo,
   updateTargetRepo,

@@ -4,8 +4,9 @@ Everything proactive so far rides inside a reply to something the user sent. Thi
 nobody asked for, so it carries a stricter bar than anything else, and every rule below is mechanical:
 
 - OPT-IN. Off until the user turns it on (a menu setting), and a user whose settings say otherwise is never messaged.
-- ANCHORED. Only to something concrete the user already gave Sonic: an open loop whose day has passed (see open_loops.py)
-  or a goal that has gone quiet (memory_utils.find_stale_goal_to_nudge). Never to a wish of Sonic's own: the wording is
+- ANCHORED. Only to something concrete the user already gave Sonic: an open loop whose day has passed (see open_loops.py),
+  a goal that has gone quiet (memory_utils.find_stale_goal_to_nudge), or, when there is neither, a topic they told Sonic
+  they're into (interest_anchor.py, which has stricter limits of its own). Never to a wish of Sonic's own: the wording is
   checked for "I wanted to check in", "I was curious", "I've been wondering", and the identity check runs on it too.
 - RARE. At most one every MIN_HOURS_BETWEEN hours, never while its last message in the thread is still unanswered, never
   more than MAX_UNANSWERED in a row, and never for a week after a safety escalation.
@@ -24,6 +25,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional
 
+from backend.utils import interest_anchor
 from backend.utils import open_loops as ol
 from backend.utils.identity_checks import identity_reply_issue
 from backend.utils.time_utils import build_time_context, gap_seconds, local_today, sent_at, stamp
@@ -64,13 +66,15 @@ def _parse(raw: Any) -> Optional[datetime]:
 def load_state(db, username: str) -> Dict[str, Any]:
     doc = db[SETTINGS_COLLECTION].find_one(
         {"username": username},
-        {"_id": 0, "proactive_opening": 1, "last_initiated_at": 1, "unanswered_initiations": 1, "no_initiation_until": 1},
+        {"_id": 0, "proactive_opening": 1, "last_initiated_at": 1, "unanswered_initiations": 1, "no_initiation_until": 1,
+         "last_interest_opening_at": 1},
     ) or {}
     return {
         "enabled": doc.get("proactive_opening") is True,
         "last_initiated_at": _parse(doc.get("last_initiated_at")),
         "unanswered": int(doc.get("unanswered_initiations") or 0),
         "quiet_until": _parse(doc.get("no_initiation_until")),
+        "last_interest_at": _parse(doc.get("last_interest_opening_at")),
     }
 
 
@@ -86,6 +90,16 @@ def record_initiation(db, username: str, now: datetime) -> None:
         {"$set": {"last_initiated_at": now.isoformat()}, "$inc": {"unanswered_initiations": 1}},
         upsert=True,
     )
+
+
+def record_interest_opening(db, username: str, now: datetime) -> None:
+    """An opener about something they're into was written: the next one of that kind waits interest_anchor.MIN_DAYS_BETWEEN days."""
+    db[SETTINGS_COLLECTION].update_one({"username": username}, {"$set": {"last_interest_opening_at": now.isoformat()}}, upsert=True)
+
+
+def opening_kind(message: Any) -> Optional[str]:
+    """What an opener was anchored to ("loop", "goal" or "interest"), or None for a message that isn't one."""
+    return (getattr(message, "additional_kwargs", None) or {}).get(KIND_KEY)
 
 
 def reset_unanswered(db, username: str) -> None:
@@ -209,6 +223,14 @@ def _task(anchor: Dict[str, Any], today: str) -> str:
     if anchor["kind"] == "loop":
         when = ol.describe_when(anchor.get("due_date", ""), today)
         return f"ask how this went. {when.capitalize()} they mentioned something coming up: \"{anchor['text']}\""
+    if anchor["kind"] == interest_anchor.KIND:
+        return (
+            "ask ONE short, plain question (under 20 words) that invites them to tell you more about something they said "
+            "they're into. Use only what this fact says: do NOT add details, names, titles, dates or plans, and do not guess "
+            "what they have been doing or are looking for. Ask about the topic itself, never about their feelings, health, "
+            "work, money or relationships. For the fact \"Plays in a band\" a good question is \"How's the band going "
+            f"lately?\". The fact: \"{anchor['text']}\""
+        )
     return f"ask how this is going. They told you about it and haven't mentioned it in a while: \"{anchor['text']}\""
 
 
@@ -271,6 +293,8 @@ def opening_issue(text: str, anchor: Dict[str, Any]) -> Optional[str]:
     anchor_words = _content_words(anchor.get("text", ""))
     if anchor_words and not (anchor_words & _content_words(body)):
         return "never referred to what they actually mentioned"
+    if anchor.get("kind") == interest_anchor.KIND:
+        return interest_anchor.opening_issue(body, anchor.get("text", ""))
     return None
 
 
@@ -279,6 +303,8 @@ def fallback_opening(anchor: Dict[str, Any]) -> str:
     text = anchor["text"][:MAX_ANCHOR_CHARS].rstrip(" .")
     if anchor["kind"] == "loop":
         return f"You mentioned this was coming up: \"{text}\". How did it go?"
+    if anchor["kind"] == interest_anchor.KIND:
+        return f"You mentioned this a while back: \"{text}\". What have you been up to with it lately?"
     return f"You mentioned this goal a while back: \"{text}\". How is it going?"
 
 
@@ -364,6 +390,9 @@ async def maybe_open_conversation(
         anchor = await asyncio.to_thread(
             pick_anchor, username, today, moment, last_message_at, lambda: ol.list_loops(db, username), find_goal,
         )
+        if not anchor and interest_anchor.allowed(state, moment):
+            # Last and lightest: nothing to follow up on, so a topic they told Sonic they're into (interest_anchor.py).
+            anchor = await interest_anchor.choose_interest(username, invoke, moment)
         if not anchor:
             return None
 
@@ -378,12 +407,17 @@ async def maybe_open_conversation(
         if anchor["kind"] == "loop":
             await asyncio.to_thread(ol.set_status, db, username, anchor["id"], ol.ASKED, moment)
         else:
+            # A goal or an interest: the fact's own "last nudged" stamp is what spaces out asking about it again.
             await asyncio.to_thread(_stamp_goal_nudged, username, anchor["id"], moment)
         await asyncio.to_thread(record_initiation, db, username, moment)
+        if anchor["kind"] == interest_anchor.KIND:
+            await asyncio.to_thread(record_interest_opening, db, username, moment)
 
         from backend.utils.self_counters import record_turn_counts
 
         counts = {"initiation_offered": 1}
+        if anchor["kind"] == interest_anchor.KIND:
+            counts["initiation_interest_offered"] = 1
         if written["fallback"]:
             counts["initiation_fallback"] = 1
         await asyncio.to_thread(record_turn_counts, counts)
@@ -419,6 +453,12 @@ async def open_for_request(
         return None
     opener_on = await asyncio.to_thread(get_enabled, username)
     digest_on = await asyncio.to_thread(ops_digest.get_enabled, username)  # a separate, admin-only toggle
+    if opener_on:
+        from backend.utils import budget_guard
+
+        # An opener costs model calls and nobody asked for it: paused in low-power mode (the usage budget guard).
+        if budget_guard.low_power(await asyncio.to_thread(budget_guard.current_state)):
+            opener_on = False
     if not (opener_on or digest_on):
         return None
     key = f"{username}::{session_id}"

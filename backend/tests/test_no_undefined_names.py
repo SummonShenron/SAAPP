@@ -60,6 +60,10 @@ CHECKED = [
     "backend/services/ops_incidents.py",
     "backend/utils/ops_digest.py",
     "backend/utils/ops_suggestions.py",
+    "backend/utils/interest_anchor.py",
+    "backend/utils/llm_usage.py",
+    "backend/utils/budget_guard.py",
+    "backend/evals/behavior_eval.py",
 ]
 _MODULE_DUNDERS = {"__file__", "__name__", "__doc__", "__builtins__", "__spec__", "__package__", "__path__"}
 

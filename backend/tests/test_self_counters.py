@@ -197,4 +197,5 @@ def test_the_chat_stream_tallies_each_signal_and_flushes_on_both_exits():
         'tally(turn_counts, "turn_failed", failed.kind)',
     ):
         assert needle in source, needle
-    assert source.count("await asyncio.to_thread(record_turn_counts, turn_counts)") == 2
+    # Three exits save the turn's counts: one paused by the usage budget (before any model call), one that finished, one that failed.
+    assert source.count("await asyncio.to_thread(record_turn_counts, turn_counts)") == 3

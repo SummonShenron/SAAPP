@@ -3,6 +3,8 @@ import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import AIMessage
 
+from backend.utils import llm_usage
+
 # Shared by invoke/astream/ainvoke so a pattern added once (like 504 below, added after a real
 # production trace) protects every call path automatically instead of drifting across three
 # separately-maintained copies. "503"/"UNAVAILABLE" was the original coverage; "504"/
@@ -35,7 +37,7 @@ def _is_transient_llm_error(e: Exception) -> bool:
 class LazyLLM:
     def __init__(
         self,
-        model_name="gemini-3.5-flash",
+        model_name="gemini-3.6-flash",
         fallback_model=None,
         temperature=0.7,
         max_retries=1,
@@ -53,6 +55,9 @@ class LazyLLM:
         self.thinking_level = thinking_level
         self.thinking_budget = thinking_budget
         self._real_llm = None
+        self._primary_client = None
+        self._fallback_client = None
+        self._tool_runnables = {}
         self.dev_mode = False
 
     def _ensure_initialized(self):
@@ -88,16 +93,19 @@ class LazyLLM:
                 if self.fallback_thinking_level is not None:
                     fallback_kwargs["thinking_level"] = self.fallback_thinking_level
                 fallback = ChatGoogleGenerativeAI(**fallback_kwargs)
+                self._fallback_client = fallback
                 self._real_llm = primary.with_fallbacks([fallback])
             else:
                 self._real_llm = primary
+            self._primary_client = primary
 
     def invoke(self, *args, **kwargs):
         if self.dev_mode:
             return AIMessage(content="[DEV_MODE] Mock LLM Response.")
         self._ensure_initialized()
+        label = llm_usage.caller_label()
         try:
-            return self._real_llm.invoke(*args, **kwargs)
+            return self._metered(self._real_llm.invoke(*args, **kwargs), label)
         except Exception as e:
             if _is_transient_llm_error(e):
                 print(f"CRITICAL: {self.model_name} API overloaded/unavailable ({e}). Returning fallback note.")
@@ -112,8 +120,9 @@ class LazyLLM:
         if self.dev_mode:
             return AIMessage(content="[DEV_MODE] Mock LLM Response.")
         self._ensure_initialized()
+        label = llm_usage.caller_label()
         try:
-            return await self._real_llm.ainvoke(*args, **kwargs)
+            return self._metered(await self._real_llm.ainvoke(*args, **kwargs), label)
         except Exception as e:
             if _is_transient_llm_error(e):
                 print(f"CRITICAL: {self.model_name} API overloaded/unavailable ({e}). Returning fallback note.")
@@ -126,8 +135,14 @@ class LazyLLM:
             return
 
         self._ensure_initialized()
+        label = llm_usage.caller_label()
+        streamed = llm_usage.empty_usage()
+        answered_by = self.model_name
         try:
             async for chunk in self._real_llm.astream(*args, **kwargs):
+                # A stream reports its usage in pieces (input on the first chunk, output on later ones): add them up.
+                llm_usage.add_into(streamed, llm_usage.usage_of(chunk))
+                answered_by = llm_usage.served_by(chunk, answered_by)
                 yield chunk
         except Exception as e:
             if _is_transient_llm_error(e):
@@ -135,6 +150,51 @@ class LazyLLM:
                 yield AIMessage(content="[System Note: AI model is experiencing high traffic. Please try again.]")
             else:
                 raise e
+        finally:
+            # Counted even if the reader stopped early (the Stop button): what was reported so far was still billed.
+            if streamed["input"] or streamed["output"]:
+                llm_usage.record(answered_by, label, streamed)
+                llm_usage.note_route(self.model_name, answered_by, self.fallback_model)
+
+    def _runnable_with_tools(self, tools: list):
+        """The model with `tools` (function declarations: name, description, parameters) bound to the primary AND the fallback client,
+        so a failover keeps its tools. Cached by tool names. With no tools it is just the model."""
+        if not tools or self._primary_client is None:
+            return self._real_llm
+        key = tuple(sorted(str(tool.get("name")) for tool in tools))
+        cached = self._tool_runnables.get(key)
+        if cached is None:
+            bound = self._primary_client.bind_tools(tools)
+            if self._fallback_client is not None:
+                bound = bound.with_fallbacks([self._fallback_client.bind_tools(tools)])
+            cached = self._tool_runnables[key] = bound
+        return cached
+
+    async def ainvoke_tools(self, messages, tools: list):
+        """One step of a tool-calling conversation: `messages` is the whole message list so far (system, user, earlier assistant
+        tool calls and the tool results), `tools` the function declarations. Returns the model's message: its `.tool_calls` are what it
+        wants run, and none means it is answering. Metered and failure-handled like ainvoke."""
+        if self.dev_mode:
+            return AIMessage(content="[DEV_MODE] Mock LLM Response.")
+        self._ensure_initialized()
+        label = llm_usage.caller_label()
+        try:
+            return self._metered(await self._runnable_with_tools(tools).ainvoke(messages), label)
+        except Exception as e:
+            if _is_transient_llm_error(e):
+                print(f"CRITICAL: {self.model_name} API overloaded/unavailable ({e}). Returning fallback note.")
+                return AIMessage(content="[System Note: AI model is experiencing high traffic. Please try again.]")
+            raise e
+
+    def _metered(self, response, label: str):
+        """Counts a finished call's token usage (backend/utils/llm_usage.py) and hands the response back untouched."""
+        try:
+            served = llm_usage.served_by(response, self.model_name)
+            llm_usage.record(served, label, llm_usage.usage_of(response))
+            llm_usage.note_route(self.model_name, served, self.fallback_model)
+        except Exception:
+            pass
+        return response
 
     def __getattr__(self, name):
         if self.dev_mode:
@@ -146,10 +206,15 @@ class LazyLLM:
 # ----------------------------------------------------------------------
 # Model Definitions
 # ----------------------------------------------------------------------
+# NAMES: these were "gemini-3.5-flash" until October 2026. Google's deprecations page says requests to that name are automatically
+# routed to gemini-3.6-flash (no shutdown date), so the code now names what is actually served. Google does this to older Flash
+# names over time, so the usage page (backend/utils/llm_usage.py) also reports any call answered by a different model than the one
+# named here. The small model, gemini-3.1-flash-lite, has an earliest shutdown of 2027-05-07 (replacement: gemini-3.5-flash-lite).
+
 
 # 1. Primary Reasoning LLM (Full depth for backend LangGraph executions)
 llm = LazyLLM(
-    model_name="gemini-3.5-flash",
+    model_name="gemini-3.6-flash",
     fallback_model="gemini-3.1-flash-lite",
     temperature=0.7,
     thinking_level="high",  # Max reasoning depth for planning & retrieval
@@ -163,7 +228,7 @@ llm = LazyLLM(
 # pool — only when the primary fails, so normal turns still cost what they did.
 lite_llm = LazyLLM(
     model_name="gemini-3.1-flash-lite",
-    fallback_model="gemini-3.5-flash",
+    fallback_model="gemini-3.6-flash",
     fallback_thinking_level="minimal",
     temperature=0.2,
     max_retries=0,
@@ -172,13 +237,13 @@ lite_llm = LazyLLM(
 # 2b. Deep-thinking variant for tool_agent_node's ReAct loop, used when the user's deep_thinking
 # setting is on (or the task is an audit): TOOL_AGENT_MAX_ITERATIONS_DEEP and the wider
 # retry-nudge budget only pay off if each individual step's own decision is better, not just more
-# numerous. Experiment: run these steps on the stronger gemini-3.5-flash (at a low thinking level,
+# numerous. Experiment: run these steps on the stronger gemini-3.6-flash (at a low thinking level,
 # since "high" there was measured at ~31s to first token) instead of flash-lite, and fall back to
 # flash-lite if it fails. Ordinary (non-deep) turns still use lite_llm above, so the extra cost is
 # confined to deep/audit turns. Env-tunable so it can be compared or reverted without a deploy:
 # set DEEP_REACT_MODEL=gemini-3.1-flash-lite and DEEP_REACT_THINKING=high for the old behavior.
 lite_llm_deep = LazyLLM(
-    model_name=os.getenv("DEEP_REACT_MODEL", "gemini-3.5-flash"),
+    model_name=os.getenv("DEEP_REACT_MODEL", "gemini-3.6-flash"),
     fallback_model=os.getenv("DEEP_REACT_FALLBACK_MODEL", "gemini-3.1-flash-lite"),
     fallback_thinking_level="low",  # a rescue should be fast
     temperature=0.2,
@@ -189,7 +254,7 @@ lite_llm_deep = LazyLLM(
 
 # 3. Dedicated Streaming LLM (Gemini 3.5 with low thinking level for fast TTFT)
 stream_llm = LazyLLM(
-    model_name="gemini-3.5-flash",
+    model_name="gemini-3.6-flash",
     fallback_model="gemini-3.1-flash-lite",
     temperature=0.7,
     thinking_level="minimal",  # <--- Drops TTFT from ~31s to ~1-2s while retaining quality
@@ -197,7 +262,7 @@ stream_llm = LazyLLM(
 
 # 4. Embedded Streaming LLM (BTY iframe traffic prioritizes minimum latency)
 embedded_llm = LazyLLM(
-    model_name="gemini-3.5-flash",
+    model_name="gemini-3.6-flash",
     fallback_model="gemini-3.1-flash-lite",
     temperature=0.7,
     thinking_level="minimal",

@@ -38,13 +38,14 @@ CHANGELOG = [
         "id": "message_first",
         "requires": [
             "backend/utils/initiation.py::def maybe_open_conversation",
+            "backend/utils/interest_anchor.py::def choose_interest",
             "app.py::/api/chat/opening",
         ],
         "month": "2026-10",
         "title": "Starting a conversation",
         "line": (
             "If you turn on Message First, I may open a conversation with one question about something you told me, like "
-            "how a date went. It's off until you turn it on."
+            "how a date went, or occasionally something you said you're into. It's off until you turn it on."
         ),
         "keywords": ["message first", "message you first", "start a conversation", "reach out", "initiate", "text me first"],
         "volunteer": [],

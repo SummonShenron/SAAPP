@@ -12,7 +12,8 @@ import ConversationsBlade from '../components/ConversationsBlade';
 import MiniPatchy, { type PatchyEnergy } from '../components/MiniPatchy';
 import OptionWheel, { type OptionWheelItem } from '../components/OptionWheel';
 import { getDynamicExampleQuestions } from '../utils/Example_List';
-import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type KnowledgeBase } from '../api';
+import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type BudgetView, type KnowledgeBase } from '../api';
+import BudgetBanner from '../components/BudgetBanner';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -547,6 +548,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [deepThinking, setDeepThinking] = useState<boolean>(false);
   const [proactiveOpening, setProactiveOpening] = useState<boolean>(false);
   const [opsDigest, setOpsDigest] = useState<{ enabled: boolean; available: boolean }>({ enabled: false, available: false });
+  const [budget, setBudget] = useState<BudgetView | null>(null);
   const openingRequestedRef = useRef<string | null>(null);
   const [allowedAffiliates, setAllowedAffiliates] = useState<KnowledgeBase[]>([]);
   const { fetchingScope } = useAffiliateScope({
@@ -924,6 +926,21 @@ useEffect(() => {
       .then(data => setProactiveOpening(data.enabled))
       .catch(() => { /* guests and embeds have no such setting */ });
   }, [principal]);
+
+  // The usage budget status (backend/utils/budget_guard.py): read on load, pushed by the server when a turn starts under a notice,
+  // and read again each time a reply finishes. Hidden in the embedded view, which keeps its own layout.
+  const refreshBudget = React.useCallback(() => {
+    if (!principal || isEmbedded) return;
+    api.getBudget().then(setBudget).catch(() => { /* no budget endpoint here, or signed out: nothing to show */ });
+  }, [principal, isEmbedded]);
+
+  useEffect(() => {
+    refreshBudget();
+  }, [refreshBudget]);
+
+  useEffect(() => {
+    if (!loading) refreshBudget();
+  }, [loading, refreshBudget]);
 
   useEffect(() => {
     if (!principal) return;
@@ -1386,6 +1403,9 @@ useEffect(() => {
                 if (!isProcessingQueue.current) {
                   processNodeQueue();
                 }
+              }
+              if (payload.event === 'budget') {
+                setBudget(payload as BudgetView);
               }
               if (payload.event === 'emotion') {
                 setPatchyEnergy(payload.tier === 'subdued' || payload.tier === 'easing' ? payload.tier : 'open');
@@ -2141,6 +2161,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
             </div>
           )}
 
+          {!isEmbedded && <BudgetBanner budget={budget} theme={theme} />}
           <form onSubmit={onSubmitForm} className="chat-input-area">
             <input
               id="file-upload"

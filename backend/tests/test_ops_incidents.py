@@ -574,3 +574,50 @@ async def test_an_admin_asking_for_the_logs_gets_them_through_the_real_tool_agen
     assert sdk.calls[0][0] == "logs" and sdk.calls[0][1]["level"] == "error"
     assert any(ops.DATA_OPEN in p and "memory save failed" in p for p in script.prompts)
     assert "memory save failed" in result["content_to_format"]
+
+
+# ---- batching: found by measuring a real multi-part request (the model repeated a rejected batch until the step cap) ----------
+
+def _batchable_sentence(prompt):
+    flat = " ".join(prompt.split())  # the prompt wraps this sentence across lines
+    start = flat.index("Only these actions may be batched this way:")
+    return flat[start: flat.index(". Never batch", start)]
+
+
+@run_async
+async def test_an_admin_with_errAgent_reads_may_batch_the_ops_actions_and_they_are_named_only_for_them(agent, sdk):
+    script = agent(["Global_Admins"], FINAL)
+    await aw.tool_agent_node(state("what broke overnight?"))
+    sentence = _batchable_sentence(script.prompts[0])
+    for name in ("list_app_incidents", "read_app_incident", "read_app_logs", "check_deploy_status"):
+        assert name in sentence
+
+
+@run_async
+async def test_nobody_else_is_told_the_ops_actions_exist_even_in_the_batching_rule(agent, sdk):
+    script = agent(["Guest"], FINAL)
+    await aw.tool_agent_node(state("what broke overnight?"))
+    assert not any(name in script.prompts[0] for name in ("list_app_incidents", "read_app_logs", "check_deploy_status"))
+    assert "Only these actions may be batched this way" in " ".join(script.prompts[0].split())
+
+
+@run_async
+async def test_an_admin_without_errAgent_reads_does_not_get_them_in_the_batching_rule_either(agent, monkeypatch):
+    script = agent(["Global_Admins"], FINAL)
+    monkeypatch.setattr(ops, "_sdk", lambda: None)
+    await aw.tool_agent_node(state("what broke overnight?"))
+    assert "read_app_logs" not in _batchable_sentence(script.prompts[0])
+
+
+@run_async
+async def test_incidents_logs_and_deploy_can_be_read_in_one_batched_step(agent, sdk):
+    batch = _llm(action="query", purpose="all three", queries=[
+        {"tool_action": "list_app_incidents", "args": {}, "purpose": "incidents"},
+        {"tool_action": "read_app_logs", "args": {"level": "error"}, "purpose": "logs"},
+        {"tool_action": "check_deploy_status", "args": {}, "purpose": "deploy"},
+    ])
+    script = agent(["Global_Admins"], batch, _llm(action="final", answer="Combined summary."))
+    result = await aw.tool_agent_node(state("check the incidents, your logs and the deploy"))
+    assert sorted(call[0] for call in sdk.calls) == ["deploy", "list", "logs"]
+    assert "Combined summary." in result["content_to_format"]
+    assert not any("cannot be batched" in p for p in script.prompts)
