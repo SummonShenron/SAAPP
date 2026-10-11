@@ -126,7 +126,7 @@ from backend.utils.time_utils import build_time_context, local_today, sent_at, s
 from backend.utils import open_loops as open_loops_utils
 from backend.utils import initiation as initiation_utils
 from backend.utils import budget_guard
-from backend.utils import llm_usage
+from backend.utils import llm_turns, llm_usage
 from backend.utils import ops_digest as ops_digest_utils
 from backend.utils import ops_suggestions as ops_suggestions_utils
 from backend.utils import duration_utils
@@ -708,6 +708,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         final_state = {}
         # Aggregate counts about how Sonic itself behaved this turn (no user, no text): backend/utils/self_counters.py.
         turn_counts = new_turn_counts()
+        llm_turn = llm_turns.begin()  # counts this turn's model calls (backend/utils/llm_turns.py)
         if answers_an_opening:
             tally(turn_counts, "initiation_answered")
             if answered_kind == "interest":
@@ -740,6 +741,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 log_safety_event(username, None, "quota", KIND_OUTAGE_FALLBACK)
             tally(turn_counts, "turn_failed", "quota")
             await asyncio.to_thread(record_turn_counts, turn_counts)
+            llm_turns.finish(llm_turn, "blocked")
+            await asyncio.to_thread(llm_usage.flush)
             logger.info("[budget] chat paused by the usage budget (crisis fallback: %s).", crisis)
             yield f"data: {json.dumps({'event': 'final_generation', 'text': budget_guard.blocked_reply(budget_state.get('resets_at'), crisis)})}\n\n"
             return
@@ -1255,6 +1258,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # Bounds this conversation's checkpoint history right now rather than waiting for the daily pass.
             spawn_background_task(prune_thread_checkpoints_async(history_key))
             await asyncio.to_thread(record_turn_counts, turn_counts)
+            llm_turns.finish(llm_turn)
             await asyncio.to_thread(llm_usage.flush)  # what this turn's model calls used (backend/utils/llm_usage.py)
             log_timings(relevance_grade, "ok")
             logger.info("--- End of token stream ---")
@@ -1272,10 +1276,13 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             )
             tally(turn_counts, "turn_failed", failed.kind)
             await asyncio.to_thread(record_turn_counts, turn_counts)
+            llm_turns.finish(llm_turn, "error")
             await asyncio.to_thread(llm_usage.flush)
             yield f"data: {json.dumps({'event': 'trace', 'title': 'Execution error', 'detail': 'The request failed on the server.', 'status': 'active'})}\n\n"
             if not full_response:
                 yield f"data: {json.dumps({'event': 'final_generation', 'text': failed.reply})}\n\n"
+        finally:
+            llm_turns.finish(llm_turn)  # a turn the client walked away from still counts (only the first finish does)
 
     async def steerable_stream():
         # Registered for the whole turn so POST /api/chat/steer has somewhere to deliver messages.

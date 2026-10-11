@@ -289,3 +289,9 @@
 .sh-bar-notice { background: #f59e0b; }
 .sh-bar-throttled { background: #f97316; }
 .sh-bar-blocked { background: #ef4444; }
+
+.sh-subhead {
+  margin: 1rem 0 0.4rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+}

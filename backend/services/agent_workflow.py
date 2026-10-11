@@ -103,7 +103,7 @@ from backend.services.react_loop import run_react_loop, _MAX_BATCH_SIZE
 from backend.services import steering
 from backend.services import native_loop, ops_incidents
 from backend.services import native_tools as native_tools_module
-from backend.utils import budget_guard
+from backend.utils import budget_guard, llm_turns
 from backend.services.repo_checkout import (
     RepoCheckoutError, fetch_and_extract_checkout, cleanup_checkout, find_declarations_in_checkout,
 )
@@ -137,6 +137,8 @@ TOOL_AGENT_MAX_RETRY_NUDGES_DEEP = int(os.getenv("TOOL_AGENT_MAX_RETRY_NUDGES_DE
 # this prompt gets rebuilt on every single ReAct step, so uncapped history would multiply cost
 # across every step of every turn, not just pay for it once.
 TOOL_AGENT_HISTORY_MAX_MESSAGES = int(os.getenv("TOOL_AGENT_HISTORY_MAX_MESSAGES", "10"))
+# The same window for the reasoner, which runs on every turn (see reasoner_node for why it needs one).
+REASONER_HISTORY_MAX_MESSAGES = max(int(os.getenv("REASONER_HISTORY_MAX_MESSAGES", "10")), 2)
 
 # search_code only matches exact literal tokens against GitHub's keyword index — a colloquial
 # or descriptive name shares no tokens at all with a differently-named real file, so rewording
@@ -835,7 +837,10 @@ async def reasoner_node(state: GraphState) -> GraphState:
     with erragent.context(workflowName=workflow_name, requestId=request_id, node=node_name):
         node_input = state.copy()
         msg = state["messages"][-1].content.strip()
-        history = state.get("messages", [])
+        # Only a recent window. app.py sends the last 10 messages each turn, but state["messages"] uses the add_messages reducer under a
+        # checkpointer, so it holds the WHOLE thread (measured: 59 messages on turn 30 after the app sent 10 a turn). Formatting all of
+        # it made this prompt grow for the life of the conversation: one local reasoner call used ~250K input tokens.
+        history = state.get("messages", [])[-REASONER_HISTORY_MAX_MESSAGES:]
 
         # Format message history into a clean string for the LLM
         formatted_history = "\n".join([f"{getattr(m, 'type', 'user')}: {getattr(m, 'content', '')}" for m in history[:-1]])
@@ -2940,6 +2945,11 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
         # when this turn needs nothing but the read-only tools it can offer; everything else keeps the ReAct loop.
         native_tools = native_tools_module.declarations_from_menu(menu_lines) if native_loop.enabled() else []
         use_native = native_loop.eligible(edit_turn=edit_turn, resumed=bool(resumed_attempts), tools=native_tools)
+        # Counted per turn (backend/utils/llm_turns.py): which engine ran, and what switched deep mode on: the user's setting, the
+        # audit-style wording of the message, or both (and whether low-power mode held it back).
+        llm_turns.note_tool_agent(
+            "native" if use_native else "react", bool(state.get("deep_thinking")), is_audit_task, budget_guard.low_power(budget_state),
+        )
 
         async def _native_engine(**kwargs):
             async def _announce(title, detail):

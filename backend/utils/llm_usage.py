@@ -27,6 +27,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from backend.utils import llm_turns
+
 logger = logging.getLogger("SASS Logger")
 
 COLLECTION = "llm_usage_daily"
@@ -145,6 +147,10 @@ def record(model: str, label: str, usage: Dict[str, int], day: Optional[str] = N
             flush_in_background()
     except Exception:
         pass
+    try:
+        llm_turns.note_call(usage or {})  # the same call, added to the chat turn that made it (backend/utils/llm_turns.py)
+    except Exception:
+        pass
 
 
 def note_route(requested: str, served: str, fallback: Optional[str] = None, day: Optional[str] = None) -> None:
@@ -174,9 +180,22 @@ def reset() -> None:
         _routes.clear()
         _buffered_calls = 0
         _flushing = False
+    llm_turns.reset()
 
 
 def flush(db: Any = None) -> int:
+    """Saves the usage counts and, with them, the per-turn counts (llm_turns.py). Returns how many usage rows were written. Blocking:
+    call it off the event loop. Never raises."""
+    try:
+        return _flush_usage(db)
+    finally:
+        try:
+            llm_turns.flush(db)
+        except Exception:
+            pass
+
+
+def _flush_usage(db: Any = None) -> int:
     """Writes what has been counted to the database (one `$inc` per day/model/label) and returns how many rows. If the write fails,
     the counts go back to be tried again with the next flush. Blocking: call it off the event loop. Never raises."""
     global _buffered_calls, _last_flush

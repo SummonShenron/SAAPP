@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 from backend.components.constraints import build_voice_prompt, GROUNDING_BLOCKS
 from backend.services import agent_workflow as aw
@@ -620,3 +620,51 @@ async def test_reasoner_tells_the_ui_which_energy_tier_is_in_force(monkeypatch):
     await aw.reasoner_node({"messages": [HumanMessage(content="I got some really bad news today")]})
 
     assert ("emotion", {"tier": "subdued"}) in emitted
+
+
+# ---------------------------------------------------------------------------
+# reasoner_node history window: it runs on every turn, so its prompt must not grow with the thread.
+# ---------------------------------------------------------------------------
+
+@run_async
+async def test_the_reasoner_prompt_carries_only_a_recent_window_of_a_long_thread(monkeypatch):
+    seen = []
+
+    async def spy(prompt):
+        seen.append(prompt)
+        return _flags_response(valence="neutral", intensity=0.0)
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", spy)
+    thread = []
+    for i in range(1, 61):
+        thread += [HumanMessage(content=f"HUMAN-TURN-{i:03d}"), AIMessage(content=f"AI-TURN-{i:03d}")]
+    thread.append(HumanMessage(content="LATEST-QUESTION"))
+
+    await aw.reasoner_node({"messages": thread})
+
+    prompt = seen[0]
+    assert "LATEST-QUESTION" in prompt
+    assert "AI-TURN-060" in prompt and "HUMAN-TURN-057" in prompt  # the recent turns are still there
+    assert "HUMAN-TURN-001" not in prompt and "AI-TURN-030" not in prompt  # the rest of the thread is not
+    assert prompt.count("TURN-") <= aw.REASONER_HISTORY_MAX_MESSAGES
+
+
+def test_a_checkpointed_thread_hands_a_node_far_more_than_the_ten_messages_the_app_sends():
+    """Why the cap above is needed: under a checkpointer the add_messages reducer keeps the whole thread, whatever the app sends."""
+    from langgraph.checkpoint.memory import MemorySaver
+    from langgraph.graph import END, START, StateGraph
+
+    from backend.state.graph_state import GraphState
+
+    sizes = []
+    graph = StateGraph(GraphState)
+    graph.add_node("n", lambda state: sizes.append(len(state["messages"])) or {})
+    graph.add_edge(START, "n")
+    graph.add_edge("n", END)
+    app = graph.compile(checkpointer=MemorySaver())
+    transcript = []
+    for turn in range(1, 21):
+        transcript.append(HumanMessage(content=f"q{turn}"))
+        app.invoke({"messages": transcript[-10:]}, {"configurable": {"thread_id": "t"}})
+        transcript.append(AIMessage(content=f"a{turn}"))
+    assert sizes[-1] > 10 * 3

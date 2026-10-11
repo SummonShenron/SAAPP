@@ -8,6 +8,8 @@ import {
   type OpsSuggestion,
   type OpsSuggestions,
   type ReflectionResult,
+  type TurnKindRow,
+  type TurnsSummary,
   type UsageSummary,
   type SafetySummary,
   type SonicHealth,
@@ -468,6 +470,55 @@ const BudgetCard: React.FC<{ budget: BudgetView }> = ({ budget }) => {
   );
 };
 
+const BUCKET_LABELS: Record<string, string> = { c1: '1 call', c2: '2', c3_4: '3-4', c5_8: '5-8', c9_plus: '9 or more' };
+
+/** One chat turn is often several model calls. This is how many, by kind of turn, and how often deep mode ran and why. */
+const TurnsSection: React.FC<{ turns: TurnsSummary }> = ({ turns }) => {
+  const rows: [string, TurnKindRow][] = [
+    ['All turns', turns.overall],
+    ['Plain chat (no tools)', turns.plain],
+    ['Tool agent', turns.tool],
+    ['Deep mode (a part of tool agent)', turns.deep],
+  ];
+  const sources = turns.deep_sources;
+  const counted = turns.histogram.reduce((sum, bucket) => sum + bucket.turns, 0);
+  return (
+    <>
+      <h3 className="sh-subhead">Model calls per chat turn</h3>
+      <table className="sh-table">
+        <thead><tr><th>Kind of turn</th><th>Turns</th><th>Calls / turn</th><th>Input / turn</th><th>Output / turn</th><th>Thinking / turn</th></tr></thead>
+        <tbody>
+          {rows.map(([label, row]) => (
+            <tr key={label}>
+              <td>{label}</td><td>{row.turns}</td><td>{row.avg_calls ?? 'n/a'}</td>
+              <td>{row.avg_input === null ? 'n/a' : tokens(row.avg_input)}</td>
+              <td>{row.avg_output === null ? 'n/a' : tokens(row.avg_output)}</td>
+              <td>{row.avg_reasoning === null ? 'n/a' : tokens(row.avg_reasoning)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="sh-hint">
+        Calls per turn: {turns.histogram.map(bucket => `${BUCKET_LABELS[bucket.bucket]}: ${bucket.turns}${counted ? ` (${Math.round((100 * bucket.turns) / counted)}%)` : ''}`).join(' · ')}.
+        The most any one turn made was {turns.max_calls}.
+      </div>
+      <div className="sh-hint">
+        Deep mode ran on {turns.deep.turns} turn(s){turns.deep_share !== null ? ` (${pct(turns.deep_share)} of all turns)` : ''}: {sources.setting} from your
+        setting, {sources.audit} from the wording of the message alone (words like "scan the repo", "every file", "audit"), {sources.both} from both.
+        {turns.deep_unasked > 0 && ' Those wording-only turns are ones nobody switched on; if they are many, the phrase list is what to narrow.'}
+        {turns.deep_suppressed > 0 && ` ${turns.deep_suppressed} more were held back by low-power mode.`}
+      </div>
+      {(turns.native_turns > 0 || turns.blocked_turns > 0 || turns.error_turns > 0) && (
+        <div className="sh-hint">
+          {turns.native_turns > 0 && `${turns.native_turns} turn(s) used the native tool engine. `}
+          {turns.blocked_turns > 0 && `${turns.blocked_turns} chat(s) were paused by the budget. `}
+          {turns.error_turns > 0 && `${turns.error_turns} turn(s) failed.`}
+        </div>
+      )}
+    </>
+  );
+};
+
 const UsageCard: React.FC<{ usage: UsageSummary; turns: number }> = ({ usage, turns }) => {
   const total = usage.total;
   const perTurn = turns > 0 ? Math.round(total.tokens / turns) : null;
@@ -516,6 +567,7 @@ const UsageCard: React.FC<{ usage: UsageSummary; turns: number }> = ({ usage, tu
               ))}
             </tbody>
           </table>
+          {usage.turns && usage.turns.turns > 0 && <TurnsSection turns={usage.turns} />}
           {(usage.routes ?? []).map(route => (
             <div key={`${route.requested}>${route.served}>${route.kind}`} className="sh-hint">
               {route.kind === 'fallback'

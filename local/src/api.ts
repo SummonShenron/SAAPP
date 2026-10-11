@@ -644,6 +644,36 @@ export interface UsageRoute {
   calls: number;
 }
 
+/** Averages for one kind of chat turn (backend/utils/llm_turns.py). Null when there were no turns of that kind. */
+export interface TurnKindRow {
+  turns: number;
+  avg_calls: number | null;
+  avg_input: number | null;
+  avg_output: number | null;
+  avg_reasoning: number | null;
+}
+
+/** How many model calls one chat turn makes, and how deep mode was switched on. Counts only. */
+export interface TurnsSummary {
+  turns: number;
+  overall: TurnKindRow;
+  plain: TurnKindRow;
+  tool: TurnKindRow;
+  /** Turns deep mode ran on; they are also counted in `tool`. */
+  deep: TurnKindRow;
+  histogram: { bucket: 'c1' | 'c2' | 'c3_4' | 'c5_8' | 'c9_plus'; turns: number }[];
+  max_calls: number;
+  /** What switched deep mode on: the user's setting, the audit-style wording of the message alone, or both. */
+  deep_sources: { setting: number; audit: number; both: number };
+  deep_share: number | null;
+  /** Deep turns nobody asked for with the setting: the audit wording alone. */
+  deep_unasked: number;
+  deep_suppressed: number;
+  native_turns: number;
+  blocked_turns: number;
+  error_turns: number;
+}
+
 export interface UsageSummary {
   total: UsageRow;
   by_model: UsageRow[];
@@ -652,6 +682,7 @@ export interface UsageSummary {
   unpriced_models: string[];
   priced: boolean;
   routes?: UsageRoute[];
+  turns?: TurnsSummary;
 }
 
 export interface SonicHealth {
