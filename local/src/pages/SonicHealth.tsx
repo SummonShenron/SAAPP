@@ -1,8 +1,11 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   api,
   type CountersSummary,
   type ObservationView,
+  type OpsSuggestion,
+  type OpsSuggestions,
   type ReflectionResult,
   type SafetySummary,
   type SonicHealth,
@@ -78,6 +81,55 @@ function evidenceLine(evidence: ObservationView['proposed_evidence']): string {
   return `Now ${pct(evidence.rate)}${before}${base}.`;
 }
 
+const SUGGESTION_KIND_LABELS: Record<OpsSuggestion['kind'], string> = {
+  recurring: 'keeps happening',
+  stale: 'still open',
+  review: 'needs your review',
+};
+
+const SuggestionsCard: React.FC<{
+  data: OpsSuggestions | null;
+  failed: boolean;
+  busyKey: string | null;
+  onInvestigate: (prompt: string) => void;
+  onDecide: (key: string, decision: 'dismiss' | 'snooze') => void;
+}> = ({ data, failed, busyKey, onInvestigate, onDecide }) => {
+  const items = data?.suggestions ?? [];
+  return (
+    <section className="service-card sh-card">
+      <div className="card-badge">{items.length} WAITING</div>
+      <h2>Suggestions</h2>
+      <p className="card-description">
+        Things worth a look, worked out from errAgent's incidents and the observations below by fixed rules. No model is involved, and
+        nothing happens until you decide. Investigate puts a question in the chat box; you press send.
+      </p>
+      {failed && <div className="sh-hint">Could not load the suggestions just now.</div>}
+      {data && data.incidents === 'unavailable' && (
+        <div className="sh-hint">errAgent could not be reached just now, so suggestions about incidents are missing, not absent.</div>
+      )}
+      {data && data.incidents === 'not_configured' && (
+        <div className="sh-hint">errAgent reads are not configured here, so there are no suggestions about incidents.</div>
+      )}
+      {data && items.length === 0 && <div className="sh-hint">Nothing to suggest right now.</div>}
+      {items.map(item => (
+        <div key={item.key} className="sh-row">
+          <div className="sh-row-title">{item.title}<span className="sh-pill">{SUGGESTION_KIND_LABELS[item.kind]}</span></div>
+          <div className="sh-row-meta">{item.detail}</div>
+          <div className="sh-row-buttons">
+            {item.prompt && (
+              <button type="button" className="sh-btn sh-btn-primary" disabled={busyKey === item.key} onClick={() => onInvestigate(item.prompt as string)}>
+                Investigate
+              </button>
+            )}
+            <button type="button" className="sh-btn" disabled={busyKey === item.key} onClick={() => onDecide(item.key, 'snooze')}>Snooze 7 days</button>
+            <button type="button" className="delete-row-btn" disabled={busyKey === item.key} onClick={() => onDecide(item.key, 'dismiss')}>Dismiss</button>
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+};
+
 const AppliesChips: React.FC<{ keys: string[] }> = ({ keys }) => (
   <div className="sh-chips">
     <span className="sh-chip-label">used in:</span>
@@ -95,6 +147,40 @@ export const SonicHealthPage: React.FC = () => {
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [reflecting, setReflecting] = useState<boolean>(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<OpsSuggestions | null>(null);
+  const [suggestionsFailed, setSuggestionsFailed] = useState<boolean>(false);
+  const [suggestionBusy, setSuggestionBusy] = useState<string | null>(null);
+  const navigate = useNavigate();
+
+  // Loaded on its own, so a problem reading errAgent never takes the rest of the page down with it.
+  useEffect(() => {
+    let cancelled = false;
+    api.getOpsSuggestions()
+      .then((data) => { if (!cancelled) { setSuggestions(data); setSuggestionsFailed(false); } })
+      .catch(() => { if (!cancelled) { setSuggestions(null); setSuggestionsFailed(true); } });
+    return () => { cancelled = true; };
+  }, [reloadKey]);
+
+  const handleInvestigate = (prompt: string) => navigate('/chat', { state: { draft: prompt } });
+
+  // Approving, retiring or reflecting changes what is waiting for review, so the suggestion about it is worked out again.
+  const refreshSuggestions = () => {
+    api.getOpsSuggestions().then((data) => { setSuggestions(data); setSuggestionsFailed(false); }).catch(() => { /* keep what is shown */ });
+  };
+
+  const handleDecide = async (key: string, decision: 'dismiss' | 'snooze') => {
+    setSuggestionBusy(key);
+    setNotice(null);
+    try {
+      await api.decideOpsSuggestion(key, decision);
+      setSuggestions(prev => (prev ? { ...prev, suggestions: prev.suggestions.filter(s => s.key !== key) } : prev));
+      setNotice(decision === 'dismiss' ? 'Dismissed for 30 days. It comes back only if it is still true then.' : 'Snoozed for 7 days.');
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Could not save that decision.');
+    } finally {
+      setSuggestionBusy(null);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -114,6 +200,7 @@ export const SonicHealthPage: React.FC = () => {
     try {
       const out = await api.approveObservation(key);
       setObservations(out.observations);
+      refreshSuggestions();
       setNotice(`Approved "${OBSERVATION_LABELS[key] ?? key}". It is live now and applies to the contexts shown.`);
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Could not approve that observation.');
@@ -129,6 +216,7 @@ export const SonicHealthPage: React.FC = () => {
     try {
       const out = await api.retireObservation(key);
       setObservations(out.observations);
+      refreshSuggestions();
       setNotice(`Retired "${OBSERVATION_LABELS[key] ?? key}".`);
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Could not retire that observation.');
@@ -143,6 +231,7 @@ export const SonicHealthPage: React.FC = () => {
     try {
       const out = await api.runObservationReflection(Math.max(days, 7));
       setObservations(out.observations);
+      refreshSuggestions();
       const r: ReflectionResult = out.result;
       setNotice(
         r.proposed.length + r.confirmed.length === 0
@@ -196,6 +285,13 @@ export const SonicHealthPage: React.FC = () => {
       {notice && <div className="sh-notice" role="status">{notice}</div>}
 
       <div className="vertical-card-stack">
+        <SuggestionsCard
+          data={suggestions}
+          failed={suggestionsFailed}
+          busyKey={suggestionBusy}
+          onInvestigate={handleInvestigate}
+          onDecide={handleDecide}
+        />
         <ObservationsCard
           awaiting={awaiting}
           live={live}

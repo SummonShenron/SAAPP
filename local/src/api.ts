@@ -327,6 +327,28 @@ export async function updateProactiveOpening(enabled: boolean): Promise<{ enable
   return res.json();
 }
 
+/**
+ * Admin only: whether Sonic tells you about new production incidents (from errAgent) when you open a conversation. `available`
+ * is false for everyone else and where errAgent reads aren't configured, so the menu item can stay hidden.
+ */
+export async function getOpsDigest(): Promise<{ enabled: boolean; available: boolean }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/ops-digest`, { headers: { ...authHeaders } });
+  if (!res.ok) throw new Error("Failed to fetch the incident digest setting.");
+  return res.json();
+}
+
+export async function updateOpsDigest(enabled: boolean): Promise<{ enabled: boolean; available: boolean }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/ops-digest`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ enabled })
+  });
+  if (!res.ok) throw new Error("Failed to update the incident digest setting.");
+  return res.json();
+}
+
 export interface OpeningMessage {
   type: 'ai';
   content: string;
@@ -606,6 +628,30 @@ export function retireObservation(key: string): Promise<{ observations: Observat
 
 export function runObservationReflection(days: number): Promise<{ result: ReflectionResult; observations: ObservationView[] }> {
   return adminRequest('/api/admin/observations/reflect', 'POST', { days });
+}
+
+export interface OpsSuggestion {
+  key: string;
+  kind: 'recurring' | 'stale' | 'review';
+  title: string;
+  detail: string;
+  /** A ready-made question for the chat box, or null when there is nothing to ask Sonic (the review happens on the page). */
+  prompt: string | null;
+}
+
+export interface OpsSuggestions {
+  suggestions: OpsSuggestion[];
+  /** Whether errAgent could be read: "unavailable" means incident suggestions are missing, not that there are none. */
+  incidents: 'ok' | 'not_configured' | 'unavailable';
+  generated_at: string;
+}
+
+export function getOpsSuggestions(): Promise<OpsSuggestions> {
+  return adminRequest<OpsSuggestions>('/api/admin/ops-suggestions', 'GET');
+}
+
+export function decideOpsSuggestion(key: string, decision: 'dismiss' | 'snooze'): Promise<{ hidden_until: string }> {
+  return adminRequest(`/api/admin/ops-suggestions/${encodeURIComponent(key)}/${decision}`, 'POST');
 }
 
 /** Welcome-screen questions built from this person's own state (documents, integrations, repo) for one scope. */
@@ -1066,6 +1112,8 @@ export const api = {
   updateDeepThinking,
   getProactiveOpening,
   updateProactiveOpening,
+  getOpsDigest,
+  updateOpsDigest,
   requestConversationOpening,
   getTargetRepo,
   updateTargetRepo,
@@ -1081,5 +1129,7 @@ export const api = {
   getSonicHealth,
   approveObservation,
   retireObservation,
-  runObservationReflection
+  runObservationReflection,
+  getOpsSuggestions,
+  decideOpsSuggestion
 };
