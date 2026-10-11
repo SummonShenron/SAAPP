@@ -2,11 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   api,
+  type BudgetView,
   type CountersSummary,
   type ObservationView,
   type OpsSuggestion,
   type OpsSuggestions,
   type ReflectionResult,
+  type UsageSummary,
   type SafetySummary,
   type SonicHealth,
 } from '../api';
@@ -302,6 +304,8 @@ export const SonicHealthPage: React.FC = () => {
           onRetire={handleRetire}
           onReflect={handleReflect}
         />
+        {health.budget && <BudgetCard budget={health.budget} />}
+        {health.usage && <UsageCard usage={health.usage} turns={health.counters.totals.turns_total ?? 0} />}
         <CountersCard counters={health.counters} />
         <SafetyCard safety={health.safety} />
       </div>
@@ -397,6 +401,138 @@ const ObservationsCard: React.FC<ObservationsCardProps> = ({ awaiting, live, lap
   </section>
 );
 
+function tokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+function usd(value: number | null | undefined): string {
+  if (value === null || value === undefined) return '';
+  return value < 0.01 ? '<$0.01' : `$${value.toFixed(2)}`;
+}
+
+const BUDGET_LEVEL_TEXT: Record<BudgetView['level'], string> = {
+  off: 'NOT SET',
+  ok: 'COMFORTABLE',
+  notice: 'GETTING CLOSE',
+  throttled: 'LOW-POWER',
+  blocked: 'PAUSED',
+};
+
+function budgetAmount(unit: 'usd' | 'tokens', value: number): string {
+  return unit === 'usd' ? `$${value.toFixed(2)}` : tokens(Math.round(value));
+}
+
+const BudgetCard: React.FC<{ budget: BudgetView }> = ({ budget }) => {
+  const resets = budget.resets_at ? new Date(budget.resets_at).toLocaleString() : null;
+  return (
+    <section className="service-card sh-card">
+      <div className="card-badge">{BUDGET_LEVEL_TEXT[budget.level]}</div>
+      <h2>Usage budget</h2>
+      <p className="card-description">
+        A ramp in front of Google's own spending cap. At 80% an admin is told; at 100% Sonic goes low-power for everyone (deep thinking and
+        the optional extras that each cost a model call are paused); at 125% chat pauses until the day or month turns, except that someone
+        who has signalled risk still gets the human support line.
+      </p>
+      {budget.level === 'off' ? (
+        <div className="sh-hint">
+          No budget is set, so nothing is limited. Set LLM_BUDGET_MONTHLY_TOKENS (or LLM_BUDGET_MONTHLY_USD together with LLM_PRICES) on the
+          server, plus a daily one if you like, to turn it on. Keep the monthly budget a little under Google's cap.
+        </div>
+      ) : (
+        <>
+          {(budget.detail ?? []).map(item => {
+            const percent = Math.round(item.fraction * 100);
+            const tone = item.fraction >= 1.25 ? 'blocked' : item.fraction >= 1 ? 'throttled' : item.fraction >= 0.8 ? 'notice' : 'ok';
+            return (
+              <div key={`${item.scope}-${item.unit}`} className="sh-budget-row">
+                <div className="sh-budget-label">
+                  <span>{item.scope === 'day' ? 'Today' : 'This month'} ({item.unit === 'usd' ? 'dollars' : 'tokens'})</span>
+                  <span>{budgetAmount(item.unit, item.spent)} of {budgetAmount(item.unit, item.limit)} ({percent}%)</span>
+                </div>
+                <div className="sh-bar"><div className={`sh-bar-fill sh-bar-${tone}`} style={{ width: `${Math.min(item.fraction * 100, 100)}%` }} /></div>
+              </div>
+            );
+          })}
+          {resets && <div className="sh-hint">The deciding budget resets {resets}.</div>}
+          {budget.paused.length > 0 && <div className="sh-hint">Paused right now: {budget.paused.join(', ')}.</div>}
+          {(budget.unpriced_tokens ?? 0) > 0 && (budget.detail ?? []).some(item => item.unit === 'usd') && (
+            <div className="sh-hint">
+              {tokens(budget.unpriced_tokens ?? 0)} tokens are from models with no price in LLM_PRICES, so the dollar figures leave them out.
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+};
+
+const UsageCard: React.FC<{ usage: UsageSummary; turns: number }> = ({ usage, turns }) => {
+  const total = usage.total;
+  const perTurn = turns > 0 ? Math.round(total.tokens / turns) : null;
+  const rows = usage.by_label.slice(0, 14);
+  return (
+    <section className="service-card sh-card">
+      <div className="card-badge">{tokens(total.tokens)} TOKENS</div>
+      <h2>Model usage</h2>
+      <p className="card-description">
+        What the model calls used in this period, by the code that made them. Counts only: no prompts, no replies, no names. Thinking is
+        part of output (billed as output); cached is part of input (billed at a discount). It starts counting from when it was deployed.
+      </p>
+      {total.calls === 0 ? (
+        <div className="sh-hint">No model calls have been counted yet in this period.</div>
+      ) : (
+        <>
+          <div className="sh-stat-grid">
+            <div className="sh-stat"><div className="sh-stat-value">{total.calls}</div><div className="sh-stat-label">model calls</div></div>
+            <div className="sh-stat"><div className="sh-stat-value">{perTurn === null ? 'n/a' : tokens(perTurn)}</div><div className="sh-stat-label">tokens per chat turn, on average</div></div>
+            <div className="sh-stat"><div className="sh-stat-value">{pct(total.cache_rate)}</div><div className="sh-stat-label">of input came from the cache</div></div>
+            <div className="sh-stat"><div className="sh-stat-value">{pct(total.thinking_rate)}</div><div className="sh-stat-label">of output was thinking</div></div>
+            {usage.priced && (
+              <div className="sh-stat"><div className="sh-stat-value">{usd(usage.estimated_cost) || 'n/a'}</div><div className="sh-stat-label">estimated cost (priced models only)</div></div>
+            )}
+          </div>
+          <table className="sh-table">
+            <thead><tr><th>Model</th><th>Calls</th><th>Input</th><th>Output</th><th>Thinking</th><th>Cached</th><th>Share</th>{usage.priced && <th>Est. cost</th>}</tr></thead>
+            <tbody>
+              {usage.by_model.map(row => (
+                <tr key={row.model}>
+                  <td>{row.model}</td><td>{row.calls}</td><td>{tokens(row.input)}</td><td>{tokens(row.output)}</td>
+                  <td>{tokens(row.reasoning)}</td><td>{pct(row.cache_rate)}</td><td>{pct(row.share)}</td>
+                  {usage.priced && <td>{usd(row.cost) || 'unpriced'}</td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <table className="sh-table">
+            <thead><tr><th>Caller</th><th>Model</th><th>Calls</th><th>Input</th><th>Output</th><th>Thinking</th><th>Cached</th><th>Share</th></tr></thead>
+            <tbody>
+              {rows.map(row => (
+                <tr key={`${row.label}|${row.model}`}>
+                  <td>{row.label}</td><td>{row.model}</td><td>{row.calls}</td><td>{tokens(row.input)}</td><td>{tokens(row.output)}</td>
+                  <td>{tokens(row.reasoning)}</td><td>{pct(row.cache_rate)}</td><td>{pct(row.share)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {(usage.routes ?? []).map(route => (
+            <div key={`${route.requested}>${route.served}>${route.kind}`} className="sh-hint">
+              {route.kind === 'fallback'
+                ? `${route.calls} call(s) asked for ${route.requested} fell back to ${route.served} because the first choice failed.`
+                : `${route.calls} call(s) asked for ${route.requested} were answered by ${route.served}: Google is routing that name to a different model.`}
+            </div>
+          ))}
+          {usage.by_label.length > rows.length && <div className="sh-hint">Showing the {rows.length} biggest of {usage.by_label.length} callers.</div>}
+          {usage.priced && usage.unpriced_models.length > 0 && (
+            <div className="sh-hint">No price is set for: {usage.unpriced_models.join(', ')}. Add it to LLM_PRICES to include it in the estimate.</div>
+          )}
+        </>
+      )}
+    </section>
+  );
+};
+
 const CountersCard: React.FC<{ counters: CountersSummary }> = ({ counters }) => {
   const { totals, previous_totals: previousTotals, rates, previous_rates: previous, change: changes } = counters;
   const turns = totals.turns_total ?? 0;
@@ -426,6 +562,7 @@ const CountersCard: React.FC<{ counters: CountersSummary }> = ({ counters }) => 
           <tr><td>Turns invited to connect to something from earlier</td><td>{pct(rates.callback_offered)}</td><td>{pct(previous.callback_offered)}</td><td>{change(changes.callback_offered)}</td></tr>
           <tr><td>Turns where what's changed about Sonic was offered</td><td>{pct(rates.self_history_offered)}</td><td>{pct(previous.self_history_offered)}</td><td>{change(changes.self_history_offered)}</td></tr>
           <tr><td>Messages Sonic started that got a reply</td><td>{pct(rates.initiation_answered)}</td><td>{pct(previous.initiation_answered)}</td><td>{change(changes.initiation_answered)}</td></tr>
+          <tr><td>Messages about something they're into that got a reply</td><td>{pct(rates.initiation_interest_answered)}</td><td>{pct(previous.initiation_interest_answered)}</td><td>{change(changes.initiation_interest_answered)}</td></tr>
           <tr><td>Messages Sonic started that fell back to the plain template</td><td>{pct(rates.initiation_fallback)}</td><td>{pct(previous.initiation_fallback)}</td><td>{change(changes.initiation_fallback)}</td></tr>
           <tr><td>Turns that asked how something went</td><td>{pct(rates.open_loop_offered)}</td><td>{pct(previous.open_loop_offered)}</td><td>{change(changes.open_loop_offered)}</td></tr>
           <tr><td>Turns where the reply mentioned a leaning of its own</td><td>{pct(rates.self_mention)}</td><td>{pct(previous.self_mention)}</td><td>{change(changes.self_mention)}</td></tr>

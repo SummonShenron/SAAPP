@@ -101,7 +101,9 @@ from backend.utils.agent_utils import (
 )
 from backend.services.react_loop import run_react_loop, _MAX_BATCH_SIZE
 from backend.services import steering
-from backend.services import ops_incidents
+from backend.services import native_loop, ops_incidents
+from backend.services import native_tools as native_tools_module
+from backend.utils import budget_guard
 from backend.services.repo_checkout import (
     RepoCheckoutError, fetch_and_extract_checkout, cleanup_checkout, find_declarations_in_checkout,
 )
@@ -2651,9 +2653,13 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 "the user presses Apply."
             )
         actions_menu = "\n".join(menu_lines)
+        # The ops actions are batchable only for an admin who is actually offered them (they are not even named for anyone else).
+        batchable_actions = TOOL_AGENT_BATCHABLE_ACTIONS | (
+            ops_incidents.BATCHABLE_ACTIONS if is_admin and ops_incidents.ops_available() else frozenset()
+        )
         prompt_template = TOOL_AGENT_PROMPT.replace("{actions_menu}", actions_menu.replace("{", "{{").replace("}", "}}"))
         prompt_template = prompt_template.replace("{history}", formatted_history.replace("{", "{{").replace("}", "}}"))
-        prompt_template = prompt_template.replace("{batchable_actions}", ", ".join(sorted(TOOL_AGENT_BATCHABLE_ACTIONS)))
+        prompt_template = prompt_template.replace("{batchable_actions}", ", ".join(sorted(batchable_actions)))
         prompt_template = prompt_template.replace(
             "{current_time}", build_agent_time_line(get_user_timezone(username)).replace("{", "{{").replace("}", "}}")
         )
@@ -2886,7 +2892,9 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             return await asyncio.to_thread(_dispatch_github)
 
         is_audit_task = _is_audit_style_task(latest_message_content)
-        deep_thinking = bool(state.get("deep_thinking")) or is_audit_task
+        # In low-power mode (the usage budget guard) deep mode is off however it was asked for, and the step cap is lower.
+        budget_state = {"level": state.get("budget_level")}
+        deep_thinking = (bool(state.get("deep_thinking")) or is_audit_task) and not budget_guard.low_power(budget_state)
 
         architecture_map = ""
         if is_audit_task:
@@ -2928,15 +2936,33 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                 },
             )
 
+        # The native tool-calling engine (backend/services/native_loop.py): a measured spike behind TOOL_AGENT_ENGINE=native. It runs only
+        # when this turn needs nothing but the read-only tools it can offer; everything else keeps the ReAct loop.
+        native_tools = native_tools_module.declarations_from_menu(menu_lines) if native_loop.enabled() else []
+        use_native = native_loop.eligible(edit_turn=edit_turn, resumed=bool(resumed_attempts), tools=native_tools)
+
+        async def _native_engine(**kwargs):
+            async def _announce(title, detail):
+                await safe_emit_event("trace_detail", {"node": "tool_agent_node", "title": title, "detail": detail})
+
+            return await native_loop.run(
+                llm=kwargs["llm"], tools=native_tools, act=kwargs["act"], question=kwargs["question"], history=formatted_history,
+                time_line=build_agent_time_line(get_user_timezone(username)), coding_preferences=coding_preferences,
+                architecture_map=architecture_map, max_steps=kwargs["max_iterations"], emit=_announce,
+                steering_source=kwargs.get("steering_source"), on_steering_applied=kwargs.get("on_steering_applied"),
+            )
+
         try:
             try:
-                loop_result = await run_react_loop(
+                loop_result = await (_native_engine if use_native else run_react_loop)(
                     question=msg,
                     schema=schema,
                     prompt_template=prompt_template,
                     act=_act,
                     is_unsafe=_is_unsafe,
-                    max_iterations=TOOL_AGENT_MAX_ITERATIONS_DEEP if deep_thinking else TOOL_AGENT_MAX_ITERATIONS,
+                    max_iterations=budget_guard.tool_steps(
+                        TOOL_AGENT_MAX_ITERATIONS_DEEP if deep_thinking else TOOL_AGENT_MAX_ITERATIONS, budget_state
+                    ),
                     node_name="tool_agent_node",
                     initial_attempts=resumed_attempts,
                     max_retry_nudges=TOOL_AGENT_MAX_RETRY_NUDGES_DEEP if deep_thinking else TOOL_AGENT_MAX_RETRY_NUDGES,
@@ -2944,7 +2970,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     stuck_action_redirects=TOOL_AGENT_STUCK_ACTION_REDIRECTS,
                     capability_denial_watchlist=TOOL_AGENT_CAPABILITY_DENIAL_WATCHLIST,
                     architecture_map=architecture_map,
-                    batchable_actions=TOOL_AGENT_BATCHABLE_ACTIONS,
+                    batchable_actions=batchable_actions,
                     declaration_lookup=_lookup_existing_declarations,
                     # With a connected folder, a proposed edit is checked against the real file
                     # (exact-once match) on the server and again in the browser, so a deliberate

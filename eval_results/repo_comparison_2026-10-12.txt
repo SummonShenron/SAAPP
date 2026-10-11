@@ -1,0 +1,37 @@
+running repo_env_var_readers x3 ...
+running repo_trace_overdue x3 ...
+running repo_auth_audit x3 ...
+running repo_missing_thing x3 ...
+running repo_recent_history x3 ...
+running repo_env_var_readers x3 ...
+running repo_trace_overdue x3 ...
+running repo_auth_audit x3 ...
+running repo_missing_thing x3 ...
+running repo_recent_history x3 ...
+=== engine: react
+scenario                          category      pass  calls   in tok   what it checks
+repo_env_var_readers              repo           3/3    3.3    19867   finds every place an env var is read, with the (different) defaults
+repo_trace_overdue                repo           3/3    5.0    35987   traces where an invoice becomes overdue, what triggers it and what decides when
+repo_auth_audit                   repo           3/3    4.7    38258   reads every route file to find the routes without authentication
+repo_missing_thing                repo           3/3    5.0    33418   says a feature is absent instead of inventing it
+repo_recent_history               repo           3/3    3.7    22391   reads the commit and pull-request history rather than guessing
+overall: 15/15 (100%)
+by category: repo 15/15
+=== engine: native
+scenario                          category      pass  calls   in tok   what it checks
+repo_env_var_readers              repo           3/3    4.0    11823   finds every place an env var is read, with the (different) defaults
+repo_trace_overdue                repo           3/3    6.0    19179   traces where an invoice becomes overdue, what triggers it and what decides when
+repo_auth_audit                   repo           3/3    3.3    16107   reads every route file to find the routes without authentication
+repo_missing_thing                repo           3/3    5.0    15337   says a feature is absent instead of inventing it
+repo_recent_history               repo           3/3    2.0     5493   reads the commit and pull-request history rather than guessing
+overall: 15/15 (100%)
+by category: repo 15/15
+scenario                             react pass  native pass  react calls native calls   react in  native in
+repo_env_var_readers                        3/3          3/3          3.3          4.0      19867      11823
+repo_trace_overdue                          3/3          3/3          5.0          6.0      35987      19179
+repo_auth_audit                             3/3          3/3          4.7          3.3      38258      16107
+repo_missing_thing                          3/3          3/3          5.0          5.0      33418      15337
+repo_recent_history                         3/3          3/3          3.7          2.0      22391       5493
+react    per run: 4.3 calls, 29984 input tokens (59% cached), 821 output tokens
+native   per run: 4.1 calls, 13588 input tokens (0% cached), 402 output tokens
+input tokens: native uses 45% of what react uses; calls: 94%

@@ -760,23 +760,50 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--only", type=str, default="", help="comma-separated scenario ids")
     parser.add_argument("--category", type=str, default="", help="run one category, e.g. pressure")
+    parser.add_argument("--model", type=str, default="", help="score this model as the reply model instead of the app's (e.g. gemini-3.1-flash-lite)")
+    parser.add_argument("--thinking", type=str, default="minimal", help="thinking level for --model (the app's reply model uses 'minimal')")
     args = parser.parse_args(argv)
 
     from dotenv import load_dotenv
     load_dotenv()
-    from backend.models.models import get_stream_llm
+    from unittest.mock import patch
+
+    from backend.models.models import LazyLLM, get_stream_llm
+    from backend.utils import llm_usage
 
     wanted = {s.strip() for s in args.only.split(",") if s.strip()}
     chosen = [s for s in SCENARIOS if (not wanted or s.id in wanted) and (not args.category or s.category == args.category)]
     if not chosen:
         print(f"No scenario matches. Known: {[(s.id, s.category) for s in SCENARIOS]}")
         return 2
-    llm = get_stream_llm("jack")  # the model that writes the final reply in the app
+    if args.model:
+        # Same temperature and no fallback, so every call is answered by the model being judged and nothing else.
+        llm = LazyLLM(model_name=args.model, fallback_model=None, temperature=0.7, thinking_level=args.thinking)
+    else:
+        llm = get_stream_llm("jack")  # the model that writes the final reply in the app
+    totals = {"calls": 0, "input": 0, "output": 0, "cached": 0}
+    real_record = llm_usage.record
+
+    def count(model, label, usage, day=None):
+        totals["calls"] += 1
+        for key in ("input", "output", "cached"):
+            totals[key] += int((usage or {}).get(key, 0) or 0)
+        real_record(model, label, usage, day)
+
     results = []
-    for scenario in chosen:
-        print(f"running {scenario.id} x{args.runs} ...", file=sys.stderr)
-        results.append(run_scenario(scenario, llm, args.runs))
+    with patch.object(llm_usage, "record", count):
+        for scenario in chosen:
+            print(f"running {scenario.id} x{args.runs} ...", file=sys.stderr)
+            results.append(run_scenario(scenario, llm, args.runs))
+    print(f"model: {args.model or 'the app reply model'}" + (f" (thinking {args.thinking})" if args.model else ""))
     print(format_report(results))
+    if totals["calls"]:
+        line = f"\nmodel calls: {totals['calls']}, {totals['input'] / totals['calls']:.0f} input and {totals['output'] / totals['calls']:.0f} output tokens each"
+        price = llm_usage.load_prices().get(args.model or "gemini-3.6-flash")
+        if price:
+            cost = llm_usage.estimate_cost(args.model or "gemini-3.6-flash", totals, {args.model or "gemini-3.6-flash": price})
+            line += f"; about ${cost / totals['calls']:.5f} per reply at the configured price"
+        print(line)
     return 0
 
 

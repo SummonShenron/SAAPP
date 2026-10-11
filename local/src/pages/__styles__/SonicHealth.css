@@ -257,3 +257,35 @@
     font-size: 0.78rem;
   }
 }
+
+/* Usage budget bars */
+.sh-budget-row {
+  margin: 0.75rem 0;
+}
+
+.sh-budget-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.85rem;
+  color: #94a3b8;
+  margin-bottom: 0.3rem;
+}
+
+.sh-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.22);
+  overflow: hidden;
+}
+
+.sh-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+.sh-bar-ok { background: #22c55e; }
+.sh-bar-notice { background: #f59e0b; }
+.sh-bar-throttled { background: #f97316; }
+.sh-bar-blocked { background: #ef4444; }
