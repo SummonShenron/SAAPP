@@ -183,6 +183,7 @@ async def run_tool_agent(
     engine: Optional[str] = None,
     tool_llm: Any = None,
     repo: bool = False,
+    history: Optional[List[Any]] = None,
 ) -> Observation:
     """One real pass of the tool agent with `llm`, in a world where nothing outward is real. Returns what it chose and did.
 
@@ -191,7 +192,8 @@ async def run_tool_agent(
     observation records the model calls and tokens the run used.
 
     `repo=True` puts the fixture repository (fixture_repo.py) behind the repo tools: the local checkout, code search, commits and pull
-    requests all answer from it, so the agent investigates a repository whose true answers are known."""
+    requests all answer from it, so the agent investigates a repository whose true answers are known. `history` is the earlier messages of
+    the conversation (the question follows them), for measuring what a long thread does to the prompt."""
     from backend.services import agent_workflow as aw
     from backend.services import ops_incidents as ops
     from backend.utils import llm_usage
@@ -275,7 +277,7 @@ async def run_tool_agent(
                 stack.enter_context(patch.object(aw.lite_llm, "ainvoke_tools", tool_llm.ainvoke_tools, create=True))
                 stack.enter_context(patch.object(aw.lite_llm_deep, "ainvoke_tools", tool_llm.ainvoke_tools, create=True))
         result = await aw.tool_agent_node(
-            {"username": "eval-user", "messages": [HumanMessage(content=question)], "documents": []}
+            {"username": "eval-user", "messages": [*(history or []), HumanMessage(content=question)], "documents": []}
         )
     observation.answer = str(result.get("content_to_format") or "")
     if engine != "native":

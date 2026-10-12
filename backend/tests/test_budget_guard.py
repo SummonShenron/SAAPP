@@ -82,13 +82,35 @@ def test_with_several_budgets_the_one_furthest_along_decides():
     assert [d["scope"] for d in state["detail"]] == ["day", "month"]
 
 
-def test_a_daily_budget_resets_at_the_next_utc_midnight_and_a_monthly_one_on_the_first():
+def test_a_daily_budget_resets_at_the_next_pacific_midnight_and_a_monthly_one_on_the_first():
     day = bg.evaluate({"day_tokens": 120}, {"day_tokens": 100.0}, NOW)
-    assert day["resets_at"] == "2026-10-11T00:00:00+00:00"
+    assert day["resets_at"] == "2026-10-11T00:00:00-07:00"  # Google's day turns over at midnight Pacific (PDT in October)
     month = bg.evaluate({"month_tokens": 120}, {"month_tokens": 100.0}, NOW)
-    assert month["resets_at"] == "2026-11-01T00:00:00+00:00"
+    assert month["resets_at"] == "2026-11-01T00:00:00-07:00"
     december = bg.evaluate({"month_tokens": 120}, {"month_tokens": 100.0}, datetime(2026, 12, 20, 9, tzinfo=timezone.utc))
-    assert december["resets_at"] == "2027-01-01T00:00:00+00:00"
+    assert december["resets_at"] == "2027-01-01T00:00:00-08:00"  # PST in winter
+
+
+def test_the_budget_follows_the_billing_zone_when_it_is_overridden(monkeypatch):
+    monkeypatch.setenv("LLM_BILLING_TIMEZONE", "UTC")
+    assert bg.evaluate({"day_tokens": 120}, {"day_tokens": 100.0}, NOW)["resets_at"] == "2026-10-11T00:00:00+00:00"
+
+
+def test_todays_spend_is_todays_in_the_billing_zone_not_in_utc():
+    # 00:05 UTC on the 12th is still the 11th in Pacific time: rows keyed 2026-10-11 are today's, rows keyed 2026-10-12 are not yet.
+    moment = datetime(2026, 10, 12, 0, 5, tzinfo=timezone.utc)
+    rows = [
+        {"day": "2026-10-11", "model": "m", "label": "x", "calls": 1, "input": 100, "output": 0, "reasoning": 0, "cached": 0},
+        {"day": "2026-10-12", "model": "m", "label": "x", "calls": 1, "input": 7, "output": 0, "reasoning": 0, "cached": 0},
+    ]
+    totals = bg.spent(rows, moment, {})
+    assert totals["day_tokens"] == 100 and totals["month_tokens"] == 107
+
+
+def test_the_already_spent_offset_belongs_to_the_billing_month_not_the_utc_one(monkeypatch):
+    monkeypatch.setenv("LLM_BUDGET_MONTH_ALREADY_USD", "2026-10:50.02")
+    assert bg.month_already_spent(datetime(2026, 11, 1, 3, 0, tzinfo=timezone.utc)) == 50.02  # still October in Pacific time
+    assert bg.month_already_spent(datetime(2026, 11, 1, 8, 0, tzinfo=timezone.utc)) == 0.0   # now November there
 
 
 def test_low_power_lists_what_is_paused_and_the_other_steps_pause_nothing():

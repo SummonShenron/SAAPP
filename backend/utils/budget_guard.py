@@ -33,8 +33,8 @@ HOW IT BEHAVES
 - NO MODEL IS INVOLVED and nothing here is stored: it reads the meter's saved rows (cached 45 seconds) plus what is still in memory.
 - WHAT PEOPLE SEE depends on who they are. Everyone sees low-power and paused messages (they explain a change in behaviour); only an
   admin sees amounts and percentages.
-- Days and months are UTC. Google's cap resets on the first of the month Pacific time, a few hours later, so keep the budget a little
-  under the cap and it never matters.
+- Days and months are Google's: Pacific time (backend/utils/billing_time.py; LLM_BILLING_TIMEZONE changes it), so "today" and "this month"
+  turn over when they do on Google's Spend page and when its quota resets. Still keep the budget a little under the cap.
 """
 import logging
 import os
@@ -42,7 +42,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from backend.utils import llm_usage
+from backend.utils import billing_time, llm_usage
 
 logger = logging.getLogger("SASS Logger")
 
@@ -96,7 +96,7 @@ def month_already_spent(now: datetime) -> float:
     total = 0.0
     for part in os.getenv("LLM_BUDGET_MONTH_ALREADY_USD", "").split(","):
         month, _, amount = part.strip().partition(":")
-        if month == now.strftime("%Y-%m"):
+        if month == billing_time.month(now):
             try:
                 total += max(float(amount), 0.0)
             except ValueError:
@@ -117,7 +117,7 @@ def thresholds() -> Tuple[float, float]:
 # ---------------------------------------------------------------------------------------------------------------
 
 def _month_start(now: datetime) -> str:
-    return now.date().replace(day=1).isoformat()
+    return billing_time.month_start(now)
 
 
 def _saved_rows(db: Any, now: datetime) -> List[Dict[str, Any]]:
@@ -136,7 +136,7 @@ def _buffered_rows() -> List[Dict[str, Any]]:
 
 def spent(rows: List[Dict[str, Any]], now: datetime, prices: Dict[str, Dict[str, float]]) -> Dict[str, Any]:
     """Tokens and (for priced models) dollars used today and this month. Pure. `unpriced_tokens` is what the dollar figure leaves out."""
-    today = now.date().isoformat()
+    today = billing_time.day(now)
     totals = {"day_tokens": 0, "month_tokens": 0, "day_usd": 0.0, "month_usd": 0.0, "unpriced_tokens": 0}
     for row in rows:
         counts = {field: int(row.get(field) or 0) for field in llm_usage.FIELDS}
@@ -158,10 +158,7 @@ def spent(rows: List[Dict[str, Any]], now: datetime, prices: Dict[str, Dict[str,
 # ---------------------------------------------------------------------------------------------------------------
 
 def _next_reset(scope: str, now: datetime) -> datetime:
-    if scope == "day":
-        return (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    first = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    return (first + timedelta(days=32)).replace(day=1)
+    return billing_time.next_day_start(now) if scope == "day" else billing_time.next_month_start(now)
 
 
 def evaluate(totals: Dict[str, Any], limits: Dict[str, float], now: datetime) -> Dict[str, Any]:
@@ -246,7 +243,7 @@ def blocked_reply(resets_at: Optional[str], crisis: bool = False) -> str:
             "I'm so sorry: I can't give you a proper answer right now, and I know this is the worst possible moment for that. "
             "Please don't wait on me." + CRISIS_RESOURCE_LINE + " I'd rather you had a person with you in the meantime."
         )
-    when = f" until {resets_at[:10]} (UTC)" if resets_at else " for now"
+    when = f" until {resets_at[:10]} ({billing_time.label()})" if resets_at else " for now"
     return (
         f"I've reached my usage limit and I'm paused{when}. That's a limit on my side, not something you did, "
         "and nothing you sent was lost. Please try again after it resets."

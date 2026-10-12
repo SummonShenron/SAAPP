@@ -27,7 +27,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from backend.utils import llm_turns
+from backend.utils import billing_time, llm_turns
 
 logger = logging.getLogger("SASS Logger")
 
@@ -129,7 +129,7 @@ def caller_label() -> str:
 # ---------------------------------------------------------------------------------------------------------------
 
 def _today() -> str:
-    return datetime.now(timezone.utc).date().isoformat()
+    return billing_time.day()  # Google's day (Pacific), so "today" here is "today" on its Spend page
 
 
 def record(model: str, label: str, usage: Dict[str, int], day: Optional[str] = None) -> None:
@@ -269,7 +269,7 @@ def flush_in_background() -> None:
 def fetch_usage_docs(db: Any, days: int, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     """The saved rows for the last `days` days, today included. Blocking."""
     moment = now or datetime.now(timezone.utc)
-    first = (moment - timedelta(days=max(days, 1) - 1)).date().isoformat()
+    first = billing_time.days_back(moment, days)
     try:
         return list(db[COLLECTION].find({"day": {"$gte": first}}, {"_id": 0}))
     except Exception:
@@ -280,7 +280,7 @@ def fetch_usage_docs(db: Any, days: int, now: Optional[datetime] = None) -> List
 def fetch_route_docs(db: Any, days: int, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     """Saved "answered by a different model" rows for the last `days` days. Blocking; never raises."""
     moment = now or datetime.now(timezone.utc)
-    first = (moment - timedelta(days=max(days, 1) - 1)).date().isoformat()
+    first = billing_time.days_back(moment, days)
     try:
         return list(db[ROUTES_COLLECTION].find({"day": {"$gte": first}}, {"_id": 0}))
     except Exception:

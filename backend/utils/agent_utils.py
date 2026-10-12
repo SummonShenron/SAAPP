@@ -2,6 +2,7 @@ import ast
 import difflib
 import json
 import logging
+import os
 import re
 from datetime import datetime
 
@@ -538,6 +539,40 @@ def _format_attempts_steps(attempts: list) -> str:
         f"**Step {i} — {a['purpose']}:**\n```\n{a['action_desc']}\n```\n"
         f"**Result:**\n```\n{_format_observation_for_footer(a['observation'])}\n```"
         for i, a in enumerate(attempts, 1)
+    )
+
+
+# --- earlier messages as they go into a prompt ---
+
+# A past answer can be long, and a tool turn's answer used to end with a transcript of every tool call and its raw result (see
+# _format_attempts_steps above). Put into every later prompt unshortened, one such message was thousands of tokens, re-sent on EVERY step of
+# every later tool turn. The transcript says nothing the answer above it doesn't, so it is dropped, and what is left is capped.
+HISTORY_MESSAGE_MAX_CHARS = int(os.getenv("HISTORY_MESSAGE_MAX_CHARS", "1500"))
+HISTORY_LAST_MESSAGE_MAX_CHARS = int(os.getenv("HISTORY_LAST_MESSAGE_MAX_CHARS", "4000"))  # the one just before the new request keeps more room
+_STEP_RECEIPT_RE = re.compile(r"\n\s*\*\*Step 1\b")
+_SHORTENED_MARK = "\n[... shortened ...]\n"
+
+
+def compact_history_message(content, limit: int) -> str:
+    """One earlier message for a prompt: without the tool-call transcript an answer ends with, and, if still longer than `limit`
+    characters, its start and its end with a mark between (the end is where an answer's conclusion and any question to the user are)."""
+    text = _STEP_RECEIPT_RE.split(str(content or ""), maxsplit=1)[0].strip()
+    if limit <= 0 or len(text) <= limit:
+        return text
+    head = int(limit * 0.7)
+    tail = max(limit - head - len(_SHORTENED_MARK), 0)
+    return text[:head].rstrip() + _SHORTENED_MARK + (text[-tail:].lstrip() if tail else "")
+
+
+def format_history(messages, *, limit=None, last_limit=None) -> str:
+    """Earlier messages as "type: content" lines, each compacted (see compact_history_message). The final message in the list, the one
+    nearest the new request, is allowed `last_limit` characters. Empty string for no messages."""
+    limit = HISTORY_MESSAGE_MAX_CHARS if limit is None else limit
+    last_limit = HISTORY_LAST_MESSAGE_MAX_CHARS if last_limit is None else last_limit
+    items = list(messages or [])
+    return "\n".join(
+        f"{getattr(m, 'type', 'user')}: {compact_history_message(getattr(m, 'content', ''), last_limit if i == len(items) - 1 else limit)}"
+        for i, m in enumerate(items)
     )
 
 

@@ -97,7 +97,7 @@ from backend.utils.agent_utils import (
     _ARCH_MAP_PY_EXTENSION, _ARCH_MAP_JS_EXTENSIONS, _JS_IMPORT_RE,
     _extract_python_imports, _extract_js_imports, _is_internal_python_import,
     _import_scope_key, _repo_top_level_segments, _build_architecture_map,
-    resolve_recent_mention, safe_emit_event,
+    resolve_recent_mention, safe_emit_event, format_history,
 )
 from backend.services.react_loop import run_react_loop, _MAX_BATCH_SIZE
 from backend.services import steering
@@ -843,7 +843,7 @@ async def reasoner_node(state: GraphState) -> GraphState:
         history = state.get("messages", [])[-REASONER_HISTORY_MAX_MESSAGES:]
 
         # Format message history into a clean string for the LLM
-        formatted_history = "\n".join([f"{getattr(m, 'type', 'user')}: {getattr(m, 'content', '')}" for m in history[:-1]])
+        formatted_history = format_history(history[:-1])
 
         formatted_prompt = REASONER_PROMPT.format(
             history=formatted_history,
@@ -1661,9 +1661,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
         # what a short reply like "yes"/"go ahead" is actually confirming, often lives a few
         # turns back — {question} alone (just this turn's message) can't recover that.
         prior_messages = state.get("messages", [])[:-1][-TOOL_AGENT_HISTORY_MAX_MESSAGES:]
-        formatted_history = "\n".join(
-            f"{getattr(m, 'type', 'user')}: {getattr(m, 'content', '')}" for m in prior_messages
-        ) or "(no prior messages this conversation)"
+        formatted_history = format_history(prior_messages) or "(no prior messages this conversation)"
 
         # Resuming a paused clarification: state["paused_clarification"] (real checkpointed
         # state — the one field reset_transient_state deliberately leaves alone) carries the

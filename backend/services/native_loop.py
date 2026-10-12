@@ -41,6 +41,15 @@ logger = logging.getLogger("SASS Logger")
 MAX_STEPS = int(os.getenv("TOOL_AGENT_NATIVE_MAX_STEPS", "8"))
 MAX_REPEATS = 3
 MAX_OBSERVATION_CHARS = 6000
+# OLDER RESULTS ARE SHORTENED. Every step re-sends the whole conversation, so a big result (a file read is up to 6,000 characters) is paid
+# for again on every later step. The model has long since used it by then: it read the file, noted what mattered and moved on. So a
+# result stays in full for the next KEEP_RECENT_STEPS steps and after that is cut to its first MASKED_HEAD_CHARS characters, with a plain
+# note saying so. Small results (under MASK_MIN_CHARS) and errors are never touched. If the model does need an older one again it can
+# call the tool again: such a repeat is allowed (up to MAX_REREADS a turn) instead of being refused as "already made".
+KEEP_RECENT_STEPS = max(int(os.getenv("TOOL_AGENT_NATIVE_KEEP_STEPS", "2")), 1)
+MASK_MIN_CHARS = 1200
+MASKED_HEAD_CHARS = 350
+MAX_REREADS = 3
 
 SYSTEM_PROMPT = """You are Sonic Assistant's research agent. You answer by calling tools and reading their real results.
 
@@ -96,6 +105,14 @@ def _clip(text: str) -> str:
     return text[:MAX_OBSERVATION_CHARS] + f"\n... [truncated: {len(text) - MAX_OBSERVATION_CHARS} more characters; ask for a narrower slice if you need them]"
 
 
+def shorten_old_result(text: str) -> Optional[str]:
+    """What an older tool result becomes, or None when it should stay as it is (short, or an error)."""
+    if len(text) < MASK_MIN_CHARS or text.startswith("ERROR"):
+        return None
+    omitted = len(text) - MASKED_HEAD_CHARS
+    return text[:MASKED_HEAD_CHARS].rstrip() + f"\n[older result shortened: {omitted} more characters not shown. Call the tool again if you need them.]"
+
+
 def _describe(name: str, args: Dict[str, Any]) -> str:
     shown = ", ".join(f"{key}={str(value)[:80]}" for key, value in args.items())
     return f"{name}({shown})"
@@ -143,6 +160,9 @@ async def run(
     messages: List[Any] = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=build_context(question, history, time_line, coding_preferences, architecture_map))]
     attempts: List[Dict[str, str]] = []
     seen: Dict[str, int] = {}
+    held: List[Dict[str, Any]] = []  # each tool result in the conversation: its message, the step it came from, its call and the full text
+    shortened_keys: set = set()
+    rereads = 0
     steering_notes: List[str] = []
     steering_used = 0
     repeats = 0
@@ -171,14 +191,28 @@ async def run(
                 logger.exception("[native_loop] on_steering_applied callback failed.")
         return True
 
+    def shorten_old_results(current_step: int) -> None:
+        """Before the model decides on `current_step`: cuts down every result older than the last KEEP_RECENT_STEPS steps."""
+        for item in held:
+            if item["done"] or current_step - item["step"] <= KEEP_RECENT_STEPS:
+                continue
+            item["done"] = True
+            shortened = shorten_old_result(item["text"])
+            if shortened is not None:
+                item["message"].content = shortened
+                shortened_keys.add(item["key"])
+
     async def run_call(step: int, call: Dict[str, Any]) -> str:
-        nonlocal repeats
+        nonlocal repeats, rereads
         name = str(call.get("name") or "")
         args = call.get("args") if isinstance(call.get("args"), dict) else {}
         if name not in offered:
             return f"ERROR: '{name}' is not an available tool. Available tools: {', '.join(sorted(offered))}."
         key = f"{name}|{json.dumps(args, sort_keys=True, default=str)}"
-        if key in seen:
+        if key in seen and key in shortened_keys and rereads < MAX_REREADS:
+            rereads += 1  # its earlier result was shortened to save tokens, so asking again is reasonable, not a repeat
+            shortened_keys.discard(key)
+        elif key in seen:
             repeats += 1
             return f"NOTE: you already made this exact call in step {seen[key]}; its result is in the conversation above. Use it, or try something different."
         seen[key] = step
@@ -197,6 +231,7 @@ async def run(
     while step < budget:
         step += 1
         await absorb_steering(step)  # before the model decides, so a steer that is already here can widen the budget
+        shorten_old_results(step)
         reply = await llm.ainvoke_tools(messages, tools)
         if await absorb_steering(step):
             # The user redirected the work while this was being decided. Drop it rather than act on, or conclude from, a plan they
@@ -212,13 +247,17 @@ async def run(
         for index, (call, result) in enumerate(zip(calls, results)):
             args = call.get("args") if isinstance(call.get("args"), dict) else {}
             attempts.append({"purpose": f"Run {call.get('name')}", "action_desc": _describe(str(call.get("name")), args), "observation": result})
-            messages.append(ToolMessage(content=_clip(result), tool_call_id=str(call.get("id") or f"call_{step}_{index}"), name=str(call.get("name"))))
+            clipped = _clip(result)
+            message = ToolMessage(content=clipped, tool_call_id=str(call.get("id") or f"call_{step}_{index}"), name=str(call.get("name")))
+            messages.append(message)
+            held.append({"message": message, "step": step, "text": clipped, "done": False, "key": f"{call.get('name')}|{json.dumps(args, sort_keys=True, default=str)}"})
         if repeats >= MAX_REPEATS:
             break
 
     if final_text is None:
         forced = True
         await absorb_steering(step)
+        shorten_old_results(step + 1)
         messages.append(HumanMessage(content=STEP_LIMIT_NOTICE))
         final_text = _text(getattr(await llm.ainvoke_tools(messages, []), "content", ""))
 

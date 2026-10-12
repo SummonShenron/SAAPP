@@ -21,6 +21,8 @@ from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
+from backend.utils import billing_time
+
 logger = logging.getLogger("SASS Logger")
 
 COLLECTION = "llm_turns_daily"
@@ -64,7 +66,7 @@ def _count(value: Any) -> int:
 
 
 def _today() -> str:
-    return datetime.now(timezone.utc).date().isoformat()
+    return billing_time.day()
 
 
 def begin() -> Turn:
@@ -224,7 +226,7 @@ def flush(db: Any = None) -> int:
 def fetch_turn_docs(db: Any, days: int, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     """The saved day rows for the last `days` days, today included. Blocking; never raises."""
     moment = now or datetime.now(timezone.utc)
-    first = (moment - timedelta(days=max(days, 1) - 1)).date().isoformat()
+    first = billing_time.days_back(moment, days)
     try:
         return list(db[COLLECTION].find({"day": {"$gte": first}}, {"_id": 0}))
     except Exception:
