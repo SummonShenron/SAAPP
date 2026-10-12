@@ -8,7 +8,8 @@ the model real function declarations instead. Two decisions keep this from dupli
   exact tokens, use find_file for a colloquial name"). That text becomes the function's description, so the two engines can't drift
   apart and nothing is offered that the menu would not have offered.
 - ONLY THE READ-ONLY SUBSET HAS A SCHEMA HERE. A tool with no entry in REGISTRY is simply not offered natively: the writes, the browser,
-  the folder edits and the approval flows stay with the old engine, which keeps all of that machinery.
+  MongoDB, the test runs, the folder edits and the approval flows stay with the old engine, which keeps all of that machinery. A turn that
+  points at one of those is routed to the old engine (native_loop.eligible), never run here without the tool.
 
 Argument names must match what tool_agent_node's dispatcher (`_act`) reads, because the native engine calls the same dispatcher.
 """
@@ -60,6 +61,22 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
         "limit": _INTEGER,
     }),
     "check_deploy_status": _object({}),
+    # the current user's own Google account (read-only; the dispatcher resolves their token and checks their granted scopes)
+    "search_gmail": _object({
+        "query": {"type": "string", "description": "real Gmail search syntax, e.g. 'from:someone@example.com' or 'has:attachment subject:report'"},
+        "max_results": {"type": "integer", "description": "default 10"},
+    }, ["query"]),
+    "read_gmail_message": _object({"message_id": {"type": "string", "description": "an id from a search_gmail result"}}, ["message_id"]),
+    "get_gmail_attachment": _object({
+        "message_id": {"type": "string", "description": "an id from a search_gmail result"},
+        "attachment_id": {"type": "string", "description": "an attachment_id from a read_gmail_message result"},
+    }, ["message_id", "attachment_id"]),
+    "search_drive_files": _object({
+        "query": {"type": "string", "description": "a real Google Drive query, e.g. \"name contains 'Report'\" or \"fullText contains 'budget'\""},
+        "max_results": {"type": "integer", "description": "default 10"},
+    }, ["query"]),
+    "read_drive_file": _object({"file_id": {"type": "string", "description": "an id from a search_drive_files result"}}, ["file_id"]),
+    "list_google_calendar_events": _object({"date": {"type": "string", "description": "YYYY-MM-DD; today in the user's timezone if left out"}}),
 }
 
 _MENU_LINE_RE = re.compile(r"^-\s+([a-z_]+)\s+—\s+(.*)$", re.DOTALL)

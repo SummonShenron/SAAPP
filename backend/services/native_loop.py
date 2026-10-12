@@ -80,23 +80,23 @@ def enabled() -> bool:
     return os.getenv("TOOL_AGENT_ENGINE", "react").strip().lower() == "native"
 
 
-# The native engine offers only the read-only subset in native_tools.REGISTRY. Everything else the old engine's menu has (Gmail, Drive,
-# the calendar, MongoDB, the browser, test runs, the draft-and-confirm email/doc/plan flows) simply is not there for the model to call.
+# The native engine offers only the read-only subset in native_tools.REGISTRY. Everything else the old engine's menu has (MongoDB, the
+# browser, test runs, the draft-and-confirm email/doc/plan flows) simply is not there for the model to call.
 # declarations_from_menu drops those silently, so a turn that needed one ran on an engine that could not do it: on 2026-10-12 a request to
 # read Gmail got "the tool isn't wired into my loop" (and then an invented "it's timing out"), with the integration connected and working.
 # So a turn goes native only when nothing in it points at a tool the native engine lacks. Matching too much is harmless (such a turn
 # just uses the old engine, as it always did); matching too little breaks the request, so this errs wide.
+# Reading Gmail, Drive and the calendar IS native now (they only needed definitions: the dispatcher is shared by both engines). What is
+# left is MongoDB, the browser, test runs, and the draft-and-confirm flows (send an email, append to a doc, a multi-file code plan).
 _OLD_ENGINE_ONLY_RE = re.compile(
-    r"\b(?:g-?mail|e-?mails?|inbox|attachments?|"
-    r"(?:google\s+)?drive|google\s+docs?|spreadsheets?|"
-    r"calendar|schedules?|scheduled|meetings?|appointments?|agenda|"
-    r"mongo(?:db)?|pymongo|database|db|"
+    r"\b(?:mongo(?:db)?|pymongo|database|db|"
     r"browser|screenshots?|navigate|click|"
     r"pytest|unit\s+tests?|run\s+(?:the\s+)?(?:tests?|ci)|"
+    r"(?:send|draft|write|compose|reply(?:\s+to)?|forward)\b[^.\n]{0,40}\be-?mails?|"
     r"(?:append|add)\s+(?:this\s+)?to\s+(?:my|the)\s+doc|(?:implementation|code)\s+plan)\b",
     re.IGNORECASE,
 )
-_OLD_ENGINE_ONLY_FLAGS = ("needs_gmail_lookup", "needs_drive_lookup", "needs_calendar_lookup", "needs_send_email")
+_OLD_ENGINE_ONLY_FLAGS = ("needs_send_email",)
 
 
 def needs_old_engine(text: str = "", flags: Optional[Dict[str, Any]] = None) -> bool:
