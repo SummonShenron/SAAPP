@@ -666,9 +666,11 @@ export interface TurnsSummary {
   /** What switched deep mode on: the user's setting, the audit-style wording of the message alone, or both. */
   deep_sources: { setting: number; audit: number; both: number };
   deep_share: number | null;
-  /** Deep turns nobody asked for with the setting: the audit wording alone. */
+  /** Deep turns nobody asked for with the setting (older days only: the audit wording used to switch deep mode on). */
   deep_unasked: number;
   deep_suppressed: number;
+  /** Turns whose wording was audit-style: a wider step budget on the normal model. */
+  audit_wording_turns: number;
   native_turns: number;
   blocked_turns: number;
   error_turns: number;

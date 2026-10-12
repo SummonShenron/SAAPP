@@ -9,9 +9,10 @@ thousands of tokens), the checks after them and the streamed reply. This module 
   by `asyncio.to_thread` carry the context with them.
 - WHAT IS KEPT, per day: turns and their calls and tokens; a histogram of calls per turn (1, 2, 3-4, 5-8, 9 or more) and the most any
   one turn made; turns that used the tool agent against turns that did not, with the same sums for each; and deep mode: how many turns it
-  ran on, split by what switched it on (the user's own setting, the audit-style wording, or both), how many it would have run on but the
-  budget guard's low-power mode held back, and the calls and tokens those deep turns used. That split is the point: the setting is opt-in
-  and off by default, the audit wording is not, and it was not known how often the wording fires on its own.
+  ran on (only the user's own opt-in setting runs the stronger model), how many it would have run on but the budget guard's low-power mode
+  held back, and the calls and tokens those deep turns used. Audit-style wording ("scan the repo", "every file") is counted on its own: it
+  gets a wider step budget on the normal model. Until 2026-10-12 that wording ran deep mode too, so older days still carry "audit" and
+  "both" deep turns; the first day it was measured, one such turn cost as much as fifteen ordinary ones.
 - IT NEVER GETS IN THE WAY. Everything is in memory and written in batches with the usage counts (llm_usage.flush calls flush() here),
   and every failure is swallowed.
 """
@@ -31,7 +32,7 @@ SUMS = ("turns", "calls", "input", "output", "reasoning")
 KINDS = ("plain", "tool", "deep")  # a deep turn is also a tool turn; it is kept separately so its cost can be read on its own
 DEEP_SOURCES = ("setting", "audit", "both")
 FIELDS = (
-    *SUMS, *BUCKETS, "blocked_turns", "error_turns", "native_turns", "deep_suppressed_turns",
+    *SUMS, *BUCKETS, "blocked_turns", "error_turns", "native_turns", "deep_suppressed_turns", "audit_wording_turns",
     *(f"{kind}_{name}" for kind in KINDS for name in SUMS),
     *(f"deep_{source}_turns" for source in DEEP_SOURCES),
 )
@@ -53,7 +54,8 @@ class Turn:
         self.tool_agent = False
         self.engine: Optional[str] = None
         self.deep_source: Optional[str] = None  # "setting", "audit" or "both" when deep mode ran
-        self.deep_suppressed = False  # deep mode was asked for (by either) but low-power mode held it back
+        self.deep_suppressed = False  # the deep-thinking setting was on but low-power mode held it back
+        self.audit_wording = False  # the message had audit-style wording ("scan the repo", "every file"): wider step budget, normal model
         self.done = False
         self._lock = threading.Lock()
 
@@ -102,20 +104,21 @@ def note_call(usage: Dict[str, int]) -> None:
 
 
 def note_tool_agent(engine: str, setting: bool, audit: bool, suppressed: bool) -> None:
-    """The tool agent ran this turn, with this engine. `setting` is the user's deep-thinking setting, `audit` is whether the wording of the
-    message is audit-style, and `suppressed` is whether low-power mode held deep mode back. (The chat endpoint already switches the setting
-    off in low-power mode, so "held back" only ever counts turns the audit wording alone would have made deep.) Never raises."""
+    """The tool agent ran this turn, with this engine. `setting` is the user's deep-thinking setting (the only thing that runs the stronger
+    model), `audit` is whether the wording of the message is audit-style (a wider step budget on the normal model; it used to switch deep
+    mode on by itself, which one real turn showed to be the dearest thing the app does), and `suppressed` is whether low-power mode held
+    deep mode back. Never raises."""
     try:
         turn = _current.get()
         if turn is None or turn.done:
             return
         turn.tool_agent = True
         turn.engine = engine
-        wants = bool(setting) or bool(audit)
-        if wants and suppressed:
+        turn.audit_wording = bool(audit)
+        if setting and suppressed:
             turn.deep_suppressed = True
-        elif wants:
-            turn.deep_source = "both" if (setting and audit) else ("setting" if setting else "audit")
+        elif setting:
+            turn.deep_source = "setting"
     except Exception:
         pass
 
@@ -164,6 +167,8 @@ def finish(turn: Optional[Turn], outcome: str = "ok", day: Optional[str] = None)
                 slot[f"deep_{turn.deep_source}_turns"] += 1
             if turn.deep_suppressed:
                 slot["deep_suppressed_turns"] += 1
+            if turn.audit_wording:
+                slot["audit_wording_turns"] += 1
             _pending_max[key] = max(_pending_max.get(key, 0), turn.calls)
     except Exception:
         pass
@@ -273,6 +278,8 @@ def summarize_turns(docs: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
         # Deep turns nobody asked for by setting: the audit wording alone. This is the number that says whether narrowing it would help.
         "deep_unasked": total["deep_audit_turns"],
         "deep_suppressed": total["deep_suppressed_turns"],
+        # Turns whose wording was audit-style (a wider step budget on the normal model). Before 2026-10-12 these ran the deep model too.
+        "audit_wording_turns": total["audit_wording_turns"],
         "native_turns": total["native_turns"],
         "blocked_turns": total["blocked_turns"],
         "error_turns": total["error_turns"],

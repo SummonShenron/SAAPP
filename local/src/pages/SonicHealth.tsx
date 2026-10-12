@@ -503,9 +503,9 @@ const TurnsSection: React.FC<{ turns: TurnsSummary }> = ({ turns }) => {
         The most any one turn made was {turns.max_calls}.
       </div>
       <div className="sh-hint">
-        Deep mode ran on {turns.deep.turns} turn(s){turns.deep_share !== null ? ` (${pct(turns.deep_share)} of all turns)` : ''}: {sources.setting} from your
-        setting, {sources.audit} from the wording of the message alone (words like "scan the repo", "every file", "audit"), {sources.both} from both.
-        {turns.deep_unasked > 0 && ' Those wording-only turns are ones nobody switched on; if they are many, the phrase list is what to narrow.'}
+        Deep mode (the stronger model) ran on {turns.deep.turns} turn(s){turns.deep_share !== null ? ` (${pct(turns.deep_share)} of all turns)` : ''}. Only your own setting runs it now.
+        {turns.audit_wording_turns > 0 && ` ${turns.audit_wording_turns} turn(s) had audit-style wording ("scan the repo", "every file", "audit"): those get a wider step budget on the normal model.`}
+        {(sources.audit > 0 || sources.both > 0) && ` Earlier in this period, ${sources.audit + sources.both} turn(s) were made deep by that wording, before it was changed.`}
         {turns.deep_suppressed > 0 && ` ${turns.deep_suppressed} more were held back by low-power mode.`}
       </div>
       {(turns.native_turns > 0 || turns.blocked_turns > 0 || turns.error_turns > 0) && (

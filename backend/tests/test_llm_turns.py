@@ -105,20 +105,21 @@ def test_plain_tool_and_deep_turns_are_kept_apart_and_a_deep_turn_is_also_a_tool
     assert slot["turns"] == 3 and slot["calls"] == 20
 
 
-@pytest.mark.parametrize("setting,audit,suppressed,source,held", [
-    (True, False, False, "setting", False),
-    (False, True, False, "audit", False),
-    (True, True, False, "both", False),
-    (False, False, False, None, False),
-    (False, True, True, None, True),   # asked for by the wording, held back by low-power mode
+@pytest.mark.parametrize("setting,audit,suppressed,source,held,audit_counted", [
+    (True, False, False, "setting", False, 0),
+    (False, True, False, None, False, 1),   # audit wording alone no longer runs deep mode, but is still counted
+    (True, True, False, "setting", False, 1),
+    (False, False, False, None, False, 0),
+    (True, False, True, None, True, 0),     # the setting was on, held back by low-power mode
 ])
-def test_what_switched_deep_mode_on_is_recorded(setting, audit, suppressed, source, held):
+def test_only_the_users_setting_runs_deep_mode_and_audit_wording_is_counted_on_its_own(setting, audit, suppressed, source, held, audit_counted):
     turn = one_turn(3, tool="react", setting=setting, audit=audit, suppressed=suppressed)
     assert turn.deep_source == source and turn.deep_suppressed is held
     slot = lt.snapshot()[DAY]
-    assert slot["deep_suppressed_turns"] == int(held)
-    for name in lt.DEEP_SOURCES:
-        assert slot[f"deep_{name}_turns"] == int(source == name)
+    assert slot["deep_suppressed_turns"] == int(held) and slot["audit_wording_turns"] == audit_counted
+    assert slot["deep_turns"] == int(source is not None)
+    for name in ("audit", "both"):
+        assert slot[f"deep_{name}_turns"] == 0  # no longer produced; only older days carry them
 
 
 def test_the_engine_is_counted():
@@ -153,7 +154,7 @@ def test_flush_writes_one_increment_per_day_with_the_biggest_turn_as_a_max():
     assert lt.flush(db) == 1
     (name, flt, update), = db.writes
     assert name == lt.COLLECTION and flt == {"day": DAY}
-    assert update["$inc"]["turns"] == 2 and update["$inc"]["deep_audit_turns"] == 1 and update["$max"] == {"max_calls": 7}
+    assert update["$inc"]["turns"] == 2 and update["$inc"]["audit_wording_turns"] == 1 and "deep_audit_turns" not in update["$inc"] and update["$max"] == {"max_calls": 7}
     assert lt.snapshot() == {}  # handed over
 
 
@@ -183,12 +184,13 @@ def test_the_summary_gives_averages_per_kind_the_histogram_and_the_unasked_deep_
     for _ in range(2):
         one_turn(5, tool="react", input=3000, output=100)                       # tool
     one_turn(14, tool="react", setting=True, input=6000, output=200, reasoning=300)
-    one_turn(10, tool="react", audit=True, input=6000, output=200)
+    one_turn(10, tool="react", audit=True, input=6000, output=200)  # audit wording: a tool turn, not a deep one
     out = lt.summarize_turns([{**lt.snapshot()[DAY]}])
     assert out["turns"] == 10 and out["plain"]["turns"] == 6 and out["plain"]["avg_calls"] == 1.0
     assert out["tool"]["turns"] == 4 and out["tool"]["avg_calls"] == (5 + 5 + 14 + 10) / 4
-    assert out["deep"]["turns"] == 2 and out["deep"]["avg_input"] == 6000 * 12 and out["deep"]["avg_calls"] == 12.0
-    assert out["deep_sources"] == {"setting": 1, "audit": 1, "both": 0} and out["deep_unasked"] == 1 and out["deep_share"] == 0.2
+    assert out["deep"]["turns"] == 1 and out["deep"]["avg_input"] == 6000 * 14 and out["deep"]["avg_calls"] == 14.0
+    assert out["deep_sources"] == {"setting": 1, "audit": 0, "both": 0} and out["deep_unasked"] == 0 and out["deep_share"] == 0.1
+    assert out["audit_wording_turns"] == 1
     assert {b["bucket"]: b["turns"] for b in out["histogram"]} == {"c1": 6, "c2": 0, "c3_4": 0, "c5_8": 2, "c9_plus": 2}
     assert out["max_calls"] == 14
 
@@ -248,7 +250,7 @@ def test_the_real_tool_agent_reports_its_engine_and_what_made_it_deep(monkeypatc
     async def model(prompt):
         return final
 
-    for question, expected in (("scan the whole repo and tell me every file that reads GRACE_DAYS", "audit"), ("what does mark_overdue do?", None)):
+    for question, audit in (("scan the whole repo and tell me every file that reads GRACE_DAYS", True), ("what does mark_overdue do?", False)):
         turn = lt.begin()
         asyncio.run(be.run_tool_agent(model, question, repo=True, engine="react"))
-        assert turn.tool_agent and turn.engine == "react" and turn.deep_source == expected, question
+        assert turn.tool_agent and turn.engine == "react" and turn.audit_wording is audit and turn.deep_source is None, question

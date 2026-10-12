@@ -1,0 +1,71 @@
+JACK HARPER
+(515) 777-6990  |  jackharper0517@gmail.com  |  linkedin.com/in/jack-r-harper  |  github.com/SummonShenron  |  sonicassistant.com
+SUMMARY
+AI engineer with enterprise delivery experience. Owned MidAmerican’s Knowledge Assistant in production: my team took it over from an Accenture proof of concept, refactored it from Flask to FastAPI, and I architected its multi-tenant security, scaling it to 10 tenants and cutting time-to-first-token from ~20s to ~4s. Since then I’ve grown into a full-stack agent engineer, known for fast feature turnaround, who designs, ships and operates systems on my own, from a live client platform (BTY Fitness) to LangGraph agents with long-term memory, sandboxed execution, human-in-the-loop safety and security.
+TECHNICAL SKILLS
+•	Languages: Python, TypeScript, JavaScript, C#, PowerShell
+•	AI & Agents: LangGraph, LangChain, ReAct/tool-calling agents, GraphRAG, hybrid retrieval (vector + lexical + RRF), multi-modal ingestion, LLM memory systems, structured outputs, grounding checks, sandboxed code execution; Azure OpenAI/Foundry, Gemini, OpenAI Tools API
+•	Backend & Data: FastAPI, Flask, async/streaming (SSE), REST, MongoDB (incl. Atlas Vector Search), Oracle SQL, Pydantic, data pipelines
+•	Frontend: React, TypeScript, HTML5, CSS3
+•	Cloud & DevOps: Azure (App Service, Function Apps, Storage, Key Vault, Load Testing), AWS (Lambda, S3, IAM), GitHub Actions, Render, Vercel, JMeter
+•	Security & Identity: Entra ID, Clerk, JWT, OAuth 2.0, encrypted secrets, multi-tenant isolation; CompTIA Pentest+
+•	Enterprise Systems: Oracle EPM/EDM, WebCenter Sites, Oracle Content Management, CFML, Tomcat/Nginx, Power Automate/Power Apps
+WORK EXPERIENCE
+Principal Financial Group  —  Software Engineer (Contract)	September 2026 – present
+Backend engineer on cloud-native financial data pipelines and legacy rule-parsing automation.
+•	AWS Lambda pipeline: built a JSON-to-XML transformation with structured logging, retry logic, deterministic cleanup and Pydantic schema validation; 27/27 integration tests passing on real production payloads.
+•	MarkitEDM rule parser: built a Python parser that automated conversion of 500+ legacy business rules into structured JSON, giving the downstream Python transformation a consistent input.
+BTY Fitness  —  Freelance Full-Stack Software Engineer	June 2026 – present
+Sole engineer: architected, deployed and operate a production scheduling and booking platform (btyfitness.app; React, TypeScript, FastAPI, MongoDB) with consistently positive reviews.
+•	Built a custom recurring scheduling engine (slot generation, conflict detection, blackout windows, automated bookings) with transactional email (Resend) and Clerk/JWT role-gated admin APIs.
+•	Embedded an in-house AI assistant with a self-service portal for admins to ingest new knowledge, plus a lightweight CMS so content changes need no code; configured SEO; resolved production CORS, auth and environment issues.
+•	Integrated the platform into errAgent for structured error ingestion, health monitoring and safe agentic diagnostics.
+MidAmerican Energy Company  —  AI Systems Engineer (Systems & Development Analyst II)	September 2022 – June 2026
+Progressed from application support and administration (CFML eForms, Oracle EPM/EDM, WebCenter Sites, .NET) to owning backend and full-stack development of the company’s enterprise AI system, the Knowledge Assistant (Python/FastAPI, React, Azure App Service, Function Apps, Storage, Key Vault).
+•	Owned the system in production: my team took over an Accenture-delivered proof of concept, was responsible for it before it went live, and helped refactor it from Flask to FastAPI, evolving it into a multi-modal RAG/agentic system serving 10 tenant affiliates. Rolled out group by group and expanded to small and large groups after each early success; ran on a ~$1,000/month budget as an alternative to individual M365 licenses for everyone.
+•	Cut average time-to-first-token from ~20s to ~4s by implementing async token streaming and parallelizing retrieval grading and follow-up question generation.
+•	Ran the cost analysis and root-cause investigation behind a month-long ~$30K cost spike: an automated ingestion job was timing out and retrying every cycle on very large Excel files. Traced it to a fix missing from QA and resolved it.
+•	Known for rapid turnaround on feature work, regularly taking a new feature from request to working locally within a day.
+•	Designed and architected the application’s security end to end: multi-tenant data isolation using Entra ID group membership and document/chunk tagging, plus sensitivity-level tagging for finer access control inside each knowledge base.
+•	Hardened its security and packaged it as an embeddable iframe widget (.sppkg), deployed on the Cyber Security Office SharePoint site with its own dedicated knowledge base.
+•	Built hybrid retrieval (vector, lexical, RRF) with multi-modal image search and inline rendering; ingestion pipelines watching SharePoint and OneNote that trigger Azure Function reindexing; and a self-service admin portal so knowledge-base owners can upload, manage and reindex content without a developer.
+•	Created JMeter load-testing suites integrated with Azure Load Testing; administered Azure infrastructure, Key Vault and AI cost management; shipped user-facing features (document attachments, saved answers, custom dark mode) and an agentic content review that corrects text to company grammar and formatting policy.
+•	Also: administered Tomcat behind Nginx; built canvas and model-driven Power Apps with Power Automate and SQL; developed and administered Oracle EPM/EDM, WebCenter Sites and Content Management; maintained CFML eForms.
+Life Care Services  —  IAM Analyst (Contractor through the Palmer Group)	December 2021 – June 2022
+•	Managed identity and access provisioning and deprovisioning across enterprise applications and network systems; administered users, groups and permissions in AD, M365 and internal and external web applications.
+•	Automated IAM tasks with PowerShell (CSV-driven account creation, mailbox permissions, distribution lists); performed SOC audit tasks and ensured compliance with security policy.
+Hy-Vee (HST)  —  POS Support Specialist	September 2020 – December 2021
+•	Supported POS systems, peripherals and networked devices: diagnosed software crashes, connectivity issues and hardware failures across registers and workstations.
+•	Performed remote software installs, workstation imaging and AD-based account and permission management; supported COVID-19 testing-site deployments.
+PROJECTS
+Designed, built and operated entirely on my own, extending what I shipped at MidAmerican.
+SAAPP (Sonic Assistant): full-stack agentic GraphRAG system
+Python, FastAPI, React, LangGraph, MongoDB, Vercel, Render  |  sonicassistant.com  |  github.com/SummonShenron/SAAPP
+•	v1: architected a multi-modal agentic GraphRAG system designed to improve on the Knowledge Assistant: a multi-node LangGraph workflow with ReAct loops, retrieval grading, query rewriting, fallback routing and chained tool calls, with vector/lexical/RRF retrieval chosen per query.
+•	2.0, built around long-term memory: a three-layer architecture (ephemeral, structured persistent, semantic) with a two-tier compaction engine (clustering, LLM summarization, fact extraction, insert-then-delete safety), giving the assistant continuity and a stable identity across sessions for each individual user.
+•	Since 2.0, emotional intelligence: reads the user’s emotional state off each message (no extra LLM call) and carries it across topic changes with time and turn decay. An emotional ceiling caps the assistant’s own energy at what the user has actually shown until they recover, unless it judges a lift will genuinely help, so it stays steady instead of snapping back to upbeat. Tuned and measured against the live model.
+•	Since 2.0, agent behavior: mid-run steering to redirect the agent while it works, an autonomous goal-tracking engine, and a self-verifying CI loop that runs local tests against its own patches.
+•	Built a tool-using agent: GitHub code search and repo reads, concurrent batched tool actions, a WASI-sandboxed Python executor, a headless-browser tool and an SSRF-guarded URL reader, Google Calendar/Gmail/Drive/Docs integrations, and a connected-local-folder mode that proposes file edits the user approves before anything is applied.
+•	Engineered anti-fabrication safeguards: grounding checks that reject answers asserting diffs or tool results the agent never retrieved, retry-nudge and empty-observation detection, and a deep-thinking mode with extended iteration budgets, each added in response to a failure observed in real traces.
+•	Streams over SSE to a React UI with a self-service ingestion tab and append-only paged conversation storage. Secured for multiple users with affiliate-based data isolation, Clerk auth and per-user Fernet-encrypted credentials with an audit trail. Backed by a large automated regression suite, a full local dev environment and documentation.
+Circuit: agentic LangGraph workflow automation platform
+Python, FastAPI, LangGraph, React/TypeScript, MongoDB Atlas, Clerk  |  circuitworkflow.com  |  github.com/SummonShenron/Circuit
+•	Built a Power-Automate-style visual platform where every workflow compiles to a LangGraph state graph: 30+ typed, Pydantic-validated block kinds with per-node retry/backoff, preflight validation and a full per-node execution trace. LLM reasoning is a control-flow primitive (LLM-classified routing, in-graph MongoDB Atlas Vector Search RAG).
+•	Built a Workflow Copilot agent that designs workflows on request: it classifies intent, authors graph patches as structured JSON, validates every patch against the live schema before showing it, and runs a deterministic graph-health analysis independent of the LLM. An errAgent bridge lets a workflow hand its graph and trace to an external debugging agent.
+•	Engineered multi-tenant infrastructure: Clerk JWT auth, Fernet-encrypted OAuth and secrets scoped per owner, an allowlisted outbound gateway, an async scheduler (cron, signed external-event and Drive folder-watch triggers) and 20+ connector blocks (Google Workspace, GitHub, RSS/webhooks, CSV).
+•	Built a React Flow editor for non-linear graphs with live template-variable validation, an AI suggest assist limited to variables actually reachable in that workflow, run history with full traces and five state-validated in-product tutorials.
+errAgent: autonomous incident response and DevOps automation platform
+Python, FastAPI, React, MongoDB, GitHub and Render APIs, Clerk, Gemini  |  erragent.com  |  github.com/SummonShenron/errAgent
+•	Built ingestion adapters (logs, machine payloads, Vercel, Render) with fingerprint-based deduplication and metadata normalization; integrated Gemini for root-cause analysis, patch generation and remediation drafting, guarded by deterministic validators for patch safety, file scope and snippet uniqueness.
+•	Designed a human-in-the-loop approval system for hotfix commits, branches and PR drafts: changes are sandbox-applied and validated first, and nothing reaches main without operator approval. Added LLM-generated pytest files with syntax and assertion checks, and CI orchestration through GitHub Actions with merge gating.
+•	Built deterministic multi-step investigation and synthetic-testing workflows (reusable HTTP flows for signup, login and contact forms with assertions and captured values), health checks, latency sampling and environment-aware diagnostics for BTY Fitness and SAAPP, with no app-specific code needed to onboard a new application.
+•	Estimated impact: incident triage from hours to minutes; unsafe hotfix merges prevented by automated test gating; one operator console for diagnostics, remediation and CI. Embedded in the BTY Fitness site, giving it real commercial use.
+Personal Agent (PAAPP)
+Python, FastAPI, LangChain, OpenAI Tools API, Google Calendar API, OAuth 2.0  |  github.com/SummonShenron/PAAPP
+•	Built a local personal agent that classifies intent and runs calendar actions through OpenAI tool calling, with a structured tool manifest and a multi-step loop (intent classification, tool execution, follow-up response).
+•	Integrated the Google Calendar API with OAuth 2.0, token caching and refresh handling; added SSE token streaming, persistent chat history, user authentication and a modular backend for future tools.
+EDUCATION & CERTIFICATIONS
+CompTIA Pentest+, September 2021   |   A.A.S. Cybersecurity, Des Moines Area Community College, May 2021   |   National Cyber League competition, Spring 2021   |   A.A. Liberal Arts, December 2018
+VOLUNTEER / COMMUNITY ACTIVITIES
+Reformed State of Mind	2016 – 2017
+Founded an organization that organized peaceful marches supporting healthcare and social causes; designed its logo and ran its social media and live video; developed public speaking through speeches at protests and talks to high-school students.

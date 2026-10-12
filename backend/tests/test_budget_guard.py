@@ -256,11 +256,18 @@ def test_in_low_power_mode_deep_thinking_is_off_whatever_was_asked_and_the_steps
     assert agent_calls[0]["llm"] is aw.lite_llm and agent_calls[0]["max_iterations"] == bg.THROTTLED_TOOL_STEPS
 
 
-def test_an_audit_style_message_does_not_switch_deep_mode_back_on_in_low_power_mode(agent_calls):
+def test_audit_style_wording_gets_the_wide_step_budget_on_the_cheap_model_never_the_stronger_one(agent_calls):
     tool_turn("audit every file across the whole repo", False, bg.OK)
-    assert agent_calls[0]["llm"] is aw.lite_llm_deep   # without the guard that wording turns deep mode on by itself
+    assert agent_calls[0]["llm"] is aw.lite_llm                                              # not the dearer model
+    assert agent_calls[0]["max_iterations"] == aw.TOOL_AGENT_MAX_ITERATIONS_DEEP             # but the room an audit needs
+    assert agent_calls[0]["max_retry_nudges"] == aw.TOOL_AGENT_MAX_RETRY_NUDGES_DEEP
+    tool_turn("audit every file across the whole repo", True, bg.OK)                        # the user's own setting still gets it
+    assert agent_calls[1]["llm"] is aw.lite_llm_deep
+
+
+def test_audit_style_wording_does_not_widen_the_budget_back_in_low_power_mode(agent_calls):
     tool_turn("audit every file across the whole repo", False, bg.THROTTLED)
-    assert agent_calls[1]["llm"] is aw.lite_llm and agent_calls[1]["max_iterations"] == bg.THROTTLED_TOOL_STEPS
+    assert agent_calls[0]["llm"] is aw.lite_llm and agent_calls[0]["max_iterations"] == bg.THROTTLED_TOOL_STEPS
 
 
 def test_an_ordinary_turn_with_no_budget_is_unchanged(agent_calls):

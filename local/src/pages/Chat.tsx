@@ -2250,7 +2250,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                         boxShadow: isEmbedded
                           ? "0 10px 25px -5px rgba(0, 0, 0, 0.7), 0 0 12px rgba(0, 242, 254, 0.15)"
                           : "0 10px 25px -5px rgba(0, 0, 0, 0.5)",
-                        zIndex: 100,
+                        zIndex: 900,
                         padding: "6px",
                       }}
                     >

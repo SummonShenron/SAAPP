@@ -2897,7 +2897,13 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
         is_audit_task = _is_audit_style_task(latest_message_content)
         # In low-power mode (the usage budget guard) deep mode is off however it was asked for, and the step cap is lower.
         budget_state = {"level": state.get("budget_level")}
-        deep_thinking = (bool(state.get("deep_thinking")) or is_audit_task) and not budget_guard.low_power(budget_state)
+        low_power = budget_guard.low_power(budget_state)
+        # Only the user's own deep-thinking setting chooses the stronger, dearer model. Audit-style wording ("scan the repo", "every file")
+        # still gets the wider step budget, the architecture map and the search nudge, but stays on the cheap model: one real turn that
+        # was switched to the stronger model by that wording alone made 10 calls and used ~195K input tokens (about $0.17 on 3.6 Flash,
+        # as much as 15 ordinary turns), and that model got no prompt-cache discount inside a tool loop.
+        deep_thinking = bool(state.get("deep_thinking")) and not low_power
+        wide_budget = (bool(state.get("deep_thinking")) or is_audit_task) and not low_power
 
         architecture_map = ""
         if is_audit_task:
@@ -2942,11 +2948,21 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
         # The native tool-calling engine (backend/services/native_loop.py): a measured spike behind TOOL_AGENT_ENGINE=native. It runs only
         # when this turn needs nothing but the read-only tools it can offer; everything else keeps the ReAct loop.
         native_tools = native_tools_module.declarations_from_menu(menu_lines) if native_loop.enabled() else []
-        use_native = native_loop.eligible(edit_turn=edit_turn, resumed=bool(resumed_attempts), tools=native_tools)
+        # The request and the one thing the person said before it: "yes, do it" after asking about an email is still an email request.
+        # (Only one message back: people discuss "the database" or "email" as code topics all the time, and every match sends the turn
+        # to the dearer old engine.)
+        recent_user_text = "\n".join(
+            [latest_message_content]
+            + [str(getattr(m, "content", "")) for m in [m for m in state.get("messages", [])[:-1] if getattr(m, "type", "") == "human"][-1:]]
+        )
+        use_native = native_loop.eligible(
+            edit_turn=edit_turn, resumed=bool(resumed_attempts), tools=native_tools,
+            text=recent_user_text, flags=state.get("reasoner_flags"),
+        )
         # Counted per turn (backend/utils/llm_turns.py): which engine ran, and what switched deep mode on: the user's setting, the
         # audit-style wording of the message, or both (and whether low-power mode held it back).
         llm_turns.note_tool_agent(
-            "native" if use_native else "react", bool(state.get("deep_thinking")), is_audit_task, budget_guard.low_power(budget_state),
+            "native" if use_native else "react", bool(state.get("deep_thinking")), is_audit_task, low_power,
         )
 
         async def _native_engine(**kwargs):
@@ -2969,11 +2985,11 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     act=_act,
                     is_unsafe=_is_unsafe,
                     max_iterations=budget_guard.tool_steps(
-                        TOOL_AGENT_MAX_ITERATIONS_DEEP if deep_thinking else TOOL_AGENT_MAX_ITERATIONS, budget_state
+                        TOOL_AGENT_MAX_ITERATIONS_DEEP if wide_budget else TOOL_AGENT_MAX_ITERATIONS, budget_state
                     ),
                     node_name="tool_agent_node",
                     initial_attempts=resumed_attempts,
-                    max_retry_nudges=TOOL_AGENT_MAX_RETRY_NUDGES_DEEP if deep_thinking else TOOL_AGENT_MAX_RETRY_NUDGES,
+                    max_retry_nudges=TOOL_AGENT_MAX_RETRY_NUDGES_DEEP if wide_budget else TOOL_AGENT_MAX_RETRY_NUDGES,
                     llm=lite_llm_deep if deep_thinking else lite_llm,
                     stuck_action_redirects=TOOL_AGENT_STUCK_ACTION_REDIRECTS,
                     capability_denial_watchlist=TOOL_AGENT_CAPABILITY_DENIAL_WATCHLIST,
