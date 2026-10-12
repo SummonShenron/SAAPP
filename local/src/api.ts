@@ -671,6 +671,8 @@ export interface TurnsSummary {
   deep_suppressed: number;
   /** Turns whose wording was audit-style: a wider step budget on the normal model. */
   audit_wording_turns: number;
+  /** Why turns went to the tool agent, biggest first: turns that had the reason, and turns that had it as their only reason. */
+  routing: { reason: string; turns: number; alone: number }[];
   native_turns: number;
   blocked_turns: number;
   error_turns: number;

@@ -4,6 +4,7 @@ import re
 from types import SimpleNamespace
 
 import pytest
+from langchain_core.messages import HumanMessage
 
 from backend.utils import llm_turns as lt
 from backend.utils import llm_usage
@@ -221,7 +222,10 @@ def test_fetching_reads_the_saved_days_and_a_broken_database_gives_nothing():
 def test_only_numbers_and_bucket_names_are_ever_kept_never_a_word_a_person_said():
     one_turn(3, tool="react", setting=True)
     saved = json.dumps(lt.snapshot()) + json.dumps(lt.summarize_turns([lt.snapshot()[DAY]]))
-    assert not re.search(r"user|message|question|prompt|text", saved.replace("turns", "").replace("tool", ""), re.IGNORECASE)
+    allowed = ["turns", "tool"] + [f"route_{r}" for r in lt.ROUTE_REASONS] + [f"route_alone_{r}" for r in lt.ROUTE_REASONS] + list(lt.ROUTE_REASONS)
+    for word in sorted(allowed, key=len, reverse=True):
+        saved = saved.replace(word, "")
+    assert not re.search(r"user|message|question|prompt|text", saved, re.IGNORECASE)
     assert all(isinstance(v, int) for v in lt.snapshot()[DAY].values())
 
 
@@ -254,3 +258,84 @@ def test_the_real_tool_agent_reports_its_engine_and_what_made_it_deep(monkeypatc
         turn = lt.begin()
         asyncio.run(be.run_tool_agent(model, question, repo=True, engine="react"))
         assert turn.tool_agent and turn.engine == "react" and turn.audit_wording is audit and turn.deep_source is None, question
+
+
+# ---- why a turn went to the tool agent ---------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("flags,admin,expected", [
+    ({"needs_github_search": True}, False, ["repo_question"]),
+    ({"needs_github_search": True, "follow_up_intent": True}, False, ["follow_up"]),
+    ({"needs_web_search": True}, False, ["web_search"]),
+    ({"needs_code_interpreter": True}, False, ["code_or_data"]),
+    ({"needs_calendar_lookup": True, "needs_gmail_lookup": True, "needs_drive_lookup": True}, False, ["calendar", "gmail", "drive"]),
+    ({}, True, ["admin_ops"]),
+    ({"needs_github_search": True, "needs_web_search": True}, True, ["admin_ops", "repo_question", "web_search"]),
+    ({"needs_conversation": True, "needs_memory_save": True, "follow_up_intent": True}, False, []),
+    (None, False, []),
+])
+def test_the_reasons_a_turn_goes_to_the_tool_agent_come_from_the_routers_flags(flags, admin, expected):
+    assert lt.tool_agent_reasons(flags, admin) == expected
+
+
+def test_reasons_are_counted_per_turn_and_a_turn_with_one_reason_is_also_counted_alone():
+    for reasons in (["repo_question"], ["repo_question"], ["repo_question", "web_search"], ["follow_up"]):
+        turn = lt.begin()
+        calls(turn, 3)
+        lt.note_tool_agent("native", False, False, False)
+        lt.note_route(reasons)
+        lt.finish(turn, "ok", DAY)
+    slot = lt.snapshot()[DAY]
+    assert slot["route_repo_question_turns"] == 3 and slot["route_alone_repo_question_turns"] == 2
+    assert slot["route_web_search_turns"] == 1 and slot["route_alone_web_search_turns"] == 0
+    assert slot["route_follow_up_turns"] == 1 and slot["route_alone_follow_up_turns"] == 1
+
+
+def test_a_reason_noted_twice_in_a_turn_counts_once_and_unknown_names_are_dropped():
+    turn = lt.begin()
+    lt.note_route(["repo_question", "repo_question", "not_a_reason"])
+    lt.note_route(["repo_question"])
+    lt.finish(turn, "ok", DAY)
+    slot = lt.snapshot()[DAY]
+    assert slot["route_repo_question_turns"] == 1 and slot["route_alone_repo_question_turns"] == 1
+    lt.note_route(["gmail"])  # no turn running: nothing happens, nothing raises
+
+
+def test_the_summary_lists_the_reasons_biggest_first_with_how_often_each_stood_alone():
+    docs = [{"turns": 5, "route_repo_question_turns": 4, "route_alone_repo_question_turns": 3, "route_follow_up_turns": 2,
+             "route_alone_follow_up_turns": 2, "route_web_search_turns": 1}]
+    out = lt.summarize_turns(docs)
+    assert out["routing"] == [
+        {"reason": "repo_question", "turns": 4, "alone": 3},
+        {"reason": "follow_up", "turns": 2, "alone": 2},
+        {"reason": "web_search", "turns": 1, "alone": 0},
+    ]
+    assert lt.summarize_turns([])["routing"] == []
+
+
+def test_the_router_notes_why_it_chose_the_tool_agent_for_every_path_into_it(monkeypatch):
+    from backend.services import agent_workflow as aw
+
+    monkeypatch.setattr(aw, "_is_admin_ops_question", lambda state: False)
+    cases = [
+        ("conversational", {"needs_github_search": True}, {"repo_question"}),
+        ("conversational", {"needs_github_search": True, "follow_up_intent": True}, {"follow_up"}),
+        ("conversational", {"needs_web_search": True, "needs_code_interpreter": True}, {"web_search", "code_or_data"}),
+        ("web_search", {}, {"approval_continuation"}),
+        ("resume_tool_agent", {}, {"clarification_resume"}),
+        ("conversational", {"needs_conversation": True}, set()),
+    ]
+    for intent, flags, expected in cases:
+        turn = lt.begin()
+        state = {"reasoner_flags": flags, "messages": [HumanMessage(content="x")]}
+        plan = aw.build_agent_plan(intent, state)
+        assert turn.route_reasons == expected, (intent, flags)
+        assert ("tool_agent" in plan["agents"]) is bool(expected)
+
+
+def test_an_admin_ops_question_is_a_reason_too(monkeypatch):
+    from backend.services import agent_workflow as aw
+
+    monkeypatch.setattr(aw, "_is_admin_ops_question", lambda state: True)
+    turn = lt.begin()
+    aw.build_agent_plan("conversational", {"reasoner_flags": {}, "messages": [HumanMessage(content="x")]})
+    assert turn.route_reasons == {"admin_ops"}

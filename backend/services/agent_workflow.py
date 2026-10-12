@@ -727,6 +727,7 @@ def build_agent_plan(intent: str, state: dict) -> dict:
     # whatever the reasoner's flags guessed for a bare "yes"/"no" reply. Web search is now
     # one of tool_agent_node's actions, not its own destination.
     if intent == "web_search":
+        llm_turns.note_route(["approval_continuation"])
         state["last_intent"] = "tool_agent"
         return {"agents": ["tool_agent", "formatter"], "skip": []}
 
@@ -736,6 +737,7 @@ def build_agent_plan(intent: str, state: dict) -> dict:
     # needs_github_search/needs_code_interpreter flags, so this routes deterministically
     # instead of leaving it to flags that were never about this reply in the first place.
     if intent == "resume_tool_agent":
+        llm_turns.note_route(["clarification_resume"])
         state["last_intent"] = "tool_agent"
         return {"agents": ["tool_agent", "formatter"], "skip": []}
 
@@ -772,12 +774,9 @@ def build_agent_plan(intent: str, state: dict) -> dict:
     # An admin asking about incidents or deploys is routed by code, not by a reasoner flag (a new flag would add prompt
     # tokens to every user's turn for an admin-only feature): see backend/services/ops_incidents.py.
     admin_ops_question = _is_admin_ops_question(state)
-    if (
-        flags.get("needs_web_search") or flags.get("needs_code_interpreter")
-        or flags.get("needs_github_search") or flags.get("needs_calendar_lookup")
-        or flags.get("needs_gmail_lookup") or flags.get("needs_drive_lookup")
-        or admin_ops_question
-    ):
+    route_reasons = llm_turns.tool_agent_reasons(flags, admin_ops_question)
+    if route_reasons:
+        llm_turns.note_route(route_reasons)  # counted per turn: why the dear path was taken (backend/utils/llm_turns.py)
         agents.append("tool_agent")
     if is_pr_request:
         agents.append("pr_summary")

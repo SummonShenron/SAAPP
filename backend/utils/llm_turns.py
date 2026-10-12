@@ -31,10 +31,22 @@ BUCKETS = ("c1", "c2", "c3_4", "c5_8", "c9_plus")
 SUMS = ("turns", "calls", "input", "output", "reasoning")
 KINDS = ("plain", "tool", "deep")  # a deep turn is also a tool turn; it is kept separately so its cost can be read on its own
 DEEP_SOURCES = ("setting", "audit", "both")
+# WHY a turn went to the tool agent (the expensive path: about 8 calls and 59K input tokens against 2 and 9K for plain chat). A turn can have
+# several reasons; each is counted, and a turn with exactly one is also counted as "alone", which is what says which rule is the driver.
+ROUTE_REASONS = (
+    "repo_question",           # the router read it as a question about this project's code or architecture
+    "follow_up",               # a short continuation of an earlier coding task (kept in tool mode on purpose)
+    "web_search", "code_or_data", "calendar", "gmail", "drive",
+    "admin_ops",               # an admin asking about incidents, logs or deploys
+    "approval_continuation",   # answering a pending web-search approval
+    "clarification_resume",    # answering the tool agent's own question
+)
 FIELDS = (
     *SUMS, *BUCKETS, "blocked_turns", "error_turns", "native_turns", "deep_suppressed_turns", "audit_wording_turns",
     *(f"{kind}_{name}" for kind in KINDS for name in SUMS),
     *(f"deep_{source}_turns" for source in DEEP_SOURCES),
+    *(f"route_{reason}_turns" for reason in ROUTE_REASONS),
+    *(f"route_alone_{reason}_turns" for reason in ROUTE_REASONS),
 )
 
 _lock = threading.Lock()
@@ -55,6 +67,7 @@ class Turn:
         self.engine: Optional[str] = None
         self.deep_source: Optional[str] = None  # "setting", "audit" or "both" when deep mode ran
         self.deep_suppressed = False  # the deep-thinking setting was on but low-power mode held it back
+        self.route_reasons: set = set()  # why the turn went to the tool agent (see ROUTE_REASONS)
         self.audit_wording = False  # the message had audit-style wording ("scan the repo", "every file"): wider step budget, normal model
         self.done = False
         self._lock = threading.Lock()
@@ -123,6 +136,38 @@ def note_tool_agent(engine: str, setting: bool, audit: bool, suppressed: bool) -
         pass
 
 
+def tool_agent_reasons(flags: Optional[Dict[str, Any]], admin_ops_question: bool = False) -> List[str]:
+    """The reasons the router's flags (and the admin-ops check) send a turn to the tool agent, in a fixed order. Empty when none do. Pure."""
+    flags = flags or {}
+    reasons: List[str] = []
+    if admin_ops_question:
+        reasons.append("admin_ops")
+    if flags.get("needs_github_search"):
+        reasons.append("follow_up" if flags.get("follow_up_intent") else "repo_question")
+    if flags.get("needs_web_search"):
+        reasons.append("web_search")
+    if flags.get("needs_code_interpreter"):
+        reasons.append("code_or_data")
+    if flags.get("needs_calendar_lookup"):
+        reasons.append("calendar")
+    if flags.get("needs_gmail_lookup"):
+        reasons.append("gmail")
+    if flags.get("needs_drive_lookup"):
+        reasons.append("drive")
+    return reasons
+
+
+def note_route(reasons: Iterable[str]) -> None:
+    """Notes why this turn is going to the tool agent. Names that are not in ROUTE_REASONS are dropped. Never raises."""
+    try:
+        turn = _current.get()
+        if turn is None or turn.done:
+            return
+        turn.route_reasons.update(reason for reason in reasons if reason in ROUTE_REASONS)
+    except Exception:
+        pass
+
+
 def bucket_for(calls: int) -> str:
     if calls <= 1:
         return "c1"
@@ -169,6 +214,10 @@ def finish(turn: Optional[Turn], outcome: str = "ok", day: Optional[str] = None)
                 slot["deep_suppressed_turns"] += 1
             if turn.audit_wording:
                 slot["audit_wording_turns"] += 1
+            for reason in turn.route_reasons:
+                slot[f"route_{reason}_turns"] += 1
+                if len(turn.route_reasons) == 1:
+                    slot[f"route_alone_{reason}_turns"] += 1
             _pending_max[key] = max(_pending_max.get(key, 0), turn.calls)
     except Exception:
         pass
@@ -280,6 +329,12 @@ def summarize_turns(docs: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
         "deep_suppressed": total["deep_suppressed_turns"],
         # Turns whose wording was audit-style (a wider step budget on the normal model). Before 2026-10-12 these ran the deep model too.
         "audit_wording_turns": total["audit_wording_turns"],
+        # Why turns went to the tool agent: per reason, how many turns had it, and how many had it as their only reason.
+        "routing": [
+            {"reason": reason, "turns": total[f"route_{reason}_turns"], "alone": total[f"route_alone_{reason}_turns"]}
+            for reason in sorted(ROUTE_REASONS, key=lambda r: -total[f"route_{r}_turns"])
+            if total[f"route_{reason}_turns"]
+        ],
         "native_turns": total["native_turns"],
         "blocked_turns": total["blocked_turns"],
         "error_turns": total["error_turns"],

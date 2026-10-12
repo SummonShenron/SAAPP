@@ -470,6 +470,19 @@ const BudgetCard: React.FC<{ budget: BudgetView }> = ({ budget }) => {
   );
 };
 
+const TOOL_REASON_LABELS: Record<string, string> = {
+  repo_question: 'a question about the code or architecture',
+  follow_up: 'a short follow-up to a coding task',
+  web_search: 'web search',
+  code_or_data: 'run code or query data',
+  calendar: 'calendar',
+  gmail: 'Gmail',
+  drive: 'Drive',
+  admin_ops: 'incidents, logs or deploys',
+  approval_continuation: 'answering a search approval',
+  clarification_resume: 'answering its own question',
+};
+
 const BUCKET_LABELS: Record<string, string> = { c1: '1 call', c2: '2', c3_4: '3-4', c5_8: '5-8', c9_plus: '9 or more' };
 
 /** One chat turn is often several model calls. This is how many, by kind of turn, and how often deep mode ran and why. */
@@ -508,6 +521,12 @@ const TurnsSection: React.FC<{ turns: TurnsSummary }> = ({ turns }) => {
         {(sources.audit > 0 || sources.both > 0) && ` Earlier in this period, ${sources.audit + sources.both} turn(s) were made deep by that wording, before it was changed.`}
         {turns.deep_suppressed > 0 && ` ${turns.deep_suppressed} more were held back by low-power mode.`}
       </div>
+      {turns.routing.length > 0 && (
+        <div className="sh-hint">
+          Why turns went to the tool agent (the expensive path): {turns.routing.map(row => `${TOOL_REASON_LABELS[row.reason] ?? row.reason} ${row.turns}${row.alone ? ` (${row.alone} with no other reason)` : ''}`).join(' · ')}.
+          A turn can have more than one reason.
+        </div>
+      )}
       {(turns.native_turns > 0 || turns.blocked_turns > 0 || turns.error_turns > 0) && (
         <div className="sh-hint">
           {turns.native_turns > 0 && `${turns.native_turns} turn(s) used the native tool engine. `}
