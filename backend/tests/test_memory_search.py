@@ -2,6 +2,8 @@ from unittest.mock import Mock
 
 from langchain_core.documents import Document
 
+from backend.services import memory_search as ms
+
 from backend.services.memory_search import (
     retrieve_relevant_memory_context,
     retrieve_user_memory,
@@ -182,3 +184,16 @@ def test_flag_stale_chunks_update_failure_returns_zero():
     store.collection.update_many = Mock(side_effect=Exception("write failed"))
 
     assert flag_stale_chunks_for_superseded_fact(store, "jack", [1.0, 0.0]) == 0
+
+
+def test_the_default_recall_cutoff_is_080_because_unrelated_questions_scored_up_to_082_at_075():
+    assert ms.DEFAULT_RECALL_SIMILARITY_THRESHOLD == 0.80
+
+
+def test_a_note_scoring_078_is_not_recalled_by_default_but_one_scoring_082_is():
+    class Store:
+        def similarity_search_with_score(self, *a, **k):
+            return [(Document(page_content="Unrelated note."), 0.78), (Document(page_content="Real answer."), 0.82)]
+
+    out = ms.retrieve_relevant_memory_context(Store(), "u", "a question")
+    assert "Real answer." in out and "Unrelated note." not in out

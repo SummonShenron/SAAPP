@@ -15,8 +15,11 @@ USER_MEMORY_INDEX = "user_memory_vector_index"
 
 # Atlas Vector Search scores are already normalized to [0, 1] (langchain_mongodb's default
 # relevance_score_fn="cosine" is the identity function on that score), so this threshold is
-# on that same scale.
-DEFAULT_RECALL_SIMILARITY_THRESHOLD = float(os.getenv("MEMORY_RECALL_SIMILARITY_THRESHOLD", "0.75"))
+# on that same scale (it is (1 + cosine) / 2, so 0.75 is only a cosine of 0.5).
+# 0.80, not 0.75: measured on the real store (backend/evals/memory_eval.py), questions about nothing stored scored 0.76 to 0.82 against
+# the closest notes, so at 0.75 every turn was handed three unrelated "recalled" lines. Notes that genuinely answer a question score
+# about 0.80 to 0.90. Tune with the env var; re-run the eval after any change.
+DEFAULT_RECALL_SIMILARITY_THRESHOLD = float(os.getenv("MEMORY_RECALL_SIMILARITY_THRESHOLD", "0.80"))
 # Same "these are about the same underlying thing" bar memory_compaction.py's
 # DEFAULT_SIMILARITY_THRESHOLD uses for its own clustering (0.85) — duplicated rather than
 # imported, to avoid an import edge back into memory_compaction.py (which already imports FROM
@@ -39,20 +42,25 @@ def embed_and_store_memory_chunk(
     text: str,
     source_type: str = "manual",
     source_ref: Optional[str] = None,
+    created_at: Optional[str] = None,
+    latest_at: Optional[str] = None,
 ) -> None:
-    """Fire-and-forget-safe: embeds and stores one chunk of personal memory text."""
+    """Fire-and-forget-safe: embeds and stores one chunk of personal memory text.
+
+    `created_at` is when the remembered thing happened; it defaults to now. A compacted summary passes the OLDEST date of the
+    notes it replaces (and `latest_at`, the newest), so folding a months-old memory into a summary never makes it look new."""
     if vector_store is None or not text or not text.strip():
         return
     try:
-        vector_store.add_texts(
-            texts=[text.strip()],
-            metadatas=[{
-                "username": username,
-                "source_type": source_type,
-                "source_ref": source_ref,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            }],
-        )
+        metadata = {
+            "username": username,
+            "source_type": source_type,
+            "source_ref": source_ref,
+            "created_at": created_at or datetime.now(timezone.utc).isoformat(),
+        }
+        if latest_at and latest_at != metadata["created_at"]:
+            metadata["latest_at"] = latest_at
+        vector_store.add_texts(texts=[text.strip()], metadatas=[metadata])
     except Exception:
         logger.exception("[MemorySearch] Failed to embed memory chunk for %s", username)
 
@@ -123,21 +131,33 @@ def retrieve_user_memory(
         return []
 
 
+SPAN_MIN_DAYS = 14  # a compacted summary whose notes span longer than this is dated as a stretch, not as one moment
+
+
+def _parse_time(raw) -> Optional[datetime]:
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
 def _age_prefix(doc: Document, now: Optional[datetime] = None) -> str:
     """"(about 3 weeks ago) " for a recalled chunk, so a callback can say roughly when without inventing it; "" when the
-    chunk has no usable timestamp (an unknown time is never guessed)."""
-    raw = (getattr(doc, "metadata", None) or {}).get("created_at")
-    if not raw:
+    chunk has no usable timestamp (an unknown time is never guessed). A summary of notes spread over more than two weeks
+    reads "(since about 3 months ago) ": its oldest note's date, said as a stretch, because it also holds newer ones."""
+    metadata = getattr(doc, "metadata", None) or {}
+    created = _parse_time(metadata.get("created_at"))
+    if created is None:
         return ""
-    try:
-        created = datetime.fromisoformat(str(raw))
-    except ValueError:
-        return ""
-    if created.tzinfo is None:
-        created = created.replace(tzinfo=timezone.utc)
     seconds = ((now or datetime.now(timezone.utc)) - created).total_seconds()
     if seconds < 0:
         return ""
+    latest = _parse_time(metadata.get("latest_at"))
+    if latest is not None and (latest - created).days >= SPAN_MIN_DAYS:
+        return f"(since {describe_gap(seconds)} ago) "
     return f"({describe_gap(seconds)} ago) "
 
 

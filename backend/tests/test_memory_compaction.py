@@ -106,6 +106,13 @@ class FakeCollection:
     def insert_one(self, doc):
         self.docs.append(doc)
 
+    def update_one(self, filt, update, upsert=False):
+        matches = self.find(filt)
+        if matches:
+            matches[0].update(update.get("$set", {}))
+        elif upsert:
+            self.docs.append({**filt, **update.get("$setOnInsert", {}), **update.get("$set", {})})
+
 
 class FakeDB:
     def __init__(self):
@@ -482,3 +489,171 @@ async def test_pattern_extraction_no_prior_run_has_no_cooldown(monkeypatch):
     result = await mc.extract_user_patterns(fake_db, object(), "jack")
 
     assert result["status"] == "completed"
+
+
+# ---------------------------------------------------------------------------
+# a summary is dated by the notes it replaces, not by when compaction ran
+# ---------------------------------------------------------------------------
+
+def test_span_of_returns_the_oldest_and_newest_dates_of_a_cluster():
+    cluster = [
+        {"created_at": "2026-07-01T10:00:00+00:00"},
+        {"created_at": "2026-09-20T10:00:00+00:00", "latest_at": "2026-10-05T10:00:00+00:00"},
+        {"created_at": "2026-08-01T10:00:00+00:00"},
+    ]
+    assert mc._span_of(cluster) == {"created_at": "2026-07-01T10:00:00+00:00", "latest_at": "2026-10-05T10:00:00+00:00"}
+
+
+def test_span_of_ignores_notes_with_no_usable_date_and_is_empty_when_none_has_one():
+    assert mc._span_of([{"text": "no date"}, {"created_at": "garbage"}]) == {}
+    assert mc._span_of([{"created_at": "garbage"}, {"created_at": "2026-07-01T10:00:00"}])["created_at"] == "2026-07-01T10:00:00+00:00"
+
+
+@run_async
+async def test_a_compacted_summary_keeps_the_oldest_date_of_what_it_replaced(monkeypatch):
+    fake_db = FakeDB()
+    _seed_chunks(fake_db, "jack", [
+        {**_chunk("a1", [1.0, 0.0, 0.0], _id="id-a1"), "created_at": "2026-07-01T10:00:00+00:00"},
+        {**_chunk("a2", [0.99, 0.01, 0.0], _id="id-a2"), "created_at": "2026-10-01T10:00:00+00:00"},
+    ])
+    monkeypatch.setattr(
+        mc.lite_llm, "ainvoke",
+        AsyncMock(return_value=SimpleNamespace(content=json.dumps({"summary": "Consolidated.", "facts": []})))
+    )
+    stored = []
+
+    def fake_embed(vector_store, username, text, source_type="manual", source_ref=None, created_at=None, latest_at=None):
+        stored.append({"text": text, "created_at": created_at, "latest_at": latest_at})
+
+    monkeypatch.setattr(mc, "embed_and_store_memory_chunk", fake_embed)
+    monkeypatch.setattr(mc, "save_user_fact", lambda *a, **k: None)
+
+    await mc.compact_user_memory(fake_db, vector_store=object(), username="jack")
+
+    assert stored == [{"text": "Consolidated.", "created_at": "2026-07-01T10:00:00+00:00", "latest_at": "2026-10-01T10:00:00+00:00"}]
+
+
+# ---------------------------------------------------------------------------
+# originals are archived before they are deleted, so a merge can be undone
+# ---------------------------------------------------------------------------
+
+def _two_similar(fake_db, **extra):
+    _seed_chunks(fake_db, "jack", [
+        {**_chunk("a1", [1.0, 0.0, 0.0], source_ref="sess-1", _id="id-a1"), "created_at": "2026-07-01T10:00:00+00:00", **extra},
+        {**_chunk("a2", [0.99, 0.01, 0.0], source_ref="sess-2", _id="id-a2"), "created_at": "2026-08-01T10:00:00+00:00"},
+    ])
+
+
+def _patch_llm_and_store(monkeypatch, fake_db, stored):
+    monkeypatch.setattr(
+        mc.lite_llm, "ainvoke",
+        AsyncMock(return_value=SimpleNamespace(content=json.dumps({"summary": "Consolidated.", "facts": []})))
+    )
+
+    def fake_embed(vector_store, username, text, source_type="manual", source_ref=None, created_at=None, latest_at=None):
+        stored.append({"text": text, "source_ref": source_ref})
+        fake_db["user_memory_chunks"].insert_one({"_id": "summary", "username": username, "text": text, "source_type": source_type, "source_ref": source_ref})
+
+    monkeypatch.setattr(mc, "embed_and_store_memory_chunk", fake_embed)
+    monkeypatch.setattr(mc, "save_user_fact", lambda *a, **k: None)
+
+
+@run_async
+async def test_merged_notes_are_copied_to_the_archive_with_their_text_embedding_and_dates(monkeypatch):
+    fake_db = FakeDB()
+    _two_similar(fake_db)
+    stored = []
+    _patch_llm_and_store(monkeypatch, fake_db, stored)
+
+    result = await mc.compact_user_memory(fake_db, vector_store=object(), username="jack")
+
+    archived = fake_db[mc.ARCHIVE_COLLECTION].docs
+    assert result["status"] == "completed" and result["clusters_archived"] == 1 and result["clusters_skipped"] == 0
+    assert sorted(d["_id"] for d in archived) == ["id-a1", "id-a2"]
+    first = next(d for d in archived if d["_id"] == "id-a1")
+    assert first["text"] == "a1" and first["embedding"] == [1.0, 0.0, 0.0] and first["created_at"] == "2026-07-01T10:00:00+00:00"
+    assert first["username"] == "jack" and first["compaction_tier"] == 1 and first["run_id"] == result["run_id"]
+    assert first["archived_at"] and first["cluster_id"]
+    # the live store holds only the summary now
+    assert [d["_id"] for d in fake_db["user_memory_chunks"].docs] == ["summary"]
+
+
+@run_async
+async def test_the_summary_is_tied_to_its_archived_originals_and_provenance_does_not_nest(monkeypatch):
+    fake_db = FakeDB()
+    _two_similar(fake_db)
+    stored = []
+    _patch_llm_and_store(monkeypatch, fake_db, stored)
+
+    await mc.compact_user_memory(fake_db, vector_store=object(), username="jack")
+
+    cluster_id = fake_db[mc.ARCHIVE_COLLECTION].docs[0]["cluster_id"]
+    assert stored[0]["source_ref"] == f"compacted:2 chunks (sess-1, sess-2) #{cluster_id}"
+
+    # a second-tier pass over a summary that already has provenance names the original sources, not the earlier merge
+    fake_db2 = FakeDB()
+    _seed_chunks(fake_db2, "jack", [
+        _chunk("s1", [1.0, 0.0, 0.0], source_ref="compacted:2 chunks (a, b) #abc123", _id="s1"),
+        _chunk("s2", [0.99, 0.01, 0.0], source_ref="sess-9", _id="s2"),
+    ])
+    for doc in fake_db2["user_memory_chunks"].docs:
+        doc["source_type"] = "compacted_summary"
+    stored2 = []
+    _patch_llm_and_store(monkeypatch, fake_db2, stored2)
+    await mc.compact_meta_memory(fake_db2, vector_store=object(), username="jack")
+    assert stored2[0]["source_ref"].startswith("compacted:2 chunks (sess-9) #")
+    assert "abc123" not in stored2[0]["source_ref"]
+
+
+@run_async
+async def test_a_cluster_that_cannot_be_archived_is_left_alone_and_nothing_is_deleted(monkeypatch):
+    fake_db = FakeDB()
+    _two_similar(fake_db)
+    stored = []
+    _patch_llm_and_store(monkeypatch, fake_db, stored)
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("archive down")
+
+    monkeypatch.setattr(mc, "_archive_cluster", broken)
+
+    result = await mc.compact_user_memory(fake_db, vector_store=object(), username="jack")
+
+    assert result["status"] == "completed" and result["clusters_skipped"] == 1 and result["clusters_archived"] == 0
+    assert sorted(d["_id"] for d in fake_db["user_memory_chunks"].docs) == ["id-a1", "id-a2"]  # both originals still live
+    assert stored == []  # and no summary was written for them
+
+
+def test_archiving_twice_is_harmless_because_each_note_is_keyed_by_its_own_id():
+    fake_db = FakeDB()
+    cluster = [_chunk("a1", [1.0, 0.0, 0.0], _id="id-a1"), _chunk("a2", [0.9, 0.1, 0.0], _id="id-a2")]
+    mc._archive_cluster(fake_db, "jack", cluster, tier=2, run_id="r1", cluster_id="c1")
+    mc._archive_cluster(fake_db, "jack", cluster, tier=2, run_id="r1", cluster_id="c1")
+    assert len(fake_db[mc.ARCHIVE_COLLECTION].docs) == 2
+
+
+def test_the_stale_flag_travels_into_the_archive_so_a_restore_does_not_revive_a_superseded_note():
+    fake_db = FakeDB()
+    mc._archive_cluster(fake_db, "jack", [{**_chunk("old", [1.0, 0.0, 0.0], _id="id-old"), "stale": True}], tier=1, run_id="r", cluster_id="c")
+    assert fake_db[mc.ARCHIVE_COLLECTION].docs[0]["stale"] is True
+
+
+# ---------------------------------------------------------------------------
+# the tier-2 threshold and the cap on a merge group
+# ---------------------------------------------------------------------------
+
+def test_tier_two_merges_at_085_like_tier_one_because_090_merged_nothing_on_real_notes():
+    import inspect
+
+    # the default in the code (the live value can be overridden by MEMORY_META_COMPACTION_SIMILARITY in the environment)
+    assert 'MEMORY_META_COMPACTION_SIMILARITY", "0.85"' in inspect.getsource(mc)
+    assert 'MEMORY_COMPACTION_SIMILARITY", "0.85"' in inspect.getsource(mc)
+
+
+def test_a_merge_group_never_exceeds_the_cap_and_the_rest_seed_later_groups():
+    chunks = [_chunk(f"n{i}", [1.0, 0.001 * i, 0.0]) for i in range(30)]
+    clusters = mc._cluster_chunks(chunks, threshold=0.9, max_size=12)
+    assert max(len(c) for c in clusters) <= 12
+    assert sum(len(c) for c in clusters) == 30  # nothing lost or duplicated
+    assert [len(c) for c in clusters] == [12, 12, 6]
+    assert mc.MAX_CLUSTER_SIZE == 12

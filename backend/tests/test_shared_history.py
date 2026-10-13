@@ -94,3 +94,32 @@ def test_a_callback_yields_to_every_other_proactive_item_not_only_an_open_loop()
     start = source.index("if callback_allowed(")
     window = source[start: start + 600]
     assert "proactive_taken=bool(open_loop_entry or relatable_entry or encouragement_entry or self_history)" in window
+
+
+def test_a_summary_of_notes_spread_over_months_is_dated_as_a_stretch_from_its_oldest_note():
+    spread = Document(page_content="Job search.", metadata={
+        "created_at": (NOW - timedelta(days=90)).isoformat(), "latest_at": (NOW - timedelta(days=2)).isoformat(),
+    })
+    assert ms._age_prefix(spread, NOW) == "(since about 3 months ago) "
+
+
+def test_a_summary_of_notes_close_together_is_dated_as_one_moment():
+    close = Document(page_content="Job search.", metadata={
+        "created_at": (NOW - timedelta(days=10)).isoformat(), "latest_at": (NOW - timedelta(days=6)).isoformat(),
+    })
+    assert ms._age_prefix(close, NOW) == "(about 10 days ago) "
+
+
+def test_storing_a_chunk_keeps_a_given_date_and_only_adds_the_newest_when_it_differs():
+    added = []
+
+    class Store:
+        def add_texts(self, texts, metadatas):
+            added.append(metadatas[0])
+
+    ms.embed_and_store_memory_chunk(Store(), "u", "text", created_at="2026-07-01T00:00:00+00:00", latest_at="2026-09-01T00:00:00+00:00")
+    ms.embed_and_store_memory_chunk(Store(), "u", "text", created_at="2026-07-01T00:00:00+00:00", latest_at="2026-07-01T00:00:00+00:00")
+    ms.embed_and_store_memory_chunk(Store(), "u", "text")
+    assert added[0]["created_at"] == "2026-07-01T00:00:00+00:00" and added[0]["latest_at"] == "2026-09-01T00:00:00+00:00"
+    assert "latest_at" not in added[1] and added[1]["created_at"] == "2026-07-01T00:00:00+00:00"
+    assert "latest_at" not in added[2] and added[2]["created_at"]
