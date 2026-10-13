@@ -339,3 +339,98 @@ def test_an_admin_ops_question_is_a_reason_too(monkeypatch):
     turn = lt.begin()
     aw.build_agent_plan("conversational", {"reasoner_flags": {}, "messages": [HumanMessage(content="x")]})
     assert turn.route_reasons == {"admin_ops"}
+
+
+# ---- which tools the tool agent called ----------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name,expected", [
+    ("read_repo_file", "read_repo_file"), ("search_gmail", "search_gmail"), ("", "other"), (None, "other"), ("Read File", "other"),
+    ("has.dot", "other"), ("$inc", "other"), ("x" * 41, "other"), ("UPPER", "other"),
+])
+def test_a_tool_name_is_only_ever_stored_if_it_is_a_plain_snake_case_name(name, expected):
+    assert lt.clean_tool_name(name) == expected
+
+
+def test_each_tool_is_counted_by_calls_errors_and_the_turns_that_used_it():
+    for calls_made in ([("read_repo_file", True), ("read_repo_file", True), ("search_code", False)], [("read_repo_file", True)]):
+        turn = lt.begin()
+        lt.note_tool_agent("native", False, False, False)
+        for name, ok in calls_made:
+            lt.note_tool_call(name, ok)
+        lt.finish(turn, "ok", DAY)
+    assert lt.tools_snapshot()[DAY] == {
+        "read_repo_file": {"calls": 3, "turns": 2, "errors": 0},
+        "search_code": {"calls": 1, "turns": 1, "errors": 1},
+    }
+
+
+def test_a_tool_call_with_no_turn_running_or_after_it_ended_changes_nothing():
+    lt.note_tool_call("read_repo_file")
+    turn = lt.begin()
+    lt.finish(turn, "ok", DAY)
+    lt.note_tool_call("read_repo_file")
+    assert lt.tools_snapshot() == {}
+
+
+def test_the_flush_writes_each_tool_as_nested_increments_and_a_failed_save_keeps_them():
+    turn = lt.begin()
+    lt.note_tool_call("read_repo_file")
+    lt.note_tool_call("search_code", False)
+    lt.finish(turn, "ok", DAY)
+    assert lt.flush(FakeDB(fail=True)) == 0
+    assert lt.tools_snapshot()[DAY]["read_repo_file"]["calls"] == 1  # kept for the next save
+    db = FakeDB()
+    assert lt.flush(db) == 1
+    inc = db.writes[0][2]["$inc"]
+    assert inc["tools.read_repo_file.calls"] == 1 and inc["tools.search_code.errors"] == 1 and inc["tools.read_repo_file.turns"] == 1
+    assert "tools.read_repo_file.errors" not in inc  # zero increments are not written
+
+
+def test_the_summary_lists_tools_by_calls_with_their_errors_and_adds_days_together():
+    docs = [
+        {"turns": 3, "tool_turns": 3, "tools": {"read_repo_file": {"calls": 5, "turns": 3, "errors": 1}, "search_code": {"calls": 2, "turns": 2, "errors": 0}}},
+        {"turns": 2, "tool_turns": 2, "tools": {"read_repo_file": {"calls": 4, "turns": 2, "errors": 0}, "search_gmail": {"calls": 1, "turns": 1, "errors": 1}}},
+        {"turns": 1},                                   # an older day with no tool counts
+        {"turns": 1, "tools": "not a dict"},            # malformed: ignored
+    ]
+    out = lt.summarize_turns(docs)
+    assert out["tools"] == [
+        {"tool": "read_repo_file", "calls": 9, "turns": 5, "errors": 1},
+        {"tool": "search_code", "calls": 2, "turns": 2, "errors": 0},
+        {"tool": "search_gmail", "calls": 1, "turns": 1, "errors": 1},
+    ]
+    assert out["tool_calls_total"] == 12 and out["tool_errors_total"] == 2
+    assert lt.summarize_turns([])["tools"] == [] and lt.summarize_turns([])["tool_calls_total"] == 0
+
+
+def test_the_real_tool_agent_counts_the_tools_it_actually_runs_in_either_engine():
+    from backend.evals import behavior_eval as be
+
+    async def react_model(prompt):
+        return SimpleNamespace(content=json.dumps({"action": "final", "answer": "ok"}))
+
+    turn = lt.begin()
+    model = Scripted(
+        reply(action="query", purpose="find", tool_action="search_literal", args={"term": "GRACE_DAYS"}),
+        reply(action="query", purpose="read", tool_action="read_repo_file", args={"path": "tallybox/config.py"}),
+        reply(action="query", purpose="missing", tool_action="read_repo_file", args={"path": "does/not/exist.py"}),
+        FINAL,
+    )
+    asyncio.run(be.run_tool_agent(model, "where is GRACE_DAYS read?", repo=True, engine="react"))
+    assert turn.tools["search_literal"] == {"calls": 1, "errors": 0}
+    assert turn.tools["read_repo_file"] == {"calls": 2, "errors": 1}  # the second path does not exist: counted as an error
+
+
+class Scripted:
+    def __init__(self, *responses):
+        self.responses = list(responses)
+
+    async def __call__(self, prompt):
+        return self.responses.pop(0) if len(self.responses) > 1 else self.responses[0]
+
+
+def reply(**payload):
+    return SimpleNamespace(content=json.dumps(payload))
+
+
+FINAL = reply(action="final", answer="Nothing conclusive.")

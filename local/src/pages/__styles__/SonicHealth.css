@@ -790,3 +790,7 @@
   color: #e2e8f0;
   font-size: 0.85rem;
 }
+
+.sh-err {
+  color: #fca5a5;
+}

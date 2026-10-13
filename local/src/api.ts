@@ -676,6 +676,10 @@ export interface TurnsSummary {
   native_turns: number;
   blocked_turns: number;
   error_turns: number;
+  /** Which tools the tool agent called, most-called first: calls, the turns that used it, and calls that came back as an error. */
+  tools: { tool: string; calls: number; turns: number; errors: number }[];
+  tool_calls_total: number;
+  tool_errors_total: number;
 }
 
 /** One billing day for the Sonic Health chart. `cost` is null when no price is configured. */

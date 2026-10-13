@@ -76,6 +76,7 @@ export const HomeTab: React.FC<HomeProps> = ({ health, awaiting, suggestionsWait
   const topCallers = [...(usage?.by_label ?? [])].sort((a, b) => b.tokens - a.tokens).slice(0, 6);
   const biggest = topCallers.length ? topCallers[0].tokens : 0;
   const routing = (turns?.routing ?? []).slice(0, 4);
+  const toolRows = (turns?.tools ?? []).slice(0, 5);
 
   return (
     <div className="sh-home">
@@ -170,6 +171,19 @@ export const HomeTab: React.FC<HomeProps> = ({ health, awaiting, suggestionsWait
                 <StatTile value={turns.deep.turns} label="deep-mode turns" />
               </div>
               {toolShare !== null && <BarRow label="Turns that used the tool agent" value={`${turns.tool.turns} of ${turns.turns} (${pct(toolShare)})`} fraction={toolShare} tone={toolShare > 0.4 ? 'notice' : 'ok'} />}
+            </Tile>
+          )}
+
+          {toolRows.length > 0 && (
+            <Tile title="Tools called" tab="turns" onOpen={onOpen} badge={`${turns?.tool_calls_total ?? 0} CALLS`}>
+              {toolRows.map(row => (
+                <BarRow
+                  key={row.tool}
+                  label={row.tool}
+                  value={<>{row.calls}{row.errors > 0 && <span className="sh-err"> · {row.errors} err</span>}</>}
+                  fraction={toolRows[0].calls > 0 ? row.calls / toolRows[0].calls : 0}
+                />
+              ))}
             </Tile>
           )}
 

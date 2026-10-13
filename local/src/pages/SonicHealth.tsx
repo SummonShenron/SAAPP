@@ -608,6 +608,28 @@ const TurnsCard: React.FC<{ turns: TurnsSummary }> = ({ turns }) => {
           <div className="sh-hint">A turn can have more than one reason, so these can add up to more than the number of tool turns.</div>
         </>
       )}
+      {turns.tools.length > 0 && (
+        <>
+          <h3 className="sh-subhead">Which tools the agent called</h3>
+          <div className="sh-bars-grid">
+            {turns.tools.map(row => (
+              <BarRow
+                key={row.tool}
+                label={row.tool}
+                value={<>{row.calls} call{row.calls === 1 ? '' : 's'} in {row.turns} turn{row.turns === 1 ? '' : 's'}{row.errors > 0 && <span className="sh-err"> · {row.errors} error{row.errors === 1 ? '' : 's'}</span>}</>}
+                fraction={turns.tools[0].calls > 0 ? row.calls / turns.tools[0].calls : 0}
+                tone={row.errors > 0 && row.errors / row.calls > 0.3 ? 'notice' : 'ok'}
+              />
+            ))}
+          </div>
+          <div className="sh-hint">
+            {turns.tool_calls_total} tool call(s) across {turns.tool.turns} tool turn(s)
+            {turns.tool.turns > 0 ? `, about ${(turns.tool_calls_total / turns.tool.turns).toFixed(1)} per turn` : ''}.
+            {turns.tool_errors_total > 0 && ` ${turns.tool_errors_total} came back as an error (a file that was not found, a tool that is not connected, and so on).`}
+            {' '}Counted from when this was added, so it fills in as tool turns happen.
+          </div>
+        </>
+      )}
       <div className="sh-hint">
         Deep mode (the stronger model) ran on {turns.deep.turns} turn(s){turns.deep_share !== null ? ` (${pct(turns.deep_share)} of all turns)` : ''}. Only your own setting runs it now.
         {turns.audit_wording_turns > 0 && ` ${turns.audit_wording_turns} turn(s) had audit-style wording ("scan the repo", "every file", "audit"): those get a wider step budget on the normal model.`}

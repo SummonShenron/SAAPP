@@ -2964,6 +2964,17 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             "native" if use_native else "react", bool(state.get("deep_thinking")), is_audit_task, low_power,
         )
 
+        async def _counted_act(decision: dict):
+            """The dispatcher, counting which tool was called and whether it came back as an error (names only: backend/utils/llm_turns.py)."""
+            name = decision.get("tool_action")
+            try:
+                result = await _act(decision)
+            except Exception:
+                llm_turns.note_tool_call(name, False)
+                raise
+            llm_turns.note_tool_call(name, not str(result).startswith("ERROR"))
+            return result
+
         async def _native_engine(**kwargs):
             async def _announce(title, detail):
                 await safe_emit_event("trace_detail", {"node": "tool_agent_node", "title": title, "detail": detail})
@@ -2981,7 +2992,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
                     question=msg,
                     schema=schema,
                     prompt_template=prompt_template,
-                    act=_act,
+                    act=_counted_act,
                     is_unsafe=_is_unsafe,
                     max_iterations=budget_guard.tool_steps(
                         TOOL_AGENT_MAX_ITERATIONS_DEEP if wide_budget else TOOL_AGENT_MAX_ITERATIONS, budget_state

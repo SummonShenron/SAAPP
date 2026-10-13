@@ -52,6 +52,9 @@ FIELDS = (
 _lock = threading.Lock()
 _pending: Dict[str, Dict[str, int]] = {}
 _pending_max: Dict[str, int] = {}
+# WHICH tools the tool agent called, by day and tool name: {day: {tool: {"calls", "turns", "errors"}}}. Names only: no arguments, no results.
+_pending_tools: Dict[str, Dict[str, Dict[str, int]]] = {}
+MAX_TOOL_NAME = 40
 _current: ContextVar[Optional["Turn"]] = ContextVar("llm_turn", default=None)
 
 
@@ -68,6 +71,7 @@ class Turn:
         self.deep_source: Optional[str] = None  # "setting", "audit" or "both" when deep mode ran
         self.deep_suppressed = False  # the deep-thinking setting was on but low-power mode held it back
         self.route_reasons: set = set()  # why the turn went to the tool agent (see ROUTE_REASONS)
+        self.tools: Dict[str, Dict[str, int]] = {}  # which tools it called: {name: {"calls", "errors"}}
         self.audit_wording = False  # the message had audit-style wording ("scan the repo", "every file"): wider step budget, normal model
         self.done = False
         self._lock = threading.Lock()
@@ -168,6 +172,27 @@ def note_route(reasons: Iterable[str]) -> None:
         pass
 
 
+def clean_tool_name(name: Any) -> str:
+    """A tool name that is safe to use as a stored key: lowercase letters, digits and underscores, short; anything else is "other"."""
+    text = str(name or "").strip()
+    return text if text and len(text) <= MAX_TOOL_NAME and text.replace("_", "").isalnum() and text == text.lower() else "other"
+
+
+def note_tool_call(name: Any, ok: bool = True) -> None:
+    """Notes that the tool agent called a tool this turn, and whether it came back as an error. Never raises."""
+    try:
+        turn = _current.get()
+        if turn is None or turn.done:
+            return
+        with turn._lock:
+            entry = turn.tools.setdefault(clean_tool_name(name), {"calls": 0, "errors": 0})
+            entry["calls"] += 1
+            if not ok:
+                entry["errors"] += 1
+    except Exception:
+        pass
+
+
 def bucket_for(calls: int) -> str:
     if calls <= 1:
         return "c1"
@@ -214,6 +239,13 @@ def finish(turn: Optional[Turn], outcome: str = "ok", day: Optional[str] = None)
                 slot["deep_suppressed_turns"] += 1
             if turn.audit_wording:
                 slot["audit_wording_turns"] += 1
+            if turn.tools:
+                day_tools = _pending_tools.setdefault(key, {})
+                for tool, entry in turn.tools.items():
+                    total = day_tools.setdefault(tool, {"calls": 0, "turns": 0, "errors": 0})
+                    total["calls"] += entry["calls"]
+                    total["errors"] += entry["errors"]
+                    total["turns"] += 1
             for reason in turn.route_reasons:
                 slot[f"route_{reason}_turns"] += 1
                 if len(turn.route_reasons) == 1:
@@ -227,6 +259,7 @@ def reset() -> None:
     with _lock:
         _pending.clear()
         _pending_max.clear()
+        _pending_tools.clear()
     try:
         _current.set(None)
     except Exception:
@@ -238,15 +271,23 @@ def snapshot() -> Dict[str, Dict[str, int]]:
         return {day: {**slot, "max_calls": _pending_max.get(day, 0)} for day, slot in _pending.items()}
 
 
+def tools_snapshot() -> Dict[str, Dict[str, Dict[str, int]]]:
+    """What has been counted so far about which tools were called, `{day: {tool: {"calls", "turns", "errors"}}}`. For tests and debugging."""
+    with _lock:
+        return {day: {tool: dict(entry) for tool, entry in tools.items()} for day, tools in _pending_tools.items()}
+
+
 def flush(db: Any = None) -> int:
     """Writes the day counts to the database (one `$inc`, plus `$max` for the biggest turn, per day) and returns how many days. If the
     write fails, the counts go back to be tried again. Blocking: call it off the event loop. Never raises."""
     with _lock:
         pending = {day: dict(slot) for day, slot in _pending.items()}
         pending_max = dict(_pending_max)
+        pending_tools = {day: {tool: dict(entry) for tool, entry in tools.items()} for day, tools in _pending_tools.items()}
         _pending.clear()
         _pending_max.clear()
-    if not pending:
+        _pending_tools.clear()
+    if not pending and not pending_tools:
         return 0
     try:
         if db is None:
@@ -255,13 +296,17 @@ def flush(db: Any = None) -> int:
             db = get_db()
         if db is None:
             raise RuntimeError("no database")
-        for day, slot in pending.items():
-            db[COLLECTION].update_one(
-                {"day": day},
-                {"$inc": {field: value for field, value in slot.items() if value}, "$max": {"max_calls": pending_max.get(day, 0)}},
-                upsert=True,
-            )
-        return len(pending)
+        for day in sorted(set(pending) | set(pending_tools)):
+            increments = {field: value for field, value in pending.get(day, {}).items() if value}
+            for tool, entry in pending_tools.get(day, {}).items():
+                for name, value in entry.items():
+                    if value:
+                        increments[f"tools.{tool}.{name}"] = value
+            update: Dict[str, Any] = {"$inc": increments}
+            if day in pending:
+                update["$max"] = {"max_calls": pending_max.get(day, 0)}
+            db[COLLECTION].update_one({"day": day}, update, upsert=True)
+        return len(set(pending) | set(pending_tools))
     except Exception:
         logger.warning("[llm_turns] could not save the per-turn counts; keeping them for the next flush.")
         with _lock:
@@ -270,6 +315,11 @@ def flush(db: Any = None) -> int:
                 for field, value in slot.items():
                     back[field] = back.get(field, 0) + value
                 _pending_max[day] = max(_pending_max.get(day, 0), pending_max.get(day, 0))
+            for day, tools in pending_tools.items():
+                for tool, entry in tools.items():
+                    back_entry = _pending_tools.setdefault(day, {}).setdefault(tool, {"calls": 0, "turns": 0, "errors": 0})
+                    for name, value in entry.items():
+                        back_entry[name] = back_entry.get(name, 0) + value
         return 0
 
 
@@ -311,7 +361,8 @@ def summarize_turns(docs: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     turn; the calls-per-turn histogram; the biggest turn; and how deep mode was switched on. Pure."""
     total = {field: 0 for field in FIELDS}
     biggest = 0
-    for doc in docs:
+    docs_list = list(docs)
+    for doc in docs_list:
         for field in FIELDS:
             total[field] += _count(doc.get(field))
         biggest = max(biggest, _count(doc.get("max_calls")))
@@ -326,9 +377,21 @@ def summarize_turns(docs: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
             "avg_reasoning": _average(total[f"{prefix}reasoning"], turns),
         }
 
+    tool_totals: Dict[str, Dict[str, int]] = {}
+    for doc in docs_list:
+        for tool, entry in (doc.get("tools") or {}).items() if isinstance(doc.get("tools"), dict) else []:
+            if not isinstance(entry, dict):
+                continue
+            slot = tool_totals.setdefault(str(tool), {"calls": 0, "turns": 0, "errors": 0})
+            for name in ("calls", "turns", "errors"):
+                slot[name] += _count(entry.get(name))
+    tools = sorted(({"tool": tool, **values} for tool, values in tool_totals.items()), key=lambda row: (-row["calls"], row["tool"]))
     turns = total["turns"]
     deep_turns = total["deep_turns"]
     return {
+        "tools": tools,
+        "tool_calls_total": sum(row["calls"] for row in tools),
+        "tool_errors_total": sum(row["errors"] for row in tools),
         "turns": turns,
         "overall": kind_row(""),
         "plain": kind_row("plain_"),
