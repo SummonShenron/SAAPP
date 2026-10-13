@@ -126,7 +126,7 @@ from backend.utils.time_utils import build_time_context, local_today, sent_at, s
 from backend.utils import open_loops as open_loops_utils
 from backend.utils import initiation as initiation_utils
 from backend.utils import budget_guard
-from backend.utils import llm_turns, llm_usage
+from backend.utils import llm_turns, llm_usage, loop_watchdog
 from backend.utils import ops_digest as ops_digest_utils
 from backend.utils import ops_suggestions as ops_suggestions_utils
 from backend.utils import duration_utils
@@ -204,11 +204,13 @@ async def lifespan(app: FastAPI):
     # This runs once when the server starts. Chat transcripts are NOT warm-loaded here: each
     # conversation is read from the store the first time it's used (see secure_chat).
     retention_task = spawn_background_task(run_checkpoint_retention_loop())
+    watchdog_task = loop_watchdog.start()  # logs when the event loop is blocked, and what was waiting (backend/utils/loop_watchdog.py)
     if get_db() is not None:
         ensure_calendar_indexes()
     yield
     # Cleanup tasks would go here
     retention_task.cancel()
+    watchdog_task.cancel()
     await asyncio.to_thread(llm_usage.flush)  # whatever the last calls used, before the process goes
     chat_sessions = {}
 # 3. Pass the lifespan to the app
@@ -346,10 +348,13 @@ class SyntheticAskRequest(BaseModel):
 @app.middleware("http")
 async def capture_unhandled_errors(request: Request, call_next) -> Response:
     started_at = time.perf_counter()
+    in_flight = loop_watchdog.request_started(request.method, request.url.path)
 
     try:
         response = await call_next(request)
+        loop_watchdog.request_finished(in_flight)
     except Exception:
+        loop_watchdog.request_finished(in_flight)
         logger.exception(
             "Unhandled request failure",
             extra={

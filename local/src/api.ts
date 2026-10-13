@@ -678,6 +678,19 @@ export interface TurnsSummary {
   error_turns: number;
 }
 
+/** One billing day for the Sonic Health chart. `cost` is null when no price is configured. */
+export interface UsageDay {
+  day: string;
+  calls: number;
+  input: number;
+  output: number;
+  tokens: number;
+  cost: number | null;
+  unpriced_tokens: number;
+  turns: number;
+  tool_turns: number;
+}
+
 export interface UsageSummary {
   total: UsageRow;
   by_model: UsageRow[];
@@ -687,6 +700,8 @@ export interface UsageSummary {
   priced: boolean;
   routes?: UsageRoute[];
   turns?: TurnsSummary;
+  /** One row per billing day of the period, oldest first. */
+  daily?: UsageDay[];
 }
 
 export interface SonicHealth {

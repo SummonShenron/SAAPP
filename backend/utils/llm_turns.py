@@ -288,6 +288,20 @@ def fetch_turn_docs(db: Any, days: int, now: Optional[datetime] = None) -> List[
         return []
 
 
+def daily_turns(docs: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, int]]:
+    """`{day: {"turns", "tool_turns", "calls"}}` from the saved day rows, for the page's chart. Pure."""
+    out: Dict[str, Dict[str, int]] = {}
+    for doc in docs:
+        day = str(doc.get("day") or "")
+        if not day:
+            continue
+        slot = out.setdefault(day, {"turns": 0, "tool_turns": 0, "calls": 0})
+        slot["turns"] += _count(doc.get("turns"))
+        slot["tool_turns"] += _count(doc.get("tool_turns"))
+        slot["calls"] += _count(doc.get("calls"))
+    return out
+
+
 def _average(total: int, turns: int) -> Optional[float]:
     return round(total / turns, 1) if turns else None
 

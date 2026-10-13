@@ -5,20 +5,36 @@ self_counters.py, self_observations.py, llm_usage.py).
 """
 import datetime
 from datetime import timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from backend.utils.budget_guard import current_state as budget_state, public_view as budget_view
-from backend.utils.llm_turns import fetch_turn_docs, summarize_turns
-from backend.utils.llm_usage import fetch_route_docs, fetch_usage_docs, load_prices, summarize_routes, summarize_usage
+from backend.utils import billing_time
+from backend.utils.llm_turns import daily_turns, fetch_turn_docs, summarize_turns
+from backend.utils.llm_usage import fetch_route_docs, fetch_usage_docs, load_prices, summarize_daily, summarize_routes, summarize_usage
 from backend.utils.safety_stats import fetch_recent_events, summarize_safety_events
 from backend.utils.self_counters import fetch_counter_docs, summarize_counters
 from backend.utils.self_observations import list_observations
 
 
 
+def billing_days(days: int, now: datetime.datetime) -> List[str]:
+    """The billing days (Pacific, see billing_time.py) of a period of `days` days ending today, oldest first, as "YYYY-MM-DD"."""
+    today = billing_time.local(now).date()
+    return [(today - datetime.timedelta(days=offset)).isoformat() for offset in range(max(days, 1) - 1, -1, -1)]
+
+
 def build_sonic_health(db: Any, days: int, now: Optional[datetime.datetime] = None) -> Dict[str, Any]:
     """The whole page's data for a period of `days`. Blocking (database reads): call it off the event loop."""
     now = now or datetime.datetime.now(timezone.utc)
+    usage_docs = fetch_usage_docs(db, days, now)
+    turn_docs = fetch_turn_docs(db, days, now)
+    prices = load_prices()
+    per_day_turns = daily_turns(turn_docs)
+    # One row per day for the chart: what the model calls used and cost, and how many chat turns there were that day.
+    daily = [
+        {**row, **{key: per_day_turns.get(row["day"], {}).get(key, 0) for key in ("turns", "tool_turns")}}
+        for row in summarize_daily(usage_docs, prices, billing_days(days, now))
+    ]
     return {
         "days": days,
         "generated_at": now.isoformat(),
@@ -26,9 +42,10 @@ def build_sonic_health(db: Any, days: int, now: Optional[datetime.datetime] = No
         "counters": summarize_counters(fetch_counter_docs(db, days, now), now, days),
         "observations": list_observations(db, now),
         "usage": {
-            **summarize_usage(fetch_usage_docs(db, days, now), load_prices()),
+            **summarize_usage(usage_docs, prices),
             "routes": summarize_routes(fetch_route_docs(db, days, now)),
-            "turns": summarize_turns(fetch_turn_docs(db, days, now)),
+            "turns": summarize_turns(turn_docs),
+            "daily": daily,
         },
         "budget": budget_view(budget_state(db, now), True),
     }

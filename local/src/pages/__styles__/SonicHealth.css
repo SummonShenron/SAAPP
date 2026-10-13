@@ -295,3 +295,498 @@
   font-size: 0.95rem;
   font-weight: 600;
 }
+
+/* ==========================================================================
+   TABBED LAYOUT. The page uses the whole width (no 1100px column), a tab bar that
+   stretches across it, and grids inside each tab. Colours follow the card palette above;
+   the shadow theme gets its own card tint.
+   ========================================================================== */
+
+.sh-page {
+  width: 100%;
+  max-width: 1900px;
+  margin: 0 auto;
+  padding: 1rem 1.75rem 3rem;
+  box-sizing: border-box;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  color: var(--text-main, #1e3a8a);
+  background-color: var(--bg-main);
+}
+
+/* The cards and tiles are dark in both themes, so their text is light whatever the page's own text colour is. */
+.sh-page .service-card,
+.sh-attention,
+.sh-home-tile {
+  color: #f1f5f9;
+}
+
+.sh-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem 2rem;
+}
+
+.sh-header h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.7rem;
+  color: var(--text-main, #1e3a8a);
+}
+
+.sh-header p {
+  margin: 0;
+  color: var(--text-muted, #64748b);
+  font-size: 0.9rem;
+  max-width: 60rem;
+}
+
+.sh-header .sh-toolbar {
+  margin-bottom: 0;
+}
+
+.sh-header .sh-generated {
+  margin-left: 0;
+}
+
+/* The tab bar: tabs share the full width evenly, and scroll sideways if the screen is too narrow for them. */
+.sh-tabs {
+  display: flex;
+  width: 100%;
+  margin: 1rem 0 1.25rem;
+  border-bottom: 1px solid #334155;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.sh-tab {
+  flex: 1 1 0;
+  min-width: max-content;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.85rem 1.1rem;
+  background: transparent;
+  color: #94a3b8;
+  border: none;
+  border-bottom: 3px solid transparent;
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.sh-tab:hover {
+  color: var(--text-main, #1e3a8a);
+  background-color: rgba(148, 163, 184, 0.12);
+}
+
+.sh-tab:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: -2px;
+}
+
+.sh-tab-active,
+.sh-tab-active:hover {
+  color: var(--text-main, #1e3a8a);
+  border-bottom-color: #38bdf8;
+  background-color: rgba(56, 189, 248, 0.12);
+}
+
+.sh-tab-badge {
+  min-width: 1.2rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.sh-tab-badge-info { background: rgba(56, 189, 248, 0.2); color: #7dd3fc; }
+.sh-tab-badge-warn { background: rgba(248, 113, 113, 0.22); color: #fca5a5; }
+
+.sh-panel {
+  min-height: 24rem;
+}
+
+.sh-page .service-card {
+  max-width: none;
+  padding: 1.5rem 1.75rem;
+}
+
+.sh-page .service-card:hover {
+  transform: none;
+}
+
+.sh-page .card-description {
+  max-width: 70rem;
+}
+
+/* Grids inside a tab */
+.sh-two {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  gap: 0.5rem 2rem;
+  align-items: start;
+}
+
+/* The two usage tables sit side by side only when there is really room for both; below that they stack. */
+.sh-two-wide-right {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 1500px) {
+  .sh-two-wide-right {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+  }
+}
+
+/* A table too wide for its column scrolls inside its own box instead of running over its neighbour. */
+.sh-two > *,
+.sh-scroll {
+  min-width: 0;
+}
+
+.sh-scroll {
+  overflow-x: auto;
+}
+
+.sh-rows-grid,
+.sh-page .sh-group {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr));
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.sh-rows-grid .sh-row,
+.sh-page .sh-group .sh-row {
+  margin-bottom: 0;
+}
+
+.sh-page .sh-group h3,
+.sh-page .sh-group > .sh-hint {
+  grid-column: 1 / -1;
+}
+
+.sh-bars-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
+  gap: 0 2rem;
+}
+
+/* The boxes inside a Home panel: always two per row, so four fill a tidy two-by-two instead of leaving one on its own. */
+.sh-stat-grid-tight {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0.75rem 0;
+}
+
+.sh-stat-grid-tight .sh-stat-value {
+  font-size: 1.25rem;
+}
+
+.sh-table-tight {
+  margin-top: 0.5rem;
+}
+
+/* Home */
+.sh-home {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.sh-attention {
+  background-color: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+}
+
+.sh-attention h3 {
+  margin: 0 0 0.6rem;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.sh-attention ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  gap: 0.5rem 1rem;
+}
+
+.sh-attention li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.55rem 0.8rem;
+  background-color: #0f172a;
+  border: 1px solid #334155;
+  border-left-width: 4px;
+  border-radius: 8px;
+  font-size: 0.88rem;
+}
+
+.sh-attention-info { border-left-color: #38bdf8 !important; }
+.sh-attention-warn { border-left-color: #f87171 !important; }
+
+/* Three independent stacks (left panels, chart in the middle, right panels). Every stack is its own column, so a panel sits directly under the
+   one above it instead of waiting for the tallest panel beside it. Below 1400px the chart moves to the top and the two stacks sit under it;
+   on a phone everything is one column. */
+.sh-home-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.sh-home-col,
+.sh-home-center {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  min-width: 0;
+}
+
+/* On a narrow screen the chart comes first, then the two stacks. */
+.sh-home-center {
+  order: -1;
+}
+
+@media (min-width: 900px) {
+  .sh-home-layout {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sh-home-center {
+    grid-column: 1 / -1;
+    order: -1;
+  }
+}
+
+@media (min-width: 1400px) {
+  .sh-home-layout {
+    grid-template-columns: minmax(300px, 1fr) minmax(560px, 2.1fr) minmax(300px, 1fr);
+  }
+
+  .sh-home-center {
+    grid-column: auto;
+    order: 0;
+  }
+}
+
+.sh-home-tile {
+  background-color: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  padding: 1.1rem 1.25rem 1rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.sh-home-tile:hover,
+.sh-home-tile:focus-visible {
+  border-color: #38bdf8;
+  outline: none;
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.35);
+}
+
+.sh-home-tile-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.sh-home-tile-head h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.sh-home-tile-head .sh-pill {
+  margin-left: 0;
+}
+
+.sh-home-open {
+  margin-left: auto;
+  color: #64748b;
+  font-size: 0.78rem;
+}
+
+.sh-home-tile:hover .sh-home-open {
+  color: #7dd3fc;
+}
+
+.theme-shadow .sh-attention,
+.theme-shadow .sh-home-tile {
+  background-color: #3b1e1e;
+  border-color: #553333;
+}
+
+@media (max-width: 640px) {
+  .sh-page {
+    padding: 0.75rem 0.75rem 2rem;
+  }
+
+  .sh-header h1 {
+    font-size: 1.4rem;
+  }
+
+  .sh-tab {
+    padding: 0.75rem 0.9rem;
+    font-size: 0.85rem;
+  }
+
+  .sh-page .service-card {
+    padding: 1.1rem 1rem;
+  }
+}
+
+/* A long table of labels and a few numbers is easier to read when the numbers stay near the labels. */
+.sh-table-readable {
+  max-width: 1150px;
+}
+
+/* The daily chart */
+.sh-chart-tile {
+  cursor: default;
+}
+
+.sh-chart-tile:hover {
+  border-color: #334155;
+  box-shadow: none;
+}
+
+.sh-chart-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1rem;
+  margin: 0.6rem 0 0.4rem;
+}
+
+.sh-chart-summary {
+  color: #94a3b8;
+  font-size: 0.82rem;
+}
+
+.sh-link-btn {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: #7dd3fc;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.sh-link-btn:hover {
+  text-decoration: underline;
+}
+
+.sh-seg {
+  display: inline-flex;
+  border: 1px solid #475569;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.sh-seg-btn {
+  background: #0f172a;
+  color: #94a3b8;
+  border: none;
+  padding: 0.3rem 0.85rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sh-seg-btn + .sh-seg-btn {
+  border-left: 1px solid #475569;
+}
+
+.sh-seg-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.sh-seg-active {
+  background: rgba(56, 189, 248, 0.2);
+  color: #e0f2fe;
+}
+
+.sh-chart-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 420px;
+}
+
+.sh-chart-grid {
+  stroke: #334155;
+  stroke-width: 1;
+}
+
+.sh-chart-axis {
+  fill: #94a3b8;
+  font-size: 11px;
+}
+
+.sh-chart-hit {
+  fill: transparent;
+}
+
+.sh-chart-day {
+  outline: none;
+  cursor: default;
+}
+
+.sh-chart-day-on .sh-chart-hit {
+  fill: rgba(148, 163, 184, 0.12);
+}
+
+.sh-chart-day:focus-visible .sh-chart-hit {
+  stroke: #38bdf8;
+  stroke-width: 1.5;
+}
+
+.sh-chart-limit {
+  stroke: #f87171;
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+}
+
+.sh-chart-limit-label {
+  fill: #fca5a5;
+  font-size: 11px;
+}
+
+.sh-chart-legend {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.78rem;
+  color: #94a3b8;
+}
+
+.sh-chart-legend i {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 2px;
+  margin-right: 0.35rem;
+}
+
+.sh-chart-detail {
+  margin-top: 0.4rem;
+  padding: 0.45rem 0.7rem;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  color: #e2e8f0;
+  font-size: 0.85rem;
+}

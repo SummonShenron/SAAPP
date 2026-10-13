@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import {
   api,
   type BudgetView,
@@ -14,10 +14,39 @@ import {
   type SafetySummary,
   type SonicHealth,
 } from '../api';
+import { HomeTab } from './SonicHealthHome';
+import { BarRow, BudgetBars, StatTile } from './sonicHealthParts';
+import { budgetAmount, pct, shortDate, tokens, usd } from './sonicHealthFormat';
 import './__styles__/SelfService.css';
 import './__styles__/SonicHealth.css';
 
 const PERIODS = [7, 30, 90];
+
+const TABS = [
+  { id: 'home', label: 'Home' },
+  { id: 'usage', label: 'Usage' },
+  { id: 'turns', label: 'Turns' },
+  { id: 'budget', label: 'Budget' },
+  { id: 'behavior', label: 'Behavior' },
+  { id: 'safety', label: 'Safety' },
+  { id: 'observations', label: 'Observations' },
+  { id: 'suggestions', label: 'Suggestions' },
+] as const;
+type TabId = typeof TABS[number]['id'];
+const LAST_TAB_KEY = 'sonic-health-tab';
+
+function isTab(value: string | null | undefined): value is TabId {
+  return TABS.some(t => t.id === value);
+}
+
+function rememberedTab(): TabId {
+  try {
+    const stored = localStorage.getItem(LAST_TAB_KEY);
+    return isTab(stored) ? stored : 'home';
+  } catch {
+    return 'home';
+  }
+}
 
 const OBSERVATION_LABELS: Record<string, string> = {
   emotional_fit: 'Emotional fit',
@@ -51,12 +80,6 @@ const ROUTE_LABELS: Record<string, string> = {
   tool_output: 'tools and repos',
 };
 
-function pct(value: number | null | undefined): string {
-  if (value === null || value === undefined) return 'n/a';
-  const n = value * 100;
-  return `${n >= 10 ? n.toFixed(0) : n.toFixed(1)}%`;
-}
-
 function change(value: number | null | undefined): React.ReactNode {
   if (value === null || value === undefined) return <span className="sh-flat">–</span>;
   const points = value * 100;
@@ -67,13 +90,6 @@ function change(value: number | null | undefined): React.ReactNode {
       {up ? '▲' : '▼'} {Math.abs(points).toFixed(1)} pts
     </span>
   );
-}
-
-function shortDate(iso: string | null | undefined): string {
-  if (!iso) return '';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 function evidenceLine(evidence: ObservationView['proposed_evidence']): string {
@@ -115,6 +131,7 @@ const SuggestionsCard: React.FC<{
         <div className="sh-hint">errAgent reads are not configured here, so there are no suggestions about incidents.</div>
       )}
       {data && items.length === 0 && <div className="sh-hint">Nothing to suggest right now.</div>}
+      <div className="sh-rows-grid">
       {items.map(item => (
         <div key={item.key} className="sh-row">
           <div className="sh-row-title">{item.title}<span className="sh-pill">{SUGGESTION_KIND_LABELS[item.kind]}</span></div>
@@ -130,6 +147,7 @@ const SuggestionsCard: React.FC<{
           </div>
         </div>
       ))}
+      </div>
     </section>
   );
 };
@@ -155,6 +173,14 @@ export const SonicHealthPage: React.FC = () => {
   const [suggestionsFailed, setSuggestionsFailed] = useState<boolean>(false);
   const [suggestionBusy, setSuggestionBusy] = useState<string | null>(null);
   const navigate = useNavigate();
+  const { tab: tabParam } = useParams();
+  const tab: TabId = isTab(tabParam) ? tabParam : tabParam ? 'home' : rememberedTab();
+
+  const selectTab = (next: string) => {
+    if (!isTab(next)) return;
+    try { localStorage.setItem(LAST_TAB_KEY, next); } catch { /* remembering the tab is a convenience */ }
+    navigate(`/sonic-health/${next}`);
+  };
 
   // Loaded on its own, so a problem reading errAgent never takes the rest of the page down with it.
   useEffect(() => {
@@ -267,49 +293,101 @@ export const SonicHealthPage: React.FC = () => {
   const awaiting = health.observations.filter(o => o.proposed_text);
   const live = health.observations.filter(o => o.state === 'live');
   const lapsed = health.observations.filter(o => o.state === 'expired' || o.state === 'retired');
+  const suggestionsWaiting = suggestions?.suggestions.length ?? 0;
+  const budgetLevel = health.budget?.level;
+
+  // A small marker on a tab that has something waiting, so the bar says where to look without opening anything.
+  const badges: Partial<Record<TabId, { text: string; tone: 'info' | 'warn' }>> = {};
+  if (awaiting.length > 0) badges.observations = { text: String(awaiting.length), tone: 'info' };
+  if (suggestionsWaiting > 0) badges.suggestions = { text: String(suggestionsWaiting), tone: 'info' };
+  if (budgetLevel === 'notice') badges.budget = { text: '80%+', tone: 'info' };
+  if (budgetLevel === 'throttled' || budgetLevel === 'blocked') badges.budget = { text: budgetLevel === 'blocked' ? 'PAUSED' : 'LOW', tone: 'warn' };
+  if (health.safety.last_resort_line > 0) badges.safety = { text: '!', tone: 'warn' };
+  if ((health.usage?.turns?.error_turns ?? 0) > 0) badges.turns = { text: String(health.usage?.turns?.error_turns), tone: 'warn' };
+
+  const onTabKey = (e: React.KeyboardEvent, index: number) => {
+    const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+    if (!step && e.key !== 'Home' && e.key !== 'End') return;
+    e.preventDefault();
+    const next = e.key === 'Home' ? 0 : e.key === 'End' ? TABS.length - 1 : (index + step + TABS.length) % TABS.length;
+    selectTab(TABS[next].id);
+    document.getElementById(`sh-tab-${TABS[next].id}`)?.focus();
+  };
+
+  const noData = (what: string) => <div className="sh-hint">Nothing about {what} has been recorded yet.</div>;
 
   return (
-    <div className="self-service-container">
-      <header className="self-service-header">
-        <h1>Sonic Health</h1>
-        <p>How the safety layer and Sonic itself have been behaving. Aggregate counts only: nothing on this page contains a person or a message.</p>
+    <div className="sh-page">
+      <header className="sh-header">
+        <div>
+          <h1>Sonic Health</h1>
+          <p>How the safety layer and Sonic itself have been behaving. Aggregate counts only: nothing here contains a person or a message.</p>
+        </div>
+        <div className="sh-toolbar">
+          <label className="sh-toolbar-label">
+            Period
+            <select className="sh-select" value={days} onChange={(e) => { setLoading(true); setDays(Number(e.target.value)); }}>
+              {PERIODS.map(p => <option key={p} value={p}>Last {p} days</option>)}
+            </select>
+          </label>
+          <button type="button" className="sh-btn" onClick={() => { setLoading(true); setReloadKey(k => k + 1); }}>Refresh</button>
+          <span className="sh-generated">Updated {new Date(health.generated_at).toLocaleString()}</span>
+        </div>
       </header>
 
-      <div className="sh-toolbar">
-        <label className="sh-toolbar-label">
-          Period
-          <select className="sh-select" value={days} onChange={(e) => { setLoading(true); setDays(Number(e.target.value)); }}>
-            {PERIODS.map(p => <option key={p} value={p}>Last {p} days</option>)}
-          </select>
-        </label>
-        <button type="button" className="sh-btn" onClick={() => { setLoading(true); setReloadKey(k => k + 1); }}>Refresh</button>
-        <span className="sh-generated">Updated {new Date(health.generated_at).toLocaleString()}</span>
-      </div>
+      <nav className="sh-tabs" role="tablist" aria-label="Sonic Health sections">
+        {TABS.map((t, index) => {
+          const badge = badges[t.id];
+          return (
+            <button
+              key={t.id}
+              id={`sh-tab-${t.id}`}
+              type="button"
+              role="tab"
+              aria-selected={tab === t.id}
+              aria-controls="sh-panel"
+              tabIndex={tab === t.id ? 0 : -1}
+              className={`sh-tab${tab === t.id ? ' sh-tab-active' : ''}`}
+              onClick={() => selectTab(t.id)}
+              onKeyDown={(e) => onTabKey(e, index)}
+            >
+              {t.label}
+              {badge && <span className={`sh-tab-badge sh-tab-badge-${badge.tone}`}>{badge.text}</span>}
+            </button>
+          );
+        })}
+      </nav>
 
       {notice && <div className="sh-notice" role="status">{notice}</div>}
 
-      <div className="vertical-card-stack">
-        <SuggestionsCard
-          data={suggestions}
-          failed={suggestionsFailed}
-          busyKey={suggestionBusy}
-          onInvestigate={handleInvestigate}
-          onDecide={handleDecide}
-        />
-        <ObservationsCard
-          awaiting={awaiting}
-          live={live}
-          lapsed={lapsed}
-          busyKey={busyKey}
-          reflecting={reflecting}
-          onApprove={handleApprove}
-          onRetire={handleRetire}
-          onReflect={handleReflect}
-        />
-        {health.budget && <BudgetCard budget={health.budget} />}
-        {health.usage && <UsageCard usage={health.usage} turns={health.counters.totals.turns_total ?? 0} />}
-        <CountersCard counters={health.counters} />
-        <SafetyCard safety={health.safety} />
+      <div id="sh-panel" role="tabpanel" aria-labelledby={`sh-tab-${tab}`} className="sh-panel">
+        {tab === 'home' && <HomeTab health={health} awaiting={awaiting.length} suggestionsWaiting={suggestionsWaiting} onOpen={selectTab} />}
+        {tab === 'usage' && (health.usage ? <UsageCard usage={health.usage} turns={health.counters.totals.turns_total ?? 0} /> : noData('model usage'))}
+        {tab === 'turns' && (health.usage?.turns && health.usage.turns.turns > 0 ? <TurnsCard turns={health.usage.turns} /> : noData('chat turns'))}
+        {tab === 'budget' && (health.budget ? <BudgetCard budget={health.budget} /> : noData('budget'))}
+        {tab === 'behavior' && <CountersCard counters={health.counters} />}
+        {tab === 'safety' && <SafetyCard safety={health.safety} />}
+        {tab === 'observations' && (
+          <ObservationsCard
+            awaiting={awaiting}
+            live={live}
+            lapsed={lapsed}
+            busyKey={busyKey}
+            reflecting={reflecting}
+            onApprove={handleApprove}
+            onRetire={handleRetire}
+            onReflect={handleReflect}
+          />
+        )}
+        {tab === 'suggestions' && (
+          <SuggestionsCard
+            data={suggestions}
+            failed={suggestionsFailed}
+            busyKey={suggestionBusy}
+            onInvestigate={handleInvestigate}
+            onDecide={handleDecide}
+          />
+        )}
       </div>
     </div>
   );
@@ -403,17 +481,6 @@ const ObservationsCard: React.FC<ObservationsCardProps> = ({ awaiting, live, lap
   </section>
 );
 
-function tokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
-}
-
-function usd(value: number | null | undefined): string {
-  if (value === null || value === undefined) return '';
-  return value < 0.01 ? '<$0.01' : `$${value.toFixed(2)}`;
-}
-
 const BUDGET_LEVEL_TEXT: Record<BudgetView['level'], string> = {
   off: 'NOT SET',
   ok: 'COMFORTABLE',
@@ -421,10 +488,6 @@ const BUDGET_LEVEL_TEXT: Record<BudgetView['level'], string> = {
   throttled: 'LOW-POWER',
   blocked: 'PAUSED',
 };
-
-function budgetAmount(unit: 'usd' | 'tokens', value: number): string {
-  return unit === 'usd' ? `$${value.toFixed(2)}` : tokens(Math.round(value));
-}
 
 const BudgetCard: React.FC<{ budget: BudgetView }> = ({ budget }) => {
   const resets = budget.resets_at ? new Date(budget.resets_at).toLocaleString() : null;
@@ -444,19 +507,7 @@ const BudgetCard: React.FC<{ budget: BudgetView }> = ({ budget }) => {
         </div>
       ) : (
         <>
-          {(budget.detail ?? []).map(item => {
-            const percent = Math.round(item.fraction * 100);
-            const tone = item.fraction >= 1.25 ? 'blocked' : item.fraction >= 1 ? 'throttled' : item.fraction >= 0.8 ? 'notice' : 'ok';
-            return (
-              <div key={`${item.scope}-${item.unit}`} className="sh-budget-row">
-                <div className="sh-budget-label">
-                  <span>{item.scope === 'day' ? 'Today' : 'This month'} ({item.unit === 'usd' ? 'dollars' : 'tokens'})</span>
-                  <span>{budgetAmount(item.unit, item.spent)} of {budgetAmount(item.unit, item.limit)} ({percent}%)</span>
-                </div>
-                <div className="sh-bar"><div className={`sh-bar-fill sh-bar-${tone}`} style={{ width: `${Math.min(item.fraction * 100, 100)}%` }} /></div>
-              </div>
-            );
-          })}
+          <BudgetBars budget={budget} />
           {resets && <div className="sh-hint">The deciding budget resets {resets}.</div>}
           {budget.paused.length > 0 && <div className="sh-hint">Paused right now: {budget.paused.join(', ')}.</div>}
           {(budget.unpriced_tokens ?? 0) > 0 && (budget.detail ?? []).some(item => item.unit === 'usd') && (
@@ -483,10 +534,10 @@ const TOOL_REASON_LABELS: Record<string, string> = {
   clarification_resume: 'answering its own question',
 };
 
-const BUCKET_LABELS: Record<string, string> = { c1: '1 call', c2: '2', c3_4: '3-4', c5_8: '5-8', c9_plus: '9 or more' };
+const BUCKET_LABELS: Record<string, string> = { c1: '1 call', c2: '2 calls', c3_4: '3-4 calls', c5_8: '5-8 calls', c9_plus: '9 or more calls' };
 
-/** One chat turn is often several model calls. This is how many, by kind of turn, and how often deep mode ran and why. */
-const TurnsSection: React.FC<{ turns: TurnsSummary }> = ({ turns }) => {
+/** One chat turn is often several model calls. This is how many, by kind of turn, how often deep mode ran, and why turns went to the tool agent. */
+const TurnsCard: React.FC<{ turns: TurnsSummary }> = ({ turns }) => {
   const rows: [string, TurnKindRow][] = [
     ['All turns', turns.overall],
     ['Plain chat (no tools)', turns.plain],
@@ -495,46 +546,81 @@ const TurnsSection: React.FC<{ turns: TurnsSummary }> = ({ turns }) => {
   ];
   const sources = turns.deep_sources;
   const counted = turns.histogram.reduce((sum, bucket) => sum + bucket.turns, 0);
+  const toolShare = turns.turns > 0 ? turns.tool.turns / turns.turns : 0;
   return (
-    <>
-      <h3 className="sh-subhead">Model calls per chat turn</h3>
-      <table className="sh-table">
-        <thead><tr><th>Kind of turn</th><th>Turns</th><th>Calls / turn</th><th>Input / turn</th><th>Output / turn</th><th>Thinking / turn</th></tr></thead>
-        <tbody>
-          {rows.map(([label, row]) => (
-            <tr key={label}>
-              <td>{label}</td><td>{row.turns}</td><td>{row.avg_calls ?? 'n/a'}</td>
-              <td>{row.avg_input === null ? 'n/a' : tokens(row.avg_input)}</td>
-              <td>{row.avg_output === null ? 'n/a' : tokens(row.avg_output)}</td>
-              <td>{row.avg_reasoning === null ? 'n/a' : tokens(row.avg_reasoning)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div className="sh-hint">
-        Calls per turn: {turns.histogram.map(bucket => `${BUCKET_LABELS[bucket.bucket]}: ${bucket.turns}${counted ? ` (${Math.round((100 * bucket.turns) / counted)}%)` : ''}`).join(' · ')}.
-        The most any one turn made was {turns.max_calls}.
+    <section className="service-card sh-card">
+      <div className="card-badge">{turns.turns} TURNS</div>
+      <h2>Model calls per chat turn</h2>
+      <p className="card-description">
+        One message to Sonic can cause several model calls: the router, each tool step, the reply, a quality check. This is how many, by
+        kind of turn, so a cost can be traced to the kind of turn that causes it.
+      </p>
+      <div className="sh-stat-grid">
+        <StatTile value={turns.overall.avg_calls ?? 'n/a'} label="model calls per turn, on average" />
+        <StatTile value={pct(toolShare)} label={`of turns used the tool agent (${turns.tool.turns} of ${turns.turns})`} />
+        <StatTile value={turns.max_calls} label="most calls any one turn made" />
+        <StatTile value={turns.deep.turns} label="deep-mode turns" />
+        <StatTile value={turns.native_turns} label="turns on the native tool engine" />
       </div>
+      <div className="sh-two">
+        <div>
+          <h3 className="sh-subhead">By kind of turn</h3>
+          <table className="sh-table">
+            <thead><tr><th>Kind of turn</th><th>Turns</th><th>Calls / turn</th><th>Input / turn</th><th>Output / turn</th><th>Thinking / turn</th></tr></thead>
+            <tbody>
+              {rows.map(([label, row]) => (
+                <tr key={label}>
+                  <td>{label}</td><td>{row.turns}</td><td>{row.avg_calls ?? 'n/a'}</td>
+                  <td>{row.avg_input === null ? 'n/a' : tokens(row.avg_input)}</td>
+                  <td>{row.avg_output === null ? 'n/a' : tokens(row.avg_output)}</td>
+                  <td>{row.avg_reasoning === null ? 'n/a' : tokens(row.avg_reasoning)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <h3 className="sh-subhead">How many calls a turn made</h3>
+          {turns.histogram.map(bucket => (
+            <BarRow
+              key={bucket.bucket}
+              label={BUCKET_LABELS[bucket.bucket]}
+              value={`${bucket.turns}${counted ? ` (${Math.round((100 * bucket.turns) / counted)}%)` : ''}`}
+              fraction={counted ? bucket.turns / counted : 0}
+              tone={bucket.bucket === 'c9_plus' ? 'notice' : 'ok'}
+            />
+          ))}
+        </div>
+      </div>
+      {turns.routing.length > 0 && (
+        <>
+          <h3 className="sh-subhead">Why turns went to the tool agent (the expensive path)</h3>
+          <div className="sh-bars-grid">
+            {turns.routing.map(row => (
+              <BarRow
+                key={row.reason}
+                label={TOOL_REASON_LABELS[row.reason] ?? row.reason}
+                value={`${row.turns}${row.alone ? ` (${row.alone} with no other reason)` : ''}`}
+                fraction={turns.tool.turns > 0 ? row.turns / turns.tool.turns : 0}
+              />
+            ))}
+          </div>
+          <div className="sh-hint">A turn can have more than one reason, so these can add up to more than the number of tool turns.</div>
+        </>
+      )}
       <div className="sh-hint">
         Deep mode (the stronger model) ran on {turns.deep.turns} turn(s){turns.deep_share !== null ? ` (${pct(turns.deep_share)} of all turns)` : ''}. Only your own setting runs it now.
         {turns.audit_wording_turns > 0 && ` ${turns.audit_wording_turns} turn(s) had audit-style wording ("scan the repo", "every file", "audit"): those get a wider step budget on the normal model.`}
         {(sources.audit > 0 || sources.both > 0) && ` Earlier in this period, ${sources.audit + sources.both} turn(s) were made deep by that wording, before it was changed.`}
         {turns.deep_suppressed > 0 && ` ${turns.deep_suppressed} more were held back by low-power mode.`}
       </div>
-      {turns.routing.length > 0 && (
+      {(turns.blocked_turns > 0 || turns.error_turns > 0) && (
         <div className="sh-hint">
-          Why turns went to the tool agent (the expensive path): {turns.routing.map(row => `${TOOL_REASON_LABELS[row.reason] ?? row.reason} ${row.turns}${row.alone ? ` (${row.alone} with no other reason)` : ''}`).join(' · ')}.
-          A turn can have more than one reason.
-        </div>
-      )}
-      {(turns.native_turns > 0 || turns.blocked_turns > 0 || turns.error_turns > 0) && (
-        <div className="sh-hint">
-          {turns.native_turns > 0 && `${turns.native_turns} turn(s) used the native tool engine. `}
           {turns.blocked_turns > 0 && `${turns.blocked_turns} chat(s) were paused by the budget. `}
           {turns.error_turns > 0 && `${turns.error_turns} turn(s) failed.`}
         </div>
       )}
-    </>
+    </section>
   );
 };
 
@@ -563,7 +649,8 @@ const UsageCard: React.FC<{ usage: UsageSummary; turns: number }> = ({ usage, tu
               <div className="sh-stat"><div className="sh-stat-value">{usd(usage.estimated_cost) || 'n/a'}</div><div className="sh-stat-label">estimated cost (priced models only)</div></div>
             )}
           </div>
-          <table className="sh-table">
+          <div className="sh-two sh-two-wide-right">
+          <div className="sh-scroll"><table className="sh-table">
             <thead><tr><th>Model</th><th>Calls</th><th>Input</th><th>Output</th><th>Thinking</th><th>Cached</th><th>Share</th>{usage.priced && <th>Est. cost</th>}</tr></thead>
             <tbody>
               {usage.by_model.map(row => (
@@ -574,8 +661,8 @@ const UsageCard: React.FC<{ usage: UsageSummary; turns: number }> = ({ usage, tu
                 </tr>
               ))}
             </tbody>
-          </table>
-          <table className="sh-table">
+          </table></div>
+          <div className="sh-scroll"><table className="sh-table">
             <thead><tr><th>Caller</th><th>Model</th><th>Calls</th><th>Input</th><th>Output</th><th>Thinking</th><th>Cached</th><th>Share</th></tr></thead>
             <tbody>
               {rows.map(row => (
@@ -585,8 +672,8 @@ const UsageCard: React.FC<{ usage: UsageSummary; turns: number }> = ({ usage, tu
                 </tr>
               ))}
             </tbody>
-          </table>
-          {usage.turns && usage.turns.turns > 0 && <TurnsSection turns={usage.turns} />}
+          </table></div>
+          </div>
           {(usage.routes ?? []).map(route => (
             <div key={`${route.requested}>${route.served}>${route.kind}`} className="sh-hint">
               {route.kind === 'fallback'
@@ -615,7 +702,7 @@ const CountersCard: React.FC<{ counters: CountersSummary }> = ({ counters }) => 
         This period against the one before it ({previousTotals.turns_total ?? 0} turns). Rewrite rates are the share of checked replies
         where the first draft had to be rewritten before the user saw it.
       </p>
-      <table className="sh-table">
+      <table className="sh-table sh-table-readable">
         <thead>
           <tr><th>Measure</th><th>Now</th><th>Before</th><th>Change</th></tr>
         </thead>
@@ -670,6 +757,7 @@ const SafetyCard: React.FC<{ safety: SafetySummary }> = ({ safety }) => {
         </div>
         <div className="sh-stat"><div className="sh-stat-value">{safety.outage_fallbacks}</div><div className="sh-stat-label">times the model was down on a risk turn</div></div>
       </div>
+      <div className="sh-two">
       <div className="sh-routes">
         <span className="sh-chip-label">By level:</span>
         {Object.keys(safety.by_level).length === 0 && <span className="sh-chip">none</span>}
@@ -678,7 +766,7 @@ const SafetyCard: React.FC<{ safety: SafetySummary }> = ({ safety }) => {
         {Object.keys(safety.by_detector).length === 0 && <span className="sh-chip">none</span>}
         {Object.entries(safety.by_detector).map(([d, n]) => <span key={d} className="sh-chip">{d} {n}</span>)}
       </div>
-      <table className="sh-table">
+      <div className="sh-scroll"><table className="sh-table">
         <thead><tr><th>Ladder step</th><th>Had someone</th><th>Had no one</th></tr></thead>
         <tbody>
           {Object.entries(safety.ladder).map(([rung, counts]) => (
@@ -687,7 +775,8 @@ const SafetyCard: React.FC<{ safety: SafetySummary }> = ({ safety }) => {
             </tr>
           ))}
         </tbody>
-      </table>
+      </table></div>
+      </div>
     </section>
   );
 };

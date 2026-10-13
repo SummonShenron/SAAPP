@@ -67,6 +67,24 @@ def _lookup_clerk_email(user_id: str):
     return email
 
 
+def describe_expired_token(token: str, now: float = None) -> str:
+    """Timing facts about a token that was refused as expired, for the log: how long it was meant to live, how old it was when it arrived and
+    how long ago it ran out. Only numbers: nothing from the token's content, and no part of the token itself. Never raises."""
+    try:
+        claims = jwt.decode(token, options={"verify_signature": False, "verify_exp": False})
+        issued, expires = claims.get("iat"), claims.get("exp")
+        moment = time.time() if now is None else now
+        if not isinstance(issued, (int, float)) or not isinstance(expires, (int, float)):
+            return "token has no iat/exp claims"
+        return (
+            f"lifetime={int(expires - issued)}s, age_on_arrival={int(moment - issued)}s, expired_for={int(moment - expires)}s "
+            f"(a Clerk session token normally lives about 60s; a large expired_for means a stale token was sent, "
+            f"a small one with a small age means this machine's clock and Clerk's disagree)"
+        )
+    except Exception:
+        return "token timing could not be read"
+
+
 def _verify_clerk_jwt(token: str) -> dict:
     try:
         header = jwt.get_unverified_header(token)
@@ -74,6 +92,9 @@ def _verify_clerk_jwt(token: str) -> dict:
         key_data = next(k for k in jwks['keys'] if k['kid'] == header['kid'])
         public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key_data)
         return jwt.decode(token, public_key, algorithms=["RS256"])
+    except jwt.ExpiredSignatureError as e:
+        logger.error(f"Manual JWT verification failed: {e} [{describe_expired_token(token)}]")
+        raise HTTPException(status_code=401, detail="Authentication failed")
     except Exception as e:
         logger.error(f"Manual JWT verification failed: {e}")
         raise HTTPException(status_code=401, detail="Authentication failed")

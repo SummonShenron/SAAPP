@@ -76,7 +76,7 @@ function App() {
         <Route path="/memory" element={<MemoryPage />} />
         <Route path="/integrations" element={<IntegrationsPage />} />
         {/* Admin only: the server enforces Global_Admins on every endpoint this page calls. */}
-        <Route path="/sonic-health" element={<SonicHealthPage />} />
+        <Route path="/sonic-health/:tab?" element={<SonicHealthPage />} />
       </Route>
       {/* Catch-all */}
       <Route path="*" element={<Navigate to="/" replace />} />

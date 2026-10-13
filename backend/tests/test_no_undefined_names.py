@@ -63,6 +63,7 @@ CHECKED = [
     "backend/utils/interest_anchor.py",
     "backend/utils/llm_usage.py",
     "backend/utils/llm_turns.py",
+    "backend/utils/loop_watchdog.py",
     "backend/utils/budget_guard.py",
     "backend/evals/behavior_eval.py",
 ]

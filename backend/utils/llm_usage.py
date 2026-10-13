@@ -344,6 +344,33 @@ def _with_rates(counts: Dict[str, int], total_tokens: int) -> Dict[str, Any]:
     }
 
 
+def summarize_daily(docs: Iterable[Dict[str, Any]], prices: Optional[Dict[str, Dict[str, float]]], days: List[str]) -> List[Dict[str, Any]]:
+    """One row per billing day in `days` (oldest first), for the page's chart: `{day, calls, input, output, tokens, cost, unpriced_tokens}`.
+    A day with no rows is all zeros, so the chart's axis has no holes. `cost` is the estimate from `prices` (dollars, `None` when no price is
+    configured at all); tokens from a model with no price are counted in `unpriced_tokens`, never guessed. Pure."""
+    prices = prices or {}
+    rows: Dict[str, Dict[str, Any]] = {day: {"day": day, "calls": 0, "input": 0, "output": 0, "cost": 0.0, "unpriced_tokens": 0} for day in days}
+    for doc in docs:
+        row = rows.get(str(doc.get("day")))
+        if row is None:
+            continue
+        row["calls"] += _count(doc.get("calls"))
+        row["input"] += _count(doc.get("input"))
+        row["output"] += _count(doc.get("output"))
+        cost = estimate_cost(str(doc.get("model") or "unknown"), doc, prices)
+        if cost is None:
+            row["unpriced_tokens"] += _count(doc.get("input")) + _count(doc.get("output"))
+        else:
+            row["cost"] += cost
+    out = []
+    for day in days:
+        row = rows[day]
+        row["tokens"] = row["input"] + row["output"]
+        row["cost"] = round(row["cost"], 4) if prices else None
+        out.append(row)
+    return out
+
+
 def summarize_usage(docs: Iterable[Dict[str, Any]], prices: Optional[Dict[str, Dict[str, float]]] = None) -> Dict[str, Any]:
     """The usage page's data: totals, then by model and by caller, biggest first, each with its share of all tokens, how much of its
     input was cached and how much of its output was thinking, and (only with prices) an estimated cost. Pure."""
