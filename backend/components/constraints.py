@@ -708,7 +708,7 @@ remembering long-term, respond with exactly: NONE
 USER: {question}
 ASSISTANT: {answer}
 
-SUMMARY:
+Reply with the sentence itself and nothing else: no label, no quotes.
 """
 
 MEMORY_COMPACTION_PROMPT = """

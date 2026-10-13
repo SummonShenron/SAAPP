@@ -447,6 +447,31 @@ def fetch_relevant_corrections(username: str, question: str) -> str:
         logger.warning(f"[GUARDRAIL WARNING] Could not fetch corrections: {e}")
         return ""
 
+# A label the model puts in front of the note ("SUMMARY: ...", "**Note:** ..."): it copies the last word of the prompt. Stored, it
+# was embedded into every note and made unrelated notes look alike. Only a leading label followed by a colon is removed.
+_NOTE_LABEL = re.compile(r"""^[\s*_#>\-"']*(?:summary|note)[\s*_]*:[\s*_]*""", re.IGNORECASE)
+
+
+def strip_note_label(text: str) -> str:
+    return _NOTE_LABEL.sub("", text or "", count=1).strip()
+
+
+async def summarize_turn(question: str, answer: str, llm=None) -> Optional[str]:
+    """The one-sentence long-term memory note for a finished turn, or None when it is not worth remembering. Shared by
+    index_conversation_turn and backend/evals/memory_eval.py, so the eval measures exactly what the app writes."""
+    call = llm or lite_llm.ainvoke
+    summary_resp = await call(MEMORY_TURN_SUMMARY_PROMPT.format(question=question[:500], answer=answer[:1000]))
+    raw_content = summary_resp.content if hasattr(summary_resp, "content") else str(summary_resp)
+    if isinstance(raw_content, list):
+        summary_text = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in raw_content])
+    else:
+        summary_text = str(raw_content)
+    summary_text = strip_note_label(summary_text)
+    if not summary_text or summary_text.upper().rstrip(".") == "NONE":
+        return None
+    return summary_text
+
+
 async def index_conversation_turn(vector_store, username: str, question: str, answer: str, session_id: Optional[str] = None):
     """Fire-and-forget: summarizes a completed turn and embeds it into the user's semantic memory.
     Meant to be called via asyncio.create_task off the response-streaming critical path;
@@ -455,16 +480,8 @@ async def index_conversation_turn(vector_store, username: str, question: str, an
         logger.debug("[MemoryIndex] Skipping turn index for %s: no vector store or empty answer.", username)
         return
     try:
-        summary_resp = await lite_llm.ainvoke(
-            MEMORY_TURN_SUMMARY_PROMPT.format(question=question[:500], answer=answer[:1000])
-        )
-        raw_content = summary_resp.content if hasattr(summary_resp, "content") else str(summary_resp)
-        if isinstance(raw_content, list):
-            summary_text = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in raw_content])
-        else:
-            summary_text = str(raw_content)
-        summary_text = summary_text.strip()
-        if not summary_text or summary_text.upper() == "NONE":
+        summary_text = await summarize_turn(question, answer)
+        if summary_text is None:
             logger.info("[MemoryIndex] Turn for %s judged not worth remembering; no chunk stored.", username)
             return
         embed_and_store_memory_chunk(vector_store, username, summary_text, source_type="conversation_turn", source_ref=session_id)

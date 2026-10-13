@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -15,7 +16,13 @@ logger = logging.getLogger("SASS Logger")
 DEFAULT_COMPACTION_THRESHOLD = int(os.getenv("MEMORY_COMPACTION_THRESHOLD", "100"))
 DEFAULT_SIMILARITY_THRESHOLD = float(os.getenv("MEMORY_COMPACTION_SIMILARITY", "0.85"))
 DEFAULT_META_COMPACTION_THRESHOLD = int(os.getenv("MEMORY_META_COMPACTION_THRESHOLD", "500"))
-DEFAULT_META_SIMILARITY_THRESHOLD = float(os.getenv("MEMORY_META_COMPACTION_SIMILARITY", "0.90"))
+# 0.85, same as tier 1. At 0.90 tier 2 merged nothing on the real pool; judged by the small model, pairs at 0.85-0.90 are the same thing 80% of
+# the time, 0.80-0.85 only 35% (and below 0.80 notes chain into groups of dozens), so do not go lower. See backend/evals/memory_eval.py.
+DEFAULT_META_SIMILARITY_THRESHOLD = float(os.getenv("MEMORY_META_COMPACTION_SIMILARITY", "0.85"))
+# Greedy clustering chains at lower thresholds; no merge group may exceed this, so one summary never has to hold dozens of notes.
+MAX_CLUSTER_SIZE = int(os.getenv("MEMORY_COMPACTION_MAX_CLUSTER", "12"))
+# Notes that compaction folds into a summary are copied here first, so a bad merge can be undone (backend/utils/memory_maintenance.py).
+ARCHIVE_COLLECTION = "user_memory_chunk_archive"
 MIN_FACTS_FOR_PATTERN_EXTRACTION = int(os.getenv("MIN_FACTS_FOR_PATTERN_EXTRACTION", "8"))
 # Re-running pattern extraction over a barely-changed fact set just gives the model another
 # chance to phrase the same underlying pattern slightly differently — fact-level dedup catches
@@ -63,16 +70,46 @@ def _count_all_chunks(db, username: str) -> int:
 def _fetch_chunks(db, username: str, source_type_filter: dict) -> List[dict]:
     cursor = db[USER_MEMORY_COLLECTION].find(
         {"username": username, "source_type": source_type_filter},
-        {"text": 1, "embedding": 1, "source_type": 1, "source_ref": 1, "created_at": 1},
+        {"text": 1, "embedding": 1, "source_type": 1, "source_ref": 1, "created_at": 1, "latest_at": 1, "username": 1, "stale": 1},
     )
     return list(cursor)
 
 
-def _cluster_chunks(chunks: List[dict], threshold: float = DEFAULT_SIMILARITY_THRESHOLD) -> List[List[dict]]:
+def _archive_cluster(db, username: str, cluster: List[dict], *, tier: int, run_id: str, cluster_id: str) -> None:
+    """Copies every note in `cluster` into the archive before compaction deletes it. Idempotent (keyed by the note's own _id), so a retry
+    after a crash is harmless. Raises on failure: the caller must not delete notes that could not be archived."""
+    archived_at = datetime.now(timezone.utc).isoformat()
+    for chunk in cluster:
+        doc = {key: value for key, value in chunk.items() if key != "_id"}
+        doc.update({"username": username, "archived_at": archived_at, "compaction_tier": tier, "run_id": run_id, "cluster_id": cluster_id})
+        db[ARCHIVE_COLLECTION].update_one({"_id": chunk["_id"]}, {"$setOnInsert": doc}, upsert=True)
+
+
+def _span_of(cluster: List[dict]) -> dict:
+    """The dates a summary of `cluster` should carry: {"created_at": oldest, "latest_at": newest}, as ISO strings. Folding notes
+    into a summary must not make them look new, so the summary is dated by what it replaces, not by when compaction ran. Notes
+    with no usable date are ignored; if none has one the result is empty and the summary is dated as usual."""
+    stamps = []
+    for chunk in cluster:
+        for key in ("created_at", "latest_at"):
+            raw = chunk.get(key)
+            if not raw:
+                continue
+            try:
+                parsed = datetime.fromisoformat(str(raw))
+            except ValueError:
+                continue
+            stamps.append(parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc))
+    if not stamps:
+        return {}
+    return {"created_at": min(stamps).isoformat(), "latest_at": max(stamps).isoformat()}
+
+
+def _cluster_chunks(chunks: List[dict], threshold: float = DEFAULT_SIMILARITY_THRESHOLD, max_size: int = MAX_CLUSTER_SIZE) -> List[List[dict]]:
     """
     Pure greedy cosine-similarity clustering: no DB/LLM calls, safe to unit test directly.
     Each unclustered chunk seeds a new cluster and absorbs any other unclustered chunk whose
-    embedding is similar enough to it.
+    embedding is similar enough to it, up to `max_size` notes; the rest stay free to seed or join later clusters.
     """
     clusters: List[List[dict]] = []
     assigned = [False] * len(chunks)
@@ -86,6 +123,8 @@ def _cluster_chunks(chunks: List[dict], threshold: float = DEFAULT_SIMILARITY_TH
 
         if anchor_embedding:
             for j in range(i + 1, len(chunks)):
+                if len(cluster) >= max_size:
+                    break
                 if assigned[j]:
                     continue
                 other_embedding = chunks[j].get("embedding")
@@ -241,19 +280,35 @@ async def _run_compaction(
         )
         clusters_formed = len(multi_clusters)
 
+        run_id = uuid.uuid4().hex[:12]
+        clusters_archived = 0
+        clusters_skipped = 0
         for cluster in multi_clusters:
+            cluster_id = uuid.uuid4().hex[:12]
+            # Copy the originals to the archive BEFORE anything else, and leave the cluster alone if that fails: a note is only ever deleted
+            # once a copy of it is safe, so any merge can be undone (python -m backend.utils.memory_maintenance restore-compacted).
+            try:
+                _archive_cluster(db, username, cluster, tier=tier, run_id=run_id, cluster_id=cluster_id)
+            except Exception:
+                logger.exception("[MemoryCompaction] Could not archive a cluster of %d for %s; leaving it uncompacted.", len(cluster), username)
+                clusters_skipped += 1
+                continue
+            clusters_archived += 1
+
             summarized = await _summarize_cluster(cluster)
 
-            source_refs = [c.get("source_ref") for c in cluster if c.get("source_ref")]
+            # Provenance names the original sources, not earlier merges (those would nest and grow with every pass).
+            source_refs = [c.get("source_ref") for c in cluster if c.get("source_ref") and not str(c.get("source_ref")).startswith("compacted:")]
             provenance = f"compacted:{len(cluster)} chunks"
             if source_refs:
                 provenance += f" ({', '.join(str(r) for r in source_refs[:3])})"
+            provenance += f" #{cluster_id}"  # ties the summary to its archived originals, for restore
 
             # Insert the compacted summary FIRST; only delete originals once that succeeds,
             # so a mid-run crash can never lose the underlying content.
             embed_and_store_memory_chunk(
                 vector_store, username, summarized["summary"],
-                source_type=output_source_type, source_ref=provenance,
+                source_type=output_source_type, source_ref=provenance, **_span_of(cluster),
             )
             db[USER_MEMORY_COLLECTION].delete_many({"_id": {"$in": [c["_id"] for c in cluster]}})
 
@@ -292,6 +347,9 @@ async def _run_compaction(
             "singletons_promoted": singletons_promoted,
             "facts_promoted": facts_promoted,
             "tier": tier,
+            "run_id": run_id,
+            "clusters_archived": clusters_archived,
+            "clusters_skipped": clusters_skipped,
         }
         log_compaction_event(db, username, result)
         return result
