@@ -22,8 +22,11 @@ DEFAULT_META_COMPACTION_THRESHOLD = int(os.getenv("MEMORY_META_COMPACTION_THRESH
 DEFAULT_META_SIMILARITY_THRESHOLD = float(os.getenv("MEMORY_META_COMPACTION_SIMILARITY", "0.85"))
 # Greedy clustering chains at lower thresholds; no merge group may exceed this, so one summary never has to hold dozens of notes.
 MAX_CLUSTER_SIZE = int(os.getenv("MEMORY_COMPACTION_MAX_CLUSTER", "12"))
+# Facts a model infers from a summary start less trusted than facts the user stated (which start at 1.0), so a stated fact outranks an
+# inferred one at equal similarity when facts are chosen for the prompt. A re-observation raises it like any other fact.
+COMPACTION_FACT_CONFIDENCE = float(os.getenv("MEMORY_COMPACTION_FACT_CONFIDENCE", "0.7"))
 # Notes that compaction folds into a summary are copied here first, so a bad merge can be undone (backend/utils/memory_maintenance.py).
-ARCHIVE_COLLECTION = "user_memory_chunk_archive"
+ARCHIVE_COLLECTION = CHUNK_ARCHIVE_COLLECTION
 MIN_FACTS_FOR_PATTERN_EXTRACTION = int(os.getenv("MIN_FACTS_FOR_PATTERN_EXTRACTION", "8"))
 # Re-running pattern extraction over a barely-changed fact set just gives the model another
 # chance to phrase the same underlying pattern slightly differently — fact-level dedup catches
@@ -70,7 +73,7 @@ def _count_all_chunks(db, username: str) -> int:
 
 def _fetch_chunks(db, username: str, source_type_filter: dict) -> List[dict]:
     cursor = db[USER_MEMORY_COLLECTION].find(
-        {"username": username, "source_type": source_type_filter},
+        {"username": username, "source_type": source_type_filter, "stale": {"$ne": True}},
         {"text": 1, "embedding": 1, "source_type": 1, "source_ref": 1, "created_at": 1, "latest_at": 1, "username": 1, "stale": 1},
     )
     return list(cursor)
@@ -289,7 +292,7 @@ async def _run_compaction(
             # Copy the originals to the archive BEFORE anything else, and leave the cluster alone if that fails: a note is only ever deleted
             # once a copy of it is safe, so any merge can be undone (python -m backend.utils.memory_maintenance restore-compacted).
             try:
-                _archive_cluster(db, username, cluster, tier=tier, run_id=run_id, cluster_id=cluster_id)
+                await asyncio.to_thread(lambda: _archive_cluster(db, username, cluster, tier=tier, run_id=run_id, cluster_id=cluster_id))
             except Exception:
                 logger.exception("[MemoryCompaction] Could not archive a cluster of %d for %s; leaving it uncompacted.", len(cluster), username)
                 clusters_skipped += 1
@@ -310,8 +313,8 @@ async def _run_compaction(
             await asyncio.to_thread(lambda: embed_and_store_memory_chunk(
                 vector_store, username, summarized["summary"],
                 source_type=output_source_type, source_ref=provenance, **_span_of(cluster),
-            )
-            db[USER_MEMORY_COLLECTION].delete_many({"_id": {"$in": [c["_id"] for c in cluster]}})
+            ))
+            await asyncio.to_thread(lambda: db[USER_MEMORY_COLLECTION].delete_many({"_id": {"$in": [c["_id"] for c in cluster]}}))
 
             for fact in summarized["facts"]:
                 fact_text = fact.get("fact") if isinstance(fact, dict) else None
