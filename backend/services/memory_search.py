@@ -26,11 +26,11 @@ CHUNK_ARCHIVE_COLLECTION = "user_memory_chunk_archive"
 # the closest notes, so at 0.75 every turn was handed three unrelated "recalled" lines. Notes that genuinely answer a question score
 # about 0.80 to 0.90. Tune with the env var; re-run the eval after any change.
 DEFAULT_RECALL_SIMILARITY_THRESHOLD = float(os.getenv("MEMORY_RECALL_SIMILARITY_THRESHOLD", "0.80"))
-# How close a note must be to a superseded fact to be hidden as outdated. On the SAME Atlas scale as the recall cutoff above, NOT the raw
-# cosine compaction clusters on, so the old 0.85 (a cosine of only 0.70) was far looser than it looked. It never mattered while the flagger
-# could not match any note (see mongo_ids); measured on the real store once it could, at 0.85 about 5 notes would be hidden per superseded fact
-# (54 of 60 sampled facts would hide all five), at 0.90 about 1, and the notes it hid were judged genuinely outdated 15 of 16 times or better.
-STALE_CHUNK_SIMILARITY_THRESHOLD = float(os.getenv("MEMORY_STALE_CHUNK_SIMILARITY", "0.90"))
+# Same "these are about the same underlying thing" bar memory_compaction.py's
+# DEFAULT_SIMILARITY_THRESHOLD uses for its own clustering (0.85) — duplicated rather than
+# imported, to avoid an import edge back into memory_compaction.py (which already imports FROM
+# this module).
+STALE_CHUNK_SIMILARITY_THRESHOLD = float(os.getenv("MEMORY_STALE_CHUNK_SIMILARITY", "0.85"))
 
 
 def get_user_memory_vector_store(db, embeddings) -> MongoDBAtlasVectorSearch:

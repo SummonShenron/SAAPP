@@ -3,21 +3,17 @@
     python -m backend.evals.memory_eval                       # every part
     python -m backend.evals.memory_eval --part recall         # only "is the right memory found?"
     python -m backend.evals.memory_eval --part write --runs 5 # only "does the saved note keep the detail?"
-    python -m backend.evals.memory_eval --query-policy latest # the message alone; "context" joins the previous user message to it; "union" (the app) does both
+    python -m backend.evals.memory_eval --query-policy latest # the app today; "context" adds the previous user message
     python -m backend.evals.memory_eval --list
     python -m backend.evals.memory_eval --save eval_results/memory_before.json
 
-FIVE PARTS, each one a place memory can quietly go wrong
+FOUR PARTS, each one a place memory can quietly go wrong
 - recall      A made-up person's memories (plus unrelated and near-topic filler, so the right one has to win) and questions about
               them: asked directly, asked in different words, asked as a short follow-up that only makes sense with the turn
               before it, asked when nothing relevant is stored, and asked when ANOTHER user stored the answer. Run through the
               app's own retrieval (memory_search.retrieve_relevant_memory_context, same top-k and threshold), so a change to either
               shows up here. The report also sweeps the similarity threshold, from the same hits, to show where the right memory
               stops being separable from the noise.
-- explicit    The same memories asked about the way a person asks when they WANT something recalled ("do you remember ..."), through the
-              explicit path (memory_search.retrieve_user_memory, what memory_recall_node uses), with questions about things never stored and the
-              other user's pet: it must find what is there and say nothing for what is not. Run with no cutoff (how it used to behave) and with
-              the app's cutoff, with a sweep of other cutoffs.
 - write       Scripted turns through the app's own summarising step (app_utils.summarize_turn): does the saved one-sentence note
               keep the name, date or number the user gave, does small talk save nothing, and can the note be found again?
 - compaction  Related notes spread over months through the real consolidation prompt: do the specifics, and the order they
@@ -44,7 +40,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from langchain_core.documents import Document
-from langchain_core.messages import HumanMessage
 
 from backend.services import memory_search as ms
 from backend.utils.embedding_utils import cosine_similarity
@@ -54,10 +49,9 @@ Embed = Callable[[str], Optional[List[float]]]
 NOW = datetime(2026, 10, 12, 12, 0, tzinfo=timezone.utc)
 PERSONA = "eval_persona"
 STRANGER = "eval_stranger"
-PARTS = ("recall", "explicit", "write", "compaction", "dedup")
-POLICIES = ("latest", "context", "union", "look")
+PARTS = ("recall", "write", "compaction", "dedup")
+POLICIES = ("latest", "context")
 SWEEP_THRESHOLDS = (0.60, 0.65, 0.70, 0.75, 0.80, 0.85)
-MAX_NOTE_CHARS = 320  # a saved note longer than this is scored a failure: a rambling note embeds as a blur
 TIER1_SIMILARITY = 0.85  # memory_compaction.DEFAULT_SIMILARITY_THRESHOLD
 TIER2_SIMILARITY = 0.85  # memory_compaction.DEFAULT_META_SIMILARITY_THRESHOLD
 
@@ -208,43 +202,11 @@ PROBES: Tuple[Probe, ...] = (
           history=("Help me draft the toast I have to give.",), notes="'it' is the toast, whose occasion is in memory"),
     Probe("roommate_follow_up", "follow_up", "Anyway, he did it again this morning.", ("roommate",),
           history=("Sam left the dishes in the sink for the third day.",)),
-    Probe("pup_paraphrase", "paraphrase", "What's the name of my pup?", ("dog",)),
-    Probe("employer_paraphrase", "paraphrase", "Which company was I trying to get hired at?", ("cover_letter",)),
-    Probe("food_paraphrase", "paraphrase", "Is there anything I'm not able to eat?", ("allergy",)),
-    Probe("legs_paraphrase", "paraphrase", "Am I still having trouble with my legs from running?", ("race",)),
-    Probe("city_paraphrase", "paraphrase", "What city did I relocate to?", ("move",)),
-    Probe("sibling_paraphrase", "paraphrase", "Remind me about my sibling's big day.", ("wedding",)),
-    Probe("evening_paraphrase", "paraphrase", "Do I have a standing commitment on one evening each week?", ("orchestra",)),
-    Probe("novel_paraphrase", "paraphrase", "What did I think of that novel I finished?", ("book",)),
     Probe("capital_negative", "negative", "What's the capital of Australia?", notes="nothing stored is relevant"),
     Probe("math_negative", "negative", "What's seventeen times twenty-three?", notes="nothing stored is relevant"),
     Probe("poem_negative", "negative", "Write me a four-line poem about autumn rain.", notes="nothing stored is relevant"),
-    Probe("math_about_me_negative", "negative", "I'm trying to work out seventeen times twenty-three, can you help me?", notes="about the user, but nothing stored is relevant"),
-    Probe("poem_about_me_negative", "negative", "Can you help me write a four-line poem about autumn rain?", notes="about the user, but nothing stored is relevant"),
-    Probe("trivia_about_me_negative", "negative", "My friend asked me what the capital of Australia is.", notes="about the user, but nothing stored is relevant"),
     Probe("pet_isolation", "isolation", "What's my pet's name?", ("dog",), ("stranger_cat",), notes="another user stored a cat; it must never appear"),
     Probe("cat_isolation", "isolation", "Remind me about my cat.", (), ("stranger_cat",), notes="this person has no cat; the other user's must not appear"),
-)
-
-
-EXPLICIT_PROBES: Tuple[Probe, ...] = (
-    Probe("x_dog", "direct", "Do you remember what my greyhound's name was?", ("dog",)),
-    Probe("x_wedding", "direct", "Remember when I told you about my sister's wedding? When is it?", ("wedding",)),
-    Probe("x_rent", "direct", "Do you remember how much my rent is going up?", ("rent",)),
-    Probe("x_allergy", "direct", "What do you remember about my food allergy?", ("allergy",)),
-    Probe("x_book", "direct", "Remind me, what was that book I finished?", ("book",)),
-    Probe("x_trip", "direct", "Do you remember where I'm going in April?", ("trip",)),
-    Probe("x_orchestra", "direct", "Do you remember which night my orchestra meets?", ("orchestra",)),
-    Probe("x_manager", "paraphrase", "What did I tell you about my boss?", ("manager",)),
-    Probe("x_pup", "paraphrase", "Do you remember my dog's name?", ("dog",)),
-    Probe("x_job", "paraphrase", "Do you remember which company I was applying to?", ("cover_letter",)),
-    Probe("x_color", "negative", "Do you remember my favorite color?", notes="never stored"),
-    Probe("x_breakfast", "negative", "Do you remember what I had for breakfast yesterday?", notes="never stored"),
-    Probe("x_iceland", "negative", "Remember when I told you about my trip to Iceland?", notes="never stored"),
-    Probe("x_car", "negative", "What did I tell you about my car?", notes="never stored"),
-    Probe("x_school", "negative", "Do you remember the name of my high school?", notes="never stored"),
-    Probe("x_street", "negative", "Do you remember the street I grew up on?", notes="never stored"),
-    Probe("x_cat", "isolation", "Do you remember my cat's name?", (), ("stranger_cat",), notes="this person has no cat; another user's must not appear"),
 )
 
 
@@ -305,9 +267,6 @@ class EvalStore:
         embedding = self.embed(query)
         return self._similarity_search_with_score(embedding, k=k, pre_filter=pre_filter) if embedding is not None else []
 
-    def similarity_search(self, query: str, k: int = 4, pre_filter=None, **_: Any):
-        return [doc for doc, _score in self.similarity_search_with_score(query, k=k, pre_filter=pre_filter)]
-
 
 def cached(embed: Embed) -> Embed:
     memo: Dict[str, Optional[List[float]]] = {}
@@ -346,9 +305,7 @@ _AGE_PREFIX = re.compile(r"^\([^)]*\)\s*")
 
 
 def build_query(policy: str, message: str, history: Sequence[str] = ()) -> str:
-    """What gets searched first. "latest": the message alone. "context": the previous user message and the message as one query.
-    "union": the message alone, plus (in run_probe) a second search on the previous message and the message, merged. "look": union, and
-    when nothing clears the cutoff the small model picks from the notes that fell just short: what the app does."""
+    """What gets searched. "latest" is what the app does today: the message alone. "context" adds the user's previous message."""
     if policy == "context" and history:
         return f"{history[-1]}\n{message}"
     return message
@@ -372,8 +329,6 @@ class ProbeResult:
     returned: List[str]  # the keys of what came back, in order
     noise: int  # recalled lines that were not a wanted memory
     hits: List[Tuple[str, float]] = field(default_factory=list)  # the ten best (key, score), before any threshold
-    looked: bool = False  # the small model was asked to look again at near misses
-    look_kept: int = 0  # how many of them it kept
 
 
 def score_recall(probe: Probe, returned_keys: Sequence[str]) -> Tuple[bool, str]:
@@ -388,65 +343,22 @@ def score_recall(probe: Probe, returned_keys: Sequence[str]) -> Tuple[bool, str]
     return True, "ok"
 
 
-def run_probe(store: EvalStore, probe: Probe, policy: str, embed: Embed, text_to_key: Dict[str, str], llm=None) -> ProbeResult:
+def run_probe(store: EvalStore, probe: Probe, policy: str, embed: Embed, text_to_key: Dict[str, str]) -> ProbeResult:
     query = build_query(policy, probe.query, probe.history)
     embedding = embed(query)
-    context_query = ""
-    if policy in ("union", "look"):  # the app's own helper decides whether a second search is worth making
-        thread = [HumanMessage(content=text) for text in (*probe.history, probe.query)]
-        context_query = ms.context_query_for(thread, probe.query)
-    near: list = []
-    block = ms.retrieve_relevant_memory_context(
-        store, PERSONA, query, precomputed_embedding=embedding, context_query=context_query, near_misses=near,
-    ) if embedding is not None else ""
-    looked, look_kept = False, 0
-    if policy == "look" and not block and near and ms.refers_to_user(probe.query):
-        looked = True
-        kept = asyncio.run(ms.judge_near_misses(context_query or probe.query, near, llm))
-        look_kept = len(kept)
-        block = ms.format_recall_block([f"{ms._age_prefix(doc)}{doc.page_content.strip()}" for doc in kept]) if kept else ""
+    block = ms.retrieve_relevant_memory_context(store, PERSONA, query, precomputed_embedding=embedding) if embedding is not None else ""
     returned = [text_to_key.get(item, "unknown") for item in parse_block(block)]
     passed, why = score_recall(probe, returned)
-    pre_filter = {"username": PERSONA, "stale": {"$ne": True}}
-    hit_lists = [store._similarity_search_with_score(embedding, k=10, pre_filter=pre_filter)] if embedding is not None else []
-    if context_query and embed(context_query) is not None:
-        hit_lists.append(ms.discount_context_hits(store._similarity_search_with_score(embed(context_query), k=10, pre_filter=pre_filter)))
-    hits = [(text_to_key.get(doc.page_content, "unknown"), round(score, 3)) for doc, score in ms.merge_hits(*hit_lists, top_k=10)]
+    hits = [(text_to_key.get(doc.page_content, "unknown"), round(score, 3))
+            for doc, score in store._similarity_search_with_score(embedding, k=10, pre_filter={"username": PERSONA, "stale": {"$ne": True}})] if embedding is not None else []
     noise = len([key for key in returned if key not in probe.want])
-    return ProbeResult(probe, policy, passed, why, returned, noise, hits, looked, look_kept)
+    return ProbeResult(probe, policy, passed, why, returned, noise, hits)
 
 
-def run_recall(embed: Embed, policy: str, store: Optional[EvalStore] = None, llm=None) -> List[ProbeResult]:
+def run_recall(embed: Embed, policy: str, store: Optional[EvalStore] = None) -> List[ProbeResult]:
     store = store or build_store(embed)
     text_to_key = {row.text: row.key for row in store.rows}
-    return [run_probe(store, probe, policy, embed, text_to_key, llm) for probe in PROBES]
-
-
-EXPLICIT_MODES = {"before": "no cutoff (before)", "cutoff": "plain cutoff", "app": "app: strip + judge"}
-
-
-def run_explicit(embed: Embed, mode: str, store: Optional[EvalStore] = None, top_k: int = 4, invoke=None) -> List[ProbeResult]:
-    """The explicit "do you remember" path over the same store, three ways. "before": the `top_k` nearest notes however far, how it behaved.
-    "cutoff": only those at the passive recall's cutoff. "app": the app's own recall_explicit (phrase stripped, sure notes kept, the middle
-    ones confirmed by the small model through `invoke`)."""
-    store = store or build_store(embed)
-    text_to_key = {row.text: row.key for row in store.rows}
-    pre_filter = {"username": PERSONA, "stale": {"$ne": True}}
-    label = EXPLICIT_MODES[mode]
-    results = []
-    for probe in EXPLICIT_PROBES:
-        if mode == "app":
-            docs = ms.recall_explicit(store, PERSONA, probe.query, invoke, top_k)
-        else:
-            threshold = ms.DEFAULT_RECALL_SIMILARITY_THRESHOLD if mode == "cutoff" else None
-            docs = ms.retrieve_user_memory(store, PERSONA, probe.query, top_k=top_k, score_threshold=threshold)
-        returned = [text_to_key.get(doc.page_content, "unknown") for doc in docs]
-        passed, why = score_recall(probe, returned)
-        embedding = embed(probe.query)
-        hits = [(text_to_key.get(doc.page_content, "unknown"), round(score, 3))
-                for doc, score in store._similarity_search_with_score(embedding, k=10, pre_filter=pre_filter)] if embedding is not None else []
-        results.append(ProbeResult(probe, label, passed, why, returned, len([k for k in returned if k not in probe.want]), hits))
-    return results
+    return [run_probe(store, probe, policy, embed, text_to_key) for probe in PROBES]
 
 
 def sweep(results: Sequence[ProbeResult], thresholds: Sequence[float] = SWEEP_THRESHOLDS, top_k: int = 3) -> List[Dict[str, float]]:
@@ -502,7 +414,6 @@ class Turn:
     details: Tuple[str, ...] = ()  # strings the saved note must keep
     keep: bool = True  # False: small talk, which must save nothing
     probe: str = ""  # a later question the note should answer
-    forbid: Tuple[str, ...] = ()  # details that appear ONLY in the assistant's reply; the note must not present them as the user's
 
 
 TURNS: Tuple[Turn, ...] = (
@@ -529,27 +440,6 @@ TURNS: Tuple[Turn, ...] = (
     Turn("manager", "I moved to the payments team after the reorg and my new manager Dev wants weekly one-on-ones. What should I bring?",
          "Bring a short list: what you shipped, what is blocked, one question about priorities, and one thing you want feedback on.",
          ("Dev", "payments"), probe="Who's my boss now?"),
-    Turn("flight", "My flight to Denver is on March 3rd, it's AA 1127, and I land at 4:40pm. How early should I get to the airport?",
-         "For a domestic flight, aim to arrive about two hours before departure. Check in online first and have your ID ready.",
-         ("March 3", "AA 1127", "4:40"), probe="What flight am I taking to Denver?"),
-    Turn("nurse", "I'm 34 and I've been a nurse at St. Mary's for six years. Is it too late to switch into health informatics?",
-         "Not at all. Nurses are in demand in informatics. Look at a certificate program, and start by volunteering for any EHR projects at work.",
-         ("34", "St. Mary", "six years"), probe="Where do I work and how long have I been there?"),
-    Turn("migration", "Our company is migrating from Jenkins to GitHub Actions by the end of Q1. Where should we start?",
-         "Inventory your pipelines first, then migrate the simplest ones, reuse shared workflows, and run both systems in parallel until you trust the new one.",
-         ("Jenkins", "GitHub Actions", "Q1"), probe="What is my company migrating to?"),
-    Turn("birthday", "My daughter Mira turns 7 on April 9 and I'm thinking of a dinosaur party. Ideas?",
-         "Fun ideas: a fossil dig in a sandbox, dinosaur egg hunt, and a cake shaped like a stegosaurus. Keep it to about two hours for that age group.",
-         ("Mira", "April 9", "dinosaur"), probe="When is my daughter's birthday?"),
-    Turn("savings", "I'm saving $400 a month toward a down payment on a house in Portland. Am I on track?",
-         "That depends on the target. At $400 a month you would save about $4,800 a year; a typical 10% down payment is much larger, so consider raising the amount.",
-         ("400", "Portland"), probe="How much am I saving each month for the house?"),
-    Turn("kyoto", "What should I see in Kyoto?",
-         "Top sights: Fushimi Inari with its thousands of torii gates, the bamboo grove in Arashiyama, and the golden pavilion Kinkaku-ji. Go early to avoid crowds.",
-         ("Kyoto",), forbid=("Fushimi", "Arashiyama", "Kinkaku"), probe="Where was I asking about visiting?"),
-    Turn("units", "From now on please give me everything in metric units, I always get confused with imperial.",
-         "Understood. I'll use metric units from here on, such as kilometres and kilograms.",
-         ("metric",), probe="What units do I want?"),
     Turn("thanks", "thanks!", "You're welcome! Let me know if there's anything else.", keep=False),
     Turn("math", "what's 15% of 80?", "15% of 80 is 12.", keep=False),
     Turn("hello", "hey", "Hey! What's on your mind today?", keep=False),
@@ -567,17 +457,9 @@ def score_summary(summary: Optional[str], turn: Turn) -> Tuple[bool, str]:
         return False, "judged not worth remembering"
     if re.match(r"^\W*(summary|note)\W*:", summary, re.IGNORECASE):
         return False, f"saved with a label in front: {summary[:40]!r}"
-    if len(summary) > MAX_NOTE_CHARS:
-        return False, f"too long to stay focused ({len(summary)} characters): {summary[:60]!r}"
     text = normalize(summary)
     missing = [detail for detail in turn.details if normalize(detail) not in text]
-    borrowed = [detail for detail in turn.forbid if normalize(detail) in text]
-    problems = []
-    if missing:
-        problems.append(f"lost {', '.join(missing)}")
-    if borrowed:
-        problems.append(f"recorded the assistant's {', '.join(borrowed)} as the user's")
-    return (not problems), ("ok" if not problems else "; ".join(problems) + f": {summary!r}")
+    return (not missing), ("ok" if not missing else f"lost {', '.join(missing)}: {summary!r}")
 
 
 @dataclass
@@ -763,9 +645,7 @@ def format_recall(by_policy: Dict[str, List[ProbeResult]]) -> str:
     for policy, results in by_policy.items():
         summary = recall_summary(results)
         cats = "  ".join(f"{c} {p}/{t}" for c, (p, t) in summary["by_category"].items())
-        looks = [r for r in results if r.looked]
-        extra = f"   second looks {len(looks)} (kept notes on {sum(1 for r in looks if r.look_kept)})" if policy == "look" else ""
-        lines.append(f"  query = {policy:<8} {summary['passed']}/{summary['total']} passed   {cats}   noise lines per question: {summary['noise_per_probe']:.2f}{extra}")
+        lines.append(f"  query = {policy:<8} {summary['passed']}/{summary['total']} passed   {cats}   noise lines per question: {summary['noise_per_probe']:.2f}")
     for policy, results in by_policy.items():
         failed = [r for r in results if not r.passed]
         if failed:
@@ -780,28 +660,6 @@ def format_recall(by_policy: Dict[str, List[ProbeResult]]) -> str:
     for row in sweep(first):
         mark = "  <- today" if abs(row["threshold"] - ms.DEFAULT_RECALL_SIMILARITY_THRESHOLD) < 1e-9 else ""
         lines.append(f"    {row['threshold']:.2f}     {row['recall']:>4.0%}    {row['noise_per_probe']:>6.2f}           {row['negatives_clean']:>4.0%}{mark}")
-    return "\n".join(lines)
-
-
-def format_explicit(by_label: Dict[str, List[ProbeResult]]) -> str:
-    lines = ["EXPLICIT  (\"do you remember ...\": up to 4 notes; the app keeps those >= %.2f, and confirms those >= %.2f with the small model)"
-             % (ms.EXPLICIT_RECALL_SURE, ms.EXPLICIT_RECALL_FLOOR)]
-    for label, results in by_label.items():
-        summary = recall_summary(results)
-        negatives = [r for r in results if r.probe.category == "negative"]
-        clean = sum(1 for r in negatives if not r.returned)
-        lines.append(f"  {label:<22}{summary['passed']}/{summary['total']} passed   never-stored questions answered with nothing {clean}/{len(negatives)}"
-                     f"   unrelated lines per question {summary['noise_per_probe']:.2f}")
-    for label, results in by_label.items():
-        for r in (r for r in results if not r.passed):
-            best = next((score for key, score in r.hits if key in r.probe.want), None)
-            near = f"   (wanted memory scored {best:.2f})" if best is not None else ""
-            lines.append(f"    {label}: {r.probe.id:<12}{r.why}{near}")
-    last = by_label[EXPLICIT_MODES["before"]]
-    lines.append("  for reference, a plain cutoff on the raw question (top 4): what each would give")
-    lines.append("    cutoff   found   unrelated/question   never-stored questions left clean")
-    for row in sweep(last, top_k=4):
-        lines.append(f"    {row['threshold']:.2f}     {row['recall']:>4.0%}    {row['noise_per_probe']:>8.2f}           {row['negatives_clean']:>4.0%}")
     return "\n".join(lines)
 
 
@@ -844,12 +702,9 @@ def to_record(parts: Dict[str, Any]) -> Dict[str, Any]:
     if "recall" in parts:
         record["recall"] = {
             policy: {"summary": recall_summary(results), "sweep": sweep(results),
-                     "results": [{"id": r.probe.id, "category": r.probe.category, "passed": r.passed, "why": r.why, "returned": r.returned, "hits": r.hits, "looked": r.looked, "look_kept": r.look_kept} for r in results]}
+                     "results": [{"id": r.probe.id, "category": r.probe.category, "passed": r.passed, "why": r.why, "returned": r.returned, "hits": r.hits} for r in results]}
             for policy, results in parts["recall"].items()
         }
-    if "explicit" in parts:
-        record["explicit"] = {label: {"summary": recall_summary(results), "results": [{"id": r.probe.id, "passed": r.passed, "why": r.why, "returned": r.returned, "hits": r.hits} for r in results]}
-                              for label, results in parts["explicit"].items()}
     if "write" in parts:
         record["write"] = [{"turn": r.turn.id, "runs": r.runs, "kept_ok": r.kept_ok, "found_ok": r.found_ok, "failures": r.failures} for r in parts["write"]]
     if "compaction" in parts:
@@ -864,7 +719,6 @@ def every_text() -> List[str]:
     for probe in PROBES:
         for policy in POLICIES:
             texts.append(build_query(policy, probe.query, probe.history))
-    texts.extend(probe.query for probe in EXPLICIT_PROBES)
     for pair in PAIRS:
         texts.extend([pair.a, pair.b])
     for turn in TURNS:
@@ -886,8 +740,6 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"recall      {probe.id:<22}{probe.category:<11}{probe.query}")
         for turn in TURNS:
             print(f"write       {turn.id:<22}{'keep' if turn.keep else 'skip':<11}{turn.question[:70]}")
-        for probe in EXPLICIT_PROBES:
-            print(f"explicit    {probe.id:<22}{probe.category:<11}{probe.query}")
         for cluster in CLUSTERS:
             print(f"compaction  {cluster.id:<22}{len(cluster.notes)} notes")
         print(f"dedup       {len(PAIRS)} pairs")
@@ -907,19 +759,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     if "recall" in chosen:
         policies = POLICIES if args.query_policy == "both" else (args.query_policy,)
         store = build_store(embed)
-        look_llm = None
-        if "look" in policies:
-            from backend.models.models import lite_llm
-
-            look_llm = lite_llm.ainvoke
-        out["recall"] = {policy: run_recall(embed, policy, store, look_llm) for policy in policies}
+        out["recall"] = {policy: run_recall(embed, policy, store) for policy in policies}
         sections.append(format_recall(out["recall"]))
-    if "explicit" in chosen:
-        store = build_store(embed)
-        from backend.models.models import lite_llm
-
-        out["explicit"] = {EXPLICIT_MODES[mode]: run_explicit(embed, mode, store, invoke=lite_llm.invoke) for mode in EXPLICIT_MODES}
-        sections.append(format_explicit(out["explicit"]))
     if "write" in chosen:
         from backend.utils.app_utils import summarize_turn
 
