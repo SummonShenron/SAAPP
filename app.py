@@ -506,11 +506,13 @@ async def log_user_login(request: Request, current_user: dict = Depends(get_curr
     # Detect if the current principal is a guest session
     is_guest = sub in ("guest-recruiter@example.com", "guest_bty") or request.headers.get("Authorization", "") in ("Bearer guest-sandbox-token", "Bearer guest-bty-token")
 
-    record_login_event(
+    # A synchronous Mongo insert: on the event loop it froze every request for as long as the database took to answer.
+    await asyncio.to_thread(
+        record_login_event,
         user_id=sub,
         email=email,
         is_guest=is_guest,
-        ip_address=client_ip
+        ip_address=client_ip,
     )
     return {"status": "success"}
 
