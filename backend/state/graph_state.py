@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 from typing import List, Any, Optional, Dict, Annotated
 from typing_extensions import TypedDict
 from backend.models.attachment import Attachment
@@ -8,6 +9,22 @@ import logging
 
 logger = logging.getLogger("SASS Logger")
 
+# THE GRAPH'S CHECKPOINT HOLDS THE STATE, AND THE STATE USED TO HOLD THE WHOLE CONVERSATION. The checkpointer saves the full state after every graph step,
+# and add_messages only ever appends, so a long chat's checkpoint grew without limit (one real thread: 3,417 messages, 2.5 MB) and every question read and
+# rewrote that many megabytes a dozen times. On a database serving bulk transfers at ~0.1 MB/s that is 25 s per save, minutes per question, and the
+# question never finishes. The full transcript is kept (and saved append-only) by app.py; the graph only ever reads the recent end (app.py sends the last
+# 10 messages in, and nodes look back a handful at most), so the state keeps a bounded recent window. 0 means no limit.
+MAX_STATE_MESSAGES = int(os.getenv("GRAPH_STATE_MAX_MESSAGES", "40"))
+
+
+def add_and_trim_messages(left, right):
+    """add_messages, then only the most recent MAX_STATE_MESSAGES are kept."""
+    merged = add_messages(left, right)
+    if MAX_STATE_MESSAGES > 0 and len(merged) > MAX_STATE_MESSAGES:
+        return merged[-MAX_STATE_MESSAGES:]
+    return merged
+
+
 class GraphState(TypedDict):
     """
     Message-based state for LangGraph streaming.
@@ -15,7 +32,7 @@ class GraphState(TypedDict):
     """
     workflowName: str               # single workflow instance identifier
     requestId: str                 # single replay correlation ID for the entire workflow
-    messages: Annotated[List[BaseMessage], add_messages]    # Full conversation history (Human + AI)
+    messages: Annotated[List[BaseMessage], add_and_trim_messages]    # Recent conversation window (Human + AI), capped at MAX_STATE_MESSAGES
     username: str                   # Authenticated user identity
     session_id: Optional[str]       # Stable per-conversation identifier
     target_scope: List[str]         # Allowed tenant affiliates
