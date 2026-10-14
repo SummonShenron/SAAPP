@@ -518,3 +518,32 @@ def test_guests_the_locked_shared_identity_and_a_blank_session_are_refused_up_fr
     assert _request(world, username="guest_bty") is None
     assert _request(world, session_id="   ") is None
     assert world.model.prompts == [] and world.saved == []
+
+
+def test_opening_a_conversation_reads_the_stored_thread_off_the_event_loop(monkeypatch):
+    import threading
+    from types import SimpleNamespace
+
+    async def fake_open(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(ini, "maybe_open_conversation", fake_open)
+    monkeypatch.setattr(ini, "get_enabled", lambda username: True)
+    monkeypatch.setattr("backend.utils.ops_digest.get_enabled", lambda username: False)
+    monkeypatch.setattr("backend.utils.budget_guard.current_state", lambda *a, **k: {"level": "ok"})
+    ran_on = []
+
+    def load(u, s):
+        ran_on.append(threading.current_thread())
+        return []
+
+    def sync(u, s, transcript):
+        ran_on.append(threading.current_thread())
+
+    sessions = {}
+    for _ in range(2):  # the first call loads, the second syncs the transcript it already holds
+        run(ini.open_for_request(
+            "u", "s1", sessions, load=load, sync=sync, get_timezone=lambda u: "UTC",
+            get_llm=lambda u: SimpleNamespace(ainvoke=None), save=lambda *a: None,
+        ))
+    assert len(ran_on) == 2 and all(t is not threading.main_thread() for t in ran_on)

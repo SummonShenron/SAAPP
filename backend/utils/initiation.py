@@ -462,10 +462,11 @@ async def open_for_request(
     if not (opener_on or digest_on):
         return None
     key = f"{username}::{session_id}"
+    # Both read the stored thread, megabytes for a long one: on the event loop that froze every request for as long as the database took.
     if key not in chat_sessions:
-        chat_sessions[key] = load(username, session_id)
+        chat_sessions[key] = await asyncio.to_thread(load, username, session_id)
     else:
-        sync(username, session_id, chat_sessions[key])
+        await asyncio.to_thread(sync, username, session_id, chat_sessions[key])
     if digest_on:
         # First, and never together with the opener: once a digest is waiting, the opener's own "already waiting" gate holds.
         posted = await ops_digest.maybe_post_digest(
