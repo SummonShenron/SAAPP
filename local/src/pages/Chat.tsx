@@ -12,6 +12,7 @@ import ConversationsBlade from '../components/ConversationsBlade';
 import MiniPatchy, { type PatchyEnergy } from '../components/MiniPatchy';
 import OptionWheel, { type OptionWheelItem } from '../components/OptionWheel';
 import { getDynamicExampleQuestions } from '../utils/Example_List';
+import { shrinkImageFile } from '../utils/imageShrink';
 import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type BudgetView, type KnowledgeBase } from '../api';
 import BudgetBanner from '../components/BudgetBanner';
 import ReactMarkdown from 'react-markdown';
@@ -1132,27 +1133,17 @@ useEffect(() => {
     }
   };
 
-  const addAttachmentFile = (file: File) => {
-    setUploadedFiles(prev => [...prev, file]);
-
+  const addAttachmentFile = async (original: File) => {
+    // Shrunk first (a phone photo is megabytes). The photo then travels once, inside the chat request: a second copy used to go to
+    // /api/upload-attachment on its own, with no auth header and in a shape that endpoint rejects, so it only cost the connection.
+    const file = await shrinkImageFile(original);
     const reader = new FileReader();
-    reader.onload = async () => {
-      const result = reader.result as string;
-      const base64 = result.split(",")[1];
-
-      setAttachments(prev => [...prev, { filename: file.name, content: base64 }]);
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(",")[1];
+      // All three together, so the pills and the payload stay in the same order whichever file finishes first.
+      setUploadedFiles(prev => [...prev, file]);
       setAttachedFiles(prev => [...prev, file]);
-
-      await fetch(`${BASE_URL}/api/upload-attachment`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          username: principal,
-          session_id: sessionId,
-          filename: file.name,
-          content: base64,
-        }),
-      });
+      setAttachments(prev => [...prev, { filename: file.name, content: base64 }]);
     };
     reader.readAsDataURL(file);
   };

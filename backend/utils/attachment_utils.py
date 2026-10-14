@@ -143,8 +143,10 @@ def extract_text_from_attachment(attachment: Attachment) -> str:
         return ""
 
 
-def process_user_attachment(att):
-    raw_text = extract_text_from_attachment(att)
+def process_user_attachment(att, raw_text: Optional[str] = None):
+    """`raw_text` is the already-extracted text when the caller has it: for an image that is a vision-model call, never worth paying twice."""
+    if raw_text is None:
+        raw_text = extract_text_from_attachment(att)
 
     if not raw_text or not raw_text.strip():
         return "Attachment contained no readable text."
@@ -171,13 +173,14 @@ def process_user_attachment(att):
     return summary_text.strip()
 
 
-def ingest_doc_to_session(username: str, session_id: str, attachment: Attachment) -> dict:
+def ingest_doc_to_session(username: str, session_id: str, attachment: Attachment, raw_text: Optional[str] = None) -> dict:
     """
     Extracts attachment text and stores it directly into MongoDB.
     """
     db = get_db()
-    raw_text = extract_text_from_attachment(attachment)
-    
+    if raw_text is None:
+        raw_text = extract_text_from_attachment(attachment)
+
     if not raw_text.strip():
         return {"status": "error", "message": "Attachment contained no readable text."}
 
@@ -215,6 +218,29 @@ def ingest_doc_to_session(username: str, session_id: str, attachment: Attachment
         "message": "Document ingested into MongoDB session store.",
         "document": {k: v for k, v in doc_entry.items() if k != "text"} # Exclude big text from returning in status dict
     }
+
+
+def process_chat_attachments(username: str, session_id: str, attachments) -> tuple:
+    """Everything a chat turn does with its attachments: read each one once (an image is a vision-model call), keep its text for the
+    session, summarize it, and for an image store the bytes. Returns (summaries, image refs). Blocking by nature (model calls, the
+    database), so the endpoint runs it in a worker thread, never on the event loop."""
+    summaries, refs = [], []
+    db = get_db()
+    for att in attachments:
+        raw_text = extract_text_from_attachment(att)
+        ingest_doc_to_session(username, session_id, att, raw_text=raw_text)
+        summary = process_user_attachment(att, raw_text=raw_text)
+        if summary:
+            summaries.append(summary)
+        if is_image_attachment(att.filename):
+            gridfs_id = store_image_in_gridfs(db, username, session_id, att)
+            if gridfs_id:
+                refs.append({
+                    "filename": att.filename,
+                    "gridfs_id": gridfs_id,
+                    "content_type": guess_image_mime_type(att.filename),
+                })
+    return summaries, refs
 
 
 def retrieve_from_session(username: str, session_id: str, query: str, top_k: int = 5) -> List[Dict]:

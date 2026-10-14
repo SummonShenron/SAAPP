@@ -73,13 +73,7 @@ from backend.utils.app_utils import (
     index_conversation_turn,
     collect_kb_images
 )
-from backend.utils.attachment_utils import (
-    process_user_attachment,
-    ingest_doc_to_session,
-    is_image_attachment,
-    store_image_in_gridfs,
-    guess_image_mime_type,
-)
+from backend.utils.attachment_utils import process_chat_attachments
 from backend.utils.memory_utils import (
     fetch_relevant_user_facts,
     fetch_goal_nudge_context,
@@ -681,20 +675,10 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     attachment_refs = []
     if request.attachments:
         logger.info(f"Processing {len(request.attachments)} attachments for {username}")
-        db = get_db()
-        for att in request.attachments:
-            ingest_doc_to_session(username, session_id, att)
-            summary = process_user_attachment(att)
-            if summary:
-                attachment_summaries.append(summary)
-            if is_image_attachment(att.filename):
-                gridfs_id = store_image_in_gridfs(db, username, session_id, att)
-                if gridfs_id:
-                    attachment_refs.append({
-                        "filename": att.filename,
-                        "gridfs_id": gridfs_id,
-                        "content_type": guess_image_mime_type(att.filename),
-                    })
+        # Vision-model calls and the image write, in a worker thread: on the event loop one photo froze every request.
+        attachment_summaries, attachment_refs = await asyncio.to_thread(
+            process_chat_attachments, username, session_id, request.attachments
+        )
 
     if attachment_refs:
         chat_sessions[history_key][-1].additional_kwargs["attachments"] = attachment_refs

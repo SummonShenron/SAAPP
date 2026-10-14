@@ -119,3 +119,49 @@ def test_store_image_in_gridfs_returns_none_on_failure(monkeypatch):
     monkeypatch.setattr(attachment_utils, "GridFS", Mock(return_value=fake_gridfs_instance))
 
     assert attachment_utils.store_image_in_gridfs(Mock(), "jack", "sess-1", _image_attachment()) is None
+
+
+def test_an_image_is_read_by_the_vision_model_once_and_its_text_reused(monkeypatch):
+    extract = Mock(return_value="A red bicycle.")
+    monkeypatch.setattr(attachment_utils, "extract_text_from_attachment", extract)
+    monkeypatch.setattr(attachment_utils, "get_db", lambda: None)  # no database: nothing stored, nothing to wait on
+    summarize = Mock()
+    monkeypatch.setattr(attachment_utils.llm, "invoke", summarize)
+
+    summaries, refs = attachment_utils.process_chat_attachments("jack", "s1", [_image_attachment()])
+
+    assert extract.call_count == 1  # it used to be two vision calls for one photo: one to store the text, one to summarize
+    assert summaries == ["A red bicycle."] and refs == []
+    summarize.assert_not_called()  # an image's description is already its summary
+
+
+def test_a_document_is_read_once_summarized_and_not_treated_as_an_image(monkeypatch):
+    extract = Mock(return_value="Some PDF text.")
+    monkeypatch.setattr(attachment_utils, "extract_text_from_attachment", extract)
+    monkeypatch.setattr(attachment_utils, "get_db", lambda: None)
+    monkeypatch.setattr(attachment_utils.llm, "invoke", Mock(return_value=SimpleNamespace(content="A summary.")))
+    stored = Mock()
+    monkeypatch.setattr(attachment_utils, "store_image_in_gridfs", stored)
+
+    summaries, refs = attachment_utils.process_chat_attachments("jack", "s1", [Attachment(filename="resume.pdf", content="ZmFrZQ==")])
+
+    assert extract.call_count == 1 and summaries == ["A summary."] and refs == []
+    stored.assert_not_called()
+
+
+def test_a_stored_image_comes_back_as_a_reference_the_page_can_render(monkeypatch):
+    monkeypatch.setattr(attachment_utils, "extract_text_from_attachment", Mock(return_value="A red bicycle."))
+    monkeypatch.setattr(attachment_utils, "get_db", lambda: object())
+    monkeypatch.setattr(attachment_utils, "ingest_doc_to_session", Mock())
+    monkeypatch.setattr(attachment_utils, "store_image_in_gridfs", Mock(return_value="abc123"))
+
+    _, refs = attachment_utils.process_chat_attachments("jack", "s1", [_image_attachment("photo.jpg")])
+
+    assert refs == [{"filename": "photo.jpg", "gridfs_id": "abc123", "content_type": "image/jpeg"}]
+
+
+def test_the_chat_endpoint_does_its_attachment_work_off_the_event_loop():
+    import pathlib
+    source = (pathlib.Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
+    assert "await asyncio.to_thread(\n            process_chat_attachments, username, session_id, request.attachments" in source
+    assert "process_user_attachment(att)" not in source  # the old inline loop, on the event loop
