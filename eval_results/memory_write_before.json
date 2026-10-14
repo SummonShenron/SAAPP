@@ -1,0 +1,153 @@
+{
+  "at": "2026-10-12T12:00:00+00:00",
+  "write": [
+    {
+      "turn": "dog",
+      "runs": 5,
+      "kept_ok": 5,
+      "found_ok": 0,
+      "failures": []
+    },
+    {
+      "turn": "wedding",
+      "runs": 5,
+      "kept_ok": 4,
+      "found_ok": 5,
+      "failures": [
+        "lost June 14: \"Requested assistance drafting a wedding toast for their sister Anika's upcoming ceremony in Lisbon.\""
+      ]
+    },
+    {
+      "turn": "rent",
+      "runs": 5,
+      "kept_ok": 0,
+      "found_ok": 5,
+      "failures": [
+        "lost 2,100: 'Sought advice on how to negotiate a rent increase with a landlord.'",
+        "lost 2,100: 'Sought advice on negotiating a rent increase and was provided with strategies and a template for communicating with a landlord.'",
+        "lost 2,100: 'Sought advice on how to negotiate a rent increase with a landlord.'",
+        "lost 2,100: 'Sought advice on negotiating a rent increase and was provided with strategies and a script for communicating with a landlord.'",
+        "lost 2,100: 'Sought advice on negotiating a rent increase and was provided with strategies and a template for communicating with a landlord.'"
+      ]
+    },
+    {
+      "turn": "allergy",
+      "runs": 5,
+      "kept_ok": 5,
+      "found_ok": 5,
+      "failures": []
+    },
+    {
+      "turn": "race",
+      "runs": 5,
+      "kept_ok": 4,
+      "found_ok": 5,
+      "failures": [
+        "lost October 25: 'Inquired about managing shin splints before an upcoming half marathon and received advice on resting, cross-training, and seeking professional care.'"
+      ]
+    },
+    {
+      "turn": "manager",
+      "runs": 5,
+      "kept_ok": 0,
+      "found_ok": 0,
+      "failures": [
+        "lost Dev, payments: 'The user asked for advice on preparing for weekly one-on-one meetings with their new manager.'",
+        "lost Dev, payments: 'The user asked for advice on preparing for weekly one-on-one meetings with their new manager.'",
+        "lost Dev, payments: 'The user asked for advice on preparing for weekly one-on-one meetings with their new manager.'",
+        "lost Dev, payments: 'The user asked for advice on preparing for weekly one-on-one meetings with their new manager.'",
+        "lost Dev, payments: 'The user asked for advice on preparing for weekly one-on-one meetings with their new manager.'"
+      ]
+    },
+    {
+      "turn": "flight",
+      "runs": 5,
+      "kept_ok": 0,
+      "found_ok": 5,
+      "failures": [
+        "lost AA 1127, 4:40: 'The user is flying to Denver on American Airlines flight 1127 on March 3rd and was advised to arrive at the airport two hours before departure.'",
+        "lost AA 1127, 4:40: 'The user is flying to Denver on American Airlines flight 1127 on March 3rd and was advised to arrive at the airport two hours before departure.'",
+        "lost AA 1127, 4:40: 'The user is flying to Denver on American Airlines flight 1127 on March 3rd and was advised to arrive at the airport two hours before departure.'",
+        "lost AA 1127, 4:40: 'The user is flying to Denver on American Airlines flight 1127 on March 3rd and was advised to arrive at the airport two hours before departure.'",
+        "lost AA 1127, 4:40: 'The user is flying to Denver on American Airlines flight 1127 on March 3rd and was advised to arrive two hours early.'"
+      ]
+    },
+    {
+      "turn": "nurse",
+      "runs": 5,
+      "kept_ok": 0,
+      "found_ok": 0,
+      "failures": [
+        "lost St. Mary, six years: 'The user is a 34-year-old nurse interested in transitioning into health informatics and was advised to pursue a certificate program and seek EHR project experience.'",
+        "lost St. Mary, six years: 'The user is a 34-year-old nurse interested in transitioning into health informatics and was advised to pursue a certificate program and seek EHR project experience.'",
+        "lost St. Mary, six years: 'The user is a 34-year-old nurse interested in transitioning into health informatics and was advised to pursue a certificate program and seek EHR project experience.'",
+        "lost St. Mary, six years: 'The user is a 34-year-old nurse interested in transitioning into health informatics and was advised to pursue a certificate program and EHR project experience.'",
+        "lost St. Mary, six years: 'The user is a 34-year-old nurse interested in transitioning into health informatics and was advised to pursue a certificate program and seek EHR project experience.'"
+      ]
+    },
+    {
+      "turn": "migration",
+      "runs": 5,
+      "kept_ok": 0,
+      "found_ok": 5,
+      "failures": [
+        "lost Q1: 'The user is planning a migration from Jenkins to GitHub Actions and received a strategy focused on inventorying pipelines and running systems in parallel.'",
+        "lost Q1: 'The user is planning a migration from Jenkins to GitHub Actions and received a strategy focused on inventorying pipelines and running systems in parallel.'",
+        "lost Q1: 'The user is planning a migration from Jenkins to GitHub Actions and received a strategy for prioritizing and executing the transition.'",
+        "lost Q1: 'The user is planning a migration from Jenkins to GitHub Actions and received a strategy focused on inventorying pipelines and running systems in parallel.'",
+        "lost Q1: 'The user is planning a migration from Jenkins to GitHub Actions and received a strategy focused on inventorying pipelines and running systems in parallel.'"
+      ]
+    },
+    {
+      "turn": "birthday",
+      "runs": 5,
+      "kept_ok": 5,
+      "found_ok": 5,
+      "failures": []
+    },
+    {
+      "turn": "savings",
+      "runs": 5,
+      "kept_ok": 5,
+      "found_ok": 5,
+      "failures": []
+    },
+    {
+      "turn": "kyoto",
+      "runs": 5,
+      "kept_ok": 4,
+      "found_ok": 4,
+      "failures": [
+        "recorded the assistant's Fushimi, Arashiyama, Kinkaku as the user's: 'Asked for travel recommendations for Kyoto and received suggestions for Fushimi Inari, the Arashiyama bamboo grove, and Kinkaku-ji.'"
+      ]
+    },
+    {
+      "turn": "units",
+      "runs": 5,
+      "kept_ok": 5,
+      "found_ok": 5,
+      "failures": []
+    },
+    {
+      "turn": "thanks",
+      "runs": 5,
+      "kept_ok": 5,
+      "found_ok": 0,
+      "failures": []
+    },
+    {
+      "turn": "math",
+      "runs": 5,
+      "kept_ok": 5,
+      "found_ok": 0,
+      "failures": []
+    },
+    {
+      "turn": "hello",
+      "runs": 5,
+      "kept_ok": 5,
+      "found_ok": 0,
+      "failures": []
+    }
+  ]
+}

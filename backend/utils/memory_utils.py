@@ -1,5 +1,7 @@
 import os
 import json
+import threading
+import time
 import uuid
 import logging
 from datetime import datetime, timezone
@@ -43,6 +45,19 @@ MAX_STORED_FACTS = int(os.getenv("MAX_STORED_FACTS", "400"))
 # destroys it outright, only moves it out of active recall. Recoverable, not just logged.
 FACT_ARCHIVE_COLLECTION = "user_memory_fact_archive"
 
+# Where a fact came from decides how long it is kept when the cap forces facts out, and whether a later re-observation may relabel it.
+# "safety_support" (the people someone said they can turn to, read by the safety layer: backend/utils/safety_utils.py, SUPPORT_FACT_SOURCE,
+# which a test keeps equal) is never pruned and never relabelled. Then what the user stated ("explicit"), then recurring patterns, then facts a
+# model inferred from compacted summaries. A fact nobody told Sonic should not push out one somebody did.
+SUPPORT_SOURCE = "safety_support"
+PROTECTED_SOURCES = (SUPPORT_SOURCE,)
+SOURCE_STRENGTH = {SUPPORT_SOURCE: 3, "explicit": 2, "pattern": 1, "inferred": 0}
+DEFAULT_SOURCE_STRENGTH = 2  # a source nobody listed is treated like one the user stated
+
+
+def source_strength(source: Optional[str]) -> int:
+    return SOURCE_STRENGTH.get(source or "", DEFAULT_SOURCE_STRENGTH)
+
 
 class UserFact(BaseModel):
     id: str
@@ -73,15 +88,73 @@ def _get_user_file(username: str) -> str:
     return os.path.join(DATA_DIR, f"{username}.json")
 
 
+# THE FACT LIST IS ONE LARGE DOCUMENT (every fact carries its embedding: ~4 MB for 400 facts), and a chat turn reads it several times. Against
+# a database that serves bulk reads at ~0.1 MB/s (measured: 41 s per read, 0.02 s of that to decode), each read blocked the server's event loop
+# for most of a minute, a turn blocked it for minutes, requests queued behind it, and the health check saw the app as down. So the list is kept
+# in memory per user: a read after the first is instant, a write replaces it, and when it is older than FACTS_CACHE_FRESH_SECONDS it is still
+# served at once while a background thread fetches the new copy. Only the very first read in a process waits for the database, and callers on the
+# event loop do that read in a worker thread (app.py, tool_agent_node). With several server instances a change made on another one shows up
+# after at most that interval.
+FACTS_CACHE_FRESH_SECONDS = float(os.getenv("FACTS_CACHE_FRESH_SECONDS", "600"))
+_facts_cache: dict = {}  # username -> (monotonic time stored, [UserFact])
+_facts_refreshing: set = set()
+_facts_lock = threading.Lock()
+
+
+def clear_facts_cache() -> None:
+    """Forgets every cached fact list (tests, and anything that changed the database behind this module's back)."""
+    with _facts_lock:
+        _facts_cache.clear()
+        _facts_refreshing.clear()
+
+
+def _fetch_facts_from_db(db, username: str) -> List[UserFact]:
+    doc = db["user_memory_facts"].find_one({"username": username})
+    return [UserFact(**item) for item in doc["facts"]] if doc and "facts" in doc else []
+
+
+def _refresh_facts_in_background(db, username: str) -> None:
+    with _facts_lock:
+        if username in _facts_refreshing:
+            return
+        _facts_refreshing.add(username)
+
+    def work() -> None:
+        try:
+            fresh = _fetch_facts_from_db(db, username)
+            with _facts_lock:
+                _facts_cache[username] = (time.monotonic(), fresh)
+        except Exception:
+            logger.exception("[MemoryUtils] Background refresh of the saved facts failed for %s; keeping the copy in memory.", username)
+        finally:
+            with _facts_lock:
+                _facts_refreshing.discard(username)
+
+    threading.Thread(target=work, name="facts-refresh", daemon=True).start()
+
+
+def _cached_facts(db, username: str) -> List[UserFact]:
+    """Every saved fact (active or not) from memory when held, else from the database (the one read that can be slow). Copies, so a caller
+    that edits a fact's fields cannot change what the next caller sees until it saves."""
+    with _facts_lock:
+        entry = _facts_cache.get(username)
+    if entry is not None:
+        if time.monotonic() - entry[0] > FACTS_CACHE_FRESH_SECONDS:
+            _refresh_facts_in_background(db, username)
+        return [f.model_copy() for f in entry[1]]
+    facts = _fetch_facts_from_db(db, username)
+    with _facts_lock:
+        _facts_cache[username] = (time.monotonic(), facts)
+    return [f.model_copy() for f in facts]
+
+
 def load_user_facts(username: str, category: Optional[str] = None) -> List[UserFact]:
-    """Loads persistent facts from MongoDB, falling back to a local JSON file."""
+    """Loads persistent facts from MongoDB (through the in-memory copy above), falling back to a local JSON file."""
     facts: List[UserFact] = []
     db = get_db()
 
     if db is not None:
-        doc = db["user_memory_facts"].find_one({"username": username})
-        if doc and "facts" in doc:
-            facts = [UserFact(**item) for item in doc["facts"]]
+        facts = _cached_facts(db, username)
     else:
         path = _get_user_file(username)
         if os.path.exists(path):
@@ -110,6 +183,8 @@ def save_user_facts(username: str, facts: List[UserFact]) -> None:
             {"$set": {"facts": facts_dicts}},
             upsert=True,
         )
+        with _facts_lock:  # what was just written is the newest copy there is
+            _facts_cache[username] = (time.monotonic(), [f.model_copy() for f in facts])
     else:
         path = _get_user_file(username)
         with open(path, "w") as f:
@@ -225,26 +300,35 @@ def _archive_dropped_facts(dropped: List["UserFact"]) -> None:
 def _prune_excess_facts(facts: List["UserFact"], protect_id: Optional[str] = None) -> List["UserFact"]:
     """Keeps the store at or under MAX_STORED_FACTS so it can never approach Mongo's 16MB
     single-document limit. Identity facts are never pruned (foundational, and naturally small
-    in number — see fetch_relevant_user_facts' same treatment); `protect_id` additionally
-    shields whichever fact save_user_fact just touched, so telling it something never results
-    in that exact fact being evicted in the same call. Among everything else, the
-    lowest-effective-confidence facts (most decayed / least reinforced) go first — and whatever
-    gets evicted is archived, not deleted outright (see _archive_dropped_facts)."""
+    in number — see fetch_relevant_user_facts' same treatment), and neither are the safety layer's remembered
+    support contacts (PROTECTED_SOURCES); `protect_id` additionally shields whichever fact save_user_fact just
+    touched, so telling it something never results in that exact fact being evicted in the same call. Among
+    everything else the facts a model inferred go first, then recurring patterns, and what the user stated
+    last (SOURCE_STRENGTH); within each of those, the lowest-effective-confidence facts (most decayed / least
+    reinforced) go first. Confidence alone was not enough: facts promoted out of compaction all carried full
+    confidence, so the oldest facts went first whoever had said them. Whatever gets evicted is archived,
+    not deleted outright (see _archive_dropped_facts)."""
     if len(facts) <= MAX_STORED_FACTS:
         return facts
 
     now = datetime.now(timezone.utc)
-    protected = [f for f in facts if f.category == "identity" or f.id == protect_id]
-    other = [f for f in facts if f.category != "identity" and f.id != protect_id]
-    other.sort(key=lambda f: effective_confidence(f, now), reverse=True)
+    def never_pruned(f: "UserFact") -> bool:
+        return f.category == "identity" or f.id == protect_id or f.source in PROTECTED_SOURCES
+
+    protected = [f for f in facts if never_pruned(f)]
+    other = [f for f in facts if not never_pruned(f)]
+    other.sort(key=lambda f: (source_strength(f.source), effective_confidence(f, now)), reverse=True)
 
     keep_count = max(MAX_STORED_FACTS - len(protected), 0)
     kept_other = other[:keep_count]
     dropped = other[keep_count:]
     if dropped:
+        by_source: dict = {}
+        for f in dropped:
+            by_source[f.source] = by_source.get(f.source, 0) + 1
         logger.info(
-            "[MemoryUtils] Pruned %d lowest-confidence fact(s) for a user to stay under the "
-            "%d-fact cap (archived, not deleted).", len(dropped), MAX_STORED_FACTS,
+            "[MemoryUtils] Pruned %d fact(s) for a user to stay under the %d-fact cap, by source %s "
+            "(archived, not deleted).", len(dropped), MAX_STORED_FACTS, by_source,
         )
         _archive_dropped_facts(dropped)
     return protected + kept_other
@@ -310,7 +394,13 @@ def save_user_fact(
         # matching finds the old fact, and this line stops it from keeping a stale category.
         existing.category = category
         existing.embedding = new_embedding if new_embedding is not None else existing.embedding
-        existing.source = source
+        if relationship_action == "duplicate":
+            # the same fact seen again keeps the strongest evidence for it: a fact the user stated stays "explicit" when compaction later
+            # restates it as "inferred" (it used to be relabelled, which made it the first to be pruned)
+            if source_strength(source) > source_strength(existing.source):
+                existing.source = source
+        elif existing.source not in PROTECTED_SOURCES:
+            existing.source = source  # changed content has its own provenance; a remembered support contact stays one
         existing.updated_at = now
         result = existing
     else:
@@ -484,6 +574,37 @@ def fetch_relevant_user_facts(
     except Exception:
         logger.exception("[MEMORY WARNING] Could not fetch user facts for %s", username)
         return ""
+
+
+# How close (raw cosine) a fact must be to a request to count as about it. Measured on real facts: unrelated technical questions top out at 0.58,
+# questions about the user's own projects start at 0.67, so 0.62 separates them. Facts are short and specific, unlike recalled notes.
+RELEVANT_FACT_MIN_SIMILARITY = float(os.getenv("RELEVANT_FACT_MIN_SIMILARITY", "0.62"))
+
+
+def select_relevant_user_facts(
+    username: str, question: str, limit: int = 4, min_similarity: Optional[float] = None, precomputed_embedding: Optional[List[float]] = None,
+) -> List["UserFact"]:
+    """The saved facts that are actually about `question`, best first: at least `min_similarity` close to it (any category), ranked by
+    similarity times effective confidence. Unlike fetch_relevant_user_facts, identity facts get no automatic seat: they compete like the
+    rest, so a person with many of them still gets the facts relevant to the request. [] when none is close enough. Never raises."""
+    floor = RELEVANT_FACT_MIN_SIMILARITY if min_similarity is None else min_similarity
+    try:
+        if not question or not question.strip():
+            return []
+        facts = [f for f in load_user_facts(username) if f.embedding]
+        if not facts:
+            return []
+        embedding = precomputed_embedding if precomputed_embedding is not None else embed_text(question)
+        if embedding is None:
+            return []
+        now = datetime.now(timezone.utc)
+        scored = [(cosine_similarity(embedding, f.embedding), f) for f in facts]
+        close = [(sim * effective_confidence(f, now), f) for sim, f in scored if sim >= floor]
+        close.sort(key=lambda pair: pair[0], reverse=True)
+        return [f for _, f in close[:limit]]
+    except Exception:
+        logger.exception("[MEMORY WARNING] Could not select relevant facts for %s", username)
+        return []
 
 
 def fetch_coding_preferences(username: str, limit: int = 10) -> str:

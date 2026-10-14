@@ -108,3 +108,12 @@ def isolate_user_settings(monkeypatch, tmp_path_factory):
     monkeypatch.setattr("backend.utils.user_settings_utils.DATA_DIR", str(settings_dir))
     monkeypatch.setattr("backend.utils.github_audit.get_db", lambda: None)
 
+
+@pytest.fixture(autouse=True)
+def clear_facts_cache_between_tests():
+    """The saved-facts list is cached in memory per user (backend/utils/memory_utils.py); a list cached by one test must never reach the next."""
+    from backend.utils import memory_utils
+
+    memory_utils.clear_facts_cache()
+    yield
+    memory_utils.clear_facts_cache()

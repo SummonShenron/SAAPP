@@ -1,3 +1,4 @@
+import asyncio
 import os
 import json
 import logging
@@ -7,7 +8,7 @@ from typing import List, Optional
 
 from backend.models.models import lite_llm
 from backend.components.constraints import MEMORY_COMPACTION_PROMPT, PATTERN_EXTRACTION_PROMPT
-from backend.services.memory_search import USER_MEMORY_COLLECTION, embed_and_store_memory_chunk
+from backend.services.memory_search import CHUNK_ARCHIVE_COLLECTION, USER_MEMORY_COLLECTION, embed_and_store_memory_chunk
 from backend.utils.memory_utils import save_user_fact, load_user_facts
 from backend.utils.embedding_utils import cosine_similarity
 
@@ -21,8 +22,11 @@ DEFAULT_META_COMPACTION_THRESHOLD = int(os.getenv("MEMORY_META_COMPACTION_THRESH
 DEFAULT_META_SIMILARITY_THRESHOLD = float(os.getenv("MEMORY_META_COMPACTION_SIMILARITY", "0.85"))
 # Greedy clustering chains at lower thresholds; no merge group may exceed this, so one summary never has to hold dozens of notes.
 MAX_CLUSTER_SIZE = int(os.getenv("MEMORY_COMPACTION_MAX_CLUSTER", "12"))
+# Facts a model infers from a summary start less trusted than facts the user stated (which start at 1.0), so a stated fact outranks an
+# inferred one at equal similarity when facts are chosen for the prompt. A re-observation raises it like any other fact.
+COMPACTION_FACT_CONFIDENCE = float(os.getenv("MEMORY_COMPACTION_FACT_CONFIDENCE", "0.7"))
 # Notes that compaction folds into a summary are copied here first, so a bad merge can be undone (backend/utils/memory_maintenance.py).
-ARCHIVE_COLLECTION = "user_memory_chunk_archive"
+ARCHIVE_COLLECTION = CHUNK_ARCHIVE_COLLECTION
 MIN_FACTS_FOR_PATTERN_EXTRACTION = int(os.getenv("MIN_FACTS_FOR_PATTERN_EXTRACTION", "8"))
 # Re-running pattern extraction over a barely-changed fact set just gives the model another
 # chance to phrase the same underlying pattern slightly differently — fact-level dedup catches
@@ -50,7 +54,7 @@ def count_uncompacted_chunks(db, username: str) -> int:
     if db is None:
         return 0
     return db[USER_MEMORY_COLLECTION].count_documents(
-        {"username": username, "source_type": {"$nin": [TIER1_SOURCE_TYPE, TIER2_SOURCE_TYPE]}}
+        {"username": username, "source_type": {"$nin": [TIER1_SOURCE_TYPE, TIER2_SOURCE_TYPE]}, "stale": {"$ne": True}}
     )
 
 
@@ -59,7 +63,7 @@ def _count_tier2_pool(db, username: str) -> int:
     if db is None:
         return 0
     return db[USER_MEMORY_COLLECTION].count_documents(
-        {"username": username, "source_type": {"$in": [TIER1_SOURCE_TYPE, TIER2_SOURCE_TYPE]}}
+        {"username": username, "source_type": {"$in": [TIER1_SOURCE_TYPE, TIER2_SOURCE_TYPE]}, "stale": {"$ne": True}}
     )
 
 
@@ -69,7 +73,7 @@ def _count_all_chunks(db, username: str) -> int:
 
 def _fetch_chunks(db, username: str, source_type_filter: dict) -> List[dict]:
     cursor = db[USER_MEMORY_COLLECTION].find(
-        {"username": username, "source_type": source_type_filter},
+        {"username": username, "source_type": source_type_filter, "stale": {"$ne": True}},
         {"text": 1, "embedding": 1, "source_type": 1, "source_ref": 1, "created_at": 1, "latest_at": 1, "username": 1, "stale": 1},
     )
     return list(cursor)
@@ -183,11 +187,11 @@ async def extract_user_patterns(db, vector_store, username: str) -> dict:
     together, not something any single fact-extraction call would produce. Each pattern is
     saved via save_user_fact with category="pattern", which gets deduplication against
     previously-saved patterns for free via that function's existing conflict-detection."""
-    facts = load_user_facts(username)
+    facts = await asyncio.to_thread(load_user_facts, username)
     if len(facts) < MIN_FACTS_FOR_PATTERN_EXTRACTION:
         return {"status": "skipped", "reason": "not_enough_facts", "fact_count": len(facts)}
 
-    last_run = _get_last_pattern_extraction(db, username)
+    last_run = await asyncio.to_thread(_get_last_pattern_extraction, db, username)
     if last_run:
         last_timestamp = datetime.fromisoformat(last_run["timestamp"])
         if last_timestamp.tzinfo is None:
@@ -219,7 +223,7 @@ async def extract_user_patterns(db, vector_store, username: str) -> dict:
     patterns_saved = 0
     for pattern_text in patterns:
         if isinstance(pattern_text, str) and pattern_text.strip():
-            save_user_fact(username, pattern_text, category="pattern", source="pattern", memory_vector_store=vector_store)
+            await asyncio.to_thread(lambda pattern_text=pattern_text: save_user_fact(username, pattern_text, category="pattern", source="pattern", memory_vector_store=vector_store))
             patterns_saved += 1
 
     result = {"status": "completed", "fact_count": len(facts), "patterns_saved": patterns_saved}
@@ -260,17 +264,17 @@ async def _run_compaction(
         return {"status": "skipped", "reason": "already_running"}
 
     _compaction_in_progress.add(username)
-    chunks_before = _count_all_chunks(db, username)
+    chunks_before = await asyncio.to_thread(_count_all_chunks, db, username)
     clusters_formed = 0
     facts_promoted = 0
 
     try:
-        candidates = _fetch_chunks(db, username, input_filter)
+        candidates = await asyncio.to_thread(_fetch_chunks, db, username, input_filter)
         if len(candidates) < 2:
             logger.info("[MemoryCompaction] Tier %s: only %d candidate chunk(s) for %s; nothing to compact.", tier, len(candidates), username)
             return {"status": "skipped", "reason": "not_enough_chunks", "chunks_before": chunks_before, "tier": tier}
 
-        clusters = _cluster_chunks(candidates, threshold=similarity_threshold)
+        clusters = await asyncio.to_thread(lambda: _cluster_chunks(candidates, threshold=similarity_threshold))
         multi_clusters = [c for c in clusters if len(c) >= 2]
         singleton_chunks = [c[0] for c in clusters if len(c) == 1]
         logger.info(
@@ -288,7 +292,7 @@ async def _run_compaction(
             # Copy the originals to the archive BEFORE anything else, and leave the cluster alone if that fails: a note is only ever deleted
             # once a copy of it is safe, so any merge can be undone (python -m backend.utils.memory_maintenance restore-compacted).
             try:
-                _archive_cluster(db, username, cluster, tier=tier, run_id=run_id, cluster_id=cluster_id)
+                await asyncio.to_thread(lambda: _archive_cluster(db, username, cluster, tier=tier, run_id=run_id, cluster_id=cluster_id))
             except Exception:
                 logger.exception("[MemoryCompaction] Could not archive a cluster of %d for %s; leaving it uncompacted.", len(cluster), username)
                 clusters_skipped += 1
@@ -306,19 +310,19 @@ async def _run_compaction(
 
             # Insert the compacted summary FIRST; only delete originals once that succeeds,
             # so a mid-run crash can never lose the underlying content.
-            embed_and_store_memory_chunk(
+            await asyncio.to_thread(lambda: embed_and_store_memory_chunk(
                 vector_store, username, summarized["summary"],
                 source_type=output_source_type, source_ref=provenance, **_span_of(cluster),
-            )
-            db[USER_MEMORY_COLLECTION].delete_many({"_id": {"$in": [c["_id"] for c in cluster]}})
+            ))
+            await asyncio.to_thread(lambda: db[USER_MEMORY_COLLECTION].delete_many({"_id": {"$in": [c["_id"] for c in cluster]}}))
 
             for fact in summarized["facts"]:
                 fact_text = fact.get("fact") if isinstance(fact, dict) else None
                 if fact_text:
-                    save_user_fact(
+                    await asyncio.to_thread(lambda fact_text=fact_text, fact=fact: save_user_fact(
                         username, fact_text, category=fact.get("category") or "preference", source="inferred",
-                        memory_vector_store=vector_store,
-                    )
+                        confidence=COMPACTION_FACT_CONFIDENCE, memory_vector_store=vector_store,
+                    ))
                     facts_promoted += 1
 
         singletons_promoted = 0
@@ -333,16 +337,16 @@ async def _run_compaction(
             # tier's output source_type — no LLM call, no content change, just relabeling —
             # removes it from that query so it stops being repeatedly rescanned, while still
             # leaving it eligible to cluster with something else later at Tier 2's own pass.
-            db[USER_MEMORY_COLLECTION].update_many(
+            await asyncio.to_thread(lambda: db[USER_MEMORY_COLLECTION].update_many(
                 {"_id": {"$in": [c["_id"] for c in singleton_chunks]}},
                 {"$set": {"source_type": output_source_type}},
-            )
+            ))
             singletons_promoted = len(singleton_chunks)
 
         result = {
             "status": "completed",
             "chunks_before": chunks_before,
-            "chunks_after": _count_all_chunks(db, username),
+            "chunks_after": await asyncio.to_thread(_count_all_chunks, db, username),
             "clusters_formed": clusters_formed,
             "singletons_promoted": singletons_promoted,
             "facts_promoted": facts_promoted,
@@ -351,7 +355,7 @@ async def _run_compaction(
             "clusters_archived": clusters_archived,
             "clusters_skipped": clusters_skipped,
         }
-        log_compaction_event(db, username, result)
+        await asyncio.to_thread(log_compaction_event, db, username, result)
         return result
     except Exception:
         logger.exception("[MemoryCompaction] Compaction run failed for %s", username)
@@ -393,7 +397,7 @@ async def maybe_trigger_meta_compaction(db, vector_store, username: str, thresho
         return
     effective_threshold = DEFAULT_META_COMPACTION_THRESHOLD if threshold is None else threshold
     try:
-        pool_size = _count_tier2_pool(db, username)
+        pool_size = await asyncio.to_thread(_count_tier2_pool, db, username)
         # DEBUG, not INFO — this check runs after every tier-1 completion regardless of whether
         # it actually triggers anything, so at INFO it was pure per-message noise; the "compacted
         # N chunks" result below (an actual event) stays at INFO.
@@ -415,7 +419,7 @@ async def maybe_trigger_compaction(db, vector_store, username: str, threshold: O
         return
     effective_threshold = DEFAULT_COMPACTION_THRESHOLD if threshold is None else threshold
     try:
-        uncompacted = count_uncompacted_chunks(db, username)
+        uncompacted = await asyncio.to_thread(count_uncompacted_chunks, db, username)
         # DEBUG, not INFO — called after every new chunk is embedded (i.e. after every message
         # that gets memory-indexed), regardless of whether the threshold is actually crossed;
         # the real event (a compaction run actually happening) is logged at INFO further down.

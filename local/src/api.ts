@@ -962,8 +962,25 @@ export async function deleteOpenLoop(loopId: string): Promise<any> {
   return res.json();
 }
 
+/** What Sonic keeps besides the facts the Memory page lists: notes from past conversations, and archived copies of notes and facts. */
+export interface MemoryStored {
+  notes: number;
+  archived: number;
+}
+
+export async function getMemoryStored(): Promise<MemoryStored> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/memory/stored`, {
+    headers: { ...authHeaders }
+  });
+  if (!res.ok) {
+    throw new Error("Failed to load what else Sonic keeps.");
+  }
+  return res.json();
+}
+
 /**
- * Clear all memory facts for the current user
+ * Clear everything Sonic remembers about the current user: facts, notes from past conversations, upcoming items and archived copies
  */
 export async function clearMemoryFacts(): Promise<any> {
   const authHeaders = await getAuthHeaders();
@@ -1230,6 +1247,7 @@ export const api = {
   listMemoryFacts,
   deleteMemoryFact,
   clearMemoryFacts,
+  getMemoryStored,
   listOpenLoops,
   deleteOpenLoop,
   getRagMode,

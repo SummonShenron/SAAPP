@@ -761,3 +761,221 @@ def test_save_user_facts_writes_json_only_when_mongo_unavailable(tmp_path):
     memory_utils.save_user_facts("jack", [])
 
     assert os.path.exists(memory_utils._get_user_file("jack"))
+
+
+# ---------------------------------------------------------------------------
+# Pruning keeps what the user stated over what a model inferred, and never the support contacts
+# ---------------------------------------------------------------------------
+
+def _sourced(source, fact_id, confidence=1.0, days_old=0, category="preference"):
+    fact = _make_fact(category=category, confidence=confidence, days_old=days_old, fact_id=fact_id)
+    fact.source = source
+    return fact
+
+
+def test_inferred_facts_are_pruned_before_stated_ones_even_when_the_stated_ones_are_older(monkeypatch):
+    monkeypatch.setattr(memory_utils, "MAX_STORED_FACTS", 2)
+    stated_old = _sourced("explicit", "told-me", days_old=400)  # decayed to almost nothing
+    inferred_fresh = _sourced("inferred", "model-1", days_old=1)
+    inferred_fresher = _sourced("inferred", "model-2", days_old=0)
+
+    kept = {f.id for f in memory_utils._prune_excess_facts([inferred_fresher, stated_old, inferred_fresh])}
+
+    assert "told-me" in kept and len(kept) == 2
+    assert "model-1" not in kept  # the older of the two inferred facts went
+
+
+def test_prune_order_is_inferred_then_pattern_then_stated_and_confidence_decides_within_a_source(monkeypatch):
+    monkeypatch.setattr(memory_utils, "MAX_STORED_FACTS", 3)
+    facts = [
+        _sourced("explicit", "stated-low", confidence=0.2),
+        _sourced("explicit", "stated-high", confidence=1.0),
+        _sourced("pattern", "pattern", confidence=1.0),
+        _sourced("inferred", "inferred", confidence=1.0),
+    ]
+    assert {f.id for f in memory_utils._prune_excess_facts(facts)} == {"stated-low", "stated-high", "pattern"}
+    facts = facts[:2] + [_sourced("explicit", "stated-mid", confidence=0.5)]
+    assert {f.id for f in memory_utils._prune_excess_facts(facts + [_sourced("inferred", "x")])} == {"stated-low", "stated-high", "stated-mid"}
+    monkeypatch.setattr(memory_utils, "MAX_STORED_FACTS", 2)
+    assert {f.id for f in memory_utils._prune_excess_facts(facts)} == {"stated-high", "stated-mid"}  # within one source the weakest goes
+
+
+def test_the_safety_layers_remembered_support_contacts_are_never_pruned(monkeypatch):
+    monkeypatch.setattr(memory_utils, "MAX_STORED_FACTS", 2)
+    support = _sourced(memory_utils.SUPPORT_SOURCE, "my-sister", confidence=0.9, days_old=900, category="relationship")
+    others = [_sourced("explicit", f"told-{i}") for i in range(3)]
+
+    kept = {f.id for f in memory_utils._prune_excess_facts([support] + others)}
+
+    assert "my-sister" in kept and len(kept) == 2  # protected, and it uses one of the two slots
+
+
+def test_the_support_source_name_is_the_one_the_safety_layer_reads():
+    from backend.utils import safety_utils
+
+    assert memory_utils.SUPPORT_SOURCE == safety_utils.SUPPORT_FACT_SOURCE
+    assert memory_utils.SUPPORT_SOURCE in memory_utils.PROTECTED_SOURCES
+
+
+def test_source_strength_ranks_support_over_stated_over_pattern_over_inferred_and_treats_an_unknown_source_as_stated():
+    s = memory_utils.source_strength
+    assert s("safety_support") > s("explicit") > s("pattern") > s("inferred")
+    assert s("something-new") == s("explicit") and s(None) == s("explicit")
+
+
+# ---------------------------------------------------------------------------
+# A re-observation must not relabel a stronger source (compaction restating a stated fact made it "inferred", the first to be pruned)
+# ---------------------------------------------------------------------------
+
+def _seed(source, fact="Prefers dark mode UI.", fact_id="seed-id"):
+    seeded = _make_fact(confidence=0.5, fact_id=fact_id, embedding=memory_utils.embed_text(fact))
+    seeded.fact, seeded.source = fact, source
+    memory_utils.save_user_facts("jack", [seeded])
+
+
+def test_a_stated_fact_that_is_restated_as_inferred_stays_stated():
+    _seed("explicit")
+    again = memory_utils.save_user_fact("jack", "prefers dark mode ui.", category="trait", source="inferred")
+    assert again.id == "seed-id" and again.source == "explicit"
+
+
+def test_an_inferred_fact_that_the_user_then_states_becomes_stated():
+    _seed("inferred")
+    again = memory_utils.save_user_fact("jack", "prefers dark mode ui.", category="trait", source="explicit")
+    assert again.source == "explicit"
+
+
+def test_a_remembered_support_contact_keeps_its_source_when_seen_again_or_changed(monkeypatch):
+    _seed(memory_utils.SUPPORT_SOURCE, fact="Can talk to their sister Anna.")
+    seen_again = memory_utils.save_user_fact("jack", "can talk to their sister anna.", category="relationship", source="inferred")
+    assert seen_again.id == "seed-id" and seen_again.source == memory_utils.SUPPORT_SOURCE
+    monkeypatch.setattr(memory_utils.lite_llm, "invoke", Mock(return_value=SimpleNamespace(content=json.dumps({"action": "supersede"}))))
+    changed = memory_utils.save_user_fact("jack", "can talk to their sister anna.", category="relationship", source="inferred")
+    assert changed.id == "seed-id" and changed.source == memory_utils.SUPPORT_SOURCE
+
+
+def test_a_fact_whose_content_really_changed_takes_the_new_sources_label(monkeypatch):
+    _seed("explicit")
+    monkeypatch.setattr(memory_utils.lite_llm, "invoke", Mock(return_value=SimpleNamespace(content=json.dumps({"action": "supersede"}))))
+    changed = memory_utils.save_user_fact("jack", "prefers dark mode ui.", category="trait", source="inferred")
+    assert changed.source == "inferred" and changed.confidence == 1.0
+
+
+# ---------------------------------------------------------------------------
+# The fact list is cached in memory: it is one 4 MB document and a slow database made each read block the server for ~40 s
+# ---------------------------------------------------------------------------
+
+class CountingFactsDB:
+    """A database holding one user's fact document, counting how many times it is read."""
+
+    def __init__(self, facts):
+        self.doc = {"username": "jack", "facts": [f.dict() for f in facts]}
+        self.reads = 0
+        self.writes = 0
+
+    def __getitem__(self, name):
+        assert name == "user_memory_facts"
+        return self
+
+    def find_one(self, filt):
+        self.reads += 1
+        return self.doc if filt.get("username") == "jack" else None
+
+    def update_one(self, filt, update, upsert=False):
+        self.writes += 1
+        self.doc["facts"] = update["$set"]["facts"]
+
+
+@pytest.fixture
+def counting_db(monkeypatch):
+    db = CountingFactsDB([_make_fact(fact_id="a"), _make_fact(fact_id="b")])
+    monkeypatch.setattr(memory_utils, "get_db", lambda: db)
+    return db
+
+
+def test_the_fact_list_is_read_from_the_database_once_not_on_every_call(counting_db):
+    for _ in range(5):
+        assert {f.id for f in memory_utils.load_user_facts("jack")} == {"a", "b"}
+    assert counting_db.reads == 1
+
+
+def test_a_saved_list_replaces_the_cached_one_so_the_next_read_sees_it_without_asking_the_database(counting_db):
+    memory_utils.load_user_facts("jack")
+    memory_utils.save_user_facts("jack", [_make_fact(fact_id="only")])
+    assert [f.id for f in memory_utils.load_user_facts("jack")] == ["only"]
+    assert counting_db.reads == 1 and counting_db.writes == 1
+
+
+def test_a_caller_that_edits_a_fact_without_saving_does_not_change_what_the_next_caller_sees(counting_db):
+    first = memory_utils.load_user_facts("jack")
+    first[0].confidence = 0.01
+    first[0].fact = "edited but never saved"
+    again = memory_utils.load_user_facts("jack")
+    assert all(f.confidence == 1.0 and f.fact == "test fact" for f in again)
+
+
+def test_category_and_active_filters_still_apply_to_the_cached_copy(counting_db):
+    memory_utils.save_user_facts("jack", [_make_fact(fact_id="a", category="goal"), _make_fact(fact_id="b", category="trait")])
+    assert [f.id for f in memory_utils.load_user_facts("jack", category="goal")] == ["a"]
+    inactive = _make_fact(fact_id="c")
+    inactive.active = False
+    memory_utils.save_user_facts("jack", [inactive])
+    assert memory_utils.load_user_facts("jack") == []
+
+
+def test_an_old_copy_is_still_served_at_once_while_a_background_thread_fetches_a_new_one(counting_db, monkeypatch):
+    import time as _time
+
+    memory_utils.load_user_facts("jack")
+    counting_db.doc["facts"] = [_make_fact(fact_id="changed-elsewhere").dict()]  # another server instance changed it
+    monkeypatch.setattr(memory_utils, "FACTS_CACHE_FRESH_SECONDS", -1.0)  # everything counts as old
+
+    served = memory_utils.load_user_facts("jack")  # returns the old copy immediately
+    assert {f.id for f in served} == {"a", "b"}
+    for _ in range(100):  # the refresh runs in its own thread; give it a moment
+        if "changed-elsewhere" in {f.id for f in memory_utils.load_user_facts("jack")}:
+            break
+        _time.sleep(0.02)
+    assert "changed-elsewhere" in {f.id for f in memory_utils.load_user_facts("jack")}
+
+
+def test_a_failed_background_refresh_keeps_the_copy_in_memory(counting_db, monkeypatch):
+    import time as _time
+
+    memory_utils.load_user_facts("jack")
+    monkeypatch.setattr(memory_utils, "FACTS_CACHE_FRESH_SECONDS", -1.0)
+    monkeypatch.setattr(memory_utils, "_fetch_facts_from_db", lambda db, username: (_ for _ in ()).throw(RuntimeError("db down")))
+    assert {f.id for f in memory_utils.load_user_facts("jack")} == {"a", "b"}
+    _time.sleep(0.2)
+    assert {f.id for f in memory_utils.load_user_facts("jack")} == {"a", "b"}
+    _time.sleep(0.3)  # the last read above started another refresh attempt; let it finish (and fail)
+    assert memory_utils._facts_refreshing == set()  # a failed refresh never gets stuck "in progress", so it can try again later
+
+
+def test_clearing_the_cache_forces_a_fresh_read(counting_db):
+    memory_utils.load_user_facts("jack")
+    memory_utils.clear_facts_cache()
+    memory_utils.load_user_facts("jack")
+    assert counting_db.reads == 2
+
+
+def test_the_chat_endpoint_reads_the_fact_list_once_in_a_worker_thread_and_runs_the_other_synchronous_reads_off_the_event_loop():
+    import pathlib
+
+    source = (pathlib.Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
+    start = source.index("await asyncio.to_thread(load_user_facts, username)")
+    block = source[start: start + 1500]
+    for needle in ("await asyncio.to_thread(fetch_relevant_corrections", "await asyncio.to_thread(embed_text, question)", "await asyncio.to_thread(lambda: fetch_relevant_user_facts("):
+        assert needle in block, needle
+    assert "facts = await asyncio.to_thread(load_user_facts, username)" in source  # and the Memory page's list
+
+
+def test_compaction_does_its_database_reading_clustering_and_writing_in_worker_threads():
+    import inspect
+
+    from backend.services import memory_compaction as mc
+
+    source = inspect.getsource(mc._run_compaction)
+    for needle in ("asyncio.to_thread(_fetch_chunks", "asyncio.to_thread(lambda: _cluster_chunks", "asyncio.to_thread(lambda: _archive_cluster",
+                   "asyncio.to_thread(lambda: embed_and_store_memory_chunk(", "asyncio.to_thread(lambda fact_text=fact_text"):
+        assert needle in source, needle

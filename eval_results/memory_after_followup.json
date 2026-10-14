@@ -1,0 +1,3558 @@
+{
+  "at": "2026-10-12T12:00:00+00:00",
+  "recall": {
+    "latest": {
+      "summary": {
+        "passed": 18,
+        "total": 22,
+        "by_category": {
+          "direct": [
+            6,
+            6
+          ],
+          "paraphrase": [
+            6,
+            7
+          ],
+          "follow_up": [
+            2,
+            4
+          ],
+          "negative": [
+            3,
+            3
+          ],
+          "isolation": [
+            1,
+            2
+          ]
+        },
+        "noise_per_probe": 0.2777777777777778
+      },
+      "sweep": [
+        {
+          "threshold": 0.6,
+          "recall": 0.8888888888888888,
+          "noise_per_probe": 2.111111111111111,
+          "negatives_clean": 0.0
+        },
+        {
+          "threshold": 0.65,
+          "recall": 0.8888888888888888,
+          "noise_per_probe": 2.111111111111111,
+          "negatives_clean": 0.0
+        },
+        {
+          "threshold": 0.7,
+          "recall": 0.8888888888888888,
+          "noise_per_probe": 2.111111111111111,
+          "negatives_clean": 0.0
+        },
+        {
+          "threshold": 0.75,
+          "recall": 0.8888888888888888,
+          "noise_per_probe": 2.111111111111111,
+          "negatives_clean": 0.3333333333333333
+        },
+        {
+          "threshold": 0.8,
+          "recall": 0.7777777777777778,
+          "noise_per_probe": 0.2777777777777778,
+          "negatives_clean": 1.0
+        },
+        {
+          "threshold": 0.85,
+          "recall": 0.4444444444444444,
+          "noise_per_probe": 0.0,
+          "negatives_clean": 1.0
+        }
+      ],
+      "results": [
+        {
+          "id": "dog_direct",
+          "category": "direct",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "dog"
+          ],
+          "hits": [
+            [
+              "dog",
+              0.853
+            ],
+            [
+              "near",
+              0.776
+            ],
+            [
+              "filler",
+              0.772
+            ],
+            [
+              "filler",
+              0.771
+            ],
+            [
+              "roommate",
+              0.77
+            ],
+            [
+              "manager",
+              0.77
+            ],
+            [
+              "filler",
+              0.763
+            ],
+            [
+              "filler",
+              0.759
+            ],
+            [
+              "filler",
+              0.756
+            ],
+            [
+              "wedding",
+              0.755
+            ]
+          ]
+        },
+        {
+          "id": "wedding_direct",
+          "category": "direct",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "wedding"
+          ],
+          "hits": [
+            [
+              "wedding",
+              0.871
+            ],
+            [
+              "near",
+              0.797
+            ],
+            [
+              "near",
+              0.778
+            ],
+            [
+              "orchestra",
+              0.765
+            ],
+            [
+              "filler",
+              0.761
+            ],
+            [
+              "filler",
+              0.758
+            ],
+            [
+              "filler",
+              0.758
+            ],
+            [
+              "roommate",
+              0.757
+            ],
+            [
+              "filler",
+              0.756
+            ],
+            [
+              "filler",
+              0.753
+            ]
+          ]
+        },
+        {
+          "id": "rent_direct",
+          "category": "direct",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "rent",
+            "near"
+          ],
+          "hits": [
+            [
+              "rent",
+              0.878
+            ],
+            [
+              "near",
+              0.816
+            ],
+            [
+              "filler",
+              0.768
+            ],
+            [
+              "roommate",
+              0.766
+            ],
+            [
+              "filler",
+              0.764
+            ],
+            [
+              "filler",
+              0.763
+            ],
+            [
+              "filler",
+              0.763
+            ],
+            [
+              "filler",
+              0.762
+            ],
+            [
+              "filler",
+              0.762
+            ],
+            [
+              "near",
+              0.76
+            ]
+          ]
+        },
+        {
+          "id": "book_direct",
+          "category": "direct",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "book",
+            "near"
+          ],
+          "hits": [
+            [
+              "book",
+              0.865
+            ],
+            [
+              "near",
+              0.817
+            ],
+            [
+              "filler",
+              0.78
+            ],
+            [
+              "filler",
+              0.769
+            ],
+            [
+              "filler",
+              0.762
+            ],
+            [
+              "filler",
+              0.762
+            ],
+            [
+              "filler",
+              0.76
+            ],
+            [
+              "filler",
+              0.757
+            ],
+            [
+              "filler",
+              0.756
+            ],
+            [
+              "filler",
+              0.756
+            ]
+          ]
+        },
+        {
+          "id": "trip_direct",
+          "category": "direct",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "trip"
+          ],
+          "hits": [
+            [
+              "trip",
+              0.829
+            ],
+            [
+              "wedding",
+              0.787
+            ],
+            [
+              "filler",
+              0.776
+            ],
+            [
+              "style",
+              0.768
+            ],
+            [
+              "manager",
+              0.768
+            ],
+            [
+              "near",
+              0.767
+            ],
+            [
+              "filler",
+              0.766
+            ],
+            [
+              "orchestra",
+              0.764
+            ],
+            [
+              "filler",
+              0.761
+            ],
+            [
+              "allergy",
+              0.761
+            ]
+          ]
+        },
+        {
+          "id": "orchestra_direct",
+          "category": "direct",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "orchestra"
+          ],
+          "hits": [
+            [
+              "orchestra",
+              0.872
+            ],
+            [
+              "near",
+              0.779
+            ],
+            [
+              "wedding",
+              0.756
+            ],
+            [
+              "race",
+              0.755
+            ],
+            [
+              "filler",
+              0.751
+            ],
+            [
+              "filler",
+              0.75
+            ],
+            [
+              "filler",
+              0.747
+            ],
+            [
+              "filler",
+              0.741
+            ],
+            [
+              "filler",
+              0.74
+            ],
+            [
+              "filler",
+              0.739
+            ]
+          ]
+        },
+        {
+          "id": "dog_paraphrase",
+          "category": "paraphrase",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "dog"
+          ],
+          "hits": [
+            [
+              "dog",
+              0.801
+            ],
+            [
+              "near",
+              0.795
+            ],
+            [
+              "manager",
+              0.768
+            ],
+            [
+              "filler",
+              0.758
+            ],
+            [
+              "filler",
+              0.758
+            ],
+            [
+              "filler",
+              0.758
+            ],
+            [
+              "roommate",
+              0.755
+            ],
+            [
+              "style",
+              0.755
+            ],
+            [
+              "filler",
+              0.754
+            ],
+            [
+              "filler",
+              0.753
+            ]
+          ]
+        },
+        {
+          "id": "allergy_paraphrase",
+          "category": "paraphrase",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "allergy"
+          ],
+          "hits": [
+            [
+              "allergy",
+              0.903
+            ],
+            [
+              "near",
+              0.794
+            ],
+            [
+              "filler",
+              0.776
+            ],
+            [
+              "roommate",
+              0.77
+            ],
+            [
+              "filler",
+              0.76
+            ],
+            [
+              "filler",
+              0.756
+            ],
+            [
+              "trip",
+              0.756
+            ],
+            [
+              "filler",
+              0.755
+            ],
+            [
+              "manager",
+              0.753
+            ],
+            [
+              "filler",
+              0.751
+            ]
+          ]
+        },
+        {
+          "id": "race_paraphrase",
+          "category": "paraphrase",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "race"
+          ],
+          "hits": [
+            [
+              "race",
+              0.849
+            ],
+            [
+              "near",
+              0.785
+            ],
+            [
+              "dog",
+              0.78
+            ],
+            [
+              "filler",
+              0.772
+            ],
+            [
+              "filler",
+              0.772
+            ],
+            [
+              "filler",
+              0.772
+            ],
+            [
+              "filler",
+              0.771
+            ],
+            [
+              "manager",
+              0.769
+            ],
+            [
+              "wedding",
+              0.769
+            ],
+            [
+              "filler",
+              0.767
+            ]
+          ]
+        },
+        {
+          "id": "job_paraphrase",
+          "category": "paraphrase",
+          "passed": false,
+          "why": "missing cover_letter (got nothing)",
+          "returned": [],
+          "hits": [
+            [
+              "filler",
+              0.784
+            ],
+            [
+              "manager",
+              0.781
+            ],
+            [
+              "near",
+              0.781
+            ],
+            [
+              "wedding",
+              0.776
+            ],
+            [
+              "filler",
+              0.775
+            ],
+            [
+              "filler",
+              0.773
+            ],
+            [
+              "filler",
+              0.771
+            ],
+            [
+              "cover_letter",
+              0.766
+            ],
+            [
+              "filler",
+              0.766
+            ],
+            [
+              "style",
+              0.764
+            ]
+          ]
+        },
+        {
+          "id": "move_paraphrase",
+          "category": "paraphrase",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "move",
+            "near"
+          ],
+          "hits": [
+            [
+              "move",
+              0.871
+            ],
+            [
+              "near",
+              0.839
+            ],
+            [
+              "filler",
+              0.765
+            ],
+            [
+              "manager",
+              0.756
+            ],
+            [
+              "filler",
+              0.753
+            ],
+            [
+              "filler",
+              0.749
+            ],
+            [
+              "filler",
+              0.748
+            ],
+            [
+              "roommate",
+              0.748
+            ],
+            [
+              "style",
+              0.745
+            ],
+            [
+              "filler",
+              0.743
+            ]
+          ]
+        },
+        {
+          "id": "boss_paraphrase",
+          "category": "paraphrase",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "manager"
+          ],
+          "hits": [
+            [
+              "manager",
+              0.831
+            ],
+            [
+              "filler",
+              0.774
+            ],
+            [
+              "roommate",
+              0.767
+            ],
+            [
+              "filler",
+              0.764
+            ],
+            [
+              "filler",
+              0.763
+            ],
+            [
+              "move",
+              0.758
+            ],
+            [
+              "filler",
+              0.755
+            ],
+            [
+              "filler",
+              0.754
+            ],
+            [
+              "filler",
+              0.752
+            ],
+            [
+              "filler",
+              0.751
+            ]
+          ]
+        },
+        {
+          "id": "style_paraphrase",
+          "category": "paraphrase",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "style",
+            "filler",
+            "filler"
+          ],
+          "hits": [
+            [
+              "style",
+              0.866
+            ],
+            [
+              "filler",
+              0.832
+            ],
+            [
+              "filler",
+              0.8
+            ],
+            [
+              "near",
+              0.8
+            ],
+            [
+              "filler",
+              0.795
+            ],
+            [
+              "filler",
+              0.787
+            ],
+            [
+              "cover_letter",
+              0.776
+            ],
+            [
+              "filler",
+              0.775
+            ],
+            [
+              "filler",
+              0.775
+            ],
+            [
+              "filler",
+              0.773
+            ]
+          ]
+        },
+        {
+          "id": "race_follow_up",
+          "category": "follow_up",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "race"
+          ],
+          "hits": [
+            [
+              "race",
+              0.807
+            ],
+            [
+              "filler",
+              0.78
+            ],
+            [
+              "near",
+              0.774
+            ],
+            [
+              "filler",
+              0.773
+            ],
+            [
+              "filler",
+              0.772
+            ],
+            [
+              "move",
+              0.77
+            ],
+            [
+              "filler",
+              0.763
+            ],
+            [
+              "wedding",
+              0.761
+            ],
+            [
+              "dog",
+              0.761
+            ],
+            [
+              "filler",
+              0.76
+            ]
+          ]
+        },
+        {
+          "id": "trip_follow_up",
+          "category": "follow_up",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "trip"
+          ],
+          "hits": [
+            [
+              "trip",
+              0.824
+            ],
+            [
+              "filler",
+              0.794
+            ],
+            [
+              "filler",
+              0.792
+            ],
+            [
+              "allergy",
+              0.786
+            ],
+            [
+              "style",
+              0.783
+            ],
+            [
+              "filler",
+              0.778
+            ],
+            [
+              "filler",
+              0.774
+            ],
+            [
+              "filler",
+              0.77
+            ],
+            [
+              "filler",
+              0.77
+            ],
+            [
+              "filler",
+              0.769
+            ]
+          ]
+        },
+        {
+          "id": "toast_follow_up",
+          "category": "follow_up",
+          "passed": false,
+          "why": "missing wedding (got nothing)",
+          "returned": [],
+          "hits": [
+            [
+              "near",
+              0.784
+            ],
+            [
+              "filler",
+              0.778
+            ],
+            [
+              "filler",
+              0.772
+            ],
+            [
+              "filler",
+              0.769
+            ],
+            [
+              "filler",
+              0.768
+            ],
+            [
+              "near",
+              0.768
+            ],
+            [
+              "filler",
+              0.768
+            ],
+            [
+              "filler",
+              0.767
+            ],
+            [
+              "filler",
+              0.764
+            ],
+            [
+              "filler",
+              0.764
+            ]
+          ]
+        },
+        {
+          "id": "roommate_follow_up",
+          "category": "follow_up",
+          "passed": false,
+          "why": "missing roommate (got nothing)",
+          "returned": [],
+          "hits": [
+            [
+              "roommate",
+              0.789
+            ],
+            [
+              "manager",
+              0.776
+            ],
+            [
+              "filler",
+              0.774
+            ],
+            [
+              "wedding",
+              0.766
+            ],
+            [
+              "filler",
+              0.76
+            ],
+            [
+              "filler",
+              0.758
+            ],
+            [
+              "rent",
+              0.758
+            ],
+            [
+              "filler",
+              0.755
+            ],
+            [
+              "filler",
+              0.754
+            ],
+            [
+              "filler",
+              0.754
+            ]
+          ]
+        },
+        {
+          "id": "capital_negative",
+          "category": "negative",
+          "passed": true,
+          "why": "ok",
+          "returned": [],
+          "hits": [
+            [
+              "near",
+              0.748
+            ],
+            [
+              "filler",
+              0.743
+            ],
+            [
+              "filler",
+              0.734
+            ],
+            [
+              "filler",
+              0.731
+            ],
+            [
+              "style",
+              0.73
+            ],
+            [
+              "filler",
+              0.729
+            ],
+            [
+              "filler",
+              0.726
+            ],
+            [
+              "filler",
+              0.726
+            ],
+            [
+              "filler",
+              0.725
+            ],
+            [
+              "wedding",
+              0.723
+            ]
+          ]
+        },
+        {
+          "id": "math_negative",
+          "category": "negative",
+          "passed": true,
+          "why": "ok",
+          "returned": [],
+          "hits": [
+            [
+              "filler",
+              0.78
+            ],
+            [
+              "filler",
+              0.759
+            ],
+            [
+              "filler",
+              0.759
+            ],
+            [
+              "orchestra",
+              0.748
+            ],
+            [
+              "filler",
+              0.744
+            ],
+            [
+              "filler",
+              0.743
+            ],
+            [
+              "filler",
+              0.743
+            ],
+            [
+              "filler",
+              0.742
+            ],
+            [
+              "wedding",
+              0.742
+            ],
+            [
+              "filler",
+              0.741
+            ]
+          ]
+        },
+        {
+          "id": "poem_negative",
+          "category": "negative",
+          "passed": true,
+          "why": "ok",
+          "returned": [],
+          "hits": [
+            [
+              "filler",
+              0.765
+            ],
+            [
+              "filler",
+              0.761
+            ],
+            [
+              "near",
+              0.756
+            ],
+            [
+              "style",
+              0.753
+            ],
+            [
+              "filler",
+              0.752
+            ],
+            [
+              "filler",
+              0.749
+            ],
+            [
+              "filler",
+              0.748
+            ],
+            [
+              "filler",
+              0.747
+            ],
+            [
+              "book",
+              0.747
+            ],
+            [
+              "filler",
+              0.747
+            ]
+          ]
+        },
+        {
+          "id": "pet_isolation",
+          "category": "isolation",
+          "passed": false,
+          "why": "missing dog (got nothing)",
+          "returned": [],
+          "hits": [
+            [
+              "dog",
+              0.781
+            ],
+            [
+              "roommate",
+              0.771
+            ],
+            [
+              "near",
+              0.769
+            ],
+            [
+              "manager",
+              0.766
+            ],
+            [
+              "filler",
+              0.764
+            ],
+            [
+              "filler",
+              0.757
+            ],
+            [
+              "filler",
+              0.757
+            ],
+            [
+              "filler",
+              0.753
+            ],
+            [
+              "filler",
+              0.75
+            ],
+            [
+              "filler",
+              0.748
+            ]
+          ]
+        },
+        {
+          "id": "cat_isolation",
+          "category": "isolation",
+          "passed": true,
+          "why": "ok",
+          "returned": [],
+          "hits": [
+            [
+              "wedding",
+              0.782
+            ],
+            [
+              "filler",
+              0.778
+            ],
+            [
+              "filler",
+              0.776
+            ],
+            [
+              "roommate",
+              0.773
+            ],
+            [
+              "filler",
+              0.773
+            ],
+            [
+              "filler",
+              0.772
+            ],
+            [
+              "filler",
+              0.768
+            ],
+            [
+              "orchestra",
+              0.766
+            ],
+            [
+              "near",
+              0.766
+            ],
+            [
+              "dog",
+              0.765
+            ]
+          ]
+        }
+      ]
+    },
+    "context": {
+      "summary": {
+        "passed": 20,
+        "total": 22,
+        "by_category": {
+          "direct": [
+            6,
+            6
+          ],
+          "paraphrase": [
+            6,
+            7
+          ],
+          "follow_up": [
+            4,
+            4
+          ],
+          "negative": [
+            3,
+            3
+          ],
+          "isolation": [
+            1,
+            2
+          ]
+        },
+        "noise_per_probe": 0.5
+      },
+      "sweep": [
+        {
+          "threshold": 0.6,
+          "recall": 0.9444444444444444,
+          "noise_per_probe": 2.0555555555555554,
+          "negatives_clean": 0.0
+        },
+        {
+          "threshold": 0.65,
+          "recall": 0.9444444444444444,
+          "noise_per_probe": 2.0555555555555554,
+          "negatives_clean": 0.0
+        },
+        {
+          "threshold": 0.7,
+          "recall": 0.9444444444444444,
+          "noise_per_probe": 2.0555555555555554,
+          "negatives_clean": 0.0
+        },
+        {
+          "threshold": 0.75,
+          "recall": 0.9444444444444444,
+          "noise_per_probe": 2.0555555555555554,
+          "negatives_clean": 0.3333333333333333
+        },
+        {
+          "threshold": 0.8,
+          "recall": 0.8888888888888888,
+          "noise_per_probe": 0.5,
+          "negatives_clean": 1.0
+        },
+        {
+          "threshold": 0.85,
+          "recall": 0.5555555555555556,
+          "noise_per_probe": 0.05555555555555555,
+          "negatives_clean": 1.0
+        }
+      ],
+      "results": [
+        {
+          "id": "dog_direct",
+          "category": "direct",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "dog"
+          ],
+          "hits": [
+            [
+              "dog",
+              0.853
+            ],
+            [
+              "near",
+              0.776
+            ],
+            [
+              "filler",
+              0.772
+            ],
+            [
+              "filler",
+              0.771
+            ],
+            [
+              "roommate",
+              0.77
+            ],
+            [
+              "manager",
+              0.77
+            ],
+            [
+              "filler",
+              0.763
+            ],
+            [
+              "filler",
+              0.759
+            ],
+            [
+              "filler",
+              0.756
+            ],
+            [
+              "wedding",
+              0.755
+            ]
+          ]
+        },
+        {
+          "id": "wedding_direct",
+          "category": "direct",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "wedding"
+          ],
+          "hits": [
+            [
+              "wedding",
+              0.871
+            ],
+            [
+              "near",
+              0.797
+            ],
+            [
+              "near",
+              0.778
+            ],
+            [
+              "orchestra",
+              0.765
+            ],
+            [
+              "filler",
+              0.761
+            ],
+            [
+              "filler",
+              0.758
+            ],
+            [
+              "filler",
+              0.758
+            ],
+            [
+              "roommate",
+              0.757
+            ],
+            [
+              "filler",
+              0.756
+            ],
+            [
+              "filler",
+              0.753
+            ]
+          ]
+        },
+        {
+          "id": "rent_direct",
+          "category": "direct",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "rent",
+            "near"
+          ],
+          "hits": [
+            [
+              "rent",
+              0.878
+            ],
+            [
+              "near",
+              0.816
+            ],
+            [
+              "filler",
+              0.768
+            ],
+            [
+              "roommate",
+              0.766
+            ],
+            [
+              "filler",
+              0.764
+            ],
+            [
+              "filler",
+              0.763
+            ],
+            [
+              "filler",
+              0.763
+            ],
+            [
+              "filler",
+              0.762
+            ],
+            [
+              "filler",
+              0.762
+            ],
+            [
+              "near",
+              0.76
+            ]
+          ]
+        },
+        {
+          "id": "book_direct",
+          "category": "direct",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "book",
+            "near"
+          ],
+          "hits": [
+            [
+              "book",
+              0.865
+            ],
+            [
+              "near",
+              0.817
+            ],
+            [
+              "filler",
+              0.78
+            ],
+            [
+              "filler",
+              0.769
+            ],
+            [
+              "filler",
+              0.762
+            ],
+            [
+              "filler",
+              0.762
+            ],
+            [
+              "filler",
+              0.76
+            ],
+            [
+              "filler",
+              0.757
+            ],
+            [
+              "filler",
+              0.756
+            ],
+            [
+              "filler",
+              0.756
+            ]
+          ]
+        },
+        {
+          "id": "trip_direct",
+          "category": "direct",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "trip"
+          ],
+          "hits": [
+            [
+              "trip",
+              0.829
+            ],
+            [
+              "wedding",
+              0.787
+            ],
+            [
+              "filler",
+              0.776
+            ],
+            [
+              "style",
+              0.768
+            ],
+            [
+              "manager",
+              0.768
+            ],
+            [
+              "near",
+              0.767
+            ],
+            [
+              "filler",
+              0.766
+            ],
+            [
+              "orchestra",
+              0.764
+            ],
+            [
+              "filler",
+              0.761
+            ],
+            [
+              "allergy",
+              0.761
+            ]
+          ]
+        },
+        {
+          "id": "orchestra_direct",
+          "category": "direct",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "orchestra"
+          ],
+          "hits": [
+            [
+              "orchestra",
+              0.872
+            ],
+            [
+              "near",
+              0.779
+            ],
+            [
+              "wedding",
+              0.756
+            ],
+            [
+              "race",
+              0.755
+            ],
+            [
+              "filler",
+              0.751
+            ],
+            [
+              "filler",
+              0.75
+            ],
+            [
+              "filler",
+              0.747
+            ],
+            [
+              "filler",
+              0.741
+            ],
+            [
+              "filler",
+              0.74
+            ],
+            [
+              "filler",
+              0.739
+            ]
+          ]
+        },
+        {
+          "id": "dog_paraphrase",
+          "category": "paraphrase",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "dog"
+          ],
+          "hits": [
+            [
+              "dog",
+              0.801
+            ],
+            [
+              "near",
+              0.795
+            ],
+            [
+              "manager",
+              0.768
+            ],
+            [
+              "filler",
+              0.758
+            ],
+            [
+              "filler",
+              0.758
+            ],
+            [
+              "filler",
+              0.758
+            ],
+            [
+              "roommate",
+              0.755
+            ],
+            [
+              "style",
+              0.755
+            ],
+            [
+              "filler",
+              0.754
+            ],
+            [
+              "filler",
+              0.753
+            ]
+          ]
+        },
+        {
+          "id": "allergy_paraphrase",
+          "category": "paraphrase",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "allergy"
+          ],
+          "hits": [
+            [
+              "allergy",
+              0.903
+            ],
+            [
+              "near",
+              0.794
+            ],
+            [
+              "filler",
+              0.776
+            ],
+            [
+              "roommate",
+              0.77
+            ],
+            [
+              "filler",
+              0.76
+            ],
+            [
+              "filler",
+              0.756
+            ],
+            [
+              "trip",
+              0.756
+            ],
+            [
+              "filler",
+              0.755
+            ],
+            [
+              "manager",
+              0.753
+            ],
+            [
+              "filler",
+              0.751
+            ]
+          ]
+        },
+        {
+          "id": "race_paraphrase",
+          "category": "paraphrase",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "race"
+          ],
+          "hits": [
+            [
+              "race",
+              0.849
+            ],
+            [
+              "near",
+              0.785
+            ],
+            [
+              "dog",
+              0.78
+            ],
+            [
+              "filler",
+              0.772
+            ],
+            [
+              "filler",
+              0.772
+            ],
+            [
+              "filler",
+              0.772
+            ],
+            [
+              "filler",
+              0.771
+            ],
+            [
+              "manager",
+              0.769
+            ],
+            [
+              "wedding",
+              0.769
+            ],
+            [
+              "filler",
+              0.767
+            ]
+          ]
+        },
+        {
+          "id": "job_paraphrase",
+          "category": "paraphrase",
+          "passed": false,
+          "why": "missing cover_letter (got nothing)",
+          "returned": [],
+          "hits": [
+            [
+              "filler",
+              0.784
+            ],
+            [
+              "manager",
+              0.781
+            ],
+            [
+              "near",
+              0.781
+            ],
+            [
+              "wedding",
+              0.776
+            ],
+            [
+              "filler",
+              0.775
+            ],
+            [
+              "filler",
+              0.773
+            ],
+            [
+              "filler",
+              0.771
+            ],
+            [
+              "cover_letter",
+              0.766
+            ],
+            [
+              "filler",
+              0.766
+            ],
+            [
+              "style",
+              0.764
+            ]
+          ]
+        },
+        {
+          "id": "move_paraphrase",
+          "category": "paraphrase",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "move",
+            "near"
+          ],
+          "hits": [
+            [
+              "move",
+              0.871
+            ],
+            [
+              "near",
+              0.839
+            ],
+            [
+              "filler",
+              0.765
+            ],
+            [
+              "manager",
+              0.756
+            ],
+            [
+              "filler",
+              0.753
+            ],
+            [
+              "filler",
+              0.749
+            ],
+            [
+              "filler",
+              0.748
+            ],
+            [
+              "roommate",
+              0.748
+            ],
+            [
+              "style",
+              0.745
+            ],
+            [
+              "filler",
+              0.743
+            ]
+          ]
+        },
+        {
+          "id": "boss_paraphrase",
+          "category": "paraphrase",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "manager"
+          ],
+          "hits": [
+            [
+              "manager",
+              0.831
+            ],
+            [
+              "filler",
+              0.774
+            ],
+            [
+              "roommate",
+              0.767
+            ],
+            [
+              "filler",
+              0.764
+            ],
+            [
+              "filler",
+              0.763
+            ],
+            [
+              "move",
+              0.758
+            ],
+            [
+              "filler",
+              0.755
+            ],
+            [
+              "filler",
+              0.754
+            ],
+            [
+              "filler",
+              0.752
+            ],
+            [
+              "filler",
+              0.751
+            ]
+          ]
+        },
+        {
+          "id": "style_paraphrase",
+          "category": "paraphrase",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "style",
+            "filler",
+            "filler"
+          ],
+          "hits": [
+            [
+              "style",
+              0.866
+            ],
+            [
+              "filler",
+              0.832
+            ],
+            [
+              "filler",
+              0.8
+            ],
+            [
+              "near",
+              0.8
+            ],
+            [
+              "filler",
+              0.795
+            ],
+            [
+              "filler",
+              0.787
+            ],
+            [
+              "cover_letter",
+              0.776
+            ],
+            [
+              "filler",
+              0.775
+            ],
+            [
+              "filler",
+              0.775
+            ],
+            [
+              "filler",
+              0.773
+            ]
+          ]
+        },
+        {
+          "id": "race_follow_up",
+          "category": "follow_up",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "race",
+            "dog"
+          ],
+          "hits": [
+            [
+              "race",
+              0.845
+            ],
+            [
+              "dog",
+              0.804
+            ],
+            [
+              "roommate",
+              0.796
+            ],
+            [
+              "near",
+              0.794
+            ],
+            [
+              "filler",
+              0.78
+            ],
+            [
+              "wedding",
+              0.775
+            ],
+            [
+              "filler",
+              0.773
+            ],
+            [
+              "near",
+              0.772
+            ],
+            [
+              "near",
+              0.771
+            ],
+            [
+              "rent",
+              0.77
+            ]
+          ]
+        },
+        {
+          "id": "trip_follow_up",
+          "category": "follow_up",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "trip",
+            "filler",
+            "filler"
+          ],
+          "hits": [
+            [
+              "trip",
+              0.863
+            ],
+            [
+              "filler",
+              0.813
+            ],
+            [
+              "filler",
+              0.808
+            ],
+            [
+              "near",
+              0.792
+            ],
+            [
+              "filler",
+              0.789
+            ],
+            [
+              "style",
+              0.784
+            ],
+            [
+              "near",
+              0.783
+            ],
+            [
+              "filler",
+              0.782
+            ],
+            [
+              "filler",
+              0.781
+            ],
+            [
+              "allergy",
+              0.776
+            ]
+          ]
+        },
+        {
+          "id": "toast_follow_up",
+          "category": "follow_up",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "near",
+            "wedding"
+          ],
+          "hits": [
+            [
+              "near",
+              0.881
+            ],
+            [
+              "wedding",
+              0.832
+            ],
+            [
+              "filler",
+              0.795
+            ],
+            [
+              "filler",
+              0.792
+            ],
+            [
+              "near",
+              0.788
+            ],
+            [
+              "filler",
+              0.788
+            ],
+            [
+              "near",
+              0.786
+            ],
+            [
+              "filler",
+              0.786
+            ],
+            [
+              "filler",
+              0.777
+            ],
+            [
+              "cover_letter",
+              0.777
+            ]
+          ]
+        },
+        {
+          "id": "roommate_follow_up",
+          "category": "follow_up",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "roommate"
+          ],
+          "hits": [
+            [
+              "roommate",
+              0.86
+            ],
+            [
+              "manager",
+              0.785
+            ],
+            [
+              "wedding",
+              0.78
+            ],
+            [
+              "filler",
+              0.777
+            ],
+            [
+              "rent",
+              0.775
+            ],
+            [
+              "filler",
+              0.771
+            ],
+            [
+              "filler",
+              0.768
+            ],
+            [
+              "filler",
+              0.766
+            ],
+            [
+              "allergy",
+              0.766
+            ],
+            [
+              "filler",
+              0.765
+            ]
+          ]
+        },
+        {
+          "id": "capital_negative",
+          "category": "negative",
+          "passed": true,
+          "why": "ok",
+          "returned": [],
+          "hits": [
+            [
+              "near",
+              0.748
+            ],
+            [
+              "filler",
+              0.743
+            ],
+            [
+              "filler",
+              0.734
+            ],
+            [
+              "filler",
+              0.731
+            ],
+            [
+              "style",
+              0.73
+            ],
+            [
+              "filler",
+              0.729
+            ],
+            [
+              "filler",
+              0.726
+            ],
+            [
+              "filler",
+              0.726
+            ],
+            [
+              "filler",
+              0.725
+            ],
+            [
+              "wedding",
+              0.723
+            ]
+          ]
+        },
+        {
+          "id": "math_negative",
+          "category": "negative",
+          "passed": true,
+          "why": "ok",
+          "returned": [],
+          "hits": [
+            [
+              "filler",
+              0.78
+            ],
+            [
+              "filler",
+              0.759
+            ],
+            [
+              "filler",
+              0.759
+            ],
+            [
+              "orchestra",
+              0.748
+            ],
+            [
+              "filler",
+              0.744
+            ],
+            [
+              "filler",
+              0.743
+            ],
+            [
+              "filler",
+              0.743
+            ],
+            [
+              "filler",
+              0.742
+            ],
+            [
+              "wedding",
+              0.742
+            ],
+            [
+              "filler",
+              0.741
+            ]
+          ]
+        },
+        {
+          "id": "poem_negative",
+          "category": "negative",
+          "passed": true,
+          "why": "ok",
+          "returned": [],
+          "hits": [
+            [
+              "filler",
+              0.765
+            ],
+            [
+              "filler",
+              0.761
+            ],
+            [
+              "near",
+              0.756
+            ],
+            [
+              "style",
+              0.753
+            ],
+            [
+              "filler",
+              0.752
+            ],
+            [
+              "filler",
+              0.749
+            ],
+            [
+              "filler",
+              0.748
+            ],
+            [
+              "filler",
+              0.747
+            ],
+            [
+              "book",
+              0.747
+            ],
+            [
+              "filler",
+              0.747
+            ]
+          ]
+        },
+        {
+          "id": "pet_isolation",
+          "category": "isolation",
+          "passed": false,
+          "why": "missing dog (got nothing)",
+          "returned": [],
+          "hits": [
+            [
+              "dog",
+              0.781
+            ],
+            [
+              "roommate",
+              0.771
+            ],
+            [
+              "near",
+              0.769
+            ],
+            [
+              "manager",
+              0.766
+            ],
+            [
+              "filler",
+              0.764
+            ],
+            [
+              "filler",
+              0.757
+            ],
+            [
+              "filler",
+              0.757
+            ],
+            [
+              "filler",
+              0.753
+            ],
+            [
+              "filler",
+              0.75
+            ],
+            [
+              "filler",
+              0.748
+            ]
+          ]
+        },
+        {
+          "id": "cat_isolation",
+          "category": "isolation",
+          "passed": true,
+          "why": "ok",
+          "returned": [],
+          "hits": [
+            [
+              "wedding",
+              0.782
+            ],
+            [
+              "filler",
+              0.778
+            ],
+            [
+              "filler",
+              0.776
+            ],
+            [
+              "roommate",
+              0.773
+            ],
+            [
+              "filler",
+              0.773
+            ],
+            [
+              "filler",
+              0.772
+            ],
+            [
+              "filler",
+              0.768
+            ],
+            [
+              "orchestra",
+              0.766
+            ],
+            [
+              "near",
+              0.766
+            ],
+            [
+              "dog",
+              0.765
+            ]
+          ]
+        }
+      ]
+    },
+    "union": {
+      "summary": {
+        "passed": 20,
+        "total": 22,
+        "by_category": {
+          "direct": [
+            6,
+            6
+          ],
+          "paraphrase": [
+            6,
+            7
+          ],
+          "follow_up": [
+            4,
+            4
+          ],
+          "negative": [
+            3,
+            3
+          ],
+          "isolation": [
+            1,
+            2
+          ]
+        },
+        "noise_per_probe": 0.3333333333333333
+      },
+      "sweep": [
+        {
+          "threshold": 0.6,
+          "recall": 0.9444444444444444,
+          "noise_per_probe": 2.0555555555555554,
+          "negatives_clean": 0.0
+        },
+        {
+          "threshold": 0.65,
+          "recall": 0.9444444444444444,
+          "noise_per_probe": 2.0555555555555554,
+          "negatives_clean": 0.0
+        },
+        {
+          "threshold": 0.7,
+          "recall": 0.9444444444444444,
+          "noise_per_probe": 2.0555555555555554,
+          "negatives_clean": 0.0
+        },
+        {
+          "threshold": 0.75,
+          "recall": 0.9444444444444444,
+          "noise_per_probe": 2.0555555555555554,
+          "negatives_clean": 0.3333333333333333
+        },
+        {
+          "threshold": 0.8,
+          "recall": 0.8888888888888888,
+          "noise_per_probe": 0.3333333333333333,
+          "negatives_clean": 1.0
+        },
+        {
+          "threshold": 0.85,
+          "recall": 0.4444444444444444,
+          "noise_per_probe": 0.05555555555555555,
+          "negatives_clean": 1.0
+        }
+      ],
+      "results": [
+        {
+          "id": "dog_direct",
+          "category": "direct",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "dog"
+          ],
+          "hits": [
+            [
+              "dog",
+              0.853
+            ],
+            [
+              "near",
+              0.776
+            ],
+            [
+              "filler",
+              0.772
+            ],
+            [
+              "filler",
+              0.771
+            ],
+            [
+              "roommate",
+              0.77
+            ],
+            [
+              "manager",
+              0.77
+            ],
+            [
+              "filler",
+              0.763
+            ],
+            [
+              "filler",
+              0.759
+            ],
+            [
+              "filler",
+              0.756
+            ],
+            [
+              "wedding",
+              0.755
+            ]
+          ]
+        },
+        {
+          "id": "wedding_direct",
+          "category": "direct",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "wedding"
+          ],
+          "hits": [
+            [
+              "wedding",
+              0.871
+            ],
+            [
+              "near",
+              0.797
+            ],
+            [
+              "near",
+              0.778
+            ],
+            [
+              "orchestra",
+              0.765
+            ],
+            [
+              "filler",
+              0.761
+            ],
+            [
+              "filler",
+              0.758
+            ],
+            [
+              "filler",
+              0.758
+            ],
+            [
+              "roommate",
+              0.757
+            ],
+            [
+              "filler",
+              0.756
+            ],
+            [
+              "filler",
+              0.753
+            ]
+          ]
+        },
+        {
+          "id": "rent_direct",
+          "category": "direct",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "rent",
+            "near"
+          ],
+          "hits": [
+            [
+              "rent",
+              0.878
+            ],
+            [
+              "near",
+              0.816
+            ],
+            [
+              "filler",
+              0.768
+            ],
+            [
+              "roommate",
+              0.766
+            ],
+            [
+              "filler",
+              0.764
+            ],
+            [
+              "filler",
+              0.763
+            ],
+            [
+              "filler",
+              0.763
+            ],
+            [
+              "filler",
+              0.762
+            ],
+            [
+              "filler",
+              0.762
+            ],
+            [
+              "near",
+              0.76
+            ]
+          ]
+        },
+        {
+          "id": "book_direct",
+          "category": "direct",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "book",
+            "near"
+          ],
+          "hits": [
+            [
+              "book",
+              0.865
+            ],
+            [
+              "near",
+              0.817
+            ],
+            [
+              "filler",
+              0.78
+            ],
+            [
+              "filler",
+              0.769
+            ],
+            [
+              "filler",
+              0.762
+            ],
+            [
+              "filler",
+              0.762
+            ],
+            [
+              "filler",
+              0.76
+            ],
+            [
+              "filler",
+              0.757
+            ],
+            [
+              "filler",
+              0.756
+            ],
+            [
+              "filler",
+              0.756
+            ]
+          ]
+        },
+        {
+          "id": "trip_direct",
+          "category": "direct",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "trip"
+          ],
+          "hits": [
+            [
+              "trip",
+              0.829
+            ],
+            [
+              "wedding",
+              0.787
+            ],
+            [
+              "filler",
+              0.776
+            ],
+            [
+              "style",
+              0.768
+            ],
+            [
+              "manager",
+              0.768
+            ],
+            [
+              "near",
+              0.767
+            ],
+            [
+              "filler",
+              0.766
+            ],
+            [
+              "orchestra",
+              0.764
+            ],
+            [
+              "filler",
+              0.761
+            ],
+            [
+              "allergy",
+              0.761
+            ]
+          ]
+        },
+        {
+          "id": "orchestra_direct",
+          "category": "direct",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "orchestra"
+          ],
+          "hits": [
+            [
+              "orchestra",
+              0.872
+            ],
+            [
+              "near",
+              0.779
+            ],
+            [
+              "wedding",
+              0.756
+            ],
+            [
+              "race",
+              0.755
+            ],
+            [
+              "filler",
+              0.751
+            ],
+            [
+              "filler",
+              0.75
+            ],
+            [
+              "filler",
+              0.747
+            ],
+            [
+              "filler",
+              0.741
+            ],
+            [
+              "filler",
+              0.74
+            ],
+            [
+              "filler",
+              0.739
+            ]
+          ]
+        },
+        {
+          "id": "dog_paraphrase",
+          "category": "paraphrase",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "dog"
+          ],
+          "hits": [
+            [
+              "dog",
+              0.801
+            ],
+            [
+              "near",
+              0.795
+            ],
+            [
+              "manager",
+              0.768
+            ],
+            [
+              "filler",
+              0.758
+            ],
+            [
+              "filler",
+              0.758
+            ],
+            [
+              "filler",
+              0.758
+            ],
+            [
+              "roommate",
+              0.755
+            ],
+            [
+              "style",
+              0.755
+            ],
+            [
+              "filler",
+              0.754
+            ],
+            [
+              "filler",
+              0.753
+            ]
+          ]
+        },
+        {
+          "id": "allergy_paraphrase",
+          "category": "paraphrase",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "allergy"
+          ],
+          "hits": [
+            [
+              "allergy",
+              0.903
+            ],
+            [
+              "near",
+              0.794
+            ],
+            [
+              "filler",
+              0.776
+            ],
+            [
+              "roommate",
+              0.77
+            ],
+            [
+              "filler",
+              0.76
+            ],
+            [
+              "filler",
+              0.756
+            ],
+            [
+              "trip",
+              0.756
+            ],
+            [
+              "filler",
+              0.755
+            ],
+            [
+              "manager",
+              0.753
+            ],
+            [
+              "filler",
+              0.751
+            ]
+          ]
+        },
+        {
+          "id": "race_paraphrase",
+          "category": "paraphrase",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "race"
+          ],
+          "hits": [
+            [
+              "race",
+              0.849
+            ],
+            [
+              "near",
+              0.785
+            ],
+            [
+              "dog",
+              0.78
+            ],
+            [
+              "filler",
+              0.772
+            ],
+            [
+              "filler",
+              0.772
+            ],
+            [
+              "filler",
+              0.772
+            ],
+            [
+              "filler",
+              0.771
+            ],
+            [
+              "manager",
+              0.769
+            ],
+            [
+              "wedding",
+              0.769
+            ],
+            [
+              "filler",
+              0.767
+            ]
+          ]
+        },
+        {
+          "id": "job_paraphrase",
+          "category": "paraphrase",
+          "passed": false,
+          "why": "missing cover_letter (got nothing)",
+          "returned": [],
+          "hits": [
+            [
+              "filler",
+              0.784
+            ],
+            [
+              "manager",
+              0.781
+            ],
+            [
+              "near",
+              0.781
+            ],
+            [
+              "wedding",
+              0.776
+            ],
+            [
+              "filler",
+              0.775
+            ],
+            [
+              "filler",
+              0.773
+            ],
+            [
+              "filler",
+              0.771
+            ],
+            [
+              "cover_letter",
+              0.766
+            ],
+            [
+              "filler",
+              0.766
+            ],
+            [
+              "style",
+              0.764
+            ]
+          ]
+        },
+        {
+          "id": "move_paraphrase",
+          "category": "paraphrase",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "move",
+            "near"
+          ],
+          "hits": [
+            [
+              "move",
+              0.871
+            ],
+            [
+              "near",
+              0.839
+            ],
+            [
+              "filler",
+              0.765
+            ],
+            [
+              "manager",
+              0.756
+            ],
+            [
+              "filler",
+              0.753
+            ],
+            [
+              "filler",
+              0.749
+            ],
+            [
+              "filler",
+              0.748
+            ],
+            [
+              "roommate",
+              0.748
+            ],
+            [
+              "style",
+              0.745
+            ],
+            [
+              "filler",
+              0.743
+            ]
+          ]
+        },
+        {
+          "id": "boss_paraphrase",
+          "category": "paraphrase",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "manager"
+          ],
+          "hits": [
+            [
+              "manager",
+              0.831
+            ],
+            [
+              "filler",
+              0.774
+            ],
+            [
+              "roommate",
+              0.767
+            ],
+            [
+              "filler",
+              0.764
+            ],
+            [
+              "filler",
+              0.763
+            ],
+            [
+              "move",
+              0.758
+            ],
+            [
+              "filler",
+              0.755
+            ],
+            [
+              "filler",
+              0.754
+            ],
+            [
+              "filler",
+              0.752
+            ],
+            [
+              "filler",
+              0.751
+            ]
+          ]
+        },
+        {
+          "id": "style_paraphrase",
+          "category": "paraphrase",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "style",
+            "filler",
+            "filler"
+          ],
+          "hits": [
+            [
+              "style",
+              0.866
+            ],
+            [
+              "filler",
+              0.832
+            ],
+            [
+              "filler",
+              0.8
+            ],
+            [
+              "near",
+              0.8
+            ],
+            [
+              "filler",
+              0.795
+            ],
+            [
+              "filler",
+              0.787
+            ],
+            [
+              "cover_letter",
+              0.776
+            ],
+            [
+              "filler",
+              0.775
+            ],
+            [
+              "filler",
+              0.775
+            ],
+            [
+              "filler",
+              0.773
+            ]
+          ]
+        },
+        {
+          "id": "race_follow_up",
+          "category": "follow_up",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "race"
+          ],
+          "hits": [
+            [
+              "race",
+              0.825
+            ],
+            [
+              "dog",
+              0.784
+            ],
+            [
+              "filler",
+              0.78
+            ],
+            [
+              "roommate",
+              0.776
+            ],
+            [
+              "near",
+              0.774
+            ],
+            [
+              "filler",
+              0.773
+            ],
+            [
+              "filler",
+              0.772
+            ],
+            [
+              "move",
+              0.77
+            ],
+            [
+              "filler",
+              0.763
+            ],
+            [
+              "wedding",
+              0.761
+            ]
+          ]
+        },
+        {
+          "id": "trip_follow_up",
+          "category": "follow_up",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "trip"
+          ],
+          "hits": [
+            [
+              "trip",
+              0.843
+            ],
+            [
+              "filler",
+              0.794
+            ],
+            [
+              "filler",
+              0.792
+            ],
+            [
+              "filler",
+              0.788
+            ],
+            [
+              "allergy",
+              0.786
+            ],
+            [
+              "style",
+              0.783
+            ],
+            [
+              "filler",
+              0.778
+            ],
+            [
+              "filler",
+              0.774
+            ],
+            [
+              "near",
+              0.772
+            ],
+            [
+              "filler",
+              0.77
+            ]
+          ]
+        },
+        {
+          "id": "toast_follow_up",
+          "category": "follow_up",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "near",
+            "wedding"
+          ],
+          "hits": [
+            [
+              "near",
+              0.861
+            ],
+            [
+              "wedding",
+              0.812
+            ],
+            [
+              "filler",
+              0.778
+            ],
+            [
+              "filler",
+              0.775
+            ],
+            [
+              "filler",
+              0.772
+            ],
+            [
+              "filler",
+              0.772
+            ],
+            [
+              "filler",
+              0.769
+            ],
+            [
+              "filler",
+              0.768
+            ],
+            [
+              "near",
+              0.768
+            ],
+            [
+              "filler",
+              0.767
+            ]
+          ]
+        },
+        {
+          "id": "roommate_follow_up",
+          "category": "follow_up",
+          "passed": true,
+          "why": "ok",
+          "returned": [
+            "roommate"
+          ],
+          "hits": [
+            [
+              "roommate",
+              0.84
+            ],
+            [
+              "manager",
+              0.776
+            ],
+            [
+              "filler",
+              0.774
+            ],
+            [
+              "wedding",
+              0.766
+            ],
+            [
+              "filler",
+              0.76
+            ],
+            [
+              "filler",
+              0.758
+            ],
+            [
+              "rent",
+              0.758
+            ],
+            [
+              "filler",
+              0.755
+            ],
+            [
+              "filler",
+              0.754
+            ],
+            [
+              "filler",
+              0.754
+            ]
+          ]
+        },
+        {
+          "id": "capital_negative",
+          "category": "negative",
+          "passed": true,
+          "why": "ok",
+          "returned": [],
+          "hits": [
+            [
+              "near",
+              0.748
+            ],
+            [
+              "filler",
+              0.743
+            ],
+            [
+              "filler",
+              0.734
+            ],
+            [
+              "filler",
+              0.731
+            ],
+            [
+              "style",
+              0.73
+            ],
+            [
+              "filler",
+              0.729
+            ],
+            [
+              "filler",
+              0.726
+            ],
+            [
+              "filler",
+              0.726
+            ],
+            [
+              "filler",
+              0.725
+            ],
+            [
+              "wedding",
+              0.723
+            ]
+          ]
+        },
+        {
+          "id": "math_negative",
+          "category": "negative",
+          "passed": true,
+          "why": "ok",
+          "returned": [],
+          "hits": [
+            [
+              "filler",
+              0.78
+            ],
+            [
+              "filler",
+              0.759
+            ],
+            [
+              "filler",
+              0.759
+            ],
+            [
+              "orchestra",
+              0.748
+            ],
+            [
+              "filler",
+              0.744
+            ],
+            [
+              "filler",
+              0.743
+            ],
+            [
+              "filler",
+              0.743
+            ],
+            [
+              "filler",
+              0.742
+            ],
+            [
+              "wedding",
+              0.742
+            ],
+            [
+              "filler",
+              0.741
+            ]
+          ]
+        },
+        {
+          "id": "poem_negative",
+          "category": "negative",
+          "passed": true,
+          "why": "ok",
+          "returned": [],
+          "hits": [
+            [
+              "filler",
+              0.765
+            ],
+            [
+              "filler",
+              0.761
+            ],
+            [
+              "near",
+              0.756
+            ],
+            [
+              "style",
+              0.753
+            ],
+            [
+              "filler",
+              0.752
+            ],
+            [
+              "filler",
+              0.749
+            ],
+            [
+              "filler",
+              0.748
+            ],
+            [
+              "filler",
+              0.747
+            ],
+            [
+              "book",
+              0.747
+            ],
+            [
+              "filler",
+              0.747
+            ]
+          ]
+        },
+        {
+          "id": "pet_isolation",
+          "category": "isolation",
+          "passed": false,
+          "why": "missing dog (got nothing)",
+          "returned": [],
+          "hits": [
+            [
+              "dog",
+              0.781
+            ],
+            [
+              "roommate",
+              0.771
+            ],
+            [
+              "near",
+              0.769
+            ],
+            [
+              "manager",
+              0.766
+            ],
+            [
+              "filler",
+              0.764
+            ],
+            [
+              "filler",
+              0.757
+            ],
+            [
+              "filler",
+              0.757
+            ],
+            [
+              "filler",
+              0.753
+            ],
+            [
+              "filler",
+              0.75
+            ],
+            [
+              "filler",
+              0.748
+            ]
+          ]
+        },
+        {
+          "id": "cat_isolation",
+          "category": "isolation",
+          "passed": true,
+          "why": "ok",
+          "returned": [],
+          "hits": [
+            [
+              "wedding",
+              0.782
+            ],
+            [
+              "filler",
+              0.778
+            ],
+            [
+              "filler",
+              0.776
+            ],
+            [
+              "roommate",
+              0.773
+            ],
+            [
+              "filler",
+              0.773
+            ],
+            [
+              "filler",
+              0.772
+            ],
+            [
+              "filler",
+              0.768
+            ],
+            [
+              "orchestra",
+              0.766
+            ],
+            [
+              "near",
+              0.766
+            ],
+            [
+              "dog",
+              0.765
+            ]
+          ]
+        }
+      ]
+    }
+  }
+}

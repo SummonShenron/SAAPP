@@ -1,0 +1,50 @@
+{
+  "when": "2026-10-14T16:43:34.418661+00:00",
+  "scenarios": {
+    "memory_other_project_hosting": {
+      "category": "memory",
+      "passes": 5,
+      "runs": 5,
+      "calls": 5,
+      "input": 40920,
+      "output": 238,
+      "cached": 24488
+    },
+    "memory_test_runner": {
+      "category": "memory",
+      "passes": 5,
+      "runs": 5,
+      "calls": 5,
+      "input": 40945,
+      "output": 260,
+      "cached": 30610
+    },
+    "memory_earlier_decision": {
+      "category": "memory",
+      "passes": 4,
+      "runs": 5,
+      "calls": 38,
+      "input": 287534,
+      "output": 3060,
+      "cached": 208155
+    },
+    "memory_user_outranks_memory": {
+      "category": "memory",
+      "passes": 5,
+      "runs": 5,
+      "calls": 5,
+      "input": 40895,
+      "output": 713,
+      "cached": 30610
+    },
+    "memory_irrelevant_left_out": {
+      "category": "memory",
+      "passes": 5,
+      "runs": 5,
+      "calls": 34,
+      "input": 229403,
+      "output": 6529,
+      "cached": 165294
+    }
+  }
+}

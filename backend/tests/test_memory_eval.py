@@ -383,3 +383,68 @@ def test_the_eval_fails_a_note_that_was_saved_with_a_label():
     turn = me.Turn("rent", "q", "a", ("2,100",))
     ok, why = me.score_summary("SUMMARY: Rent is going up to $2,100.", turn)
     assert ok is False and "label" in why
+
+
+# ---- the "union" policy is the app's own follow-up search ----------------------------------------------------------------------
+
+
+def test_union_finds_a_follow_up_through_the_joined_query_that_the_message_alone_misses():
+    store = me.EvalStore(EMBED)
+    store.add("toast wedding sister Anika Lisbon giving", me.PERSONA, "wedding")
+    store.add("Asked how to center a div with grid.", me.PERSONA, "filler")
+    text_to_key = {row.text: row.key for row in store.rows}
+    probe = me.Probe("toast", "follow_up", "Make it funnier.", ("wedding",), history=("toast wedding sister Anika Lisbon giving",))
+    assert me.run_probe(store, probe, "latest", EMBED, text_to_key).passed is False
+    union = me.run_probe(store, probe, "union", EMBED, text_to_key)
+    assert union.passed and union.returned == ["wedding"]
+    assert union.hits[0][0] == "wedding"
+
+
+def test_union_leaves_a_question_that_stands_alone_exactly_as_the_message_alone_would():
+    store = me.EvalStore(EMBED)
+    store.add("rescue greyhound named Biscuit adopted in March", me.PERSONA, "dog")
+    text_to_key = {row.text: row.key for row in store.rows}
+    probe = me.Probe("dog", "direct", "greyhound named Biscuit rescue adopted March")
+    alone = me.run_probe(store, probe, "latest", EMBED, text_to_key)
+    union = me.run_probe(store, probe, "union", EMBED, text_to_key)
+    assert alone.returned == union.returned
+
+
+# ---- richer notes: the extra write scenarios and what they score -----------------------------------------------------------
+
+
+def test_details_the_assistant_alone_supplied_are_in_the_reply_and_not_in_what_the_user_said():
+    for turn in me.TURNS:
+        for detail in turn.forbid:
+            assert me.normalize(detail) in me.normalize(turn.answer), turn.id
+            assert me.normalize(detail) not in me.normalize(turn.question), turn.id
+        assert not set(turn.forbid) & set(turn.details), turn.id
+
+
+def test_a_note_that_records_the_assistants_details_as_the_users_is_scored_a_failure():
+    turn = next(t for t in me.TURNS if t.id == "kyoto")
+    assert me.score_summary("Asked what to see in Kyoto.", turn)[0]
+    ok, why = me.score_summary("Asked about Kyoto and plans to visit Fushimi Inari.", turn)
+    assert ok is False and "assistant's Fushimi" in why
+
+
+def test_a_note_longer_than_the_cap_is_scored_a_failure_even_with_every_detail():
+    turn = me.Turn("rent", "q", "a", ("2,100",))
+    rambling = "Rent is going up to $2,100. " + "And the assistant explained many things at length. " * 10
+    ok, why = me.score_summary(rambling, turn)
+    assert ok is False and "too long" in why
+    assert me.score_summary("Rent is going up to $2,100 in January and they want to negotiate it.", turn)[0]
+
+
+def test_the_write_scenarios_cover_names_dates_numbers_a_preference_and_small_talk():
+    ids = {t.id for t in me.TURNS}
+    assert {"flight", "nurse", "migration", "birthday", "savings", "kyoto", "units", "thanks", "math", "hello"} <= ids
+    assert len([t for t in me.TURNS if t.keep]) >= 12 and len([t for t in me.TURNS if not t.keep]) >= 3
+
+
+def test_the_summary_prompt_asks_for_the_users_specifics_and_not_the_assistants():
+    from backend.components.constraints import MEMORY_TURN_SUMMARY_PROMPT as prompt
+
+    for needle in ("EVERY specific the", "names of people", "dates, times, amounts", "never record a detail that appears only in the assistant's reply", "NONE"):
+        assert needle in prompt, needle
+    assert "ONE short" not in prompt
