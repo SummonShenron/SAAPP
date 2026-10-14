@@ -91,15 +91,33 @@ def test_delete_user_conversation():
 class _FakeMongoCollection:
     def __init__(self, docs):
         self.docs = docs
+        self.reads = []
 
     def find(self, filt, projection=None):
         return [d for d in self.docs if d.get("username") == filt.get("username")]
 
     def delete_one(self, filt):
+        before = len(self.docs)
         self.docs[:] = [
             d for d in self.docs
             if not (d.get("username") == filt.get("username") and d.get("session_id") == filt.get("session_id"))
         ]
+        return type("Result", (), {"deleted_count": before - len(self.docs)})()
+
+    def aggregate(self, pipeline):
+        match = pipeline[0]["$match"]
+        return [
+            {"session_id": d["session_id"], "title": d.get("title", ""), "total": len(d.get("messages", []))}
+            for d in self.docs if all(d.get(k) == v for k, v in match.items())
+        ]
+
+    def find_one(self, filt, projection=None):
+        self.reads.append(projection)
+        for d in self.docs:
+            if all(d.get(k) == v for k, v in filt.items()):
+                skip, count = projection["messages"]["$slice"]
+                return {"messages": d["messages"][skip:skip + count]}
+        return None
 
 
 class _FakeMongoDB:
@@ -119,6 +137,53 @@ def test_delete_user_conversation_reports_success_when_backed_by_mongo(monkeypat
 
     assert app_utils.delete_user_conversation("jack", "conv-1") is True
     assert app_utils.delete_user_conversation("jack", "conv-1") is False
+
+
+def test_deleting_a_conversation_does_not_read_every_thread_the_user_has(monkeypatch):
+    fake_db = _FakeMongoDB([{"username": "jack", "session_id": "conv-1", "messages": []}])
+    monkeypatch.setattr(app_utils, "get_db", lambda: fake_db)
+    monkeypatch.setattr(app_utils, "load_user_conversations", lambda *a: pytest.fail("downloaded every conversation"))
+
+    assert app_utils.delete_user_conversation("jack", "conv-1") is True
+
+
+def _mongo_thread(n):
+    return _FakeMongoDB([{"username": "jack", "session_id": "big", "title": "Big", "messages": [{"i": i} for i in range(n)]}])
+
+
+def test_a_page_of_a_long_thread_is_cut_on_the_server_and_matches_the_in_memory_paging(monkeypatch):
+    fake_db = _mongo_thread(250)
+    monkeypatch.setattr(app_utils, "get_db", lambda: fake_db)
+
+    page = app_utils.load_user_conversation_page("jack", "big", limit=100)
+    assert [m["i"] for m in page["messages"]] == list(range(150, 250))
+    assert (page["start"], page["total"], page["title"], page["session_id"]) == (150, 250, "Big", "big")
+    assert fake_db["conversations"].reads == [{"_id": 0, "messages": {"$slice": [150, 100]}}]  # never the whole array
+
+    older = app_utils.load_user_conversation_page("jack", "big", limit=100, before=150)
+    assert [m["i"] for m in older["messages"]] == list(range(50, 150)) and older["start"] == 50
+
+
+def test_a_missing_or_empty_thread_pages_without_a_second_read(monkeypatch):
+    fake_db = _mongo_thread(0)
+    monkeypatch.setattr(app_utils, "get_db", lambda: fake_db)
+
+    assert app_utils.load_user_conversation_page("jack", "nope") is None
+    assert app_utils.load_user_conversation_page("alice", "big") is None
+    assert app_utils.load_user_conversation_page("jack", "big")["messages"] == []
+    assert fake_db["conversations"].reads == []
+
+
+def test_the_conversation_endpoints_do_their_database_work_off_the_event_loop():
+    import pathlib
+    source = (pathlib.Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
+    for needle in (
+        "await asyncio.to_thread(list_user_conversation_summaries, username)",
+        "await asyncio.to_thread(load_user_conversation_page, username, session_id, limit, before)",
+        "await asyncio.to_thread(delete_user_conversation, username, session_id)",
+        "await asyncio.to_thread(delete_user_conversation, username, convo[\"session_id\"])",
+    ):
+        assert needle in source, needle
 
 
 def test_load_session_messages_reconstructs_langchain_messages():

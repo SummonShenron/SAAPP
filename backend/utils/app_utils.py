@@ -142,15 +142,45 @@ def list_user_conversation_summaries(username: str) -> list:
     return summaries
 
 
+def _page_bounds(total: int, limit: int | None, before: int | None) -> tuple:
+    limit = min(max(limit or DEFAULT_CONVERSATION_PAGE_SIZE, 1), MAX_CONVERSATION_PAGE_SIZE)
+    end = total if before is None else min(max(before, 0), total)
+    return max(end - limit, 0), end
+
+
 def paginate_messages(messages: list, limit: int | None = None, before: int | None = None) -> dict:
     """Newest-first paging over a transcript: the `limit` messages ending just before index `before`
     (default: the end), returned in chronological order with `start`/`total` so a client can ask for
     the previous page by passing `before=start`."""
     total = len(messages)
-    limit = min(max(limit or DEFAULT_CONVERSATION_PAGE_SIZE, 1), MAX_CONVERSATION_PAGE_SIZE)
-    end = total if before is None else min(max(before, 0), total)
-    start = max(end - limit, 0)
+    start, end = _page_bounds(total, limit, before)
     return {"messages": messages[start:end], "start": start, "total": total}
+
+
+def load_user_conversation_page(username: str, session_id: str, limit: int | None = None, before: int | None = None) -> dict | None:
+    """One page of one thread, shaped like paginate_messages plus session_id/title (None if there is no such thread).
+    With Mongo the page is cut out on the server: a long thread is megabytes, and shipping all of it to return
+    100 messages took tens of seconds on a slow link and held up everything else on the way."""
+    db = get_db()
+    if db is None:
+        convo = load_user_conversation(username, session_id)
+        if convo is None:
+            return None
+        return {"session_id": convo["session_id"], "title": convo.get("title", ""),
+                **paginate_messages(convo.get("messages", []), limit=limit, before=before)}
+    match = {"username": username, "session_id": session_id}
+    head = next(iter(db["conversations"].aggregate([
+        {"$match": match},
+        {"$project": {"_id": 0, "session_id": 1, "title": 1, "total": {"$size": {"$ifNull": ["$messages", []]}}}},
+    ])), None)
+    if head is None:
+        return None
+    start, end = _page_bounds(head["total"], limit, before)
+    messages = []
+    if end > start:
+        doc = db["conversations"].find_one(match, {"_id": 0, "messages": {"$slice": [start, end - start]}}) or {}
+        messages = doc.get("messages", [])
+    return {"session_id": head["session_id"], "title": head.get("title", ""), "messages": messages, "start": start, "total": head["total"]}
 
 
 def _deserialize_messages(raw_messages: list) -> list:
@@ -291,16 +321,17 @@ def save_conversation_turn(username: str, session_id: str, messages: list) -> di
 
 
 def delete_user_conversation(username: str, session_id: str) -> bool:
+    db = get_db()
+    if db is not None:
+        # The delete itself says whether anything was there; reading every thread the user has ever had to find out took minutes.
+        return db["conversations"].delete_one({"username": username, "session_id": session_id}).deleted_count > 0
+
     # Determine whether the conversation exists BEFORE deleting it — if we delete from Mongo
     # first, the very next load_user_conversations() call re-reads Mongo and would never see
     # the (now-gone) row, making this always report "not found" even on a successful delete.
     all_conversations = load_user_conversations(username)
     remaining = [c for c in all_conversations if c.get("session_id") != session_id]
     existed = len(remaining) != len(all_conversations)
-
-    db = get_db()
-    if db is not None:
-        db["conversations"].delete_one({"username": username, "session_id": session_id})
 
     if not existed:
         return False

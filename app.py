@@ -52,6 +52,7 @@ from backend.utils.app_utils import (
     save_conversation_turn,
     load_user_conversations,
     load_user_conversation,
+    load_user_conversation_page,
     list_user_conversation_summaries,
     paginate_messages,
     load_session_messages,
@@ -1373,9 +1374,9 @@ async def clear_chat(request: Request, user = Depends(get_current_user)):
         return {"status": "cleared", "count": 1}
 
     # No specific conversation given: wipe every conversation this user has.
-    conversations = load_user_conversations(username)
+    conversations = await asyncio.to_thread(list_user_conversation_summaries, username)  # ids only, not every message
     for convo in conversations:
-        delete_user_conversation(username, convo["session_id"])
+        await asyncio.to_thread(delete_user_conversation, username, convo["session_id"])
         await _delete_checkpoint_thread(username, convo["session_id"])
     return {"status": "cleared", "count": len(conversations)}
 
@@ -1626,7 +1627,7 @@ async def delete_document(
 @app.get("/api/conversations")
 async def list_conversations(current_user = Depends(get_current_user)):
     username = current_user.get("sub")
-    return list_user_conversation_summaries(username)
+    return await asyncio.to_thread(list_user_conversation_summaries, username)
 
 @app.get("/api/conversations/{session_id}")
 async def get_conversation(
@@ -1638,17 +1639,16 @@ async def get_conversation(
     """One page of a conversation, newest messages by default. `start`/`total` in the response let
     the client request the previous page with `before=start`."""
     username = current_user.get("sub")
-    convo = load_user_conversation(username, session_id)
-    if convo is None:
+    page = await asyncio.to_thread(load_user_conversation_page, username, session_id, limit, before)
+    if page is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    page = paginate_messages(convo.get("messages", []), limit=limit, before=before)
-    return {"session_id": convo["session_id"], "title": convo.get("title", ""), **page}
+    return page
 
 @app.delete("/api/conversations/{session_id}")
 async def remove_conversation(session_id: str, current_user = Depends(get_current_user)):
     username = current_user.get("sub")
     chat_sessions.pop(f"{username}::{session_id}", None)
-    if not delete_user_conversation(username, session_id):
+    if not await asyncio.to_thread(delete_user_conversation, username, session_id):
         raise HTTPException(status_code=404, detail="Conversation not found")
     await _delete_checkpoint_thread(username, session_id)
     return {"status": "deleted", "session_id": session_id}
