@@ -630,10 +630,11 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     # The full transcript in chat_sessions[history_key] is kept durable (it's what gets
     # persisted per-conversation); only a bounded recent window is fed to the LLM/graph.
     if history_key not in chat_sessions:
-        chat_sessions[history_key] = load_session_messages(username, session_id)
+        # Reads the whole saved conversation (megabytes for a long one): in a worker thread, never on the event loop.
+        chat_sessions[history_key] = await asyncio.to_thread(load_session_messages, username, session_id)
     else:
         # Another backend instance sharing this database may have saved since we last looked.
-        sync_session_messages(username, session_id, chat_sessions[history_key])
+        await asyncio.to_thread(sync_session_messages, username, session_id, chat_sessions[history_key])
     # When the previous message in this conversation was sent (None for a new conversation or one saved before
     # messages were stamped), read before this turn's own message goes in, so the reply can tell how long they were away.
     last_message_at = sent_at(chat_sessions[history_key][-1]) if chat_sessions[history_key] else None
@@ -782,7 +783,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                         logger.info(f"[secure_chat] Client disconnected mid-investigation for {history_key}; stopping graph execution.")
                         await event_stream.aclose()
                         chat_sessions[history_key].append(stamp(AIMessage(content="_[Stopped by user before responding]_")))
-                        save_conversation_turn(username, session_id, chat_sessions[history_key])
+                        await asyncio.to_thread(save_conversation_turn, username, session_id, chat_sessions[history_key])
                         return
                     kind = event["event"]
 
@@ -863,7 +864,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 # later "approve" can never find it and always falls through to a fresh proposal instead
                 # of executing.
                 chat_sessions[history_key].append(stamp(AIMessage(content=card_text)))
-                save_conversation_turn(username, session_id, chat_sessions[history_key])
+                await asyncio.to_thread(save_conversation_turn, username, session_id, chat_sessions[history_key])
                 t_first_token = time.perf_counter()
                 log_timings(relevance_grade, "card")
                 return
@@ -1083,7 +1084,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     await token_stream.aclose()
                     stopped_note = f"{full_response}\n\n_[Stopped by user]_" if full_response else "_[Stopped by user before responding]_"
                     chat_sessions[history_key].append(stamp(AIMessage(content=stopped_note)))
-                    save_conversation_turn(username, session_id, chat_sessions[history_key])
+                    await asyncio.to_thread(save_conversation_turn, username, session_id, chat_sessions[history_key])
                     return
 
                 if first_token:
@@ -1253,7 +1254,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             if kb_images:
                 ai_message.additional_kwargs["kb_images"] = kb_images
             chat_sessions[history_key].append(ai_message)
-            save_conversation_turn(username, session_id, chat_sessions[history_key])
+            await asyncio.to_thread(save_conversation_turn, username, session_id, chat_sessions[history_key])
             # A false "I can't edit files" reply would otherwise be remembered and recalled into
             # later prompts as if it were a fact (a real memory chunk did exactly that).
             if budget_guard.allows("memory_summaries", budget_state) and not (folder_connected and is_stale_capability_denial(full_response)):
@@ -1365,7 +1366,7 @@ async def clear_chat(request: Request, user = Depends(get_current_user)):
         # list, but the same thread_id will be reused going forward, so its checkpoint (any
         # pending action, paused clarification, etc.) must be cleared too or stale state from
         # before the clear could resurface on the next message.
-        save_conversation_turn(username, session_id, [])
+        await asyncio.to_thread(save_conversation_turn, username, session_id, [])
         await _delete_checkpoint_thread(username, session_id)
         return {"status": "cleared", "count": 1}
 
