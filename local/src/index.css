@@ -997,7 +997,8 @@ div:has(.portal-body) {
   outline: none;
   transition: all 0.2s;
   background: var(--bg-main);
-  box-shadow: var(--shadow);
+  /* Pulls a top shadow upward over the scrolling messages */
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.15);;
   z-index: 1;
 
 }

@@ -700,10 +700,13 @@ Return ONLY a JSON object matching this schema, with no preamble or markdown:
 """
 
 MEMORY_TURN_SUMMARY_PROMPT = """
-Summarize the key fact, decision, or takeaway from this exchange in ONE short third-person
-sentence about the user, suitable for long-term semantic memory (e.g. "Asked about deploying
-the app to Vercel and was walked through the CLI steps."). If there is nothing worth
-remembering long-term, respond with exactly: NONE
+Write a note about the user from this exchange, for long-term memory: one or two short
+third-person sentences saying what they asked about, decided or shared. Keep EVERY specific the
+USER gave, exactly as they said it: names of people, pets, places, companies and products,
+dates, times, amounts and other numbers. Spend the words on the user's own details, not on the
+assistant's advice, and never record a detail that appears only in the assistant's reply.
+(e.g. "Is giving the toast at their sister Anika's wedding in Lisbon on June 14th and asked for
+help drafting it.") If there is nothing worth remembering long-term, respond with exactly: NONE
 
 USER: {question}
 ASSISTANT: {answer}
@@ -1008,7 +1011,7 @@ RECENT CONVERSATION (oldest first, most recent last — this is what happened be
 below; a multi-turn task's actual instruction, or what a short reply like "yes" or "go ahead" is
 actually confirming, often lives here rather than in the request itself):
 {history}
-
+{user_memory}
 USER REQUEST: {question}
 
 ATTEMPTS SO FAR THIS REQUEST:

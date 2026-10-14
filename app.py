@@ -84,11 +84,10 @@ from backend.utils.memory_utils import (
     fetch_goal_nudge_context,
     load_user_facts,
     delete_user_fact,
-    delete_all_user_facts,
     effective_confidence,
 )
 from backend.services.memory_compaction import compact_user_memory, compact_meta_memory
-from backend.services.memory_search import retrieve_relevant_memory_context
+from backend.services.memory_search import context_query_for, recall_with_second_look
 from backend.services.local_workspace import (
     apply_sync as apply_local_workspace_sync,
     clear_workspace as clear_local_workspace,
@@ -162,6 +161,7 @@ from backend.logging.sass_logger import setup_logging
 from backend.services.orchestrator import startup_services
 from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, load_directory, make_personal_kb_id, new_personal_kb, personal_kb_groups, personal_kb_update, resolve_kb_display_names
 from backend.utils.db_utils import get_db, save_error_event, test_connection
+from backend.utils import memory_erase
 from backend.auth.isolation_auth import get_current_user, record_login_event
 from backend.services.checkpoint_retention import run_checkpoint_retention_loop, prune_thread_checkpoints_async
 from contextlib import asynccontextmanager
@@ -1008,14 +1008,18 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
 
             # Announce LLM generation start
             yield f"data: {json.dumps({'event': 'node_progress', 'node': 'formatter_node', 'title': 'Formatting output structure...', 'detail': f'Synthesizing final answer for {question[:30]}...'})}\n\n"
-            guardrail_context = fetch_relevant_corrections(username, question)
+            # Everything below that reads the database or the embeddings API is synchronous; run directly on the event loop, one slow read
+            # froze the whole server (a 4 MB fact list took 41 s), so each goes to a worker thread. The fact list is read once here, which
+            # also fills the in-memory copy the calls after it use (backend/utils/memory_utils.py).
+            await asyncio.to_thread(load_user_facts, username)
+            guardrail_context = await asyncio.to_thread(fetch_relevant_corrections, username, question)
             # Computed once and threaded through both fact + semantic memory recall below — they
             # embed the identical question string this turn, and re-embedding it a second time
             # (the semantic recall call, further down) would be a genuinely free duplicate
             # network round trip to the embeddings API for no behavior change.
-            question_embedding = embed_text(question) if question else None
-            memory_context = fetch_relevant_user_facts(username, question, precomputed_embedding=question_embedding)
-            goal_nudge_context = "" if (risk_level != RISK_NONE or open_loop_entry) else fetch_goal_nudge_context(username)
+            question_embedding = await asyncio.to_thread(embed_text, question) if question else None
+            memory_context = await asyncio.to_thread(lambda: fetch_relevant_user_facts(username, question, precomputed_embedding=question_embedding))
+            goal_nudge_context = "" if (risk_level != RISK_NONE or open_loop_entry) else await asyncio.to_thread(fetch_goal_nudge_context, username)
 
             if guardrail_context:
                 prompt = prompt + guardrail_context
@@ -1044,9 +1048,10 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 yield f"data: {json.dumps({'event': 'node_progress', 'node': 'attachment_context', 'title': 'Applying attached file content', 'detail': 'Injected description of the attached file into context prompt.'})}\n\n"
 
             if source_type == "conversational":
-                semantic_memory_context = retrieve_relevant_memory_context(
+                semantic_memory_context = await recall_with_second_look(
                     services.get("user_memory_vector_store"), username, question,
                     precomputed_embedding=question_embedding,
+                    context_query=context_query_for(chat_sessions[history_key], question),
                 )
                 if semantic_memory_context:
                     prompt = prompt + semantic_memory_context
@@ -1671,7 +1676,7 @@ async def store_feedback(
 @app.get("/api/memory")
 async def list_memory(current_user = Depends(get_current_user)):
     username = current_user.get("sub")
-    facts = load_user_facts(username)
+    facts = await asyncio.to_thread(load_user_facts, username)
     now = datetime.now(timezone.utc)
     return [{**f.dict(), "effective_confidence": effective_confidence(f, now)} for f in facts]
 
@@ -1685,12 +1690,21 @@ async def delete_memory_fact(fact_id: str, current_user = Depends(get_current_us
     return {"status": "deleted", "id": fact_id}
 
 
+@app.get("/api/memory/stored")
+async def memory_stored(current_user = Depends(get_current_user)):
+    """What Sonic keeps besides the facts listed above: how many notes from past conversations, and how many archived copies."""
+    return await asyncio.to_thread(memory_erase.stored_counts, get_db(), current_user.get("sub"))
+
+
 @app.delete("/api/memory")
 async def clear_memory(current_user = Depends(get_current_user)):
     username = current_user.get("sub")
-    delete_all_user_facts(username)
+    result = await asyncio.to_thread(memory_erase.erase_user_memory, get_db(), username)
     await asyncio.to_thread(open_loops_utils.forget_all_loops, username)
-    return {"status": "cleared"}
+    if result["failed"]:
+        # Never report a partial wipe as success: the page says it permanently deletes everything.
+        raise HTTPException(status_code=500, detail="Some of your memory could not be deleted. Please try again.")
+    return {"status": "cleared", "deleted": result["deleted"], "facts": result["facts"]}
 
 
 @app.get("/api/open-loops")

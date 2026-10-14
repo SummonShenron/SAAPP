@@ -29,7 +29,7 @@ def test_fact_for_state_drops_the_embedding_and_keeps_everything_else():
 def test_memory_recall_node_keeps_embeddings_out_of_graph_state(monkeypatch):
     facts = [_fact(i) for i in range(5)]
     monkeypatch.setattr(aw, "load_user_facts", lambda username: facts)
-    monkeypatch.setattr(aw, "retrieve_user_memory", lambda *a, **k: [])
+    monkeypatch.setattr(aw, "recall_explicit", lambda *a, **k: [])
 
     state = aw.memory_recall_node({"messages": [HumanMessage(content="what do you know about me")], "username": "u"})
 

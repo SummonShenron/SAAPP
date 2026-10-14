@@ -50,7 +50,8 @@ from backend.utils.safety_utils import (
 )
 from backend.services.local_workspace import get_workspace_handle, workspace_status
 from backend.services.local_edits import validate_edit_proposal
-from backend.services.memory_search import embed_and_store_memory_chunk, retrieve_user_memory
+from backend.services.memory_search import embed_and_store_memory_chunk, recall_explicit
+from backend.services.tool_agent_memory import build_user_memory_block
 from backend.state.graph_state import GraphState, route_after_grading
 from langgraph.graph import StateGraph, START, END
 from backend.utils.db_utils import get_db
@@ -1070,11 +1071,12 @@ def memory_recall_node(state: GraphState, memory_vector_store=None) -> dict:
         facts = load_user_facts(username)
         state["memory_facts"] = [fact_for_state(f) for f in facts]
 
-        semantic_hits = retrieve_user_memory(memory_vector_store, username, question, top_k=4)
+        # Only notes that really are what the user asked about (memory_search.recall_explicit); it used to be the 4 nearest, however far.
+        semantic_hits = recall_explicit(memory_vector_store, username, question)
         state["memory_hits"] = [h.page_content for h in semantic_hits]
 
         if not facts and not semantic_hits:
-            report = "No saved facts or preferences are on record for this user yet."
+            report = "No saved facts or preferences are on record for this user yet, and no notes from past conversations matched this question."
         else:
             report_parts = []
             if facts:
@@ -1083,6 +1085,9 @@ def memory_recall_node(state: GraphState, memory_vector_store=None) -> dict:
             if semantic_hits:
                 semantic_lines = "\n".join(f"- {h.page_content}" for h in semantic_hits)
                 report_parts.append(f"Relevant past context:\n{semantic_lines}")
+            else:
+                report_parts.append("Notes from past conversations: none matched this question.")
+            report_parts.append("If neither the saved facts nor these notes answer what the user asked about, say plainly that you do not have it. Do not guess or fill it in.")
             report = "\n\n".join(report_parts)
 
         doc = Document(
@@ -1628,7 +1633,7 @@ def extract_pr_request_details(text: str | None, fallback_repo: str = "SummonShe
     return details
 
 
-async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
+async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[str, Any]:
     """Unified read-only research agent: Mongo (admin-only), GitHub, and web search all live
     as actions in one ReAct loop, so the model can reach for whichever tool (or sequence of
     tools) a question actually needs — e.g. check the repo, then search the web if the repo
@@ -2665,10 +2670,16 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
         prompt_template = prompt_template.replace(
             "{current_time}", build_agent_time_line(get_user_timezone(username)).replace("{", "{{").replace("}", "}}")
         )
-        coding_preferences = fetch_coding_preferences(username)
+        coding_preferences = await asyncio.to_thread(fetch_coding_preferences, username)
         prompt_template = prompt_template.replace(
             "{coding_preferences}", coding_preferences.replace("{", "{{").replace("}", "}}")
         )
+        # What memory knows about this request (saved facts and recalled notes), as untrusted background: see backend/services/tool_agent_memory.py.
+        # It is "" for most turns, and it lets the agent understand a reference to a project or setup that is not in the connected repository.
+        user_memory = await build_user_memory_block(username, latest_message_content, state.get("messages"), memory_vector_store)
+        if user_memory:
+            await safe_emit_event("trace_detail", {"node": "tool_agent_node", "title": "Recalled relevant memory", "detail": "Found saved context about this request."})
+        prompt_template = prompt_template.replace("{user_memory}", user_memory.replace("{", "{{").replace("}", "}}"))
 
         async def _lookup_existing_declarations(names: list) -> dict:
             # Whole-repo view for run_react_loop's "your code redeclares something that already
@@ -2982,7 +2993,7 @@ async def tool_agent_node(state: GraphState) -> Dict[str, Any]:
             return await native_loop.run(
                 llm=kwargs["llm"], tools=native_tools, act=kwargs["act"], question=kwargs["question"], history=formatted_history,
                 time_line=build_agent_time_line(get_user_timezone(username)), coding_preferences=coding_preferences,
-                architecture_map=architecture_map, max_steps=kwargs["max_iterations"], emit=_announce,
+                architecture_map=architecture_map, user_memory=user_memory, max_steps=kwargs["max_iterations"], emit=_announce,
                 steering_source=kwargs.get("steering_source"), on_steering_applied=kwargs.get("on_steering_applied"),
             )
 
@@ -4258,7 +4269,10 @@ def create_workflow(vector_store, user_memory_vector_store=None, checkpointer=No
     workflow.add_node("coordinator_node", coordinator_node)
     workflow.add_node("summarizer_node", summarizer_node)
     workflow.add_node("formatter_node", formatter_node)
-    workflow.add_node("tool_agent_node", tool_agent_node)
+    async def tool_agent_node_with_store(state):
+        return await tool_agent_node(state, user_memory_vector_store)
+
+    workflow.add_node("tool_agent_node", tool_agent_node_with_store)
     workflow.add_node("pr_summary", pr_summarizer_node)
     workflow.add_node("propose_write_node", propose_write_node)
     workflow.add_node("execute_write_node", execute_write_node)

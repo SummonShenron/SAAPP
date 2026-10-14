@@ -167,7 +167,7 @@ async def test_compact_user_memory_inserts_before_deleting_and_promotes_facts(mo
     monkeypatch.setattr(mc, "embed_and_store_memory_chunk", fake_embed)
 
     promoted_facts = []
-    monkeypatch.setattr(mc, "save_user_fact", lambda username, fact, category, source, memory_vector_store=None: promoted_facts.append((username, fact, category, source)))
+    monkeypatch.setattr(mc, "save_user_fact", lambda username, fact, category, source, confidence=1.0, memory_vector_store=None: promoted_facts.append((username, fact, category, source)))
 
     result = await mc.compact_user_memory(fake_db, vector_store=object(), username="jack")
 

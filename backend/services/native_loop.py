@@ -147,7 +147,7 @@ def _describe(name: str, args: Dict[str, Any]) -> str:
     return f"{name}({shown})"
 
 
-def build_context(question: str, history: str, time_line: str, coding_preferences: str, architecture_map: str = "") -> str:
+def build_context(question: str, history: str, time_line: str, coding_preferences: str, architecture_map: str = "", user_memory: str = "") -> str:
     """The one human message that opens the conversation: what is stable for this person first, then this request."""
     parts = []
     if coding_preferences:
@@ -158,6 +158,8 @@ def build_context(question: str, history: str, time_line: str, coding_preference
         parts.append(time_line.strip())
     if history:
         parts.append("RECENT CONVERSATION (oldest first):\n" + history.strip())
+    if user_memory:  # right above the request, where it is hardest to overlook
+        parts.append(user_memory.strip())
     parts.append("USER REQUEST:\n" + question.strip())
     return "\n\n".join(parts)
 
@@ -171,6 +173,7 @@ async def run(
     history: str = "",
     time_line: str = "",
     coding_preferences: str = "",
+    user_memory: str = "",
     architecture_map: str = "",
     max_steps: Optional[int] = None,
     emit: Optional[Callable[[str, str], Awaitable[None]]] = None,
@@ -186,7 +189,7 @@ async def run(
     messages the user sent mid-run (see the module docstring)."""
     budget = max(1, min(max_steps or MAX_STEPS, MAX_STEPS))
     offered = {tool["name"] for tool in tools}
-    messages: List[Any] = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=build_context(question, history, time_line, coding_preferences, architecture_map))]
+    messages: List[Any] = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=build_context(question, history, time_line, coding_preferences, architecture_map, user_memory))]
     attempts: List[Dict[str, str]] = []
     seen: Dict[str, int] = {}
     held: List[Dict[str, Any]] = []  # each tool result in the conversation: its message, the step it came from, its call and the full text

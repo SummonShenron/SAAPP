@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { api, type UserFact, type OpenLoop } from '../api';
+import { api, type UserFact, type OpenLoop, type MemoryStored } from '../api';
 import './__styles__/SelfService.css';
 import './__styles__/Memory.css';
 
@@ -44,6 +44,7 @@ function formatDueDay(day: string): string {
 export const MemoryPage: React.FC = () => {
   const [facts, setFacts] = useState<UserFact[]>([]);
   const [loops, setLoops] = useState<OpenLoop[]>([]);
+  const [stored, setStored] = useState<MemoryStored>({ notes: 0, archived: 0 });
   const [loading, setLoading] = useState<boolean>(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [clearing, setClearing] = useState<boolean>(false);
@@ -57,6 +58,14 @@ export const MemoryPage: React.FC = () => {
       .then((data: UserFact[]) => { if (!cancelled) setFacts(data); })
       .catch((err: any) => { console.error('Failed to load memory facts:', err); if (!cancelled) setFacts([]); })
       .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getMemoryStored()
+      .then((data: MemoryStored) => { if (!cancelled) setStored(data); })
+      .catch((err: unknown) => { console.error('Failed to load stored notes:', err); });
     return () => { cancelled = true; };
   }, []);
 
@@ -94,12 +103,13 @@ export const MemoryPage: React.FC = () => {
   };
 
   const handleClearAll = async () => {
-    if (!window.confirm('Forget everything Sonic remembers about you? This permanently deletes every saved memory and cannot be undone.')) return;
+    if (!window.confirm("Forget everything Sonic remembers about you? This permanently deletes your saved memories, the notes from your past conversations and any archived copies of them. Your chats and the feedback you've rated aren't affected. This cannot be undone.")) return;
     setClearing(true);
     try {
       await api.clearMemoryFacts();
       setFacts([]);
       setLoops([]);
+      setStored({ notes: 0, archived: 0 });
     } catch (err) {
       console.error('Failed to clear memory:', err);
       alert('Failed to clear memory. Please try again.');
@@ -168,6 +178,13 @@ export const MemoryPage: React.FC = () => {
           <p className="card-description">
             Search, review, or forget individual memories. Clearing everything is permanent.
           </p>
+          {(stored.notes > 0 || stored.archived > 0) && (
+            <p className="card-description">
+              Sonic also keeps {stored.notes} short note{stored.notes === 1 ? '' : 's'} from your past conversations, which it searches to recall what you have talked about
+              {stored.archived > 0 ? `, and ${stored.archived} older cop${stored.archived === 1 ? 'y' : 'ies'} kept when its memory was tidied up` : ''}.
+              They are not listed here, but Clear All removes them too.
+            </p>
+          )}
 
           <div className="memory-controls-row">
             <input
@@ -191,7 +208,7 @@ export const MemoryPage: React.FC = () => {
               type="button"
               className="delete-row-btn memory-clear-all-btn"
               onClick={handleClearAll}
-              disabled={clearing || (facts.length === 0 && loops.length === 0)}
+              disabled={clearing || (facts.length === 0 && loops.length === 0 && stored.notes === 0 && stored.archived === 0)}
             >
               {clearing ? 'Clearing...' : 'Clear All'}
             </button>

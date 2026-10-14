@@ -1,3 +1,4 @@
+import asyncio
 import os
 import re
 import uuid
@@ -484,7 +485,7 @@ async def index_conversation_turn(vector_store, username: str, question: str, an
         if summary_text is None:
             logger.info("[MemoryIndex] Turn for %s judged not worth remembering; no chunk stored.", username)
             return
-        embed_and_store_memory_chunk(vector_store, username, summary_text, source_type="conversation_turn", source_ref=session_id)
+        await asyncio.to_thread(embed_and_store_memory_chunk, vector_store, username, summary_text, source_type="conversation_turn", source_ref=session_id)
         logger.info("[MemoryIndex] Embedded memory chunk for %s (%d chars).", username, len(summary_text))
         await maybe_trigger_compaction(get_db(), vector_store, username)
     except Exception:
