@@ -147,7 +147,7 @@ class _Col:
 
 
 class _Other:
-    """Any collection the guard reads besides the day rows: hour rows, a person's rows, admin extensions. Each holds plain dicts."""
+    """Any collection the guard reads besides the day rows: minute rows, a person's rows, admin extensions, saved window starts. Plain dicts."""
 
     def __init__(self, rows=(), fail=False):
         self.rows, self.fail, self.queries, self.updates = [dict(r) for r in rows], fail, [], []
@@ -186,10 +186,11 @@ class _Other:
 
 
 class _DB:
-    def __init__(self, rows=(), fail=False, hourly=(), people=(), extensions=()):
+    def __init__(self, rows=(), fail=False, minutes=(), people=(), extensions=(), windows=()):
         self.col = _Col(list(rows), fail)
         self.others = {
-            lu.HOURLY_COLLECTION: _Other(hourly, fail), "llm_usage_user_hourly": _Other(people, fail), bg.EXTENSIONS_COLLECTION: _Other(extensions, fail),
+            lu.MINUTE_COLLECTION: _Other(minutes, fail), "llm_usage_user_minutely": _Other(people, fail),
+            bg.EXTENSIONS_COLLECTION: _Other(extensions, fail), bg.WINDOWS_COLLECTION: _Other(windows, fail),
         }
 
     def __getitem__(self, name):
@@ -404,12 +405,21 @@ def test_the_already_spent_amount_moves_the_monthly_dollar_budget_and_not_the_da
 
 # ---- the five-hour window, per-person limits and extending a block ----------------------------------------------------------------
 
-def hour_row(hour, input_tokens=0, output_tokens=0, model="m"):
-    return {"hour": hour, "model": model, "calls": 1, "input": input_tokens, "output": output_tokens, "reasoning": 0, "cached": 0}
+def at(hour, minute=0, day=10):
+    """A moment on the test day (2026-10-10, UTC) by clock time."""
+    return datetime(2026, 10, day, hour, minute, tzinfo=timezone.utc)
 
 
-def person_row(user, hour, tokens):
-    return {"user": user, "hour": hour, "tokens": tokens, "calls": 1, "turns": 1}
+def minute_of(moment):
+    return lu.minute_key(moment)
+
+
+def minute_row(moment, input_tokens=0, output_tokens=0, model="m", calls=1):
+    return {"minute": minute_of(moment), "model": model, "calls": calls, "input": input_tokens, "output": output_tokens, "reasoning": 0, "cached": 0}
+
+
+def person_row(user, moment, tokens):
+    return {"user": user, "minute": minute_of(moment), "tokens": tokens, "calls": 1, "turns": 1}
 
 
 def test_the_five_hour_and_per_person_limits_are_read_from_their_own_settings(monkeypatch):
@@ -421,39 +431,109 @@ def test_the_five_hour_and_per_person_limits_are_read_from_their_own_settings(mo
     assert bg.user_budgets() == {"my_five_tokens": 300_000.0}
 
 
-def test_the_window_is_this_hour_and_the_four_before_it_and_older_hours_are_left_out():
-    rows = [hour_row("2026-10-10T10", 9_000), hour_row("2026-10-10T11", 100, 20), hour_row("2026-10-10T15", 5)]
-    totals = bg.spent([], NOW, {}, rows)
-    assert bg.window_start_hour(NOW) == "2026-10-10T11"
-    assert totals["five_tokens"] == 125
+# -- when a window starts and ends (pure)
+
+def test_the_first_use_starts_a_window_that_lasts_exactly_five_hours():
+    assert bg.resolve_window(None, [at(14)], at(15)) == (at(14), at(19))
+    assert bg.resolve_window(None, [at(14), at(14, 40), at(18, 59)], at(18, 59)) == (at(14), at(19))  # more use inside it does not move its end
+
+
+def test_when_the_window_ends_usage_starts_again_from_nothing_whatever_happened_in_it():
+    assert bg.resolve_window(at(14), [at(14), at(18, 59)], at(18, 59)) == (at(14), at(19))
+    assert bg.resolve_window(at(14), [at(14), at(18, 59)], at(19)) is None  # the heavy use right up to the end counts for nothing now
+
+
+def test_the_next_window_starts_at_the_first_use_after_the_last_one_ended():
+    window = bg.resolve_window(at(10), [at(10), at(12), at(15, 30)], at(16))
+    assert window == (at(15, 30), at(20, 30))  # not at 15:00, when the last one ended: nothing was used until 15:30
+
+
+def test_use_after_the_window_ended_but_before_now_is_what_starts_the_next_one_and_later_use_is_ignored():
+    assert bg.resolve_window(at(10), [at(10), at(15, 10)], at(15, 20)) == (at(15, 10), at(20, 10))
+    assert bg.resolve_window(at(10), [at(10), at(15, 10)], at(15, 5)) is None  # that use has not happened yet
+
+
+def test_several_idle_windows_are_walked_past_to_the_one_in_progress():
+    assert bg.resolve_window(at(2), [at(2), at(7, 30), at(13)], at(14)) == (at(13), at(18))
+
+
+def test_with_no_saved_start_only_use_in_the_last_five_hours_counts_as_a_window_in_progress():
+    assert bg.resolve_window(None, [at(8)], at(15)) is None        # six hours ago: that window is over
+    assert bg.resolve_window(None, [at(11)], at(15)) == (at(11), at(16))
+
+
+def test_a_window_with_no_use_in_it_at_all_is_idle():
+    assert bg.resolve_window(None, [], at(15)) is None and bg.resolve_window(at(10), [], at(12)) == (at(10), at(15))
+
+
+# -- what it counts
+
+def test_the_window_counts_only_use_since_it_began_and_not_the_one_before():
+    rows = [minute_row(at(12), 9_000), minute_row(at(15, 10), 100, 20)]
+    totals = bg.spent([], at(15, 30), {}, rows, anchor=at(10))  # the window that began at 10:00 ended at 15:00; the next began at 15:10
+    assert totals["five_tokens"] == 120 and totals["five_start"] == at(15, 10) and totals["five_reset"] == at(20, 10)
 
 
 def test_the_window_prices_its_usage_like_the_day_does():
     prices = {"m": {"input": 1.0, "output": 2.0, "cached_input": 1.0}}
-    totals = bg.spent([], NOW, prices, [hour_row("2026-10-10T14", 1_000_000, 500_000)])
+    totals = bg.spent([], at(15), prices, [minute_row(at(14), 1_000_000, 500_000)])
     assert totals["five_usd"] == pytest.approx(2.0)
 
 
-def test_the_window_says_when_it_next_has_room_from_its_oldest_hour_with_any_use():
-    totals = bg.spent([], NOW, {}, [hour_row("2026-10-10T12", 10), hour_row("2026-10-10T14", 10), hour_row("2026-10-10T13", 0)])
-    assert totals["five_reset"] == datetime(2026, 10, 10, 17, 0, tzinfo=timezone.utc)  # 12:00 + 5h, so then it drops
-    assert bg.spent([], NOW, {}, [])["five_reset"] == datetime(2026, 10, 10, 16, 0, tzinfo=timezone.utc)  # nothing in it: an hour on
+def test_an_empty_or_malformed_row_does_not_start_a_window():
+    junk = [{"minute": "not a minute", "calls": 3}, {"calls": 3}, minute_row(at(14), 0, 0, calls=0)]
+    totals = bg.spent([], at(15), {}, junk)
+    assert totals["five_start"] is None and totals["five_tokens"] == 0
 
+
+# -- the guard's decision
 
 def test_a_burst_trips_the_five_hour_window_long_before_the_daily_budget_notices(monkeypatch):
     monkeypatch.setenv("LLM_BUDGET_DAILY_TOKENS", "1000000")
     monkeypatch.setenv("LLM_BUDGET_5H_TOKENS", "1000")
-    db = _DB([row("m", "2026-10-10", 1_500, 0)], hourly=[hour_row("2026-10-10T14", 1_500)])
-    state = bg.current_state(db, NOW)
+    db = _DB([row("m", "2026-10-10", 1_500, 0)], minutes=[minute_row(at(14), 1_500)])
+    state = bg.current_state(db, at(15))
     assert state["level"] == bg.BLOCKED and state["scope"] == "five" and state["blocked_scopes"] == ["five"]
-    assert state["resets_at"].startswith("2026-10-10T19:00")  # 14:00 + 5h, UTC
+    assert state["resets_at"].startswith("2026-10-10T19:00")  # the window began at 14:00, so it ends at 19:00 exactly
+    assert state["resets"]["five"] == state["resets_at"]
 
 
-def test_the_hour_rows_are_only_read_when_a_five_hour_limit_is_set(monkeypatch):
+def test_someone_who_maxes_it_out_three_minutes_before_it_ends_can_use_it_again_in_three_minutes(monkeypatch):
+    monkeypatch.setenv("LLM_BUDGET_5H_TOKENS", "1000")
+    db = _DB(minutes=[minute_row(at(14), 100), minute_row(at(18, 55), 5_000)])
+    blocked = bg.current_state(db, at(18, 57))
+    assert blocked["level"] == bg.BLOCKED and blocked["resets_at"].startswith("2026-10-10T19:00")
+    bg._reset_cache()
+    free = bg.current_state(db, at(19, 0))
+    assert free["level"] == bg.OK and free["spent"] == 0  # back to 0%, with no waiting for the heavy use to age out
+
+
+def test_the_first_use_after_a_window_ends_starts_a_new_one_and_it_is_remembered(monkeypatch):
+    monkeypatch.setenv("LLM_BUDGET_5H_TOKENS", "1000")
+    db = _DB(minutes=[minute_row(at(14), 5_000)])
+    bg.current_state(db, at(15))
+    saved = db.others[bg.WINDOWS_COLLECTION].rows
+    assert len(saved) == 1 and saved[0]["scope"] == "five" and saved[0]["user"] == "" and saved[0]["start"] == at(14).isoformat()
+    # Idle after 19:00; then something is used at 19:10: that starts the next window, which counts only that.
+    db.others[lu.MINUTE_COLLECTION].rows.append(minute_row(at(19, 10), 300))
+    bg._reset_cache()
+    state = bg.current_state(db, at(19, 20))
+    assert state["spent"] == 300 and state["level"] == bg.OK and state["resets_at"].startswith("2026-10-11T00:10")
+    assert db.others[bg.WINDOWS_COLLECTION].rows[0]["start"] == at(19, 10).isoformat()
+
+
+def test_a_saved_start_that_is_too_old_is_not_followed(monkeypatch):
+    monkeypatch.setenv("LLM_BUDGET_5H_TOKENS", "1000")
+    old = {"scope": "five", "user": "", "start": at(1, day=5).isoformat()}
+    db = _DB(minutes=[minute_row(at(14), 5_000)], windows=[old])
+    assert bg.current_state(db, at(15))["scope"] == "five"  # worked out afresh from the usage, not from a window days ago
+
+
+def test_the_minute_rows_are_only_read_when_a_five_hour_limit_is_set(monkeypatch):
     monkeypatch.setenv("LLM_BUDGET_DAILY_TOKENS", "1000")
     db = _DB([row("m", "2026-10-10", 10, 0)])
     bg.current_state(db, NOW)
-    assert db.others[lu.HOURLY_COLLECTION].queries == []
+    assert db.others[lu.MINUTE_COLLECTION].queries == [] and db.others[bg.WINDOWS_COLLECTION].queries == []
 
 
 def test_the_blocked_message_names_the_time_for_a_five_hour_window_and_the_day_for_a_day():
@@ -463,6 +543,8 @@ def test_the_blocked_message_names_the_time_for_a_five_hour_window_and_the_day_f
     own = bg.blocked_reply("2026-10-10T19:00:00+00:00", False, "my_five")
     assert "your own usage limit" in own and "12:00 PM" in own
 
+
+# -- extending a block
 
 def test_an_extension_raises_the_block_line_of_its_own_scope_only(monkeypatch):
     limits = {"five_tokens": 1000.0, "day_tokens": 1000.0}
@@ -485,7 +567,7 @@ def test_a_running_extension_saved_by_an_admin_is_honoured_and_an_expired_one_is
     monkeypatch.setenv("LLM_BUDGET_5H_TOKENS", "1000")
     soon, past = "2026-10-10T20:00:00+00:00", "2026-10-10T10:00:00+00:00"
     extensions = [{"scope": "day", "extra": 0.25, "until": soon}, {"scope": "five", "extra": 0.5, "until": past}]
-    db = _DB([row("m", "2026-10-10", 1_300, 0)], hourly=[hour_row("2026-10-10T14", 1_300)], extensions=extensions)
+    db = _DB([row("m", "2026-10-10", 1_300, 0)], minutes=[minute_row(at(14), 1_300)], extensions=extensions)
     state = bg.current_state(db, NOW)
     assert dict((d["scope"], d["fraction"]) for d in state["detail"]) == {"day": 1.3, "five": 1.3}
     assert state["blocked_scopes"] == ["five"]  # the day's block line moved to 150%; the five-hour one expired, so it is back at 125%
@@ -510,16 +592,27 @@ def test_granting_an_extension_adds_a_step_records_who_and_when_and_ends_with_th
     assert db.others[bg.EXTENSIONS_COLLECTION].rows[0]["extra"] == 0.5 and len(db.others[bg.EXTENSIONS_COLLECTION].rows[0]["grants"]) == 2
 
 
+def test_a_five_hour_extension_ends_with_the_window_it_was_granted_in(monkeypatch):
+    monkeypatch.setenv("LLM_BUDGET_5H_TOKENS", "1000")
+    db = _DB(minutes=[minute_row(at(14), 1_400)])
+    state = bg.current_state(db, NOW)
+    assert state["level"] == bg.BLOCKED
+    granted = bg.grant_extension(db, "admin@example.com", state, NOW)
+    assert granted["extended"][0]["until"] == at(19).isoformat()  # not five hours from the click: the window began at 14:00
+    bg._reset_cache()
+    assert bg.current_state(db, NOW)["level"] == bg.THROTTLED
+
+
 def test_a_grant_after_the_last_one_ran_out_starts_again_from_one_step(monkeypatch):
     monkeypatch.setenv("LLM_BUDGET_5H_TOKENS", "1000")
     old = {"scope": "five", "extra": 0.75, "until": "2026-10-10T09:00:00+00:00", "grants": [{"by": "a", "at": "x", "extra": 0.75}]}
-    db = _DB(hourly=[hour_row("2026-10-10T14", 1_400)], extensions=[old])
+    db = _DB(minutes=[minute_row(at(14), 1_400)], extensions=[old])
     state = bg.current_state(db, NOW)
     assert state["level"] == bg.BLOCKED
     bg.grant_extension(db, "admin@example.com", state, NOW)
     saved = db.others[bg.EXTENSIONS_COLLECTION].rows[0]
     assert saved["extra"] == 0.25 and len(saved["grants"]) == 1
-    assert saved["until"] == "2026-10-10T20:00:00+00:00"  # a five-hour window has no fixed end: five hours from the grant
+    assert saved["until"] == at(19).isoformat()
 
 
 def test_nothing_blocking_means_nothing_is_granted(monkeypatch):
@@ -529,19 +622,38 @@ def test_nothing_blocking_means_nothing_is_granted(monkeypatch):
     assert db.others[bg.EXTENSIONS_COLLECTION].rows == []
 
 
-def test_a_person_over_their_own_five_hour_limit_is_paused_and_nobody_else_is(monkeypatch):
+# -- one person's own limits
+
+def test_a_person_over_their_own_five_hour_limit_is_paused_until_their_window_ends_and_nobody_else_is(monkeypatch):
     monkeypatch.setenv("LLM_USER_BUDGET_5H_TOKENS", "1000")
-    db = _DB(people=[person_row("jack", "2026-10-10T14", 1_300), person_row("sam", "2026-10-10T14", 100)])
-    mine = bg.current_state(db, NOW, "jack")
+    db = _DB(people=[person_row("jack", at(14), 1_300), person_row("sam", at(14), 100)])
+    mine = bg.current_state(db, at(15), "jack")
     assert mine["level"] == bg.BLOCKED and mine["scope"] == "my_five" and mine["resets_at"].startswith("2026-10-10T19:00")
-    assert bg.current_state(db, NOW, "sam")["level"] == bg.OK
-    assert bg.current_state(db, NOW)["level"] == bg.OFF  # no person named (an admin, or anything that is not a turn): no per-person limit applies
+    assert bg.current_state(db, at(15), "sam")["level"] == bg.OK
+    assert bg.current_state(db, at(15))["level"] == bg.OFF  # no person named (an admin, or anything that is not a turn): no per-person limit applies
+
+
+def test_a_persons_window_starts_at_their_own_first_use_and_resets_to_zero_at_its_end(monkeypatch):
+    monkeypatch.setenv("LLM_USER_BUDGET_5H_TOKENS", "1000")
+    db = _DB(people=[person_row("jack", at(14), 400), person_row("jack", at(18, 56), 5_000)])
+    assert bg.current_state(db, at(18, 58), "jack")["level"] == bg.BLOCKED
+    free = bg.current_state(db, at(19, 1), "jack")
+    assert free["level"] == bg.OK and free["spent"] == 0
+    saved = [r for r in db.others[bg.WINDOWS_COLLECTION].rows if r["user"] == "jack"]
+    assert saved and saved[0]["scope"] == "my_five" and saved[0]["start"] == at(14).isoformat()
+
+
+def test_two_people_have_their_own_windows(monkeypatch):
+    monkeypatch.setenv("LLM_USER_BUDGET_5H_TOKENS", "1000")
+    db = _DB(people=[person_row("jack", at(9), 5_000), person_row("sam", at(14), 5_000)])
+    assert bg.current_state(db, at(15), "jack")["level"] == bg.OK          # their window began at 09:00 and ended at 14:00
+    assert bg.current_state(db, at(15), "sam")["level"] == bg.BLOCKED
 
 
 def test_a_persons_own_daily_limit_counts_their_billing_day(monkeypatch):
     monkeypatch.setenv("LLM_USER_BUDGET_DAILY_TOKENS", "1000")
     # Pacific midnight is 07:00 UTC: 06:00 UTC belongs to yesterday's billing day, 07:00 to today's.
-    db = _DB(people=[person_row("jack", "2026-10-10T06", 5_000), person_row("jack", "2026-10-10T07", 600), person_row("jack", "2026-10-10T14", 500)])
+    db = _DB(people=[person_row("jack", at(6), 5_000), person_row("jack", at(7), 600), person_row("jack", at(14), 500)])
     state = bg.current_state(db, NOW, "jack")
     assert state["scope"] == "my_day" and state["spent"] == 1_100 and state["level"] == bg.THROTTLED
 
@@ -551,15 +663,15 @@ def test_the_turn_that_just_finished_counts_toward_a_persons_limit_before_it_is_
 
     user_usage.reset()
     monkeypatch.setenv("LLM_USER_BUDGET_5H_TOKENS", "1000")
-    db = _DB(people=[person_row("jack", "2026-10-10T14", 600)])
-    user_usage.add("jack", 500, 2, now=NOW)
-    assert bg.current_state(db, NOW, "jack")["spent"] == 1_100
+    db = _DB(people=[person_row("jack", at(14), 600)])
+    user_usage.add("jack", 500, 2, now=at(15))
+    assert bg.current_state(db, at(15), "jack")["spent"] == 1_100
     user_usage.reset()
 
 
 def test_a_persons_own_limit_is_not_something_an_admin_can_extend_and_it_reads_as_theirs(monkeypatch):
     monkeypatch.setenv("LLM_USER_BUDGET_5H_TOKENS", "1000")
-    state = bg.current_state(_DB(people=[person_row("jack", "2026-10-10T14", 1_300)]), NOW, "jack")
+    state = bg.current_state(_DB(people=[person_row("jack", at(14), 1_300)]), at(15), "jack")
     assert state["level"] == bg.BLOCKED and bg.extendable_scopes(state) == []
     seen = bg.public_view(state, False)
     assert seen["own_limit"] is True and "your usage limit" in seen["message"] and "spent" not in seen
@@ -594,3 +706,19 @@ def test_the_chat_turn_applies_a_persons_own_limits_to_everyone_but_admins_and_s
     source = _app_source()
     assert "budget_guard.current_state, None, None, None if is_admin_user else username" in source
     assert "budget_guard.blocked_reply(budget_state.get('resets_at'), crisis, budget_state.get('scope'))" in source
+
+
+def test_a_persons_window_counts_only_their_window_not_the_rest_of_their_day(monkeypatch):
+    monkeypatch.setenv("LLM_USER_BUDGET_5H_TOKENS", "1000")
+    # 3,000 tokens this morning in an earlier window; the current window (from 14:00) has 400.
+    db = _DB(people=[person_row("jack", at(8), 3_000), person_row("jack", at(14), 400)])
+    state = bg.current_state(db, at(15), "jack")
+    assert state["scope"] == "my_five" and state["spent"] == 400 and state["level"] == bg.OK
+
+
+def test_once_the_window_has_ended_nothing_is_counted_and_no_window_is_in_progress():
+    rows = [minute_row(at(14), 5_000)]
+    totals = bg.spent([], at(19, 30), {}, rows, anchor=at(14))
+    assert totals["five_tokens"] == 0 and totals["five_start"] is None
+    person = bg.person_totals([person_row("jack", at(14), 5_000)], at(19, 30), at(14))
+    assert person["my_five_tokens"] == 0 and person["my_five_start"] is None

@@ -20,17 +20,17 @@ def _clean(monkeypatch):
     lu.reset()
 
 
-def test_a_call_in_an_eval_run_is_counted_under_an_eval_label_and_not_in_the_hour_rows(monkeypatch):
+def test_a_call_in_an_eval_run_is_counted_under_an_eval_label_and_not_in_the_minute_rows(monkeypatch):
     monkeypatch.setenv(lu.SOURCE_ENV, "eval")
     lu.record("m", "native_loop.run", CALL, day="2026-10-10")
     assert list(lu.snapshot()) == [("2026-10-10", "m", "eval:native_loop.run")]
-    assert lu.hourly_snapshot() == {}
+    assert lu.minute_snapshot() == {}
 
 
 def test_an_ordinary_call_is_counted_as_it_always_was(monkeypatch):
     lu.record("m", "native_loop.run", CALL, day="2026-10-10")
     assert list(lu.snapshot()) == [("2026-10-10", "m", "native_loop.run")]
-    assert len(lu.hourly_snapshot()) == 1
+    assert len(lu.minute_snapshot()) == 1
 
 
 def test_an_eval_label_is_not_prefixed_twice(monkeypatch):

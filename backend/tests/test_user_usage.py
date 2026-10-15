@@ -24,8 +24,8 @@ class _Col:
             row[key] = row.get(key, 0) + by
 
     def find(self, flt, projection=None):
-        floor = flt["hour"]["$gte"]
-        return [dict(r) for r in self.rows if r["user"] == flt["user"] and r["hour"] >= floor]
+        floor = flt["minute"]["$gte"]
+        return [dict(r) for r in self.rows if r["user"] == flt["user"] and r["minute"] >= floor]
 
 
 class _DB:
@@ -46,10 +46,10 @@ def _clean():
     llm_turns.reset()
 
 
-def test_a_turn_is_counted_for_the_person_by_the_hour_it_ended_in():
+def test_a_turn_is_counted_for_the_person_by_the_minute_it_ended_in():
     uu.add("jack", 900, 3, now=NOW)
     uu.add("jack", 100, 1, now=NOW)
-    assert uu.snapshot() == {("jack", "2026-10-10T15"): {"tokens": 1_000, "calls": 4, "turns": 2}}
+    assert uu.snapshot() == {("jack", "2026-10-10T15:30"): {"tokens": 1_000, "calls": 4, "turns": 2}}
 
 
 def test_nobody_and_nothing_are_not_counted():
@@ -60,13 +60,13 @@ def test_nobody_and_nothing_are_not_counted():
     assert uu.snapshot() == {}
 
 
-def test_what_is_saved_is_only_counts_keyed_by_person_and_hour():
+def test_what_is_saved_is_only_counts_keyed_by_person_and_minute():
     db = _DB()
     uu.add("jack", 900, 3, now=NOW)
     assert uu.flush(db) == 1 and uu.snapshot() == {}
     uu.add("jack", 100, 1, now=NOW)
     uu.flush(db)
-    assert db.col.rows == [{"user": "jack", "hour": "2026-10-10T15", "tokens": 1_000, "calls": 4, "turns": 2}]
+    assert db.col.rows == [{"user": "jack", "minute": "2026-10-10T15:30", "tokens": 1_000, "calls": 4, "turns": 2}]
     assert uu.flush(db) == 0  # nothing new, nothing written
 
 
@@ -75,7 +75,7 @@ def test_a_failed_write_keeps_the_counts_for_the_next_flush():
     db.col.fail = True
     uu.add("jack", 900, 3, now=NOW)
     assert uu.flush(db) == 0
-    assert uu.snapshot()[("jack", "2026-10-10T15")]["tokens"] == 900
+    assert uu.snapshot()[("jack", "2026-10-10T15:30")]["tokens"] == 900
     db.col.fail = False
     assert uu.flush(db) == 1 and db.col.rows[0]["tokens"] == 900
 
@@ -83,7 +83,7 @@ def test_a_failed_write_keeps_the_counts_for_the_next_flush():
 def test_with_no_database_nothing_is_lost_or_raised(monkeypatch):
     monkeypatch.setattr("backend.utils.db_utils.get_db", lambda: None)
     uu.add("jack", 900, 3, now=NOW)
-    assert uu.flush() == 0 and uu.snapshot()[("jack", "2026-10-10T15")]["tokens"] == 900
+    assert uu.flush() == 0 and uu.snapshot()[("jack", "2026-10-10T15:30")]["tokens"] == 900
 
 
 def test_a_person_reads_back_only_their_own_recent_rows_plus_what_is_not_saved_yet():
@@ -92,10 +92,10 @@ def test_a_person_reads_back_only_their_own_recent_rows_plus_what_is_not_saved_y
     uu.add("sam", 700, 1, now=NOW)
     uu.flush(db)
     uu.add("jack", 40, 1, now=NOW)
-    rows = uu.fetch(db, "jack", "2026-10-10T15") + uu.unsaved_rows("jack")
-    assert uu.tokens_since(rows, "2026-10-10T15") == 540
-    assert uu.tokens_since(rows, "2026-10-10T16") == 0  # later than anything they did
-    assert uu.fetch(db, "jack", "2026-10-10T16") == []
+    rows = uu.fetch(db, "jack", "2026-10-10T15:30") + uu.unsaved_rows("jack")
+    assert uu.tokens_since(rows, "2026-10-10T15:30") == 540
+    assert uu.tokens_since(rows, "2026-10-10T15:31") == 0  # later than anything they did
+    assert uu.fetch(db, "jack", "2026-10-10T15:31") == []
 
 
 def test_a_finished_turn_adds_its_tokens_to_the_person_it_was_for():

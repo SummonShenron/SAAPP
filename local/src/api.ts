@@ -620,7 +620,7 @@ export interface SafetySummary {
   ladder: Record<string, Record<string, number>>;
 }
 
-/** 'five' is the rolling five-hour window; 'my_day' / 'my_five' are one person's own limits. */
+/** 'five' is the five-hour window that starts at the first use; 'my_day' / 'my_five' are one person's own limits. */
 export type BudgetScope = 'day' | 'month' | 'five' | 'my_day' | 'my_five';
 
 export interface BudgetDetail {

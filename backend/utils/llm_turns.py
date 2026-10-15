@@ -91,7 +91,7 @@ def _today() -> str:
 
 def begin(user: Optional[str] = None) -> Turn:
     """Starts counting a turn in the current context and returns it. `user` (optional) is who it is for: the turn's tokens are then also
-    added to that person's own hourly count (backend/utils/user_usage.py) when it finishes. Never raises."""
+    added to that person's own minute-by-minute count (backend/utils/user_usage.py) when it finishes. Never raises."""
     turn = Turn(user)
     try:
         _current.set(turn)

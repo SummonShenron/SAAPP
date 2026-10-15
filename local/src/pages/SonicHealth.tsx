@@ -498,7 +498,7 @@ const BudgetCard: React.FC<{ budget: BudgetView }> = ({ budget }) => {
       <p className="card-description">
         A ramp in front of Google's own spending cap. At 80% an admin is told; at 100% Sonic goes low-power for everyone (deep thinking and
         the optional extras that each cost a model call are paused); at 125% chat pauses until the budget resets (a day, a month, or for the
-        rolling five-hour window, when its oldest hour drops out), except that someone who has signalled risk still gets the human support line.
+        five-hour window, the exact moment it ends, five hours after the first use that started it), except that someone who has signalled risk still gets the human support line.
         When chat is paused, an admin can extend the block by another 25% from the banner above the chat box. Per-person limits, if set, apply
         to each person on their own, and admins are exempt from them.
       </p>

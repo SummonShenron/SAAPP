@@ -22,9 +22,10 @@ Several can be set at once; the one that is furthest along decides. Spend is jud
 
 Tune with LLM_BUDGET_NOTICE_AT (0.8) and LLM_BUDGET_BLOCK_AT (1.25).
 
-A FIVE-HOUR WINDOW can be set the same way, in the same units (LLM_BUDGET_5H_USD / LLM_BUDGET_5H_TOKENS). It is rolling: the last five hours of
-usage (this hour and the four before it, so between four and five hours of it), not a window that resets at a fixed time, so it catches a burst the
-daily budget would only notice much later. When it blocks, the message says when the oldest hour leaves the window.
+A FIVE-HOUR WINDOW can be set the same way, in the same units (LLM_BUDGET_5H_USD / LLM_BUDGET_5H_TOKENS). It is a session, not a rolling count: the
+first use starts a window that lasts exactly five hours, whatever happens in it, and when it ends usage counts from zero again. The next window
+starts at the next use after that. So someone who maxes it out three minutes before it ends can use Sonic again in three minutes. It catches a burst
+the daily budget would only notice much later. When it blocks, the message gives the exact time the window ends.
 
 PER-PERSON LIMITS: LLM_USER_BUDGET_5H_TOKENS and LLM_USER_BUDGET_DAILY_TOKENS limit what any one signed-in person may use, in tokens (a
 person's spend is counted from their finished turns, backend/utils/user_usage.py, which has no per-model prices). The same steps apply, but
@@ -33,7 +34,7 @@ affected. Global admins are exempt (they are the ones who manage the budget). Of
 
 EXTENDING A BLOCK: when the global budget has blocked chat, a global admin can grant +25% (EXTENSION_STEP) once per click, as many times as
 they like. A grant raises the block line of the scope that is blocking, from 125% to 150%, then 175% and so on, and ends when that scope
-resets (a day, a month, or five hours from the grant for the five-hour window). Low-power mode stays on throughout. Each grant is saved with
+resets (a day, a month, or the end of the current five-hour window). Low-power mode stays on throughout. Each grant is saved with
 who and when. A per-person block is not extended by this.
 
 THE METER ONLY COUNTS FROM THE DAY IT WAS DEPLOYED, so in that first month the monthly dollar figure would leave out everything spent
@@ -88,7 +89,7 @@ _USER_BUDGET_ENV = {
     "my_day_tokens": "LLM_USER_BUDGET_DAILY_TOKENS",
     "my_five_tokens": "LLM_USER_BUDGET_5H_TOKENS",
 }
-# A budget key's (scope, unit). "five" is the rolling five-hour window; "my_" scopes are one person's own share.
+# A budget key's (scope, unit). "five" is the five-hour window that starts at the first use; "my_" scopes are one person's own share.
 _KEYS = {
     "day_usd": ("day", "usd"), "month_usd": ("month", "usd"), "day_tokens": ("day", "tokens"), "month_tokens": ("month", "tokens"),
     "five_usd": ("five", "usd"), "five_tokens": ("five", "tokens"),
@@ -96,17 +97,21 @@ _KEYS = {
 }
 GLOBAL_SCOPES = ("day", "month", "five")
 FIVE_HOURS = 5
+WINDOW = timedelta(hours=FIVE_HOURS)
+MAX_WALK = 12  # windows followed forward from a saved start; more than this means nothing has been used for a long time
+WINDOW_LOOKBACK = timedelta(hours=48)  # a saved start older than this is not worth following
+WINDOWS_COLLECTION = "budget_windows"
 EXTENSION_STEP = 0.25
 EXTENSIONS_COLLECTION = "budget_extensions"
 _SEVERITY = {OK: 0, NOTICE: 1, THROTTLED: 2, BLOCKED: 3}
 # How a scope is said to a person, where it is not already plain English ("day", "month").
 _SCOPE_TEXT = {"five": "5-hour", "my_day": "your daily", "my_five": "your 5-hour"}
 
-_cache: Dict[str, Any] = {"at": None, "rows": [], "hourly_at": None, "hourly": [], "ext_at": None, "ext": {}}
+_cache: Dict[str, Any] = {"at": None, "rows": [], "five_at": None, "five_rows": [], "five_anchor": None, "ext_at": None, "ext": {}}
 
 
 def _reset_cache() -> None:
-    _cache.update({"at": None, "rows": [], "hourly_at": None, "hourly": [], "ext_at": None, "ext": {}})
+    _cache.update({"at": None, "rows": [], "five_at": None, "five_rows": [], "five_anchor": None, "ext_at": None, "ext": {}})
 
 
 def _positive(name: str) -> Optional[float]:
@@ -174,23 +179,68 @@ def _buffered_rows() -> List[Dict[str, Any]]:
     return [{"day": day, "model": model, "label": label, **counts} for (day, model, label), counts in llm_usage.snapshot().items()]
 
 
-def window_start_hour(now: datetime) -> str:
-    """The first hour bucket still inside the five-hour window: this hour and the four before it."""
-    return llm_usage.hour_key(now - timedelta(hours=FIVE_HOURS - 1))
+def resolve_window(anchor: Optional[datetime], usage_times: List[datetime], now: datetime) -> Optional[Tuple[datetime, datetime]]:
+    """(start, end) of the five-hour window `now` falls in, or None when it is idle (nothing used since the last window ended). A window starts at
+    the first use after the previous one ended and lasts exactly five hours, whatever happens inside it. `anchor` is the start of the last window
+    known (None if there is none), `usage_times` the moments something was used (in order). Pure."""
+    start = anchor
+    for _ in range(MAX_WALK):
+        if start is not None and now < start + WINDOW:
+            return start, start + WINDOW
+        after = start + WINDOW if start is not None else now - WINDOW
+        following = next((moment for moment in usage_times if moment >= after), None)
+        if following is None or following > now:
+            return None
+        start = following
+    return None
 
 
-def _saved_hourly(db: Any, now: datetime) -> List[Dict[str, Any]]:
-    """The saved hour rows inside the five-hour window, cached briefly like the day rows."""
-    at = _cache["hourly_at"]
+def _usage_time(row: Dict[str, Any]) -> Optional[datetime]:
+    """When a minute row says something was used, or None for a row that is empty or malformed."""
+    try:
+        if not (int(row.get("calls") or 0) or int(row.get("tokens") or 0) or int(row.get("input") or 0) or int(row.get("output") or 0)):
+            return None
+        return llm_usage.minute_start(str(row["minute"]))
+    except (KeyError, ValueError, TypeError):
+        return None
+
+
+def _read_anchor(db: Any, scope: str, now: datetime, user: str = "") -> Optional[datetime]:
+    """The saved start of the last window for a scope (and person) as of `now`, or None when there is none or it is too old to follow. Raises
+    on a database error."""
+    doc = db[WINDOWS_COLLECTION].find_one({"scope": scope, "user": user}, {"_id": 0}) or {}
+    start = _as_aware(doc.get("start"))
+    return start if start is not None and start >= now - WINDOW_LOOKBACK else None
+
+
+def _save_anchor(db: Any, scope: str, start: datetime, user: str = "") -> None:
+    """Remembers when the current window began, so the next look continues from it. Best effort: it can be worked out again from the usage."""
+    try:
+        db[WINDOWS_COLLECTION].update_one(
+            {"scope": scope, "user": user}, {"$set": {"scope": scope, "user": user, "start": start.isoformat()}}, upsert=True
+        )
+    except Exception:
+        logger.warning("[budget] could not save when the %s window began; it will be worked out again.", scope)
+
+
+def fetch_since(anchor: Optional[datetime], now: datetime) -> str:
+    """How far back minute rows must be read to follow a window from its saved start (or, with none, to find the one in progress)."""
+    return llm_usage.minute_key(max(anchor, now - WINDOW_LOOKBACK) if anchor is not None else now - WINDOW)
+
+
+def _saved_five(db: Any, now: datetime) -> Tuple[List[Dict[str, Any]], Optional[datetime]]:
+    """The saved minute rows the shared window needs and its saved start, cached briefly like the day rows. Raises on a database error."""
+    at = _cache["five_at"]
     if at is not None and time.monotonic() - at < CACHE_SECONDS:
-        return _cache["hourly"]
-    rows = llm_usage.fetch_hourly_docs(db, window_start_hour(now))
-    _cache["hourly_at"], _cache["hourly"] = time.monotonic(), rows
-    return rows
+        return _cache["five_rows"], _cache["five_anchor"]
+    anchor = _read_anchor(db, "five", now)
+    rows = llm_usage.fetch_minute_docs(db, fetch_since(anchor, now))
+    _cache["five_at"], _cache["five_rows"], _cache["five_anchor"] = time.monotonic(), rows, anchor
+    return rows, anchor
 
 
-def _buffered_hourly() -> List[Dict[str, Any]]:
-    return [{"hour": hour, "model": model, **counts} for (hour, model), counts in llm_usage.hourly_snapshot().items()]
+def _buffered_minutes() -> List[Dict[str, Any]]:
+    return [{"minute": minute, "model": model, **counts} for (minute, model), counts in llm_usage.minute_snapshot().items()]
 
 
 def _as_aware(value: Any) -> Optional[datetime]:
@@ -218,21 +268,13 @@ def _saved_extensions(db: Any, now: datetime) -> Dict[str, float]:
     return found
 
 
-def _hour_start(hour: str) -> datetime:
-    return datetime.strptime(hour, "%Y-%m-%dT%H").replace(tzinfo=timezone.utc)
-
-
-def five_hour_reset(oldest_hour: Optional[str], now: datetime) -> datetime:
-    """When the five-hour window next gets room: when the oldest hour that has any usage in it falls out of the window. With no usage in it
-    there is nothing to wait for, so an hour from now."""
-    if not oldest_hour:
-        return now + timedelta(hours=1)
-    return _hour_start(oldest_hour) + timedelta(hours=FIVE_HOURS)
-
-
-def spent(rows: List[Dict[str, Any]], now: datetime, prices: Dict[str, Dict[str, float]], hourly_rows: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
-    """Tokens and (for priced models) dollars used today, this month and (from `hourly_rows`) in the five-hour window. Pure. `unpriced_tokens`
-    is what the dollar figure leaves out."""
+def spent(
+    rows: List[Dict[str, Any]], now: datetime, prices: Dict[str, Dict[str, float]],
+    minute_rows: Optional[List[Dict[str, Any]]] = None, anchor: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Tokens and (for priced models) dollars used today, this month and, from `minute_rows`, in the five-hour window that `anchor` (the start
+    of the last known window) leads to. Pure. `unpriced_tokens` is what the dollar figure leaves out. `five_start` is when the window in progress
+    began (None when idle) and `five_reset` when it ends."""
     today = billing_time.day(now)
     totals = {"day_tokens": 0, "month_tokens": 0, "day_usd": 0.0, "month_usd": 0.0, "unpriced_tokens": 0, "five_tokens": 0, "five_usd": 0.0}
     for row in rows:
@@ -249,44 +291,43 @@ def spent(rows: List[Dict[str, Any]], now: datetime, prices: Dict[str, Dict[str,
         else:
             totals["month_usd"] += cost
             totals["day_usd"] += cost if is_today else 0.0
-    since = window_start_hour(now)
-    oldest: Optional[str] = None
-    for row in hourly_rows or []:
-        hour = str(row.get("hour") or "")
-        if not hour or hour < since:
-            continue
-        counts = {field: int(row.get(field) or 0) for field in llm_usage.FIELDS}
-        tokens = counts["input"] + counts["output"]
-        cost = llm_usage.estimate_cost(str(row.get("model")), counts, prices)
-        totals["five_tokens"] += tokens
-        totals["five_usd"] += cost or 0.0
-        if tokens and (oldest is None or hour < oldest):
-            oldest = hour
-    totals["five_reset"] = five_hour_reset(oldest, now)
+    minute_rows = minute_rows or []
+    window = resolve_window(anchor, sorted(t for t in (_usage_time(r) for r in minute_rows) if t is not None), now)
+    totals["five_start"], totals["five_reset"] = (window if window else (None, now + WINDOW))
+    if window:
+        first = llm_usage.minute_key(window[0])
+        for row in minute_rows:
+            if str(row.get("minute") or "") < first:
+                continue
+            counts = {field: int(row.get(field) or 0) for field in llm_usage.FIELDS}
+            cost = llm_usage.estimate_cost(str(row.get("model")), counts, prices)
+            totals["five_tokens"] += counts["input"] + counts["output"]
+            totals["five_usd"] += cost or 0.0
     return totals
 
 
-def _billing_day_start_hour(now: datetime) -> str:
-    return llm_usage.hour_key(billing_time.next_day_start(now) - timedelta(days=1))
+def _billing_day_start_minute(now: datetime) -> str:
+    return llm_usage.minute_key(billing_time.next_day_start(now) - timedelta(days=1))
 
 
-def person_totals(rows: List[Dict[str, Any]], now: datetime) -> Dict[str, Any]:
-    """One person's tokens in the five-hour window and in today's billing day, from their hour rows (saved plus unsaved). Pure."""
+def person_totals(rows: List[Dict[str, Any]], now: datetime, anchor: Optional[datetime] = None) -> Dict[str, Any]:
+    """One person's tokens in their own five-hour window (started by their first use, like the shared one) and in today's billing day, from their
+    minute rows (saved plus unsaved). Pure."""
     from backend.utils import user_usage
 
-    five_since = window_start_hour(now)
-    five_rows = [row for row in rows if str(row.get("hour") or "") >= five_since and int(row.get("tokens") or 0)]
-    oldest = min((str(row["hour"]) for row in five_rows), default=None)
+    times = sorted(t for t in (_usage_time(r) for r in rows) if t is not None)
+    window = resolve_window(anchor, times, now)
     return {
-        "my_five_tokens": user_usage.tokens_since(rows, five_since),
-        "my_day_tokens": user_usage.tokens_since(rows, _billing_day_start_hour(now)),
-        "my_five_reset": five_hour_reset(oldest, now),
+        "my_five_tokens": user_usage.tokens_since(rows, llm_usage.minute_key(window[0])) if window else 0,
+        "my_day_tokens": user_usage.tokens_since(rows, _billing_day_start_minute(now)),
+        "my_five_start": window[0] if window else None,
+        "my_five_reset": window[1] if window else now + WINDOW,
     }
 
 
-def person_fetch_since(now: datetime) -> str:
-    """How far back a person's hour rows must be read to answer both of their limits."""
-    return min(window_start_hour(now), _billing_day_start_hour(now))
+def person_fetch_since(now: datetime, anchor: Optional[datetime] = None) -> str:
+    """How far back a person's minute rows must be read to answer both of their limits."""
+    return min(fetch_since(anchor, now), _billing_day_start_minute(now))
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -331,6 +372,7 @@ def evaluate(totals: Dict[str, Any], limits: Dict[str, float], now: datetime, ex
         "paused": list(PAUSED_FEATURES) if level in LOW_POWER_LEVELS else [],
         "unpriced_tokens": totals.get("unpriced_tokens", 0),
         "blocked_scopes": [item["scope"] for item, lvl in zip(detail, levels) if lvl == BLOCKED],
+        "resets": {item["scope"]: _next_reset(item["scope"], now, totals).isoformat() for item in detail},
         "extended_by": float(extensions.get(leading["scope"], 0) or 0) if leading["scope"] in GLOBAL_SCOPES else 0.0,
     }
 
@@ -355,15 +397,27 @@ def current_state(db: Any = None, now: Optional[datetime] = None, username: Opti
         extensions: Dict[str, float] = {}
         if limits:
             rows = _saved_rows(db, moment) + _buffered_rows()
-            hourly = (_saved_hourly(db, moment) + _buffered_hourly()) if ("five_usd" in limits or "five_tokens" in limits) else []
-            totals = spent(rows, moment, llm_usage.load_prices(), hourly)
+            minute_rows: List[Dict[str, Any]] = []
+            anchor: Optional[datetime] = None
+            has_window = "five_usd" in limits or "five_tokens" in limits
+            if has_window:
+                saved, anchor = _saved_five(db, moment)
+                minute_rows = saved + _buffered_minutes()
+            totals = spent(rows, moment, llm_usage.load_prices(), minute_rows, anchor)
             totals["month_usd"] += month_already_spent(moment)
+            if has_window and totals["five_start"] is not None and totals["five_start"] != anchor:
+                _save_anchor(db, "five", totals["five_start"])  # a new window began: remember it, so the next look continues from it
+                _cache["five_anchor"] = totals["five_start"]
             extensions = _saved_extensions(db, moment)
         if own:
             from backend.utils import user_usage
 
-            mine = user_usage.fetch(db, str(username), person_fetch_since(moment)) + user_usage.unsaved_rows(str(username))
-            totals.update(person_totals(mine, moment))
+            who = str(username)
+            my_anchor = _read_anchor(db, "my_five", moment, who) if "my_five_tokens" in own else None
+            mine = user_usage.fetch(db, who, person_fetch_since(moment, my_anchor)) + user_usage.unsaved_rows(who)
+            totals.update(person_totals(mine, moment, my_anchor))
+            if "my_five_tokens" in own and totals["my_five_start"] is not None and totals["my_five_start"] != my_anchor:
+                _save_anchor(db, "my_five", totals["my_five_start"], who)
         return evaluate(totals, {**limits, **own}, moment, extensions)
     except Exception:
         logger.warning("[budget] could not read the usage; the budget guard is stepping aside for this call.")
@@ -380,13 +434,14 @@ def extendable_scopes(state: Optional[Dict[str, Any]]) -> List[str]:
 
 
 def grant_extension(db: Any, admin: str, state: Optional[Dict[str, Any]], now: Optional[datetime] = None) -> Dict[str, Any]:
-    """Adds EXTENSION_STEP to every global scope that is blocking chat, until that scope resets (five hours from now for the five-hour window,
-    since it has no fixed end). Each grant is recorded with who and when. Nothing blocked, nothing changed. Blocking: call it off the event
+    """Adds EXTENSION_STEP to every global scope that is blocking chat, until that scope resets (the end of the window in progress for the five-hour one,
+    the end of the day or month otherwise). Each grant is recorded with who and when. Nothing blocked, nothing changed. Blocking: call it off the event
     loop. Raises on a database error, so the caller can say it did not work."""
     moment = now or datetime.now(timezone.utc)
     granted = []
     for scope in extendable_scopes(state):
-        until = (moment + timedelta(hours=FIVE_HOURS)) if scope == "five" else _next_reset(scope, moment)
+        # It ends when the scope does: the end of the five-hour window in progress, the day or the month.
+        until = _as_aware(((state or {}).get("resets") or {}).get(scope)) or _next_reset(scope, moment)
         # A grant while an earlier one is still running adds to it; one after it ran out starts again from zero.
         existing = db[EXTENSIONS_COLLECTION].find_one({"scope": scope}, {"_id": 0}) or {}
         until_old = _as_aware(existing.get("until"))

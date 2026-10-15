@@ -32,9 +32,11 @@ from backend.utils import billing_time, llm_turns
 logger = logging.getLogger("SASS Logger")
 
 COLLECTION = "llm_usage_daily"
-# The same counts by HOUR (UTC, "YYYY-MM-DDTHH") and model, without the caller label: small, and enough to add up a rolling window such as
-# the budget guard's five hours (budget_guard.py). Days are Google's Pacific days; hours are UTC so a daylight-saving change can't repeat one.
-HOURLY_COLLECTION = "llm_usage_hourly"
+# The same counts by MINUTE (UTC, "YYYY-MM-DDTHH:MM") and model, without the caller label: small, and exact enough to say when a window that starts
+# at someone's first use began, which the budget guard's five-hour window needs (budget_guard.py). Days are Google's Pacific days; minutes are UTC,
+# so a daylight-saving change can't repeat one. Rows carry an `at` time and expire on their own after MINUTE_ROWS_KEEP_SECONDS.
+MINUTE_COLLECTION = "llm_usage_minutely"
+MINUTE_ROWS_KEEP_SECONDS = 3 * 24 * 60 * 60
 ROUTES_COLLECTION = "llm_model_routes"
 # A run of the evals (backend/evals) is real spend but not the app's own: it is counted under a label that starts with this, so the usage page
 # still shows it, and the budget guard leaves it out (it must never be able to pause chat). The evals' command-line entry points call
@@ -54,7 +56,8 @@ _PLUMBING_PREFIXES = (
 
 _lock = threading.Lock()
 _buffer: Dict[Tuple[str, str, str], Dict[str, int]] = {}
-_hourly: Dict[Tuple[str, str], Dict[str, int]] = {}  # (hour, model) -> counts; written with the daily rows
+_minutes: Dict[Tuple[str, str], Dict[str, int]] = {}  # (minute, model) -> counts; written with the daily rows
+_ttl_ready: set = set()
 _buffered_calls = 0
 _last_flush = time.monotonic()
 _flushing = False
@@ -150,12 +153,17 @@ def is_eval_label(label: Any) -> bool:
     return str(label or "").startswith(EVAL_PREFIX)
 
 
-def hour_key(now: Optional[datetime] = None) -> str:
-    """The UTC hour a moment falls in, "YYYY-MM-DDTHH". Sorts as text in time order, so a range read is a plain `$gte`."""
+def minute_key(now: Optional[datetime] = None) -> str:
+    """The UTC minute a moment falls in, "YYYY-MM-DDTHH:MM". Sorts as text in time order, so a range read is a plain `$gte`."""
     moment = now or datetime.now(timezone.utc)
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
-    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H")
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M")
+
+
+def minute_start(minute: str) -> datetime:
+    """The moment a minute key begins, as an aware UTC datetime."""
+    return datetime.strptime(minute, "%Y-%m-%dT%H:%M").replace(tzinfo=timezone.utc)
 
 
 def record(model: str, label: str, usage: Dict[str, int], day: Optional[str] = None) -> None:
@@ -169,10 +177,10 @@ def record(model: str, label: str, usage: Dict[str, int], day: Optional[str] = N
             slot = _buffer.setdefault(key, empty_usage())
             slot["calls"] += 1
             add_into(slot, usage)
-            if not from_eval:  # the hour rows exist only for the budget guard's window, which an eval must not move
-                hour_slot = _hourly.setdefault((hour_key(), key[1]), empty_usage())
-                hour_slot["calls"] += 1
-                add_into(hour_slot, usage)
+            if not from_eval:  # the minute rows exist only for the budget guard's window, which an eval must not move
+                minute_slot = _minutes.setdefault((minute_key(), key[1]), empty_usage())
+                minute_slot["calls"] += 1
+                add_into(minute_slot, usage)
             _buffered_calls += 1
             due = _buffered_calls >= FLUSH_AFTER_CALLS or (time.monotonic() - _last_flush) >= FLUSH_AFTER_SECONDS
         if due:
@@ -205,17 +213,17 @@ def snapshot() -> Dict[Tuple[str, str, str], Dict[str, int]]:
         return {key: dict(value) for key, value in _buffer.items()}
 
 
-def hourly_snapshot() -> Dict[Tuple[str, str], Dict[str, int]]:
-    """What has been counted by (hour, model) and not yet saved."""
+def minute_snapshot() -> Dict[Tuple[str, str], Dict[str, int]]:
+    """What has been counted by (minute, model) and not yet saved."""
     with _lock:
-        return {key: dict(value) for key, value in _hourly.items()}
+        return {key: dict(value) for key, value in _minutes.items()}
 
 
 def reset() -> None:
     global _buffered_calls, _flushing
     with _lock:
         _buffer.clear()
-        _hourly.clear()
+        _minutes.clear()
         _routes.clear()
         _buffered_calls = 0
         _flushing = False
@@ -246,14 +254,14 @@ def _flush_usage(db: Any = None) -> int:
     global _buffered_calls, _last_flush
     with _lock:
         pending = dict(_buffer)
-        pending_hourly = dict(_hourly)
+        pending_minutes = dict(_minutes)
         pending_routes = dict(_routes)
         _buffer.clear()
-        _hourly.clear()
+        _minutes.clear()
         _routes.clear()
         _buffered_calls = 0
         _last_flush = time.monotonic()
-    if not pending and not pending_routes and not pending_hourly:
+    if not pending and not pending_routes and not pending_minutes:
         return 0
     written = 0
     try:
@@ -270,9 +278,13 @@ def _flush_usage(db: Any = None) -> int:
                 upsert=True,
             )
             written += 1
-        for (hour, model), counts in pending_hourly.items():
-            db[HOURLY_COLLECTION].update_one(
-                {"hour": hour, "model": model}, {"$inc": {field: counts.get(field, 0) for field in FIELDS}}, upsert=True
+        if pending_minutes:
+            ensure_expiry(db, MINUTE_COLLECTION)
+        for (minute, model), counts in pending_minutes.items():
+            db[MINUTE_COLLECTION].update_one(
+                {"minute": minute, "model": model},
+                {"$inc": {field: counts.get(field, 0) for field in FIELDS}, "$setOnInsert": {"at": minute_start(minute)}},
+                upsert=True,
             )
         for (day, requested, served, kind), calls in pending_routes.items():
             db[ROUTES_COLLECTION].update_one(
@@ -286,8 +298,8 @@ def _flush_usage(db: Any = None) -> int:
                 slot = _buffer.setdefault(key, empty_usage())
                 for field in FIELDS:
                     slot[field] = slot.get(field, 0) + counts.get(field, 0)
-            for key, counts in pending_hourly.items():
-                slot = _hourly.setdefault(key, empty_usage())
+            for key, counts in pending_minutes.items():
+                slot = _minutes.setdefault(key, empty_usage())
                 for field in FIELDS:
                     slot[field] = slot.get(field, 0) + counts.get(field, 0)
             for key, calls in pending_routes.items():
@@ -332,10 +344,22 @@ def fetch_usage_docs(db: Any, days: int, now: Optional[datetime] = None) -> List
         return []
 
 
-def fetch_hourly_docs(db: Any, since_hour: str) -> List[Dict[str, Any]]:
-    """The saved hour rows from `since_hour` ("YYYY-MM-DDTHH") on. Blocking. Raises on a database error: the budget guard decides what a
-    failed read means (it steps aside, so cost control can never be the reason chat is down)."""
-    return list(db[HOURLY_COLLECTION].find({"hour": {"$gte": since_hour}}, {"_id": 0}))
+def ensure_expiry(db: Any, collection: str) -> None:
+    """Makes rows of a minute-count collection delete themselves after MINUTE_ROWS_KEEP_SECONDS (a TTL index on `at`), once per process.
+    Best effort: a database that cannot do it (or a failure) just means the rows stay until someone removes them."""
+    if collection in _ttl_ready:
+        return
+    try:
+        db[collection].create_index("at", expireAfterSeconds=MINUTE_ROWS_KEEP_SECONDS)
+        _ttl_ready.add(collection)
+    except Exception:
+        pass
+
+
+def fetch_minute_docs(db: Any, since_minute: str) -> List[Dict[str, Any]]:
+    """The saved minute rows from `since_minute` ("YYYY-MM-DDTHH:MM") on. Blocking. Raises on a database error: the budget guard decides what
+    a failed read means (it steps aside, so cost control can never be the reason chat is down)."""
+    return list(db[MINUTE_COLLECTION].find({"minute": {"$gte": since_minute}}, {"_id": 0}))
 
 
 def fetch_route_docs(db: Any, days: int, now: Optional[datetime] = None) -> List[Dict[str, Any]]:

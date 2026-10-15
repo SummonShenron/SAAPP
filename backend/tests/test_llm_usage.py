@@ -105,11 +105,11 @@ class _Col:
 class _DB:
     def __init__(self):
         self.col = _Col()
-        self.hourly = _Col()
+        self.minutes = _Col()
 
     def __getitem__(self, name):
-        assert name in (lu.COLLECTION, lu.HOURLY_COLLECTION)
-        return self.col if name == lu.COLLECTION else self.hourly
+        assert name in (lu.COLLECTION, lu.MINUTE_COLLECTION)
+        return self.col if name == lu.COLLECTION else self.minutes
 
 
 def test_calls_are_counted_per_day_model_and_caller():
@@ -142,38 +142,60 @@ def test_a_failed_write_keeps_the_counts_for_the_next_flush():
     assert lu.flush(db) == 1 and db.col.docs[0]["input"] == 10
 
 
-def test_the_hour_key_is_the_utc_hour_and_sorts_in_time_order():
+def test_the_minute_key_is_the_utc_minute_and_sorts_in_time_order():
     from datetime import datetime, timedelta, timezone
 
-    moment = datetime(2026, 10, 14, 23, 59, tzinfo=timezone(timedelta(hours=-7)))  # 06:59 UTC the next day
-    assert lu.hour_key(moment) == "2026-10-15T06"
-    assert lu.hour_key(datetime(2026, 10, 14, 9, 5)) == "2026-10-14T09"  # no zone is taken to be UTC
-    assert lu.hour_key(datetime(2026, 10, 14, 9, tzinfo=timezone.utc)) < lu.hour_key(datetime(2026, 10, 14, 10, tzinfo=timezone.utc))
+    moment = datetime(2026, 10, 14, 23, 59, 40, tzinfo=timezone(timedelta(hours=-7)))  # 06:59 UTC the next day
+    assert lu.minute_key(moment) == "2026-10-15T06:59"
+    assert lu.minute_key(datetime(2026, 10, 14, 9, 5)) == "2026-10-14T09:05"  # no zone is taken to be UTC
+    assert lu.minute_key(datetime(2026, 10, 14, 9, 59, tzinfo=timezone.utc)) < lu.minute_key(datetime(2026, 10, 14, 10, 0, tzinfo=timezone.utc))
+    assert lu.minute_start("2026-10-14T09:05") == datetime(2026, 10, 14, 9, 5, tzinfo=timezone.utc)
 
 
-def test_calls_are_also_counted_by_hour_and_model_without_the_caller_label(monkeypatch):
-    monkeypatch.setattr(lu, "hour_key", lambda now=None: "2026-10-14T09")
+def test_calls_are_also_counted_by_minute_and_model_without_the_caller_label(monkeypatch):
+    monkeypatch.setattr(lu, "minute_key", lambda now=None: "2026-10-14T09:05")
     lu.record("m1", "node.a", {"input": 100, "output": 10, "reasoning": 0, "cached": 0}, day="2026-10-14")
     lu.record("m1", "node.b", {"input": 50, "output": 5, "reasoning": 0, "cached": 0}, day="2026-10-14")
     lu.record("m2", "node.a", {"input": 7, "output": 7, "reasoning": 0, "cached": 0}, day="2026-10-14")
-    hourly = lu.hourly_snapshot()
-    assert hourly[("2026-10-14T09", "m1")] == {"calls": 2, "input": 150, "output": 15, "reasoning": 0, "cached": 0}
-    assert len(hourly) == 2
+    minutes = lu.minute_snapshot()
+    assert minutes[("2026-10-14T09:05", "m1")] == {"calls": 2, "input": 150, "output": 15, "reasoning": 0, "cached": 0}
+    assert len(minutes) == 2
 
 
-def test_the_hourly_rows_are_saved_with_the_daily_ones_and_kept_when_the_write_fails(monkeypatch):
-    monkeypatch.setattr(lu, "hour_key", lambda now=None: "2026-10-14T09")
+def test_the_minute_rows_are_saved_with_the_daily_ones_and_kept_when_the_write_fails(monkeypatch):
+    monkeypatch.setattr(lu, "minute_key", lambda now=None: "2026-10-14T09:05")
     db = _DB()
     lu.record("m1", "node.a", {"input": 10, "output": 2, "reasoning": 0, "cached": 0}, day="2026-10-14")
     lu.flush(db)
-    assert db.hourly.docs == [{"hour": "2026-10-14T09", "model": "m1", "calls": 1, "input": 10, "output": 2, "reasoning": 0, "cached": 0}]
-    db.col.fail = db.hourly.fail = True
+    assert db.minutes.docs == [{"minute": "2026-10-14T09:05", "model": "m1", "calls": 1, "input": 10, "output": 2, "reasoning": 0, "cached": 0}]
+    db.col.fail = db.minutes.fail = True
     lu.record("m1", "node.a", {"input": 5, "output": 1, "reasoning": 0, "cached": 0}, day="2026-10-14")
     assert lu.flush(db) == 0
-    assert lu.hourly_snapshot()[("2026-10-14T09", "m1")]["input"] == 5  # not lost: it goes out with the next flush
-    db.col.fail = db.hourly.fail = False
+    assert lu.minute_snapshot()[("2026-10-14T09:05", "m1")]["input"] == 5  # not lost: it goes out with the next flush
+    db.col.fail = db.minutes.fail = False
     lu.flush(db)
-    assert db.hourly.docs[0]["input"] == 15
+    assert db.minutes.docs[0]["input"] == 15
+
+
+def test_a_new_minute_row_carries_the_time_it_covers_so_old_rows_can_expire():
+    class Col(_Col):
+        def update_one(self, flt, update, upsert=False):
+            super().update_one(flt, update, upsert)
+            self.last_update = update
+
+    class DB(_DB):
+        def __init__(self):
+            self.col, self.minutes, self.indexes = _Col(), Col(), []
+
+        def __getitem__(self, name):
+            return self.col if name == lu.COLLECTION else self.minutes
+
+    db = DB()
+    db.minutes.create_index = lambda field, **kw: db.indexes.append((field, kw))
+    lu.record("m1", "node.a", {"input": 1, "output": 1, "reasoning": 0, "cached": 0}, day="2026-10-14")
+    lu.flush(db)
+    assert db.minutes.last_update["$setOnInsert"]["at"].tzinfo is not None
+    assert db.indexes == [("at", {"expireAfterSeconds": lu.MINUTE_ROWS_KEEP_SECONDS})]
 
 
 def test_with_no_database_nothing_is_lost_or_raised(monkeypatch):
