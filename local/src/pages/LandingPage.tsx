@@ -3,7 +3,7 @@ import { useSignIn, useAuth, useClerk } from '@clerk/clerk-react';
 import { useNavigate } from 'react-router-dom';
 import logoImg from '../assets/neutral_logo.png'; // Updated logo import
 import { getMe, logLogin } from '../api';
-import sonicSpinImg from '../assets/sonic-rolling.gif';
+import Spinner from '../components/Spinner';
 
 interface LandingPageProps {
   onEnter: (username: string) => void;
@@ -214,7 +214,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
 
                   {serverStarting && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <img src={sonicSpinImg} alt="starting" style={{ width: 18, height: 18 }} />
+                      <Spinner size={18} />
                       <span style={{ fontSize: '0.82rem', color: '#6b7280' }}>Starting server…</span>
                     </div>
                   )}

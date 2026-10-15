@@ -1,0 +1,19 @@
+/* The app's loading spinner (components/Spinner.tsx): a ring with one bright arc. Colours come from the theme, so it works in light and dark. */
+.app-spinner {
+  display: inline-block;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 3px solid var(--spinner-track, rgba(100, 116, 139, 0.25));
+  border-top-color: var(--spinner-color, var(--accent-primary, #2563eb));
+  animation: app-spinner-turn 0.9s linear infinite;
+}
+
+@keyframes app-spinner-turn {
+  to { transform: rotate(360deg); }
+}
+
+/* Someone who has asked their device for less motion gets a slow turn instead of a fast one: it still shows that something is happening. */
+@media (prefers-reduced-motion: reduce) {
+  .app-spinner { animation-duration: 3s; }
+}
