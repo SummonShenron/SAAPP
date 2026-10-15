@@ -618,10 +618,11 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     effective_target_repo = _settings["target_repo"]
     # The usage budget guard (backend/utils/budget_guard.py). Off, and free, unless a budget is configured. In low-power mode deep
     # thinking is off whatever the setting says, and the optional extras further down are skipped.
-    budget_state = await asyncio.to_thread(budget_guard.current_state)
+    is_admin_user = is_global_admin(directory, username)
+    # A person's own limits apply to them (global admins, who manage the budget, are exempt from those and only meet the shared one).
+    budget_state = await asyncio.to_thread(budget_guard.current_state, None, None, None if is_admin_user else username)
     if not budget_guard.allows("deep_thinking", budget_state):
         effective_deep_thinking = False
-    is_admin_user = is_global_admin(directory, username)
 
     # ---------- Conversation Memory State Init ----------
     # The full transcript in chat_sessions[history_key] is kept durable (it's what gets
@@ -701,7 +702,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         final_state = {}
         # Aggregate counts about how Sonic itself behaved this turn (no user, no text): backend/utils/self_counters.py.
         turn_counts = new_turn_counts()
-        llm_turn = llm_turns.begin()  # counts this turn's model calls (backend/utils/llm_turns.py)
+        llm_turn = llm_turns.begin(username)  # counts this turn's model calls, and adds them to this person's own count (backend/utils/llm_turns.py)
         if answers_an_opening:
             tally(turn_counts, "initiation_answered")
             if answered_kind == "interest":
@@ -737,7 +738,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             llm_turns.finish(llm_turn, "blocked")
             await asyncio.to_thread(llm_usage.flush)
             logger.info("[budget] chat paused by the usage budget (crisis fallback: %s).", crisis)
-            yield f"data: {json.dumps({'event': 'final_generation', 'text': budget_guard.blocked_reply(budget_state.get('resets_at'), crisis)})}\n\n"
+            yield f"data: {json.dumps({'event': 'final_generation', 'text': budget_guard.blocked_reply(budget_state.get('resets_at'), crisis, budget_state.get('scope'))})}\n\n"
             return
 
         try:
@@ -1780,8 +1781,30 @@ async def update_deep_thinking_setting(payload: DeepThinkingUpdate, current_user
 async def get_budget(current_user = Depends(get_current_user)):
     """Where the usage budget stands (backend/utils/budget_guard.py): everyone gets the level, what is paused and when it ends;
     only an admin gets amounts. `level` is "off" when no budget is configured."""
+    username = current_user.get("sub")
+    admin = is_global_admin(load_directory(), username)
+    state = await asyncio.to_thread(budget_guard.current_state, None, None, None if admin else username)
+    return budget_guard.public_view(state, admin)
+
+
+@app.post("/api/budget/extend")
+async def extend_budget(current_user = Depends(get_current_user)):
+    """A global admin raises the block line of whatever shared budget has paused chat by another 25%, until that budget resets
+    (backend/utils/budget_guard.py). Each click adds another 25%; nothing happens if nothing is blocking. Each grant is saved with who and when."""
+    username = current_user.get("sub")
+    if not is_global_admin(load_directory(), username):
+        raise HTTPException(status_code=403, detail="Admins only.")
     state = await asyncio.to_thread(budget_guard.current_state)
-    return budget_guard.public_view(state, is_global_admin(load_directory(), current_user.get("sub")))
+    if not budget_guard.extendable_scopes(state):
+        raise HTTPException(status_code=409, detail="Nothing is blocking chat, so there is nothing to extend.")
+    try:
+        await asyncio.to_thread(budget_guard.grant_extension, get_db(), username, state)
+    except Exception:
+        logger.exception("[budget] could not save the extension")
+        raise HTTPException(status_code=500, detail="The extension could not be saved.")
+    logger.info("[budget] a global admin extended the blocked budget by %d%%.", round(budget_guard.EXTENSION_STEP * 100))
+    fresh = await asyncio.to_thread(budget_guard.current_state)
+    return budget_guard.public_view(fresh, True)
 
 
 @app.get("/api/settings/proactive-opening")

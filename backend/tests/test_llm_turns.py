@@ -241,7 +241,7 @@ def test_the_health_payload_carries_the_turn_summary():
 
 def test_the_chat_endpoint_starts_a_turn_and_finishes_it_on_every_way_out():
     source = open("app.py", encoding="utf-8").read()
-    assert "llm_turn = llm_turns.begin()" in source
+    assert "llm_turn = llm_turns.begin(username)" in source
     assert 'llm_turns.finish(llm_turn, "blocked")' in source and 'llm_turns.finish(llm_turn, "error")' in source
     assert source.count("llm_turns.finish(llm_turn)") >= 2  # the normal end, and the safety net for a turn the client walked away from
 

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import type { UsageDay } from '../api';
 import { tokens, usd } from './sonicHealthFormat';
 
-type Mode = 'cost' | 'tokens' | 'turns';
+type Mode = 'cost' | 'tokens' | 'calls' | 'turns';
 
 const WIDE = 800; // the chart's drawing width on a roomy screen; on a phone it is drawn narrower, so it keeps a useful height
 const NARROW = 420;
@@ -25,6 +25,7 @@ const PLAIN = '#38bdf8';
 const TOOL = '#f59e0b';
 const COST = '#38bdf8';
 const TOKENS = '#818cf8';
+const EVAL = '#a8a29e'; // eval runs: counted in the totals but shown apart from the app's own use
 
 /** The smallest "round" number (1, 2, 2.5, 5 times a power of ten) at or above `value`, so the axis ends on a clean figure. */
 export function niceCeil(value: number): number {
@@ -50,17 +51,25 @@ function axisLabel(mode: Mode, value: number): string {
 function valueOf(mode: Mode, day: UsageDay): number {
   if (mode === 'cost') return day.cost ?? 0;
   if (mode === 'tokens') return day.tokens;
+  if (mode === 'calls') return day.calls;
   return day.turns;
 }
 
 function dayDetail(day: UsageDay, priced: boolean): string {
   const parts = [shortDay(day.day)];
   if (priced && day.cost !== null) parts.push(`${usd(day.cost) || '$0.00'} estimated`);
-  parts.push(`${tokens(day.tokens)} tokens`, `${day.calls} model calls`, `${day.turns} chat turn${day.turns === 1 ? '' : 's'}${day.tool_turns ? ` (${day.tool_turns} with tools)` : ''}`);
+  const fromEvals = day.eval_calls ?? 0;
+  parts.push(
+    `${tokens(day.tokens)} tokens`,
+    `${day.calls} model calls${fromEvals ? ` (${fromEvals} from evals)` : ''}`,
+    `${day.turns} chat turn${day.turns === 1 ? '' : 's'}${day.tool_turns ? ` (${day.tool_turns} with tools)` : ''}`,
+  );
+  // Calls per chat turn, from the app's own calls only: what one message costs in model calls (evals are not chat turns).
+  if (day.turns > 0) parts.push(`${((day.calls - fromEvals) / day.turns).toFixed(1)} calls per turn`);
   return parts.join(' · ');
 }
 
-/** Bars for each day of the period: what the model calls cost, how many tokens they used, or how many chat turns there were. */
+/** Bars for each day of the period: what the model calls cost, how many tokens or model calls they used (eval runs shown apart), or how many chat turns there were. */
 export const DailyChart: React.FC<{ daily: UsageDay[]; dailyLimitUsd?: number | null; onOpen?: () => void }> = ({ daily, dailyLimitUsd, onOpen }) => {
   const priced = daily.some(day => day.cost !== null);
   const narrow = useNarrow();
@@ -91,15 +100,16 @@ export const DailyChart: React.FC<{ daily: UsageDay[]; dailyLimitUsd?: number | 
   const total = values.reduce((a, b) => a + b, 0);
   const summary = mode === 'cost' ? `${usd(total) || '$0.00'} in total, ${usd(total / daily.length) || '$0.00'} a day`
     : mode === 'tokens' ? `${tokens(total)} tokens in total, ${tokens(Math.round(total / daily.length))} a day`
+    : mode === 'calls' ? `${total} model calls in total, ${Math.round(total / daily.length)} a day`
     : `${total} chat turns in total, ${(total / daily.length).toFixed(1)} a day`;
 
   return (
     <div className="sh-chart">
       <div className="sh-chart-head">
         <div className="sh-seg" role="group" aria-label="What the chart shows">
-          {(['cost', 'tokens', 'turns'] as Mode[]).map(m => (
+          {(['cost', 'tokens', 'calls', 'turns'] as Mode[]).map(m => (
             <button key={m} type="button" className={`sh-seg-btn${mode === m ? ' sh-seg-active' : ''}`} disabled={m === 'cost' && !priced} onClick={() => setMode(m)}>
-              {m === 'cost' ? 'Cost' : m === 'tokens' ? 'Tokens' : 'Turns'}
+              {m === 'cost' ? 'Cost' : m === 'tokens' ? 'Tokens' : m === 'calls' ? 'Calls' : 'Turns'}
             </button>
           ))}
         </div>
@@ -128,7 +138,13 @@ export const DailyChart: React.FC<{ daily: UsageDay[]; dailyLimitUsd?: number | 
               onBlur={() => setHover(null)}
             >
               <rect x={MARGIN.left + slot * i} y={MARGIN.top} width={slot} height={plotH} className="sh-chart-hit" />
-              {mode === 'turns' ? (
+              {mode === 'calls' ? (
+                <>
+                  {/* The app's own calls underneath, any eval calls stacked on top in grey. */}
+                  <rect x={cx - barW / 2} y={y(day.calls - (day.eval_calls ?? 0))} width={barW} height={Math.max(MARGIN.top + plotH - y(day.calls - (day.eval_calls ?? 0)), day.calls > 0 ? 1 : 0)} fill={PLAIN} rx={2} />
+                  <rect x={cx - barW / 2} y={y(day.calls)} width={barW} height={Math.max(y(day.calls - (day.eval_calls ?? 0)) - y(day.calls), 0)} fill={EVAL} rx={2} />
+                </>
+              ) : mode === 'turns' ? (
                 <>
                   <rect x={cx - barW / 2} y={y(plain)} width={barW} height={Math.max(MARGIN.top + plotH - y(plain), 0)} fill={PLAIN} rx={2} />
                   <rect x={cx - barW / 2} y={y(day.turns)} width={barW} height={Math.max(y(plain) - y(day.turns), 0)} fill={TOOL} rx={2} />
@@ -149,6 +165,9 @@ export const DailyChart: React.FC<{ daily: UsageDay[]; dailyLimitUsd?: number | 
           </g>
         )}
       </svg>
+      {mode === 'calls' && (
+        <div className="sh-chart-legend"><span><i style={{ background: PLAIN }} />the app's own calls</span><span><i style={{ background: EVAL }} />from eval runs</span></div>
+      )}
       {mode === 'turns' && (
         <div className="sh-chart-legend"><span><i style={{ background: PLAIN }} />plain chat</span><span><i style={{ background: TOOL }} />used the tool agent</span></div>
       )}

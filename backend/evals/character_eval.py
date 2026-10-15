@@ -808,4 +808,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 
 if __name__ == "__main__":
+    from backend.utils import llm_usage
+
+    llm_usage.mark_as_eval()  # counted on the usage page as eval spend, but never toward the budget that can pause chat
     raise SystemExit(main())

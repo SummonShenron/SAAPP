@@ -18,13 +18,21 @@ export const BarRow: React.FC<{ label: React.ReactNode; value: React.ReactNode; 
   </div>
 );
 
-/** The day and month spend bars of the usage budget. */
+const SCOPE_LABELS: Record<string, string> = {
+  day: 'Today',
+  month: 'This month',
+  five: 'Last 5 hours',
+  my_day: 'Your own limit, today',
+  my_five: 'Your own limit, last 5 hours',
+};
+
+/** The spend bars of the usage budget: the day, the month and the rolling five hours, plus a person's own limits when they have them. */
 export const BudgetBars: React.FC<{ budget: BudgetView }> = ({ budget }) => (
   <>
     {(budget.detail ?? []).map(item => (
       <BarRow
         key={`${item.scope}-${item.unit}`}
-        label={`${item.scope === 'day' ? 'Today' : 'This month'} (${item.unit === 'usd' ? 'dollars' : 'tokens'})`}
+        label={`${SCOPE_LABELS[item.scope] ?? item.scope} (${item.unit === 'usd' ? 'dollars' : 'tokens'})`}
         value={`${budgetAmount(item.unit, item.spent)} of ${budgetAmount(item.unit, item.limit)} (${Math.round(item.fraction * 100)}%)`}
         fraction={item.fraction}
         tone={budgetTone(item.fraction)}

@@ -65,3 +65,19 @@ def test_the_daily_series_holds_only_numbers_and_dates():
     out = sh.build_sonic_health(_DB([], [], []), 3, datetime(2026, 10, 12, 20, 0, tzinfo=timezone.utc))
     for d in out["usage"]["daily"]:
         assert all(isinstance(v, (int, float, type(None))) for k, v in d.items() if k != "day")
+
+
+def test_a_days_eval_calls_are_split_out_while_the_totals_still_count_everything():
+    docs = [
+        {**row("2026-10-12", calls=4, input=1_000_000), "label": "native_loop.run"},
+        {**row("2026-10-12", calls=6, input=2_000_000), "label": "eval:native_loop.run"},
+    ]
+    out = lu.summarize_daily(docs, PRICES, DAYS)[2]
+    assert out["calls"] == 10 and out["tokens"] == 3_000_000 and out["cost"] == 3.0
+    assert out["eval_calls"] == 6 and out["eval_tokens"] == 2_000_000 and out["eval_cost"] == 2.0
+
+
+def test_a_day_with_no_eval_use_reports_zero_and_no_prices_means_no_eval_cost():
+    out = lu.summarize_daily([row("2026-10-12", calls=3)], PRICES, DAYS)[2]
+    assert out["eval_calls"] == 0 and out["eval_tokens"] == 0 and out["eval_cost"] == 0.0
+    assert all(r["eval_cost"] is None for r in lu.summarize_daily([row("2026-10-12")], {}, DAYS))
