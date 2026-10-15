@@ -1,7 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import sonicSpinImg from '../assets/sonic-rolling.gif';
-import shadowSpinImg from '../assets/shadow.gif';
+import Spinner from './Spinner';
 import type { AuthGateState } from '../hooks/useAuthReady';
 import './__styles__/AuthLoadingScreen.css';
 
@@ -10,7 +9,7 @@ import './__styles__/AuthLoadingScreen.css';
  * is not ready. It says what is happening: first "Signing you in", then, if it is taking a while (a phone, or a server that was asleep), that
  * it may take up to a minute, and if it never works, what to do about it.
  */
-const AuthLoadingScreen: React.FC<{ state: Exclude<AuthGateState, 'ready'>; slow: boolean; onRetry: () => void; theme?: string }> = ({ state, slow, onRetry, theme }) => {
+const AuthLoadingScreen: React.FC<{ state: Exclude<AuthGateState, 'ready'>; slow: boolean; onRetry: () => void }> = ({ state, slow, onRetry }) => {
   const navigate = useNavigate();
   const failed = state !== 'checking';
   const title = state === 'checking' ? 'Signing you in…' : state === 'denied' ? 'Your sign-in was not accepted' : "Couldn't reach the server";
@@ -25,7 +24,7 @@ const AuthLoadingScreen: React.FC<{ state: Exclude<AuthGateState, 'ready'>; slow
 
   return (
     <main className="auth-loading" role="status" aria-live="polite" aria-busy={!failed}>
-      {!failed && <img className="auth-loading-spinner" src={theme === 'shadow' ? shadowSpinImg : sonicSpinImg} alt="" />}
+      {!failed && <Spinner size={56} />}
       <h2 className="auth-loading-title">{title}</h2>
       <p className="auth-loading-detail">{detail}</p>
       {failed && (

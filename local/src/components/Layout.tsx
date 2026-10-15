@@ -170,7 +170,7 @@ if (typeof window !== 'undefined') {
       {authReady ? (
         <Outlet />
       ) : (
-        <AuthLoadingScreen state={auth.state as 'checking' | 'denied' | 'timeout'} slow={auth.slow} onRetry={auth.retry} theme={theme} />
+        <AuthLoadingScreen state={auth.state as 'checking' | 'denied' | 'timeout'} slow={auth.slow} onRetry={auth.retry} />
       )}
 
       {/* Help / onboarding overlay */}
