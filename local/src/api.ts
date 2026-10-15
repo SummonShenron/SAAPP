@@ -1,4 +1,6 @@
 // src/api.ts
+import type { SessionCheck } from './utils/authReady';
+
 declare global {
   interface Window {
     Clerk?: {
@@ -9,6 +11,7 @@ declare global {
   }
 }
 const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+const VERIFY_TIMEOUT_MS = 25_000; // one try at confirming the session may wait this long on a server that is still waking up
 
 export const BASE_URL = import.meta.env.VITE_API_BASE || 
   (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
@@ -137,6 +140,39 @@ export const getAuthHeaders = async (): Promise<Record<string, string>> => {
 
   return headers;
 };
+/**
+ * One try at confirming this browser is fully signed in: for a Clerk user, Clerk has loaded and has a session that can hand over a token;
+ * for anyone, the server has accepted those credentials on a cheap authenticated call. 'retry' means "not yet" (Clerk still loading, no
+ * token yet, the server still waking up or unreachable), 'denied' means Clerk has no session or the server refused the token. The page waits
+ * on this before it lets anyone send anything (components/Layout.tsx, hooks/useAuthReady.ts), because a message sent before it is true goes
+ * out with no usable login token and is refused.
+ */
+export async function verifySession(): Promise<SessionCheck> {
+  const principal = getEffectivePrincipal();
+  const headers: Record<string, string> = { "Content-Type": "application/json", "X-Principal": principal, "x-user-id": principal };
+  if (isGuestPrincipal(principal)) {
+    headers["Authorization"] = `Bearer ${principal === 'guest_bty' ? 'guest-bty-token' : 'guest-sandbox-token'}`;
+  } else {
+    const clerk = (window as any).Clerk;
+    if (!clerk?.loaded) return 'retry'; // the script has not finished starting (slow on a phone)
+    if (!clerk.session) return 'denied'; // loaded, and nobody is signed in
+    const token = await clerk.session.getToken();
+    if (!token) return 'retry';
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), VERIFY_TIMEOUT_MS); // a sleeping server can hold a request open for a long time
+  try {
+    const res = await fetch(`${BASE_URL}/api/affiliates?username=${encodeURIComponent(principal)}`, { headers, signal: controller.signal });
+    if (res.ok) return 'ready';
+    return res.status === 401 || res.status === 403 ? 'denied' : 'retry';
+  } catch {
+    return 'retry';
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Fetch current principal from backend.
  */
@@ -1285,6 +1321,7 @@ export const api = {
   updateOpsDigest,
   getBudget,
   extendBudget,
+  verifySession,
   requestConversationOpening,
   getTargetRepo,
   updateTargetRepo,

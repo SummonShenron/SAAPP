@@ -1,0 +1,59 @@
+/* The screen shown in place of the page until the person is fully signed in (components/AuthLoadingScreen.tsx). It takes the app's own theme
+   variables, so it matches light and dark ("shadow") without a rule of its own for either. */
+.auth-loading {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  min-height: 60vh;
+  padding: 2rem 16px;
+  text-align: center;
+  color: var(--text-main, #1f2937);
+}
+
+.auth-loading-spinner {
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
+}
+
+.auth-loading-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.auth-loading-detail {
+  margin: 0;
+  max-width: 28rem;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: var(--text-muted, #64748b);
+}
+
+.auth-loading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+}
+
+.auth-loading-btn {
+  padding: 0.5rem 1.1rem;
+  min-height: 44px; /* a comfortable tap target on a phone */
+  border-radius: 8px;
+  border: 1px solid var(--accent-primary, #2563eb);
+  background: var(--accent-primary, #2563eb);
+  color: #ffffff;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.auth-loading-btn-quiet {
+  background: transparent;
+  color: inherit;
+}

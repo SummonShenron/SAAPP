@@ -7,10 +7,11 @@ const RETRY_DELAYS_MS = [1500, 4000, 10000];
 
 /** Whether the signed-in user is in the Global_Admins group. Only decides what to SHOW (a nav link); the server enforces
  *  admin access on every admin endpoint, so a wrong answer here can never expose anything. */
-export function useIsGlobalAdmin(): boolean {
+export function useIsGlobalAdmin(enabled: boolean = true): boolean {
   const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
+    if (!enabled) return; // not until the person is fully signed in (hooks/useAuthReady.ts)
     const principal = getEffectivePrincipal();
     if (!principal || isGuestPrincipal(principal)) return;
     let cancelled = false;
@@ -30,7 +31,7 @@ export function useIsGlobalAdmin(): boolean {
     attempt(RETRY_DELAYS_MS.length);
 
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
-  }, []);
+  }, [enabled]);
 
   return isAdmin;
 }

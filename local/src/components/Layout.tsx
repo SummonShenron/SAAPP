@@ -3,6 +3,8 @@ import { Outlet, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { api, getEffectivePrincipal, isGuestPrincipal } from "../api";
 import { useIsGlobalAdmin } from "../hooks/useIsGlobalAdmin";
+import { useAuthReady } from "../hooks/useAuthReady";
+import AuthLoadingScreen from "../components/AuthLoadingScreen";
 import HelpPanel from "../components/HelpPanel";
 import { useAuth } from '@clerk/clerk-react';
 
@@ -18,7 +20,17 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
   const [showHelp, setShowHelp] = useState(false);
   const [closing, setClosing] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const isAdmin = useIsGlobalAdmin();
+
+  // --- EMBED MODE DETECTION ---
+  const hashSearch = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
+  const searchParams = new URLSearchParams(window.location.search || hashSearch);
+  const isEmbedded = searchParams.get('mode') === 'embed' || window.location.href.includes("mode=embed");
+
+  // Nothing behind the nav renders, loads or can be sent until the person is fully signed in (hooks/useAuthReady.ts). The embedded widget has
+  // its own guest identity and never waits.
+  const auth = useAuthReady(isEmbedded);
+  const authReady = auth.state === 'ready';
+  const isAdmin = useIsGlobalAdmin(authReady);
 
   const HELP_CLOSE_ANIMATION_MS = 200;
 
@@ -42,11 +54,6 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
     return () => window.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showHelp]);
-
-  // --- EMBED MODE DETECTION ---
-const hashSearch = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
-const searchParams = new URLSearchParams(window.location.search || hashSearch);
-const isEmbedded = searchParams.get('mode') === 'embed' || window.location.href.includes("mode=embed");
 
 // Bootstrap guest identity synchronously so children see it on first render
 if (typeof window !== 'undefined') {
@@ -73,7 +80,7 @@ if (typeof window !== 'undefined') {
   // embed iframe never renders it at all (see the isEmbedded early return below), so skip the
   // check entirely there rather than fetching a setting nothing will use.
   useEffect(() => {
-    if (!isLoaded || isEmbedded) return;
+    if (!isLoaded || isEmbedded || !authReady) return;
     const hasAuth = isSignedIn || !!localStorage.getItem('guest_token');
     if (!hasAuth) return;
 
@@ -82,7 +89,7 @@ if (typeof window !== 'undefined') {
         if (!data.has_seen_help) setShowHelp(true);
       })
       .catch((err) => console.warn("Could not fetch help-seen setting:", err));
-  }, [isLoaded, isSignedIn, isEmbedded]);
+  }, [isLoaded, isSignedIn, isEmbedded, authReady]);
 
   const handleNavClick = (path: string) => {
     navigate(path);
@@ -159,8 +166,12 @@ if (typeof window !== 'undefined') {
         </div>
       )}
 
-      {/* Main page content */}
-      <Outlet />
+      {/* Main page content: only once the person is fully signed in */}
+      {authReady ? (
+        <Outlet />
+      ) : (
+        <AuthLoadingScreen state={auth.state as 'checking' | 'denied' | 'timeout'} slow={auth.slow} onRetry={auth.retry} theme={theme} />
+      )}
 
       {/* Help / onboarding overlay */}
       {showHelp && (
