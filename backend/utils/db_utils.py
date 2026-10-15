@@ -5,6 +5,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional, Any
 
+from backend.utils import db_monitor
+
 load_dotenv()
 logger = logging.getLogger("SASS Logger")
 # Global variable to hold the client so we don't reconnect every time
@@ -22,7 +24,8 @@ def get_db():
         
     if _client is None:
         uri = os.getenv("MONGO_URI")
-        _client = MongoClient(uri)
+        # The listener logs any command slower than a couple of seconds, with its collection and reply size (backend/utils/db_monitor.py).
+        _client = MongoClient(uri, event_listeners=[db_monitor.SlowCommandLogger()])
     # logger.info(f"Connecting to MongoDB at: {os.environ.get('MONGO_URI', 'NOT SET')}")
     # 'saapp_database' will be the name of your DB in the cluster
     return _client['saapp_database']

@@ -61,7 +61,8 @@ _current: ContextVar[Optional["Turn"]] = ContextVar("llm_turn", default=None)
 class Turn:
     """What one chat turn has used so far."""
 
-    def __init__(self) -> None:
+    def __init__(self, user: Optional[str] = None) -> None:
+        self.user = user  # who the turn is for, only so their own usage can be added up (backend/utils/user_usage.py)
         self.calls = 0
         self.input = 0
         self.output = 0
@@ -88,9 +89,10 @@ def _today() -> str:
     return billing_time.day()
 
 
-def begin() -> Turn:
-    """Starts counting a turn in the current context and returns it. Never raises."""
-    turn = Turn()
+def begin(user: Optional[str] = None) -> Turn:
+    """Starts counting a turn in the current context and returns it. `user` (optional) is who it is for: the turn's tokens are then also
+    added to that person's own hourly count (backend/utils/user_usage.py) when it finishes. Never raises."""
+    turn = Turn(user)
     try:
         _current.set(turn)
     except Exception:
@@ -216,6 +218,10 @@ def finish(turn: Optional[Turn], outcome: str = "ok", day: Optional[str] = None)
                 return
             turn.done = True
         key = day or _today()
+        if turn.user and outcome != "blocked":
+            from backend.utils import user_usage
+
+            user_usage.add(turn.user, turn.input + turn.output, turn.calls)
         with _lock:
             slot = _pending.setdefault(key, {field: 0 for field in FIELDS})
             if outcome == "blocked":

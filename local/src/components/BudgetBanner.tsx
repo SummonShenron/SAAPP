@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { BudgetView } from '../api';
 import './__styles__/BudgetBanner.css';
 
@@ -8,6 +8,7 @@ import './__styles__/BudgetBanner.css';
  * - Low-power mode and a paused chat are shown to everyone, because they explain a change in how Sonic behaves.
  * - The early "notice" step and the meter chip are for admins only (the server only sends them amounts and percentages).
  * - Nothing at all is shown when no budget is configured or the budget is comfortable and the person isn't an admin.
+ * - When the shared budget has paused chat, an admin also gets a button that raises the block line by 25% (`onExtend`).
  */
 function when(iso: string | null | undefined): string {
   if (!iso) return 'it resets';
@@ -16,25 +17,52 @@ function when(iso: string | null | undefined): string {
   return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
+const SCOPE_TEXT: Record<string, string> = { five: '5 hours', my_day: 'your day', my_five: 'your 5 hours' };
+
 function chipText(budget: BudgetView): string {
   const percent = Math.round((budget.fraction ?? 0) * 100);
-  return `Budget ${percent}%${budget.scope ? ` of ${budget.scope}` : ''}`;
+  const scope = budget.scope ? (SCOPE_TEXT[budget.scope] ?? budget.scope) : '';
+  const raised = budget.extended_by ? ` (+${Math.round(budget.extended_by * 100)}%)` : '';
+  return `Budget ${percent}%${scope ? ` of ${scope}` : ''}${raised}`;
 }
 
-const BudgetBanner: React.FC<{ budget: BudgetView | null; theme?: string }> = ({ budget, theme }) => {
+const BudgetBanner: React.FC<{ budget: BudgetView | null; theme?: string; onExtend?: () => Promise<void> }> = ({ budget, theme, onExtend }) => {
+  const [extending, setExtending] = useState(false);
+  const [extendError, setExtendError] = useState('');
   if (!budget || budget.level === 'off') return null;
   const hasChip = typeof budget.fraction === 'number';
   const showMessage = budget.level !== 'ok' && Boolean(budget.message);
   if (!showMessage && !hasChip) return null;
 
+  const own = Boolean(budget.own_limit);
   let text = budget.message;
-  if (budget.level === 'throttled') text = `Low-power mode until ${when(budget.resets_at)}: ${budget.message.replace(/^Low-power mode:\s*/, '')}`;
-  if (budget.level === 'blocked') text = `Paused until ${when(budget.resets_at)}: the usage budget has been reached.`;
+  if (budget.level === 'throttled') text = `Low-power mode until ${when(budget.resets_at)}: ${budget.message.replace(/^Low-power mode( for you)?:\s*/, '')}`;
+  if (budget.level === 'blocked') text = `Paused until ${when(budget.resets_at)}: ${own ? 'you have reached your usage limit' : 'the usage budget has been reached'}.`;
   const paused = budget.paused.length ? `Paused: ${budget.paused.join(', ')}.` : undefined;
+  const canExtend = Boolean(onExtend) && budget.level === 'blocked' && Boolean(budget.can_extend);
+
+  const extend = async () => {
+    if (!onExtend || extending) return;
+    setExtending(true);
+    setExtendError('');
+    try {
+      await onExtend();
+    } catch (e) {
+      setExtendError(e instanceof Error ? e.message : 'Could not extend the budget.');
+    } finally {
+      setExtending(false);
+    }
+  };
 
   return (
     <div className={`budget-banner budget-${budget.level}${theme === 'shadow' ? ' budget-dark' : ''}`} role="status" aria-live="polite" title={paused}>
       {showMessage && <span className="budget-banner-text">{text}</span>}
+      {canExtend && (
+        <button type="button" className="budget-extend" onClick={extend} disabled={extending} title="Admins only: raise the block line by another 25% until this budget resets">
+          {extending ? 'Extending…' : 'Extend by 25%'}
+        </button>
+      )}
+      {extendError && <span className="budget-extend-error">{extendError}</span>}
       {hasChip && (
         <span className="budget-chip" title="Share of the usage budget used (admins only)">
           {chipText(budget)}

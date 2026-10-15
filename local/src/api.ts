@@ -584,8 +584,11 @@ export interface SafetySummary {
   ladder: Record<string, Record<string, number>>;
 }
 
+/** 'five' is the rolling five-hour window; 'my_day' / 'my_five' are one person's own limits. */
+export type BudgetScope = 'day' | 'month' | 'five' | 'my_day' | 'my_five';
+
 export interface BudgetDetail {
-  scope: 'day' | 'month';
+  scope: BudgetScope;
   unit: 'usd' | 'tokens';
   spent: number;
   limit: number;
@@ -602,18 +605,36 @@ export interface BudgetView {
   paused: string[];
   resets_at: string | null;
   fraction?: number;
-  scope?: 'day' | 'month';
+  scope?: BudgetScope;
   unit?: 'usd' | 'tokens';
   spent?: number;
   limit?: number;
   detail?: BudgetDetail[];
   unpriced_tokens?: number;
+  /** Everyone: the limit in force is this person's own, not the shared one. */
+  own_limit?: boolean;
+  /** Admins only: the shared budget has paused chat and +25% is on offer. */
+  can_extend?: boolean;
+  /** Admins only: how far the block line has already been raised (0.25 = +25%). */
+  extended_by?: number;
 }
 
 export async function getBudget(): Promise<BudgetView> {
   const authHeaders = await getAuthHeaders();
   const res = await fetch(`${BASE_URL}/api/budget`, { headers: { ...authHeaders } });
   if (!res.ok) throw new Error("Failed to fetch the usage budget.");
+  return res.json();
+}
+
+/** Admins only: raises the block line of the shared budget that paused chat by another 25%, until that budget resets. Returns the new state. */
+export async function extendBudget(): Promise<BudgetView> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/budget/extend`, { method: "POST", headers: { ...authHeaders } });
+  if (!res.ok) {
+    let detail = '';
+    try { detail = (await res.json())?.detail ?? ''; } catch { /* no JSON body */ }
+    throw new Error(typeof detail === 'string' && detail ? detail : `Could not extend the budget (${res.status}).`);
+  }
   return res.json();
 }
 
@@ -693,6 +714,10 @@ export interface UsageDay {
   unpriced_tokens: number;
   turns: number;
   tool_turns: number;
+  /** The part of `calls`, `tokens` and `cost` that came from a run of the evals (they are counted in the totals, so the app's own use is the difference). */
+  eval_calls?: number;
+  eval_tokens?: number;
+  eval_cost?: number | null;
 }
 
 export interface UsageSummary {
@@ -1259,6 +1284,7 @@ export const api = {
   getOpsDigest,
   updateOpsDigest,
   getBudget,
+  extendBudget,
   requestConversationOpening,
   getTargetRepo,
   updateTargetRepo,

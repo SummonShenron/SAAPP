@@ -16,7 +16,8 @@ from backend.utils.safety_utils import CRISIS_RESOURCE_LINE
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 NOW = datetime(2026, 10, 10, 15, 0, tzinfo=timezone.utc)
 ENV = ("LLM_BUDGET_DAILY_USD", "LLM_BUDGET_MONTHLY_USD", "LLM_BUDGET_DAILY_TOKENS", "LLM_BUDGET_MONTHLY_TOKENS",
-       "LLM_BUDGET_NOTICE_AT", "LLM_BUDGET_BLOCK_AT", "LLM_PRICES")
+       "LLM_BUDGET_NOTICE_AT", "LLM_BUDGET_BLOCK_AT", "LLM_PRICES", "LLM_BUDGET_5H_USD", "LLM_BUDGET_5H_TOKENS",
+       "LLM_USER_BUDGET_5H_TOKENS", "LLM_USER_BUDGET_DAILY_TOKENS")
 
 
 def run(coro):
@@ -145,13 +146,56 @@ class _Col:
         return [dict(r) for r in self.rows if r["day"] >= floor]
 
 
-class _DB:
+class _Other:
+    """Any collection the guard reads besides the day rows: hour rows, a person's rows, admin extensions. Each holds plain dicts."""
+
     def __init__(self, rows=(), fail=False):
+        self.rows, self.fail, self.queries, self.updates = [dict(r) for r in rows], fail, [], []
+
+    def _matches(self, flt, row):
+        for key, want in flt.items():
+            have = row.get(key)
+            if isinstance(want, dict) and "$gte" in want:
+                if have is None or have < want["$gte"]:
+                    return False
+            elif have != want:
+                return False
+        return True
+
+    def find(self, flt, projection=None):
+        self.queries.append(flt)
+        if self.fail:
+            raise OSError("db down")
+        return [dict(r) for r in self.rows if self._matches(flt, r)]
+
+    def find_one(self, flt, projection=None):
+        found = self.find(flt, projection)
+        return found[0] if found else None
+
+    def update_one(self, flt, update, upsert=False):
+        if self.fail:
+            raise OSError("db down")
+        row = next((r for r in self.rows if self._matches(flt, r)), None)
+        if row is None:
+            row = dict(flt)
+            self.rows.append(row)
+        row.update(update.get("$set", {}))
+        for key, by in update.get("$inc", {}).items():
+            row[key] = row.get(key, 0) + by
+        self.updates.append((flt, update))
+
+
+class _DB:
+    def __init__(self, rows=(), fail=False, hourly=(), people=(), extensions=()):
         self.col = _Col(list(rows), fail)
+        self.others = {
+            lu.HOURLY_COLLECTION: _Other(hourly, fail), "llm_usage_user_hourly": _Other(people, fail), bg.EXTENSIONS_COLLECTION: _Other(extensions, fail),
+        }
 
     def __getitem__(self, name):
-        assert name == lu.COLLECTION
-        return self.col
+        if name == lu.COLLECTION:
+            return self.col
+        return self.others[name]
 
 
 def test_the_state_comes_from_the_saved_rows_and_whatever_is_still_in_memory(monkeypatch):
@@ -309,7 +353,7 @@ def _app_source():
 
 def test_the_chat_turn_decides_the_budget_first_and_pauses_the_extras_and_the_model_when_told_to():
     source = _app_source()
-    state_at = source.index("budget_state = await asyncio.to_thread(budget_guard.current_state)")
+    state_at = source.index("budget_state = await asyncio.to_thread(budget_guard.current_state, None, None, None if is_admin_user else username)")
     assert state_at < source.index('"budget_level": budget_state.get("level")') < source.index("async def token_streamer():")
     assert "effective_deep_thinking = False" in source[state_at: state_at + 300]
     for gate in ('budget_guard.allows("answer_recheck", budget_state)', 'budget_guard.allows("memory_summaries", budget_state)',
@@ -326,8 +370,9 @@ def test_the_chat_turn_decides_the_budget_first_and_pauses_the_extras_and_the_mo
 def test_the_budget_endpoint_is_thin_and_everyone_signed_in_may_ask_but_only_admins_get_amounts():
     source = _app_source()
     start = source.index('@app.get("/api/budget")')
-    block = source[start: source.index('@app.get("/api/settings/proactive-opening")')]
-    assert "Depends(get_current_user)" in block and "budget_guard.public_view(state, is_global_admin(" in block and len(block.splitlines()) < 12
+    block = source[start: source.index('@app.post("/api/budget/extend")')]
+    assert "Depends(get_current_user)" in block and "budget_guard.public_view(state, admin)" in block and "is_global_admin(" in block
+    assert len(block.splitlines()) < 12
 
 
 def test_the_health_page_reports_the_budget_to_admins():
@@ -355,3 +400,197 @@ def test_the_already_spent_amount_moves_the_monthly_dollar_budget_and_not_the_da
     assert detail["month"]["spent"] == pytest.approx(50.02) and detail["day"]["spent"] == 0
     assert state["level"] == bg.NOTICE and state["scope"] == "month"      # 83% of the month before a single call is counted
     assert bg.current_state(_DB([]), datetime(2026, 11, 2, tzinfo=timezone.utc))["detail"][0]["spent"] == 0  # and gone in November
+
+
+# ---- the five-hour window, per-person limits and extending a block ----------------------------------------------------------------
+
+def hour_row(hour, input_tokens=0, output_tokens=0, model="m"):
+    return {"hour": hour, "model": model, "calls": 1, "input": input_tokens, "output": output_tokens, "reasoning": 0, "cached": 0}
+
+
+def person_row(user, hour, tokens):
+    return {"user": user, "hour": hour, "tokens": tokens, "calls": 1, "turns": 1}
+
+
+def test_the_five_hour_and_per_person_limits_are_read_from_their_own_settings(monkeypatch):
+    monkeypatch.setenv("LLM_BUDGET_5H_USD", "0.60")
+    monkeypatch.setenv("LLM_BUDGET_5H_TOKENS", "500000")
+    monkeypatch.setenv("LLM_USER_BUDGET_5H_TOKENS", "300000")
+    monkeypatch.setenv("LLM_USER_BUDGET_DAILY_TOKENS", "0")  # not a limit
+    assert bg.budgets() == {"five_usd": 0.6, "five_tokens": 500_000.0}
+    assert bg.user_budgets() == {"my_five_tokens": 300_000.0}
+
+
+def test_the_window_is_this_hour_and_the_four_before_it_and_older_hours_are_left_out():
+    rows = [hour_row("2026-10-10T10", 9_000), hour_row("2026-10-10T11", 100, 20), hour_row("2026-10-10T15", 5)]
+    totals = bg.spent([], NOW, {}, rows)
+    assert bg.window_start_hour(NOW) == "2026-10-10T11"
+    assert totals["five_tokens"] == 125
+
+
+def test_the_window_prices_its_usage_like_the_day_does():
+    prices = {"m": {"input": 1.0, "output": 2.0, "cached_input": 1.0}}
+    totals = bg.spent([], NOW, prices, [hour_row("2026-10-10T14", 1_000_000, 500_000)])
+    assert totals["five_usd"] == pytest.approx(2.0)
+
+
+def test_the_window_says_when_it_next_has_room_from_its_oldest_hour_with_any_use():
+    totals = bg.spent([], NOW, {}, [hour_row("2026-10-10T12", 10), hour_row("2026-10-10T14", 10), hour_row("2026-10-10T13", 0)])
+    assert totals["five_reset"] == datetime(2026, 10, 10, 17, 0, tzinfo=timezone.utc)  # 12:00 + 5h, so then it drops
+    assert bg.spent([], NOW, {}, [])["five_reset"] == datetime(2026, 10, 10, 16, 0, tzinfo=timezone.utc)  # nothing in it: an hour on
+
+
+def test_a_burst_trips_the_five_hour_window_long_before_the_daily_budget_notices(monkeypatch):
+    monkeypatch.setenv("LLM_BUDGET_DAILY_TOKENS", "1000000")
+    monkeypatch.setenv("LLM_BUDGET_5H_TOKENS", "1000")
+    db = _DB([row("m", "2026-10-10", 1_500, 0)], hourly=[hour_row("2026-10-10T14", 1_500)])
+    state = bg.current_state(db, NOW)
+    assert state["level"] == bg.BLOCKED and state["scope"] == "five" and state["blocked_scopes"] == ["five"]
+    assert state["resets_at"].startswith("2026-10-10T19:00")  # 14:00 + 5h, UTC
+
+
+def test_the_hour_rows_are_only_read_when_a_five_hour_limit_is_set(monkeypatch):
+    monkeypatch.setenv("LLM_BUDGET_DAILY_TOKENS", "1000")
+    db = _DB([row("m", "2026-10-10", 10, 0)])
+    bg.current_state(db, NOW)
+    assert db.others[lu.HOURLY_COLLECTION].queries == []
+
+
+def test_the_blocked_message_names_the_time_for_a_five_hour_window_and_the_day_for_a_day():
+    five = bg.blocked_reply("2026-10-10T19:00:00+00:00", False, "five")
+    assert "until 12:00 PM (Pacific time)" in five and "my usage limit" in five
+    assert "until 2026-10-11 (Pacific time)" in bg.blocked_reply("2026-10-11T07:00:00+00:00", False, "day")
+    own = bg.blocked_reply("2026-10-10T19:00:00+00:00", False, "my_five")
+    assert "your own usage limit" in own and "12:00 PM" in own
+
+
+def test_an_extension_raises_the_block_line_of_its_own_scope_only(monkeypatch):
+    limits = {"five_tokens": 1000.0, "day_tokens": 1000.0}
+    totals = {"five_tokens": 1_400, "day_tokens": 100, "five_reset": NOW}
+    assert bg.evaluate(totals, limits, NOW)["level"] == bg.BLOCKED
+    extended = bg.evaluate(totals, limits, NOW, {"five": 0.25})                  # 125% + 25%: the block line is now 150%
+    assert extended["level"] == bg.THROTTLED and extended["paused"] and extended["extended_by"] == 0.25
+    assert bg.evaluate({**totals, "five_tokens": 1_550}, limits, NOW, {"five": 0.25})["level"] == bg.BLOCKED
+    other = bg.evaluate(totals, limits, NOW, {"day": 0.25})                      # extending the day does nothing for the window
+    assert other["level"] == bg.BLOCKED and other["blocked_scopes"] == ["five"]
+
+
+def test_an_extension_never_lowers_the_throttle_line_so_low_power_stays_on(monkeypatch):
+    state = bg.evaluate({"day_tokens": 1_100}, {"day_tokens": 1000.0}, NOW, {"day": 0.25})
+    assert state["level"] == bg.THROTTLED and bg.low_power(state)
+
+
+def test_a_running_extension_saved_by_an_admin_is_honoured_and_an_expired_one_is_not(monkeypatch):
+    monkeypatch.setenv("LLM_BUDGET_DAILY_TOKENS", "1000")
+    monkeypatch.setenv("LLM_BUDGET_5H_TOKENS", "1000")
+    soon, past = "2026-10-10T20:00:00+00:00", "2026-10-10T10:00:00+00:00"
+    extensions = [{"scope": "day", "extra": 0.25, "until": soon}, {"scope": "five", "extra": 0.5, "until": past}]
+    db = _DB([row("m", "2026-10-10", 1_300, 0)], hourly=[hour_row("2026-10-10T14", 1_300)], extensions=extensions)
+    state = bg.current_state(db, NOW)
+    assert dict((d["scope"], d["fraction"]) for d in state["detail"]) == {"day": 1.3, "five": 1.3}
+    assert state["blocked_scopes"] == ["five"]  # the day's block line moved to 150%; the five-hour one expired, so it is back at 125%
+
+
+def test_granting_an_extension_adds_a_step_records_who_and_when_and_ends_with_the_scope(monkeypatch):
+    monkeypatch.setenv("LLM_BUDGET_DAILY_TOKENS", "1000")
+    db = _DB([row("m", "2026-10-10", 1_300, 0)])
+    state = bg.current_state(db, NOW)
+    assert bg.extendable_scopes(state) == ["day"]
+    first = bg.grant_extension(db, "admin@example.com", state, NOW)
+    saved = db.others[bg.EXTENSIONS_COLLECTION].rows[0]
+    assert first["extended"] == [{"scope": "day", "extra": 0.25, "until": bg.billing_time.next_day_start(NOW).isoformat()}]
+    assert saved["extra"] == 0.25 and saved["grants"] == [{"by": "admin@example.com", "at": NOW.isoformat(), "extra": 0.25}]
+    # The state, read again, is no longer blocked: 130% is under the new 150% line (but still throttled).
+    assert bg.current_state(db, NOW)["level"] == bg.THROTTLED
+    db.col.rows[0]["input"] = 1_600
+    bg._reset_cache()
+    again = bg.current_state(db, NOW)
+    assert again["level"] == bg.BLOCKED
+    bg.grant_extension(db, "admin@example.com", again, NOW)
+    assert db.others[bg.EXTENSIONS_COLLECTION].rows[0]["extra"] == 0.5 and len(db.others[bg.EXTENSIONS_COLLECTION].rows[0]["grants"]) == 2
+
+
+def test_a_grant_after_the_last_one_ran_out_starts_again_from_one_step(monkeypatch):
+    monkeypatch.setenv("LLM_BUDGET_5H_TOKENS", "1000")
+    old = {"scope": "five", "extra": 0.75, "until": "2026-10-10T09:00:00+00:00", "grants": [{"by": "a", "at": "x", "extra": 0.75}]}
+    db = _DB(hourly=[hour_row("2026-10-10T14", 1_400)], extensions=[old])
+    state = bg.current_state(db, NOW)
+    assert state["level"] == bg.BLOCKED
+    bg.grant_extension(db, "admin@example.com", state, NOW)
+    saved = db.others[bg.EXTENSIONS_COLLECTION].rows[0]
+    assert saved["extra"] == 0.25 and len(saved["grants"]) == 1
+    assert saved["until"] == "2026-10-10T20:00:00+00:00"  # a five-hour window has no fixed end: five hours from the grant
+
+
+def test_nothing_blocking_means_nothing_is_granted(monkeypatch):
+    monkeypatch.setenv("LLM_BUDGET_DAILY_TOKENS", "1000")
+    db = _DB([row("m", "2026-10-10", 100, 0)])
+    assert bg.grant_extension(db, "admin@example.com", bg.current_state(db, NOW), NOW) == {"extended": []}
+    assert db.others[bg.EXTENSIONS_COLLECTION].rows == []
+
+
+def test_a_person_over_their_own_five_hour_limit_is_paused_and_nobody_else_is(monkeypatch):
+    monkeypatch.setenv("LLM_USER_BUDGET_5H_TOKENS", "1000")
+    db = _DB(people=[person_row("jack", "2026-10-10T14", 1_300), person_row("sam", "2026-10-10T14", 100)])
+    mine = bg.current_state(db, NOW, "jack")
+    assert mine["level"] == bg.BLOCKED and mine["scope"] == "my_five" and mine["resets_at"].startswith("2026-10-10T19:00")
+    assert bg.current_state(db, NOW, "sam")["level"] == bg.OK
+    assert bg.current_state(db, NOW)["level"] == bg.OFF  # no person named (an admin, or anything that is not a turn): no per-person limit applies
+
+
+def test_a_persons_own_daily_limit_counts_their_billing_day(monkeypatch):
+    monkeypatch.setenv("LLM_USER_BUDGET_DAILY_TOKENS", "1000")
+    # Pacific midnight is 07:00 UTC: 06:00 UTC belongs to yesterday's billing day, 07:00 to today's.
+    db = _DB(people=[person_row("jack", "2026-10-10T06", 5_000), person_row("jack", "2026-10-10T07", 600), person_row("jack", "2026-10-10T14", 500)])
+    state = bg.current_state(db, NOW, "jack")
+    assert state["scope"] == "my_day" and state["spent"] == 1_100 and state["level"] == bg.THROTTLED
+
+
+def test_the_turn_that_just_finished_counts_toward_a_persons_limit_before_it_is_saved(monkeypatch):
+    from backend.utils import user_usage
+
+    user_usage.reset()
+    monkeypatch.setenv("LLM_USER_BUDGET_5H_TOKENS", "1000")
+    db = _DB(people=[person_row("jack", "2026-10-10T14", 600)])
+    user_usage.add("jack", 500, 2, now=NOW)
+    assert bg.current_state(db, NOW, "jack")["spent"] == 1_100
+    user_usage.reset()
+
+
+def test_a_persons_own_limit_is_not_something_an_admin_can_extend_and_it_reads_as_theirs(monkeypatch):
+    monkeypatch.setenv("LLM_USER_BUDGET_5H_TOKENS", "1000")
+    state = bg.current_state(_DB(people=[person_row("jack", "2026-10-10T14", 1_300)]), NOW, "jack")
+    assert state["level"] == bg.BLOCKED and bg.extendable_scopes(state) == []
+    seen = bg.public_view(state, False)
+    assert seen["own_limit"] is True and "your usage limit" in seen["message"] and "spent" not in seen
+    admin = bg.public_view(state, True)
+    assert admin["can_extend"] is False
+
+
+def test_an_admin_is_told_when_plus_25_percent_is_on_offer_and_how_far_it_has_gone(monkeypatch):
+    monkeypatch.setenv("LLM_BUDGET_DAILY_TOKENS", "1000")
+    state = bg.current_state(_DB([row("m", "2026-10-10", 1_300, 0)]), NOW)
+    assert bg.public_view(state, True)["can_extend"] is True
+    assert "can_extend" not in bg.public_view(state, False)  # nobody else is shown the lever, or any amount
+
+
+def test_the_extend_endpoint_is_admin_only_refuses_when_nothing_is_blocking_and_saves_off_the_event_loop():
+    source = _app_source()
+    start = source.index('@app.post("/api/budget/extend")')
+    block = source[start: source.index('@app.get("/api/settings/proactive-opening")')]
+    assert block.index("is_global_admin(") < block.index("status_code=403") < block.index("extendable_scopes(") < block.index("status_code=409")
+    assert "await asyncio.to_thread(budget_guard.grant_extension, get_db(), username, state)" in block
+    assert block.index("grant_extension") < block.index("budget_guard.public_view(fresh, True)")
+    assert username_not_logged(block)
+
+
+def username_not_logged(block):
+    """The log line about a grant names no one (the saved grant does)."""
+    log = next(line for line in block.splitlines() if "logger.info" in line)
+    return "username" not in log
+
+
+def test_the_chat_turn_applies_a_persons_own_limits_to_everyone_but_admins_and_says_which_limit_it_was():
+    source = _app_source()
+    assert "budget_guard.current_state, None, None, None if is_admin_user else username" in source
+    assert "budget_guard.blocked_reply(budget_state.get('resets_at'), crisis, budget_state.get('scope'))" in source

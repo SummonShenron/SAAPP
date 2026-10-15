@@ -2152,7 +2152,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
             </div>
           )}
 
-          {!isEmbedded && <BudgetBanner budget={budget} theme={theme} />}
+          {!isEmbedded && <BudgetBanner budget={budget} theme={theme} onExtend={async () => setBudget(await api.extendBudget())} />}
           <form onSubmit={onSubmitForm} className="chat-input-area">
             <input
               id="file-upload"

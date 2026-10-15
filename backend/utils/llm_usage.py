@@ -32,7 +32,15 @@ from backend.utils import billing_time, llm_turns
 logger = logging.getLogger("SASS Logger")
 
 COLLECTION = "llm_usage_daily"
+# The same counts by HOUR (UTC, "YYYY-MM-DDTHH") and model, without the caller label: small, and enough to add up a rolling window such as
+# the budget guard's five hours (budget_guard.py). Days are Google's Pacific days; hours are UTC so a daylight-saving change can't repeat one.
+HOURLY_COLLECTION = "llm_usage_hourly"
 ROUTES_COLLECTION = "llm_model_routes"
+# A run of the evals (backend/evals) is real spend but not the app's own: it is counted under a label that starts with this, so the usage page
+# still shows it, and the budget guard leaves it out (it must never be able to pause chat). The evals' command-line entry points call
+# mark_as_eval(); nothing else sets this.
+SOURCE_ENV = "LLM_USAGE_SOURCE"
+EVAL_PREFIX = "eval:"
 FIELDS = ("calls", "input", "output", "reasoning", "cached")
 FLUSH_AFTER_CALLS = 40
 FLUSH_AFTER_SECONDS = 120
@@ -46,6 +54,7 @@ _PLUMBING_PREFIXES = (
 
 _lock = threading.Lock()
 _buffer: Dict[Tuple[str, str, str], Dict[str, int]] = {}
+_hourly: Dict[Tuple[str, str], Dict[str, int]] = {}  # (hour, model) -> counts; written with the daily rows
 _buffered_calls = 0
 _last_flush = time.monotonic()
 _flushing = False
@@ -132,15 +141,38 @@ def _today() -> str:
     return billing_time.day()  # Google's day (Pacific), so "today" here is "today" on its Spend page
 
 
+def mark_as_eval() -> None:
+    """Called at the start of an eval run: from here every call is counted as eval spend (see EVAL_PREFIX)."""
+    os.environ[SOURCE_ENV] = "eval"
+
+
+def is_eval_label(label: Any) -> bool:
+    return str(label or "").startswith(EVAL_PREFIX)
+
+
+def hour_key(now: Optional[datetime] = None) -> str:
+    """The UTC hour a moment falls in, "YYYY-MM-DDTHH". Sorts as text in time order, so a range read is a plain `$gte`."""
+    moment = now or datetime.now(timezone.utc)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H")
+
+
 def record(model: str, label: str, usage: Dict[str, int], day: Optional[str] = None) -> None:
     """Counts one call. Cheap, in memory, and silent on any failure."""
     global _buffered_calls
     try:
+        from_eval = os.getenv(SOURCE_ENV, "").strip().lower() == "eval"
+        label = EVAL_PREFIX + str(label or "unknown") if from_eval and not is_eval_label(label) else label
         key = (day or _today(), str(model or "unknown")[:80], str(label or "unknown")[:120])
         with _lock:
             slot = _buffer.setdefault(key, empty_usage())
             slot["calls"] += 1
             add_into(slot, usage)
+            if not from_eval:  # the hour rows exist only for the budget guard's window, which an eval must not move
+                hour_slot = _hourly.setdefault((hour_key(), key[1]), empty_usage())
+                hour_slot["calls"] += 1
+                add_into(hour_slot, usage)
             _buffered_calls += 1
             due = _buffered_calls >= FLUSH_AFTER_CALLS or (time.monotonic() - _last_flush) >= FLUSH_AFTER_SECONDS
         if due:
@@ -173,10 +205,17 @@ def snapshot() -> Dict[Tuple[str, str, str], Dict[str, int]]:
         return {key: dict(value) for key, value in _buffer.items()}
 
 
+def hourly_snapshot() -> Dict[Tuple[str, str], Dict[str, int]]:
+    """What has been counted by (hour, model) and not yet saved."""
+    with _lock:
+        return {key: dict(value) for key, value in _hourly.items()}
+
+
 def reset() -> None:
     global _buffered_calls, _flushing
     with _lock:
         _buffer.clear()
+        _hourly.clear()
         _routes.clear()
         _buffered_calls = 0
         _flushing = False
@@ -193,6 +232,12 @@ def flush(db: Any = None) -> int:
             llm_turns.flush(db)
         except Exception:
             pass
+        try:
+            from backend.utils import user_usage
+
+            user_usage.flush(db)
+        except Exception:
+            pass
 
 
 def _flush_usage(db: Any = None) -> int:
@@ -201,12 +246,14 @@ def _flush_usage(db: Any = None) -> int:
     global _buffered_calls, _last_flush
     with _lock:
         pending = dict(_buffer)
+        pending_hourly = dict(_hourly)
         pending_routes = dict(_routes)
         _buffer.clear()
+        _hourly.clear()
         _routes.clear()
         _buffered_calls = 0
         _last_flush = time.monotonic()
-    if not pending and not pending_routes:
+    if not pending and not pending_routes and not pending_hourly:
         return 0
     written = 0
     try:
@@ -223,6 +270,10 @@ def _flush_usage(db: Any = None) -> int:
                 upsert=True,
             )
             written += 1
+        for (hour, model), counts in pending_hourly.items():
+            db[HOURLY_COLLECTION].update_one(
+                {"hour": hour, "model": model}, {"$inc": {field: counts.get(field, 0) for field in FIELDS}}, upsert=True
+            )
         for (day, requested, served, kind), calls in pending_routes.items():
             db[ROUTES_COLLECTION].update_one(
                 {"day": day, "requested": requested, "served": served, "kind": kind}, {"$inc": {"calls": calls}}, upsert=True
@@ -233,6 +284,10 @@ def _flush_usage(db: Any = None) -> int:
         with _lock:
             for key, counts in pending.items():
                 slot = _buffer.setdefault(key, empty_usage())
+                for field in FIELDS:
+                    slot[field] = slot.get(field, 0) + counts.get(field, 0)
+            for key, counts in pending_hourly.items():
+                slot = _hourly.setdefault(key, empty_usage())
                 for field in FIELDS:
                     slot[field] = slot.get(field, 0) + counts.get(field, 0)
             for key, calls in pending_routes.items():
@@ -275,6 +330,12 @@ def fetch_usage_docs(db: Any, days: int, now: Optional[datetime] = None) -> List
     except Exception:
         logger.warning("[llm_usage] could not read the usage counts.")
         return []
+
+
+def fetch_hourly_docs(db: Any, since_hour: str) -> List[Dict[str, Any]]:
+    """The saved hour rows from `since_hour` ("YYYY-MM-DDTHH") on. Blocking. Raises on a database error: the budget guard decides what a
+    failed read means (it steps aside, so cost control can never be the reason chat is down)."""
+    return list(db[HOURLY_COLLECTION].find({"hour": {"$gte": since_hour}}, {"_id": 0}))
 
 
 def fetch_route_docs(db: Any, days: int, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
@@ -345,11 +406,16 @@ def _with_rates(counts: Dict[str, int], total_tokens: int) -> Dict[str, Any]:
 
 
 def summarize_daily(docs: Iterable[Dict[str, Any]], prices: Optional[Dict[str, Dict[str, float]]], days: List[str]) -> List[Dict[str, Any]]:
-    """One row per billing day in `days` (oldest first), for the page's chart: `{day, calls, input, output, tokens, cost, unpriced_tokens}`.
-    A day with no rows is all zeros, so the chart's axis has no holes. `cost` is the estimate from `prices` (dollars, `None` when no price is
-    configured at all); tokens from a model with no price are counted in `unpriced_tokens`, never guessed. Pure."""
+    """One row per billing day in `days` (oldest first), for the page's chart: `{day, calls, input, output, tokens, cost, unpriced_tokens,
+    eval_calls, eval_tokens, eval_cost}`. A day with no rows is all zeros, so the chart's axis has no holes. `cost` is the estimate from
+    `prices` (dollars, `None` when no price is configured at all); tokens from a model with no price are counted in `unpriced_tokens`, never
+    guessed. The first figures count EVERYTHING; the `eval_` ones are the part of them that came from a run of the evals (labels that start
+    with EVAL_PREFIX), so the app's own use is the difference. Pure."""
     prices = prices or {}
-    rows: Dict[str, Dict[str, Any]] = {day: {"day": day, "calls": 0, "input": 0, "output": 0, "cost": 0.0, "unpriced_tokens": 0} for day in days}
+    rows: Dict[str, Dict[str, Any]] = {
+        day: {"day": day, "calls": 0, "input": 0, "output": 0, "cost": 0.0, "unpriced_tokens": 0, "eval_calls": 0, "eval_tokens": 0, "eval_cost": 0.0}
+        for day in days
+    }
     for doc in docs:
         row = rows.get(str(doc.get("day")))
         if row is None:
@@ -362,11 +428,16 @@ def summarize_daily(docs: Iterable[Dict[str, Any]], prices: Optional[Dict[str, D
             row["unpriced_tokens"] += _count(doc.get("input")) + _count(doc.get("output"))
         else:
             row["cost"] += cost
+        if is_eval_label(doc.get("label")):
+            row["eval_calls"] += _count(doc.get("calls"))
+            row["eval_tokens"] += _count(doc.get("input")) + _count(doc.get("output"))
+            row["eval_cost"] += cost or 0.0
     out = []
     for day in days:
         row = rows[day]
         row["tokens"] = row["input"] + row["output"]
         row["cost"] = round(row["cost"], 4) if prices else None
+        row["eval_cost"] = round(row["eval_cost"], 4) if prices else None
         out.append(row)
     return out
 

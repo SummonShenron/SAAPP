@@ -105,10 +105,11 @@ class _Col:
 class _DB:
     def __init__(self):
         self.col = _Col()
+        self.hourly = _Col()
 
     def __getitem__(self, name):
-        assert name == lu.COLLECTION
-        return self.col
+        assert name in (lu.COLLECTION, lu.HOURLY_COLLECTION)
+        return self.col if name == lu.COLLECTION else self.hourly
 
 
 def test_calls_are_counted_per_day_model_and_caller():
@@ -139,6 +140,40 @@ def test_a_failed_write_keeps_the_counts_for_the_next_flush():
     assert lu.snapshot()[("2026-10-10", "m1", "node.a")]["input"] == 10
     db.col.fail = False
     assert lu.flush(db) == 1 and db.col.docs[0]["input"] == 10
+
+
+def test_the_hour_key_is_the_utc_hour_and_sorts_in_time_order():
+    from datetime import datetime, timedelta, timezone
+
+    moment = datetime(2026, 10, 14, 23, 59, tzinfo=timezone(timedelta(hours=-7)))  # 06:59 UTC the next day
+    assert lu.hour_key(moment) == "2026-10-15T06"
+    assert lu.hour_key(datetime(2026, 10, 14, 9, 5)) == "2026-10-14T09"  # no zone is taken to be UTC
+    assert lu.hour_key(datetime(2026, 10, 14, 9, tzinfo=timezone.utc)) < lu.hour_key(datetime(2026, 10, 14, 10, tzinfo=timezone.utc))
+
+
+def test_calls_are_also_counted_by_hour_and_model_without_the_caller_label(monkeypatch):
+    monkeypatch.setattr(lu, "hour_key", lambda now=None: "2026-10-14T09")
+    lu.record("m1", "node.a", {"input": 100, "output": 10, "reasoning": 0, "cached": 0}, day="2026-10-14")
+    lu.record("m1", "node.b", {"input": 50, "output": 5, "reasoning": 0, "cached": 0}, day="2026-10-14")
+    lu.record("m2", "node.a", {"input": 7, "output": 7, "reasoning": 0, "cached": 0}, day="2026-10-14")
+    hourly = lu.hourly_snapshot()
+    assert hourly[("2026-10-14T09", "m1")] == {"calls": 2, "input": 150, "output": 15, "reasoning": 0, "cached": 0}
+    assert len(hourly) == 2
+
+
+def test_the_hourly_rows_are_saved_with_the_daily_ones_and_kept_when_the_write_fails(monkeypatch):
+    monkeypatch.setattr(lu, "hour_key", lambda now=None: "2026-10-14T09")
+    db = _DB()
+    lu.record("m1", "node.a", {"input": 10, "output": 2, "reasoning": 0, "cached": 0}, day="2026-10-14")
+    lu.flush(db)
+    assert db.hourly.docs == [{"hour": "2026-10-14T09", "model": "m1", "calls": 1, "input": 10, "output": 2, "reasoning": 0, "cached": 0}]
+    db.col.fail = db.hourly.fail = True
+    lu.record("m1", "node.a", {"input": 5, "output": 1, "reasoning": 0, "cached": 0}, day="2026-10-14")
+    assert lu.flush(db) == 0
+    assert lu.hourly_snapshot()[("2026-10-14T09", "m1")]["input"] == 5  # not lost: it goes out with the next flush
+    db.col.fail = db.hourly.fail = False
+    lu.flush(db)
+    assert db.hourly.docs[0]["input"] == 15
 
 
 def test_with_no_database_nothing_is_lost_or_raised(monkeypatch):
