@@ -15,7 +15,7 @@ from functools import partial
 from pathlib import Path
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from backend.models.attachment import Attachment
 from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
@@ -1959,7 +1959,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
 
         def _run_mongo_code(code: str):
             local_scope = {"db": db, "username": username, "result": None}
-            exec(code, {"__builtins__": exec_builtins}, local_scope)
+            exec(code, mongo_query_globals(exec_builtins), local_scope)
             return local_scope.get("result", None)
 
         _CHECKOUT_EXCLUDE_DIR_NAMES = ("node_modules", "dist", "__pycache__")
@@ -2451,7 +2451,11 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 "- run_mongo_query — args: code (a string of executable PyMongo code that assigns "
                 "its output to a variable named result; wrap cursor operations like find()/aggregate() "
                 "in list(...); for text-field matching prefer a MongoDB regex with case-insensitive "
-                "options over strict equality)"
+                "options over strict equality; imports are not allowed, but `datetime` (the class: "
+                "datetime.now(timezone.utc), datetime.fromisoformat(...)), `timedelta` and `timezone` are already "
+                "available; stored timestamps such as created_at/updated_at on conversations and sent_at on "
+                "messages are ISO-8601 strings, so they can be compared directly as strings, e.g. "
+                "{'updated_at': {'$gte': '2026-10-14'}})"
             )
             menu_lines.append(
                 "- run_repo_tests — args: test_commands (one or more lines, each exactly "
@@ -3690,6 +3694,14 @@ def _recover_create_issue(messages: list, repo_hint: str) -> dict | None:
     if not title:
         return None
     return {"title": title, "body": body, "repo": repo}
+
+
+def mongo_query_globals(builtins: dict) -> dict:
+    """The globals a `run_mongo_query` snippet runs with: the small set of allowed built-ins, plus `datetime` (the class, so `datetime.now(timezone.utc)` and
+    `datetime.fromisoformat(...)` work), `timedelta` and `timezone`. They are here because the sandbox has no `__import__`, so a snippet cannot import them
+    itself, and a question about "today" or "two days ago" cannot be answered without them. Imports stay blocked. They are globals, not locals, so they are
+    also visible inside comprehensions and lambdas (a name only in the local scope is not)."""
+    return {"__builtins__": builtins, "datetime": datetime, "timedelta": timedelta, "timezone": timezone}
 
 
 def _execute_run_mongo_write(username: str, details: dict) -> str:

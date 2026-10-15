@@ -17,33 +17,9 @@
   flex: 1 1 auto;
 }
 
-.budget-chip {
-  order: -1; /* before the message, so the chip is on the left in every state */
-  flex: 0 0 auto;
-  padding: 0.1rem 0.55rem;
-  border-radius: 999px;
-  font-size: 0.72rem;
-  font-weight: 600;
-  background: rgba(100, 116, 139, 0.18);
-  color: #64748b;
-  white-space: nowrap;
-}
-
-/* On the left: the mascot sits at the right edge of the chat box and covers anything aligned there. */
-.budget-ok {
-  justify-content: flex-start;
-  padding: 0;
-  margin-bottom: 0.25rem;
-}
-
 .budget-notice {
   background: rgba(245, 158, 11, 0.12);
   border-color: rgba(245, 158, 11, 0.45);
-  color: #b45309;
-}
-
-.budget-notice .budget-chip {
-  background: rgba(245, 158, 11, 0.22);
   color: #b45309;
 }
 
@@ -53,27 +29,16 @@
   color: #c2410c;
 }
 
-.budget-throttled .budget-chip {
-  background: rgba(249, 115, 22, 0.24);
-  color: #c2410c;
-}
-
 .budget-blocked {
   background: rgba(239, 68, 68, 0.13);
   border-color: rgba(239, 68, 68, 0.5);
   color: #b91c1c;
 }
 
-.budget-blocked .budget-chip {
-  background: rgba(239, 68, 68, 0.24);
-  color: #b91c1c;
-}
-
 /* The app's own dark theme ("shadow"), not the operating system's setting. */
-.budget-dark .budget-chip { color: #94a3b8; }
-.budget-dark.budget-notice, .budget-dark.budget-notice .budget-chip { color: #fbbf24; }
-.budget-dark.budget-throttled, .budget-dark.budget-throttled .budget-chip { color: #fb923c; }
-.budget-dark.budget-blocked, .budget-dark.budget-blocked .budget-chip { color: #f87171; }
+.budget-dark.budget-notice { color: #fbbf24; }
+.budget-dark.budget-throttled { color: #fb923c; }
+.budget-dark.budget-blocked { color: #f87171; }
 
 /* The admin's "Extend by 25%" button, shown only on a blocked banner (components/BudgetBanner.tsx). */
 .budget-extend {

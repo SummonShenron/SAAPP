@@ -1,0 +1,58 @@
+/* The usage ring beside the "..." button (components/UsageRing.tsx). */
+.usage-ring {
+  position: relative;
+  flex: 0 0 auto;
+  align-self: center; /* the buttons beside it are taller: keep it on their middle line */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+  outline: none;
+}
+
+.usage-ring-track {
+  stroke: rgba(100, 116, 139, 0.3);
+}
+
+/* It fills smoothly when usage grows. */
+.usage-ring-fill {
+  transition: stroke-dashoffset 0.6s ease, stroke 0.3s ease;
+}
+
+.usage-ring:focus-visible .usage-ring-track {
+  stroke: rgba(100, 116, 139, 0.6);
+}
+
+/* The words, shown above the ring on hover, keyboard focus or a tap. Anchored to the ring's right edge so it grows leftward, away from the
+   screen's edge, which the icon row sits against on a phone. */
+.usage-ring-tip {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  padding: 0.3rem 0.6rem;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #f8fafc;
+  border: 1px solid #334155;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+  font-size: 0.74rem;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  z-index: 20;
+}
+
+.usage-ring:hover .usage-ring-tip,
+.usage-ring:focus-visible .usage-ring-tip,
+.usage-ring-tapped .usage-ring-tip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .usage-ring-fill, .usage-ring-tip { transition: none; }
+}

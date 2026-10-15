@@ -15,6 +15,7 @@ import { getDynamicExampleQuestions } from '../utils/Example_List';
 import { shrinkImageFile } from '../utils/imageShrink';
 import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type BudgetView, type KnowledgeBase } from '../api';
 import BudgetBanner from '../components/BudgetBanner';
+import UsageRing from '../components/UsageRing';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -2183,6 +2184,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               />
 
               <div className="icon-row-overlay">
+                {!isEmbedded && <UsageRing budget={budget} />}
                 <div style={{ position: "relative" }}>
                   <button
                     type="button"
