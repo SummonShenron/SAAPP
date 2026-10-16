@@ -204,16 +204,42 @@ class TranscriptMessages(list):
     messages are already stored. save_conversation_turn appends only what comes after that point,
     so a copy that has fallen behind the database (another backend instance sharing the same Mongo
     saved in the meantime) can never overwrite what the other instance wrote — the old
-    replace-the-whole-transcript save did exactly that and silently deleted a morning's messages."""
+    replace-the-whole-transcript save did exactly that and silently deleted a morning's messages.
+
+    A long thread is megabytes (3,400 messages took ~25 s to load on the slow database link), and a turn only ever uses the end of it, so only the last
+    TAIL_MESSAGES are loaded into memory. `base` is how many of the thread's leading messages are not in this list, and `persisted` stays the number
+    of messages stored in total, so the list's own stored part is its first `persisted - base` messages."""
     persisted: int = 0
+    base: int = 0
 
 
-def load_session_messages(username: str, session_id: str) -> "TranscriptMessages":
-    """The saved transcript of one conversation as LangChain messages (empty if it's brand new).
-    Loaded on first use per conversation instead of warm-starting every user's every thread at boot."""
-    convo = load_user_conversation(username, session_id)
-    transcript = TranscriptMessages(_deserialize_messages(convo.get("messages", [])) if convo else [])
-    transcript.persisted = len(transcript)
+TAIL_MESSAGES = int(os.getenv("CONVERSATION_TAIL_MESSAGES", "200"))
+
+
+def load_session_messages(username: str, session_id: str, tail: int | None = None) -> "TranscriptMessages":
+    """The saved transcript of one conversation as LangChain messages (empty if it's brand new): with Mongo, the last `tail` messages (default
+    TAIL_MESSAGES), cut out on the server so the rest of a long thread is never sent. Loaded on first use per conversation instead of warm-starting
+    every user's every thread at boot."""
+    db = get_db()
+    if db is None:
+        convo = load_user_conversation(username, session_id)
+        transcript = TranscriptMessages(_deserialize_messages(convo.get("messages", [])) if convo else [])
+        transcript.persisted = len(transcript)
+        return transcript
+    keep = max(tail if tail is not None else TAIL_MESSAGES, 1)
+    row = next(iter(db["conversations"].aggregate([
+        {"$match": {"username": username, "session_id": session_id}},
+        {"$project": {
+            "_id": 0,
+            "total": {"$size": {"$ifNull": ["$messages", []]}},
+            "tail": {"$slice": [{"$ifNull": ["$messages", []]}, -keep]},
+        }},
+    ])), None)
+    messages = _deserialize_messages((row or {}).get("tail", []))
+    total = int((row or {}).get("total", 0))
+    transcript = TranscriptMessages(messages)
+    transcript.persisted = total
+    transcript.base = max(total - len(row["tail"]), 0) if row else 0
     return transcript
 
 
@@ -233,12 +259,13 @@ def sync_session_messages(username: str, session_id: str, transcript: "Transcrip
     remote = sizes[0]["n"] if sizes else 0
     if remote == transcript.persisted:
         return
-    unsaved = list(transcript[transcript.persisted:])
+    stored_here = transcript.persisted - transcript.base  # how many of this list's own messages are the stored ones
+    unsaved = list(transcript[stored_here:])
     if remote > transcript.persisted:
         doc = db["conversations"].find_one(
             match, {"_id": 0, "messages": {"$slice": [transcript.persisted, remote - transcript.persisted]}}
         ) or {}
-        transcript[:] = list(transcript[:transcript.persisted]) + _deserialize_messages(doc.get("messages", [])) + unsaved
+        transcript[:] = list(transcript[:stored_here]) + _deserialize_messages(doc.get("messages", [])) + unsaved
         transcript.persisted = remote
         logger.info("Synced %s::%s: picked up messages saved elsewhere (now %d stored).", username, session_id, remote)
         return
@@ -246,6 +273,7 @@ def sync_session_messages(username: str, session_id: str, transcript: "Transcrip
     fresh = load_session_messages(username, session_id)
     transcript[:] = list(fresh) + unsaved
     transcript.persisted = fresh.persisted
+    transcript.base = fresh.base
 
 
 def save_user_conversations(username: str, conversations: list) -> None:
@@ -294,9 +322,15 @@ def save_conversation_turn(username: str, session_id: str, messages: list) -> di
 
     if db is not None:
         match = {"username": username, "session_id": session_id}
-        append_only = isinstance(messages, TranscriptMessages) and messages.persisted <= len(serialized_messages)
+        base = messages.base if isinstance(messages, TranscriptMessages) else 0
+        append_only = isinstance(messages, TranscriptMessages) and messages.persisted - base <= len(serialized_messages)
+        if base and not append_only:
+            # Only the end of the thread is in memory, so a list shorter than what it stored cannot be written back as "the whole transcript": that would
+            # delete everything before it. Nothing in the app removes messages from a live thread, so this is a bug if it ever happens; do no harm.
+            logger.warning("Not saving %s::%s: the in-memory thread is shorter than what it loaded, and only its tail is held.", username, session_id)
+            return doc
         if append_only:
-            delta = serialized_messages[messages.persisted:]
+            delta = serialized_messages[messages.persisted - base:]
             update = {
                 "$set": {"updated_at": now},
                 "$setOnInsert": {"title": title, "created_at": doc["created_at"]},
@@ -309,7 +343,7 @@ def save_conversation_turn(username: str, session_id: str, messages: list) -> di
         else:
             db["conversations"].update_one(match, {"$set": doc}, upsert=True)
         if isinstance(messages, TranscriptMessages):
-            messages.persisted = len(serialized_messages)
+            messages.persisted = base + len(serialized_messages)
         return doc
 
     remaining = [c for c in all_conversations if c.get("session_id") != session_id]

@@ -44,6 +44,8 @@
   --light-shadow-hover: none;
   --shadow-dark-hover: none;
   --float-shadow: 0 8px 24px rgba(20, 35, 74, 0.16);
+  --popover-bg: #ffffff;        /* menus and popovers */
+  --on-accent: #ffffff;         /* text on a solid accent button */
 }
 
 /* THEME OVERRIDE: THE DARK THEME. (The class is still called theme-shadow from when this was a deliberately edgy red-and-black "Shadow" theme.)
@@ -61,12 +63,12 @@
   --text-main: #e8e8ea;
   --text-muted: #8e8e95;
   --text: #f5f5f6;
-  --accent-primary: #f0883e;     /* the one colour: orange */
+  --accent-primary: #cf8a5a;     /* the one colour: a muted, slightly dusty orange (it was #f0883e, which glowed) */
   --accent-success: #3dba8c;
   --accent-danger: #ef4444;
-  --accent-hover: #d9741f;
-  --accent-soft: rgba(240, 136, 62, 0.12);
-  --accent-ring: rgba(240, 136, 62, 0.25);
+  --accent-hover: #b9764a;
+  --accent-soft: rgba(207, 138, 90, 0.12);
+  --accent-ring: rgba(207, 138, 90, 0.25);
   --edge: color-mix(in srgb, var(--accent-primary) 60%, transparent);  /* an orange panel edge */
   --card-tint: #131315;
   --tint-hover: #1d1d20;
@@ -74,6 +76,7 @@
   /* Component tokens */
   --panel-bg: #0e0e10;           /* rail, trace blade, nav */
   --popover-bg: #18181b;         /* menus and popovers */
+  --on-accent: #0a0a0b;          /* text on a solid accent button: white on the muted orange is too faint */
   --card-bg: #131315;            /* cards and tiles */
   --input-bg: #0d0d0f;
   --line: #262629;
@@ -196,12 +199,13 @@ body, html {
 
 /* ==========================================================================
    2. LANDING PAGE STYLES (Identity Gatekeeper)
-   An orange panel that fades to white at the seam, with the logo on the white side. The copy is navy (the logo's blue), which reads across the whole fade.
+   An orange panel that darkens to black at the seam, with the logo on the black side. The copy is black, which reads on the orange part of the panel (the
+   copy sits in its first half; the fade to black happens beyond it).
    ========================================================================== */
 .landing-page {
-  --landing-ink: #14234a;
-  --landing-ink-soft: #3b4a75;
-  --landing-rule: rgba(20, 35, 74, 0.25);
+  --landing-ink: #0a0a0b;
+  --landing-ink-soft: #3a1d0b;
+  --landing-rule: rgba(10, 10, 11, 0.3);
   display: flex;
   width: 100vw;
   height: 100vh;
@@ -213,14 +217,15 @@ body, html {
   flex-direction: column;
   justify-content: center;
   padding: 10% 5%;
-  /* Orange on the far left, dissolving into pure white at the center seam */
+  /* Orange across the first half, then darkening to black at the center seam */
   background: linear-gradient(
     90deg,
     #e8752a 0%,
-    #f08c44 30%,
-    #f6b07c 60%,
-    #fcdcc2 86%,
-    #ffffff 100%
+    #ee8238 35%,
+    #e5762a 55%,
+    #a8491a 74%,
+    #4a2008 90%,
+    #0a0a0b 100%
   );
   border-right: none;
   z-index: 2;
@@ -232,7 +237,8 @@ body, html {
   align-items: center;
   justify-content: center;
   position: relative;
-  background-color: #ffffff; /* Clean white backdrop to pop the logo */
+  background-color: #0a0a0b; /* Black backdrop to pop the logo */
+  flex-direction: column;
   overflow: hidden;
   padding: 2rem 3rem;
 }
@@ -242,7 +248,7 @@ body, html {
   content: '';
   position: absolute;
   inset: 0;
-  background: radial-gradient(circle at 50% 60%, color-mix(in srgb, var(--accent-primary) 7%, transparent) 0%, transparent 65%);
+  background: radial-gradient(circle at 50% 55%, rgba(240, 136, 62, 0.12) 0%, transparent 62%);
   pointer-events: none;
 }
 
@@ -252,16 +258,28 @@ body, html {
   object-fit: contain;
   z-index: 2;
   margin-top: 3rem;
-  filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.08));
   transition: transform 0.4s ease;
 }
 
 .landing-hero-logo:hover {
-  transform: translateY(-2px) scale(1.02);
+  transform: scale(1.02);
 }
 
-/* Navy copy on the orange-to-white panel */
-.landing-mobile-logo { display: none; margin-bottom: 0.75rem; color: var(--landing-ink); } /* the one-colour logo: the full-colour one's orange end would vanish on the orange */
+/* The company line under the logo */
+.landing-brand {
+  z-index: 2;
+  margin-top: 1.4rem;
+  font-size: 0.95rem;
+  font-weight: 500;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: #cf8a5a;
+  text-align: center;
+}
+
+/* Black copy on the orange panel */
+.landing-mobile-logo { display: none; margin-bottom: 0.4rem; color: var(--landing-ink); } /* the one-colour logo: the full-colour one's orange end would vanish on the orange */
+.landing-mobile-brand { display: none; margin-bottom: 0.9rem; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.3em; text-transform: uppercase; color: var(--landing-ink-soft); }
 
 .landing-hero-text h2 {
   font-size: 2.2rem;
@@ -309,6 +327,10 @@ body, html {
   box-shadow: none;
   transform: translateY(-2px);
 }
+/* On the landing page the buttons sit on orange, so the accent hover would vanish: black lifts a shade, the outlined one takes a faint dark wash. No lift. */
+.landing-page .enter-btn:hover:not(:disabled) { transform: none; }
+.landing-page .login-btn:hover:not(:disabled) { background-color: #26262b !important; }
+.landing-page .guest-btn:hover:not(:disabled) { background-color: rgba(10, 10, 11, 0.1) !important; }
 .enter-btn:active:not(:disabled) {
   background: var(--accent-hover);
   transform: translateY(2px);
@@ -1510,7 +1532,7 @@ select:not(:-internal-list-box):not([multiple]) option {
   border-radius: 50%;
   /* Per-segment easing lives on the keyframes themselves below (that's the only way to get a
      different feel per phase) — linear here is just the harmless fallback. */
-  animation: sonic-spin 3s linear infinite;
+  animation: sonic-spin 5.4s linear infinite;
   position: relative;
   flex-shrink: 0; /* Prevent the ring from squeezing */
 }
@@ -1540,29 +1562,26 @@ select:not(:-internal-list-box):not([multiple]) option {
 
 /* Shadow Engine Theme Override */
 .theme-shadow .sonic-ring-loader {
-  border: 4px solid rgba(240, 136, 62, 0.15); /* Faint track in the accent */
+  border: 4px solid rgba(207, 138, 90, 0.15); /* Faint track in the accent */
   border-top: 4px solid var(--accent-primary); /* The spinning arc */
   box-shadow: none;
 }
 
 .theme-shadow .sonic-ring-loader::after {
-  background: rgba(240, 136, 62, 0.25);
+  background: rgba(207, 138, 90, 0.25);
 }
 
 /* Animations */
 @keyframes sonic-spin {
-  /* Each keyframe's animation-timing-function governs the segment FROM that keyframe TO the
-     next one — this is the only way to give each phase its own feel instead of one curve
-     stretched over the whole animation. Total rotation across one cycle is 3240deg = 9 full
-     spins (a multiple of 360, so the loop restart at 0% is seamless) — most of that rotation
-     is deliberately packed into the decel tail below, not the burst, so it reads as a tire
-     winding down through several visible rotations rather than gliding to a stop in half a turn. */
-  0% { transform: rotate(0deg); animation-timing-function: ease-out; } /* wind-up: quick pull that settles into the cocked position */
-  12% { transform: rotate(-20deg); animation-timing-function: ease-in; } /* release: holds tension then snaps forward, building speed */
-  25% { transform: rotate(0deg); animation-timing-function: linear; } /* fast burst: already at speed */
-  40% { transform: rotate(900deg); animation-timing-function: ease-out; } /* 2.5 more rotations at full speed */
-  85% { transform: rotate(3060deg); animation-timing-function: ease-out; } /* decel tail: 6 more rotations, visibly slowing throughout */
-  100% { transform: rotate(3240deg); } /* final crawl: just half a rotation over the last 15% of the duration — the "last wheel rotation takes forever" moment */
+  /* One pull-back, then ONE continuous wind-down. Each keyframe's animation-timing-function governs the segment from that keyframe to the next.
+     The spin is a single segment (-24deg to 16 whole turns) on a single easing curve, so the speed rises quickly to about ten turns a second and then
+     falls away smoothly the whole way: nothing in it can stall and re-start, and the last turn, the last quarter turn and the last few degrees each take
+     longer than the one before, until it comes to rest exactly at the top (5760deg is a multiple of 360, so the loop restarts from where it stopped).
+     The last 5% of the cycle holds still at the top before the next pull-back. */
+  0% { transform: rotate(0deg); animation-timing-function: ease-out; }                     /* wind-up: a quick pull back to the cocked position */
+  7% { transform: rotate(-24deg); animation-timing-function: cubic-bezier(0.2, 0.3, 0.15, 1); }  /* release, then the wind-down: 16 turns, fast then ever slower */
+  95% { transform: rotate(5760deg); }
+  100% { transform: rotate(5760deg); }
 }
 /* Keeps the text pulsing while waiting */
 .loading-text {
@@ -1592,11 +1611,12 @@ select:not(:-internal-list-box):not([multiple]) option {
     justify-content: center;
     align-items: center;
     text-align: center;
-    /* One column: the orange fades to white down the page instead of across it */
-    background: linear-gradient(180deg, #e8752a 0%, #f08c44 25%, #f6b07c 55%, #fcdcc2 80%, #ffffff 100%);
+    /* One column: the orange deepens a little down the page instead of fading to black (the copy runs the whole length) */
+    background: linear-gradient(180deg, #ee8238 0%, #e8752a 55%, #c75d1d 100%);
   }
 
   .landing-mobile-logo { display: inline-block; }
+  .landing-mobile-brand { display: block; }
 
   .landing-right {
     display: none; /* Hide the desktop split image panel on mobile to save space */

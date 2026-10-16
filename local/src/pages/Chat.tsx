@@ -20,6 +20,7 @@ import UsageRing from '../components/UsageRing';
 import TracePanel, { type TraceStep } from '../components/TracePanel';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import LogoMark from '../components/LogoMark';
+import InputGlow from '../components/InputGlow';
 import Icon from '../components/icons';
 import { BRAND_NAME, BRAND_TAGLINE } from '../components/brand';
 import { shell } from '../components/shellStore';
@@ -243,9 +244,9 @@ const ChatMessageList = React.memo(function ChatMessageList({
             margin: '0.25rem auto 0.75rem',
             padding: '4px 14px',
             borderRadius: '999px',
-            background: 'rgba(51, 65, 85, 0.6)',
-            border: '1px solid #475569',
-            color: '#cbd5e1',
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border-color)',
+            color: 'var(--text-main)',
             fontSize: '0.8rem',
             cursor: loadingEarlier ? 'default' : 'pointer',
           }}
@@ -2060,7 +2061,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
         {!hasChatted && (
           <div className="example-cards-container">
             {loadingCards ? (
-              <div style={{ color: '#64748b', fontSize: '0.85rem', padding: '1rem' }}>
+              <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', padding: '1rem' }}>
                 Querying directory indices for security group context...
               </div>
             ) : (
@@ -2152,14 +2153,14 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                 gap: "8px",
                 padding: "10px 14px",
                 marginBottom: "8px",
-                background: isEmbedded ? "#121316" : "#121824",
-                border: isEmbedded ? "1px solid rgba(0, 242, 254, 0.4)" : "1px solid #334155",
+                background: isEmbedded ? "#121316" : "var(--bg-surface)",
+                border: isEmbedded ? "1px solid rgba(0, 242, 254, 0.4)" : "1px solid var(--border-color)",
                 borderRadius: "12px",
                 fontSize: "13px",
-                color: "#f8fafc",
+                color: "var(--text-main)",
               }}
             >
-              <span style={{ color: "#94a3b8", whiteSpace: "nowrap" }}>Target repo:</span>
+              <span style={{ color: "var(--text-muted)", whiteSpace: "nowrap" }}>Target repo:</span>
               <input
                 type="text"
                 value={repoInput}
@@ -2173,10 +2174,10 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                   flex: 1,
                   minWidth: 0,
                   background: "transparent",
-                  border: "1px solid #334155",
+                  border: "1px solid var(--border-color)",
                   borderRadius: "8px",
                   padding: "6px 10px",
-                  color: "#f8fafc",
+                  color: "var(--text-main)",
                   fontSize: "13px",
                 }}
               />
@@ -2189,7 +2190,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                   border: "none",
                   borderRadius: "8px",
                   padding: "6px 12px",
-                  color: "#fff",
+                  color: "var(--on-accent, #fff)",
                   fontSize: "13px",
                   cursor: repoSaving ? "not-allowed" : "pointer",
                 }}
@@ -2203,10 +2204,10 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                   disabled={repoSaving}
                   style={{
                     background: "transparent",
-                    border: "1px solid #334155",
+                    border: "1px solid var(--border-color)",
                     borderRadius: "8px",
                     padding: "6px 12px",
-                    color: "#cbd5e1",
+                    color: "var(--text-main)",
                     fontSize: "13px",
                     cursor: repoSaving ? "not-allowed" : "pointer",
                   }}
@@ -2217,7 +2218,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               <button
                 type="button"
                 onClick={() => setShowRepoBanner(false)}
-                style={{ background: "transparent", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: "14px" }}
+                style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: "14px" }}
               >
                 ✕
               </button>
@@ -2246,6 +2247,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
             />
 
             <div className="chat-input-wrapper">
+              <InputGlow />
               {/* The empty chat has the full-size Patchy; this small one takes over when the conversation starts. */}
               {patchyAllowed && showPatchy && hasChatted && (
                 <MiniPatchy
@@ -2402,8 +2404,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                         left: "0",
                         width: "260px",
                         maxWidth: "80vw",
-                        background: isEmbedded ? "#121316" : "#121824",
-                        border: isEmbedded ? "1px solid rgba(0, 242, 254, 0.4)" : "1px solid #334155",
+                        background: isEmbedded ? "#121316" : "var(--bg-surface)",
+                        border: isEmbedded ? "1px solid rgba(0, 242, 254, 0.4)" : "1px solid var(--border-color)",
                         textDecoration: "none",
                         padding: "12px 14px",
                         borderRadius: "12px",
@@ -2412,7 +2414,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                           : "0 10px 25px -5px rgba(0, 0, 0, 0.5)",
                         zIndex: 100,
                         fontSize: "12px",
-                        color: "#f8fafc",
+                        color: "var(--text-main)",
                         lineHeight: "1.4"
                       }}
                     >
@@ -2426,7 +2428,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                           top: "8px",
                           right: "10px",
                           cursor: "pointer",
-                          color: "#94a3b8",
+                          color: "var(--text-muted)",
                           fontSize: "14px",
                           lineHeight: 1,
                           padding: "2px"
@@ -2440,7 +2442,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                       <strong style={{ color: "#38bdf8", display: "block", marginBottom: "6px", fontSize: "13px", paddingRight: "16px" }}>
                         Secure Index Tip:
                       </strong>
-                      <ul style={{ margin: 0, paddingLeft: "16px", display: "flex", flexDirection: "column", gap: "6px", color: "#cbd5e1" }}>
+                      <ul style={{ margin: 0, paddingLeft: "16px", display: "flex", flexDirection: "column", gap: "6px", color: "var(--text-main)" }}>
                         <li>Please be as specific as possible when asking questions to get the most accurate responses.</li>
                         <li>Due to operating on cost-sensitive infrastructure, response times may vary or be unavailable due to model demand.</li>
                         {isEmbedded && (
@@ -2465,7 +2467,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
 
                 <button
                   type={loading && !input.trim() ? "button" : "submit"}
-                  className="circle-icon-button"
+                  className="circle-icon-button send-button"
                   onClick={loading && !input.trim() ? stopGeneration : undefined}
                   disabled={!loading && !input.trim()}
                   title={loading ? (input.trim() ? "Steer Sonic" : "Stop generating") : "Send"}
@@ -2715,19 +2717,19 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
             backdropFilter: 'blur(4px)'
           }}>
             <div style={{
-              background: '#1e293b',
-              border: '1px solid rgba(148, 163, 184, 0.2)',
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border-color)',
               borderRadius: '12px',
               padding: '1.5rem',
               width: '100%',
               maxWidth: '400px',
-              color: '#f8fafc',
+              color: 'var(--text-main)',
               boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)'
             }}>
               <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.1rem', fontWeight: 600 }}>
                 Delete this conversation?
               </h3>
-              <p style={{ margin: '0 0 1.25rem 0', fontSize: '0.85rem', color: '#94a3b8' }}>
+              <p style={{ margin: '0 0 1.25rem 0', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
                 This clears the chat and removes it from your conversations list. This can't be undone.
               </p>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
@@ -2738,8 +2740,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                     padding: '0.4rem 0.8rem',
                     borderRadius: '6px',
                     background: 'transparent',
-                    border: '1px solid #475569',
-                    color: '#cbd5e1',
+                    border: '1px solid var(--border-color)',
+                    color: 'var(--text-main)',
                     cursor: 'pointer',
                     fontSize: '0.85rem'
                   }}
@@ -2778,25 +2780,25 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
             backdropFilter: 'blur(4px)'
           }}>
             <div style={{
-              background: '#1e293b',
-              border: '1px solid rgba(148, 163, 184, 0.2)',
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border-color)',
               borderRadius: '12px',
               padding: '1.5rem',
               width: '100%',
               maxWidth: '450px',
-              color: '#f8fafc',
+              color: 'var(--text-main)',
               boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)'
             }}>
               <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.1rem', fontWeight: 600 }}>
                 Specify Negative Feedback
               </h3>
-              <p style={{ margin: '0 0 1rem 0', fontSize: '0.85rem', color: '#94a3b8' }}>
+              <p style={{ margin: '0 0 1rem 0', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
                 Help improve future responses by categorizing and explaining the issue.
               </p>
 
               <form onSubmit={handleSubmitNegativeFeedback}>
                 <div style={{ marginBottom: '1rem' }}>
-                  <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem', color: '#cbd5e1' }}>
+                  <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem', color: 'var(--text-main)' }}>
                     Category Tag
                   </label>
                   <select
@@ -2806,9 +2808,9 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                       width: '100%',
                       padding: '0.5rem',
                       borderRadius: '6px',
-                      background: '#0f172a',
-                      border: '1px solid #334155',
-                      color: '#f8fafc',
+                      background: 'var(--bg-main)',
+                      border: '1px solid var(--border-color)',
+                      color: 'var(--text-main)',
                       fontSize: '0.875rem'
                     }}
                   >
@@ -2821,7 +2823,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                 </div>
 
                 <div style={{ marginBottom: '1.25rem' }}>
-                  <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem', color: '#cbd5e1' }}>
+                  <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem', color: 'var(--text-main)' }}>
                     Reason / Details
                   </label>
                   <textarea
@@ -2834,9 +2836,9 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                       width: '100%',
                       padding: '0.5rem',
                       borderRadius: '6px',
-                      background: '#0f172a',
-                      border: '1px solid #334155',
-                      color: '#f8fafc',
+                      background: 'var(--bg-main)',
+                      border: '1px solid var(--border-color)',
+                      color: 'var(--text-main)',
                       fontSize: '0.875rem',
                       resize: 'vertical',
                       boxSizing: 'border-box'
@@ -2852,8 +2854,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                       padding: '0.4rem 0.8rem',
                       borderRadius: '6px',
                       background: 'transparent',
-                      border: '1px solid #475569',
-                      color: '#cbd5e1',
+                      border: '1px solid var(--border-color)',
+                      color: 'var(--text-main)',
                       cursor: 'pointer',
                       fontSize: '0.85rem'
                     }}

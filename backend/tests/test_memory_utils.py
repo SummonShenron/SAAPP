@@ -747,7 +747,7 @@ def test_fetch_goal_nudge_context_never_raises_on_internal_error(monkeypatch):
 
 def test_save_user_facts_does_not_write_json_when_mongo_is_used(monkeypatch, tmp_path):
     fake_collection = Mock()
-    fake_db = {"user_memory_facts": fake_collection}
+    fake_db = {"user_memory_facts": fake_collection, "user_memory_fact_embeddings": Mock()}
     monkeypatch.setattr(memory_utils, "get_db", lambda: fake_db)
 
     memory_utils.save_user_facts("jack", [])
@@ -865,6 +865,24 @@ def test_a_fact_whose_content_really_changed_takes_the_new_sources_label(monkeyp
 # The fact list is cached in memory: it is one 4 MB document and a slow database made each read block the server for ~40 s
 # ---------------------------------------------------------------------------
 
+class _EmbeddingsCollection:
+    """The second collection the facts are split across (the embeddings, kept apart because they are most of the bytes)."""
+
+    def __init__(self):
+        self.doc = None
+        self.reads = 0
+
+    def find_one(self, filt):
+        self.reads += 1
+        return self.doc
+
+    def update_one(self, filt, update, upsert=False):
+        self.doc = {"username": filt["username"], **update["$set"]}
+
+    def delete_one(self, filt):
+        self.doc = None
+
+
 class CountingFactsDB:
     """A database holding one user's fact document, counting how many times it is read."""
 
@@ -872,10 +890,11 @@ class CountingFactsDB:
         self.doc = {"username": "jack", "facts": [f.dict() for f in facts]}
         self.reads = 0
         self.writes = 0
+        self.embeddings = _EmbeddingsCollection()
 
     def __getitem__(self, name):
-        assert name == "user_memory_facts"
-        return self
+        assert name in ("user_memory_facts", "user_memory_fact_embeddings")
+        return self if name == "user_memory_facts" else self.embeddings
 
     def find_one(self, filt):
         self.reads += 1

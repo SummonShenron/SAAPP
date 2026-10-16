@@ -89,6 +89,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
         <div className="landing-hero-text">
           {/* The big logo lives in the right panel; on a phone that panel is hidden, so a small one sits above the name. */}
           <LogoMark className="landing-mobile-logo" variant="mono" size={56} />
+          <div className="landing-mobile-brand">Sonic Graph Technologies</div>
           <h2>SONIC ASSISTANT</h2>
           <h3>RAG Pipeline & Multi-Tenant Data Isolation System.</h3>
           <h4>Built by Jack Harper.</h4>
@@ -151,9 +152,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
             className="enter-btn guest-btn" 
             onClick={handleGuestEntry}
             style={{
-              backgroundColor: '#ffffff',
+              backgroundColor: 'transparent',
               color: 'var(--landing-ink)',
-              border: '1px solid var(--landing-rule)',
+              border: '1px solid var(--landing-ink)',
               padding: '0.85rem',
               borderRadius: '6px',
               fontWeight: 600,
@@ -173,9 +174,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
               marginTop: '1rem',
               padding: '0.9rem',
               borderRadius: 8,
-              background: 'linear-gradient(90deg, rgba(255,249,230,1) 0%, rgba(255,243,230,1) 100%)',
-              border: '1px solid #f59e0b',
-              color: '#92400e',
+              background: 'rgba(10, 10, 11, 0.9)',
+              border: '1px solid rgba(240, 136, 62, 0.45)',
+              color: '#f0e2d4',
               maxWidth: 420,
               marginLeft: 'auto',
               marginRight: 'auto',
@@ -188,7 +189,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                     Services may take a moment to start. First request after inactivity can be slow while the server spins up.
                   </div>
 
-                  <details style={{ marginTop: 8, fontSize: '0.82rem', color: '#6b7280' }}>
+                  <details style={{ marginTop: 8, fontSize: '0.82rem', color: '#a8a29e' }}>
                     <summary style={{ cursor: 'pointer' }}>Learn more</summary>
                     <div style={{ marginTop: 8 }}>
                       We run on cost‑sensitive infrastructure and use third‑party LLMs on free tiers. This can cause longer response times or temporary unavailability during peak demand. If the app appears to hang after signing in, wait 30–60 seconds and try again. You may be redirected to the chat page while the backend starts.
@@ -206,7 +207,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                     style={{
                       background: 'transparent',
                       border: 'none',
-                      color: '#92400e',
+                      color: '#f0e2d4',
                       cursor: 'pointer',
                       fontSize: '0.9rem'
                     }}
@@ -217,7 +218,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                   {serverStarting && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <Spinner size={18} />
-                      <span style={{ fontSize: '0.82rem', color: '#6b7280' }}>Starting server…</span>
+                      <span style={{ fontSize: '0.82rem', color: '#a8a29e' }}>Starting server…</span>
                     </div>
                   )}
                 </div>
@@ -235,6 +236,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
       {/* Hero Right: Displays Logo directly centered */}
       <div className="landing-right">
         <LogoMark className="landing-hero-logo" size={300} label="Sonic Graph Technologies" />
+        <div className="landing-brand">Sonic Graph Technologies</div>
       </div>
     </div>
   );

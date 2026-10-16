@@ -15,7 +15,7 @@
   -webkit-tap-highlight-color: transparent;
   image-rendering: pixelated;
   /* idle: orange, the app's accent */
-  --pp-accent: #f0883e;
+  --pp-accent: #cf8a5a;
 }
 
 .pp-root:focus-visible {

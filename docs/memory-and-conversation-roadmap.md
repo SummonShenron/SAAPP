@@ -515,3 +515,29 @@ topic. Each topic now has an `about` description, and the second model look (the
 mainly about that topic. Anything but a clear yes on both is a no, and a missing answer counts as no. Checked with the real model: the spelling page with an
 accurate summary is refused for the AI topic, and passes the old support-only check, which is what let it in. The vague query was also reworded ("history of
 artificial intelligence early milestones explained"). Search wording still decides what is found; the gate decides what is kept.
+
+## 7. Cold-start loads: the facts document and the thread (built 2026-10-16)
+
+The two reads that were still slow after the 2026-10-14 slowdown fixes: the saved facts (one ~4 MB document, ~41 s cold) on the first turn after every restart, and a conversation's
+whole transcript (3,400 messages, ~25 s) once per thread per restart. Both were measured on a link near 0.1 MB/s, so the fix is fewer bytes, not faster code.
+
+- **Facts stored slim** (`backend/utils/memory_utils.py`): the facts document now holds only the text (about 0.1 MB for 345 facts) and is marked `embeddings_split`; the embeddings live in their own
+  document (`user_memory_fact_embeddings`, one per user) as packed 16-bit floats, a list of `{id, v}` so a fact id never has to be a legal key. Measured with the real BSON encoder: one fact's embedding
+  went from 9,895 bytes to 1,602 (6.2 times smaller), so 345 facts' embeddings went from about 3.4 MB to 0.55 MB. A cold load reads both documents (about 0.65 MB, so roughly 7 s at the measured
+  speed instead of 41 s) and puts each embedding back on its fact, so nothing else in the app changes. 16-bit precision moves a cosine similarity by about 1e-4, far inside the 0.80 and 0.62 thresholds.
+  A document in the old layout still loads exactly as before and is converted once, in the background, only if it is still in the old layout (so it can never overwrite a newer save); that first
+  load after a deploy is the last slow one. Saving writes the embeddings document first, then the facts, so a failure between them can strand vectors but never strip a fact of its own;
+  forgetting every fact deletes the embeddings document too (the erase path goes through the same function). The local JSON fallback is unchanged.
+- **Threads load as a tail** (`backend/utils/app_utils.py`): with Mongo, `load_session_messages` asks the server for the message count and only the last `CONVERSATION_TAIL_MESSAGES` (default 200)
+  in one aggregation, so the rest of a long thread is never sent. The in-memory transcript records `base` (how many leading messages it does not hold) and `persisted` stays the number stored in
+  total; sync and the append-only save use `persisted - base` as the list's own stored part. A list that shrinks while only its tail is held is never written back as "the whole thread" (that
+  would delete history); nothing in the app does this. A plain list still replaces the transcript, and the no-database fallback still loads everything.
+
+Verified: 8 tests for the slim facts (packing and its effect on similarity, the split on save, a cold load reading exactly two documents, the old layout still loading and converting, the
+conversion refusing to overwrite a newer save, ids with dots or `$`, forgetting leaving nothing, the JSON fallback), 8 for the tail (the load cut on the server, short and new threads, appending only
+the new messages, sync picking up exactly what another instance saved and keeping unsaved messages, a thread cleared elsewhere, the shrink guard, a plain list, the file fallback), and the existing
+fact and conversation tests updated for the second collection and the new aggregation; full suite 3,280 passed. **Not run against a real Atlas cluster**: the two layouts, the `$slice` aggregation and the
+background conversion are covered with in-memory fakes, so the first deploy is the first live test (check the log for "Moved ... embeddings out of the facts document" and the `[db-slow]` lines).
+
+Not changed: the 2.5 MB old LangGraph checkpoints of the old thread (deleting them needs your consent), and anything that rolls back to older code while the new layout is stored: older code
+would read the facts without their embeddings and could save them without, so roll forward rather than back after the conversion has run.

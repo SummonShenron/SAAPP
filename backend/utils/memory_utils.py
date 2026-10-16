@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, timezone
 from typing import List, Optional
 
+import numpy as np
 from pydantic import BaseModel
 
 from backend.utils.db_utils import get_db
@@ -44,6 +45,8 @@ MAX_STORED_FACTS = int(os.getenv("MAX_STORED_FACTS", "400"))
 # growing array) — so pruning a fact out of the hot MAX_STORED_FACTS-bounded store never
 # destroys it outright, only moves it out of active recall. Recoverable, not just logged.
 FACT_ARCHIVE_COLLECTION = "user_memory_fact_archive"
+FACTS_COLLECTION = "user_memory_facts"
+EMBEDDINGS_COLLECTION = "user_memory_fact_embeddings"
 
 # Where a fact came from decides how long it is kept when the cap forces facts out, and whether a later re-observation may relabel it.
 # "safety_support" (the people someone said they can turn to, read by the safety layer: backend/utils/safety_utils.py, SUPPORT_FACT_SOURCE,
@@ -108,9 +111,74 @@ def clear_facts_cache() -> None:
         _facts_refreshing.clear()
 
 
+# WHERE THE EMBEDDINGS LIVE. The fact list used to be one document with every fact's embedding as a list of 768 doubles (~4 MB for 345 facts), and
+# reading it cold took ~41 s on the slow link. The text of the facts is small (~100 KB); it is the embeddings that are heavy. So they are kept apart,
+# in their own document (EMBEDDINGS_COLLECTION, one per user) and as packed 16-bit floats (1.5 KB a fact, about a quarter of the old size even before
+# the document split): the facts document is marked `embeddings_split` and carries no embeddings, and a load reads both and puts each embedding
+# back on its fact, so nothing else in the app sees a difference. 16-bit precision moves a cosine similarity by about 1e-4, far inside the thresholds.
+# A document written before this change (embeddings inline, no marker) still loads as it was, and is converted in the background the first time.
+def pack_embedding(vector: List[float]) -> bytes:
+    return np.asarray(vector, dtype=np.float16).tobytes()
+
+
+def unpack_embedding(blob: bytes) -> List[float]:
+    return np.frombuffer(bytes(blob), dtype=np.float16).astype(np.float64).tolist()
+
+
 def _fetch_facts_from_db(db, username: str) -> List[UserFact]:
-    doc = db["user_memory_facts"].find_one({"username": username})
-    return [UserFact(**item) for item in doc["facts"]] if doc and "facts" in doc else []
+    doc = db[FACTS_COLLECTION].find_one({"username": username})
+    if not doc or "facts" not in doc:
+        return []
+    facts = [UserFact(**item) for item in doc["facts"]]
+    if doc.get("embeddings_split"):
+        stored = ((db[EMBEDDINGS_COLLECTION].find_one({"username": username}) or {}).get("vectors")) or []
+        by_id = {item["id"]: item["v"] for item in stored if isinstance(item, dict) and "id" in item and "v" in item}
+        for fact in facts:
+            blob = by_id.get(fact.id)
+            if blob is not None and fact.embedding is None:
+                fact.embedding = unpack_embedding(blob)
+    elif any(f.embedding for f in facts):
+        _migrate_to_split_in_background(db, username, facts)
+    return facts
+
+
+def _write_facts(db, username: str, facts: List[UserFact], only_if_unsplit: bool = False) -> bool:
+    """Writes the fact list in the split layout: the embeddings document first (so a failure between the two writes can leave vectors with no facts,
+    never facts that lost theirs), then the facts without embeddings. With `only_if_unsplit` the facts write happens only while the stored document is still
+    in the old layout, so the background conversion can never overwrite a newer list saved in the meantime."""
+    if facts:
+        # A list of {id, v} rather than a map keyed by fact id: a document's keys may not contain dots or start with "$", an id's characters are not ours to promise.
+        vectors = [{"id": f.id, "v": pack_embedding(f.embedding)} for f in facts if f.embedding]
+        db[EMBEDDINGS_COLLECTION].update_one({"username": username}, {"$set": {"vectors": vectors}}, upsert=True)
+    else:
+        db[EMBEDDINGS_COLLECTION].delete_one({"username": username})  # forgetting everything leaves no vectors behind either
+    query = {"username": username, "embeddings_split": {"$ne": True}} if only_if_unsplit else {"username": username}
+    result = db[FACTS_COLLECTION].update_one(
+        query, {"$set": {"facts": [f.model_dump(exclude={"embedding"}) for f in facts], "embeddings_split": True}}, upsert=not only_if_unsplit
+    )
+    return bool(getattr(result, "modified_count", 1))
+
+
+_facts_migrating: set = set()
+
+
+def _migrate_to_split_in_background(db, username: str, facts: List[UserFact]) -> None:
+    with _facts_lock:
+        if username in _facts_migrating:
+            return
+        _facts_migrating.add(username)
+
+    def work() -> None:
+        try:
+            if _write_facts(db, username, facts, only_if_unsplit=True):
+                logger.info("[MemoryUtils] Moved %d facts' embeddings out of the facts document for %s.", len(facts), username)
+        except Exception:
+            logger.exception("[MemoryUtils] Could not convert the saved facts to the slim layout for %s; they still load as before.", username)
+        finally:
+            with _facts_lock:
+                _facts_migrating.discard(username)
+
+    threading.Thread(target=work, name="facts-slim", daemon=True).start()
 
 
 def _refresh_facts_in_background(db, username: str) -> None:
@@ -178,11 +246,7 @@ def save_user_facts(username: str, facts: List[UserFact]) -> None:
 
     db = get_db()
     if db is not None:
-        db["user_memory_facts"].update_one(
-            {"username": username},
-            {"$set": {"facts": facts_dicts}},
-            upsert=True,
-        )
+        _write_facts(db, username, facts)
         with _facts_lock:  # what was just written is the newest copy there is
             _facts_cache[username] = (time.monotonic(), [f.model_copy() for f in facts])
     else:

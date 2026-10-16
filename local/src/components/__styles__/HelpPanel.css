@@ -62,8 +62,8 @@
 }
 
 .help-nav-item.active {
-  background: #4a6fa5;
-  color: #ffffff;
+  background: var(--accent-soft);
+  color: var(--accent-primary);
   font-weight: 600;
 }
 
@@ -142,7 +142,7 @@
   border-radius: 16px;
   overflow: hidden;
   z-index: 952;
-  box-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--float-shadow);
   animation: popInHelp 0.2s ease-out;
 }
 

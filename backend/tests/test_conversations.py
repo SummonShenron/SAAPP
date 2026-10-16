@@ -283,7 +283,14 @@ class _SingleDocMongoCollection:
 
     def aggregate(self, pipeline):
         d = self._match(pipeline[0]["$match"])
-        return [] if d is None else [{"n": len(d.get("messages", []))}]
+        if d is None:
+            return []
+        messages = list(d.get("messages", []))
+        project = pipeline[1]["$project"]
+        if "tail" in project:  # the tail load: the total, and the last N messages cut on the server
+            keep = -project["tail"]["$slice"][1]
+            return [{"total": len(messages), "tail": messages[-keep:]}]
+        return [{"n": len(messages)}]
 
     def update_one(self, filt, update, upsert=False):
         self.updates.append(update)

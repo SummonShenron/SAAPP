@@ -49,7 +49,7 @@
 }
 
 .theme-shadow .app-rail { --rail-bg: var(--panel-bg); }
-.theme-shadow .app-rail { border-right-color: var(--edge); } /* an orange edge on the rail */
+/* .theme-shadow .app-rail { border-right-color: var(--edge); } an orange edge on the rail */
 .app-rail-compact { width: 64px; align-items: center; padding: 12px 8px; }
 
 .app-rail button {
@@ -259,27 +259,96 @@ div.chat-page.chat-page { flex: 1 1 auto; min-height: 0; display: flex; flex-dir
 .chat-page .chat-input-area button:hover:not(:disabled),
 .chat-page .chat-input-area button:active:not(:disabled) { transform: none; box-shadow: none; }
 
+/* The menus that open from the message box (the settings menu and the security scope picker, which hold an option wheel) and the tooltip. They were a fixed
+   navy slate whatever the theme, so in the black and grey theme they were the one blue thing on the page. They now take the theme's popover surface, hairline
+   and text colours, and the one floating shadow. (The embedded widget has no app shell, so it keeps its own look.) */
+.app-shell .chat-overflow-wheel-popover,
+.app-shell .chat-scope-picker-popover,
+.app-shell .chat-tooltip-popover {
+  background: var(--popover-bg) !important;
+  border: 1px solid var(--border-color) !important;
+  box-shadow: var(--float-shadow) !important;
+}
+.app-shell .chat-overflow-wheel-popover .option-wheel,
+.app-shell .chat-scope-picker-popover .option-wheel {
+  --ow-text-color: var(--text-muted) !important;
+  --ow-active-color: var(--text-main) !important;
+}
+.app-shell .chat-scope-picker-popover > div:first-child { color: var(--text-muted) !important; }
+.app-shell .chat-tooltip-popover a,
+.app-shell .chat-tooltip-popover a:visited { color: var(--accent-primary) !important; }
+
 /* The example questions are flat too: no shadow, no red glow in the dark theme, no lift on hover or press. The hover still changes the background and
    border, so they still answer the pointer. */
 .chat-page .example-cards-container .query-card,
 .chat-page .example-cards-container .query-card:hover,
 .chat-page .example-cards-container .query-card:active { box-shadow: none; transform: none; translate: none; filter: none; }
 
-/* Orange at the live edges, the places that react to you, rather than as a fill. The input's glowing border runs blue to orange like the
-   logo (it was cyan), the caret and text selection are orange, and the active item in the rail has an orange edge. */
-.chat-page .chat-input-wrapper::before {
-  background: linear-gradient(90deg, transparent 0%, #2f6fe0 20%, #f0883e 40%, transparent 60%);
-  background-size: 400% 400%;
+/* Orange at the live edges, the places that react to you, rather than as a fill: the caret and text selection are orange, the active item in the rail
+   has an orange edge, and the message box has a slow comet that circles it while it is hovered or focused (components/InputGlow.tsx). The comet runs
+   blue at the tail to orange at the head, like the logo; the old border that flashed all the way round and faded is off in the app (the embedded
+   widget keeps it). */
+.chat-page .chat-input-wrapper::before { display: none; }
+.input-glow {
+  --glow-tail: #2f6fe0;
+  --glow-head: var(--accent-primary);
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.6s ease;
+}
+.theme-shadow .input-glow { --glow-tail: #2b4a8a; }
+.chat-input-wrapper:hover .input-glow,
+.chat-input-wrapper:focus-within .input-glow { opacity: 1; }
+.input-glow rect {
+  x: 1px;
+  y: 1px;
+  width: calc(100% - 2px);
+  height: calc(100% - 2px);
+  rx: 25px;
+  fill: none;
+  stroke: color-mix(in srgb, var(--glow-head) calc(var(--t) * 100%), var(--glow-tail));
+  stroke-width: 2px;
+  stroke-linecap: round;
+  stroke-opacity: 0.32;  /* each dash is faint; where they overlap near the head they add up to a clear point */
+  /* all the dashes end at the same point and move together: the head is where the dash ends */
+  stroke-dashoffset: calc(var(--len) * 1px);  /* the start of the lap; the motion is built in InputGlow.tsx, paced by its size */
+}
+/* Without motion: no comet, and the box's own border takes the accent while it is focused. */
+@media (prefers-reduced-motion: reduce) {
+  .input-glow { display: none; }
+  .chat-page .chat-input-wrapper:focus-within .chat-textarea { border-color: var(--accent-primary); }
 }
 .chat-page .chat-textarea { caret-color: var(--accent-primary); }
 .app-shell ::selection { background: color-mix(in srgb, var(--accent-primary) 35%, transparent); }
-.app-rail .rail-item.active,
-.rail-convo.active {
-  background-image: linear-gradient(var(--accent-primary), var(--accent-primary));
-  background-size: 3px 55%;
-  background-repeat: no-repeat;
-  background-position: 0 50%;
+/* Where you are: a short accent bar on the left edge of the selected rail item and conversation. It is a pseudo-element, because it used to be a background
+   image that the dark theme's own `background:` on the active item reset, so in the dark theme it never showed. */
+.app-rail .rail-item,
+.rail-convo { position: relative; }
+.app-rail .rail-item.active::before,
+.rail-convo.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 24%;
+  bottom: 24%;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent-primary);
+  pointer-events: none;
 }
+
+/* Send: quiet while there is nothing to send, the accent once there is. (The rest of the buttons in that row keep the accent.) */
+.chat-page .circle-icon-button.send-button:disabled svg,
+.chat-page .circle-icon-button.send-button:disabled svg * { stroke: var(--text-muted) !important; }
+.chat-page .circle-icon-button.send-button:disabled { opacity: 0.55; }
+/* On hover the row's buttons take a soft accent fill; a solid one hid their own accent icon. */
+.chat-page .icon-row-overlay .circle-icon-button:hover:not(:disabled) { background: var(--accent-soft); transform: none; box-shadow: none; }
 
 .empty-brand { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 2rem 0 0.5rem; }
 .empty-brand-title { margin: 6px 0 0; font-size: 1.55rem; font-weight: 700; color: var(--text-main); }

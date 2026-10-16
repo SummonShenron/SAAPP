@@ -41,7 +41,7 @@
 }
 
 .option-wheel__item--selected {
-  color: #cfd2dd;
+  color: var(--ow-active-color, #cfd2dd);
   font-weight: 600;
 }
 
@@ -87,13 +87,13 @@
 
 .option-wheel--column .option-wheel__item:hover,
 .option-wheel--column .option-wheel__item:focus-visible {
-  background: rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--ow-active-color, #ffffff) 9%, transparent);
   color: var(--ow-active-color, #ffffff);
   outline: none;
 }
 
 .option-wheel--column .option-wheel__item--selected {
-  background: rgba(255, 255, 255, 0.05);
+  background: color-mix(in srgb, var(--ow-active-color, #ffffff) 5%, transparent);
 }
 
 .option-wheel--column .option-wheel__item--disabled {

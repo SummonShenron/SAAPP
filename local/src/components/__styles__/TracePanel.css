@@ -11,7 +11,7 @@
   color: var(--text-main);
 }
 .theme-shadow .trace-blade { background: var(--panel-bg); }
-.theme-shadow .trace-blade { border-left-color: var(--edge); } /* and on the trace blade */
+.theme-shadow .trace-blade { border-left-color: var(--border-color); } /* and on the trace blade */
 
 .trace-sheet-backdrop { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); z-index: 999; }
 .trace-sheet {
@@ -108,6 +108,20 @@
 .trace-node-active .trace-node-title { color: var(--accent-primary); }
 .trace-node-detail { margin-top: 2px; font-size: 0.78rem; color: var(--text-muted); overflow-wrap: anywhere; }
 .trace-batch { font-size: 0.66rem; font-weight: 600; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border-color); color: var(--accent-primary); }
+
+/* The dark theme keeps the path to greys and black: a finished step is a grey dot on a grey line, and the one thing in the accent is the step that is
+   running right now (its ring and its pulse). Nothing else on the blade is coloured. */
+.theme-shadow .trace-node-dot { border-color: #3a3a40; background: #0e0e10; color: #cfcfd4; }
+.theme-shadow .trace-node-done .trace-node-dot { background: #2c2c31; border-color: #3a3a40; }
+.theme-shadow .trace-node::before { background: #2c2c31; }
+.theme-shadow .trace-node-active .trace-node-dot { border-color: var(--accent-primary); }
+.theme-shadow .trace-node-running::after {
+  background: repeating-linear-gradient(to bottom, #4a4a52 0 4px, transparent 4px 8px);
+  background-size: 2px 8px;
+}
+.theme-shadow .trace-node-active .trace-node-title { color: var(--text-main); }
+.theme-shadow .trace-node-done .trace-node-title { font-weight: 500; color: #c4c4ca; }
+.theme-shadow .trace-batch { color: var(--text-muted); }
 
 @keyframes trace-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }

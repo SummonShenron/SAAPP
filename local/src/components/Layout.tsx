@@ -214,7 +214,7 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
       />
 
       <div className="app-main">
-        <TopBar title={title} isMobile={isMobile} onOpenMenu={() => setDrawerOpen(true)} actions={onChat ? topBarActions : null} />
+        <TopBar title={title} isMobile={isMobile} onOpenMenu={() => setDrawerOpen(true)} actions={onChat ? topBarActions : null} onHelp={toggleHelp} />
         <div className="app-content">
           {/* Main page content: only once the person is fully signed in */}
           {authReady ? (
