@@ -1,0 +1,307 @@
+/* The app shell (components/Layout.tsx): the rail on the left, a thin top bar, and the page filling the rest. It uses the theme variables from
+   index.css, so it follows light and dark ("shadow") without rules of its own for either, except the rail's tint in dark. */
+
+.portal-container.app-shell {
+  flex-direction: row;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh; /* a phone's address bar changes 100vh; dvh follows what is actually visible */
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-main);
+}
+
+.app-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* ---------- the rail ---------- */
+
+.app-rail {
+  --rail-bg: var(--bg-alt);
+  flex: 0 0 auto;
+  width: 252px;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 10px;
+  background: var(--rail-bg);
+  border-right: 1px solid var(--border-color);
+  color: var(--text-main);
+  position: relative;
+  z-index: 20;
+  transition: width 0.18s ease;
+}
+
+.theme-shadow .app-rail { --rail-bg: var(--panel-bg); }
+.app-rail-compact { width: 64px; align-items: center; padding: 12px 8px; }
+
+.app-rail button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  margin: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.rail-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 2px 2px 10px; width: 100%; box-sizing: border-box; }
+.app-rail-compact .rail-head { justify-content: center; padding-bottom: 4px; }
+
+.app-rail .rail-brand { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 2px; border-radius: 8px; }
+.rail-wordmark { font-weight: 700; font-size: 0.98rem; letter-spacing: 0.2px; color: var(--accent-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.theme-shadow .rail-wordmark { color: var(--text-main); }
+
+.app-rail .rail-icon-btn { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 8px; color: var(--text-muted); flex: 0 0 auto; }
+.app-rail .rail-icon-btn:hover { background: var(--bg-surface-hover); color: var(--text-main); }
+.theme-shadow .app-rail .rail-icon-btn:hover { background: rgba(255, 255, 255, 0.08); }
+
+.app-rail .rail-new {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  margin: 2px 0 6px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-main);
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--accent-primary);
+}
+.app-rail .rail-new:hover { background: var(--bg-surface-hover); }
+.theme-shadow .app-rail .rail-new { color: var(--text-main); background: rgba(255, 255, 255, 0.04); }
+.app-rail-compact .rail-new { width: 40px; height: 40px; justify-content: center; padding: 0; }
+
+.rail-nav { display: flex; flex-direction: column; gap: 2px; width: 100%; }
+
+.app-rail .rail-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  color: var(--text-main);
+  border: 1px solid transparent;
+}
+.app-rail .rail-item:hover { background: var(--bg-surface-hover); }
+.theme-shadow .app-rail .rail-item:hover { background: rgba(255, 255, 255, 0.06); }
+.app-rail .rail-item.active { background: var(--bg-main); border-color: var(--border-color); font-weight: 600; }
+.theme-shadow .app-rail .rail-item.active { background: rgba(255, 255, 255, 0.08); }
+.app-rail-compact .rail-item { width: 40px; height: 40px; justify-content: center; padding: 0; }
+
+.rail-recent { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; margin-top: 10px; width: 100%; }
+.rail-section { font-size: 0.74rem; color: var(--text-muted); padding: 0 10px 4px; }
+.rail-recent-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+.rail-empty { font-size: 0.82rem; color: var(--text-muted); padding: 6px 10px; }
+.rail-spacer { flex: 1 1 auto; }
+
+.rail-convo { display: flex; align-items: center; border-radius: 8px; border: 1px solid transparent; }
+.rail-convo:hover { background: var(--bg-surface-hover); }
+.theme-shadow .rail-convo:hover { background: rgba(255, 255, 255, 0.06); }
+.rail-convo.active { background: var(--bg-main); border-color: var(--border-color); }
+.theme-shadow .rail-convo.active { background: rgba(255, 255, 255, 0.08); }
+.app-rail .rail-convo-main { flex: 1 1 auto; min-width: 0; padding: 7px 10px; font-size: 0.86rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rail-convo.active .rail-convo-main { font-weight: 600; }
+.app-rail .rail-convo-delete { flex: 0 0 auto; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 6px; color: var(--text-muted); opacity: 0; }
+.rail-convo:hover .rail-convo-delete, .rail-convo:focus-within .rail-convo-delete { opacity: 1; }
+.app-rail .rail-convo-delete:hover { color: var(--accent-danger); }
+@media (hover: none) { .app-rail .rail-convo-delete { opacity: 0.55; } }
+
+/* ---------- the person's chip and menu ---------- */
+
+.user-menu { position: relative; width: 100%; margin-top: 8px; }
+.app-rail-compact .user-menu { width: auto; }
+
+.app-rail .user-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-main);
+}
+.app-rail .user-chip:hover { background: var(--bg-surface-hover); }
+.theme-shadow .app-rail .user-chip { background: rgba(255, 255, 255, 0.04); }
+.app-rail-compact .user-chip { width: auto; padding: 4px; border-radius: 50%; }
+
+.user-avatar { width: 28px; height: 28px; border-radius: 50%; background: var(--accent-primary); color: #fff; font-size: 0.72rem; font-weight: 700; display: flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+.theme-shadow .user-avatar { background: var(--accent-primary); }
+.user-chip-name { flex: 1 1 auto; min-width: 0; font-size: 0.88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.user-chip-caret { color: var(--text-muted); flex: 0 0 auto; }
+
+.user-menu-popover {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  min-width: 100%;
+  width: max-content;
+  max-width: 280px;
+  box-sizing: border-box;
+  padding: 6px;
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
+  z-index: 40;
+}
+.theme-shadow .user-menu-popover { background: var(--popover-bg); }
+.app-rail-compact .user-menu-popover { min-width: 220px; }
+.user-menu-who { padding: 8px 10px 8px; border-bottom: 1px solid var(--border-color); margin-bottom: 4px; }
+.user-menu-name { font-weight: 600; font-size: 0.9rem; }
+.user-menu-email { font-size: 0.78rem; color: var(--text-muted); overflow-wrap: anywhere; }
+.app-rail .user-menu-item { display: flex; align-items: center; gap: 10px; width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 8px; font-size: 0.88rem; }
+.app-rail .user-menu-item:hover { background: var(--bg-surface-hover); }
+.theme-shadow .app-rail .user-menu-item:hover { background: rgba(255, 255, 255, 0.08); }
+.app-rail .user-menu-danger { color: var(--accent-danger); }
+.user-menu-divider { height: 1px; background: var(--border-color); margin: 4px 0; }
+
+/* ---------- the top bar ---------- */
+
+.app-topbar {
+  flex: 0 0 auto;
+  height: 44px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  background: var(--bg-main);
+  border-bottom: 1px solid var(--border-color);
+}
+.topbar-title { flex: 1 1 auto; min-width: 0; margin: 0; font-size: 0.95rem; font-weight: 600; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topbar-sub { flex: 0 0 auto; font-size: 0.78rem; color: var(--text-muted); white-space: nowrap; }
+.topbar-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.topbar-menu, .topbar-btn { display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 8px; border: 0; background: none; color: var(--accent-primary); cursor: pointer; }
+.theme-shadow .topbar-menu, .theme-shadow .topbar-btn { color: var(--text-main); }
+.topbar-menu:hover, .topbar-btn:hover { background: var(--bg-surface-hover); }
+.topbar-btn { position: relative; }
+/* A pulse on the trace button while a request runs and the trace is closed, so the work in progress is not invisible. */
+.topbar-btn-dot { position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent-primary); animation: trace-pulse 1.2s ease-in-out infinite; }
+.theme-shadow .topbar-btn-dot { background: var(--accent-primary); }
+.topbar-btn[aria-pressed="true"] { background: var(--bg-alt); color: var(--accent-primary); }
+.theme-shadow .topbar-btn[aria-pressed="true"] { background: rgba(255, 255, 255, 0.1); color: var(--text-main); }
+
+@media (max-width: 900px) { .topbar-sub { display: none; } }
+
+/* ---------- the chat page inside the shell ---------- */
+
+/* A row: the conversation, and the trace blade beside it when it is open. (The `div:has(.portal-body)` rule in index.css makes this a column; the
+   doubled class wins over it.) */
+div.chat-page.chat-page { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: row; height: auto; }
+
+/* Stage 2, the conversation's own space. Everything here is scoped to .chat-page, so the embedded widget keeps its original layout.
+   The scroll fades on .chat-window (index.css) and the messages' fade-in are deliberately left exactly as they are. */
+.chat-page .portal-body { flex: 1 1 auto; min-width: 0; min-height: 0; max-width: 960px; padding: 0 1.5rem 1rem; }
+
+/* The scroll fades on .chat-window are 40px at the top and 36px at the bottom (index.css). Padding of the same length keeps the first and last
+   messages fully clear when the list is at rest, while anything scrolling past the edges still fades out and in exactly as before. */
+.chat-page .chat-window { padding: 2.5rem 1.5rem 2.25rem; }
+
+/* The empty chat: the brand and the example cards sit together in the middle of the free space, with the input docked below, instead of the
+   cards hugging the top and a wide gap above the input. */
+.chat-page .portal-body.initial-state-view .controls-footer { margin-top: 0; padding-top: 1rem; }
+.chat-page .empty-brand { margin-top: auto; }
+.chat-page .example-cards-container { margin-bottom: auto; }
+
+/* Phones: the gutters stacked (page, then chat window) and left the text about three quarters of the screen's width. */
+@media (max-width: 768px) {
+  .chat-page .portal-body { padding: 0 0.5rem 0.5rem; }
+  .chat-page .chat-window { padding: 2.5rem 0.5rem 2.25rem; }
+  /* A reply has no visible bubble, so the bubble's own side padding was only taking width from the text. */
+  .chat-page .message-bubble.ai { padding-left: 0.5rem; padding-right: 0.5rem; }
+  .chat-page .empty-brand { padding-top: 1rem; }
+}
+
+/* Flat, no drop shadows on the bubbles or the input. The input's border was white in the light theme (invisible once the shadow went), so it gets the
+   theme's soft blue border; the dark theme keeps the border it already had. (The .chat-window prefix outranks the theme rules in index.css, and
+   nothing here applies to the embedded widget.) */
+.chat-page .chat-window .message-bubble.message-bubble { box-shadow: none; }
+.chat-page .chat-textarea,
+.chat-page .chat-textarea:active { box-shadow: none; border-color: var(--border-color); }
+.theme-shadow .chat-page .chat-textarea { border-color: var(--border-color); }
+
+/* No lift on the input: the box and its buttons stay put on hover and press. The glowing border is a layer the size of the wrapper, and an inline
+   textarea left a few pixels of line-box gap under itself, so that border sat low and showed as a second line under the box; a block textarea
+   makes the wrapper exactly the box's size. */
+.chat-page .chat-textarea { display: block; }
+.chat-page .chat-input-wrapper:hover,
+.chat-page .chat-input-wrapper:active,
+.chat-page .chat-input-wrapper:hover::before,
+.chat-page .chat-input-wrapper:active::before { transform: none; }
+.chat-page .chat-input-wrapper:hover::before,
+.chat-page .chat-input-wrapper:focus-within::before { box-shadow: none; }
+.chat-page .chat-input-area button:hover:not(:disabled),
+.chat-page .chat-input-area button:active:not(:disabled) { transform: none; box-shadow: none; }
+
+/* The example questions are flat too: no shadow, no red glow in the dark theme, no lift on hover or press. The hover still changes the background and
+   border, so they still answer the pointer. */
+.chat-page .example-cards-container .query-card,
+.chat-page .example-cards-container .query-card:hover,
+.chat-page .example-cards-container .query-card:active { box-shadow: none; transform: none; translate: none; filter: none; }
+
+/* Orange at the live edges, the places that react to you, rather than as a fill. The input's glowing border runs blue to orange like the
+   logo (it was cyan), the caret and text selection are orange, and the active item in the rail has an orange edge. */
+.chat-page .chat-input-wrapper::before {
+  background: linear-gradient(90deg, transparent 0%, #2f6fe0 20%, #f0883e 40%, transparent 60%);
+  background-size: 400% 400%;
+}
+.chat-page .chat-textarea { caret-color: var(--accent-primary); }
+.app-shell ::selection { background: color-mix(in srgb, var(--accent-primary) 35%, transparent); }
+.app-rail .rail-item.active,
+.rail-convo.active {
+  background-image: linear-gradient(var(--accent-primary), var(--accent-primary));
+  background-size: 3px 55%;
+  background-repeat: no-repeat;
+  background-position: 0 50%;
+}
+
+.empty-brand { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 2rem 0 0.5rem; }
+.empty-brand-title { margin: 6px 0 0; font-size: 1.55rem; font-weight: 700; color: var(--text-main); }
+.empty-brand-sub { margin: 0; font-size: 0.9rem; color: var(--text-muted); }
+
+/* ---------- phones: the rail is a drawer ---------- */
+
+.rail-backdrop { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); z-index: 999; }
+
+.app-rail-drawer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  height: 100vh;
+  height: 100dvh;
+  width: min(300px, 86vw);
+  transform: translateX(-102%);
+  transition: transform 0.2s ease;
+  z-index: 1000;
+}
+.app-rail-drawer.app-rail-open { transform: none; box-shadow: 0 0 40px rgba(0, 0, 0, 0.35); }
+
+@media (prefers-reduced-motion: reduce) {
+  .app-rail, .app-rail-drawer { transition: none; }
+}

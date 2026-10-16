@@ -3,29 +3,38 @@
    1. GLOBAL RESETS & THEME VARIABLES
    ========================================================================== */
 :root {
+  /* The light theme: the dark theme's navy family in a light version. A light blue shared by the rail and your message bubble (so the bubble takes the same
+     dark text as replies), deep navy text, and the same orange accent. (An orange-led light theme, a navy rail and a royal-blue bubble were tried and set aside.) */
   --bg-main: #ffffff;
-  --bg-alt: #eff6ff;       /* Ultra-soft, calming pastel sky blue backdrop */
-  --bg-surface: #ffffff;    /* Clean white surface containers to break up the color */
-  --bg-surface-hover: #f1f5f9;
-  --border-color: #bfdbfe;  /* Gentle light-blue accent borders */
-  --ai-border-color: #ffffff; 
-  --user-border-color: #eff6ff;
-  --text-main: #1e3a8a;     /* Deep, soft royal blue for comfortable reading */
-  --text-muted: #60a5fa;    /* Balanced sky blue for auxiliary items */
-  --text: #000000;          /* Default text color (same as text-main for consistency) */
-  --accent-primary: #1e40af; /* Smooth, modern classic blue (clean, non-aggressive) */
-  --accent-success: #10b981; /* Soft emerald green for secure badges */
-  --accent-danger: #ef4444;  /* Muted crimson for alerts */
-  --bubble-user-bg: #F1F5F9 ;
-  --code-bg: #0f172a;       /* CodeBlock's syntax-highlighter background (Chat.tsx) */
+  --bg-alt: #d9e5fb;            /* light blue: the rail, panels */
+  --bg-surface: #ffffff;
+  --bg-surface-hover: #cadcf7;
+  --border-color: #bccdee;      /* hairlines */
+  --ai-border-color: #ffffff;
+  --user-border-color: #c3d0ea;
+  --text-main: #14234a;         /* deep navy, from the dark theme's backdrop family */
+  --text-muted: #6b7a9c;
+  --text: #000000;
+  --accent-primary: #c85a0c;    /* the orange: icons, labels, links, the avatar, focus */
+  --accent-hover: #aa4a07;
+  --accent-soft: #fde9d6;       /* a faint orange tint for hovers and chips */
+  --accent-ring: rgba(200, 90, 12, 0.25);
+  --accent-success: #10b981;    /* Soft emerald green for secure badges */
+  --accent-danger: #ef4444;     /* Muted crimson for alerts */
+  --card-tint: #eef2fa;         /* the example question cards */
+  --tint-hover: #f5f8fd;
+  --bubble-user-bg: #d9e5fb;    /* your messages: the rail's light blue, with the same dark text as replies */
+  --bubble-user-border: #b4c8ee;
+  --bubble-user-text: var(--text-main);
+  --code-bg: #0f172a;           /* CodeBlock's syntax-highlighter background (Chat.tsx) */
   --code-border: #334155;
   --font-sans: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  --follow-up-bg: rgba(6, 182, 212, 0.1);   /* Light sky blue for follow-up messages */
+  --follow-up-bg: rgba(27, 56, 112, 0.07);
   --hero-overlay: linear-gradient(
-    rgba(239, 246, 255, 0.05) 0%,   /* Almost completely transparent sky blue at the top */
-    rgba(239, 246, 255, 0.45) 100%  /* Soft, feathered sky blue at the bottom */
+    rgba(238, 242, 250, 0.05) 0%,
+    rgba(238, 242, 250, 0.45) 100%
   );
-  --reverse-shadow: 
+  --reverse-shadow:
       0 2px -4px rgba(0, 0, 0, 0.02),
       0 10px -20px rgba(0, 0, 0, 0.04),
       0 20px -4px rgba(0, 0, 0, 0.04),
@@ -39,18 +48,18 @@
       0 2px 4px rgba(0, 0, 0, 0.03),
       0 8px 16px rgba(0, 0, 0, 0.04),
       0 16px 32px rgba(0, 0, 0, 0.05);
-  --shadow-hover: 
+  --shadow-hover:
     0 4px 8px rgba(0, 0, 0, 0.04),
     0 15px 30px rgba(0, 0, 0, 0.08),
     0 30px 15px rgba(0, 0, 0, 0.06),
     0 45px 70px rgba(0, 0, 0, 0.1);
 
-  --shadow-hover-reversed: 
+  --shadow-hover-reversed:
     -0 -4px 8px rgba(0, 0, 0, 0.04),
     -0 -15px 30px rgba(0, 0, 0, 0.08),
     -0 -30px 15px rgba(0, 0, 0, 0.06),
     -0 -45px 70px rgba(0, 0, 0, 0.1);
-  
+
   --light-shadow-hover:
   0 3px 6px rgba(0, 0, 0, 0.03),
   0 12px 24px rgba(0, 0, 0, 0.05),
@@ -58,49 +67,59 @@
   0 30px 40px rgba(0, 0, 0, 0.07);
 }
 
-/* THEME OVERRIDE: SHADOW MODE (DARK CRIMSON) */
+/* THEME OVERRIDE: THE DARK THEME. (The class is still called theme-shadow from when this was a deliberately edgy red-and-black "Shadow" theme.)
+   A deep navy backdrop with neutral-blue surfaces, blue for your own messages, and orange as the accent (icons, labels, links, the avatar, the live
+   edges: focus, the active item, the caret), matching the logo's blue and orange. Real danger stays a clear red (--accent-danger). Anything that wants a dark surface should use the tokens
+   below, not a hex, so the next change to this theme is one block. */
 .theme-shadow {
-  --bg-main: #1a1a1a;   
-  --bg-alt: #910000;    
-  --bg-surface: #ffffff;     
-  --bg-surface-hover: #2e2e36;
-  --border-color: #7a0010;
-  --ai-border-color: #ffffff; 
-  --user-border-color: #910000;   
-  --text-main: #e6e6e6;      
-  --text-muted: #9ca3af;     
-  --accent-primary: #910000; 
-  --accent-success: #eab308; 
-  --accent-danger: #ff0000;  
-  --text: #ffffff;
-  --follow-up-bg: #3b1e1e;   /* Light sky blue for follow-up messages */
-  /* Component Overrides */
-  --bubble-user-bg: #7a0010;
-  --bubble-user-border: #7f1d1d;
-  --bubble-user-text: #f3f4f6;
-  --bubble-ai-bg: #1a1a1a;
-  --bubble-ai-border: #1a1a1a;
-  --bubble-ai-text: #e5e7eb;
-  --filter-bg: #1c1111;
-  --code-bg: #0a0a0c;       /* Matches the AI bubble surface instead of the default slate */
-  --code-border: #0a0a0c;
-  --hero-overlay: linear-gradient(rgba(10, 10, 12, 0.4), rgba(10, 10, 12, 0.85));
+  --bg-main: #0a0f1c;            /* the page */
+  --bg-alt: #0e1526;
+  --bg-surface: #111a2e;
+  --bg-surface-hover: #172440;
+  --border-color: #1c2a47;       /* hairlines */
+  --ai-border-color: #22314f;
+  --user-border-color: #28508f;
+  --text-main: #e4eaf4;
+  --text-muted: #8a9bb8;
+  --text: #f3f6fb;
+  --accent-primary: #f0883e;     /* the accent: a warm orange against the navy */
+  --accent-success: #3dba8c;
+  --accent-danger: #ef4444;
+  --accent-hover: #d9741f;
+  --accent-soft: rgba(240, 136, 62, 0.12);
+  --accent-ring: rgba(240, 136, 62, 0.25);
+  --card-tint: #101a2f;
+  --tint-hover: #172440;
+  --follow-up-bg: #111a2e;
+  /* Component tokens */
+  --panel-bg: #0c1424;           /* rail, trace blade, nav */
+  --popover-bg: #131d34;         /* menus and popovers */
+  --card-bg: #101a2f;            /* cards and tiles */
+  --input-bg: #0c1325;
+  --line: #1c2a47;
+  --bubble-user-bg: #17305e;     /* your messages: a deep royal blue (solid orange and a thin orange edge were both tried; plain blue won) */
+  --bubble-user-border: #28508f;
+  --bubble-user-text: #f3f6fb;
+  --bubble-ai-bg: #0a0f1c;
+  --bubble-ai-border: #0a0f1c;
+  --bubble-ai-text: #e4eaf4;
+  --filter-bg: #0e1526;
+  --code-bg: #070b15;
+  --code-border: #16213a;
+  --hero-overlay: linear-gradient(rgba(8, 12, 24, 0.4), rgba(8, 12, 24, 0.85));
   --input-text: var(--text-main);
-  --card-text: #e5e7eb;
-  --loader-glow: drop-shadow(0 0 6px rgba(220, 38, 38, 0.7));
-  /* Deeper, more aggressive black layering to cut through the dark theme */
+  --card-text: #e4eaf4;
+  --loader-glow: none;
+  /* Flat theme: shadows are only for things that float (menus, popovers), and they are plain black, not coloured. */
   --shadow:
-      0 4px 6px rgba(0, 0, 0, 0.3),
-      0 15px 30px rgba(0, 0, 0, 0.4),
-      0 30px 60px rgba(0, 0, 0, 0.5); 
-  --shadow-hover: 
-    0 8px 12px rgba(0, 0, 0, 0.4),
-    0 22px 40px rgba(0, 0, 0, 0.5),
-    0 45px 80px rgba(0, 0, 0, 0.6);
-  --shadow-dark-hover: 
-    0 8px 12px rgba(0, 0, 0, 0.45),
-    0 22px 40px rgba(0, 0, 0, 0.55),
-    0 45px 80px rgba(0, 0, 0, 0.65);    
+      0 4px 10px rgba(0, 0, 0, 0.35),
+      0 14px 30px rgba(0, 0, 0, 0.4);
+  --shadow-hover:
+    0 6px 14px rgba(0, 0, 0, 0.4),
+    0 18px 36px rgba(0, 0, 0, 0.45);
+  --shadow-dark-hover:
+    0 6px 14px rgba(0, 0, 0, 0.45),
+    0 18px 36px rgba(0, 0, 0, 0.5);
 }
 
 * {
@@ -110,7 +129,7 @@
 }
 
 .theme-shadow, html body {
-  background-color:  #1a1a1a;
+  background-color: #0a0f1c;
 }
 
 body, html {
@@ -244,7 +263,7 @@ body, html {
   content: '';
   position: absolute;
   inset: 0;
-  background: radial-gradient(circle at 50% 60%, rgba(59, 130, 246, 0.06) 0%, transparent 65%);
+  background: radial-gradient(circle at 50% 60%, color-mix(in srgb, var(--accent-primary) 7%, transparent) 0%, transparent 65%);
   pointer-events: none;
 }
 
@@ -301,16 +320,16 @@ body, html {
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s ease;
-  box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.2);
+  box-shadow: 0 4px 6px -1px var(--accent-ring);
 }
 
 .enter-btn:hover:not(:disabled) {
-  background: #2563eb;
-  box-shadow: 0 10px 15px -3px rgba(59, 130, 246, 0.3);
+  background: var(--accent-hover);
+  box-shadow: 0 10px 15px -3px var(--accent-ring);
   transform: translateY(-2px);
 }
 .enter-btn:active:not(:disabled) {
-  background: #2563eb;
+  background: var(--accent-hover);
   transform: translateY(2px);
 }
 .enter-btn:disabled {
@@ -349,7 +368,7 @@ body, html {
   transition: all 0.9s ease
 }
 .theme-shadow .menu-navigator {
-  background-color: #1c1111;
+  background-color: var(--panel-bg);
   border-bottom: 1px solid var(--border-color);
   box-shadow: var(--shadow);
 }
@@ -654,9 +673,9 @@ div:has(.portal-body) {
 
 .message-bubble.user {
   align-self: flex-end;
-  background: var(--bubble-user-bg);       /* Very soft, clean light blue bubble */
-  color: var(--text-main);   /* Easy reading deep blue text */
-  border: 1px solid var(--user-border-color);
+  background: var(--bubble-user-bg);
+  color: var(--bubble-user-text);
+  border: 1px solid var(--bubble-user-border);
   box-shadow: var(--shadow);
   z-index: 1;
 }
@@ -763,22 +782,22 @@ div:has(.portal-body) {
   margin-top: 0.4rem;
   padding: 0.35rem 0.55rem;
   border-radius: 10px;
-  border: 1px solid rgba(59, 130, 246, 0.3);
-  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 30%, transparent);
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
   line-height: 1.35;
   text-decoration: none;
 }
 
 .citation-link-document:hover {
-  background: rgba(59, 130, 246, 0.16);
-  border-color: rgba(59, 130, 246, 0.55);
+  background: color-mix(in srgb, var(--accent-primary) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary) 55%, transparent);
 }
 
 .theme-shadow .message-bubble.user {
   align-self: flex-end;
-  background: #7a0010;       /* Very soft, clean light blue bubble */
-  color: var(--text);   /* Easy reading deep blue text */
-  border: 1px solid #7a0010;
+  background: var(--bubble-user-bg);
+  color: var(--text);
+  border: 1px solid var(--bubble-user-border);
   box-shadow: var(--shadow);
 }
 
@@ -791,9 +810,9 @@ div:has(.portal-body) {
 }
 
 .theme-shadow .follow-up-container button {
-  background: #3b1e1e !important;
+  background: var(--card-bg) !important;
   color: var(--text-main) !important;
-  border: 1px solid #910000 !important;
+  border: 1px solid var(--border-color) !important;
   box-shadow: var(--shadow);
 }
 
@@ -812,7 +831,7 @@ div:has(.portal-body) {
 }
 
 .query-card {
-  background: #dbeafe;
+  background:var(--bg-main);
   border: 1px solid var(--user-border-color);
   padding: 1rem;
   border-radius: 16px;
@@ -827,13 +846,13 @@ div:has(.portal-body) {
 
 
 .theme-shadow .query-card {
-  background: #7a0010 ;                  
+  background: var(--bg-main);                  
   border: 1px solid var(--border-color);
   filter: var(--loader-glow);         
 }
 
 .query-card:hover {
-  background: #f8fafc;
+  background: var(--tint-hover);
   border-color: var(--accent-primary);
   transform: translateY(-2px);
   box-shadow: var(--shadow-hover);
@@ -1009,7 +1028,7 @@ div:has(.portal-body) {
 
 .chat-input-area input:focus {
   /* border-color: var(--accent-primary); */
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+  box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
 .chat-input-area input::placeholder {
@@ -1064,13 +1083,13 @@ div:has(.portal-body) {
 
 .theme-shadow .circle-icon-button:hover:not(:disabled) {
   transform: translateY(-2px);
-  background: #7a0010;
+  background: var(--accent-primary);
   box-shadow: var(--shadow-hover);
 }
 
 .theme-shadow .circle-icon-buttonactive:not(:disabled) {
   transform: translateY(2px);
-  background: #7a0010;
+  background: var(--accent-primary);
   box-shadow: var(--shadow-hover);
 }
 .theme-shadow .circle-icon-button:hover {
@@ -1091,7 +1110,7 @@ div:has(.portal-body) {
 
 .theme-shadow .desktop-trace-sidebar {
   border: 1px solid var(--border-color) !important;
-  background: #3b1e1e !important;
+  background: var(--card-bg) !important;
   box-shadow: var(--shadow);
 }
 
@@ -1164,7 +1183,7 @@ div:has(.portal-body) {
   transition: all 0.2s;
 }
 .theme-shadow .chat-tooltip-popover {
-  background: #3b1e1e !important;
+  background: var(--popover-bg) !important;
   border: 1px solid var(--border-color) !important;
   box-shadow: var(--shadow);
 }
@@ -1196,7 +1215,7 @@ div:has(.portal-body) {
 }
 
 .theme-shadow .chat-textarea {
-  border: 1px solid var(--bubble-user-border)
+  border: 1px solid var(--border-color)
 }
 .chat-textarea:active {
   box-shadow: none;
@@ -1228,13 +1247,13 @@ div:has(.portal-body) {
 }
 
 .chat-input-area button:hover:not(:disabled) {
-  background: #2563eb;
+  background: var(--accent-hover);
   box-shadow: var(--shadow-hover);
   transform: translateY(-2px);
 }
 
 .chat-input-area button:active:not(:disabled) {
-  background: #2563eb;
+  background: var(--accent-hover);
   transform: translateY(2px);
   box-shadow: 0 1px 3px rgba(0,0,0,0.02);
 }
@@ -1252,7 +1271,7 @@ div:has(.portal-body) {
   align-items: center;
   gap: 0.75rem;
   padding: 0.6rem 0.85rem;
-  background: #eff6ff; 
+  background: var(--bg-alt); 
   border: 1px solid var(--user-border-color);
   border-radius: 16px;
   box-shadow: var(--shadow);
@@ -1265,14 +1284,14 @@ div:has(.portal-body) {
 }
 
 .theme-shadow .filter-row:hover {
-  background: #1c1111;
+  background: var(--bg-alt);
   border-color: var(--accent-primary);
   transform: translateY(-2px);
   box-shadow: var(--shadow-hover);
 }
 
 .filter-row:hover {
-  background: #f8fafc;
+  background: var(--tint-hover);
   border-color: var(--accent-primary);
   transform: translateY(-2px);
   box-shadow: var(--shadow-hover);
@@ -1514,13 +1533,13 @@ select:not(:-internal-list-box):not([multiple]) option {
 
 /* Shadow Engine Theme Override */
 .theme-shadow .sonic-ring-loader {
-  border: 4px solid rgba(220, 38, 38, 0.15); /* Faint red track */
-  border-top: 4px solid #dc2626; /* Crimson spinning arc */
-  box-shadow: 0 0 12px rgba(220, 38, 38, 0.6);
+  border: 4px solid rgba(240, 136, 62, 0.15); /* Faint track in the accent */
+  border-top: 4px solid var(--accent-primary); /* The spinning arc */
+  box-shadow: none;
 }
 
 .theme-shadow .sonic-ring-loader::after {
-  background: rgba(220, 38, 38, 0.25);
+  background: rgba(240, 136, 62, 0.25);
 }
 
 /* Animations */

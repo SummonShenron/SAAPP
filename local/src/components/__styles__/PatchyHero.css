@@ -1,0 +1,49 @@
+/* The full-size Patchy on the empty chat. It shares every expression with the small one (MiniPatchy.css); this only turns the small one's
+   "sits on the input" layout into a standing figure that floats. */
+.mp-hero {
+  position: relative;
+  right: auto;
+  bottom: auto;
+  display: inline-block;
+  z-index: auto;
+}
+
+/* A backdrop glow in his current color */
+.mp-hero .mph-glow { fill: var(--mp-accent); opacity: 0.12; transition: opacity 0.3s ease; }
+.mp-asleep.mp-hero .mph-glow, .mp-drowsy.mp-hero .mph-glow { opacity: 0.06; }
+
+/* He floats while he is up and about */
+.mp-hero.mp-idle .mp-bob,
+.mp-hero.mp-watching .mp-bob,
+.mp-hero.mp-drowsy .mp-bob,
+.mp-hero.mp-thinking .mp-bob,
+.mp-hero.mp-searching .mp-bob,
+.mp-hero.mp-puzzled .mp-bob,
+.mp-hero.mp-working .mp-bob { animation: mph-float 4s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+@keyframes mph-float {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  50% { transform: translateY(-5px) scale(0.985, 1.015); }
+  75% { transform: translateY(-1px) scale(1.01, 0.99); }
+}
+.mp-e-subdued.mp-hero .mp-bob { animation-duration: 7s; }
+
+/* Feet dangle */
+.mph-foot { animation: mph-dangle 4s ease-in-out infinite; }
+.mph-foot-r { animation-delay: 0.3s; }
+@keyframes mph-dangle {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(1.5px); }
+}
+.mp-asleep .mph-foot, .mp-e-subdued .mph-foot { animation: none; }
+
+/* A calm signal off the antenna, only while he is standing by */
+.mph-radar { opacity: 0; }
+.mp-idle.mp-e-open .mph-radar-1 { animation: mph-radar 2.6s ease-out infinite; }
+.mp-idle.mp-e-open .mph-radar-2 { animation: mph-radar 2.6s ease-out 1.3s infinite; }
+@keyframes mph-radar {
+  0% { r: 4px; opacity: 0.7; stroke-width: 1.5px; }
+  100% { r: 16px; opacity: 0; stroke-width: 0.5px; }
+}
+
+/* The little speech labels (hehe! / got it) are sized for the small one; here they sit beside his head. */
+.mp-hero.mp-laugh::after, .mp-hero.mp-steered::after { font-size: 12px; top: 18px; margin-right: -14px; }
