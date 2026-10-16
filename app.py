@@ -124,6 +124,9 @@ from backend.utils import llm_turns, llm_usage, loop_watchdog
 from backend.utils import ops_digest as ops_digest_utils
 from backend.utils import ops_suggestions as ops_suggestions_utils
 from backend.utils import duration_utils
+from backend.utils import curiosity as curiosity_utils
+from backend.utils import reading_shelf as shelf_utils
+from backend.services import shelf_refresh
 from backend.utils.self_history_utils import SELF_HISTORY_MARK, build_self_history_block, select_self_history
 from backend.utils.shared_history import CALLBACK_MARK, build_callback_block, callback_allowed
 from backend.utils.user_settings_utils import (
@@ -642,6 +645,10 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     answered_kind = initiation_utils.opening_kind(chat_sessions[history_key][-1]) if answers_an_opening else None
     if answers_an_opening and not is_guest_username(username):
         await asyncio.to_thread(initiation_utils.answered, username)
+    # Whether this message picks up the one open question Sonic asked at a lull (backend/utils/curiosity.py): counted only.
+    previous_marks = (getattr(chat_sessions[history_key][-1], "additional_kwargs", None) or {}) if chat_sessions[history_key] else {}
+    answers_curiosity = bool(previous_marks.get(curiosity_utils.CURIOSITY_MARK)) and curiosity_utils.taken(question)
+    answers_shelf = bool(previous_marks.get(shelf_utils.SHELF_MARK)) and curiosity_utils.taken(question)
     chat_sessions[history_key].append(stamp(HumanMessage(content=question)))
 
     messages_state = chat_sessions[history_key][-10:]
@@ -707,6 +714,10 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             tally(turn_counts, "initiation_answered")
             if answered_kind == "interest":
                 tally(turn_counts, "initiation_interest_answered")
+        if answers_curiosity:
+            tally(turn_counts, "curiosity_taken")
+        if answers_shelf:
+            tally(turn_counts, "shelf_taken")
 
         def log_timings(grade: str, outcome: str):
             now = time.perf_counter()
@@ -961,6 +972,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 )
                 tally(turn_counts, "duration_offered")
             callback_offered = False
+            callback_at_lull = False
+            lean_entry = None
             prompt = build_voice_prompt(
                 grounding_block=GROUNDING_BLOCKS.get(source_type, KB_STRICT_GROUNDING),
                 data=data,
@@ -1046,16 +1059,63 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     prompt = prompt + semantic_memory_context
                     # Invites one explicit connection to what was recalled (backend/utils/shared_history.py); quiet under
                     # the same gates as the other proactive items, and rate-limited.
-                    if callback_allowed(
+                    # At a lull a callback is the conversation's one extender (backend/utils/curiosity.py): it follows the same once-per-
+                    # conversation and per-person limits, and is framed as something to pick back up, not a link to what they just said.
+                    callback_lull = curiosity_utils.is_lull(question)
+                    callback_slot_ok = (not callback_lull) or (
+                        curiosity_utils.slot_open(question, chat_sessions[history_key], source_type=source_type, risk_active=False,
+                                                  energy_tier="open", proactive_taken=False)
+                        and not curiosity_utils.last_reply_asked(chat_sessions[history_key])
+                        and curiosity_utils.gap_clear(await asyncio.to_thread(curiosity_utils.last_offer_at, username), datetime.now(timezone.utc))
+                    )
+                    if callback_slot_ok and callback_allowed(
                         True, chat_sessions[history_key], source_type=source_type, risk_active=risk_level != RISK_NONE,
                         energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
                         closing=is_closing_message(question),
                         proactive_taken=bool(open_loop_entry or relatable_entry or encouragement_entry or self_history),
                     ):
-                        prompt = prompt + build_callback_block()
+                        prompt = prompt + build_callback_block(lull=callback_lull)
                         callback_offered = True
+                        callback_at_lull = callback_lull
                         tally(turn_counts, "callback_offered")
                     yield f"data: {json.dumps({'event': 'node_progress', 'node': 'user_memory_recall', 'title': 'Recalling relevant memory', 'detail': 'Found semantically relevant past context.'})}\n\n"
+            # At a real lull, or when they touch a topic Sonic has read about, offers ONE thing of its own: an item from its reading shelf
+            # (backend/utils/reading_shelf.py) or, with nothing to offer, the plain open question (backend/utils/curiosity.py). Both use the
+            # turn's one proactive slot, so they only get it when nothing else took it, and share the per-conversation and per-person limits.
+            # Asking what it has been reading is answered from the shelf whatever else is going on.
+            curiosity_invited = False
+            shelf_offer = None
+            if source_type == "conversational" and not is_guest_username(username) and risk_level == RISK_NONE:
+                slot = dict(
+                    source_type=source_type, risk_active=False,
+                    energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
+                    proactive_taken=bool(open_loop_entry or relatable_entry or encouragement_entry or self_history
+                                         or callback_offered or goal_nudge_context),
+                )
+                asked_listing = shelf_utils.shelf_enabled() and shelf_utils.asks_what_reading(question)
+                topic_ok = shelf_utils.shelf_enabled() and shelf_utils.topic_for(question) is not None and curiosity_utils.slot_open(
+                    question, chat_sessions[history_key], min_turns=2, **slot)
+                lull_ok = curiosity_utils.curiosity_allowed(question, chat_sessions[history_key], **slot)
+                db_for_shelf = get_db()
+                if asked_listing and db_for_shelf is not None:
+                    shelf_offer = await asyncio.to_thread(shelf_utils.offer_for_turn, db_for_shelf, username, question, listing=True, topic_ok=False, lull_ok=False)
+                elif (topic_ok or lull_ok) and curiosity_utils.gap_clear(
+                        await asyncio.to_thread(curiosity_utils.last_offer_at, username), datetime.now(timezone.utc)):
+                    if db_for_shelf is not None:
+                        shelf_offer = await asyncio.to_thread(
+                            shelf_utils.offer_for_turn, db_for_shelf, username, question, listing=False, topic_ok=bool(topic_ok), lull_ok=bool(lull_ok),
+                        )
+                    if shelf_offer is None and lull_ok:
+                        # Nothing on the shelf this person has not seen and no earlier conversation to pick back up: one of Sonic's own leanings
+                        # (curated, said once to each person), and only with none left, the plain open question.
+                        lean_entry = curiosity_utils.pick_lean(await asyncio.to_thread(curiosity_utils.lean_seen, username))
+                        if lean_entry:
+                            prompt = prompt + curiosity_utils.build_lean_block(lean_entry)
+                        else:
+                            prompt = prompt + curiosity_utils.build_curiosity_block()
+                            curiosity_invited = True
+                if shelf_offer:
+                    prompt = prompt + (shelf_utils.build_listing_block(shelf_offer) if shelf_offer["kind"] == "listing" else shelf_utils.build_shelf_block(shelf_offer))
             # A clearly closing message ("thanks!", "goodnight") gets a directive to close the conversation
             # instead of fishing for more (backend/utils/wrapup_utils.py); the persona carries the general rule.
             closing_turn = source_type == "conversational" and risk_level == RISK_NONE and is_closing_message(question)
@@ -1127,6 +1187,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 # whether the person stays or comes back. Not applied while a safety context is in force, which has
                 # its own rules for what the reply must do.
                 identity_issue = None if safety_plan.active else identity_reply_issue(full_response)
+                if identity_issue is None and not safety_plan.active:
+                    # An invented read, or a verdict on a piece on the reading shelf: also a matter of what Sonic is (backend/utils/reading_shelf.py).
+                    identity_issue = shelf_utils.shelf_reply_issue(full_response, shelf_offer is not None)
                 encouragement_issue = (
                     encouragement_reply_issue(full_response, encouragement_entry)
                     if encouragement_entry and not safety_plan.active else None
@@ -1235,6 +1298,29 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 ai_message.additional_kwargs[ENCOURAGEMENT_MARK] = True
             if callback_offered:
                 ai_message.additional_kwargs[CALLBACK_MARK] = True
+            # Counted and capped on what Sonic actually did, not on what it was invited to do.
+            if curiosity_invited and curiosity_utils.asked_a_question(full_response):
+                ai_message.additional_kwargs[curiosity_utils.CURIOSITY_MARK] = True
+                tally(turn_counts, "curiosity_offered")
+                await asyncio.to_thread(curiosity_utils.record_offer, username)
+            if callback_at_lull and not is_guest_username(username):
+                # A callback offered at a lull spent the one extender (it is counted as a callback above).
+                ai_message.additional_kwargs[curiosity_utils.CURIOSITY_MARK] = True
+                await asyncio.to_thread(curiosity_utils.record_offer, username)
+            if lean_entry and curiosity_utils.lean_used(full_response, lean_entry):
+                ai_message.additional_kwargs[curiosity_utils.CURIOSITY_MARK] = True
+                tally(turn_counts, "lean_offered")
+                await asyncio.to_thread(curiosity_utils.record_offer, username)
+                await asyncio.to_thread(curiosity_utils.mark_lean, username, lean_entry["id"])
+            if shelf_offer and shelf_offer["kind"] == "listing":
+                tally(turn_counts, "shelf_listed")
+            elif shelf_offer and shelf_utils.reply_used_item(full_response, shelf_offer["item"]):
+                # Same: the shelf item is spent, for this conversation and for this person, only when the reply really brought it up.
+                ai_message.additional_kwargs[curiosity_utils.CURIOSITY_MARK] = True
+                ai_message.additional_kwargs[shelf_utils.SHELF_MARK] = True
+                tally(turn_counts, "shelf_offered")
+                await asyncio.to_thread(curiosity_utils.record_offer, username)
+                await asyncio.to_thread(shelf_utils.mark_offered, get_db(), username, shelf_offer["item"]["_id"])
             if self_history and self_history["mode"] == "volunteer":
                 ai_message.additional_kwargs[SELF_HISTORY_MARK] = True  # only a volunteered mention is rate-limited
             if mentions_itself(full_response):
@@ -1247,6 +1333,12 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # later prompts as if it were a fact (a real memory chunk did exactly that).
             if budget_guard.allows("memory_summaries", budget_state) and not (folder_connected and is_stale_capability_denial(full_response)):
                 spawn_background_task(index_conversation_turn(services.get("user_memory_vector_store"), username, question, full_response, session_id))
+            # The reading shelf is topped up lazily, when a conversation starts: one search, a few page reads and two small model calls, only
+            # when it is due (backend/services/shelf_refresh.py). After the reply is on its way, so it never slows one.
+            if len(chat_sessions[history_key]) <= 2 and get_db() is not None and budget_guard.allows("shelf_refresh", budget_state):
+                from backend.models.models import lite_llm as shelf_llm
+
+                spawn_background_task(shelf_refresh.maybe_refresh(get_db(), shelf_llm.ainvoke))
             # Asked once: an offered loop is closed for good, and anything new they said is noted for later.
             if open_loop_entry:
                 await asyncio.to_thread(open_loops_utils.mark_asked, username, open_loop_entry["id"])
@@ -2201,6 +2293,44 @@ async def retire_observation(key: str, admin = Depends(require_global_admin)):
     if not await asyncio.to_thread(retire_observation_doc, db, key, None, admin.get("sub")):
         raise HTTPException(status_code=404, detail="No such observation.")
     return {"observations": await asyncio.to_thread(list_observations, db)}
+
+class ShelfRemoveRequest(BaseModel):
+    block_source: bool = False
+
+
+@app.get("/api/admin/reading-shelf")
+async def get_reading_shelf(admin = Depends(require_global_admin)):
+    """Everything on Sonic's reading shelf (backend/utils/reading_shelf.py), newest first, with the sources that are blocked. Global_Admins only."""
+    return await asyncio.to_thread(shelf_utils.admin_view, _admin_db())
+
+
+@app.post("/api/admin/reading-shelf/{key}/remove")
+async def remove_reading_shelf_item(key: str, payload: ShelfRemoveRequest, admin = Depends(require_global_admin)):
+    """Takes one item off the shelf for good (it stays as a tombstone so the page is never read again). With block_source, the site is blocked too."""
+    db = _admin_db()
+    if not await asyncio.to_thread(shelf_utils.remove_item, db, key, admin.get("sub"), payload.block_source):
+        raise HTTPException(status_code=404, detail="No such item.")
+    logger.info("[shelf] an admin removed an item%s.", " and blocked its source" if payload.block_source else "")
+    return await asyncio.to_thread(shelf_utils.admin_view, db)
+
+
+@app.delete("/api/admin/reading-shelf/blocked/{domain}")
+async def unblock_reading_shelf_source(domain: str, admin = Depends(require_global_admin)):
+    """Lets a blocked site be read again (items already removed stay removed)."""
+    db = _admin_db()
+    await asyncio.to_thread(shelf_utils.unblock_domain, db, domain)
+    return await asyncio.to_thread(shelf_utils.admin_view, db)
+
+
+@app.post("/api/admin/reading-shelf/refresh")
+async def refresh_reading_shelf(admin = Depends(require_global_admin)):
+    """Runs one search now instead of waiting for the interval: one search, up to a few page reads and two small model calls."""
+    from backend.models.models import lite_llm as shelf_llm
+
+    db = _admin_db()
+    result = await shelf_refresh.refresh_shelf(db, shelf_llm.ainvoke, force=True)
+    return {"result": result, **(await asyncio.to_thread(shelf_utils.admin_view, db))}
+
 
 @app.post("/api/synthetic/ask")
 async def synthetic_ask(

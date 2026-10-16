@@ -107,6 +107,78 @@ A character eval (`backend/evals/character_eval.py`): winding down gets exactly 
 conversation soon after gets none; a crisis context gets none; and when answered, the follow-up goes somewhere sensible. In production, the
 taken/offered ratio.
 
+### Scope update (2026-10-16): two tools, one use per conversation
+
+The user widened this from "ask a follow-up question" to two small, human conversation tools, both for the moment a conversation has no clear direction:
+
+- **(a) An open, natural extender**: the kind people ask on the phone ("what else have you got going on?", "anything else new?"). Not a probe, not about the topic just finished.
+- **(b) Offering something of its own to steer by**: Sonic mentions something about itself when it is naturally able to, to give the conversation a direction: a topic it leans toward, or a good conversation the two of them had before.
+
+Rules the user set: **only one of these, once per conversation**; if the person has nothing, or the conversation really is over, Sonic wraps up exactly as it does now (the wrap-up already works well and stays unchanged); and **nothing here ever outranks the emotional ceiling or the safety mechanisms**.
+
+How this fits what already exists (so it is mostly new *triggering*, not new capability):
+
+- (a) is the idea above. (b) reuses parts that are already built: the **callback** (`shared_history.py`, one explicit dated reference to recalled context) for "a good conversation we had", and the curated **INTERESTS** (`sonic_profile.py`, topics it leans toward) through the `relatable_utils.py` gates, for "something it enjoys". Both already obey the identity rules.
+- The identity rules (`identity_checks.py`) stay in force for (b): topics it leans toward, never activities ("I watched", "my favourite game"), never a claimed feeling or an invented past ("I once", "I've been there"), never a stake in the person staying or returning ("I'd love to keep talking"). A callback must point at a real recalled note, dated; it is never made up.
+- They share the turn's **one proactive slot** with open loops, relatable lines, the goal nudge, encouragement and the callback, so this takes the slot only when nothing higher wants it (safety, then encouragement, then an open loop, then a callback, then this).
+- Choosing between (a) and (b), mechanically and with no model call: a relevant recalled thread that clears the callback gate, then the callback; else an unused curated interest when the talk has been light; else the plain open question (a). Whichever is chosen, the other is spent too: one per conversation.
+- A lull is not a goodbye. "Winding down" must be told apart from a **closing** message (`is_closing_message`): a lull ("ok", "yeah that makes sense") may get one extender; a closing ("thanks, that's all", "bye") gets none. This boundary is where the eval cases go.
+- Because a model left to itself would ask one every turn, the limits live in code (the per-conversation mark like `CALLBACK_MARK`, a cross-conversation cap so it is not a tic, and the route gates: conversational replies only, not tool, KB or web routes), not just in the prompt.
+
+Build in two stages: **(a) first** (gate, prompt block, counters `curiosity_offered` / `curiosity_taken`, and the exemption in `closing_reply_issue` so the reply-fit check does not rewrite it away), then **(b)** on top, reusing the callback and interest machinery. Each stage gets `character_eval` scenarios before it ships.
+
+### Stage (a) built (2026-10-16): the open natural extender
+
+`backend/utils/curiosity.py`, wired in `app.py` next to the callback. Everything that limits it is code:
+
+- **At a lull only.** After at least 3 messages from the person (`CURIOSITY_MIN_USER_TURNS`), when their message is nothing but an acknowledgement or hedge
+  ("ok", "yeah, I see", "huh, interesting"; short, no question, no digits or links, from a fixed word list), and Sonic's last reply did not end on a question
+  of its own. A closing message is never a lull: `is_lull` defers to `is_closing_message`, so a goodbye still gets the clean close.
+- **Once per conversation, where a conversation is a stretch of the chat, not the whole saved thread.** The mark `curiosity_offered` on Sonic's reply is looked
+  for back to the last pause of an hour or more between two messages (`CURIOSITY_CONVERSATION_GAP_HOURS`, default 1). Counting the whole thread would have let
+  one offer spend the limit for the life of a chat people return to for weeks. The real-exchange count (3 messages from them) restarts after a pause too.
+  Messages saved before they were stamped with a time are never taken as a pause.
+- **Not in every conversation: a time gap, not a count.** Per person, stored as `last_curiosity_offer_at` on the `user_settings` document, 2 hours by default
+  (`CURIOSITY_MIN_HOURS`), set short on purpose so it can be tested and tuned from real use (it started at 72 hours and was judged far too long). This is the one
+  place I did not do exactly what was proposed ("never two conversations in a row"): nothing orders conversations cheaply, so a gap in hours stands in for it.
+  Tighten or loosen with the env var; no deploy of code is needed, only the setting.
+- **Quiet when quiet matters more.** Conversational route only, no guests, no safety context, the emotional layer must be at the open energy tier, and it
+  takes the turn's one proactive slot only when an open loop, relatable line, encouragement, self-history line, callback or goal nudge has not.
+- **Recorded on what happened.** The mark, the `curiosity_offered` counter and the stored time are written only if the finished reply really asked a question
+  (a question inside a `<<<FOLLOW_UP>>>` suggestion does not count). `curiosity_taken` counts the next message when it has real substance (3+ words, not a
+  closing, not another bare acknowledgement). Both are in `self_counters` (closed key list) with rates: offered per turn, taken per offer.
+- **Kill switch:** `CURIOSITY_OFFERS=false`.
+- **The `closing_reply_issue` trap from above does not apply** as written: the question is never offered on a closing message, so the closing check never sees it.
+  If they answer with a goodbye, that turn is a normal closing and gets the clean close.
+- The prompt block lifts the "no tacked-on question" rule for this one reply, gives registers (what else is on their plate, what's new, how the rest of the day
+  looks) rather than a stock phrase, because with a single example it said the same sentence every time, and forbids probing, menus, claiming curiosity and a follow-up tag.
+
+Verified: 44 unit tests (`backend/tests/test_curiosity.py`: the lull detector, every gate, the gap, the database round trip and failure, the recording, the
+counters, and pins on the wiring in `app.py`); two `character_eval` scenarios on the real model, `lull_open_question` (exactly one question, no claimed
+curiosity, no tag) and `lull_question_answered_wraps_up` (when they have nothing, a clean close with no second question), both 10/10; `clean_close` still 5/5;
+backend suite 3134 passed. A changelog entry (`open_question`) was added so Sonic can describe the change truthfully.
+
+Stage (b) is built (below). Not measured yet: how often real people pick the question up
+(`curiosity_taken` / `curiosity_offered` in Sonic Health data once it has traffic).
+
+### Stage (b) built (2026-10-16): something of its own to steer by
+
+At a lull the single extender now has an order, all in `app.py`, all sharing the one proactive slot, the once-per-conversation mark and the per-person gap:
+
+1. **A reading-shelf item** this person has not been offered (section 6).
+2. **A callback**: the existing recalled-context callback already fires on any conversational turn with recalled memory. At a lull it now (a) obeys the extender limits
+   (it only fires if the conversation has not used its one, the person is outside the gap, and Sonic's last reply did not end on a question), (b) has its own lull
+   wording (`build_callback_block(lull=True)`: something worth picking back up, not a link to what they just said), and (c) spends the extender (mark and
+   per-person time) when offered. It is spent on the invitation, because the app cannot cheaply tell afterwards whether the model used it.
+3. **A leaning** from the curated `INTERESTS`, in leaning language with one light question ("Game design is a topic I lean toward... is that something you follow?").
+   Each is said to a given person once (`lean_seen` on their settings document); marked and counted (`lean_offered`) only if the reply really said it.
+4. **The plain open question** from stage (a), only when the person has heard every leaning.
+
+Verified: 54 tests in `test_curiosity.py` (picking and remembering leanings, the blocks, the lull wording, and pins on the order and limits in `app.py`); real-model
+`character_eval` `lull_lean` 8/8 (one leaning in its own words, one light question, no activity or feeling) and `lull_callback` 7/8 (the miss skipped the optional
+callback, which is allowed). One of four sampled leaning replies added a follow-up suggestion tag despite the instruction; the scenario's scorer rejects that.
+A leaning offered after an unrelated topic reads as a deliberate change of subject ("on a completely different note..."), which is what it is.
+
 ## 3. In flight: the app shell redesign
 
 Not a scoping note: this one is being built, in stages, and is recorded here so the plan survives between sessions.
@@ -215,7 +287,7 @@ Keep the technical detail, but stop inventing a cause:
 A test for the error mapping as a pure function (status and failure kind in, message out), including that no mapped message mentions vectors or allocation
 unless the backend said so; and a manual check that a 401, a budget block, a 500 and a dropped connection each show a different, true message.
 
-## 5. Tool agent memory: correct answers about code from earlier messages get flagged and rewritten (not yet built)
+## 5. Tool agent memory: correct answers about code from earlier messages get flagged and rewritten (built 2026-10-16)
 
 Reported 2026-10-16, with `TOOL_AGENT_MEMORY=true` switched on (it ships off; `backend/services/tool_agent_memory.py`). Not yet reproduced: what follows is
 from reading the code, so the first step is to confirm which check fires.
@@ -261,3 +333,157 @@ Give the validators a second, labelled evidence source instead of loosening them
 A `behavior_eval` scenario: the user attaches code in one message, then asks about it in a later one, with `TOOL_AGENT_MEMORY` on; the answer discusses it and is
 **not** rewritten, and the same answer with the code swapped for an invented name still **is** flagged (so the fix does not just switch the checks off).
 Plus unit tests for each check with the user-supplied context present and absent.
+
+### What was built (2026-10-16)
+
+Confirmed by reading and then by a real-model eval: all three code-block checks (grounding judge, no-precedent, idiom/duplicate-declaration) fired on the
+same correct answer. Without the fix the new scenario rewrote it **0/3** times (9 model calls per run, rejections `no_precedent`, `ungrounded_claim`,
+`generic_code`); with the fix it passes **3/3** with 1 call and no rewrite.
+
+- **Second evidence source for the grounding judge.** `build_earlier_context_block` (`agent_utils.py`) builds a labelled "what the user showed or said earlier"
+  section (plus saved notes, when present), marked as data, never instructions, and never able to make a claim about the repo true. `GROUNDING_CHECK_PROMPT`
+  takes it as `{earlier_context}`; the "REAL TOOL OBSERVATIONS" section stays the source of truth for the repository. The rewrite notice now says material the
+  user shared earlier counts as a source.
+- **Mechanical skip for the three code-block checks.** `answer_code_quotes_conversation` passes when every code block in the answer has at least 60% of its
+  meaningful lines (12+ characters, whitespace squashed) found in the earlier conversation. Invented or proposed code does not pass, so it is still flagged.
+- **Wiring.** `tool_agent_node` passes the earlier messages and the memory block into `run_react_loop(conversation_text=, saved_notes=)`. The native engine
+  skips these checks by design and ignores the extras.
+- **Observability.** Log lines only (`[validator] ...`, check names and counts, no user content). No Sonic Health counters yet.
+- **Tests.** 16 unit tests (`test_react_loop_conversation_context.py`) and 7 harness tests (`test_behavior_eval_conversation_code.py`), including controls that
+  prove new or invented code is still rejected. Four mutation checks (one per check, plus the grounding context) were each caught. The eval harness now
+  records which rejection notice fired (`Observation.rejections`).
+
+### Known limits
+
+- Text from session attachments is not part of the earlier-conversation text, only message content is.
+- The grounding prompt keeps the most recent 6000 characters of the conversation; the mechanical match looks at up to 120,000.
+- An answer that mixes quoted user code with new proposed code in one block can pass if 60% of the lines are quoted.
+
+## 6. Sonic's reading shelf: things it came across that match its interests (built 2026-10-16)
+
+Suggested 2026-10-16 by the user, as the natural partner to section 2. Sonic has interests it "leans toward" (`sonic_profile.INTERESTS`) but no way to learn more
+about them, so when asked what it would talk about it can only recite the list. The user's example: the person had nothing to say and asked Sonic to bring its own
+topics; Sonic named categories (lean systems, finding the commit a bug started in, game lore), but had nothing specific to share.
+
+### The idea
+
+Now and then Sonic runs a web search on a topic from its own interests, reads what it finds, and keeps a short note on a **shelf**. Later, on a lull or when the
+person mentions something close to it, Sonic can say "that reminds me of a writeup I read about a bug like that, on X". This gives it something of its own to
+bring, and a real sense of having done something between conversations.
+
+### Why this is honest (and what would make it dishonest)
+
+Sonic cannot have lived experience ("this one time I solved a bug"). It *can* have read something: the search and fetch really happened. So the rule is that
+every sentence Sonic says about the shelf must be backed by a stored item.
+
+- Each item stores the **URL, the date read, the interest it came from, and a short summary in Sonic's own words**. No reproduction of the page (copyright and
+  the shelf stays small). Sonic can offer the link, so the person can check it.
+- Allowed: "I came across a writeup about...", "something I read about...". Not allowed: a feeling about it ("I loved it"), an activity ("I spent the evening
+  on"), thinking about the person while they were away, or anything implying it needed them to come back. The checks in `identity_checks.py` and the opener checks
+  in `initiation.py` already ban these shapes; the shelf lines go through the same checks.
+
+### Constraints
+
+- **Shared, not per user.** Interests are global, so one shelf serves everyone. A few searches a week in total, not per person: cheap, and it respects the M0
+  database and the 2027 Gemini price rise.
+- **Searches come only from the curated interests.** No user text ever goes into a self-store (the standing identity rule), including the search queries.
+- **Fetched content is untrusted data.** Summaries are stored as data, shown to the model in a labelled section, and can never carry instructions: the same
+  principle as `MemoryTurnGuard`. A hostile page must not be able to steer Sonic.
+- **Sonic adds items itself; admins review after the fact (decided 2026-10-16).** No approval queue in front of the shelf: an item goes live once it passes the
+  automatic checks. Because nothing waits for a human, the automatic checks carry the safety and must be strict (untrusted-data handling, grounded summary, identity
+  checks on the stored note, a fixed blocklist for sensitive or adult topics and for sources). Review is an **admin screen in the GUI** that makes it trivial
+  to see what is on the shelf and take an item off: newest first, each row showing the interest, the summary, the source link and the date, with a one-click
+  Remove (and a "remove and don't search this source again" option). Removal takes effect on the next turn (the surfacing path reads the shelf live, no cache that
+  could keep serving a removed item) and a removed item is never re-added (keep a tombstone of its URL).
+- **Grounded summaries.** The summary is checked against the fetched text (same shape as the grounding judge), so the shelf cannot hold an invented claim.
+- **Uses the one proactive slot.** Order stays safety, encouragement, open loop, callback, then curiosity / shelf. An item is shown at most once per person, on
+  a lull or on a real topic match, and never in a closing message.
+
+### Where it would go
+
+- A `reading_shelf` collection and a small service that picks an interest (least recently searched), runs one search plus one fetch, summarises, and stores it
+  as pending. Counts only in the log (no content).
+- **Trigger: lazy (decided 2026-10-16).** Sonic runs on the $7 Render tier, which stays up, but the refresh is still lazy, so it does not depend on a loop
+  surviving redeploys, restarts or a crashed task. When a conversation starts and the newest shelf entry (or the last attempt) is older than N days, refresh
+  off the critical path with `asyncio.create_task` (the way other background work is launched), one interest per refresh, least recently searched first. Record
+  the attempt time **before** searching, so a failure or empty result does not retry on every conversation, and keep it single-flight (a claim written to the
+  database) so two overlapping conversations or instances never run it twice. A failed or empty search is a quiet no-op. A scheduled loop via
+  `spawn_background_task()` (like `checkpoint_retention`) could be added later as a belt-and-braces top-up, but it is not required.
+- **Admin screen:** an admin-only endpoint pair (list, remove) following the existing admin gating, and a page in the frontend's admin area. The row list is the
+  whole feature; no editing, only remove. Show counts (items, offered, taken) at the top so it doubles as a health view.
+- Surfacing: a third source for curiosity tool (b) in section 2, beside the callback and the curated interests, through the same `relatable_utils.py` gates.
+
+### Open questions
+
+- How many items to keep, and when an item expires (a thread from a year ago is still fine; a "news" item is not).
+- Decided: the person **can** ask "what have you been reading?" directly, and then Sonic may list several recent items (the one case it lists more than one).
+  It still only ever states what the shelf holds, with sources, and says plainly when the shelf is empty.
+- A setting to turn it off, as with the proactive opener.
+
+### How we will know it worked
+
+Unit tests: no item without a URL and a date; an injected instruction in fetched text never reaches the prompt as an instruction; shelf lines pass the identity
+checks and a dishonest one ("I spent the evening reading") fails. A `character_eval` scenario: on a lull with an unused matching item, Sonic offers it once, with
+the source; with no item it does what it does today. In production, offered / taken counters like section 2.
+
+### Order
+
+Section 2 stage (a) first, then this shelf, then section 2 stage (b) drawing from it.
+
+### What was built (2026-10-16)
+
+- **Storage and rules:** `backend/utils/reading_shelf.py` (collection `sonic_reading_shelf`, state in `sonic_reading_shelf_state`). Five hand-written topics
+  (bug hunts, game design, computing history, tabletop design, science fiction) with rotating search queries; the least recently searched topic goes next.
+  An item is the URL, domain, title, a short summary, topic, read time and status. A removed item stays as a tombstone, so that page is never read again.
+  Sites that are not worth reading (social networks, video, walls, shopping, Wikipedia) are blocked by default; an admin can add more.
+- **The summary is checked by fixed rules, then by a second model look:** 8 to 45 words, one plain passage, third person, nothing sensitive (the same list the
+  opener uses), nothing that reads as an order (the memory guard's patterns), no name or number the page does not contain; then a second small call must
+  confirm the page supports it. The page is shown to the model as untrusted data and only the summary is stored.
+- **Refresh (`backend/services/shelf_refresh.py`):** lazy, as decided: checked when a conversation starts (one database read per process per ten minutes),
+  attempt time written before anything is searched (single-flight, and a failed search is not retried at once), then one search, up to three page reads and two
+  small model calls, off the critical path and skipped under the budget guard's low-power mode. Every `SHELF_REFRESH_DAYS` (default 2). It works against the
+  real search and model: a live run added an item for three of four topics (the fourth was refused by the sensitive-ground rule, which over-matches on purpose).
+- **Surfacing (`app.py`):** three cases, all conversational, non-guest, no safety context. (1) Asked "what have you been reading?": answered from the shelf (up
+  to five items with links), and with an empty shelf it says so and invents nothing. (2) The person touches an item's topic (the hand-written triggers):
+  Sonic helps first, then mentions the piece. (3) At a lull (section 2's detector): the piece replaces the open question; with nothing unseen it falls back to
+  the question. Cases 2 and 3 use the same one slot, the same one-per-conversation mark and the same per-person gap as the open question, and an item is
+  offered to a given person once. Recorded only if the reply really brought it up (the link, or two content words of the title and summary).
+- **Honesty checks on the reply:** a claim to have read "an article/post/writeup..." when no item was put in front of the model is sent back for a rewrite, as an
+  identity issue; with an item present, a verdict ("great breakdown", "worth a read", "fascinating") or an order to read it is too. The block itself tells it
+  to say only what the summary holds, name the source, give the link once and claim no feeling or time spent.
+- **Admin screen:** Sonic Health, new "Reading shelf" tab (`SonicHealthShelf.tsx`): newest first, each item with its summary, source link, date and how often it was
+  offered; one-click Remove, or "Remove and block <site>"; blocked sites listed with "Allow again"; "Search now" runs one refresh immediately. Backed by
+  `/api/admin/reading-shelf` (list, remove, unblock, refresh), all behind the global-admin check. Removal is read live: nothing is cached on the offer path.
+- **Counters:** `shelf_offered`, `shelf_taken`, `shelf_listed` in the closed key list, with rates in Sonic Health data. A changelog entry (`reading_shelf`) was added.
+
+Verified: 60+ unit tests (`test_reading_shelf.py`: URL handling, source rules, every summary rule, claim and refresh single-flight, topic rotation, tombstones,
+expiry, choosing an offer, the blocks, the reply checks, the refresh end to end with a fake network and model including a hostile page, the app wiring, the admin
+routes); six `character_eval` scenarios in the "reading shelf" category on the real model (a topic match and a lull each bring the piece up with the link and no
+verdict, an empty shelf is stated plainly, a listing names exactly the two items, and with nothing on the shelf a story-shaped question produces no invented read),
+39 of 40 first drafts clean before the verdict check was added (the miss was "a great look at...", now also caught in code). Frontend type-checks; **the new tab was not
+opened in a browser** (it needs an admin sign-in and a live backend), so its look is untested.
+
+Known gaps: the model told a famous bug story from memory when asked for one with nothing on the shelf (no claim of having read it, but the details differed run to
+run), which is a hallucination risk the shelf does not remove; per-topic triggers are broad words like "bug" and "debugging" (the relatable line competes for the same
+slot); Wikipedia and similar were blocked after a live run returned dull encyclopedia pages, so the quality of what the search finds is still unproven over time.
+
+
+### Review of the added topics and the Reddit change (2026-10-16)
+
+The user added queries for security (zero days, exploit development and mitigation, APTs), game lore and narrative design, current extraction-shooter news,
+early computing and AI history, and mechanistic interpretability, and took Reddit off the blocked list. Findings from running them live:
+
+- **Fixed:** two of the AI queries were missing a comma between them, which Python joins into one long query; now separate.
+- **Security and interpretability queries produce real items** (a V8 zero-day explainer, an APT overview, an interpretability research page), but they sit under
+  the `bug_hunts` and `computing_history` topics, whose triggers are debugging and old-hardware words, so those items can only be offered at a lull or when the
+  person talks about debugging. Separate topics with their own trigger words (security, lore, AI research) would make them surface when those subjects come up.
+- **The Dark Souls lore query returned a fan-wiki landing page**, summarized as a generic description, and the interpretability query returned an Anthropic research
+  landing page. "News" queries (extraction shooters) found nothing usable and go stale by nature.
+- **Reddit:** unblocking it does nothing yet. A `site:reddit.com` search finds threads, but a plain fetch returns nothing from `www.reddit.com` and a block page
+  from `old.reddit.com`, so every Reddit result is skipped as "too little text". Making it work needs Reddit's official API with an app credential (read-only,
+  low volume), which is a separate, small piece of work. Queries would also need `site:reddit.com` to find threads at all.
+
+**Topic split (done):** security, game lore and AI research are now their own topics with their own trigger words (alongside bug hunts, game design, computing history,
+tabletop and science fiction), so their items surface when those subjects come up and no longer wait for a lull or a debugging chat. Triggers avoid lookalikes
+(`apt-get` does not reach security; a tested case). The extraction-shooter news query stayed under game design; it found nothing usable in a live run and is the
+first one to cut if it keeps failing. The admin tab has labels for the new topics.

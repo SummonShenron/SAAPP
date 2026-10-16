@@ -39,7 +39,15 @@ def callback_allowed(
     return not recently_offered(recent_messages)
 
 
-def build_callback_block() -> str:
+def build_callback_block(lull: bool = False) -> str:
+    if lull:
+        return (
+            "\nCALLBACK AT A LULL (optional, this reply only): the conversation has gone quiet and what they asked is answered. The recalled context "
+            "above comes from earlier conversations. If one item genuinely connects to what you were just talking about, you may, after a short "
+            "reply, bring it up once in a sentence as something worth picking back up (\"this is the same shape as the retry problem you sorted out a "
+            "few weeks back\"). Use the dates only as loosely as they're given. Never list or recite what you know about them, never mention memory, "
+            "records or notes, never say you were thinking about it, and skip it entirely if the link is a stretch.\n"
+        )
     return (
         "\nCALLBACK (optional): the recalled context above comes from earlier conversations. If, and only if, one item "
         "genuinely connects to what they're saying now, you may draw that connection once, in a sentence or less, the way a "

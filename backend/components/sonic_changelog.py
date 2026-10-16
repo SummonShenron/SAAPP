@@ -23,6 +23,38 @@ Fields: `id`; `month` (YYYY-MM, newest first within the list is not required); `
 
 CHANGELOG = [
     {
+        "id": "reading_shelf",
+        "requires": [
+            "backend/utils/reading_shelf.py::def offer_for_turn",
+            "backend/services/shelf_refresh.py::async def refresh_shelf",
+            "app.py::shelf_utils.offer_for_turn",
+        ],
+        "month": "2026-10",
+        "title": "Keeping a reading shelf",
+        "line": (
+            "I now keep a short shelf of pieces I have read about the topics I lean toward, like game design, famous bugs and computing "
+            "history. When a chat goes quiet or the topic comes up, I may mention one, with the link. You can ask what I have been reading."
+        ),
+        "keywords": ["reading", "reading shelf", "been reading", "read anything", "articles", "bug stories", "come across"],
+        "volunteer": [],
+    },
+    {
+        "id": "open_question",
+        "requires": [
+            "backend/utils/curiosity.py::def curiosity_allowed",
+            "app.py::curiosity_utils.curiosity_allowed(",
+            "backend/utils/curiosity.py::def pick_lean",
+        ],
+        "month": "2026-10",
+        "title": "Asking what else is going on",
+        "line": (
+            "When a conversation goes quiet, I may bring up one thing: an open question like what else you have going on, a topic I "
+            "lean toward, or something from an earlier conversation we had. I do it at most once in a conversation, and not often."
+        ),
+        "keywords": ["ask me questions", "ask questions", "what else", "small talk", "go quiet", "lull", "never ask"],
+        "volunteer": [],
+    },
+    {
         "id": "how_long",
         "requires": [
             "backend/utils/duration_utils.py::def build_duration_context",
