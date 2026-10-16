@@ -38,22 +38,35 @@ const TracePanel: React.FC<{ steps: TraceStep[]; running: boolean; onClose: () =
       <div className="trace-panel-body" ref={body} aria-live="polite">
         <div className="trace-status">{status}</div>
         {steps.length === 0 && <div className="trace-empty">Start a request and the route it takes will appear here.</div>}
-        {steps.map(step => (
-          <div className={`trace-step${step.status === 'complete' ? ' trace-step-complete' : ''}`} key={step.id}>
-            <span className="trace-step-mark" aria-hidden="true">
-              {step.status === 'complete' ? <Icon name="check" size={15} /> : <span className="trace-step-dot" />}
-            </span>
-            <div className="trace-step-text">
-              <div className="trace-step-title">
-                {step.title}
-                {step.batchSize && step.batchSize > 1 && (
-                  <span className="trace-batch">batched {step.batchIndex}/{step.batchSize}</span>
-                )}
-              </div>
-              {step.detail && <div className="trace-step-detail">{step.detail}</div>}
-            </div>
-          </div>
-        ))}
+        {/* The steps are nodes on one path: each is a dot on a line, the line behind it is drawn in the accent (the way already travelled), and while a
+            request runs a dashed stub flows on from the last node toward whatever comes next. */}
+        {steps.length > 0 && (
+          <ol className="trace-path">
+            {steps.map((step, i) => {
+              const done = step.status === 'complete';
+              const last = i === steps.length - 1;
+              return (
+                <li
+                  key={step.id}
+                  className={`trace-node ${done ? 'trace-node-done' : 'trace-node-active'}${last ? ' trace-node-last' : ''}${last && running ? ' trace-node-running' : ''}`}
+                >
+                  <span className="trace-node-dot" aria-hidden="true">
+                    {done ? <Icon name="check" size={11} /> : <span className="trace-node-core" />}
+                  </span>
+                  <div className="trace-node-text">
+                    <div className="trace-node-title">
+                      {step.title}
+                      {step.batchSize && step.batchSize > 1 && (
+                        <span className="trace-batch">batched {step.batchIndex}/{step.batchSize}</span>
+                      )}
+                    </div>
+                    {step.detail && <div className="trace-node-detail">{step.detail}</div>}
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        )}
       </div>
     </>
   );

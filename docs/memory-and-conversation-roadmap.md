@@ -146,13 +146,26 @@ Not a scoping note: this one is being built, in stages, and is recorded here so 
   - *Energy tier* is respected everywhere: for a low (subdued) person there is no alarm or shake on a failure (a slow nod, soft rose), no sweat drop, and no giggle.
   - The empty chat shows the full-size Patchy (replacing the big logo there; the logo stays in the rail) and the small one takes over when the conversation
     starts. `patchy-preview.html` is now a gallery of every look (`?empty=1` shows the empty chat as laid out, `?dark=1` the dark theme).
-- **Look (2026-10-16):** the app is flat (no shadows on bubbles, the input or the example cards, no lift on hover). The **dark theme was redone**: a deep navy
-  backdrop, **a plain blue bubble for your own messages and orange as the accent, used at the live edges (the input's blue-to-orange glow, the active rail item, the caret and selection, the labels) and not as a fill (a solid orange bubble and a thin orange edge on the blue one were both tried; plain blue won)**, instead of the old red-and-black "Shadow" look. It is one token block, `.theme-shadow`
-  in `index.css`; the hardcoded dark hexes in the other stylesheets now point at its tokens (`--panel-bg`, `--popover-bg`, `--card-bg`, `--input-bg`,
-  `--line`), so the next change is one block. The logo's gradient is now blue to orange (`LOGO_GRADIENT_STOPS` in `logoMarkData.ts`, `logo-mark.svg`,
-  `favicon.svg`). Cyan and red were tried and set aside (cyan read edgy and belongs to the BTY site; red was the old Shadow look). One caveat to watch:
-  the usage ring and budget banner use amber and orange for "notice" and "throttled", which now sit near the accent. Left over: the dead `.hero-banner`
-  rules in `index.css` still carry the old red gradients, and the theme is still named `theme-shadow` in code.
+- **Look (2026-10-16):** the app is flat (no shadows on bubbles, the input or the example cards, no lift on hover). The **dark theme is black and grey with orange as
+  the only colour** (its third pass: the old red "Shadow" look, then deep navy, now neutral): a near-black page, grey surfaces, a **grey user bubble**, orange
+  accents and labels, and **orange panel edges on the app rail and the trace blade** (`--edge`). It is one token block, `.theme-shadow` in `index.css`; the
+  hardcoded dark hexes in the other stylesheets point at its tokens (`--panel-bg`, `--popover-bg`, `--card-bg`, `--input-bg`, `--line`), so the next change is one
+  block. The logo's gradient is blue to orange (`LOGO_GRADIENT_STOPS` in `logoMarkData.ts`, `logo-mark.svg`, `favicon.svg`). Cyan was tried and set aside (it read
+  edgy and belongs to the BTY site). One caveat to watch: the usage ring and budget banner use amber and orange for "notice" and "throttled", which sit near the
+  accent. Left over: the dead `.hero-banner` rules in `index.css` still carry the old red gradients, and the theme is still named `theme-shadow` in code.
+- **Shadows and the trace as a path (2026-10-16):** every decorative shadow token (`--shadow`, `--shadow-hover`, `--shadow-dark-hover`, `--light-shadow`,
+  `--shadow-hover-reversed`, `--reverse-shadow`) is now `none` in both themes, which flattens every rule that used them in one move, plus the literal ones on the landing
+  buttons, the switch glow, the loader glow, the overflow button's glow and the mobile trace sheet. Only things that float over the page keep one, from
+  `--float-shadow` (the tooltip) or their own rule (the user menu, the mobile rail drawer, the overflow menus, Help and the folder-consent modal). Hover lifts
+  (`translateY(-2px)`) on the other buttons and cards are still there; without their shadow they are the next thing to flatten if wanted. **The trace panel's steps
+  are nodes on a path** (`TracePanel.tsx`, `TracePanel.css`): a dot per step on a line drawn in the accent, a check once done, a pulsing ring on the running one,
+  and a dashed stub flowing on from the last node while the request runs. No cards or borders. The old `.trace-step*` rules in `TracePanel.css` were removed:
+  they were global and had been styling the embedded widget's own `.trace-step` divs too.
+- **Landing page (2026-10-16):** brought in line. The left panel is **orange fading to white at the seam** (it was dark slate to white), the old raster
+  `neutral_logo.png` is replaced by the vector logo (blue to orange) on the white side, and the copy and buttons are navy (`--landing-ink`), which reads across the
+  whole fade: a navy primary button and a white guest button. On a phone the right panel is hidden, so a small one-colour navy logo sits above the name and the
+  fade runs down the page. An orange-and-blue variant (a blue wash behind the logo) was tried and set aside: it made a visible seam where it met the fade, and the
+  logo already carries both colours. `neutral_logo.png` is no longer used by the app (it is still what the vector mark was traced from).
 - **Light theme, settled (2026-10-16):** an orange-led light theme (peach surfaces), a navy app rail and a royal-blue user bubble with white text were all tried
   and set aside. The light theme is the dark theme's design in a light version: **one light blue (`#d9e5fb`) shared by the app rail and your message bubble**, so
   the bubble takes the same dark navy text as replies (`--bubble-user-text: var(--text-main)`), deep navy text (`#14234a`), and the same orange accent
@@ -163,3 +176,88 @@ Not a scoping note: this one is being built, in stages, and is recorded here so 
 - **Branding:** the name and sub header are placeholders in `local/src/components/brand.ts`. The original logo SVGs were lost; the mark was traced
   from `neutral_logo.png` into `logo-mark.svg`, `logo-mark-mono.svg` and `LogoMark.tsx`. Replace them if the originals turn up. The Sonic and
   Shadow themes and the Sonic-branded images are still to be rebranded away.
+
+## 4. Chat send errors hide the real cause (not yet built)
+
+### What was observed
+
+When a chat request fails, the person sees "Vector assertion timed out. Check local engine allocations." That reads like a vector-store problem. It is not
+a real diagnosis: the string is hardcoded in `local/src/pages/Chat.tsx` (the `catch` in `handleSendMessage`, the branch that is not a deliberate Stop) and
+is shown for **any** failure of the request, whatever the cause. The real error only goes to `console.error("Chat send failed:", err)`, so it is swallowed
+as far as the person, and anyone reading a bug report, can tell. Nothing in `backend/` produces that text.
+
+### Where the real information is lost
+
+- `Chat.tsx`: the generic message above replaces the error entirely.
+- `api.ts` `sendChatMessage`: a non-OK response throws a fixed "Failed to initialize communication stream." and drops the status code and the body, so the
+  caller cannot tell an expired session (401/403) from a spent budget (429 or the budget block) from a server fault (5xx) from a dead network.
+- A stream that dies or times out part-way ends in the same catch, with the same text. During the 2026-10-14 production slowdown, hung requests would have
+  shown exactly this misleading message.
+- The stream's own `error` event is passed through as `Execution Fault: <message>`, which is better, but it still depends on the backend's message being
+  specific.
+
+### The idea
+
+Keep the technical detail, but stop inventing a cause:
+
+1. Make `sendChatMessage` throw a typed error carrying the HTTP status, a short machine reason from the response body when there is one, and whether it was a
+   network failure or a timeout.
+2. In `Chat.tsx`, map the failure kinds to honest, plain messages: session expired (sign in again), usage paused (say when it resets; the budget banner already
+   knows), server trouble (try again; say it is on our side), offline or timed out (check the connection and retry). Unknown stays generic but says it is
+   unknown, and never names a component it has no evidence about.
+3. Keep the raw error reachable for debugging without putting it in front of everyone: an expandable "details" line on the failed reply, and the existing console
+   log. Never include the person's message text or other user content (the log-hygiene rule: no user content in logs or error forwarding).
+4. Give a failed reply a retry affordance, since the question is already there to resend.
+5. The Patchy error face already fires on these failures (a failed turn no longer ends with the cheer hop), so it needs no change.
+
+### How we will know it worked
+
+A test for the error mapping as a pure function (status and failure kind in, message out), including that no mapped message mentions vectors or allocation
+unless the backend said so; and a manual check that a 401, a budget block, a 500 and a dropped connection each show a different, true message.
+
+## 5. Tool agent memory: correct answers about code from earlier messages get flagged and rewritten (not yet built)
+
+Reported 2026-10-16, with `TOOL_AGENT_MEMORY=true` switched on (it ships off; `backend/services/tool_agent_memory.py`). Not yet reproduced: what follows is
+from reading the code, so the first step is to confirm which check fires.
+
+### What was observed
+
+The model now remembers talking about, or seeing, code from earlier in the conversation (code the user attached or pasted in earlier messages). When the
+user then asks about it, the model answers correctly, in reference to the user's question. That answer is flagged by the validator and **rewritten**, because
+the code it refers to is not in the repo, and the validator treats that as an unsupported or ungrounded claim. The answer was right to talk about code that
+lives outside the repo; the checks cannot tell "outside the repo, but the user showed it to me" from "invented".
+
+### Why the validators object (from the code)
+
+All of these live in `backend/services/react_loop.py`, run on a "final" answer, and compare it only against `attempts`, the tool observations gathered
+**this turn**. Nothing the user supplied earlier is in `attempts`, and neither the saved-memory block nor the conversation history is shown to them:
+
+1. `_check_final_answer_grounding` (`agent_utils.py`, `GROUNDING_CHECK_PROMPT` in `constraints.py`): "the ONLY source of truth" is this turn's observations, so
+   a named file, function or snippet that came from an earlier message reads as a fabricated claim. A flagged answer sets
+   `pending_ungrounded_claim_notice` and forces a rewrite that tells the model to verify the claim "with a real action" or remove it, which is the wrong
+   advice when the source is the user's own message.
+2. The no-precedent check (`_final_answer_has_code_block` plus `_has_successful_code_precedent_research`, mechanical, no LLM): any answer containing a code
+   block with no successful `read_repo_file` / `search_code` / `search_literal` / `find_file` result this turn is rejected with "you haven't looked at any
+   real code in this repo". It cannot tell a quoted or discussed snippet from a proposed implementation, so quoting the user's attached code trips it.
+3. `_check_idiom_grounding` ("is this code tailored to this repo, or generic?") and the duplicate-declaration check (`_extract_declared_names` against the
+   repo) can fire on the same answer, since code from outside the repo will not look like the repo's idioms.
+
+Each rejection is budget-limited ("force one real correction, then let a second attempt through"), so the answer is not lost, but it is rewritten once, which
+costs a model call and can degrade a correct answer.
+
+### The idea
+
+Give the validators a second, labelled evidence source instead of loosening them:
+
+- Pass the user-supplied context (attached or earlier-message code, and the memory block when it holds such code) into the grounding prompts as a separate
+  section, "code the user showed you earlier in this conversation (not the repo)", and say a claim traced to it is supported.
+- Make the no-precedent check apply only when the answer **proposes** code for the repo, not when it quotes or discusses code the user supplied. Cheapest
+  honest test: skip it when the code blocks in the answer appear (near-verbatim) in the conversation's earlier messages.
+- Change the rewrite notice for this case so it does not ask for a "real action" to verify something only the user can vouch for.
+- First, count which check fires and why (counts only, no content, per the log-hygiene rule), so the fix targets the real one and a recurrence is visible.
+
+### How we will know it worked
+
+A `behavior_eval` scenario: the user attaches code in one message, then asks about it in a later one, with `TOOL_AGENT_MEMORY` on; the answer discusses it and is
+**not** rewritten, and the same answer with the code swapped for an invented name still **is** flagged (so the fix does not just switch the checks off).
+Plus unit tests for each check with the user-supplied context present and absent.

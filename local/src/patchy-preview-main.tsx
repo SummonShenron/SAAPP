@@ -125,10 +125,10 @@ const chatMock = (
         </footer>
       </main>
       {params.get('blade') && <aside className="trace-blade">
-        <TracePanel onClose={() => {}} running={false} steps={[
+        <TracePanel onClose={() => {}} running={!params.get('done')} steps={[
           { id: '1', title: 'Analyzing intent and planning route...', detail: 'Node: coordinator_node', status: 'complete' },
           { id: '2', title: 'GraphRAG Retrieval in progress...', detail: 'Node: retrieve_node', status: 'complete' },
-          { id: '3', title: 'Generating response...', detail: 'Node: conversational_node', status: 'active' },
+          { id: '3', title: 'Generating response...', detail: 'Node: conversational_node', status: params.get('done') ? 'complete' : 'active' },
         ]} />
       </aside>}
     </div>

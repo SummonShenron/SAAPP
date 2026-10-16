@@ -2261,8 +2261,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                     title="More actions"
                     style={showOverflowWheel || showScopePicker ? {
                       background: 'var(--accent-primary)',
-                      border: '1px solid var(--accent-primary)',
-                      boxShadow: '0 0 8px rgba(99, 102, 241, 0.5)'
+                      border: '1px solid var(--accent-primary)'
                     } : {}}
                   >
                     <style>{`
