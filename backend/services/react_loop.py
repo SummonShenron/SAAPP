@@ -14,6 +14,8 @@ from backend.models.models import lite_llm
 from backend.utils.log_hygiene import describe_observation
 from backend.utils.agent_utils import (
     _CAPABILITY_DENIAL_RE,
+    answer_code_quotes_conversation,
+    build_earlier_context_block,
     _extract_declared_names,
     _find_unseen_existing_declarations,
     _ClarificationNeeded,
@@ -70,6 +72,8 @@ async def run_react_loop(
     on_steering_applied=None,
     steering_extra_steps: int = 2,
     steering_max_extra_steps: int = 8,
+    conversation_text: str = "",
+    saved_notes: str = "",
 ) -> dict:
     """Generic Reason -> Act -> Observe -> Decide loop shared by every iterative tool
     (MongoDB, GitHub search, ...). Each step asks the model for the next action given
@@ -316,6 +320,18 @@ async def run_react_loop(
     MAX_DUPLICATE_DECLARATION_REJECTIONS = 1
     pending_duplicate_declaration_notice: str | None = None
 
+    # What the user showed or said earlier in the conversation (and the saved notes about them): not the repo, so the tool observations can never back a
+    # claim about it. The grounding judge reads it as a second, labelled source, and an answer whose code blocks mostly quote it is discussing what the
+    # user showed, not proposing code for the repo, so the three code-block checks (no precedent, redeclared name, generic idiom) stand aside for it.
+    # Which check fires is logged by name only ("[validator]"), so how often each one objects can be counted from the logs without any user text.
+    earlier_context_block = build_earlier_context_block(conversation_text, saved_notes)
+
+    def _answer_quotes_the_conversation(answer_text: str) -> bool:
+        quoted = answer_code_quotes_conversation(answer_text, conversation_text)
+        if quoted:
+            logger.info("[validator] %s: code-block checks skipped, the answer's code is quoted from earlier in the conversation.", node_name)
+        return quoted
+
     steering_notes: list = []
     steering_extra_used = 0
     budget = max_iterations
@@ -558,8 +574,9 @@ async def run_react_loop(
                 continue
         if action == "final" and not forced_final and ungrounded_claim_reject_count < MAX_UNGROUNDED_CLAIM_REJECTIONS:
             answer_text = decision.get("answer") or ""
-            unsupported_claims = await _check_final_answer_grounding(answer_text, attempts, llm)
+            unsupported_claims = await _check_final_answer_grounding(answer_text, attempts, llm, earlier_context_block)
             if unsupported_claims:
+                logger.info("[validator] %s: the grounding check flagged %d claim(s).", node_name, len(unsupported_claims))
                 # The general case the diff check above can't cover — an arbitrary prose claim
                 # (a function name, a specific value, an existence assertion) with no reliable
                 # mechanical check, so a second LLM call judges it against the real attempts
@@ -571,12 +588,20 @@ async def run_react_loop(
                     "Your last answer made at least one claim that doesn't actually appear in your "
                     f"real observations this turn: {claims_list}. Either verify each of these with a "
                     "real action before answering again, or remove/qualify them as unverified — do "
-                    "not restate them as fact without real evidence from this turn."
+                    "not restate them as fact without real evidence from this turn. (Something the user "
+                    "showed or said earlier in this conversation counts as a source for what they showed "
+                    "or said: if a claim comes from there, say that it comes from what they shared, "
+                    "rather than trying to verify it in the repo.)"
                 )
                 continue
         if action == "final" and not forced_final and no_precedent_research_reject_count < MAX_NO_PRECEDENT_RESEARCH_REJECTIONS:
             answer_text = decision.get("answer") or ""
-            if _final_answer_has_code_block(answer_text) and not _has_successful_code_precedent_research(attempts):
+            if (
+                _final_answer_has_code_block(answer_text)
+                and not _has_successful_code_precedent_research(attempts)
+                and not _answer_quotes_the_conversation(answer_text)
+            ):
+                logger.info("[validator] %s: the no-precedent check rejected a final answer with code.", node_name)
                 # Cheap, mechanical, no LLM call — a "final" proposing code with zero real,
                 # non-error, non-empty read_repo_file/search_code/search_literal/find_file result
                 # this turn means nothing real was ever actually looked at to model the code on.
@@ -597,7 +622,7 @@ async def run_react_loop(
         ):
             answer_text = decision.get("answer") or ""
             declared_names = _extract_declared_names(answer_text)
-            if declared_names:
+            if declared_names and not _answer_quotes_the_conversation(answer_text):
                 # Cheap and mechanical (no LLM call), so it runs before the LLM-judged idiom check
                 # below — a rejection here skips that call for this pass. Catches the observed
                 # failure of proposing `const overflowItems = [...]` as if new when one already
@@ -611,6 +636,7 @@ async def run_react_loop(
                     logger.exception("[%s] declaration lookup failed — skipping the check (fail-open).", node_name)
                     unseen = []
                 if unseen:
+                    logger.info("[validator] %s: the duplicate-declaration check rejected a final answer.", node_name)
                     duplicate_declaration_reject_count += 1
                     listing = "; ".join(f"`{u['name']}` at {u['path']}:{u['line']}" for u in unseen)
                     pending_duplicate_declaration_notice = (
@@ -624,8 +650,9 @@ async def run_react_loop(
                     continue
         if action == "final" and not forced_final and idiom_grounding_reject_count < MAX_IDIOM_GROUNDING_REJECTIONS:
             answer_text = decision.get("answer") or ""
-            idiom_issue = await _check_idiom_grounding(answer_text, attempts, llm)
+            idiom_issue = None if _answer_quotes_the_conversation(answer_text) else await _check_idiom_grounding(answer_text, attempts, llm)
             if idiom_issue:
+                logger.info("[validator] %s: the idiom check rejected a final answer (%s).", node_name, idiom_issue["reason_category"])
                 # The distinct axis _check_final_answer_grounding is structurally forbidden from
                 # covering: not "is any claim false" but "is this code actually derived from what
                 # you found, or generic/exampleish boilerplate that would look the same either

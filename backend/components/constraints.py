@@ -360,10 +360,10 @@ well-written, and NOT against your own outside knowledge of what's typically tru
 answer is not the same as a grounded one; your only job is to compare the answer's specific
 claims against the observations below and say which ones don't actually appear there.
 
-REAL TOOL OBSERVATIONS GATHERED THIS TURN (the ONLY source of truth — anything the answer states
-as fact must trace back to something here):
+REAL TOOL OBSERVATIONS GATHERED THIS TURN (the source of truth for the REPOSITORY — anything the
+answer states as fact about this repo must trace back to something here):
 {attempts}
-
+{earlier_context}
 THE AGENT'S PROPOSED FINAL ANSWER:
 {final_answer}
 
