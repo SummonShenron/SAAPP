@@ -34,92 +34,67 @@
     rgba(238, 242, 250, 0.05) 0%,
     rgba(238, 242, 250, 0.45) 100%
   );
-  --reverse-shadow:
-      0 2px -4px rgba(0, 0, 0, 0.02),
-      0 10px -20px rgba(0, 0, 0, 0.04),
-      0 20px -4px rgba(0, 0, 0, 0.04),
-      0 30px -60px rgba(0, 0, 0, 0.06);
-  --shadow:
-      0 2px 4px rgba(0, 0, 0, 0.02),
-      0 10px 20px rgba(0, 0, 0, 0.04),
-      0 20px 4px rgba(0, 0, 0, 0.04),
-      0 30px 60px rgba(0, 0, 0, 0.06);
-  --light-shadow:
-      0 2px 4px rgba(0, 0, 0, 0.03),
-      0 8px 16px rgba(0, 0, 0, 0.04),
-      0 16px 32px rgba(0, 0, 0, 0.05);
-  --shadow-hover:
-    0 4px 8px rgba(0, 0, 0, 0.04),
-    0 15px 30px rgba(0, 0, 0, 0.08),
-    0 30px 15px rgba(0, 0, 0, 0.06),
-    0 45px 70px rgba(0, 0, 0, 0.1);
-
-  --shadow-hover-reversed:
-    -0 -4px 8px rgba(0, 0, 0, 0.04),
-    -0 -15px 30px rgba(0, 0, 0, 0.08),
-    -0 -30px 15px rgba(0, 0, 0, 0.06),
-    -0 -45px 70px rgba(0, 0, 0, 0.1);
-
-  --light-shadow-hover:
-  0 3px 6px rgba(0, 0, 0, 0.03),
-  0 12px 24px rgba(0, 0, 0, 0.05),
-  0 20px 10px rgba(0, 0, 0, 0.05),
-  0 30px 40px rgba(0, 0, 0, 0.07);
+  /* Flat: the decorative shadow tokens are none, so every rule that still says box-shadow: var(--shadow...) is flat. Only things that float over the page
+     (menus, popovers, tooltips) get a shadow, and they use --float-shadow. */
+  --reverse-shadow: none;
+  --shadow: none;
+  --light-shadow: none;
+  --shadow-hover: none;
+  --shadow-hover-reversed: none;
+  --light-shadow-hover: none;
+  --shadow-dark-hover: none;
+  --float-shadow: 0 8px 24px rgba(20, 35, 74, 0.16);
 }
 
 /* THEME OVERRIDE: THE DARK THEME. (The class is still called theme-shadow from when this was a deliberately edgy red-and-black "Shadow" theme.)
-   A deep navy backdrop with neutral-blue surfaces, blue for your own messages, and orange as the accent (icons, labels, links, the avatar, the live
-   edges: focus, the active item, the caret), matching the logo's blue and orange. Real danger stays a clear red (--accent-danger). Anything that wants a dark surface should use the tokens
-   below, not a hex, so the next change to this theme is one block. */
+   Black and grey, neutral (no colour tint), with orange as the only colour: the accent (icons, labels, links, the avatar), the live edges (the input's glow,
+   the caret, the active rail item) and a few panel edges (the rail's and the trace blade's, --edge). Your own messages are a grey bubble. Real danger stays
+   a clear red (--accent-danger). Anything that wants a dark surface should use the tokens below, not a hex, so the next change to this theme is one block. */
 .theme-shadow {
-  --bg-main: #0a0f1c;            /* the page */
-  --bg-alt: #0e1526;
-  --bg-surface: #111a2e;
-  --bg-surface-hover: #172440;
-  --border-color: #1c2a47;       /* hairlines */
-  --ai-border-color: #22314f;
-  --user-border-color: #28508f;
-  --text-main: #e4eaf4;
-  --text-muted: #8a9bb8;
-  --text: #f3f6fb;
-  --accent-primary: #f0883e;     /* the accent: a warm orange against the navy */
+  --bg-main: #0a0a0b;            /* the page */
+  --bg-alt: #111113;
+  --bg-surface: #151517;
+  --bg-surface-hover: #1d1d20;
+  --border-color: #262629;       /* hairlines: neutral grey */
+  --ai-border-color: #2c2c30;
+  --user-border-color: #3a3a40;
+  --text-main: #e8e8ea;
+  --text-muted: #8e8e95;
+  --text: #f5f5f6;
+  --accent-primary: #f0883e;     /* the one colour: orange */
   --accent-success: #3dba8c;
   --accent-danger: #ef4444;
   --accent-hover: #d9741f;
   --accent-soft: rgba(240, 136, 62, 0.12);
   --accent-ring: rgba(240, 136, 62, 0.25);
-  --card-tint: #101a2f;
-  --tint-hover: #172440;
-  --follow-up-bg: #111a2e;
+  --edge: color-mix(in srgb, var(--accent-primary) 60%, transparent);  /* an orange panel edge */
+  --card-tint: #131315;
+  --tint-hover: #1d1d20;
+  --follow-up-bg: #151517;
   /* Component tokens */
-  --panel-bg: #0c1424;           /* rail, trace blade, nav */
-  --popover-bg: #131d34;         /* menus and popovers */
-  --card-bg: #101a2f;            /* cards and tiles */
-  --input-bg: #0c1325;
-  --line: #1c2a47;
-  --bubble-user-bg: #17305e;     /* your messages: a deep royal blue (solid orange and a thin orange edge were both tried; plain blue won) */
-  --bubble-user-border: #28508f;
-  --bubble-user-text: #f3f6fb;
-  --bubble-ai-bg: #0a0f1c;
-  --bubble-ai-border: #0a0f1c;
-  --bubble-ai-text: #e4eaf4;
-  --filter-bg: #0e1526;
-  --code-bg: #070b15;
-  --code-border: #16213a;
-  --hero-overlay: linear-gradient(rgba(8, 12, 24, 0.4), rgba(8, 12, 24, 0.85));
+  --panel-bg: #0e0e10;           /* rail, trace blade, nav */
+  --popover-bg: #18181b;         /* menus and popovers */
+  --card-bg: #131315;            /* cards and tiles */
+  --input-bg: #0d0d0f;
+  --line: #262629;
+  --bubble-user-bg: #2a2a2e;     /* your messages: a mid grey */
+  --bubble-user-border: #3a3a40;
+  --bubble-user-text: #f3f3f5;
+  --bubble-ai-bg: #0a0a0b;
+  --bubble-ai-border: #0a0a0b;
+  --bubble-ai-text: #e8e8ea;
+  --filter-bg: #111113;
+  --code-bg: #070708;
+  --code-border: #1a1a1d;
+  --hero-overlay: linear-gradient(rgba(8, 8, 9, 0.4), rgba(8, 8, 9, 0.85));
   --input-text: var(--text-main);
-  --card-text: #e4eaf4;
+  --card-text: #e8e8ea;
   --loader-glow: none;
-  /* Flat theme: shadows are only for things that float (menus, popovers), and they are plain black, not coloured. */
-  --shadow:
-      0 4px 10px rgba(0, 0, 0, 0.35),
-      0 14px 30px rgba(0, 0, 0, 0.4);
-  --shadow-hover:
-    0 6px 14px rgba(0, 0, 0, 0.4),
-    0 18px 36px rgba(0, 0, 0, 0.45);
-  --shadow-dark-hover:
-    0 6px 14px rgba(0, 0, 0, 0.45),
-    0 18px 36px rgba(0, 0, 0, 0.5);
+  /* Flat theme: every decorative shadow is none; only things that float (menus, popovers, tooltips) get one, and it is plain black. */
+  --shadow: none;
+  --shadow-hover: none;
+  --shadow-dark-hover: none;
+  --float-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
 }
 
 * {
@@ -129,7 +104,7 @@
 }
 
 .theme-shadow, html body {
-  background-color: #0a0f1c;
+  background-color: #0a0a0b;
 }
 
 body, html {
@@ -220,9 +195,13 @@ body, html {
 }
 
 /* ==========================================================================
-   2. LANDING PAGE STYLES (Identity Gatekeeper - Flipped Gradient)
+   2. LANDING PAGE STYLES (Identity Gatekeeper)
+   An orange panel that fades to white at the seam, with the logo on the white side. The copy is navy (the logo's blue), which reads across the whole fade.
    ========================================================================== */
 .landing-page {
+  --landing-ink: #14234a;
+  --landing-ink-soft: #3b4a75;
+  --landing-rule: rgba(20, 35, 74, 0.25);
   display: flex;
   width: 100vw;
   height: 100vh;
@@ -234,13 +213,13 @@ body, html {
   flex-direction: column;
   justify-content: center;
   padding: 10% 5%;
-  /* Gradient starts dark slate on the far left and dissolves into pure white at the center seam */
+  /* Orange on the far left, dissolving into pure white at the center seam */
   background: linear-gradient(
     90deg,
-    #0f172a 0%,
-    #1e293b 30%,
-    #475569 60%,
-    #e2e8f0 88%,
+    #e8752a 0%,
+    #f08c44 30%,
+    #f6b07c 60%,
+    #fcdcc2 86%,
     #ffffff 100%
   );
   border-right: none;
@@ -281,28 +260,30 @@ body, html {
   transform: translateY(-2px) scale(1.02);
 }
 
-/* Typography contrast updates for dark-to-light left panel */
+/* Navy copy on the orange-to-white panel */
+.landing-mobile-logo { display: none; margin-bottom: 0.75rem; color: var(--landing-ink); } /* the one-colour logo: the full-colour one's orange end would vanish on the orange */
+
 .landing-hero-text h2 {
   font-size: 2.2rem;
   letter-spacing: 0.5px;
   margin-bottom: 0.5rem;
-  color: #f8fafc;
+  color: var(--landing-ink);
 }
 
 .landing-hero-text h3 {
-  color: #cbd5e1;
+  color: var(--landing-ink);
   font-size: 1.1rem;
   margin-bottom: 0.25rem;
 }
 
 .landing-hero-text h4 {
-  color: #94a3b8;
+  color: var(--landing-ink-soft);
   font-size: 0.95rem;
   font-weight: 400;
 }
 
 .landing-hero-text p {
-  color: #cbd5e1;
+  color: var(--landing-ink);
   margin-bottom: 2.5rem;
   font-size: 1rem;
   line-height: 1.5;
@@ -320,12 +301,12 @@ body, html {
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s ease;
-  box-shadow: 0 4px 6px -1px var(--accent-ring);
+  box-shadow: none;
 }
 
 .enter-btn:hover:not(:disabled) {
   background: var(--accent-hover);
-  box-shadow: 0 10px 15px -3px var(--accent-ring);
+  box-shadow: none;
   transform: translateY(-2px);
 }
 .enter-btn:active:not(:disabled) {
@@ -1182,10 +1163,12 @@ div:has(.portal-body) {
   outline: none;
   transition: all 0.2s;
 }
+.chat-tooltip-popover { box-shadow: var(--float-shadow); }
+
 .theme-shadow .chat-tooltip-popover {
   background: var(--popover-bg) !important;
   border: 1px solid var(--border-color) !important;
-  box-shadow: var(--shadow);
+  box-shadow: var(--float-shadow);
 }
 
 .theme-shadow .chat-tooltip-popover s,
@@ -1359,7 +1342,6 @@ div:has(.portal-body) {
 .switch input:checked + .switch-track {
   background: var(--accent-primary);
   filter: brightness(1.2);
-  box-shadow: 0 0 8px var(--accent-primary);
 }
 
 .switch input:checked + .switch-track .switch-thumb {
@@ -1503,7 +1485,6 @@ select:not(:-internal-list-box):not([multiple]) option {
   /* Per-segment easing lives on the keyframes themselves below (that's the only way to get a
      different feel per phase) — linear here is just the harmless fallback. */
   animation: sonic-spin 3s linear infinite;
-  box-shadow: 0 0 12px rgba(255, 204, 0, 0.5);
   position: relative;
   flex-shrink: 0; /* Prevent the ring from squeezing */
 }
@@ -1585,7 +1566,11 @@ select:not(:-internal-list-box):not([multiple]) option {
     justify-content: center;
     align-items: center;
     text-align: center;
+    /* One column: the orange fades to white down the page instead of across it */
+    background: linear-gradient(180deg, #e8752a 0%, #f08c44 25%, #f6b07c 55%, #fcdcc2 80%, #ffffff 100%);
   }
+
+  .landing-mobile-logo { display: inline-block; }
 
   .landing-right {
     display: none; /* Hide the desktop split image panel on mobile to save space */

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSignIn, useAuth, useClerk } from '@clerk/clerk-react';
 import { useNavigate } from 'react-router-dom';
-import logoImg from '../assets/neutral_logo.png'; // Updated logo import
+import LogoMark from '../components/LogoMark';
 import { getMe, logLogin } from '../api';
 import Spinner from '../components/Spinner';
 
@@ -87,6 +87,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
     <div className="landing-page">
       <div className="landing-left">
         <div className="landing-hero-text">
+          {/* The big logo lives in the right panel; on a phone that panel is hidden, so a small one sits above the name. */}
+          <LogoMark className="landing-mobile-logo" variant="mono" size={56} />
           <h2>SONIC ASSISTANT</h2>
           <h3>RAG Pipeline & Multi-Tenant Data Isolation System.</h3>
           <h4>Built by Jack Harper.</h4>
@@ -98,7 +100,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
             className="enter-btn login-btn" 
             onClick={handleLogin}
             style={{
-              backgroundColor: '#4285F4',
+              backgroundColor: 'var(--landing-ink)',
               color: 'white',
               border: 'none',
               padding: '0.85rem',
@@ -117,14 +119,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
               gap: 12,
               marginTop: 8,
               fontSize: '0.85rem',
-              color: '#788ba5',
+              color: 'var(--landing-ink-soft)',
               width: '100%',
               justifyContent: 'space-between',
               flexWrap: 'wrap'
             }}
           >
             <div style={{ flex: '1 1 auto', minWidth: 180 }}>
-              <strong style={{ color: '#bbbbbd' }}>Affiliate access</strong>
+              <strong style={{ color: 'var(--landing-ink)' }}>Affiliate access</strong>
               <div style={{ marginTop: 4 }}>
                 <span style={{ display: 'inline-block', marginRight: 10 }}>
                   <strong>A</strong> — Sonic docs
@@ -139,19 +141,19 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
             </div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', color: '#64748b', fontSize: '0.85rem', margin: '0.5rem 0' }}>
-            <div style={{ flex: 1, height: '1px', backgroundColor: '#334155' }}></div>
+          <div style={{ display: 'flex', alignItems: 'center', color: 'var(--landing-ink-soft)', fontSize: '0.85rem', margin: '0.5rem 0' }}>
+            <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--landing-rule)' }}></div>
             <span style={{ padding: '0 10px' }}>OR</span>
-            <div style={{ flex: 1, height: '1px', backgroundColor: '#334155' }}></div>
+            <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--landing-rule)' }}></div>
           </div>
 
           <button 
             className="enter-btn guest-btn" 
             onClick={handleGuestEntry}
             style={{
-              backgroundColor: '#1e293b',
-              color: '#f8fafc',
-              border: '1px solid #334155',
+              backgroundColor: '#ffffff',
+              color: 'var(--landing-ink)',
+              border: '1px solid var(--landing-rule)',
               padding: '0.85rem',
               borderRadius: '6px',
               fontWeight: 600,
@@ -162,7 +164,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
             Sign in as Guest (One-Click Sandbox)
           </button>
           
-          <p style={{ color: '#64748b', fontSize: '0.8rem', textAlign: 'center', lineHeight: '1.4' }}>
+          <p style={{ color: 'var(--landing-ink-soft)', fontSize: '0.8rem', textAlign: 'center', lineHeight: '1.4' }}>
             Guest mode provides interactive, safe access to sandboxed features and Jack's portfolio knowledge base.
           </p>
 
@@ -225,14 +227,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
         </div>
 
         <div style={{ marginTop: '2rem', display: 'flex', gap: '1rem', fontSize: '0.8rem' }}>
-          <a href="#/privacy" style={{ color: '#64748b' }}>Privacy Policy</a>
-          <a href="#/terms" style={{ color: '#64748b' }}>Terms of Service</a>
+          <a href="#/privacy" style={{ color: 'var(--landing-ink-soft)' }}>Privacy Policy</a>
+          <a href="#/terms" style={{ color: 'var(--landing-ink-soft)' }}>Terms of Service</a>
         </div>
       </div>
 
       {/* Hero Right: Displays Logo directly centered */}
       <div className="landing-right">
-        <img src={logoImg} alt="Sonic Graph Technologies" className="landing-hero-logo" />
+        <LogoMark className="landing-hero-logo" size={300} label="Sonic Graph Technologies" />
       </div>
     </div>
   );

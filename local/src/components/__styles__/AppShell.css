@@ -49,6 +49,7 @@
 }
 
 .theme-shadow .app-rail { --rail-bg: var(--panel-bg); }
+.theme-shadow .app-rail { border-right-color: var(--edge); } /* an orange edge on the rail */
 .app-rail-compact { width: 64px; align-items: center; padding: 12px 8px; }
 
 .app-rail button {
