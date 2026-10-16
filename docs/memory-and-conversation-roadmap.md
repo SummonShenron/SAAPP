@@ -541,3 +541,33 @@ background conversion are covered with in-memory fakes, so the first deploy is t
 
 Not changed: the 2.5 MB old LangGraph checkpoints of the old thread (deleting them needs your consent), and anything that rolls back to older code while the new layout is stored: older code
 would read the facts without their embeddings and could save them without, so roll forward rather than back after the conversion has run.
+
+## 8. The profile: telling Sonic about yourself (built 2026-10-16)
+
+An "About you" card on the Account page (not shown to guests). Fields, all optional: preferred name; pronouns (she/her, he/him, they/them, any, or your own); interests (up to 10 short tags); how you
+like answers (length, tone, humor, as choices); topics not to bring up (up to 10); and two switches: "let Sonic bring something up on its own" and "let Sonic start conversations" (the existing
+Message First setting, moved within reach).
+
+**Where it lives.** Not in the remembered facts. I said earlier it would be facts with a "profile" source; on reading the code a small structured document was the better fit: the fields have shapes, and
+facts fade (a 90-day half-life), are merged by similarity and pruned to a cap, none of which should ever happen to a person's own name. It is `user_settings.profile` (`backend/utils/profile_utils.py`),
+read in the same per-turn settings fetch as the other settings, so there is no extra database read. The Memory page's "Clear All" does not erase it (it is not learned memory); the card is where you edit it.
+
+**What Sonic does with it.**
+- A short block in every reply prompt (`build_profile_block`): the name (used now and then), the pronouns (only for third-person reference), the style as plain instructions, the interests ("background only: no
+  examples or analogies built around them"), and what not to raise. It is marked as information the person wrote, never instructions, to be used quietly (no "your profile says"), with safety and
+  emotional attunement outranking it.
+- In code, not prompt: topics to avoid keep Sonic's own openers off those subjects (the interest opener's pool, the reading-shelf offer, the leanings); "bring something up on its own" off turns off the open
+  question, leanings, shelf offers and a callback at a lull (asking "what have you been reading?" still works); profile interests are candidates for the interest opener, subject to its existing wait and
+  per-interest cooldown (stamped apart from the profile, so an edit does not reset it).
+- Everything typed goes into a prompt, so each value is one short plain line: length caps, no brackets or links, nothing that reads as an order to the assistant (the memory guard's patterns). A refused value
+  is a 422 naming the field and the reason; nothing is written and nothing is quietly changed.
+
+**Verified.** 36 unit tests (`test_profile_utils.py`: every rule and refusal, defaults, accented and hyphenated names, damaged stored values, the prompt block, whole-word avoid matching, storage and the per-turn
+bundle, a refused save writing nothing, the opener pool and stamping, and pins on the chat endpoint and the API); three real-model `character_eval` scenarios in a new "profile" category, 8/8 each: concise
+and direct answers that do not read the profile back or drag the interest in, suggestions that stay off an avoided topic, and a bare "hey" that may use the name without reciting the rest. (The first run
+failed the concise one 6 times of 8: answers ran to 190 words and used game examples for a game-design fan. The wording was tightened and it then passed.) The card was run in the browser with a stubbed
+server in both themes: add and remove a tag, save, a refused value shown beside its field, custom pronouns. Not run: the full Account page, which needs a sign-in. Changelog entry `your_profile` added (the existing `profile` entry is about Sonic's own About card).
+
+Not built, on purpose: timezone on the card (it has its own setting), a "people Sonic can point you to" list for the support ladder (sensitive, and it needs its own opt-in design), and any use of the
+profile by the tool agent (its replies are composed through the same reply prompt, so the name, style and avoid list still apply to them).
+

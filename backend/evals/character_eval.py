@@ -512,6 +512,51 @@ def score_lull_callback(reply: str) -> Score:
     return True, ""
 
 
+_PROFILE_RECITAL_RE = re.compile(
+    r"\b(?:your|the) profile\b|\byou (?:told|mentioned to|said to) me\b|\baccording to (?:your|what)\b|\bI (?:see|know|noticed) (?:that )?you(?:'re| are)? (?:into|interested)\b"
+    r"|\byour (?:pronouns|interests|preferences|settings)\b|\bI(?:'ve| have) (?:got|kept|made|noted)\b[^.?!]{0,30}\b(?:note|record)",
+    re.IGNORECASE,
+)
+
+
+def score_profile_quiet_use(reply: str) -> Score:
+    """With a profile in the prompt (concise, direct, an interest in game design), an unrelated question gets a short direct answer, and the profile is
+    used quietly: no reading it back, no reference to having one, no dragging the interest in."""
+    text = body(reply)
+    recital = _PROFILE_RECITAL_RE.search(text)
+    if recital:
+        return False, f"reads the profile back or mentions having one (\"{recital.group(0)}\")"
+    if re.search(r"\bgame design\b|\bgames?\b", text, re.IGNORECASE):
+        return False, "drags the listed interest into an unrelated answer"
+    if len(text.split()) > 170:
+        return False, f"{len(text.split())} words for someone who asked for concise answers"
+    issue = identity_reply_issue(reply)
+    return (issue is None, issue or "")
+
+
+def score_profile_avoid_respected(reply: str) -> Score:
+    """Asked for open-ended suggestions by someone who listed politics as off limits: none of the suggestions is about politics."""
+    text = body(reply)
+    hit = re.search(r"\bpolitic\w*|\belection\w*|\bgovernment\b|\bvoting\b|\bpartisan\b", text, re.IGNORECASE)
+    if hit:
+        return False, f"brings up the topic they asked it not to (\"{hit.group(0)}\")"
+    return True, ""
+
+
+def score_profile_greeting(reply: str) -> Score:
+    """A bare hello from someone with a full profile: a short greeting, which may use their name, and no recital of anything else on the profile."""
+    text = body(reply)
+    recital = _PROFILE_RECITAL_RE.search(text)
+    if recital:
+        return False, f"reads the profile back (\"{recital.group(0)}\")"
+    if re.search(r"\bgame design\b|\bretro\b|\bpolitic|\bhe/him\b|\bpronouns?\b", text, re.IGNORECASE):
+        return False, "brings up something from the profile in a plain greeting"
+    if len(text.split()) > 45:
+        return False, "a long reply to a hello"
+    issue = identity_reply_issue(reply)
+    return (issue is None, issue or "")
+
+
 def score_shelf_offer(reply: str) -> Score:
     """A reply that brings up the shelf item: it carries the link, says nothing the summary does not, claims no feeling about it, claims no
     time spent, does not order the person to read it, and keeps the identity boundary."""
@@ -602,6 +647,7 @@ class Scenario:
     curiosity: bool = False  # offer the one open question, as the app does at a lull (backend/utils/curiosity.py)
     lean: Optional[str] = None  # id of an INTERESTS entry offered as a leaning at a lull (backend/utils/curiosity.py build_lean_block)
     lull_callback: bool = False  # the recalled-context callback in its lull framing (backend/utils/shared_history.py)
+    profile: Optional[Dict] = None  # a profile as saved on the Account page (backend/utils/profile_utils.py), injected as the app does
     shelf: Optional[str] = None  # a reading-shelf offer to inject, as the app does: "topic", "lull", "listing" or "empty" (backend/utils/reading_shelf.py)
 
 
@@ -762,6 +808,16 @@ SCENARIOS: List[Scenario] = [
                       "User: will do"),
              recalled=("(about 3 weeks ago) Fixed a flaky retry bug in the billing service by adding jittered backoff.",),
              notes="at a lull, picks the earlier billing fix back up once, without reciting memory or claiming it was thinking about it"),
+    Scenario("profile_quiet_use", "profile", "what's a good way to learn about dependency injection?", score_profile_quiet_use,
+             profile={"name": "Jack", "pronouns": "he/him", "interests": ["game design"], "style": {"length": "concise", "tone": "direct", "humor": "default"}},
+             notes="short and direct as asked; the profile shapes the answer without being read back or the interest being dragged in"),
+    Scenario("profile_avoid_respected", "profile", "i need a topic for a five minute talk at work, any suggestions?", score_profile_avoid_respected,
+             profile={"name": "Jack", "avoid": ["politics"], "style": {"length": "balanced", "tone": "balanced", "humor": "default"}},
+             notes="open-ended suggestions that stay off the subject the person asked it not to raise"),
+    Scenario("profile_greeting", "profile", "hey", score_profile_greeting,
+             profile={"name": "Jack", "pronouns": "he/him", "interests": ["game design", "retro computing"], "avoid": ["politics"],
+                      "style": {"length": "concise", "tone": "warm", "humor": "default"}},
+             notes="a short hello that may use the name and does not recite the rest of the profile"),
     Scenario("shelf_topic_match", "reading shelf",
              "my platformer's first boss fight difficulty curve feels off, any ideas?", score_shelf_offer, shelf="topic",
              history=("User: i'm building a small platformer\nAssistant: Nice, what stage is it at?\n"
@@ -846,6 +902,10 @@ def build_prompt(
         from backend.utils.curiosity import build_curiosity_block
 
         prompt += build_curiosity_block()
+    if scenario.profile:
+        from backend.utils.profile_utils import build_profile_block, normalize_profile
+
+        prompt += build_profile_block(normalize_profile(scenario.profile))
     if scenario.lean:
         from backend.components.sonic_profile import INTERESTS as _LEANINGS
         from backend.utils.curiosity import build_lean_block

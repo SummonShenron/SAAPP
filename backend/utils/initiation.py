@@ -337,6 +337,11 @@ async def write_opening(
 # ---------------------------------------------------------------------------------------------------------------
 
 def _stamp_goal_nudged(username: str, fact_id: str, now: datetime) -> None:
+    if str(fact_id).startswith("profile-interest-"):  # an interest from the profile page: no remembered fact to stamp, so it is kept with the settings
+        from backend.utils.user_settings_utils import stamp_profile_interest_asked
+
+        stamp_profile_interest_asked(username, fact_id, now.isoformat())
+        return
     from backend.utils.memory_utils import load_user_facts, save_user_facts
 
     facts = load_user_facts(username)

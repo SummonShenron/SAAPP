@@ -517,6 +517,50 @@ export async function updateHasSeenHelp(hasSeenHelp: boolean): Promise<{ has_see
  * Get / set the current user's IANA timezone (e.g. "America/New_York") — used when the agent
  * schedules a Google Calendar event on the user's behalf.
  */
+/** What a person tells Sonic about themselves (the "About you" card on the Account page; backend/utils/profile_utils.py). */
+export interface UserProfile {
+  name: string;
+  pronouns: string;
+  interests: string[];
+  style: { length: string; tone: string; humor: string };
+  avoid: string[];
+  offers: boolean;
+}
+
+/** The server refused a value: which field, and the reason to show next to it. */
+export class ProfileSaveError extends Error {
+  readonly field: string;
+  constructor(field: string, message: string) {
+    super(message);
+    this.name = 'ProfileSaveError';
+    this.field = field;
+  }
+}
+
+export async function getProfile(): Promise<UserProfile> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/profile`, { headers: { ...authHeaders } });
+  if (!res.ok) throw new Error("Failed to fetch your profile.");
+  return res.json();
+}
+
+export async function updateProfile(profile: UserProfile): Promise<UserProfile> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/profile`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify(profile),
+  });
+  if (res.status === 422) {
+    let detail: { field?: string; message?: string } = {};
+    try { detail = (await res.json())?.detail ?? {}; } catch { /* no JSON body */ }
+    throw new ProfileSaveError(detail.field ?? '', detail.message ?? "That can't be saved.");
+  }
+  if (res.status === 403) throw new Error("Sign in to keep a profile.");
+  if (!res.ok) throw new Error("Could not save your profile. Try again.");
+  return res.json();
+}
+
 export async function getTimezone(): Promise<{ timezone: string }> {
   const authHeaders = await getAuthHeaders();
   const res = await fetch(`${BASE_URL}/api/settings/timezone`, {
@@ -1386,6 +1430,8 @@ export const api = {
   updateTargetDoc,
   getHasSeenHelp,
   updateHasSeenHelp,
+  getProfile,
+  updateProfile,
   getTimezone,
   updateTimezone,
   getCalendarStatus,

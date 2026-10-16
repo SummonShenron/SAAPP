@@ -47,61 +47,46 @@ The system uses a unified search service designed to adapt its strategy based on
 * **Graph-Enhanced Context:** Integrates with a NetworkX knowledge graph to surface multi-hop entity relationships and enrich retrieved context.
 
 ---
-## Requirements & Automation
+## Requirements
 
-The application uses a setup script designed for **Windows (PowerShell)**. The script leverages Windows Package Manager (`winget`) to check for and interactively install system-level dependencies if they are missing upon user consent.
-
-To ensure the automated setup completes successfully:
-1. Run your terminal as an **Administrator** or in Visual Studio Code (required for `winget` installations).
-2. Ensure you have an active internet connection to download packages and the **Llama 3** model.
-3. if in VSC, create a virtual environment for the install(s)
+Local development uses a PowerShell script (**Windows**) to start the app. You need these installed first:
+1. **Python 3.11 or newer**, on your `PATH`.
+2. **Node.js** (includes `npm`).
+3. An internet connection: the app calls the Google Gemini API and a hosted MongoDB, so it needs your API keys and connection settings to be configured.
 
 ---
 
 ## Getting Started & Execution
 
-PowerShell scripts are provided in the root directory to automate cross-platform execution and environment builds.
-
 > *Note: If you encounter a script execution policy restriction in your terminal, run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` before executing.*
 
-### First-Time Environment Setup
-If you are running the project for the first time, execute the bootstrapper script:
+### Starting the App
+One script starts everything for local development, first run or not:
 ```powershell
-./start.ps1
-What this script automates for you:
+./start_saapp.ps1
+```
 
-Checks for Python 3.11 and Node.js, prompting for consent to install via winget if missing.
+What it does:
 
-Provisions an isolated Python virtual environment (.venv) and upgrades pip.
+- Refuses to start if port 8000 or 8080 is already in use, and says which process holds it, so a leftover server can't keep serving old code.
+- Creates the Python virtual environment (`.venv`) and installs `requirements.txt` if the environment is missing.
+- Runs `npm install` in `local/` if `local/node_modules` is missing.
+- Starts the FastAPI backend (http://127.0.0.1:8000, with auto-reload) and the Vite frontend (http://127.0.0.1:8080), each in its own window.
 
-Installs all backend dependencies from requirements.txt.
+Use `-BackendOnly` or `-FrontendOnly` to start just one of them.
 
-Compiles and installs frontend UI dependencies (npm install).
+---
 
-Configures MongoDB connection hooks and cleans stale collections.
+## Automated Data Ingestion Pipelines
 
-Triggers the initialization chunking pipeline (ingest.py) to seed initial documents.
+The project separates initial bootstrapping from runtime data changes:
 
-Launches the FastAPI server and Vite frontend dev server in separate background instances.
+### 1. Database bootstrapper (`ingest.py`)
+Run it by hand to seed the initial documents (it is not part of the start script):
+```powershell
+.\.venv\Scripts\python.exe ingest.py
+```
+It purges stale database remnants to prevent vector index collisions, scans the root drop-zones for default data, splits content into 600-token overlapping chunks, and indexes them into MongoDB.
 
-2. Subsequent Faster Bootups
-Once the initial configuration is complete, you can bypass dependency checks to instantly launch the local web app by running:
-
-PowerShell
-./local_start.ps1
-Automated Data Ingestion Pipelines
-The project implements a two-tiered data pipeline architecture to separate initial system bootstrapping from runtime data adjustments:
-
-1. Database Bootstrapper (ingest.py)
-When the application is launched for the first time via start.ps1, the system automatically invokes the bootstrapper script.
-
-Purpose: Purges stale database remnants to prevent vector index collisions, scans the root drop-zones for default data, splits content into clean 600-token overlapping semantic structures, and indexes them securely into MongoDB.
-
-2. Adding New Material
-If you would like to ingest new material locally:
-
-Place a new .pdf inside either index-db\Affiliate_A or index-db\Affiliate_B (or create a custom affiliate folder).
-
-Navigate to the function app directory (cd local-function-app) and run its start.ps1 script to process and push the new files into MongoDB.
-
-Alternatively, you can use the built-in Self-Service page directly inside the web application UI to upload, ingest, and manage material on the fly.
+### 2. Adding new material
+Use the built-in Self-Service page in the web application to upload, ingest, and manage material on the fly.
