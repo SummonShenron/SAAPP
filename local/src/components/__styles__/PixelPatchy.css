@@ -14,8 +14,8 @@
   user-select: none;
   -webkit-tap-highlight-color: transparent;
   image-rendering: pixelated;
-  /* idle: Patchy's own cyan */
-  --pp-accent: #38c2de;
+  /* idle: orange, the app's accent */
+  --pp-accent: #f0883e;
 }
 
 .pp-root:focus-visible {

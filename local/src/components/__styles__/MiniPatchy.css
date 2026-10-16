@@ -16,8 +16,8 @@
   -webkit-tap-highlight-color: transparent;
   /* The SVG's empty margins shouldn't swallow clicks meant for the input; only Patchy himself is poke-able. */
   pointer-events: none;
-  /* idle: Patchy's own cyan */
-  --mp-accent: #38c2de;
+  /* idle: orange, the app's accent (Patchy was cyan until the theme went black, grey and orange) */
+  --mp-accent: #f0883e;
   --mp-leg: 0.5s; /* half a cycle of the leg taps */
 }
 
@@ -127,7 +127,7 @@
 /* ---- energy follows the user's emotional state (see MiniPatchy.tsx) ---- */
 /* easing: a small lift has been shown, so gentler, not flat */
 .mp-e-easing { --mp-leg: 1.1s; }
-.mp-e-easing.mp-idle { --mp-accent: #5fb4cf; }
+.mp-e-easing.mp-idle { --mp-accent: #d9965f; }
 .mp-e-easing.mp-done .mp-bob { animation: mp-hop-small 0.5s ease-out 2; }
 @keyframes mp-hop-small {
   0%, 100% { transform: translateY(0); }
@@ -136,7 +136,7 @@
 .mp-e-easing.mp-laugh .mp-bob { animation-duration: 0.5s; }
 
 /* subdued: low or frustrated with no lift yet, so quiet and steady */
-.mp-e-subdued.mp-idle { --mp-accent: #7f9cc9; }
+.mp-e-subdued.mp-idle { --mp-accent: #b99472; }
 .mp-e-subdued.mp-working { --mp-accent: #c4a94f; }
 .mp-e-subdued.mp-done { --mp-accent: #6fb58a; }
 .mp-e-subdued .mp-leg { animation: none; }

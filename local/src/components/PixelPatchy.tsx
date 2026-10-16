@@ -6,7 +6,7 @@ import './__styles__/PixelPatchy.css';
 // antenna) but deliberately thin: a one-pixel outline, one-pixel arms, no mouth. Every pixel is a rect
 // in a 15x15 grid, so it stays crisp and animates with steps() for a real pixel-art feel.
 //
-// Moods: idle (cyan, slow bob, blinking cursor), working (yellow like Patchy's "analyzing", typing
+// Moods: idle (orange, slow bob, blinking cursor), working (yellow like Patchy's "analyzing", typing
 // hands and scrolling code), celebrating (green hop when a turn finishes), laughing (pink, when poked).
 
 const COLS = 15;
