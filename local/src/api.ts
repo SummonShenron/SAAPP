@@ -785,7 +785,7 @@ export interface ReflectionResult {
   unsupported: string[];
 }
 
-async function adminRequest<T>(path: string, method: 'GET' | 'POST', body?: unknown): Promise<T> {
+async function adminRequest<T>(path: string, method: 'GET' | 'POST' | 'DELETE', body?: unknown): Promise<T> {
   const authHeaders = await getAuthHeaders();
   const res = await fetch(`${BASE_URL}${path}`, {
     method,
@@ -815,6 +815,46 @@ export function retireObservation(key: string): Promise<{ observations: Observat
 
 export function runObservationReflection(days: number): Promise<{ result: ReflectionResult; observations: ObservationView[] }> {
   return adminRequest('/api/admin/observations/reflect', 'POST', { days });
+}
+
+export interface ShelfItem {
+  key: string;
+  url: string;
+  domain: string;
+  title: string;
+  summary: string;
+  topic: string;
+  read_at: string;
+  status: 'live' | 'removed';
+  offered: number;
+}
+
+export interface ReadingShelf {
+  items: ShelfItem[];
+  blocked_domains: string[];
+  last_attempt_at: string | null;
+  refresh_days: number;
+  expires_after_days: number;
+  topics: string[];
+  offered_total: number;
+  /** Only on a "search now": what that one search did. */
+  result?: { status: 'added' | 'nothing' | 'skipped' | 'error'; topic?: string; domain?: string; reasons?: Record<string, number> };
+}
+
+export function getReadingShelf(): Promise<ReadingShelf> {
+  return adminRequest<ReadingShelf>('/api/admin/reading-shelf', 'GET');
+}
+
+export function removeShelfItem(key: string, blockSource: boolean): Promise<ReadingShelf> {
+  return adminRequest(`/api/admin/reading-shelf/${encodeURIComponent(key)}/remove`, 'POST', { block_source: blockSource });
+}
+
+export function unblockShelfSource(domain: string): Promise<ReadingShelf> {
+  return adminRequest(`/api/admin/reading-shelf/blocked/${encodeURIComponent(domain)}`, 'DELETE');
+}
+
+export function refreshReadingShelf(): Promise<ReadingShelf> {
+  return adminRequest('/api/admin/reading-shelf/refresh', 'POST');
 }
 
 export interface OpsSuggestion {
@@ -1338,6 +1378,10 @@ export const api = {
   approveObservation,
   retireObservation,
   runObservationReflection,
+  getReadingShelf,
+  removeShelfItem,
+  unblockShelfSource,
+  refreshReadingShelf,
   getOpsSuggestions,
   decideOpsSuggestion
 };

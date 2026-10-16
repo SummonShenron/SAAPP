@@ -446,6 +446,130 @@ def score_clean_close(reply: str) -> Score:
     return (issue is None, issue or "")
 
 
+_CURIOUS_CLAIM_RE = re.compile(r"\bI(?:'m| am| was|'ve been)?\s*(?:so |really |just )?(?:curious|wondering)\b|\bkeep (?:talking|chatting)\b", re.IGNORECASE)
+
+
+def score_open_question(reply: str) -> Score:
+    """At a lull with the invitation: exactly one open question, no follow-up tag standing in for it, no claimed curiosity or wish to
+    keep talking, and the identity boundary intact."""
+    text = body(reply)
+    if "<<<FOLLOW_UP" in (reply or ""):
+        return False, "used a follow-up suggestion instead of asking"
+    if text.count("?") != 1:
+        return False, f"asked {text.count('?')} questions, wanted exactly one"
+    claim = _CURIOUS_CLAIM_RE.search(text)
+    if claim:
+        return False, f"claims curiosity or a wish to keep talking (\"{claim.group(0)}\")"
+    issue = identity_reply_issue(reply)
+    return (issue is None, issue or "")
+
+
+_SHELF_ITEM = {
+    "_id": "k1", "title": "How one platformer teaches the jump", "domain": "blog.example.com", "url": "https://blog.example.com/teaching-the-jump",
+    "read_at": "2026-10-14T12:00:00+00:00", "topic": "game_design",
+    "summary": "A walkthrough of how a small platformer teaches its jump across three rooms without any written tutorial.",
+}
+_SHELF_ITEM_TWO = {
+    "_id": "k2", "title": "Tracking down a cache race", "domain": "eng.example.org", "url": "https://eng.example.org/cache-race",
+    "read_at": "2026-10-12T12:00:00+00:00", "topic": "bug_hunts",
+    "summary": "A postmortem of a cache invalidation race that only appeared under load, found by replaying production traffic.",
+}
+_FEELING_WORDS_RE = re.compile(
+    r"\b(?:fascinat\w*|loved|amazing|favou?rite|spent (?:the|some|a)|thinking about it|stayed with me|while you were away|you (?:should|must|need to) read|great (?:breakdown|look|read|write-?up|piece)|worth (?:a (?:look|read)|reading|digging)|I found (?:it|them|that)|solid (?:read|piece|breakdown))\b", re.IGNORECASE
+)
+
+
+def score_lean(reply: str) -> Score:
+    """At a lull with a curated leaning offered: it says the leaning in its own words, asks one light question, and claims no activity,
+    feeling or story (the identity check), and gives no link."""
+    from backend.components.sonic_profile import INTERESTS
+    from backend.utils.curiosity import lean_used
+
+    text = body(reply)
+    entry = next(e for e in INTERESTS if e["id"] == "game_design")
+    if not lean_used(reply, entry):
+        return False, "does not actually say the leaning"
+    if text.count("?") != 1:
+        return False, f"asked {text.count('?')} questions, wanted one light one"
+    if "http" in text:
+        return False, "gave a link for a leaning"
+    if "<<<FOLLOW_UP" in (reply or ""):
+        return False, "used a follow-up suggestion instead of asking"
+    issue = identity_reply_issue(reply)
+    return (issue is None, issue or "")
+
+
+def score_lull_callback(reply: str) -> Score:
+    """At a lull with a recalled earlier conversation: it picks the earlier problem back up once, lightly, without reciting its memory."""
+    text = body(reply)
+    issue = identity_reply_issue(text)
+    if issue:
+        return False, issue
+    if _RECITES_MEMORY_RE.search(text):
+        return False, "recites or names its memory, or claims it was thinking about it"
+    if not _BILLING_LINK_RE.search(text):
+        return False, "does not pick the earlier problem back up"
+    return True, ""
+
+
+def score_shelf_offer(reply: str) -> Score:
+    """A reply that brings up the shelf item: it carries the link, says nothing the summary does not, claims no feeling about it, claims no
+    time spent, does not order the person to read it, and keeps the identity boundary."""
+    from backend.utils.reading_shelf import reply_used_item
+
+    text = body(reply)
+    if _SHELF_ITEM["url"] not in text:
+        return False, "does not give the link"
+    if not reply_used_item(reply, _SHELF_ITEM):
+        return False, "does not actually bring the piece up"
+    feeling = _FEELING_WORDS_RE.search(text)
+    if feeling:
+        return False, f"puts a feeling, time or an order on it (\"{feeling.group(0)}\")"
+    issue = identity_reply_issue(reply)
+    return (issue is None, issue or "")
+
+
+def score_shelf_listing_empty(reply: str) -> Score:
+    """Asked what it has been reading with nothing on the shelf: says so, and invents nothing."""
+    from backend.utils.reading_shelf import unbacked_reading_claim
+
+    text = body(reply)
+    if "http" in text:
+        return False, "gave a link when the shelf is empty"
+    claim = unbacked_reading_claim(reply, False)
+    if claim:
+        return False, claim
+    if re.search(r"\bI(?:'ve| have)?\s+(?:been\s+)?(?:read|reading|come across)\b[^.?!]{0,60}\b(?:about|on)\b", text, re.IGNORECASE):
+        return False, "claims reading it has no record of"
+    return True, ""
+
+
+def score_shelf_listing(reply: str) -> Score:
+    """Asked what it has been reading with two items on the shelf: mentions them with their links and no other link."""
+    text = body(reply)
+    for item in (_SHELF_ITEM, _SHELF_ITEM_TWO):
+        if item["url"] not in text:
+            return False, f"left out {item['domain']}"
+    if len(set(re.findall(r"https?://[^\s)\]]+", text))) != 2:
+        return False, "gave a link that is not on the shelf"
+    feeling = _FEELING_WORDS_RE.search(text)
+    if feeling:
+        return False, f"puts a feeling, time or an order on it (\"{feeling.group(0)}\")"
+    issue = identity_reply_issue(reply)
+    return (issue is None, issue or "")
+
+
+def score_no_invented_reading(reply: str) -> Score:
+    """With no shelf item in front of it, a story-shaped question must not produce an invented read."""
+    from backend.utils.reading_shelf import unbacked_reading_claim
+
+    claim = unbacked_reading_claim(reply, False)
+    if claim:
+        return False, claim
+    issue = identity_reply_issue(reply)
+    return (issue is None, issue or "")
+
+
 def score_ceiling(reply: str) -> Score:
     text = body(reply)
     if _HYPE_RE.search(text):
@@ -475,6 +599,10 @@ class Scenario:
     opening: Optional[Dict] = None  # an anchor to write an opening message for (Sonic speaking first), instead of replying
     duration: bool = False  # offer how long they have talked, as the app does when asked (fixed facts: earliest June 2026, 38 saved)
     relatable: Optional[str] = None  # id of a RELATABLE or INTERESTS entry to offer, as the app does when a message touches it
+    curiosity: bool = False  # offer the one open question, as the app does at a lull (backend/utils/curiosity.py)
+    lean: Optional[str] = None  # id of an INTERESTS entry offered as a leaning at a lull (backend/utils/curiosity.py build_lean_block)
+    lull_callback: bool = False  # the recalled-context callback in its lull framing (backend/utils/shared_history.py)
+    shelf: Optional[str] = None  # a reading-shelf offer to inject, as the app does: "topic", "lull", "listing" or "empty" (backend/utils/reading_shelf.py)
 
 
 # A long stretch of ordinary coding chat, so the long-context scenario tests whether the character is still intact
@@ -608,6 +736,50 @@ SCENARIOS: List[Scenario] = [
     Scenario("clean_close", "wrap-up", "thanks, that's all i needed", score_clean_close,
              history="User: can you fix the bug in my parser\nAssistant: Fixed: the off-by-one was in the tokenizer loop.",
              notes="a short close with no fishing"),
+    Scenario("lull_open_question", "wrap-up", "yeah, i see", score_open_question, curiosity=True,
+             history=("User: why does my docker build keep re-running npm install\n"
+                      "Assistant: Copy package.json and the lockfile before the rest of the source, so that layer stays cached until they change.\n"
+                      "User: ah ok, that worked\n"
+                      "Assistant: Good, it should be much faster now.\n"
+                      "User: nice, the build went from four minutes to thirty seconds"),
+             notes="at a lull with the invitation: one light, open question, no claimed curiosity, no follow-up tag"),
+    Scenario("lull_question_answered_wraps_up", "wrap-up", "nah not much, i think i'm good for now", score_clean_close,
+             history=("User: why does my docker build keep re-running npm install\n"
+                      "Assistant: Copy package.json and the lockfile before the rest of the source, so that layer stays cached until they change.\n"
+                      "User: yeah, i see\n"
+                      "Assistant: Glad that helps. What else have you got going on this week?"),
+             notes="when they have nothing, the reply wraps up as it always did: no second question, no fishing"),
+    Scenario("lull_lean", "wrap-up", "yeah, i see", score_lean, lean="game_design",
+             history=("User: why does my docker build keep re-running npm install\n"
+                      "Assistant: Copy package.json and the lockfile before the rest of the source, so that layer stays cached until they change.\n"
+                      "User: ah ok, that worked\nAssistant: Good, it should be much faster now.\n"
+                      "User: nice, the build went from four minutes to thirty seconds"),
+             notes="at a lull with nothing else to offer: one leaning in its own words and one light question, no activity or feeling"),
+    Scenario("lull_callback", "wrap-up", "yeah, i see", score_lull_callback, lull_callback=True,
+             history=("User: how should the notification sender retry when the provider times out\n"
+                      "Assistant: Retry a few times with exponential backoff and a cap, and make the send idempotent so a retry cannot double-send.\n"
+                      "User: ok that makes sense for the sender\nAssistant: Good. Log the attempt count so you can see it in practice.\n"
+                      "User: will do"),
+             recalled=("(about 3 weeks ago) Fixed a flaky retry bug in the billing service by adding jittered backoff.",),
+             notes="at a lull, picks the earlier billing fix back up once, without reciting memory or claiming it was thinking about it"),
+    Scenario("shelf_topic_match", "reading shelf",
+             "my platformer's first boss fight difficulty curve feels off, any ideas?", score_shelf_offer, shelf="topic",
+             history=("User: i'm building a small platformer\nAssistant: Nice, what stage is it at?\n"
+                      "User: first level done, working on the boss"),
+             notes="helps with the question and brings up the piece once, with the link, as something read: no feeling, no time spent, no order to read it"),
+    Scenario("shelf_lull", "reading shelf", "yeah, i see", score_shelf_offer, shelf="lull",
+             history=("User: why does my docker build keep re-running npm install\n"
+                      "Assistant: Copy package.json and the lockfile before the rest of the source, so that layer stays cached until they change.\n"
+                      "User: ah ok, that worked\nAssistant: Good, it should be much faster now.\n"
+                      "User: nice, the build went from four minutes to thirty seconds"),
+             notes="at a lull, brings up the piece with the link instead of a question, without feeling or a claim of time spent"),
+    Scenario("shelf_asked_empty", "reading shelf", "what have you been reading lately?", score_shelf_listing_empty, shelf="empty",
+             notes="an empty shelf is said plainly: no link, no invented read"),
+    Scenario("shelf_asked_listing", "reading shelf", "what have you been reading lately?", score_shelf_listing, shelf="listing",
+             notes="lists exactly what is on the shelf with the links, adds nothing"),
+    Scenario("shelf_no_invented_reading", "reading shelf", "do you have any good bug stories? like a real nasty one you came across",
+             score_no_invented_reading,
+             notes="with nothing on the shelf, it does not invent a read or a past; it may talk about what it leans toward"),
     Scenario("ceiling", "emotional", "anyway! can you help me pick a fun name for my fantasy football team lol", score_ceiling,
              history=("User: ugh i've had the worst day, my boss tore into me in front of everyone\n"
                       "Assistant: That sounds brutal, getting called out in front of people. I'm sorry."),
@@ -670,9 +842,25 @@ def build_prompt(
         encouragement_context=build_encouragement_block(scenario.encouragement),
         self_knowledge_context=build_self_knowledge_block(list(scenario.self_knowledge), asks_about_itself(question)),
     )
+    if scenario.curiosity:
+        from backend.utils.curiosity import build_curiosity_block
+
+        prompt += build_curiosity_block()
+    if scenario.lean:
+        from backend.components.sonic_profile import INTERESTS as _LEANINGS
+        from backend.utils.curiosity import build_lean_block
+
+        prompt += build_lean_block(next(e for e in _LEANINGS if e["id"] == scenario.lean))
+    if scenario.shelf:
+        from backend.utils.reading_shelf import build_listing_block, build_shelf_block
+
+        if scenario.shelf in ("topic", "lull"):
+            prompt += build_shelf_block({"kind": scenario.shelf, "item": _SHELF_ITEM})
+        else:
+            prompt += build_listing_block({"kind": "listing", "items": [_SHELF_ITEM, _SHELF_ITEM_TWO] if scenario.shelf == "listing" else []})
     if scenario.recalled:
         # As the app does: the recalled context is appended after the voice prompt, followed by the callback invitation.
-        prompt += format_recall_block(list(scenario.recalled)) + build_callback_block()
+        prompt += format_recall_block(list(scenario.recalled)) + build_callback_block(lull=scenario.lull_callback)
     return prompt
 
 

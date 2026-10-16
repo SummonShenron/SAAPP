@@ -15,6 +15,7 @@ import {
   type SonicHealth,
 } from '../api';
 import { HomeTab } from './SonicHealthHome';
+import { ShelfTab } from './SonicHealthShelf';
 import { BarRow, BudgetBars, StatTile } from './sonicHealthParts';
 import { budgetAmount, pct, shortDate, tokens, usd } from './sonicHealthFormat';
 import './__styles__/SelfService.css';
@@ -30,6 +31,7 @@ const TABS = [
   { id: 'behavior', label: 'Behavior' },
   { id: 'safety', label: 'Safety' },
   { id: 'observations', label: 'Observations' },
+  { id: 'shelf', label: 'Reading shelf' },
   { id: 'suggestions', label: 'Suggestions' },
 ] as const;
 type TabId = typeof TABS[number]['id'];
@@ -379,6 +381,7 @@ export const SonicHealthPage: React.FC = () => {
             onReflect={handleReflect}
           />
         )}
+        {tab === 'shelf' && <ShelfTab />}
         {tab === 'suggestions' && (
           <SuggestionsCard
             data={suggestions}
