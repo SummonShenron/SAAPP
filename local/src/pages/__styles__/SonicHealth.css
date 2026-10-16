@@ -120,6 +120,12 @@
   margin-bottom: 0.35rem;
 }
 
+.sh-row-title a {
+  color: var(--accent-primary);
+  text-decoration: none;
+}
+.sh-row-title a:hover { text-decoration: underline; }
+
 .sh-pill {
   margin-left: 0.6rem;
   font-size: 0.7rem;

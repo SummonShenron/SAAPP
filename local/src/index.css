@@ -77,9 +77,9 @@
   --card-bg: #131315;            /* cards and tiles */
   --input-bg: #0d0d0f;
   --line: #262629;
-  --bubble-user-bg: #2a2a2e;     /* your messages: a mid grey */
-  --bubble-user-border: #3a3a40;
-  --bubble-user-text: #f3f3f5;
+  --bubble-user-bg: #1b1b1e;     /* your messages: a faint lift off the page, no outline (the light theme's bubble is about this quiet) */
+  --bubble-user-border: transparent;
+  --bubble-user-text: #e8e8ea;
   --bubble-ai-bg: #0a0a0b;
   --bubble-ai-border: #0a0a0b;
   --bubble-ai-text: #e8e8ea;
@@ -777,10 +777,12 @@ div:has(.portal-body) {
 .theme-shadow .message-bubble.user {
   align-self: flex-end;
   background: var(--bubble-user-bg);
-  color: var(--text);
+  color: var(--bubble-user-text);
   border: 1px solid var(--bubble-user-border);
   box-shadow: var(--shadow);
 }
+
+.theme-shadow .message-bubble.user .message-sender { color: var(--text-muted); }   /* the one orange label on the page was the loudest thing in the bubble */
 
 .theme-shadow .message-bubble.ai {
   align-self: flex-start;

@@ -35,8 +35,9 @@ def default_fetch(url: str):
     return try_lightweight_fetch(url)
 
 
-async def _summarize(invoke: Callable[[str], Awaitable[Any]], title: str, text: str) -> Optional[str]:
-    """A summary that passes every fixed check and is confirmed by a second look at the page, or None."""
+async def _summarize(invoke: Callable[[str], Awaitable[Any]], title: str, text: str, about: str = "") -> Optional[str]:
+    """A summary that passes every fixed check and is confirmed by a second look at the page (it supports the summary and is really about
+    the topic searched for), or None. Anything but a clear yes is a no."""
     summary = shelf.parse_json_field(await invoke(shelf.build_summary_prompt(title, text)), "summary")
     if not isinstance(summary, str):
         return None
@@ -45,8 +46,12 @@ async def _summarize(invoke: Callable[[str], Awaitable[Any]], title: str, text: 
     if issue:
         logger.info("[shelf] a summary was refused: %s.", issue)
         return None
-    if shelf.parse_json_field(await invoke(shelf.build_support_prompt(text, summary)), "supported") is not True:
+    verdict = await invoke(shelf.build_support_prompt(text, summary, about))
+    if shelf.parse_json_field(verdict, "supported") is not True:
         logger.info("[shelf] a summary was refused: the page did not support it.")
+        return None
+    if about and shelf.parse_json_field(verdict, "on_topic") is not True:
+        logger.info("[shelf] a page was refused: it is not about the topic it was searched for.")
         return None
     return summary
 
@@ -93,7 +98,7 @@ async def refresh_shelf(
                 reasons[reason] = reasons.get(reason, 0) + 1
                 continue
             title = shelf.clean_title(result.get("title"))
-            summary = await _summarize(invoke, title, text)
+            summary = await _summarize(invoke, title, text, topic.get("about", ""))
             if not summary:
                 reasons["summary refused"] = reasons.get("summary refused", 0) + 1
                 continue

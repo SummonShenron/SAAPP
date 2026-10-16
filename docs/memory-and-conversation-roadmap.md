@@ -487,3 +487,10 @@ early computing and AI history, and mechanistic interpretability, and took Reddi
 tabletop and science fiction), so their items surface when those subjects come up and no longer wait for a lull or a debugging chat. Triggers avoid lookalikes
 (`apt-get` does not reach security; a tested case). The extraction-shooter news query stayed under game design; it found nothing usable in a live run and is the
 first one to cut if it keeps failing. The admin tab has labels for the new topics.
+
+**Relevance check (added after the first live admin "Search now"):** the query "the beginning steps of AI and machine learning explained" returned a Two Minute English
+page on how to spell "beginning", and it was shelved under AI research, because the summary was accurate to the page and nothing asked whether the page was about the
+topic. Each topic now has an `about` description, and the second model look (the support check) answers two questions: does the page support the summary, and is it
+mainly about that topic. Anything but a clear yes on both is a no, and a missing answer counts as no. Checked with the real model: the spelling page with an
+accurate summary is refused for the AI topic, and passes the old support-only check, which is what let it in. The vague query was also reworded ("history of
+artificial intelligence early milestones explained"). Search wording still decides what is found; the gate decides what is kept.

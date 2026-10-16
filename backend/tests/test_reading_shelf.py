@@ -361,7 +361,8 @@ def summary_reply(text=GOOD):
     return json.dumps({"summary": text})
 
 
-SUPPORTED, UNSUPPORTED = json.dumps({"supported": True}), json.dumps({"supported": False})
+SUPPORTED, UNSUPPORTED = json.dumps({"supported": True, "on_topic": True}), json.dumps({"supported": False, "on_topic": True})
+OFF_TOPIC, NO_TOPIC_ANSWER = json.dumps({"supported": True, "on_topic": False}), json.dumps({"supported": True})
 
 
 def refresh(db, invoke, search, fetch=None, **kw):
@@ -389,6 +390,20 @@ def test_a_summary_the_second_look_does_not_support_is_not_stored():
     db = Db()
     result = refresh(db, Scripted(summary_reply(), UNSUPPORTED), search_for("https://blog.example.com/post"))
     assert result["status"] == "nothing" and shelf.live_items(db, NOW) == []
+
+
+def test_a_page_that_is_not_about_the_topic_searched_for_is_not_stored_even_if_the_summary_is_accurate():
+    for verdict in (OFF_TOPIC, NO_TOPIC_ANSWER):                 # a missing answer counts as no
+        db = Db()
+        assert refresh(db, Scripted(summary_reply(), verdict), search_for("https://blog.example.com/post"))["status"] == "nothing"
+        assert shelf.live_items(db, NOW) == []
+
+
+def test_the_second_look_names_the_topic_and_every_topic_has_a_description_for_it():
+    assert all(t.get("about") for t in shelf.TOPICS)
+    prompt = shelf.build_support_prompt(PAGE, GOOD, "the design of video games")
+    assert "mainly about the design of video games" in prompt and "spelling or grammar" in prompt and "on_topic" in prompt
+    assert "on_topic" not in shelf.build_support_prompt(PAGE, GOOD)
 
 
 def test_a_summary_that_invents_a_name_never_reaches_the_second_call():
