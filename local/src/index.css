@@ -859,6 +859,35 @@ div:has(.portal-body) {
   margin-bottom: 0.5rem;
 }
 
+/* Why a file was not attached (a photo format the browser cannot read): a quiet line above the box, with a way to dismiss it. */
+.attach-notice {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0 0 0.5rem;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-main);
+  color: var(--text);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.attach-notice button {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+/* Four cards (the portfolio set) sit as a 2 x 2 instead of leaving one alone on a second row. */
+.example-cards-container:has(.query-card:nth-child(4):last-child) {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .query-card {
   background:var(--bg-main);
   border: 1px solid var(--user-border-color);
@@ -905,6 +934,15 @@ div:has(.portal-body) {
   color: var(--text);
   line-height: 1.4;
   margin-bottom: 0.75rem;
+}
+
+/* What kind of question it is ("About Jack", "Watch it work"): quiet, so the question stays the thing you read. */
+.query-card-label {
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 0.4rem;
 }
 
 .query-card span {

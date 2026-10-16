@@ -31,7 +31,7 @@ CHANGELOG = [
         "month": "2026-10",
         "title": "Telling me about yourself",
         "line": (
-            "On the Account page you can tell me your name and pronouns, what you're into, how you like answers (short or detailed, direct or warm), "
+            "On the Account page you can tell me your name and pronouns, what you do for work, what you're into, how you like answers (short or detailed, direct or warm), "
             "and topics you'd rather I didn't bring up. I use it quietly, and everything on it is optional."
         ),
         "keywords": ["profile", "my name", "call me", "pronouns", "account page", "preferences", "interests", "don't bring up"],
@@ -470,13 +470,24 @@ CHANGELOG = [
         "volunteer": ["read this link", "this url", "this article"],
     },
     {
+        "id": "paperwork_help",
+        "requires": [
+            "backend/utils/paperwork_utils.py::def build_paperwork_block",
+        ],
+        "month": "2026-10",
+        "title": "Making sense of letters and messages",
+        "line": "I can now read a photo or file of a letter, bill, or notice and tell you in plain words what it says, what you need to do and by when, and whether it looks like a scam.",
+        "keywords": ["letter", "bill", "notice", "photo", "scam", "is this real", "explain this"],
+        "volunteer": ["this letter", "this bill", "is this real", "is this a scam"],
+    },
+    {
         "id": "example_questions",
         "requires": [
-            "backend/utils/example_questions.py::def build_example_questions",
+            "backend/utils/example_questions.py::def build_welcome_cards",
         ],
         "month": "2026-10",
         "title": "Example questions that fit you",
-        "line": "The example questions on the home screen come from your own documents and connections, not a fixed list.",
+        "line": "The suggestions on the home screen are a few labelled cards: some from your own documents and connections, something to try right now, and what I've been reading when I have something to share.",
         "keywords": ["example questions", "suggestions", "starter questions"],
         "volunteer": [],
     },

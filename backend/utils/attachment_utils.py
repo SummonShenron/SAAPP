@@ -16,6 +16,8 @@ from backend.models.models import llm
 
 logger = logging.getLogger("SASS Logger")
 
+# A document up to this many characters (a page or two) is given to the model as it is rather than summarized.
+SHORT_DOCUMENT_CHARS = 6000
 IMAGE_ATTACHMENT_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
 _IMAGE_MIME_TYPES = {
     "png": "image/png",
@@ -155,6 +157,11 @@ def process_user_attachment(att, raw_text: Optional[str] = None):
         # extract_text_from_attachment already ran the image through the vision model —
         # that description IS the summary, no need to re-run it through ATTACHMENT_PROMPT
         # (which is phrased for extracting structure out of document text).
+        return raw_text.strip()
+
+    if len(raw_text) <= SHORT_DOCUMENT_CHARS:
+        # A letter, a bill or a one-page form fits in the prompt as it is. A summary of it could drop the very date or amount the person is asking
+        # about, and skipping the model call is cheaper too.
         return raw_text.strip()
 
     prompt = ATTACHMENT_PROMPT.format(text=raw_text)

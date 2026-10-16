@@ -436,15 +436,14 @@ JSON Output:
 ATTACHMENT_PROMPT = """
 You are a document analysis assistant.
 
-The user has uploaded a PDF. Read the PDF content directly from the raw bytes below.
-Extract all readable text, interpret layout, and produce a structured summary.
+The user has attached a document; its text is below. Produce a faithful summary that keeps every specific the reader may need: dates, deadlines,
+amounts, names, reference numbers, and any request or required action. Do not add anything that is not in the text.
 
 Return:
-- Purpose of the document
-- Key sections
-- Important details
-- Skills, experience, or qualifications
-- Any notable metrics or achievements
+- What the document is, and who it is from or for
+- Key sections or points
+- Important details (dates, amounts, names, numbers), exactly as written
+- Any action required, and by when
 
 Text:
 {text}
@@ -458,6 +457,9 @@ Include:
 - Any visible text, labels, numbers, or data (transcribe it verbatim)
 - Layout or structure if it's a chart, table, diagram, or UI screenshot
 - Overall context or apparent purpose of the image
+- If it's a letter, bill, statement, form, notice, or message: transcribe ALL of its text in order, and make sure every date, deadline, amount, \
+account or reference number, phone number, web address, sender name, and signature is written out exactly as printed. Say so plainly where \
+something is cut off, blurry, or unreadable instead of guessing it.
 
 Be thorough and factual — this description will be used in place of the image itself."""
 

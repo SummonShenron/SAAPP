@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 PROFILE_KEY = "profile"
 
 NAME_MAX = 40
+WORK_MAX = 60
 PRONOUN_MAX = 30
 INTEREST_MAX = 40
 AVOID_MAX = 60
@@ -102,6 +103,7 @@ def normalize_profile(raw: Any) -> Dict[str, Any]:
     return {
         "name": clean_text(raw.get("name"), "name", NAME_MAX),
         "pronouns": pronouns,
+        "work": clean_text(raw.get("work"), "work", WORK_MAX),     # a job title, or "retired", "student": whatever they say they do
         "interests": _clean_list(raw.get("interests"), "interests", INTEREST_MAX, MAX_INTERESTS),
         "style": {
             "length": _choice(style_in.get("length"), "style", LENGTHS, DEFAULT_STYLE["length"]),
@@ -123,7 +125,7 @@ def stored_profile(raw: Any) -> Dict[str, Any]:
 
 
 def is_empty(profile: Dict[str, Any]) -> bool:
-    return not (profile.get("name") or profile.get("pronouns") or profile.get("interests") or profile.get("avoid")) and (
+    return not (profile.get("name") or profile.get("pronouns") or profile.get("work") or profile.get("interests") or profile.get("avoid")) and (
         profile.get("style") == DEFAULT_STYLE
     )
 
@@ -166,6 +168,11 @@ def build_profile_block(profile: Optional[Dict[str, Any]]) -> str:
         lines.append(f"Name: {profile['name']}. Use it now and then, naturally; not in every reply.")
     if profile.get("pronouns"):
         lines.append(f"Pronouns: {profile['pronouns']}. Use them if you ever refer to the person in the third person.")
+    if profile.get("work"):
+        lines.append(
+            f"What they do: {profile['work']}. Background for pitching explanations at the right level; assume nothing beyond what it says, and do not "
+            "mention it unless it matters to the question."
+        )
     style = profile.get("style") or DEFAULT_STYLE
     for key, table in (("length", _LENGTH_LINE), ("tone", _TONE_LINE), ("humor", _HUMOR_LINE)):
         line = table.get(style.get(key))

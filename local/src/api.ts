@@ -521,6 +521,7 @@ export async function updateHasSeenHelp(hasSeenHelp: boolean): Promise<{ has_see
 export interface UserProfile {
   name: string;
   pronouns: string;
+  work?: string;
   interests: string[];
   style: { length: string; tone: string; humor: string };
   avoid: string[];
@@ -928,13 +929,39 @@ export function decideOpsSuggestion(key: string, decision: 'dismiss' | 'snooze')
 
 /** Welcome-screen questions built from this person's own state (documents, integrations, repo) for one scope. */
 export async function getExampleQuestions(affiliate: string): Promise<string[]> {
+  return (await fetchExamplePayload(affiliate)).questions;
+}
+
+/** The labelled welcome cards. A server from before the cards existed sends only the plain list, which becomes unlabelled cards. */
+export async function getExampleCards(affiliate: string): Promise<ExampleCard[]> {
+  const { questions, cards } = await fetchExamplePayload(affiliate);
+  return cards.length ? cards : questions.map(text => ({ text }));
+}
+
+export interface ExampleCard { text: string; label?: string; action?: 'attach'; prompt?: string }
+
+async function fetchExamplePayload(affiliate: string): Promise<{ questions: string[]; cards: ExampleCard[] }> {
   const authHeaders = await getAuthHeaders();
   const res = await fetch(`${BASE_URL}/api/example-questions?affiliate=${encodeURIComponent(affiliate)}`, {
     headers: { ...authHeaders }
   });
   if (!res.ok) throw new Error("Failed to fetch example questions.");
   const data = await res.json();
-  return Array.isArray(data?.questions) ? data.questions.filter((q: unknown) => typeof q === "string") : [];
+  const questions: string[] = Array.isArray(data?.questions) ? data.questions.filter((q: unknown) => typeof q === "string") : [];
+  const cards = Array.isArray(data?.cards)
+    ? data.cards
+        .filter((c: unknown): c is { text: string; label?: unknown; action?: unknown; prompt?: unknown } => !!c && typeof (c as { text?: unknown }).text === "string")
+        .map((c: { text: string; label?: unknown; action?: unknown; prompt?: unknown }): ExampleCard => {
+          const card: ExampleCard = { text: c.text };
+          if (typeof c.label === "string" && c.label) card.label = c.label;
+          if (c.action === "attach") {
+            card.action = "attach";
+            if (typeof c.prompt === "string" && c.prompt) card.prompt = c.prompt;
+          }
+          return card;
+        })
+    : [];
+  return { questions, cards };
 }
 
 export async function getCalendarStatus(): Promise<CalendarConnectionStatus> {

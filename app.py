@@ -114,7 +114,7 @@ from backend.utils.sonic_health import build_sonic_health
 from backend.utils.self_observations import (
     approve as approve_observation_doc, list_observations, reflect as reflect_observations, retire as retire_observation_doc,
 )
-from backend.utils.example_questions import build_example_questions, gather_example_inputs
+from backend.utils.example_questions import build_example_questions, build_welcome_cards, gather_example_inputs
 from backend.components.sonic_profile import SONIC_PROFILE
 from backend.utils.time_utils import build_time_context, local_today, sent_at, stamp
 from backend.utils import open_loops as open_loops_utils
@@ -125,6 +125,7 @@ from backend.utils import ops_digest as ops_digest_utils
 from backend.utils import ops_suggestions as ops_suggestions_utils
 from backend.utils import duration_utils
 from backend.utils import curiosity as curiosity_utils
+from backend.utils import paperwork_utils
 from backend.utils import profile_utils
 from backend.utils import reading_shelf as shelf_utils
 from backend.services import shelf_refresh
@@ -552,7 +553,8 @@ async def get_example_questions(affiliate: str = Query("All"), current_user = De
     if affiliate != "All" and affiliate not in accessible:
         raise HTTPException(status_code=403, detail="Unauthorized affiliate scope requested.")
     inputs = await asyncio.to_thread(gather_example_inputs, username, affiliate, directory)
-    return {"questions": build_example_questions(inputs)}
+    # `questions` is the older plain list, kept so a page loaded before this deploy still works; `cards` are the labelled ones.
+    return {"questions": build_example_questions(inputs), "cards": build_welcome_cards(inputs)}
 
 
 @app.get("/api/user/groups")
@@ -1055,6 +1057,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 )
                 prompt = prompt + attachment_context
                 yield f"data: {json.dumps({'event': 'node_progress', 'node': 'attachment_context', 'title': 'Applying attached file content', 'detail': 'Injected description of the attached file into context prompt.'})}\n\n"
+
+            prompt = prompt + paperwork_utils.build_paperwork_block(question, bool(attachment_docs))
 
             if source_type == "conversational":
                 semantic_memory_context = await recall_with_second_look(
@@ -1917,6 +1921,7 @@ async def extend_budget(current_user = Depends(get_current_user)):
 class ProfileUpdate(BaseModel):
     name: str = ""
     pronouns: str = ""
+    work: str = ""
     interests: List[str] = []
     style: Dict[str, str] = {}
     avoid: List[str] = []

@@ -1,4 +1,5 @@
-import { getExampleQuestions } from '../api';
+import { getExampleCards, getExampleQuestions, isGuestPrincipal } from '../api';
+import { cardsFromQuestions, isPortfolioGuest, portfolioCards, type WelcomeCard } from '../welcomeCards';
 
 // 1. Centralized Security Directory Map.
 const AFFILIATE_QUESTION_POOLS: Record<string, string[]> = {
@@ -36,6 +37,32 @@ const AFFILIATE_QUESTION_POOLS: Record<string, string[]> = {
     "Explain progressive overload in strength training."
   ],
 };
+
+/**
+ * The cards for the welcome screen.
+ * - The shared portfolio guest gets a fixed, labelled set (plain questions first).
+ * - A signed-in person looking at everything, or at their own knowledge base, gets the labelled cards the server builds from their own state.
+ * - Anyone looking at one of the demo knowledge bases (and the embedded guest) gets that demo's questions, unlabelled.
+ * If the server cannot be reached the screen falls back to the demo questions rather than going empty.
+ */
+export async function getWelcomeCards(
+  allowedAffiliates: string[],
+  affiliate: string,
+  principal: string | null | undefined,
+  embedded: boolean
+): Promise<WelcomeCard[]> {
+  if (isPortfolioGuest(principal, embedded)) return portfolioCards();
+  const signedIn = !embedded && !isGuestPrincipal(principal);
+  if (signedIn && (affiliate === 'All' || !AFFILIATE_QUESTION_POOLS[affiliate])) {
+    try {
+      const cards = await getExampleCards(affiliate);
+      if (cards.length) return cards;
+    } catch (error) {
+      console.error("Failed to fetch welcome cards:", error);
+    }
+  }
+  return cardsFromQuestions(await getDynamicExampleQuestions(allowedAffiliates, affiliate));
+}
 
 function shuffledCopy<T>(items: readonly T[]): T[] {
   const shuffled = [...items];

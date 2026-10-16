@@ -64,8 +64,8 @@ def test_process_user_attachment_returns_vision_description_directly_for_images(
     llm_invoke.assert_not_called()  # no redundant ATTACHMENT_PROMPT summarization pass for images
 
 
-def test_process_user_attachment_still_summarizes_documents(monkeypatch):
-    monkeypatch.setattr(attachment_utils, "extract_text_from_attachment", Mock(return_value="Some PDF text."))
+def test_process_user_attachment_still_summarizes_long_documents(monkeypatch):
+    monkeypatch.setattr(attachment_utils, "extract_text_from_attachment", Mock(return_value="Some PDF text. " * 600))
     monkeypatch.setattr(
         attachment_utils.llm, "invoke",
         Mock(return_value=SimpleNamespace(content="Structured summary."))
@@ -136,7 +136,7 @@ def test_an_image_is_read_by_the_vision_model_once_and_its_text_reused(monkeypat
 
 
 def test_a_document_is_read_once_summarized_and_not_treated_as_an_image(monkeypatch):
-    extract = Mock(return_value="Some PDF text.")
+    extract = Mock(return_value="Some PDF text. " * 600)
     monkeypatch.setattr(attachment_utils, "extract_text_from_attachment", extract)
     monkeypatch.setattr(attachment_utils, "get_db", lambda: None)
     monkeypatch.setattr(attachment_utils.llm, "invoke", Mock(return_value=SimpleNamespace(content="A summary.")))
@@ -165,3 +165,31 @@ def test_the_chat_endpoint_does_its_attachment_work_off_the_event_loop():
     source = (pathlib.Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
     assert "await asyncio.to_thread(\n            process_chat_attachments, username, session_id, request.attachments" in source
     assert "process_user_attachment(att)" not in source  # the old inline loop, on the event loop
+
+
+def test_a_short_document_reaches_the_model_as_written_so_no_date_or_amount_is_lost(monkeypatch):
+    letter = "Your premium changes from $1,180 to $1,396 on March 1. Dispute by February 14."
+    monkeypatch.setattr(attachment_utils, "extract_text_from_attachment", Mock(return_value=letter))
+    summarize = Mock()
+    monkeypatch.setattr(attachment_utils.llm, "invoke", summarize)
+
+    assert attachment_utils.process_user_attachment(Attachment(filename="notice.pdf", content="ZmFrZQ==")) == letter
+    summarize.assert_not_called()                                     # and no model call is paid for
+
+
+def test_the_summary_prompt_for_long_documents_keeps_specifics_and_is_not_about_resumes():
+    from backend.components.constraints import ATTACHMENT_PROMPT
+
+    for needle in ("dates", "amounts", "exactly as written", "action required"):
+        assert needle in ATTACHMENT_PROMPT
+    assert "Skills, experience" not in ATTACHMENT_PROMPT
+
+
+def test_a_document_just_over_the_limit_is_summarized_and_one_at_the_limit_is_not(monkeypatch):
+    summarize = Mock(return_value=SimpleNamespace(content="A summary."))
+    monkeypatch.setattr(attachment_utils.llm, "invoke", summarize)
+    at_limit = "x" * attachment_utils.SHORT_DOCUMENT_CHARS
+    monkeypatch.setattr(attachment_utils, "extract_text_from_attachment", Mock(return_value=at_limit))
+    assert attachment_utils.process_user_attachment(Attachment(filename="a.pdf", content="ZmFrZQ==")) == at_limit
+    monkeypatch.setattr(attachment_utils, "extract_text_from_attachment", Mock(return_value=at_limit + "y"))
+    assert attachment_utils.process_user_attachment(Attachment(filename="a.pdf", content="ZmFrZQ==")) == "A summary."

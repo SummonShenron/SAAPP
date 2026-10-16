@@ -52,6 +52,9 @@ Include:
 - Any visible text, labels, numbers, or data (transcribe it verbatim)
 - Layout or structure if it's a chart, table, diagram, or UI screenshot
 - Overall context or apparent purpose of the image
+- If it's a letter, bill, statement, form, notice, or message: transcribe ALL of its text in order, and make sure every date, deadline, amount, \
+account or reference number, phone number, web address, sender name, and signature is written out exactly as printed. Say so plainly where \
+something is cut off, blurry, or unreadable instead of guessing it.
 
 Be thorough and factual — this description will be used in place of the image itself."""
 

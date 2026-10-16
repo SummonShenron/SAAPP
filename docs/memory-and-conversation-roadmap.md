@@ -544,7 +544,7 @@ would read the facts without their embeddings and could save them without, so ro
 
 ## 8. The profile: telling Sonic about yourself (built 2026-10-16)
 
-An "About you" card on the Account page (not shown to guests). Fields, all optional: preferred name; pronouns (she/her, he/him, they/them, any, or your own); interests (up to 10 short tags); how you
+An "About you" card on the Account page (not shown to guests). Fields, all optional: preferred name; pronouns (she/her, he/him, they/them, any, or your own); what you do (a job title, or "retired", "student"; up to 60 characters, background only, never brought up unless it matters); interests (up to 10 short tags); how you
 like answers (length, tone, humor, as choices); topics not to bring up (up to 10); and two switches: "let Sonic bring something up on its own" and "let Sonic start conversations" (the existing
 Message First setting, moved within reach).
 

@@ -4,6 +4,15 @@ const MAX_EDGE = 1600;
 const KEEP_AS_IS_BYTES = 800_000;
 const JPEG_QUALITY = 0.85;
 
+/** An iPhone photo in its default HEIC format that this browser could not convert (Safari can; Chrome and Edge often cannot). The server does not read
+ *  HEIC, so sent as it is the photo would arrive as nothing and the question about it would get a blank answer; better to say so up front. */
+export function isUnreadableHeic(file: Pick<File, 'name' | 'type'>): boolean {
+  return /^image\/hei[cf]$/i.test(file.type) || /\.hei[cf]$/i.test(file.name);
+}
+
+export const HEIC_NOTICE =
+  "This browser can't read that photo's format (HEIC). Take a screenshot of the photo and attach that, or set your iPhone camera to Most Compatible (Settings, Camera, Formats) and try again.";
+
 export async function shrinkImageFile(file: File): Promise<File> {
   // GIFs keep their frames; anything that is not an image (PDF, DOCX) is not ours to touch.
   if (!file.type.startsWith("image/") || file.type === "image/gif") return file;

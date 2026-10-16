@@ -6,9 +6,10 @@ import TagInput from './TagInput';
 const NAME_MAX = 40;
 const PRONOUN_CHOICES = ['she/her', 'he/him', 'they/them', 'any'];
 const PRONOUN_MAX = 30;
+const WORK_MAX = 60;
 
 const EMPTY: UserProfile = {
-  name: '', pronouns: '', interests: [], style: { length: 'balanced', tone: 'balanced', humor: 'default' }, avoid: [], offers: true,
+  name: '', pronouns: '', work: '', interests: [], style: { length: 'balanced', tone: 'balanced', humor: 'default' }, avoid: [], offers: true,
 };
 
 /**
@@ -91,6 +92,13 @@ const ProfileCard: React.FC = () => {
         )}
         <div className="account-hint">Used if Sonic ever refers to you in the third person.</div>
         {fieldError('pronouns')}
+      </div>
+
+      <div className="profile-field">
+        <label className="account-label" htmlFor="profile-work">What you do</label>
+        <input id="profile-work" className="account-input" type="text" value={profile.work ?? ''} maxLength={WORK_MAX} placeholder="Your job title, or something like retired or student" onChange={e => update({ work: e.target.value })} />
+        <div className="account-hint">Helps Sonic pitch explanations at the right level. It won't bring it up unless it matters.</div>
+        {fieldError('work')}
       </div>
 
       <div className="profile-field">

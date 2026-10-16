@@ -89,6 +89,68 @@ def test_clean_doc_name(raw, expected):
 
 
 # ---------------------------------------------------------------------------------------------------------------
+# The labelled welcome cards
+# ---------------------------------------------------------------------------------------------------------------
+
+def cards(inputs, seed=0, limit=4):
+    return eq.build_welcome_cards(inputs, limit=limit, rng=random.Random(seed))
+
+
+def labels(out):
+    return [c["label"] for c in out]
+
+
+FULL = dict(owns_scope=True, doc_names=["notes.pdf", "plan.pdf"], calendar_connected=True, target_repo="x/y", has_memories=True)
+
+
+def test_a_returning_person_gets_their_own_stuff_first_then_something_to_try_then_sonics_pick():
+    out = cards(ExampleInputs(**FULL, shelf_available=True))
+    assert labels(out) == [eq.LABEL_YOURS, eq.LABEL_YOURS, eq.LABEL_TRY, eq.LABEL_PICK]
+    assert out[-1]["text"] == eq.SHELF_QUESTION
+
+
+def test_a_brand_new_person_is_shown_how_to_get_started_and_something_they_can_try_with_no_setup():
+    out = cards(ExampleInputs(owns_scope=True, shelf_available=True))
+    assert labels(out) == [eq.LABEL_SETUP, eq.LABEL_SETUP, eq.LABEL_TRY, eq.LABEL_PICK]
+    assert not any(c["label"] == eq.LABEL_YOURS for c in out)
+
+
+def test_sonics_pick_is_left_out_when_there_is_nothing_read_or_the_person_switched_it_off_and_the_room_is_filled():
+    out = cards(ExampleInputs(**FULL, shelf_available=False))
+    assert len(out) == 4 and eq.LABEL_PICK not in labels(out)
+    assert labels(out)[:2] == [eq.LABEL_YOURS, eq.LABEL_YOURS] and eq.LABEL_TRY in labels(out)
+
+
+def test_the_cards_never_repeat_never_exceed_the_limit_and_always_have_a_label():
+    for seed in range(40):
+        for inputs in (ExampleInputs(), ExampleInputs(**FULL, shelf_available=True), ExampleInputs(calendar_available=False)):
+            out = cards(inputs, seed)
+            assert 0 < len(out) <= 4 and len({c["text"] for c in out}) == len(out) and all(c["label"] for c in out)
+
+
+def test_a_shared_identity_is_never_offered_the_calendar_and_sonics_pick_stays_last():
+    out = cards(ExampleInputs(calendar_available=False, shelf_available=True))
+    assert not any("calendar" in c["text"].lower() for c in out) and out[-1]["label"] == eq.LABEL_PICK
+
+
+def test_the_try_these_requests_need_no_setup_and_the_shelf_question_is_one_the_shelf_recognizes():
+    from backend.utils import reading_shelf
+
+    assert reading_shelf.asks_what_reading(eq.SHELF_QUESTION)
+    assert len(eq._TRY_THESE) == len(set(eq._TRY_THESE)) >= 4
+    assert not any(word in q.lower() for q in eq._TRY_THESE for word in ("my documents", "my calendar", "my repo", "attached"))
+
+
+def test_it_varies_between_visits():
+    assert len({tuple(c["text"] for c in cards(ExampleInputs(**FULL), seed=s)) for s in range(30)}) > 1
+
+
+def test_the_memory_card_still_never_shows_what_is_remembered():
+    out = cards(ExampleInputs(has_memories=True), limit=10)
+    assert any(c["text"] == "What do you remember about me?" for c in out)
+
+
+# ---------------------------------------------------------------------------------------------------------------
 # Gathering what the server knows
 # ---------------------------------------------------------------------------------------------------------------
 
@@ -183,3 +245,48 @@ def test_a_user_with_no_database_still_gets_questions(monkeypatch):
     _patch(monkeypatch)
     monkeypatch.setattr("backend.utils.db_utils.get_db", lambda: None)
     assert eq.gather_example_inputs("user_1", "All", DIRECTORY).doc_names == []
+
+
+def test_sonics_pick_needs_something_read_and_the_persons_permission_to_bring_things_up(monkeypatch):
+    _patch(monkeypatch)
+    monkeypatch.setattr("backend.utils.reading_shelf.shelf_enabled", lambda: True)
+    monkeypatch.setattr("backend.utils.reading_shelf.live_items", lambda db: [{"title": "x"}])
+    monkeypatch.setattr("backend.utils.user_settings_utils.get_user_profile", lambda u: {"offers": True})
+    assert eq.gather_example_inputs("user_1", "All", DIRECTORY).shelf_available
+    monkeypatch.setattr("backend.utils.user_settings_utils.get_user_profile", lambda u: {"offers": False})
+    assert not eq.gather_example_inputs("user_1", "All", DIRECTORY).shelf_available
+    monkeypatch.setattr("backend.utils.user_settings_utils.get_user_profile", lambda u: {"offers": True})
+    monkeypatch.setattr("backend.utils.reading_shelf.live_items", lambda db: [])
+    assert not eq.gather_example_inputs("user_1", "All", DIRECTORY).shelf_available
+    monkeypatch.setattr("backend.utils.reading_shelf.live_items", lambda db: [{"title": "x"}])
+    monkeypatch.setattr("backend.utils.reading_shelf.shelf_enabled", lambda: False)
+    assert not eq.gather_example_inputs("user_1", "All", DIRECTORY).shelf_available
+
+
+def test_a_shared_identity_never_gets_sonics_pick(monkeypatch):
+    _patch(monkeypatch)
+    monkeypatch.setattr("backend.utils.reading_shelf.shelf_enabled", lambda: True)
+    monkeypatch.setattr("backend.utils.reading_shelf.live_items", lambda db: [{"title": "x"}])
+    assert not eq.gather_example_inputs("guest_bty", "All", {"guest_bty": {"username": "guest_bty", "groups": ["Affiliate_A"]}}).shelf_available
+
+
+def test_the_endpoint_sends_the_labelled_cards_and_still_the_plain_list():
+    source = open("app.py", encoding="utf-8").read()
+    start = source.index('@app.get("/api/example-questions")')
+    body = source[start:source.index('@app.get("/api/user/groups")')]
+    assert '"questions": build_example_questions(inputs)' in body and '"cards": build_welcome_cards(inputs)' in body
+
+
+def test_the_photo_card_is_always_the_first_thing_to_try_and_the_only_one_that_opens_the_file_picker():
+    for seed in range(20):
+        for inputs in (ExampleInputs(owns_scope=True), ExampleInputs(**FULL)):
+            out = cards(inputs, seed)
+            tries = [c for c in out if c["label"] == eq.LABEL_TRY]
+            assert tries[0] == eq.ATTACH_CARD
+            assert [c for c in out if c.get("action")] == [eq.ATTACH_CARD]
+
+
+def test_the_photo_card_leaves_a_question_ready_and_does_not_pretend_the_text_is_the_message():
+    card = eq.ATTACH_CARD
+    assert card["action"] == "attach" and card["prompt"].endswith("?") and len(card["prompt"]) <= 120
+    assert card["prompt"] != card["text"]

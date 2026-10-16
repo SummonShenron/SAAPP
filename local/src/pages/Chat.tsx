@@ -12,8 +12,9 @@ import MiniPatchy, { type PatchyEnergy } from '../components/MiniPatchy';
 import PatchyHero from '../components/PatchyHero';
 import { TURN_SENT_STATUS, budgetFromLevel, lookForNode } from '../components/patchyLook';
 import OptionWheel, { type OptionWheelItem } from '../components/OptionWheel';
-import { getDynamicExampleQuestions } from '../utils/Example_List';
-import { shrinkImageFile } from '../utils/imageShrink';
+import { getWelcomeCards } from '../utils/Example_List';
+import type { WelcomeCard } from '../welcomeCards';
+import { HEIC_NOTICE, isUnreadableHeic, shrinkImageFile } from '../utils/imageShrink';
 import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type BudgetView, type KnowledgeBase } from '../api';
 import BudgetBanner from '../components/BudgetBanner';
 import UsageRing from '../components/UsageRing';
@@ -585,6 +586,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [agentStatus, setAgentStatus] = useState<string>('');
   const [agentPath, setAgentPath] = useState<string[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const [attachNotice, setAttachNotice] = useState('');   // why a file was not attached (a photo format the browser cannot read)
   const embedVisitorParam = searchParams.get('visitor_id') || searchParams.get('user_id') || searchParams.get('uid');
   const shouldResetEmbedChat = ['1', 'true', 'yes'].includes(
     (searchParams.get('new_user') || searchParams.get('fresh') || searchParams.get('reset') || '').toLowerCase()
@@ -858,7 +860,7 @@ useEffect(() => {
     }
   }, [routeLocation.state, routeLocation.pathname, routeNavigate]);
   const [loading, setLoading] = useState<boolean>(false);
-  const [currentExampleQuestions, setCurrentExampleQuestions] = useState<string[]>([]);
+  const [currentExampleQuestions, setCurrentExampleQuestions] = useState<WelcomeCard[]>([]);
   const [loadingCards, setLoadingCards] = useState<boolean>(false);
 
   // Notify the parent window (BTY SonicWidget) so mini Patchy can animate.
@@ -1068,9 +1070,11 @@ useEffect(() => {
     setAttachedFiles([]);
     setConversationsRefreshKey(k => k + 1);
     try {
-      const questions = await getDynamicExampleQuestions(
+      const questions = await getWelcomeCards(
       allowedAffiliates.map(a => a.id),
-      isEmbedded ? embedAffiliate : 'All'
+      isEmbedded ? embedAffiliate : 'All',
+      principal,
+      isEmbedded
     );
     setCurrentExampleQuestions(questions);
     } catch (error) {
@@ -1192,6 +1196,8 @@ useEffect(() => {
     // Shrunk first (a phone photo is megabytes). The photo then travels once, inside the chat request: a second copy used to go to
     // /api/upload-attachment on its own, with no auth header and in a shape that endpoint rejects, so it only cost the connection.
     const file = await shrinkImageFile(original);
+    if (isUnreadableHeic(file)) { setAttachNotice(HEIC_NOTICE); return; }
+    setAttachNotice('');
     const reader = new FileReader();
     reader.onload = () => {
       const base64 = (reader.result as string).split(",")[1];
@@ -1201,6 +1207,17 @@ useEffect(() => {
       setAttachments(prev => [...prev, { filename: file.name, content: base64 }]);
     };
     reader.readAsDataURL(file);
+  };
+
+  // A card is a question to send, except one that needs something from the person first (a photo of a letter): that one opens the file picker, from
+  // inside this click so a phone allows it, and leaves a question ready so that attaching is all that is left before sending.
+  const chooseWelcomeCard = (card: WelcomeCard) => {
+    if (card.action === 'attach') {
+      if (card.prompt) setInput(card.prompt);
+      document.getElementById('file-upload')?.click();
+      return;
+    }
+    handleSendMessage(card.text, attachmentsRef.current);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1284,12 +1301,12 @@ useEffect(() => {
     if (allowedAffiliates.length === 0) return;
     const syncQuestionPool = async () => {
       setLoadingCards(true);
-      const questions = await getDynamicExampleQuestions(allowedAffiliates.map(a => a.id), selectedAffiliate);
+      const questions = await getWelcomeCards(allowedAffiliates.map(a => a.id), selectedAffiliate, principal, isEmbedded);
       setCurrentExampleQuestions(questions);
       setLoadingCards(false);
     };
     syncQuestionPool();
-  }, [allowedAffiliates, selectedAffiliate]);
+  }, [allowedAffiliates, selectedAffiliate, principal, isEmbedded]);
 
   useEffect(() => {
     // A brand-new message (user sends, or the assistant's reply bubble first appears) gets one
@@ -2065,9 +2082,10 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                 Querying directory indices for security group context...
               </div>
             ) : (
-              currentExampleQuestions.map((q, idx) => (
-                <div key={idx} className="query-card" onClick={() => !loading && handleSendMessage(q, attachmentsRef.current)}>
-                  <p>{q}</p>
+              currentExampleQuestions.map((card, idx) => (
+                <div key={idx} className="query-card" onClick={() => !loading && chooseWelcomeCard(card)}>
+                  {card.label && <small className="query-card-label">{card.label}</small>}
+                  <p>{card.text}</p>
                   <span>→</span>
                 </div>
               ))
@@ -2222,6 +2240,13 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               >
                 ✕
               </button>
+            </div>
+          )}
+
+          {attachNotice && (
+            <div className="attach-notice" role="alert">
+              {attachNotice}
+              <button type="button" aria-label="Dismiss" onClick={() => setAttachNotice('')}>✕</button>
             </div>
           )}
 
