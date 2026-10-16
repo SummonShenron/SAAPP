@@ -51,7 +51,7 @@ from backend.utils.safety_utils import (
 from backend.services.local_workspace import get_workspace_handle, workspace_status
 from backend.services.local_edits import validate_edit_proposal
 from backend.services.memory_search import embed_and_store_memory_chunk, recall_explicit
-from backend.services.tool_agent_memory import build_user_memory_block
+from backend.services.tool_agent_memory import MemoryTurnGuard, build_user_memory_block
 from backend.state.graph_state import GraphState, route_after_grading
 from langgraph.graph import StateGraph, START, END
 from backend.utils.db_utils import get_db
@@ -1666,6 +1666,14 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         # turns back — {question} alone (just this turn's message) can't recover that.
         prior_messages = state.get("messages", [])[:-1][-TOOL_AGENT_HISTORY_MAX_MESSAGES:]
         formatted_history = format_history(prior_messages) or "(no prior messages this conversation)"
+        # The whole earlier conversation, uncompacted, for the after-answer checks (react_loop.py): code the user showed in an earlier message is not in the
+        # repo, so those checks need it to tell "discussing what you showed me" from "inventing". Not the compacted prompt history above, which cuts long
+        # messages short and so would miss most of a pasted file.
+        earlier_conversation_text = "\n".join(
+            f"{getattr(m, 'type', 'user')}: {m.content}"
+            for m in state.get("messages", [])[:-1]
+            if isinstance(getattr(m, "content", None), str) and m.content.strip()
+        )
 
         # Resuming a paused clarification: state["paused_clarification"] (real checkpointed
         # state — the one field reset_transient_state deliberately leaves alone) carries the
@@ -2684,6 +2692,12 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         if user_memory:
             await safe_emit_event("trace_detail", {"node": "tool_agent_node", "title": "Recalled relevant memory", "detail": "Found saved context about this request."})
         prompt_template = prompt_template.replace("{user_memory}", user_memory.replace("{", "{{").replace("}", "}}"))
+        # On a turn that carries remembered text, a rule in code (not the model's judgment) decides what that text can never cause: a database query
+        # the user did not ask for, a read of stored memory, a fetch from a site the user did not name. Applied in _counted_act, so both engines obey it.
+        memory_guard = None
+        if user_memory:
+            prior_user_text = [str(getattr(m, "content", "")) for m in state.get("messages", [])[:-1] if getattr(m, "type", "") == "human"][-1:]
+            memory_guard = MemoryTurnGuard("\n".join([latest_message_content] + prior_user_text))
 
         async def _lookup_existing_declarations(names: list) -> dict:
             # Whole-repo view for run_react_loop's "your code redeclares something that already
@@ -2982,11 +2996,18 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         async def _counted_act(decision: dict):
             """The dispatcher, counting which tool was called and whether it came back as an error (names only: backend/utils/llm_turns.py)."""
             name = decision.get("tool_action")
+            if memory_guard is not None:
+                refusal = memory_guard.refusal(name, decision.get("args"))
+                if refusal:
+                    llm_turns.note_tool_call(name, False)
+                    return refusal
             try:
                 result = await _act(decision)
             except Exception:
                 llm_turns.note_tool_call(name, False)
                 raise
+            if memory_guard is not None:
+                memory_guard.note_result(name, result)
             llm_turns.note_tool_call(name, not str(result).startswith("ERROR"))
             return result
 
@@ -3028,6 +3049,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                     required_action=_LOCAL_EDIT_REQUIRED_ACTION if edit_turn else None,
                     steering_source=lambda: steering.drain(steering_key),
                     on_steering_applied=_on_steering_applied,
+                    conversation_text=earlier_conversation_text,
+                    saved_notes=user_memory,
                 )
             except _UnsafeActionRequested as e:
                 if e.decision.get("tool_action") == "propose_append_target_doc":

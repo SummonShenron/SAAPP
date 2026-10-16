@@ -1,0 +1,14 @@
+{
+  "when": "2026-10-16T12:27:20.595554+00:00",
+  "scenarios": {
+    "conversation_code_discussed": {
+      "category": "memory",
+      "passes": 0,
+      "runs": 3,
+      "calls": 27,
+      "input": 182495,
+      "output": 2835,
+      "cached": 128577
+    }
+  }
+}
