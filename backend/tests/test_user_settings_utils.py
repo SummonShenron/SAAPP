@@ -167,9 +167,15 @@ def test_setting_target_repo_does_not_clobber_other_settings():
     assert usu.get_user_target_repo("jack") == "facebook/react"
 
 
+def _settings_only(bundle):
+    """The three original settings; the profile that rides in the same bundle is tested in test_profile_utils.py."""
+    return {key: bundle[key] for key in ("rag_mode", "deep_thinking", "target_repo")}
+
+
 def test_settings_bundle_defaults():
     bundle = usu.get_user_settings_bundle("jack")
-    assert bundle == {"rag_mode": "strict", "deep_thinking": False, "target_repo": None}
+    assert _settings_only(bundle) == {"rag_mode": "strict", "deep_thinking": False, "target_repo": None}
+    assert bundle["profile"]["name"] == "" and bundle["profile"]["offers"] is True      # nothing set: an empty profile, never a missing one
 
 
 def test_settings_bundle_matches_individual_getters_after_changes():
@@ -177,13 +183,13 @@ def test_settings_bundle_matches_individual_getters_after_changes():
     usu.set_user_deep_thinking_mode("jack", True)
     usu.set_user_target_repo("jack", "facebook/react")
     bundle = usu.get_user_settings_bundle("jack")
-    assert bundle == {"rag_mode": "open", "deep_thinking": True, "target_repo": "facebook/react"}
+    assert _settings_only(bundle) == {"rag_mode": "open", "deep_thinking": True, "target_repo": "facebook/react"}
 
 
 def test_settings_bundle_forces_defaults_for_locked_user():
     usu.set_user_target_repo("guest_bty", "facebook/react")  # rejected, but prove the bundle ignores it too
     bundle = usu.get_user_settings_bundle("guest_bty")
-    assert bundle == {"rag_mode": "strict", "deep_thinking": False, "target_repo": None}
+    assert _settings_only(bundle) == {"rag_mode": "strict", "deep_thinking": False, "target_repo": None}
 
 
 def test_settings_bundle_reads_document_once(monkeypatch):

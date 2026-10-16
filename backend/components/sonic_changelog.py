@@ -23,6 +23,21 @@ Fields: `id`; `month` (YYYY-MM, newest first within the list is not required); `
 
 CHANGELOG = [
     {
+        "id": "your_profile",
+        "requires": [
+            "backend/utils/profile_utils.py::def build_profile_block",
+            "app.py::profile_utils.build_profile_block(",
+        ],
+        "month": "2026-10",
+        "title": "Telling me about yourself",
+        "line": (
+            "On the Account page you can tell me your name and pronouns, what you're into, how you like answers (short or detailed, direct or warm), "
+            "and topics you'd rather I didn't bring up. I use it quietly, and everything on it is optional."
+        ),
+        "keywords": ["profile", "my name", "call me", "pronouns", "account page", "preferences", "interests", "don't bring up"],
+        "volunteer": [],
+    },
+    {
         "id": "reading_shelf",
         "requires": [
             "backend/utils/reading_shelf.py::def offer_for_turn",

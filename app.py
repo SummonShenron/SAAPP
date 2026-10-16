@@ -125,6 +125,7 @@ from backend.utils import ops_digest as ops_digest_utils
 from backend.utils import ops_suggestions as ops_suggestions_utils
 from backend.utils import duration_utils
 from backend.utils import curiosity as curiosity_utils
+from backend.utils import profile_utils
 from backend.utils import reading_shelf as shelf_utils
 from backend.services import shelf_refresh
 from backend.utils.self_history_utils import SELF_HISTORY_MARK, build_self_history_block, select_self_history
@@ -134,6 +135,8 @@ from backend.utils.user_settings_utils import (
     get_user_deep_thinking_mode, set_user_deep_thinking_mode,
     get_user_target_repo, set_user_target_repo,
     get_user_settings_bundle,
+    get_user_profile,
+    set_user_profile,
     get_user_has_seen_help, set_user_has_seen_help,
     get_user_timezone, set_user_timezone,
     get_user_target_doc_id, set_user_target_doc_id,
@@ -619,6 +622,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     effective_rag_mode = _settings["rag_mode"]
     effective_deep_thinking = _settings["deep_thinking"]
     effective_target_repo = _settings["target_repo"]
+    user_profile = _settings.get("profile") or profile_utils.stored_profile({})  # what they set on the Account page (backend/utils/profile_utils.py)
     # The usage budget guard (backend/utils/budget_guard.py). Off, and free, unless a budget is configured. In low-power mode deep
     # thinking is off whatever the setting says, and the optional extras further down are skipped.
     is_admin_user = is_global_admin(directory, username)
@@ -1028,6 +1032,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 # Emit trace event to frontend execution trace drawer!
                 yield f"data: {json.dumps({'event': 'node_progress', 'node': 'self_correction_guardrail', 'title': 'Applying Lessons Learned Guardrail', 'detail': f'Injected past failure constraint into context prompt.'})}\n\n"
 
+            profile_block = profile_utils.build_profile_block(user_profile)
+            if profile_block:
+                prompt = prompt + profile_block
             if memory_context:
                 prompt = prompt + memory_context
                 yield f"data: {json.dumps({'event': 'node_progress', 'node': 'user_memory', 'title': 'Applying known user context', 'detail': 'Injected saved preferences/facts into context prompt.'})}\n\n"
@@ -1063,7 +1070,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     # conversation and per-person limits, and is framed as something to pick back up, not a link to what they just said.
                     callback_lull = curiosity_utils.is_lull(question)
                     callback_slot_ok = (not callback_lull) or (
-                        curiosity_utils.slot_open(question, chat_sessions[history_key], source_type=source_type, risk_active=False,
+                        profile_utils.offers_allowed(user_profile)
+                        and curiosity_utils.slot_open(question, chat_sessions[history_key], source_type=source_type, risk_active=False,
                                                   energy_tier="open", proactive_taken=False)
                         and not curiosity_utils.last_reply_asked(chat_sessions[history_key])
                         and curiosity_utils.gap_clear(await asyncio.to_thread(curiosity_utils.last_offer_at, username), datetime.now(timezone.utc))
@@ -1093,9 +1101,10 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                                          or callback_offered or goal_nudge_context),
                 )
                 asked_listing = shelf_utils.shelf_enabled() and shelf_utils.asks_what_reading(question)
-                topic_ok = shelf_utils.shelf_enabled() and shelf_utils.topic_for(question) is not None and curiosity_utils.slot_open(
+                offers = profile_utils.offers_allowed(user_profile)  # the person's own switch for Sonic bringing something up by itself
+                topic_ok = offers and shelf_utils.shelf_enabled() and shelf_utils.topic_for(question) is not None and curiosity_utils.slot_open(
                     question, chat_sessions[history_key], min_turns=2, **slot)
-                lull_ok = curiosity_utils.curiosity_allowed(question, chat_sessions[history_key], **slot)
+                lull_ok = offers and curiosity_utils.curiosity_allowed(question, chat_sessions[history_key], **slot)
                 db_for_shelf = get_db()
                 if asked_listing and db_for_shelf is not None:
                     shelf_offer = await asyncio.to_thread(shelf_utils.offer_for_turn, db_for_shelf, username, question, listing=True, topic_ok=False, lull_ok=False)
@@ -1105,10 +1114,16 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                         shelf_offer = await asyncio.to_thread(
                             shelf_utils.offer_for_turn, db_for_shelf, username, question, listing=False, topic_ok=bool(topic_ok), lull_ok=bool(lull_ok),
                         )
+                    if shelf_offer and shelf_offer["kind"] != "listing" and profile_utils.touches_avoided(
+                            f"{shelf_offer['item'].get('title', '')} {shelf_offer['item'].get('summary', '')} {shelf_offer['item'].get('topic', '')}", user_profile):
+                        shelf_offer = None  # the person asked not to have this subject brought up
                     if shelf_offer is None and lull_ok:
                         # Nothing on the shelf this person has not seen and no earlier conversation to pick back up: one of Sonic's own leanings
                         # (curated, said once to each person), and only with none left, the plain open question.
-                        lean_entry = curiosity_utils.pick_lean(await asyncio.to_thread(curiosity_utils.lean_seen, username))
+                        from backend.components.sonic_profile import INTERESTS as _LEANINGS
+
+                        avoided_leanings = [e["id"] for e in _LEANINGS if profile_utils.touches_avoided(e["line"], user_profile)]
+                        lean_entry = curiosity_utils.pick_lean(list(await asyncio.to_thread(curiosity_utils.lean_seen, username)) + avoided_leanings)
                         if lean_entry:
                             prompt = prompt + curiosity_utils.build_lean_block(lean_entry)
                         else:
@@ -1897,6 +1912,33 @@ async def extend_budget(current_user = Depends(get_current_user)):
     logger.info("[budget] a global admin extended the blocked budget by %d%%.", round(budget_guard.EXTENSION_STEP * 100))
     fresh = await asyncio.to_thread(budget_guard.current_state)
     return budget_guard.public_view(fresh, True)
+
+
+class ProfileUpdate(BaseModel):
+    name: str = ""
+    pronouns: str = ""
+    interests: List[str] = []
+    style: Dict[str, str] = {}
+    avoid: List[str] = []
+    offers: bool = True
+
+
+@app.get("/api/settings/profile")
+async def get_profile_setting(current_user = Depends(get_current_user)):
+    """What the person set about themselves on the Account page (backend/utils/profile_utils.py)."""
+    return await asyncio.to_thread(get_user_profile, current_user.get("sub"))
+
+
+@app.put("/api/settings/profile")
+async def update_profile_setting(payload: ProfileUpdate, current_user = Depends(get_current_user)):
+    """Saves the whole profile. A value that cannot be saved is a 422 naming the field and the reason; nothing is written then."""
+    username = current_user.get("sub")
+    if is_guest_username(username) or username in TOGGLE_LOCKED_USERS:
+        raise HTTPException(status_code=403, detail="Signing in is required to keep a profile.")
+    try:
+        return await asyncio.to_thread(set_user_profile, username, payload.model_dump())
+    except profile_utils.ProfileError as error:
+        raise HTTPException(status_code=422, detail={"field": error.field, "message": error.message})
 
 
 @app.get("/api/settings/proactive-opening")

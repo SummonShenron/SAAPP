@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getEffectivePrincipal, isGuestPrincipal } from '../api';
+import ProfileCard from '../components/ProfileCard';
 import './__styles__/Account.css';
 
 /**
@@ -25,6 +26,8 @@ export const AccountPage: React.FC<{ theme: string; toggleTheme: () => void }> =
         </dl>
         {guest && <p className="account-note">Guests share one temporary identity, so nothing here is personal. Sign in to keep your own conversations, memory, and settings.</p>}
       </section>
+
+      {!guest && <ProfileCard />}
 
       <section className="account-card">
         <h3>Appearance</h3>

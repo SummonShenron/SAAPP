@@ -51,7 +51,7 @@ trafilatura>=2.0,<3.0
 # local daemon entirely (added in errAgent commit 2087d59), yet its own entry_points.txt already
 # points the `erragent` console script at erragent.local.cli:main — so that command has never
 # actually been importable when installed at v0.1.0. The "erragent dev" subcommand specifically
-# (used by start_all.ps1 to run the daemon + this app together) wasn't added until v0.4.0, hence
+# (used by start_saapp.ps1 to run the daemon + this app together) wasn't added until v0.4.0, hence
 # v0.4.1 (latest at time of writing) rather than an earlier daemon-only tag. Diffed v0.1.0..v0.4.1
 # on every core client file directly (client.py/context.py/handler.py/middleware.py/config.py/
 # __init__.py): the only change is config.py/__init__.py now defaulting ERRAGENT_LOCAL_ONLY to

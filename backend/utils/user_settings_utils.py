@@ -2,10 +2,12 @@ import os
 import re
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from backend.utils.db_utils import get_db
+from backend.utils import profile_utils
 
 logger = logging.getLogger("SASS Logger")
 
@@ -186,13 +188,57 @@ def get_user_settings_bundle(username: str) -> dict:
     chat-request path, which used to call the three getters above separately (3 network round
     trips per message for 3 fields on the exact same document) instead of once."""
     if username in TOGGLE_LOCKED_USERS:
-        return {"rag_mode": RAG_MODE_STRICT, "deep_thinking": DEFAULT_DEEP_THINKING, "target_repo": None}
+        return {"rag_mode": RAG_MODE_STRICT, "deep_thinking": DEFAULT_DEEP_THINKING, "target_repo": None, "profile": profile_utils.stored_profile({})}
     doc = _fetch_settings_doc(username)
     return {
         "rag_mode": _resolve_rag_mode(doc),
         "deep_thinking": _resolve_deep_thinking(doc),
         "target_repo": _resolve_target_repo(doc),
+        "profile": _resolve_profile(doc),  # the profile page's fields (backend/utils/profile_utils.py), read from the same document
     }
+
+
+def _resolve_profile(doc: dict) -> dict:
+    raw = doc.get(profile_utils.PROFILE_KEY)
+    profile = profile_utils.stored_profile(raw)
+    profile["updated_at"] = raw.get("updated_at") if isinstance(raw, dict) else None
+    return profile
+
+
+def get_profile_interest_asked(username: str) -> dict:
+    """{interest id: when it was last asked about}, for the interest opener (backend/utils/initiation.py): a profile interest has no remembered fact to
+    carry that stamp, so it is kept here, apart from the profile, and an edit of the profile does not reset it."""
+    asked = _fetch_settings_doc(username).get("profile_interest_asked")
+    return dict(asked) if isinstance(asked, dict) else {}
+
+
+def stamp_profile_interest_asked(username: str, interest_id: str, when: str) -> None:
+    db = get_db()
+    if db is not None:
+        db["user_settings"].update_one({"username": username}, {"$set": {f"profile_interest_asked.{interest_id}": when}}, upsert=True)
+    else:
+        asked = get_profile_interest_asked(username)
+        asked[interest_id] = when
+        _write_local_setting(username, "profile_interest_asked", asked)
+
+
+def get_user_profile(username: str) -> dict:
+    """What this person set on their profile (an empty one when nothing, or when the stored value is damaged). Locked identities have none."""
+    if username in TOGGLE_LOCKED_USERS:
+        return profile_utils.stored_profile({})
+    return _resolve_profile(_fetch_settings_doc(username))
+
+
+def set_user_profile(username: str, raw: dict) -> dict:
+    """Validates and saves the whole profile (the page sends all of it). Raises profile_utils.ProfileError for a value that cannot be saved, and
+    nothing is written then. Returns the profile as stored."""
+    profile = profile_utils.normalize_profile(raw)
+    profile["updated_at"] = datetime.now(timezone.utc).isoformat()
+    db = get_db()
+    if db is not None:
+        db["user_settings"].update_one({"username": username}, {"$set": {profile_utils.PROFILE_KEY: profile}}, upsert=True)
+    _write_local_setting(username, profile_utils.PROFILE_KEY, profile)
+    return profile
 
 
 def set_user_target_repo(username: str, repo: Optional[str]) -> Optional[str]:

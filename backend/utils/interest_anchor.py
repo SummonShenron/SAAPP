@@ -206,9 +206,17 @@ async def choose_interest(
 
     try:
         if load_facts is None:
+            from backend.utils import profile_utils
             from backend.utils.memory_utils import load_user_facts
+            from backend.utils.user_settings_utils import get_profile_interest_asked, get_user_profile
 
-            load_facts = lambda name: load_user_facts(name, CATEGORY)  # noqa: E731
+            def load_facts(name: str) -> List[Any]:
+                # What Sonic has learned, plus the interests the person listed on their profile, minus anything they asked not to be brought up.
+                profile = get_user_profile(name)
+                known = list(load_user_facts(name, CATEGORY)) + profile_utils.interest_facts(
+                    profile, profile.get("updated_at"), get_profile_interest_asked(name)
+                )
+                return [fact for fact in known if not profile_utils.touches_avoided(getattr(fact, "fact", ""), profile)]
         facts = await asyncio.to_thread(load_facts, username)
         pool = candidates(facts, now)
         if not pool:
