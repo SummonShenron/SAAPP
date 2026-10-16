@@ -249,7 +249,7 @@ Not a scoping note: this one is being built, in stages, and is recorded here so 
   from `neutral_logo.png` into `logo-mark.svg`, `logo-mark-mono.svg` and `LogoMark.tsx`. Replace them if the originals turn up. The Sonic and
   Shadow themes and the Sonic-branded images are still to be rebranded away.
 
-## 4. Chat send errors hide the real cause (not yet built)
+## 4. Chat send errors hide the real cause (built 2026-10-16)
 
 ### What was observed
 
@@ -286,6 +286,27 @@ Keep the technical detail, but stop inventing a cause:
 
 A test for the error mapping as a pure function (status and failure kind in, message out), including that no mapped message mentions vectors or allocation
 unless the backend said so; and a manual check that a 401, a budget block, a 500 and a dropped connection each show a different, true message.
+
+### What was built (2026-10-16)
+
+Almost all of it is frontend. A check of `app.py` showed the backend already turns a failed turn into a plain-language reply (`handle_failed_turn`) and a spent budget
+into its own reply, both as ordinary stream events, so they never reached the generic message. The failures that did were the ones before or outside a stream: an
+HTTP error (a 401 from an expired sign-in, a 5xx or 502/503/504 while Render starts or redeploys), the request never connecting, and a stream that dropped part-way.
+Nothing in `backend/` was changed. (The backend also never sends a stream `error` event, so the page's `Execution Fault:` branch is effectively dead; left alone.)
+
+- `local/src/chatErrors.ts` (pure, tested): a typed `ChatSendError` with a kind (session, forbidden, bad request, rate limited, starting, server, network,
+  interrupted, unknown), the status and the server's own plain-string `detail`. `kindForStatus`, `safeDetail` (never a 422's body, which echoes what the person sent; cleaned
+  and cut to 160 characters) and `describeChatError` (message, whether a retry is worth offering, one technical line).
+- `sendChatMessage` (`api.ts`) now throws these instead of "Failed to initialize communication stream.": a status and detail for a non-OK response (reading a non-JSON body
+  such as a proxy page safely), `network` when `fetch` rejects, `interrupted` when a read fails after the stream began. A deliberate Stop (AbortError) passes through untouched.
+- `Chat.tsx`: the hardcoded "Vector assertion timed out..." is gone. The empty reply placeholder becomes the plain message for the cause (or a notice after any partial answer),
+  with a quiet **Try again** button where retrying can help (not for an expired sign-in or a refused or oversized request) and a **Details** disclosure with the one technical
+  line. Retrying replaces the failed message and notice instead of repeating the question in the thread. The console log stays. The Patchy error face needed no change.
+- Honest messages: none mentions vectors, allocation or an engine (a test checks every kind and several statuses); the unknown case says the cause is not known.
+
+Verified: 10 node tests (`node --test src/chatErrors.test.mjs`); the real `sendChatMessage` run in the browser against a faked `fetch` for a 401, 403, 422 with an echoed message, a 503
+HTML page, a 500 text page, an offline request, a mid-stream drop, a good stream and a Stop: each gave its own kind and message, the 422 never leaked the text, and the Stop was
+untouched. The notice rendered in both themes. Not exercised: the full Chat page (it needs a sign-in), so the Try again click path (replace and resend) is untested in a browser.
 
 ## 5. Tool agent memory: correct answers about code from earlier messages get flagged and rewritten (built 2026-10-16)
 

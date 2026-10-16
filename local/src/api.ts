@@ -1,5 +1,6 @@
 // src/api.ts
 import type { SessionCheck } from './utils/authReady';
+import { ChatSendError, kindForStatus, safeDetail, toChatSendError } from './chatErrors';
 
 declare global {
   interface Window {
@@ -1228,37 +1229,53 @@ export async function sendChatMessage(
   signal?: AbortSignal
 ): Promise<void> {
   const authHeaders = await getAuthHeaders();
-  const response = await fetch(`${BASE_URL}/api/chat`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders
-    },
-    body: JSON.stringify({
-      username,
-      question,
-      affiliate: borderScope,
-      attachments,
-      session_id,
-    }),
-    signal,
-  });
+  // A deliberate Stop surfaces as an AbortError and is the caller's to handle; every other failure is a ChatSendError that says what is
+  // actually known (see chatErrors.ts), so the page never has to guess a cause.
+  const isStop = (err: unknown) => err instanceof DOMException && err.name === 'AbortError';
+  let response: Response;
+  try {
+    response = await fetch(`${BASE_URL}/api/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders
+      },
+      body: JSON.stringify({
+        username,
+        question,
+        affiliate: borderScope,
+        attachments,
+        session_id,
+      }),
+      signal,
+    });
+  } catch (err) {
+    throw isStop(err) ? err : toChatSendError(err);
+  }
 
   if (!response.ok) {
-    throw new Error("Failed to initialize communication stream.");
+    let body: unknown;
+    try { body = await response.json(); } catch { /* not JSON (a proxy's error page, say) */ }
+    throw new ChatSendError(kindForStatus(response.status), { status: response.status, detail: safeDetail(response.status, body) });
   }
 
   const reader = response.body?.getReader();
   const decoder = new TextDecoder();
 
   if (!reader) {
-    throw new Error("ReadableStream is unsupported.");
+    throw new ChatSendError('unknown', { detail: 'the browser cannot read a streamed response' });
   }
 
   let buffer = "";
 
   while (true) {
-    const { value, done } = await reader.read();
+    let chunk: ReadableStreamReadResult<Uint8Array>;
+    try {
+      chunk = await reader.read();
+    } catch (err) {
+      throw isStop(err) ? err : new ChatSendError('interrupted');
+    }
+    const { value, done } = chunk;
     if (done) break;
 
     buffer += decoder.decode(value, { stream: true });

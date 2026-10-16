@@ -631,6 +631,30 @@ div:has(.portal-body) {
   margin: -0.15rem 0 0.4rem;
 }
 
+/* A reply that is really a failure notice (see chatErrors.ts): a quiet retry button and a "Details" disclosure with the one technical line. */
+.message-failure {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+}
+.message-failure-retry {
+  background: transparent;
+  color: var(--accent-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  padding: 0.25rem 0.8rem;
+  font: inherit;
+  cursor: pointer;
+}
+.message-failure-retry:hover:not(:disabled) { border-color: var(--accent-primary); }
+.message-failure-retry:disabled { opacity: 0.5; cursor: default; }
+.message-failure-details { color: var(--text-muted); }
+.message-failure-details summary { cursor: pointer; user-select: none; }
+.message-failure-details code { display: block; margin-top: 0.3rem; font-size: 0.75rem; overflow-wrap: anywhere; }
+
 .message-sender {
   font-size: 0.7rem;
   font-weight: 700;

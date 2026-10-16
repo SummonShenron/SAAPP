@@ -28,6 +28,7 @@ import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useAuth } from '@clerk/clerk-react';
+import { describeChatError, toChatSendError } from '../chatErrors';
 
 interface MessageImage {
   filename: string;
@@ -47,6 +48,9 @@ interface Message {
   steer?: 'queued' | 'applied' | 'deferred' | 'dropped';
   // Sonic wrote this on its own when the conversation was opened (the "message first" setting), not in reply to anything.
   initiated?: boolean;
+  // Set on a reply that is really a failure notice (see chatErrors.ts): the technical line for the "Details" disclosure, whether sending again is
+  // worth offering, and what to resend. `userMessageId` is the message that failed, which a retry replaces instead of repeating.
+  failure?: { details: string; retryable: boolean; retryText: string; userMessageId: string };
 }
 
 const STEER_STATUS_LABEL: Record<NonNullable<Message['steer']>, string> = {
@@ -143,7 +147,7 @@ interface ChatMessageListProps {
   chatWindowRef: React.RefObject<HTMLDivElement | null>;
   messagesEndRef: React.RefObject<HTMLDivElement | null>;
   attachmentsRef: React.MutableRefObject<{ filename: string; content: string }[]>;
-  handleSendMessageRef: React.MutableRefObject<(text: string, attachments: { filename: string; content: string }[]) => void>;
+  handleSendMessageRef: React.MutableRefObject<(text: string, attachments: { filename: string; content: string }[], replaceIds?: string[]) => void>;
   handleFeedbackRef: React.MutableRefObject<(messageId: string, choice: 'like' | 'dislike') => void>;
   getTokenRef: React.MutableRefObject<(() => Promise<string | null>) | undefined>;
   canEditLocal: boolean;
@@ -379,6 +383,25 @@ const ChatMessageList = React.memo(function ChatMessageList({
                   {cleanContent}
                 </ReactMarkdown>
               </div>
+
+              {msg.failure && (
+                <div className="message-failure">
+                  {msg.failure.retryable && (
+                    <button
+                      type="button"
+                      className="message-failure-retry"
+                      disabled={loading}
+                      onClick={() => handleSendMessageRef.current(msg.failure!.retryText, attachmentsRef.current, [msg.failure!.userMessageId, msg.id])}
+                    >
+                      Try again
+                    </button>
+                  )}
+                  <details className="message-failure-details">
+                    <summary>Details</summary>
+                    <code>{msg.failure.details}</code>
+                  </details>
+                </div>
+              )}
 
               {msg.editProposal && (
                 <LocalEditCard
@@ -1359,7 +1382,9 @@ useEffect(() => {
 
   const handleSendMessage = async (
     textToSend: string,
-    currentAttachments: { filename: string; content: string }[]
+    currentAttachments: { filename: string; content: string }[],
+    // A retry replaces the failed message and its failure notice rather than repeating them in the thread.
+    replaceIds: string[] = []
   ) => {
     setTraceSteps([]);
     if (!textToSend.trim() || loading) return;
@@ -1374,10 +1399,12 @@ useEffect(() => {
         return { filename: a.filename, dataUrl: `data:${mime};base64,${a.content}` };
       });
 
+    const userMessageId = genId();
+    const aiMessageId = genId();
     setMessages(prev => [
-      ...prev,
-      { id: genId(), sender: 'user', text: textToSend, images: imageAttachments.length ? imageAttachments : undefined },
-      { id: genId(), sender: 'ai', text: '' }
+      ...(replaceIds.length ? prev.filter(m => !replaceIds.includes(m.id)) : prev),
+      { id: userMessageId, sender: 'user', text: textToSend, images: imageAttachments.length ? imageAttachments : undefined },
+      { id: aiMessageId, sender: 'ai', text: '' }
     ]);
 
     setHasChatted(true);
@@ -1590,13 +1617,23 @@ useEffect(() => {
         });
         postPatchyStatus('done');
       } else {
-        console.error("Chat send failed:", err);
+        // What went wrong, said plainly and only as far as it is known (chatErrors.ts). The raw error stays in the console and, as one
+        // technical line with no message text in it, behind a "Details" disclosure on the notice.
+        const sendError = toChatSendError(err);
+        const view = describeChatError(sendError);
+        console.error("Chat send failed:", sendError.kind, sendError.status ?? '', err);
         failed = true;
         postPatchyStatus('error');
-        setMessages(prev => [
-          ...prev,
-          { id: genId(), sender: 'ai', text: "Vector assertion timed out. Check local engine allocations." }
-        ]);
+        const notice: Message = {
+          id: aiMessageId, sender: 'ai', text: view.message,
+          failure: { details: view.details, retryable: view.retryable, retryText: textToSend, userMessageId },
+        };
+        setMessages(prev => {
+          // The empty reply placeholder this turn added becomes the notice; if the answer had already started streaming, the notice follows it.
+          const at = prev.findIndex(m => m.id === aiMessageId);
+          if (at >= 0 && !prev[at].text) return prev.map((m, i) => (i === at ? notice : m));
+          return [...prev, { ...notice, id: genId() }];
+        });
       }
     } finally {
       // Steers that were queued but never applied (this turn had no work phase, or it ended first)
