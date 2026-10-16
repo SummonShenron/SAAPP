@@ -625,8 +625,8 @@
 
 .theme-shadow .sh-attention,
 .theme-shadow .sh-home-tile {
-  background-color: #3b1e1e;
-  border-color: #553333;
+  background-color: var(--card-bg);
+  border-color: var(--line);
 }
 
 @media (max-width: 640px) {

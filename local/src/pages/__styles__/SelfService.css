@@ -22,13 +22,13 @@
   font-size: 2.25rem;
   font-weight: 700;
   margin: 0 0 0.5rem 0;
-  background: linear-gradient(90deg, #38bdf8, #2563eb);
+  background: linear-gradient(90deg, #f6a15a, var(--accent-primary));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 
 .theme-shadow .self-service-header h1 {
-  background: linear-gradient(90deg, #f83838, #ffffff);
+  background: linear-gradient(90deg, var(--accent-primary), #ffffff);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
@@ -77,8 +77,8 @@
 }
 
 .theme-shadow .service-card {
-  background-color: #3b1e1e; /* Even darker background for shadow theme */
-  border: 1px solid #553333
+  background-color: var(--card-bg); /* Even darker background for shadow theme */
+  border: 1px solid var(--line)
 }
 
 .service-card:hover {
@@ -86,31 +86,31 @@
 }
 
 .theme-shadow .form-group select {
-  background-color: #2a0f0f;
-  border: 1px solid #553333;
+  background-color: var(--input-bg);
+  border: 1px solid var(--line);
 }
 
 .theme-shadow .custom-file-button {
-  background-color: #2a0f0f;
-  border: 1px solid #553333;
+  background-color: var(--input-bg);
+  border: 1px solid var(--line);
 }
 
 .theme-shadow .manifest-search-input {
-  background-color: #2a0f0f;
-  border: 1px solid #553333;
+  background-color: var(--input-bg);
+  border: 1px solid var(--line);
 }
 
 .theme-shadow .manifest-table th {
-  background-color: #553333;
+  background-color: var(--line);
 }
 
 .theme-shadow .manifest-table td {
-  background-color: #553333;
+  background-color: var(--line);
 }
 
 .theme-shadow .staged-files-preview {
-  background-color: #2a0f0f;
-  border: 1px solid #553333;
+  background-color: var(--input-bg);
+  border: 1px solid var(--line);
 }
 /* Step Badges (Top right of cards) */
 .card-badge {
@@ -178,7 +178,7 @@
 }
 
 .form-group select:focus {
-  border-color: #2563eb;
+  border-color: var(--accent-primary);
 }
 
 .form-group select:hover {
@@ -253,7 +253,7 @@
 
 /* Action Execution Submits */
 .action-button {
-  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-hover));
   color: #ffffff;
   border: none;
   padding: 0.85rem 1.75rem;
@@ -267,7 +267,7 @@
 }
 
 .theme-shadow .action-button {
-  background: linear-gradient(135deg, #eb2525, #000000);
+  background: linear-gradient(135deg, var(--accent-primary), #b45a1c);
 }
 .action-button:hover:not(:disabled) {
   opacity: 0.95;

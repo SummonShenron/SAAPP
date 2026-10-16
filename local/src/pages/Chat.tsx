@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import swooshLogoImg from '../assets/white_swoosh.png';
 import { useAffiliateScope } from '../hooks/useAffiliateScope';
 import { useLocalWorkspace } from '../hooks/useLocalWorkspace';
 import LocalEditCard from '../components/LocalEditCard';
@@ -10,12 +9,20 @@ import type { ApplyResult, UndoResult } from '../localEdits';
 import type { EditProposal } from '../localEditsCore';
 import ConversationsBlade from '../components/ConversationsBlade';
 import MiniPatchy, { type PatchyEnergy } from '../components/MiniPatchy';
+import PatchyHero from '../components/PatchyHero';
+import { TURN_SENT_STATUS, budgetFromLevel, lookForNode } from '../components/patchyLook';
 import OptionWheel, { type OptionWheelItem } from '../components/OptionWheel';
 import { getDynamicExampleQuestions } from '../utils/Example_List';
 import { shrinkImageFile } from '../utils/imageShrink';
 import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type BudgetView, type KnowledgeBase } from '../api';
 import BudgetBanner from '../components/BudgetBanner';
 import UsageRing from '../components/UsageRing';
+import TracePanel, { type TraceStep } from '../components/TracePanel';
+import { useMediaQuery } from '../hooks/useMediaQuery';
+import LogoMark from '../components/LogoMark';
+import Icon from '../components/icons';
+import { BRAND_NAME, BRAND_TAGLINE } from '../components/brand';
+import { shell } from '../components/shellStore';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -219,9 +226,8 @@ const ChatMessageList = React.memo(function ChatMessageList({
     <div
       className="chat-window"
       ref={chatWindowRef}
-      // 310px = the previous 380px minus the ~70px the old <Filters /> row (plus its gap) used to
-      // occupy below the input; leaving it at 380 left that space empty under the input.
-      style={isEmbedded ? undefined : { maxHeight: 'calc(100vh - 310px)', overflowY: 'auto' }}
+      // Standalone: it fills whatever the page column leaves above the input (components/__styles__/AppShell.css). The embedded widget keeps its fixed cap.
+      style={isEmbedded ? undefined : { minHeight: 0, overflowY: 'auto' }}
     >
       {earlierCount > 0 && (
         <button
@@ -473,15 +479,6 @@ interface ChatPageProps {
   toggleTheme: () => void;
 }
 
-interface TraceStep {
-  id: string;
-  title: string;
-  detail: string;
-  status: "active" | "complete";
-  batchIndex?: number;
-  batchSize?: number;
-}
-
 const parseFollowUp = (content: string) => {
   const match = content.match(/<<<FOLLOW_UP:\s*(.*?)>>>/s);
   if (!match) return { cleanContent: content, followUp: null };
@@ -523,15 +520,16 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const traceDragRef = useRef({ startX: 0, startY: 0, initialX: 0, initialY: 0 });
   // Trace is available by default in standalone mode, but starts hidden when embedded.
 
-  const [isNavHovered, setIsNavHovered] = useState(false); 
   const [showTracePanel, setShowTracePanel] = useState(() => {
     if (isEmbedded) return false;
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('showTracePanel');
       if (saved !== null) return JSON.parse(saved);
     }
-    return true; 
+    // The trace is a blade beside the conversation (it costs width), so with no saved choice it starts open only on a wide screen.
+    return typeof window === 'undefined' || window.innerWidth >= 1400;
   });
+  const isMobileView = useMediaQuery('(max-width: 768px)');
 
   const toggleTracePanel = () => {
     setShowTracePanel((prev: boolean) => {
@@ -560,7 +558,6 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   // Connected local folder: Sonic reads this instead of GitHub's copy. Not offered to guests (every
   // guest shares one identity) or in embed mode.
   const workspace = useLocalWorkspace({ enabled: !isEmbedded && !isGuestPrincipal(principal) });
-  const [userEmail, setUserEmail] = useState<string>('');
   const [agentStatus, setAgentStatus] = useState<string>('');
   const [agentPath, setAgentPath] = useState<string[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
@@ -643,6 +640,12 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [resendTick, setResendTick] = useState(0);
   // Bumped each time a turn finishes normally, so the pixel Patchy by the input can hop.
   const [patchyCheer, setPatchyCheer] = useState(0);
+  // Bumped when a turn fails (his face turns sorry instead of celebrating), and when a message is steered into a running turn (he nods).
+  const [patchyFault, setPatchyFault] = useState(0);
+  const [patchySteer, setPatchySteer] = useState(0);
+  // Whether the person is engaged with the message box (clicked into it or typed, and hasn't sent or clicked away): Patchy turns to watch it, and reads
+  // along once there is text in it. Plain focus doesn't count: the page focuses the box itself on load, and it stays focused between turns.
+  const [inputEngaged, setInputEngaged] = useState(false);
   // Patchy is on by default; the "..." menu can hide him. Remembered per browser (storage can be
   // blocked, so a failed read/write just means the default / a non-sticky choice).
   const [showPatchy, setShowPatchy] = useState<boolean>(() => {
@@ -655,6 +658,8 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   // The energy ceiling the backend says is in force for this conversation (it follows the user's own
   // emotional state); Patchy's mood mirrors it. Resets when the conversation does.
   const [patchyEnergy, setPatchyEnergy] = useState<PatchyEnergy>('open');
+  // The usage budget as Patchy shows it: a sweat drop at the notice level, heavy lids when throttled, asleep when chat is paused.
+  const patchyBudget = budgetFromLevel(budget?.level);
   const togglePatchy = () => {
     setShowPatchy(prev => {
       const next = !prev;
@@ -727,15 +732,6 @@ useEffect(() => {
     window.removeEventListener('mouseup', handleMouseUp);
   };
 }, [isDraggingTrace]);
-  useEffect(() => {
-    const handleNavHover = (e: Event) => {
-      const customEvent = e as CustomEvent<boolean>;
-      setIsNavHovered(customEvent.detail);
-    };
-    window.addEventListener("nav-hover", handleNavHover);
-    return () => window.removeEventListener("nav-hover", handleNavHover);
-  }, []);
-
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (tooltipRef.current && !tooltipRef.current.contains(event.target as Node)) {
@@ -887,7 +883,6 @@ useEffect(() => {
         const data = await api.getAffiliates(principal);
         if (Array.isArray(data)) {
           setAllowedAffiliates(data);
-          setUserEmail(`${principal.toLowerCase()}@entra.local`);
         }
       } catch (err) {
         console.error("Failed to sync user claims:", err);
@@ -1101,6 +1096,43 @@ useEffect(() => {
       setShowConversations(false);
     }
   };
+
+  // The shell's rail lists the conversations and switches between them, but this page owns the open one: it hands the shell the open conversation and
+  // stable ways to switch or start one (components/shellStore.ts), plus the trace button for the top bar.
+  const switchRef = useRef(switchConversation);
+  const newChatRef = useRef(startNewConversation);
+  useEffect(() => {
+    switchRef.current = switchConversation;
+    newChatRef.current = startNewConversation;
+  });
+  useEffect(() => {
+    if (isEmbedded) return;
+    shell.setConversations({
+      activeSessionId: sessionId,
+      refreshKey: conversationsRefreshKey,
+      select: (id: string) => { void switchRef.current(id); },
+      newChat: () => newChatRef.current(),
+    });
+    return () => shell.setConversations(null);
+  }, [isEmbedded, sessionId, conversationsRefreshKey]);
+  useEffect(() => {
+    if (isEmbedded) return;
+    const traceOpen = isMobileView ? isMobileTraceOpen : showTracePanel;
+    shell.setTopBarActions(
+      <button
+        type="button"
+        className="topbar-btn"
+        onClick={() => (isMobileView ? setIsMobileTraceOpen(v => !v) : toggleTracePanel())}
+        aria-pressed={traceOpen}
+        aria-label="Toggle execution trace"
+        title={traceOpen ? 'Hide execution trace' : 'Show execution trace'}
+      >
+        <Icon name="microscope" size={18} />
+        {loading && !traceOpen && <span className="topbar-btn-dot" aria-hidden="true" />}
+      </button>
+    );
+    return () => shell.setTopBarActions(null);
+  }, [isEmbedded, showTracePanel, isMobileView, isMobileTraceOpen, loading]);
 
   // Prepends the page of saved messages just before the ones on screen. The smooth scroll-to-bottom
   // that normally fires when the message count changes is skipped here, and the viewport is held
@@ -1350,8 +1382,9 @@ useEffect(() => {
 
     setHasChatted(true);
     setInput('');
+    setInputEngaged(false);
     setLoading(true);
-    setAgentStatus('Running at the speed of sound');
+    setAgentStatus(TURN_SENT_STATUS);
     setAgentPath([]);
     hasStreamedRef.current = false;
     postPatchyStatus('thinking');
@@ -1359,6 +1392,8 @@ useEffect(() => {
     const controller = new AbortController();
     abortControllerRef.current = controller;
     let stoppedByUser = false;
+    // Set when the turn ends in an error (the stream's own error event, or the request failing), so Patchy shows it instead of cheering.
+    let failed = false;
 
     try {
       // Pushes only what changed in the connected folder since the last message (a no-op when none
@@ -1517,6 +1552,7 @@ useEffect(() => {
                   return updated;
                 });
                 setAgentStatus('');
+                failed = true;
                 postPatchyStatus('error');
                 addTraceStep({ title: "Execution error", detail: payload.message, status: "active" });
                 markTraceComplete();
@@ -1555,6 +1591,7 @@ useEffect(() => {
         postPatchyStatus('done');
       } else {
         console.error("Chat send failed:", err);
+        failed = true;
         postPatchyStatus('error');
         setMessages(prev => [
           ...prev,
@@ -1579,7 +1616,8 @@ useEffect(() => {
       if (stoppedByUser) pendingResendRef.current = [];
       abortControllerRef.current = null;
       setLoading(false);
-      if (!stoppedByUser) setPatchyCheer(c => c + 1);
+      if (failed) setPatchyFault(c => c + 1);
+      else if (!stoppedByUser) setPatchyCheer(c => c + 1);
       setAgentStatus('');
       postPatchyStatus('done');
     }
@@ -1597,6 +1635,7 @@ useEffect(() => {
     if (!trimmed) return;
     const id = genId();
     setInput('');
+    setInputEngaged(false);
     setMessages(prev => {
       const last = prev.length - 1;
       const bubble: Message = { id, sender: 'user', text: trimmed, steer: 'queued' };
@@ -1612,6 +1651,7 @@ useEffect(() => {
     } catch (err) {
       console.warn("Steering request failed; it will be sent as a normal message instead.", err);
     }
+    if (status === 'queued') setPatchySteer(c => c + 1);
     if (status !== 'queued') {
       // Nothing could act on it (no running turn, work phase already over, ...): send it as the next
       // message as soon as the current turn is done.
@@ -1811,7 +1851,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
         toggleConversationsBlade();
         break;
       case 3:
-        toggleTracePanel();
+        if (!isEmbedded && isMobileView) setIsMobileTraceOpen(v => !v);
+        else toggleTracePanel();
         break;
       case 4:
         if (!loading && hasChatted) handleExportChat();
@@ -1948,12 +1989,14 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
     }]),
   ];
 
-  const overflowItems: OptionWheelItem[] = [...settingsEntries.map(e => e.item), ...baseOverflowItems];
+  // The conversations list lives in the rail now; the embedded widget has no rail, so only it keeps the menu entry (and the overlay it opens).
+  const baseOverflowEntries = baseOverflowItems.map((item, index) => ({ item, index })).filter(e => isEmbedded || e.item.label !== 'Conversations');
+  const overflowItems: OptionWheelItem[] = [...settingsEntries.map(e => e.item), ...baseOverflowEntries.map(e => e.item)];
 
   const runOverflowAction = (index: number) => {
     const entry = settingsEntries[index];
     if (!entry) {
-      runBaseOverflowAction(index - settingsEntries.length);
+      runBaseOverflowAction(baseOverflowEntries[index - settingsEntries.length]?.index ?? -1);
       return;
     }
     entry.run();
@@ -1961,20 +2004,20 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
   };
 
   return (
-  <div>
-    {/* HERO BANNER (hidden entirely in embed mode) */}
-    {!isEmbedded && (
-      <div className={`hero-banner ${isNavHovered ? 'nav-hover-active' : ''} ${theme === 'shadow' ? 'theme-shadow' : 'theme-sonic'}`}>
-        <img src={swooshLogoImg} alt="Logo" className="hero-logo-icon" />
-        <div className="banner-context">
-          <h3>{theme === 'sonic' ? 'Sonic Assistant' : 'Sonic Assistant'}</h3>
-          <h4>{theme === 'sonic' ? 'Powered by Sonic Graph Technologies.' : 'Powered by Sonic Graph Technologies.'}</h4>
-          {userEmail && <p className="badge">Principal Account Identity: {userEmail}</p>}
-        </div>
-      </div>
-    )}
+  <div className={isEmbedded ? undefined : 'chat-page'}>
       {/* PORTAL BODY */}
       <main className={`portal-body ${!hasChatted ? 'initial-state-view' : ''}`}>
+
+        {/* The product's mark, name and sub header: shown while the conversation is empty, then out of the way (the rail carries the name). */}
+        {!hasChatted && !isEmbedded && (
+          <div className="empty-brand">
+            {patchyAllowed && showPatchy
+              ? <PatchyHero energy={patchyEnergy} budget={patchyBudget} engaged={inputEngaged} typed={input.length} />
+              : <LogoMark size={64} label={BRAND_NAME} />}
+            <h2 className="empty-brand-title">{BRAND_NAME}</h2>
+            <p className="empty-brand-sub">{BRAND_TAGLINE}</p>
+          </div>
+        )}
 
         {/* 1. INITIAL STATE / CARDS */}
         {!hasChatted && (
@@ -2019,6 +2062,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
         {/* 3. INPUT AREA & FOOTER */}
         <footer className="controls-footer" style={{ position: 'relative' }}>
           {/* MOBILE TRACE PILL (Pinned inside top of footer) */}
+          {isEmbedded && (
+          <>
           <div className="mobile-trace-pill-container">
             <style>{`
               @media (min-width: 768px) {
@@ -2059,6 +2104,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               </div>
             )}
           </div>
+          </>
+          )}
 
           {showRepoBanner && (
             <div className="repo-banner"
@@ -2101,7 +2148,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                 onClick={handleSaveTargetRepo}
                 disabled={repoSaving}
                 style={{
-                  background: "#3b82f6",
+                  background: "var(--accent-primary)",
                   border: "none",
                   borderRadius: "8px",
                   padding: "6px 12px",
@@ -2162,14 +2209,29 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
             />
 
             <div className="chat-input-wrapper">
-              {patchyAllowed && showPatchy && <MiniPatchy working={loading} cheer={patchyCheer} energy={patchyEnergy} />}
+              {/* The empty chat has the full-size Patchy; this small one takes over when the conversation starts. */}
+              {patchyAllowed && showPatchy && hasChatted && (
+                <MiniPatchy
+                  look={loading ? lookForNode(agentStatus) : 'idle'}
+                  cheer={patchyCheer}
+                  fault={patchyFault}
+                  steer={patchySteer}
+                  engaged={inputEngaged}
+                  typed={input.length}
+                  energy={patchyEnergy}
+                  budget={patchyBudget}
+                />
+              )}
               <textarea
                 ref={inputRef}
+                onPointerDown={() => setInputEngaged(true)}
+                onBlur={() => setInputEngaged(false)}
                 className="chat-textarea"
                 placeholder={loading ? "Steer Sonic while it works..." : chatPlaceholder}
                 value={input}
                 onChange={(e) => {
                   setInput(e.target.value);
+                  setInputEngaged(true);
                   e.target.style.height = "auto";
                   e.target.style.height = `${e.target.scrollHeight}px`;
                 }}
@@ -2198,8 +2260,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                     }}
                     title="More actions"
                     style={showOverflowWheel || showScopePicker ? {
-                      background: '#3b82f6',
-                      border: '1px solid #3b82f6',
+                      background: 'var(--accent-primary)',
+                      border: '1px solid var(--accent-primary)',
                       boxShadow: '0 0 8px rgba(99, 102, 241, 0.5)'
                     } : {}}
                   >
@@ -2402,7 +2464,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
         )}
 
         {/* --- MOBILE TRACE MODAL DRAWER (Root Level) --- */}
-        {isMobileTraceOpen && (
+        {isEmbedded && isMobileTraceOpen && (
           <div className="mobile-trace-modal-root">
             <style>{`
               @media (min-width: 768px) {
@@ -2498,8 +2560,9 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
         )}
 
         {/* --- DESKTOP TRACE SIDEBAR (Desktop Only) --- */}
-        {showTracePanel && (
+        {isEmbedded && showTracePanel && (
           <aside className="desktop-trace-sidebar" style={{
+            // The embedded widget only (everyone else gets the blade): the original floating panel beside the column, draggable.
             position: 'absolute',
             top: 0,
             left: 'calc(100% + 1.25rem)',
@@ -2782,6 +2845,22 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           </div>
         )}
       </main>
+
+      {/* The execution trace: a blade down the right side on a wide screen (it pushes the conversation over), a bottom sheet on a phone. */}
+      {!isEmbedded && !isMobileView && showTracePanel && (
+        <aside className="trace-blade" aria-label="Execution trace">
+          <TracePanel steps={traceSteps} running={loading} onClose={toggleTracePanel} />
+        </aside>
+      )}
+      {!isEmbedded && isMobileView && isMobileTraceOpen && (
+        <>
+          <div className="trace-sheet-backdrop" onClick={() => setIsMobileTraceOpen(false)} />
+          <div className="trace-sheet" role="dialog" aria-label="Execution trace">
+            <div className="trace-sheet-grip" />
+            <TracePanel steps={traceSteps} running={loading} onClose={() => setIsMobileTraceOpen(false)} />
+          </div>
+        </>
+      )}
     </div>  
   );
 }

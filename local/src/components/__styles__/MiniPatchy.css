@@ -41,8 +41,12 @@
   outline-offset: 2px;
 }
 
-.mp-root .mp-accent { fill: var(--mp-accent); }
-.mp-root .mp-stroke-accent { stroke: var(--mp-accent); }
+.mp-root .mp-accent { fill: var(--mp-accent); transition: fill 0.3s ease; }
+.mp-root .mp-stroke-accent { stroke: var(--mp-accent); transition: stroke 0.3s ease; }
+
+/* Every expression is always drawn and faded in or out (see PatchyParts.tsx), so a change of look is a crossfade. */
+.mp-fade { opacity: 0; transition: opacity 0.25s ease; }
+.mp-fade.mp-on { opacity: 1; }
 
 .mp-working { --mp-accent: #eab308; } /* the same yellow the full-size Patchy uses for "analyzing" */
 .mp-done    { --mp-accent: #22c55e; }
@@ -58,12 +62,20 @@
 .mp-working { --mp-leg: 0.28s; }
 .mp-done, .mp-laugh { --mp-leg: 0.16s; }
 
-/* The original Patchy's head tilt */
+/* The head. Two layers, so that no look change snaps it:
+   - .mp-head sways forever (the original Patchy's head tilt). Its two extremes are --mp-lo and --mp-hi, registered properties, so each look can set
+     how far it sways (idle the full tilt, working none) and the sway eases between amounts instead of one animation being swapped for another.
+   - .mp-turn, inside it, holds the head's pose for the look (bowed over the laptop, tipped to one side, drooping asleep, turned to the input) and
+     transitions between poses. */
+@property --mp-lo { syntax: '<angle>'; inherits: true; initial-value: -7deg; }
+@property --mp-hi { syntax: '<angle>'; inherits: true; initial-value: 5deg; }
+@property --mp-wob { syntax: '<number>'; inherits: true; initial-value: 0; }
+.mp-root { --mp-lo: -7deg; --mp-hi: 5deg; --mp-wob: 0; transition: --mp-lo 0.5s ease, --mp-hi 0.5s ease, --mp-wob 0.4s ease; }
 .mp-head { transform-origin: 50px 54px; animation: mp-tilt 7s ease-in-out infinite; }
 @keyframes mp-tilt {
   0%, 50%, 100% { transform: rotate(0deg); }
-  25% { transform: rotate(-7deg); }
-  75% { transform: rotate(5deg); }
+  25% { transform: rotate(var(--mp-lo)); }
+  75% { transform: rotate(var(--mp-hi)); }
 }
 
 .mp-antenna { animation: mp-pulse 2s ease-in-out infinite; }
@@ -90,11 +102,10 @@
   50%, 100% { opacity: 0; }
 }
 
-/* ---- working: looking down at the laptop, hands tapping, code building line by line ---- */
-.mp-working .mp-head { animation: mp-look-down 0.4s ease-out forwards; }
-@keyframes mp-look-down { to { transform: rotate(4deg) translateY(1.5px); } }
-.mp-working .mp-eyes { animation: mp-glance 0.4s ease-out forwards, mp-blink 4.2s infinite 0.4s; }
-@keyframes mp-glance { to { transform: translateY(2px); } }
+/* ---- working: looking down at the laptop (head bowed, eyes low), hands tapping, code building line by line ---- */
+.mp-working { --mp-lo: 0deg; --mp-hi: 0deg; }
+.mp-working .mp-turn { transform: rotate(4deg) translateY(1.5px); }
+.mp-working .mp-eyes { translate: 0 3px; }
 
 .mp-working .mp-hand-l { animation: mp-tap 0.28s ease-in-out infinite alternate; }
 .mp-working .mp-hand-r { animation: mp-tap 0.28s ease-in-out 0.14s infinite alternate; }
@@ -132,18 +143,10 @@
 .mp-e-subdued .mp-antenna { animation-duration: 4s; }
 .mp-e-subdued.mp-working .mp-antenna { animation-duration: 1.6s; }
 /* Head tilted toward you, swaying a little: attentive and concerned */
-.mp-e-subdued.mp-idle .mp-head { animation: mp-concern 6s ease-in-out infinite; }
-@keyframes mp-concern {
-  0%, 100% { transform: rotate(2deg); }
-  50% { transform: rotate(6deg); }
-}
+.mp-e-subdued.mp-idle { --mp-lo: -2deg; --mp-hi: 2deg; }
+.mp-e-subdued.mp-idle .mp-turn { transform: rotate(4deg); }
 /* Wide open eyes, a touch larger: he is watching you, not drifting */
-.mp-e-subdued .mp-eyes { transform-box: fill-box; transform-origin: center; }
-.mp-e-subdued.mp-idle .mp-eyes { transform: scale(1.12); animation: mp-blink-wide 5s infinite; }
-@keyframes mp-blink-wide {
-  0%, 45%, 52%, 100% { transform: scale(1.12); }
-  48% { transform: scale(1.12, 0.08); }
-}
+.mp-e-subdued.mp-idle .mp-eyes { scale: 1.12; }
 .mp-e-subdued.mp-working .mp-hand-l,
 .mp-e-subdued.mp-working .mp-hand-r { animation-duration: 0.5s; }
 .mp-e-subdued.mp-working .mp-line { animation-duration: 2.2s; }
@@ -187,8 +190,156 @@
   pointer-events: none;
 }
 
+/* ==========================================================================================================================================
+   What he does while a turn runs, and the other moods (see patchyLook.ts for when each one applies). "Writing" is .mp-working, above.
+   ========================================================================================================================================== */
+
+.mp-thinking  { --mp-accent: #eab308; --mp-leg: 0.9s; }
+.mp-searching { --mp-accent: #a855f7; --mp-leg: 0.7s; }
+.mp-puzzled   { --mp-accent: #38c2de; --mp-leg: 0.7s; }
+.mp-error     { --mp-accent: #ef4444; --mp-leg: 1.2s; }
+.mp-drowsy    { --mp-accent: #7fb4c9; --mp-leg: 1.8s; }
+.mp-asleep    { --mp-accent: #8aa0c8; }
+.mp-asleep .mp-leg { animation: none; }
+
+/* ---- thinking: a hand to his head bobbing, his eyes up and to the side, a thought forming ---- */
+.mp-thinking { --mp-lo: -2deg; --mp-hi: 2deg; }
+.mp-thinking .mp-turn { transform: rotate(-5deg); }
+.mp-thinking .mp-eyes { translate: 1.5px -2px; }
+.mp-dot { opacity: 0.9; animation: mp-dot 1.4s ease-in-out infinite; }
+.mp-dot-2 { animation-delay: 0.25s; }
+.mp-dot-3 { animation-delay: 0.5s; }
+@keyframes mp-dot {
+  0%, 100% { opacity: 0.15; }
+  50% { opacity: 1; }
+}
+.mp-thinking .mp-antenna { animation-duration: 0.9s; }
+
+/* ---- searching: a magnifying glass over his eye, scanning slowly; his head holds still so the lens stays on the eye.
+   The right arm is always in a .mp-scan group, which wobbles by --mp-wob (0 nearly always, 1 while searching) so the scan eases in and out. ---- */
+.mp-searching { --mp-lo: 0deg; --mp-hi: 0deg; --mp-wob: 1; }
+.mp-scan { transform-origin: 66px 45px; animation: mp-scan 2.6s ease-in-out infinite; }
+@keyframes mp-scan {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  33% { transform: translate(calc(-2px * var(--mp-wob)), calc(-1px * var(--mp-wob))) rotate(calc(-3deg * var(--mp-wob))); }
+  66% { transform: translate(calc(1px * var(--mp-wob)), calc(1px * var(--mp-wob))) rotate(calc(2deg * var(--mp-wob))); }
+}
+
+/* ---- puzzled: head tipped, one brow up, a question mark, a sweat drop ---- */
+.mp-puzzled { --mp-lo: -2.5deg; --mp-hi: 2.5deg; }
+.mp-puzzled .mp-turn { transform: rotate(-6.5deg); }
+.mp-q { transform-box: fill-box; transform-origin: center; animation: mp-q 1.3s ease-in-out infinite; }
+@keyframes mp-q {
+  0%, 100% { transform: translateY(0) rotate(-6deg); }
+  50% { transform: translateY(-2px) rotate(6deg); }
+}
+.mp-sweat { animation: mp-sweat 2.2s ease-in infinite; }
+@keyframes mp-sweat {
+  0% { transform: translateY(0); opacity: 0; }
+  25% { opacity: 0.9; }
+  80% { transform: translateY(9px); opacity: 0.8; }
+  100% { transform: translateY(13px); opacity: 0; }
+}
+/* The budget's notice level: the same drop, but slow and rare, so it is a hint and not a nag */
+.mp-b-notice:not(.mp-puzzled) .mp-sweat { animation-duration: 4.5s; animation-delay: 1s; }
+
+/* ---- error: sorry and red, a short alarmed shake, a quick antenna ---- */
+.mp-error { --mp-lo: 0deg; --mp-hi: 0deg; }
+.mp-error .mp-turn { transform: rotate(-3deg) translateY(1px); }
+.mp-error .mp-bob { animation: mp-alarm 0.5s ease-in-out 4; }
+@keyframes mp-alarm {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  25% { transform: translate(-1px, 0) rotate(-1.5deg); }
+  75% { transform: translate(1px, 0) rotate(1.5deg); }
+}
+.mp-error .mp-antenna { animation-duration: 0.5s; }
+/* A low person is not shown an alarm: a slow nod, a soft rose, no shake */
+.mp-e-subdued.mp-error { --mp-accent: #d98a8a; }
+.mp-e-subdued.mp-error .mp-bob { animation: mp-nod 1.4s ease-in-out 1; }
+.mp-e-subdued.mp-error .mp-antenna { animation-duration: 3s; }
+.mp-e-subdued.mp-thinking { --mp-accent: #c4a94f; }
+.mp-e-subdued.mp-searching { --mp-accent: #a58bd1; }
+.mp-e-subdued.mp-puzzled { --mp-accent: #7f9cc9; }
+
+/* ---- watching the input (you have clicked into it or typed): he turns his head toward it and looks down. It is a turn, simulated flat: the whole head bows a little, the
+   face slides across the shell toward the box (the visor, eyes and mouth move more than the shell does, which is what reads as depth), the shell
+   narrows slightly, the ear on the side he turns toward foreshortens behind the face while the other swings into view and grows, and his eyes drop. With text in the box (.mp-reading) he turns
+   further and looks lower, as if reading it. Everything is a transition, so clicking in, typing the first letter and clearing the box all ease. ---- */
+.mp-watching { --mp-lo: 0deg; --mp-hi: 0deg; }
+.mp-turn, .mp-face, .mp-shell, .mp-ear { transition: transform 0.55s cubic-bezier(0.3, 0.7, 0.3, 1); }
+.mp-eyes { transition: translate 0.4s cubic-bezier(0.3, 0.7, 0.3, 1), scale 0.4s ease; }
+.mp-turn { transform-origin: 50px 54px; }
+.mp-shell, .mp-ear, .mp-face { transform-box: fill-box; transform-origin: center; }
+.mp-ear-l { transform-origin: right center; }
+.mp-ear-r { transform-origin: left center; }
+
+/* The small Patchy is drawn at 0.58 scale, so the turn has to be bold in the SVG's own units to read at all: these are about 2 to 3 real pixels. */
+.mp-watching .mp-turn { transform: translate(-1px, 1.5px) rotate(-5deg); }
+.mp-watching .mp-face { transform: translate(-3px, 1.5px) scaleX(0.93); }
+.mp-watching .mp-shell { transform: scaleX(0.94); }
+.mp-watching .mp-ear-r { transform: translateX(-1.8px) scaleX(1.5); }
+.mp-watching .mp-ear-l { transform: translateX(1.2px) scaleX(0.5); }
+.mp-watching .mp-eyes { translate: -1.5px 2px; }
+
+.mp-watching.mp-reading .mp-turn { transform: translate(-1.5px, 3px) rotate(-8deg); }
+.mp-watching.mp-reading .mp-face { transform: translate(-4px, 3px) scaleX(0.88); }
+.mp-watching.mp-reading .mp-shell { transform: scaleX(0.92); }
+.mp-watching.mp-reading .mp-ear-r { transform: translateX(-2.2px) scaleX(1.7); }
+.mp-watching.mp-reading .mp-ear-l { transform: translateX(1.8px) scaleX(0.4); }
+.mp-watching.mp-reading .mp-eyes { translate: -2px 2.5px; }
+
+/* ---- drowsy: heavy lids (drawn in the head), a head drooping a little and swaying slowly ---- */
+.mp-drowsy { --mp-lo: -1deg; --mp-hi: 1deg; }
+.mp-drowsy .mp-turn { transform: rotate(5deg) translateY(1.5px); }
+.mp-drowsy .mp-antenna { animation-duration: 4s; }
+
+/* ---- asleep (chat is paused): eyes closed, head resting, slow breathing, z's drifting up ---- */
+.mp-asleep { --mp-lo: 0deg; --mp-hi: 0deg; }
+.mp-asleep .mp-turn { transform: rotate(9deg) translateY(2px); }
+.mp-asleep .mp-bob { animation: mp-breathe 3.2s ease-in-out infinite; }
+@keyframes mp-breathe {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(1px); }
+}
+.mp-asleep .mp-antenna { animation-duration: 5s; }
+.mp-z { opacity: 0.85; animation: mp-zfloat 3s ease-in-out infinite; }
+.mp-z-2 { animation-delay: 1s; }
+.mp-z-3 { animation-delay: 2s; }
+@keyframes mp-zfloat {
+  0% { opacity: 0; transform: translate(0, 4px); }
+  25% { opacity: 0.95; }
+  100% { opacity: 0; transform: translate(4px, -8px); }
+}
+
+/* ---- the budget's throttled level: weary. Heavy lids (drawn in the head), slower legs and antenna, a drooping head when idle ---- */
+.mp-b-throttled { --mp-leg: 1.6s; }
+.mp-b-throttled .mp-antenna { animation-duration: 4s; }
+.mp-b-throttled.mp-idle { --mp-lo: -1.5deg; --mp-hi: 1.5deg; }
+.mp-b-throttled.mp-idle .mp-turn { transform: rotate(4.5deg) translateY(0.5px); }
+
+/* ---- steered: a message was sent into the turn that is running; he nods "got it" ---- */
+/* The nod uses the individual rotate and translate properties, which add to the head's pose (transform) instead of replacing it. */
+.mp-steered .mp-turn { animation: mp-steer-nod 0.55s ease-in-out 2; }
+@keyframes mp-steer-nod {
+  0%, 100% { rotate: 0deg; translate: 0 0; }
+  40% { rotate: 2deg; translate: 0 2.5px; }
+  70% { rotate: -1deg; translate: 0 -0.5px; }
+}
+.mp-steered::after {
+  content: 'got it';
+  position: absolute;
+  right: 100%;
+  top: 6px;
+  margin-right: 1px;
+  font: 700 9px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.4px;
+  color: var(--mp-accent);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .mp-root *, .mp-root::after { animation: none !important; }
+  .mp-root *, .mp-root::after { animation: none !important; transition: none !important; }
 }
 
 /* The embedded widget (BTY) has its own mini Patchy in the parent page. */
