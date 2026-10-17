@@ -1,0 +1,144 @@
+/* How Sonic's replies are set: lists, bold, headings, quotes, tables, rules and inline code.
+
+   Until now only paragraphs were styled. A global reset (`* { margin: 0; padding: 0 }`) removes the browser's list indentation, so bullets sat on the
+   text edge and a nested list lined up with its parent, and everything else was the browser default: a heavy flat heading, a hard-coded dark chip behind
+   inline code, no table styling. This gives replies one look, built from the theme tokens, so it follows light and dark:
+
+   - bullets are small accent diamonds (hollow one level down), numbers are small accent monospace figures (01, 02, 03);
+   - bold carries a highlighter-pen swipe in the accent colour, not just weight;
+   - h3 is a small uppercase accent label (like the AI/USER labels), h1 and h2 are plain bold with a hairline;
+   - a quote has an accent rule, a horizontal rule starts with a short accent stub, a table is hairlines and small header labels;
+   - inline code is a chip in the accent colour.
+
+   Scoped to the app shell, so the embedded widget (which has none) keeps the look it has. */
+
+/* Outside the app shell (the embedded widget) inline code keeps the look it always had: the chip that used to be an inline style on the element. */
+.reply-code {
+  background: rgba(51, 65, 85, 0.6);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+
+.app-shell .message-bubble.ai .message-text { line-height: 1.62; }
+.app-shell .message-bubble.ai .message-text > :first-child { margin-top: 0; }
+.app-shell .message-bubble.ai .message-text > :last-child { margin-bottom: 0; }
+.app-shell .message-bubble.ai .message-text p { margin: 0.55rem 0; }
+
+/* ---- lists ---- */
+.app-shell .message-bubble.ai .message-text ul, .app-shell .message-bubble.ai .message-text ol { list-style: none; margin: 0.5rem 0; padding: 0; }
+.app-shell .message-bubble.ai .message-text li { position: relative; margin: 0.34rem 0; padding-left: 1.45rem; }
+.app-shell .message-bubble.ai .message-text li > p { margin: 0; }
+.app-shell .message-bubble.ai .message-text li > p + p { margin-top: 0.35rem; }
+.app-shell .message-bubble.ai .message-text li > ul, .app-shell .message-bubble.ai .message-text li > ol { margin: 0.3rem 0 0.1rem; }
+
+.app-shell .message-bubble.ai .message-text ul > li::before {
+  content: '';
+  position: absolute;
+  left: 0.3rem;
+  top: 0.64em;
+  width: 0.36rem;
+  height: 0.36rem;
+  background: var(--accent-primary);
+  transform: rotate(45deg);
+}
+.app-shell .message-bubble.ai .message-text ul ul > li::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--accent-primary); }
+.app-shell .message-bubble.ai .message-text ul ul ul > li::before { width: 0.3rem; height: 0.3rem; background: var(--text-muted); box-shadow: none; transform: none; border-radius: 50%; }
+
+.app-shell .message-bubble.ai .message-text ol { counter-reset: reply-item; }
+.app-shell .message-bubble.ai .message-text ol > li { counter-increment: reply-item; padding-left: 1.95rem; }
+.app-shell .message-bubble.ai .message-text ol > li::before {
+  content: counter(reply-item, decimal-leading-zero);
+  position: absolute;
+  left: 0;
+  top: 0.2em;
+  font-family: ui-monospace, 'Cascadia Code', 'Segoe UI Mono', Consolas, monospace;
+  font-size: 0.74em;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--accent-primary);
+}
+
+/* a task list ("- [ ] item") has its own checkbox, so it gets no marker */
+.app-shell .message-bubble.ai .message-text li.task-list-item { padding-left: 0; }
+.app-shell .message-bubble.ai .message-text li.task-list-item::before { display: none; }
+.app-shell .message-bubble.ai .message-text li.task-list-item input { margin-right: 0.5rem; accent-color: var(--accent-primary); }
+
+/* ---- emphasis ---- */
+.app-shell .message-bubble.ai .message-text strong {
+  font-weight: 650;
+  color: var(--text-main);
+  background-image: linear-gradient(transparent 62%, color-mix(in srgb, var(--accent-primary) 24%, transparent) 62%);
+  padding: 0 0.08em;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.app-shell .message-bubble.ai .message-text em { font-style: italic; }
+
+/* ---- inline code ---- */
+.app-shell .message-bubble.ai .message-text .reply-code {
+  font-family: ui-monospace, 'Cascadia Code', 'Segoe UI Mono', Consolas, monospace;
+  font-size: 0.86em;
+  padding: 0.12em 0.42em;
+  border-radius: 5px;
+  background: var(--chip-bg);
+  border: 1px solid var(--line);
+  color: var(--accent-primary);
+  overflow-wrap: anywhere;
+}
+
+/* ---- headings ---- */
+.app-shell .message-bubble.ai .message-text h1, .app-shell .message-bubble.ai .message-text h2 {
+  margin: 1.2rem 0 0.45rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--line);
+  font-size: 1.12rem;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--text-main);
+}
+.app-shell .message-bubble.ai .message-text h3 {
+  margin: 1.05rem 0 0.3rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--accent-primary);
+}
+.app-shell .message-bubble.ai .message-text h4, .app-shell .message-bubble.ai .message-text h5, .app-shell .message-bubble.ai .message-text h6 { margin: 0.85rem 0 0.25rem; font-size: 0.92rem; font-weight: 650; color: var(--text-main); }
+
+/* ---- quote, rule, table ---- */
+.app-shell .message-bubble.ai .message-text blockquote {
+  margin: 0.75rem 0;
+  padding: 0.1rem 0 0.1rem 0.95rem;
+  border-left: 3px solid var(--accent-primary);
+  color: var(--text-soft);
+}
+.app-shell .message-bubble.ai .message-text blockquote p { margin: 0.3rem 0; }
+
+.app-shell .message-bubble.ai .message-text hr {
+  height: 1px;
+  margin: 1.1rem 0;
+  border: 0;
+  background: linear-gradient(90deg, var(--accent-primary) 0, var(--accent-primary) 2rem, var(--line) 2rem);
+}
+
+.app-shell .message-bubble.ai .message-text table {
+  display: block;
+  max-width: 100%;
+  margin: 0.75rem 0;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 0.92em;
+}
+.app-shell .message-bubble.ai .message-text th, .app-shell .message-bubble.ai .message-text td { padding: 0.42rem 0.8rem; text-align: left; border-bottom: 1px solid var(--line); }
+.app-shell .message-bubble.ai .message-text th {
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border-bottom-color: var(--line-strong);
+  white-space: nowrap;
+}
+.app-shell .message-bubble.ai .message-text tbody tr:last-child td { border-bottom: 0; }

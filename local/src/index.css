@@ -362,6 +362,26 @@ body, html {
 }
 .landing-right > * { position: relative; z-index: 1; }
 
+/* Pointing at one side lights it and dims the other, so the choice (sign in, or the guest sandbox) reads at a glance. A warm light rises from the bottom of the
+   panel under the pointer; the other panel is darkened. Keyboard focus counts the same as the pointer. Only on a screen that can hover and has two columns. */
+@media (hover: hover) and (min-width: 769px) {
+  .landing-left, .landing-right {
+    transition: filter 0.4s ease, box-shadow 0.4s ease;
+  }
+  .landing-left:hover, .landing-left:focus-within,
+  .landing-right:hover, .landing-right:focus-within {
+    filter: brightness(1.1);
+    box-shadow: inset 0 -90px 130px -70px rgba(240, 136, 62, 0.26);
+  }
+  .landing-row:has(.landing-left:hover, .landing-left:focus-within) .landing-right,
+  .landing-row:has(.landing-right:hover, .landing-right:focus-within) .landing-left {
+    filter: brightness(0.5);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .landing-left, .landing-right { transition: none; }
+}
+
 .landing-signin, .landing-guest { display: flex; flex-direction: column; gap: 0.9rem; width: 100%; max-width: 320px; }
 .landing-signin { margin: 1.2rem 0 1rem; }
 .landing-guest { align-items: center; margin-top: 1.4rem; }

@@ -26,6 +26,7 @@ import Icon from '../components/icons';
 import { BRAND_NAME, BRAND_TAGLINE } from '../components/brand';
 import { shell } from '../components/shellStore';
 import ReactMarkdown from 'react-markdown';
+import '../components/__styles__/ReplyText.css';
 import remarkGfm from 'remark-gfm';
 import { CODE_BOX_STYLE } from '../components/codeBoxStyle';
 import { useAuth } from '@clerk/clerk-react';
@@ -302,15 +303,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
                     // does the block/inline split instead, reaching into the `code` element
                     // it wraps (already rendered by the branch below) for the language + text.
                     code: ({ children, ...rest }: any) => (
-                      <code
-                        {...rest}
-                        style={{
-                          background: 'rgba(51, 65, 85, 0.6)',
-                          padding: '0.1em 0.35em',
-                          borderRadius: '4px',
-                          fontSize: '0.9em',
-                        }}
-                      >
+                      <code {...rest} className="reply-code">
                         {children}
                       </code>
                     ),
