@@ -17,9 +17,15 @@ const CATEGORY_COLORS: Record<string, string> = {
 
 const SOURCE_LABELS: Record<string, string> = {
   explicit: 'You told me',
+  user_edit: 'You wrote this',
+  safety_support: 'You told me',
   inferred: 'Inferred',
   pattern: 'Recurring pattern',
 };
+
+// What a note can be filed under when it is edited. A note already under another category (a recurring pattern, a coding habit) keeps it as an option.
+const EDITABLE_CATEGORIES = ['preference', 'identity', 'setting', 'trait', 'career', 'project', 'goal', 'relationship'];
+const MAX_FACT_CHARS = 500;
 
 function confidenceTone(value: number): string {
   if (value >= 0.7) return 'confidence-high';
@@ -50,6 +56,11 @@ export const MemoryPage: React.FC = () => {
   const [clearing, setClearing] = useState<boolean>(false);
   const [search, setSearch] = useState<string>('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<string>('');
+  const [draftCategory, setDraftCategory] = useState<string>('preference');
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string>('');
 
   useEffect(() => {
     let cancelled = false;
@@ -99,6 +110,38 @@ export const MemoryPage: React.FC = () => {
       alert('Failed to delete that memory. Please try again.');
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const startEditing = (fact: UserFact) => {
+    setEditingId(fact.id);
+    setDraft(fact.fact);
+    setDraftCategory(fact.category);
+    setEditError('');
+  };
+
+  const cancelEditing = () => {
+    setEditingId(null);
+    setEditError('');
+  };
+
+  const handleSaveEdit = async (fact: UserFact) => {
+    const text = draft.trim();
+    if (!text) { setEditError("A memory can't be empty. Use the bin icon to forget it instead."); return; }
+    if (text === fact.fact.trim() && draftCategory === fact.category) { cancelEditing(); return; }
+    setSavingId(fact.id);
+    setEditError('');
+    try {
+      const saved = await api.editMemoryFact(fact.id, text, draftCategory !== fact.category ? draftCategory : undefined);
+      setFacts(prev => prev.map(f => (f.id === saved.id ? saved : f)));
+      setEditingId(null);
+      // Its links were judged again for the new wording and other notes show it in their "Goes with" chips, so their rows are refreshed too.
+      api.listMemoryFacts().then(setFacts).catch((err: unknown) => console.error('Failed to refresh memory after an edit:', err));
+    } catch (err) {
+      console.error('Failed to edit memory fact:', err);
+      setEditError(err instanceof Error ? err.message : 'Failed to save that memory. Please try again.');
+    } finally {
+      setSavingId(null);
     }
   };
 
@@ -251,8 +294,45 @@ export const MemoryPage: React.FC = () => {
                         <span className="memory-badge memory-status-badge">{fact.goal_status}</span>
                       )}
                     </div>
-                    <div className="memory-row-text">{fact.fact}</div>
-                    {fact.related_facts && fact.related_facts.length > 0 && (
+                    {editingId === fact.id ? (
+                      <div className="memory-edit">
+                        <textarea
+                          className="memory-edit-text"
+                          value={draft}
+                          rows={3}
+                          maxLength={MAX_FACT_CHARS}
+                          autoFocus
+                          aria-label="Edit this memory"
+                          onChange={(e) => setDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Escape') cancelEditing();
+                            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleSaveEdit(fact);
+                          }}
+                        />
+                        <div className="memory-edit-row">
+                          <select
+                            className="memory-category-select"
+                            value={draftCategory}
+                            aria-label="Category"
+                            onChange={(e) => setDraftCategory(e.target.value)}
+                          >
+                            {(EDITABLE_CATEGORIES.includes(fact.category) ? EDITABLE_CATEGORIES : [fact.category, ...EDITABLE_CATEGORIES]).map(cat => (
+                              <option key={cat} value={cat}>{cat}</option>
+                            ))}
+                          </select>
+                          <span className="memory-edit-count">{draft.length}/{MAX_FACT_CHARS}</span>
+                          <button type="button" className="memory-edit-cancel" onClick={cancelEditing} disabled={savingId === fact.id}>Cancel</button>
+                          <button type="button" className="memory-edit-save" onClick={() => handleSaveEdit(fact)} disabled={savingId === fact.id || !draft.trim()}>
+                            {savingId === fact.id ? 'Saving...' : 'Save'}
+                          </button>
+                        </div>
+                        {editError && <div className="memory-edit-error" role="alert">{editError}</div>}
+                        <div className="memory-edit-hint">Your wording replaces the old one and is treated as something you told Sonic directly.</div>
+                      </div>
+                    ) : (
+                      <div className="memory-row-text">{fact.fact}</div>
+                    )}
+                    {editingId !== fact.id && fact.related_facts && fact.related_facts.length > 0 && (
                       <div className="memory-links">
                         <span className="memory-links-label">Goes with:</span>
                         {fact.related_facts.map(linked => (
@@ -284,20 +364,35 @@ export const MemoryPage: React.FC = () => {
                       <span className="memory-row-date">Updated {formatDate(fact.updated_at)}</span>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    className="memory-delete-btn"
-                    title="Forget this memory"
-                    onClick={() => handleDeleteFact(fact.id, fact.fact)}
-                    disabled={deletingId !== null}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="3 6 5 6 21 6" />
-                      <path d="M19 6l-2 14H7L5 6" />
-                      <line x1="10" y1="11" x2="10" y2="17" />
-                      <line x1="14" y1="11" x2="14" y2="17" />
-                    </svg>
-                  </button>
+                  <div className="memory-row-actions">
+                    <button
+                      type="button"
+                      className="memory-edit-btn"
+                      title="Edit this memory"
+                      aria-label="Edit this memory"
+                      onClick={() => startEditing(fact)}
+                      disabled={editingId === fact.id || savingId !== null}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 20h9" />
+                        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      className="memory-delete-btn"
+                      title="Forget this memory"
+                      onClick={() => handleDeleteFact(fact.id, fact.fact)}
+                      disabled={deletingId !== null}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="3 6 5 6 21 6" />
+                        <path d="M19 6l-2 14H7L5 6" />
+                        <line x1="10" y1="11" x2="10" y2="17" />
+                        <line x1="14" y1="11" x2="14" y2="17" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

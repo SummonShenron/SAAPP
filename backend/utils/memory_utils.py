@@ -55,7 +55,12 @@ EMBEDDINGS_COLLECTION = "user_memory_fact_embeddings"
 # model inferred from compacted summaries. A fact nobody told Sonic should not push out one somebody did.
 SUPPORT_SOURCE = "safety_support"
 PROTECTED_SOURCES = (SUPPORT_SOURCE,)
-SOURCE_STRENGTH = {SUPPORT_SOURCE: 3, "explicit": 2, "pattern": 1, "inferred": 0}
+# A note the person rewrote on the Memory page: their wording outranks everything a model extracted, so it is the last to be pruned and a model
+# restating the same thing later does not replace it (see save_user_fact). Not in PROTECTED_SOURCES: those are never pruned at all, and a person
+# editing many notes must not be able to push the store past its cap.
+USER_EDIT_SOURCE = "user_edit"
+SOURCE_STRENGTH = {SUPPORT_SOURCE: 3, USER_EDIT_SOURCE: 3, "explicit": 2, "pattern": 1, "inferred": 0}
+MAX_FACT_CHARS = 500
 DEFAULT_SOURCE_STRENGTH = 2  # a source nobody listed is treated like one the user stated
 
 
@@ -460,13 +465,16 @@ def save_user_fact(
                 if existing.id in other.related:
                     other.related = [linked for linked in other.related if linked != existing.id]
             existing.related = []
-        existing.fact = fact_text
-        # Corrects category drift on every re-observation instead of freezing whichever category
-        # the fact happened to get on its very first (possibly inconsistent) extraction — this is
-        # the other half of fixing the identity/career/setting fragmentation bug: cross-category
-        # matching finds the old fact, and this line stops it from keeping a stale category.
-        existing.category = category
-        existing.embedding = new_embedding if new_embedding is not None else existing.embedding
+        # A note the person wrote themselves keeps its wording when a model merely restates it; a real change (supersede) still replaces it.
+        keeps_wording = relationship_action == "duplicate" and existing.source == USER_EDIT_SOURCE
+        if not keeps_wording:
+            existing.fact = fact_text
+            # Corrects category drift on every re-observation instead of freezing whichever category
+            # the fact happened to get on its very first (possibly inconsistent) extraction — this is
+            # the other half of fixing the identity/career/setting fragmentation bug: cross-category
+            # matching finds the old fact, and this line stops it from keeping a stale category.
+            existing.category = category
+            existing.embedding = new_embedding if new_embedding is not None else existing.embedding
         if relationship_action == "duplicate":
             # the same fact seen again keeps the strongest evidence for it: a fact the user stated stays "explicit" when compaction later
             # restates it as "inferred" (it used to be relabelled, which made it the first to be pruned)
@@ -511,6 +519,59 @@ def delete_user_fact(username: str, fact_id: str) -> bool:
     fact_links.drop_dangling_links(remaining)     # nothing stays linked to what was just forgotten
     save_user_facts(username, remaining)
     return True
+
+
+class FactEditError(ValueError):
+    """The edit cannot be made; the message is safe to show the person."""
+
+
+def edit_user_fact(username: str, fact_id: str, text: str, category: Optional[str] = None, memory_vector_store=None) -> Optional[UserFact]:
+    """The person rewrites a saved note on the Memory page. Their wording replaces the old one and is trusted over anything a model extracted: the
+    note is re-embedded (recall finds it by its new meaning), marked as theirs, and given full confidence; its links are cleared and judged again,
+    as for any changed fact. Returns None when there is no such note; raises FactEditError for text that cannot be saved."""
+    new_text = " ".join((text or "").split())
+    if not new_text:
+        raise FactEditError("A memory can't be empty. Use the bin icon to forget it instead.")
+    if len(new_text) > MAX_FACT_CHARS:
+        raise FactEditError(f"Keep it under {MAX_FACT_CHARS} characters.")
+    if category is not None and category not in VALID_CATEGORIES:
+        raise FactEditError("That isn't a category Sonic uses.")
+
+    all_facts = load_user_facts(username)
+    fact = next((f for f in all_facts if f.id == fact_id), None)
+    if fact is None:
+        return None
+    if new_text == fact.fact and (category is None or category == fact.category):
+        return fact                                   # nothing changed: no embedding, no model call, no write
+
+    text_changed = new_text != fact.fact
+    if text_changed:
+        embedding = embed_text(new_text)
+        if embedding is None:
+            raise FactEditError("Couldn't save that just now. Please try again.")   # never keep new words on an embedding of the old ones
+        # A compacted note that still says the old thing would otherwise be recalled beside the corrected one.
+        flag_stale_chunks_for_superseded_fact(memory_vector_store, username, fact.embedding)
+        for other in all_facts:
+            if fact.id in other.related:
+                other.related = [linked for linked in other.related if linked != fact.id]
+        fact.related = []
+        fact.fact = new_text
+        fact.embedding = embedding
+    if category is not None:
+        fact.category = category
+        if category in ("goal", "project") and fact.goal_status is None:
+            fact.goal_status = "active"
+        elif category not in ("goal", "project"):
+            fact.goal_status = None
+    if fact.source not in PROTECTED_SOURCES:
+        fact.source = USER_EDIT_SOURCE                # a remembered support contact stays one
+    fact.confidence = 1.0                             # they said it themselves
+    fact.updated_at = datetime.now(timezone.utc).isoformat()
+    if text_changed and fact.embedding:
+        fact_links.link_new_fact(all_facts, fact, cosine_similarity, lite_llm.invoke)
+    save_user_facts(username, all_facts)
+    logger.info("User edited memory fact for %s (id %s, %d chars)", username, fact.id, len(fact.fact))
+    return fact
 
 
 def unlink_user_facts(username: str, fact_id: str, other_id: str) -> bool:

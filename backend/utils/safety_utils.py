@@ -50,8 +50,12 @@ IMMINENT_TURNS = 4
 IMMINENT_HOURS = 3
 ACUTE_TURNS = 8
 ACUTE_HOURS = 6
-ELEVATED_TURNS = 30
-ELEVATED_HOURS = 12
+# An episode that began at the lowest level relaxes after this long (it was 30 turns / 12 hours, and a person who had said they were fine stayed in a safety
+# context for most of a day); the quieter stretch that follows an acute or imminent one keeps the longer window.
+ELEVATED_TURNS = 15
+ELEVATED_HOURS = 4
+AFTER_CRISIS_TURNS = 30
+AFTER_CRISIS_HOURS = 12
 
 # ---------------------------------------------------------------------------
 # Explicit-language detection (first person, deliberately specific)
@@ -226,7 +230,8 @@ def effective_risk(state: Optional[Dict[str, Any]], now: datetime.datetime) -> s
         return RISK_IMMINENT
     if level in (RISK_IMMINENT, RISK_ACUTE) and turns <= ACUTE_TURNS and hours <= ACUTE_HOURS:
         return RISK_ACUTE
-    if turns <= ELEVATED_TURNS and hours <= ELEVATED_HOURS:
+    own_episode = level == RISK_ELEVATED
+    if turns <= (ELEVATED_TURNS if own_episode else AFTER_CRISIS_TURNS) and hours <= (ELEVATED_HOURS if own_episode else AFTER_CRISIS_HOURS):
         return RISK_ELEVATED
     return RISK_NONE
 
@@ -439,10 +444,19 @@ _CARRIED_NOTE = (
 # leaves Sonic with nothing that says what it is and can do, so a question about itself used to get a confident false "no" (it said it never reads, and
 # that it couldn't look things up). This keeps the answer true without letting it take over: brief, plain, and back to them.
 _ABOUT_YOURSELF = (
-    "\nIF THEY ASK ABOUT YOU (what you can do, what you remember, whether you read or look things up): answer in a sentence or two, truthfully and in plain "
-    "prose with no list, then come back to them. Never deny an ability you have. You can search the web, read what they attach, check their calendar and "
-    "email once they have connected Google, and remember what they tell you, and your reading shelf is kept up on a schedule. Right now you are putting "
-    "them first, so say you can do any of it later, or whenever they want, rather than saying you can't.\n"
+    "\nIF THEY ASK ABOUT YOU OR ASK YOU TO DO SOMETHING (what you can do, what you remember, whether you read or look things up, or a lookup, a repo or a file): "
+    "answer in a sentence or two, truthfully and in plain prose with no list, then come back to them. Never deny an ability you have. You can search the web, "
+    "read their code on GitHub, read what they attach, check their calendar and email once they have connected Google, and remember what they tell you, and "
+    "your reading shelf is kept up on a schedule. Your tools are paused for this reply because you are putting them first, not gone: say it is on hold and "
+    "that you will do it whenever they want, rather than saying you can't or have no access. Never describe a result you did not get.\n"
+)
+
+# The lower two levels hold for hours (up to 12 at the lowest), and a person in them still asks for ordinary things ("look at the last PR"). The tools run for
+# that turn, but the results used to be dropped like those of someone in crisis, so Sonic answered with a confident "I don't have access" to what it had just
+# fetched. Below the top level, on a turn that did not raise it, the results ride along and the register stays gentle.
+_TASK_NOTE = (
+    "\nTHIS MESSAGE IS A PRACTICAL REQUEST: do what they asked properly, the way you would on any other day, using whatever you were given below; never deflect "
+    "it or say you can't. Keep the gentle register, and add at most one short, unforced line asking how they are doing now.\n"
 )
 
 _FOLLOW_UP_RE = re.compile(r"<<<FOLLOW_UP:", re.IGNORECASE)
@@ -466,6 +480,7 @@ class SafetyPlan:
     asked_for_line: bool = False
     line_allowed: bool = field(default=False)   # may the reply mention a human line at all?
     line_required: bool = field(default=False)  # must it?
+    keeps_results: bool = False                 # may this turn's retrieved documents and tool output reach the reply? (see _TASK_NOTE)
 
     @property
     def active(self) -> bool:
@@ -506,9 +521,10 @@ def plan_safety_turn(
     history_text: str,
     user_message: str,
     people: Optional[List[str]] = None,
+    has_results: bool = False,
 ) -> SafetyPlan:
     """Decides what this turn's reply must do. `people` are the names Sonic remembers from earlier
-    conversations (see remembered_support_people)."""
+    conversations (see remembered_support_people). `has_results`: the tools fetched something this turn (see _TASK_NOTE)."""
     if level == RISK_NONE:
         return SafetyPlan(level=RISK_NONE, fresh=False)
     info = ladder_status(safety_state)
@@ -525,6 +541,16 @@ def plan_safety_turn(
 
     plan.line_allowed = info["exhausted"] or asked or given
     plan.line_required = (info["exhausted"] or asked) and not given
+    try:
+        turns = int((safety_state or {}).get("turns_since", 0) or 0)
+    except (TypeError, ValueError):
+        turns = 0
+    if has_results and level in (RISK_ELEVATED, RISK_ACUTE) and not fresh and turns >= 1 and not plan.line_required:
+        # carried over from earlier, not raised by this message, no line owed, and the tools really fetched something: a task is a task.
+        # (Only when there are results: a turn with none, such as someone answering which person they could lean on, stays on the ladder.)
+        plan.keeps_results = True
+        plan.context = _SAFETY_HEADER + _CARRIED_NOTE + _TASK_NOTE + _ABOUT_YOURSELF
+        return plan
     if not fresh and not info["next"] and not info["available"] and not info["exhausted"]:
         plan.context = _SAFETY_HEADER + _CARRIED_NOTE + _ABOUT_YOURSELF
         return plan

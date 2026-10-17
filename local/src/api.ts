@@ -1067,7 +1067,7 @@ export interface UserFact {
   username: string;
   category: string;
   fact: string;
-  source: "explicit" | "inferred" | "pattern";
+  source: "explicit" | "inferred" | "pattern" | "user_edit" | "safety_support";
   confidence: number;
   effective_confidence: number;
   created_at: string;
@@ -1101,6 +1101,28 @@ export async function deleteMemoryFact(factId: string): Promise<any> {
   });
   if (!res.ok) {
     throw new Error("Failed to delete memory fact.");
+  }
+  return res.json();
+}
+
+/**
+ * Rewrite one saved note (and optionally its category). Resolves to the note as the list shows it; throws an Error carrying the server's
+ * plain-language reason when the text can't be saved (empty, too long, couldn't be embedded).
+ */
+export async function editMemoryFact(factId: string, fact: string, category?: string): Promise<UserFact> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/memory/${encodeURIComponent(factId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify(category ? { fact, category } : { fact })
+  });
+  if (!res.ok) {
+    let reason = "Failed to save that memory.";
+    try {
+      const body = await res.json();
+      if (res.status === 400 && typeof body?.detail === "string") reason = body.detail;
+    } catch { /* keep the generic message */ }
+    throw new Error(reason);
   }
   return res.json();
 }
@@ -1449,6 +1471,7 @@ export const api = {
   deleteConversation,
   listMemoryFacts,
   deleteMemoryFact,
+  editMemoryFact,
   deleteMemoryLink,
   clearMemoryFacts,
   getMemoryStored,

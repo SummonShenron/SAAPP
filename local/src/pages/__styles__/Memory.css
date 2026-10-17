@@ -226,6 +226,128 @@
   cursor: not-allowed;
 }
 
+/* Edit and forget sit together on the right of a row. */
+.memory-row-actions {
+  flex-shrink: 0;
+  display: flex;
+  gap: 0.4rem;
+}
+
+.memory-edit-btn {
+  flex-shrink: 0;
+  background: rgba(148, 163, 184, 0.1);
+  color: #cbd5e1;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.memory-edit-btn:hover:not(:disabled) {
+  background-color: #475569;
+  color: #ffffff;
+  border-color: #64748b;
+}
+
+.memory-edit-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Rewriting a note in place. */
+.memory-edit {
+  margin-bottom: 0.6rem;
+}
+
+.memory-edit-text {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 4.5rem;
+  background-color: #020617;
+  color: #f1f5f9;
+  border: 1px solid #475569;
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  font: inherit;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  outline: none;
+}
+
+.memory-edit-text:focus {
+  border-color: #60a5fa;
+}
+
+.memory-edit-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.memory-edit-row .memory-category-select {
+  padding: 0.4rem 0.7rem;
+}
+
+.memory-edit-count {
+  margin-right: auto;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
+.memory-edit-save,
+.memory-edit-cancel {
+  border-radius: 6px;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.memory-edit-save {
+  background-color: #2563eb;
+  color: #ffffff;
+  border: 1px solid #2563eb;
+}
+
+.memory-edit-save:hover:not(:disabled) {
+  background-color: #1d4ed8;
+}
+
+.memory-edit-cancel {
+  background: none;
+  color: #cbd5e1;
+  border: 1px solid #475569;
+}
+
+.memory-edit-cancel:hover:not(:disabled) {
+  background-color: rgba(148, 163, 184, 0.12);
+}
+
+.memory-edit-save:disabled,
+.memory-edit-cancel:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.memory-edit-error {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  color: #fca5a5;
+}
+
+.memory-edit-hint {
+  margin-top: 0.4rem;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
 @media (max-width: 768px) {
   .memory-controls-row {
     flex-direction: column;
@@ -244,7 +366,7 @@
     flex-direction: column;
   }
 
-  .memory-delete-btn {
+  .memory-row-actions {
     align-self: flex-end;
   }
 }

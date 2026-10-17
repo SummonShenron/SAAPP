@@ -83,6 +83,8 @@ from backend.utils.memory_utils import (
     fact_for_state,
     linked_fact_summaries,
     unlink_user_facts,
+    edit_user_fact,
+    FactEditError,
 )
 from backend.services.memory_compaction import compact_user_memory, compact_meta_memory
 from backend.services.memory_search import context_query_for, recall_with_second_look
@@ -907,16 +909,18 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             if risk_level != RISK_NONE and not is_guest_username(username):
                 # Nothing proactive for a week after, and for as long as, someone is in a safety context.
                 spawn_background_task(asyncio.to_thread(initiation_utils.risk_escalated, username))
-            if risk_level != RISK_NONE:
-                source_type = "conversational"
             # What this turn's reply must do (work through the people in their life first; a human line only
             # when due), and the people Sonic remembers from earlier conversations to ask about by name.
             safety_plan = plan_safety_turn(
                 risk_level, risk_fresh, safety_state, format_history_as_text(messages_state), final_state.get("original_question", question),
                 people=await asyncio.to_thread(remembered_support_people, username) if risk_level != RISK_NONE else [],
+                has_results=bool(payload.get("data") or documents),
             )
+            drops_results = risk_level != RISK_NONE and not safety_plan.keeps_results     # a practical request below the top level keeps what the tools fetched
+            if drops_results:
+                source_type = "conversational"
             documents_sorted = sorted(documents, key=lambda d: d.metadata.get("priority", False), reverse=True)
-            data = "" if risk_level != RISK_NONE else (payload.get("data") or format_docs(documents_sorted))
+            data = "" if drops_results else (payload.get("data") or format_docs(documents_sorted))
             kb_images = collect_kb_images(documents_sorted) if source_type in ("kb_strict", "kb_open") else []
 
             emotional_context = safety_plan.context + build_emotional_context(
@@ -1805,6 +1809,25 @@ async def list_memory(current_user = Depends(get_current_user)):
         {**fact_for_state(f), "effective_confidence": effective_confidence(f, now), "related_facts": linked_fact_summaries(f, by_id)}
         for f in facts
     ]
+
+
+class MemoryEdit(BaseModel):
+    fact: str
+    category: Optional[str] = None
+
+
+@app.put("/api/memory/{fact_id}")
+async def edit_memory_fact(fact_id: str, payload: MemoryEdit, current_user = Depends(get_current_user)):
+    """The person rewrites a saved note; returns it as the list shows it (with its fresh links)."""
+    username = current_user.get("sub")
+    try:
+        edited = await asyncio.to_thread(edit_user_fact, username, fact_id, payload.fact, payload.category, services.get("user_memory_vector_store"))
+    except FactEditError as err:
+        raise HTTPException(status_code=400, detail=str(err))
+    if edited is None:
+        raise HTTPException(status_code=404, detail="Memory fact not found")
+    by_id = {f.id: f for f in await asyncio.to_thread(load_user_facts, username)}
+    return {**fact_for_state(edited), "effective_confidence": effective_confidence(edited, datetime.now(timezone.utc)), "related_facts": linked_fact_summaries(edited, by_id)}
 
 
 @app.delete("/api/memory/{fact_id}/links/{other_id}")

@@ -492,6 +492,21 @@ CHANGELOG = [
         "volunteer": ["this spreadsheet", "my spreadsheet", "this csv", "this excel"],
     },
     {
+        "id": "edit_memory",
+        "requires": [
+            "backend/utils/memory_utils.py::def edit_user_fact",
+            "app.py::edit_user_fact",
+        ],
+        "month": "2026-10",
+        "title": "Fixing what I remember",
+        "line": (
+            "On the Memory page you can rewrite a note I've saved, or change its category, if I got something wrong. "
+            "Your wording replaces mine and counts as something you told me directly, so I won't quietly change it back."
+        ),
+        "keywords": ["edit memory", "fix a memory", "wrong memory", "correct what you remember", "change a note"],
+        "volunteer": ["you remembered that wrong", "that's not right about me"],
+    },
+    {
         "id": "tidy_up",
         "requires": [
             "local/src/tidy/tidyCore.ts",

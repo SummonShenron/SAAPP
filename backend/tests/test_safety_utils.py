@@ -191,13 +191,23 @@ def test_a_raised_level_holds_then_relaxes_one_step_at_a_time():
     assert su.effective_risk(_state("imminent", turns=su.IMMINENT_TURNS + 1), NOW) == su.RISK_ACUTE
     assert su.effective_risk(_state("acute", turns=su.ACUTE_TURNS), NOW) == su.RISK_ACUTE
     assert su.effective_risk(_state("acute", turns=su.ACUTE_TURNS + 1), NOW) == su.RISK_ELEVATED
-    assert su.effective_risk(_state("acute", turns=su.ELEVATED_TURNS + 1), NOW) == su.RISK_NONE
+    assert su.effective_risk(_state("acute", turns=su.AFTER_CRISIS_TURNS), NOW) == su.RISK_ELEVATED
+    assert su.effective_risk(_state("acute", turns=su.AFTER_CRISIS_TURNS + 1), NOW) == su.RISK_NONE
 
 
 def test_the_watch_also_expires_with_time():
     assert su.effective_risk(_state("imminent", minutes_ago=su.IMMINENT_HOURS * 60 + 1), NOW) == su.RISK_ACUTE
     assert su.effective_risk(_state("acute", minutes_ago=su.ACUTE_HOURS * 60 + 1), NOW) == su.RISK_ELEVATED
     assert su.effective_risk(_state("elevated", minutes_ago=su.ELEVATED_HOURS * 60 + 1), NOW) == su.RISK_NONE
+    assert su.effective_risk(_state("acute", minutes_ago=su.ACUTE_HOURS * 60 + 1), NOW) == su.RISK_ELEVATED    # the stretch after a crisis keeps the longer tail
+    assert su.effective_risk(_state("acute", minutes_ago=su.AFTER_CRISIS_HOURS * 60 + 1), NOW) == su.RISK_NONE
+
+
+def test_an_episode_that_began_at_the_lowest_level_relaxes_sooner_than_the_stretch_after_a_crisis():
+    assert su.ELEVATED_TURNS < su.AFTER_CRISIS_TURNS and su.ELEVATED_HOURS < su.AFTER_CRISIS_HOURS
+    assert su.effective_risk(_state("elevated", turns=su.ELEVATED_TURNS), NOW) == su.RISK_ELEVATED
+    assert su.effective_risk(_state("elevated", turns=su.ELEVATED_TURNS + 1), NOW) == su.RISK_NONE
+    assert su.effective_risk(_state("acute", turns=su.ELEVATED_TURNS + 1), NOW) == su.RISK_ELEVATED
 
 
 def test_a_malformed_state_means_no_risk_rather_than_crashing():
@@ -226,7 +236,7 @@ def test_a_weaker_signal_does_not_downgrade_an_active_state():
 def test_nothing_in_force_and_nothing_new_stays_none_even_if_a_support_answer_arrives():
     assert su.merge_safety_state(None, su.RISK_NONE, NOW) is None
     assert su.merge_safety_state(None, su.RISK_NONE, NOW, {"friends": "available"}, "Dani") is None
-    assert su.merge_safety_state(_state("acute", turns=su.ELEVATED_TURNS + 5), su.RISK_NONE, NOW) is None
+    assert su.merge_safety_state(_state("acute", turns=su.AFTER_CRISIS_TURNS + 5), su.RISK_NONE, NOW) is None
 
 
 def test_the_ladder_answers_are_remembered_across_turns_and_re_raises():
@@ -640,14 +650,59 @@ def test_the_reasoner_prompt_teaches_the_risk_levels_and_the_ladder_without_flag
 
 def test_the_app_overrides_routing_suppresses_nudges_and_guarantees_a_line_when_one_is_due():
     source = (pathlib.Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
-    assert 'if risk_level != RISK_NONE:\n                source_type = "conversational"' in source
-    assert 'data = "" if risk_level != RISK_NONE else' in source
+    assert 'drops_results = risk_level != RISK_NONE and not safety_plan.keeps_results' in source
+    assert 'if drops_results:\n                source_type = "conversational"' in source
+    assert 'data = "" if drops_results else' in source
     assert 'goal_nudge_context = "" if (risk_level != RISK_NONE or open_loop_entry) else await asyncio.to_thread(fetch_goal_nudge_context, username)' in source
     assert 'source_type == "conversational" and risk_level == RISK_NONE and is_closing_message(question)' in source
     assert "safety_plan = plan_safety_turn(" in source and "safety_plan.context" in source
     assert "safety_plan.reply_issue(full_response)" in source
     assert "safety_plan.needs_resource_line(full_response)" in source and "full_response += CRISIS_RESOURCE_LINE" in source
     assert "remembered_support_people" in source
+
+
+# ---------------------------------------------------------------------------
+# A practical request at the lowest level keeps what the tools fetched (Sonic had answered "I don't have access" to a PR it had just read)
+# ---------------------------------------------------------------------------
+
+def _carried(level, turns, **extra):
+    return {"escalated": False, "level": level, "turns_since": turns, "ladder": {}, **extra}
+
+
+def test_a_practical_request_below_the_top_level_keeps_the_tool_results_and_the_gentle_register():
+    for level in (su.RISK_ELEVATED, su.RISK_ACUTE):
+        plan = su.plan_safety_turn(level, False, _carried(level, 3), "", "look at the last pr", has_results=True)
+        assert plan.keeps_results and plan.active
+        assert "PRACTICAL REQUEST" in plan.context and "no jokes" in plan.context and "SAFETY" in plan.context
+        assert "IF THEY ASK ABOUT YOU" in plan.context           # still told what it can do
+
+
+def test_nothing_changes_at_the_top_level_for_a_fresh_disclosure_or_a_message_that_raised_it_again():
+    def keeps(level, fresh, state, message="look at the last pr"):
+        return su.plan_safety_turn(level, fresh, state, "", message, has_results=True).keeps_results
+    assert not keeps(su.RISK_IMMINENT, False, _carried(su.RISK_IMMINENT, 1))
+    assert not keeps(su.RISK_ELEVATED, True, {**_carried(su.RISK_ELEVATED, 0), "escalated": True}, "i don't want to be here")
+    assert not keeps(su.RISK_ACUTE, True, {**_carried(su.RISK_ACUTE, 0), "escalated": True}, "i want to end it")
+    assert not keeps(su.RISK_ELEVATED, False, _carried(su.RISK_ELEVATED, 0), "i'm still thinking about it")   # said again this turn
+    assert not keeps(su.RISK_NONE, False, None)
+
+
+def test_a_turn_where_the_tools_fetched_nothing_stays_on_the_ladder():
+    # someone answering which person they could lean on must keep being guided, not be handed the practical-request note
+    state = _carried(su.RISK_ELEVATED, 3)
+    plan = su.plan_safety_turn(su.RISK_ELEVATED, False, state, "", "my sister, maybe")
+    assert not plan.keeps_results and "PRACTICAL REQUEST" not in plan.context and "NEXT STEP" in plan.context
+
+
+def test_a_human_line_that_is_owed_is_never_skipped_for_a_task():
+    state = _carried(su.RISK_ELEVATED, 3, ladder={})
+    plan = su.plan_safety_turn(su.RISK_ELEVATED, False, state, "", "can you give me a number to call? and also look at the last pr", has_results=True)
+    assert plan.line_required and not plan.keeps_results
+
+
+def test_a_missing_or_malformed_turn_count_never_lets_results_through():
+    for state in (None, {"level": su.RISK_ELEVATED}, {"level": su.RISK_ELEVATED, "turns_since": "many"}):
+        assert not su.plan_safety_turn(su.RISK_ELEVATED, False, state, "", "look at the last pr", has_results=True).keeps_results
 
 
 # ---------------------------------------------------------------------------
