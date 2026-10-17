@@ -43,6 +43,10 @@ export const AccountPage: React.FC<{ theme: string; toggleTheme: () => void }> =
       {!guest && (
         <section className="account-card">
           <h3>Your data</h3>
+          <p className="account-note">
+            Your conversations are kept until you delete them. Photos and files you attach are removed after 30 days, or sooner if you delete the conversation.
+            What you attach is read by Google's Gemini so Sonic can answer.
+          </p>
           <div className="account-row-action">
             <div>
               <div className="account-label">Memory</div>
@@ -56,6 +60,13 @@ export const AccountPage: React.FC<{ theme: string; toggleTheme: () => void }> =
               <div className="account-hint">Connected accounts such as calendar and GitHub.</div>
             </div>
             <button type="button" className="account-btn" onClick={() => navigate('/integrations')}>Open</button>
+          </div>
+          <div className="account-row-action">
+            <div>
+              <div className="account-label">Privacy</div>
+              <div className="account-hint">What we keep, who sees it, and how to remove it.</div>
+            </div>
+            <button type="button" className="account-btn" onClick={() => navigate('/privacy')}>Read</button>
           </div>
         </section>
       )}

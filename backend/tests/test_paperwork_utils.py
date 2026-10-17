@@ -42,5 +42,13 @@ def test_the_guidance_covers_what_a_person_needs_and_treats_the_letter_as_data_n
 
 def test_the_chat_endpoint_adds_the_guidance_after_the_attachment_content():
     source = open("app.py", encoding="utf-8").read()
-    assert "paperwork_utils.build_paperwork_block(question, bool(attachment_docs))" in source
+    assert "paperwork_utils.build_paperwork_block(question, bool(attachment_docs), [d.page_content for d in attachment_docs])" in source
     assert source.index("attachment_context = (") < source.index("paperwork_utils.build_paperwork_block(")
+
+
+def test_a_spreadsheet_alone_is_a_table_to_work_with_and_not_something_received():
+    table = 'Spreadsheet "budget.xlsx".\n\nSheet "Jan": 3 rows x 2 columns.'
+    assert pw.build_paperwork_block("what do you think?", True, [table]) == ""
+    assert pw.build_paperwork_block("what do you think?", True, [table, "NOTICE OF ADJUSTMENT. Your premium changes on March 1."]) == pw.PAPERWORK_BLOCK
+    assert pw.build_paperwork_block("is this real?", True, [table]) == pw.PAPERWORK_BLOCK       # the words in the message still count
+    assert pw.build_paperwork_block("what do you think?", True, ["a letter"]) == pw.PAPERWORK_BLOCK

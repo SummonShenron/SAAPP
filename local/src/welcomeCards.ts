@@ -4,9 +4,11 @@
 export interface WelcomeCard {
   text: string;
   label?: string;
-  /** "attach": the card needs a file first, so it opens the picker (leaving `prompt` in the box) instead of sending its text. */
-  action?: 'attach';
+  /** "attach": the card needs a file first, so it opens the picker (leaving `prompt` in the box) instead of sending its text.
+   *  "open": the card is a way into another page (`path`) instead of a question. */
+  action?: 'attach' | 'open';
   prompt?: string;
+  path?: string;
 }
 
 // The portfolio visitor (the shared "guest"; mostly recruiters and hiring managers) is judging the person and the system in half a minute, so the plain
@@ -26,6 +28,19 @@ export function isPortfolioGuest(principal: string | null | undefined, embedded:
 
 export function portfolioCards(): WelcomeCard[] {
   return PORTFOLIO_CARDS.map(card => ({ ...card }));
+}
+
+const TIDY_CARD: WelcomeCard = { label: 'Try this', text: 'Tidy up a messy folder, like Downloads', action: 'open', path: '/tidy' };
+
+/**
+ * Adds the "tidy up a folder" card to a set of cards, for a browser that can open folders. It takes the place of one of the ordinary "Try this" cards
+ * (never the photo card), or is added at the end when there is room, so the screen keeps its four cards.
+ */
+export function withTidyCard(cards: WelcomeCard[], limit = 4): WelcomeCard[] {
+  if (cards.some(card => card.action === 'open')) return cards;
+  const index = cards.map(card => card.label === 'Try this' && !card.action).lastIndexOf(true);
+  if (index >= 0) return cards.map((card, i) => (i === index ? { ...TIDY_CARD } : card));
+  return cards.length < limit ? [...cards, { ...TIDY_CARD }] : cards;
 }
 
 export function cardsFromQuestions(questions: readonly string[]): WelcomeCard[] {

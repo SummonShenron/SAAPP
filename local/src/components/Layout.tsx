@@ -1,12 +1,13 @@
 // src/components/Layout.tsx
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
-import { useState, useEffect } from "react";
+import { Suspense, useState, useEffect } from "react";
 import { api, getEffectivePrincipal, isGuestPrincipal } from "../api";
 import { useIsGlobalAdmin } from "../hooks/useIsGlobalAdmin";
 import { useAuthReady } from "../hooks/useAuthReady";
 import { useConversationList } from "../hooks/useConversationList";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import AuthLoadingScreen from "../components/AuthLoadingScreen";
+import Spinner from "../components/Spinner";
 import HelpPanel from "../components/HelpPanel";
 import Rail from "./Rail";
 import TopBar from "./TopBar";
@@ -23,6 +24,7 @@ interface LayoutProps {
 const RAIL_PREF_KEY = "rail-collapsed";
 const PAGE_TITLES: Record<string, string> = {
   "/self-service": "Self Service",
+  "/tidy": "Tidy up",
   "/memory": "Memory",
   "/integrations": "Integrations",
   "/sonic-health": "Sonic Health",
@@ -148,7 +150,7 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
   if (isEmbedded) {
     return (
       <div className="portal-container bty-embed-container" style={{ minHeight: '100vh', background: '#121316', padding: 0 }}>
-        <Outlet />
+        <Suspense fallback={null}><Outlet /></Suspense>
       </div>
     );
   }
@@ -218,7 +220,10 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
         <div className="app-content">
           {/* Main page content: only once the person is fully signed in */}
           {authReady ? (
-            <Outlet />
+            // A page that is fetched on first use (see App.tsx) shows a quiet spinner for the moment it takes, inside the same shell.
+            <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: '4rem 0' }}><Spinner size={32} /></div>}>
+              <Outlet />
+            </Suspense>
           ) : (
             <AuthLoadingScreen state={auth.state as 'checking' | 'denied' | 'timeout'} slow={auth.slow} onRetry={auth.retry} />
           )}

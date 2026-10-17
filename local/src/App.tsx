@@ -1,16 +1,20 @@
 import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { LandingPage } from "./pages/LandingPage";
 import { ChatPage } from "./pages/Chat";
-import { SelfServicePage } from "./pages/SelfService";
-import { MemoryPage } from "./pages/Memory";
-import { IntegrationsPage } from "./pages/Integrations";
-import { AccountPage } from "./pages/Account";
-import { SonicHealthPage } from "./pages/SonicHealth";
-import { PrivacyPage } from "./pages/Privacy";
-import { TermsPage } from "./pages/Terms";
 import { Layout } from "../src/components/Layout";
 import { api } from "./api";
+
+// The chat page and the landing page are what almost everyone opens first, so they travel in the main file. Every other page is fetched the first time
+// it is opened, which keeps the admin dashboards and settings pages out of the download a visitor waits for before anything appears.
+const SelfServicePage = lazy(() => import("./pages/SelfService").then(m => ({ default: m.SelfServicePage })));
+const TidyPage = lazy(() => import("./pages/Tidy").then(m => ({ default: m.TidyPage })));
+const MemoryPage = lazy(() => import("./pages/Memory").then(m => ({ default: m.MemoryPage })));
+const IntegrationsPage = lazy(() => import("./pages/Integrations").then(m => ({ default: m.IntegrationsPage })));
+const AccountPage = lazy(() => import("./pages/Account").then(m => ({ default: m.AccountPage })));
+const SonicHealthPage = lazy(() => import("./pages/SonicHealth").then(m => ({ default: m.SonicHealthPage })));
+const PrivacyPage = lazy(() => import("./pages/Privacy").then(m => ({ default: m.PrivacyPage })));
+const TermsPage = lazy(() => import("./pages/Terms").then(m => ({ default: m.TermsPage })));
 
 function App() {
   const navigate = useNavigate();
@@ -26,6 +30,7 @@ function App() {
   };
 
   return (
+    <Suspense fallback={null}>
     <Routes>
       {/* Landing page (no nav bar) */}
       <Route
@@ -74,6 +79,7 @@ function App() {
         element={<ChatPage theme={theme} toggleTheme={toggleTheme} />}
       />
         <Route path="/self-service" element={<SelfServicePage />} />
+        <Route path="/tidy" element={<TidyPage />} />
         <Route path="/memory" element={<MemoryPage />} />
         <Route path="/integrations" element={<IntegrationsPage />} />
         <Route path="/account" element={<AccountPage theme={theme} toggleTheme={toggleTheme} />} />
@@ -83,6 +89,7 @@ function App() {
       {/* Catch-all */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </Suspense>
   );
 }
 

@@ -22,6 +22,7 @@ Pillow
 pdfplumber
 networkx
 pandas
+openpyxl
 numpy
 python-docx
 clerk_backend_api

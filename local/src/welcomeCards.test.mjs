@@ -32,3 +32,25 @@ test('plain questions become unlabelled cards in the same order', () => {
   assert.deepEqual(cardsFromQuestions(['a?', 'b?']), [{ text: 'a?' }, { text: 'b?' }]);
   assert.deepEqual(cardsFromQuestions([]), []);
 });
+
+test('the tidy-up card replaces an ordinary "Try this" card, never the photo card, and is never added twice', async () => {
+  const { withTidyCard } = await import('./welcomeCards.ts');
+  const photo = { label: 'Try this', text: 'Photograph a letter', action: 'attach', prompt: 'What does this say?' };
+  const cards = [{ label: 'From your stuff', text: 'a?' }, photo, { label: 'Try this', text: 'Draft an email?' }, { label: "Sonic's pick", text: 'b?' }];
+  const out = withTidyCard(cards);
+  assert.equal(out.length, 4);
+  assert.deepEqual(out[1], photo);
+  assert.equal(out[2].action, 'open');
+  assert.equal(out[2].path, '/tidy');
+  assert.deepEqual(withTidyCard(out), out);
+  assert.deepEqual(cards[2], { label: 'Try this', text: 'Draft an email?' });      // the originals are not changed
+});
+
+test('with no ordinary "Try this" card to replace, the tidy-up card is added only if there is room', async () => {
+  const { withTidyCard } = await import('./welcomeCards.ts');
+  const photoOnly = [{ label: 'Try this', text: 'Photo', action: 'attach' }];
+  assert.equal(withTidyCard(photoOnly).length, 2);
+  const full = ['a', 'b', 'c', 'd'].map(t => ({ label: 'From your stuff', text: `${t}?` }));
+  assert.equal(withTidyCard(full).length, 4);
+  assert.ok(!withTidyCard(full).some(c => c.action === 'open'));
+});

@@ -1,5 +1,5 @@
 import { getExampleCards, getExampleQuestions, isGuestPrincipal } from '../api';
-import { cardsFromQuestions, isPortfolioGuest, portfolioCards, type WelcomeCard } from '../welcomeCards';
+import { cardsFromQuestions, isPortfolioGuest, portfolioCards, withTidyCard, type WelcomeCard } from '../welcomeCards';
 
 // 1. Centralized Security Directory Map.
 const AFFILIATE_QUESTION_POOLS: Record<string, string[]> = {
@@ -56,7 +56,8 @@ export async function getWelcomeCards(
   if (signedIn && (affiliate === 'All' || !AFFILIATE_QUESTION_POOLS[affiliate])) {
     try {
       const cards = await getExampleCards(affiliate);
-      if (cards.length) return cards;
+      // Only on a browser that can open folders (Chrome or Edge on a computer): the page it leads to needs that.
+      if (cards.length) return typeof (window as { showDirectoryPicker?: unknown }).showDirectoryPicker === 'function' ? withTidyCard(cards) : cards;
     } catch (error) {
       console.error("Failed to fetch welcome cards:", error);
     }

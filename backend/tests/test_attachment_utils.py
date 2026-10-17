@@ -193,3 +193,57 @@ def test_a_document_just_over_the_limit_is_summarized_and_one_at_the_limit_is_no
     assert attachment_utils.process_user_attachment(Attachment(filename="a.pdf", content="ZmFrZQ==")) == at_limit
     monkeypatch.setattr(attachment_utils, "extract_text_from_attachment", Mock(return_value=at_limit + "y"))
     assert attachment_utils.process_user_attachment(Attachment(filename="a.pdf", content="ZmFrZQ==")) == "A summary."
+
+
+# ---- what a deleted conversation leaves behind ---------------------------------------------------------------------------------------------
+
+class _Coll:
+    def __init__(self, rows=(), deleted=0):
+        self.rows, self.deleted, self.find_filter, self.delete_filter = list(rows), deleted, None, None
+
+    def delete_many(self, filt):
+        self.delete_filter = filt
+        return SimpleNamespace(deleted_count=self.deleted)
+
+    def find(self, filt, projection=None):
+        self.find_filter = filt
+        return iter(self.rows)
+
+
+class _Db(dict):
+    pass
+
+
+def test_deleting_a_conversation_removes_its_extracted_text_and_its_stored_photos_and_nothing_else(monkeypatch):
+    documents, files = _Coll(deleted=2), _Coll(rows=[{"_id": "a"}, {"_id": "b"}])
+    monkeypatch.setattr(attachment_utils, "get_db", lambda: _Db({"session_documents": documents, "fs.files": files}))
+    gridfs = Mock()
+    monkeypatch.setattr(attachment_utils, "GridFS", Mock(return_value=gridfs))
+
+    out = attachment_utils.delete_session_attachments("jack", "s1")
+
+    assert out == {"documents": 2, "files": 2}
+    assert documents.delete_filter == {"username": "jack", "session_id": "s1"}
+    assert files.find_filter == {"metadata.username": "jack", "metadata.session_id": "s1", "metadata.kind": "chat_attachment"}   # never a knowledge-base file
+    assert [c.args[0] for c in gridfs.delete.call_args_list] == ["a", "b"]
+
+
+def test_cleaning_up_attachments_never_raises_and_does_nothing_without_a_database(monkeypatch):
+    monkeypatch.setattr(attachment_utils, "get_db", lambda: None)
+    assert attachment_utils.delete_session_attachments("jack", "s1") == {"documents": 0, "files": 0}
+
+    class Broken:
+        def __getitem__(self, name):
+            raise RuntimeError("mongo down")
+
+    monkeypatch.setattr(attachment_utils, "get_db", lambda: Broken())
+    assert attachment_utils.delete_session_attachments("jack", "s1") == {"documents": 0, "files": 0}
+
+
+def test_every_way_of_deleting_or_clearing_a_conversation_also_removes_its_attachments():
+    source = open("app.py", encoding="utf-8").read()
+    call = "await asyncio.to_thread(delete_session_attachments, username, session_id)"
+    remove = source[source.index('@app.delete("/api/conversations/{session_id}")'):source.index('@app.post("/api/chat/feedback")')]
+    assert call in remove
+    clear = source[source.index('@app.post("/api/chat/clear")'):source.index('@app.post("/api/upload-attachment")')]
+    assert clear.count("delete_session_attachments") == 2          # the one conversation emptied in place, and the wipe of every conversation

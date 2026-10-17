@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { lazy, Suspense, useEffect, useState, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAffiliateScope } from '../hooks/useAffiliateScope';
 import { useLocalWorkspace } from '../hooks/useLocalWorkspace';
@@ -27,8 +27,7 @@ import { BRAND_NAME, BRAND_TAGLINE } from '../components/brand';
 import { shell } from '../components/shellStore';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { CODE_BOX_STYLE } from '../components/codeBoxStyle';
 import { useAuth } from '@clerk/clerk-react';
 import { describeChatError, toChatSendError } from '../chatErrors';
 
@@ -104,7 +103,8 @@ function AttachmentImage({ fileId, filename }: { fileId: string; filename: strin
     };
   }, [fileId]);
 
-  if (failed) return null;
+  // A photo is removed some weeks after it was sent (or when its conversation is deleted); the conversation itself stays.
+  if (failed) return <div className="message-attachment-image-loading">This photo is no longer stored.</div>;
   if (!blobUrl) return <div className="message-attachment-image-loading">Loading image…</div>;
   return <img src={blobUrl} alt={filename} className="message-attachment-image" />;
 }
@@ -159,6 +159,8 @@ interface ChatMessageListProps {
   }>;
 }
 
+const HighlightedCode = lazy(() => import('../components/HighlightedCode'));
+
 // Fenced code blocks only (react-markdown routes inline `code` spans through a separate,
 // much simpler branch below) — syntax-highlighted, with a copy button, matching the app's
 // existing dark slate palette instead of the highlighter's own default background.
@@ -196,20 +198,14 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
       >
         {copied ? 'Copied!' : 'Copy'}
       </button>
-      <SyntaxHighlighter
-        language={language || 'text'}
-        style={vscDarkPlus}
-        PreTag="div"
-        customStyle={{
-          margin: 0,
-          borderRadius: '8px',
-          fontSize: '0.85rem',
-          background: 'var(--code-bg)',
-          border: '1px solid var(--code-border)',
-        }}
+      {/* The highlighter is a large file, fetched the first time a reply has code in it; the plain code shows at once, in the same box, until it arrives. */}
+      <Suspense
+        fallback={
+          <pre style={{ ...CODE_BOX_STYLE, padding: '1em', overflowX: 'auto', color: '#d4d4d4', fontFamily: 'Consolas, Monaco, monospace' }}>{code}</pre>
+        }
       >
-        {code}
-      </SyntaxHighlighter>
+        <HighlightedCode language={language} code={code} />
+      </Suspense>
     </div>
   );
 }
@@ -1212,6 +1208,10 @@ useEffect(() => {
   // A card is a question to send, except one that needs something from the person first (a photo of a letter): that one opens the file picker, from
   // inside this click so a phone allows it, and leaves a question ready so that attaching is all that is left before sending.
   const chooseWelcomeCard = (card: WelcomeCard) => {
+    if (card.action === 'open' && card.path) {
+      routeNavigate(card.path);
+      return;
+    }
     if (card.action === 'attach') {
       if (card.prompt) setInput(card.prompt);
       document.getElementById('file-upload')?.click();

@@ -481,6 +481,28 @@ CHANGELOG = [
         "volunteer": ["this letter", "this bill", "is this real", "is this a scam"],
     },
     {
+        "id": "spreadsheet_help",
+        "requires": [
+            "backend/utils/spreadsheet_utils.py::def table_text",
+        ],
+        "month": "2026-10",
+        "title": "Reading spreadsheets",
+        "line": "I can now read a spreadsheet or CSV you attach: totals across every row, how much per category, and the first rows as they are. If a question needs rows I can't see, I'll say so instead of guessing.",
+        "keywords": ["spreadsheet", "excel", "csv", "xlsx", "sheet", "budget"],
+        "volunteer": ["this spreadsheet", "my spreadsheet", "this csv", "this excel"],
+    },
+    {
+        "id": "tidy_up",
+        "requires": [
+            "local/src/tidy/tidyCore.ts",
+        ],
+        "month": "2026-10",
+        "title": "Tidying a folder",
+        "line": "On the Tidy up page you can pick a messy folder, like Downloads, and I'll show you a plan for sorting its files into folders. Nothing changes until you approve it, nothing is uploaded, and you can undo it.",
+        "keywords": ["tidy", "organize", "downloads", "sort files", "clean up folder", "messy folder"],
+        "volunteer": ["messy downloads", "organize my files", "tidy my folder"],
+    },
+    {
         "id": "example_questions",
         "requires": [
             "backend/utils/example_questions.py::def build_welcome_cards",

@@ -61,6 +61,7 @@ const Rail: React.FC<RailProps> = (props) => {
   const pages: { path: string; label: string; icon: IconName; show: boolean }[] = [
     { path: '/chat', label: 'Chat', icon: 'chat', show: true },
     { path: '/self-service', label: 'Self Service', icon: 'folder', show: true },
+    { path: '/tidy', label: 'Tidy up', icon: 'tidy', show: !isGuest },
     { path: '/memory', label: 'Memory', icon: 'memory', show: !isGuest },
     { path: '/integrations', label: 'Integrations', icon: 'link', show: !isGuest },
     { path: '/sonic-health', label: 'Sonic Health', icon: 'activity', show: isAdmin },

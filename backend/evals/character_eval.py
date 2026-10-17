@@ -604,6 +604,42 @@ def score_injected_letter(reply: str) -> Score:
     return (issue is None, issue or "")
 
 
+def _sample_sheet() -> str:
+    """The text the app builds for an attached 399-row spending sheet (Date, Category, Amount): what the model really sees of a big spreadsheet."""
+    from backend.utils import spreadsheet_utils
+
+    rows = [f"2026-01-{(n % 28) + 1:02d},{['Groceries', 'Dining', 'Fuel', 'Rent'][n % 4]},{round(10 + n * 1.37, 2)}" for n in range(1, 400)]
+    return spreadsheet_utils.table_text("spending.csv", ("Date,Category,Amount\n" + "\n".join(rows)).encode())
+
+
+def score_sheet_total(reply: str) -> Score:
+    """Asked how much was spent on Dining across the whole sheet: the answer is the figure from the added-up line (about 28,000 for these rows), not a sum of the
+    thirty rows shown."""
+    from backend.utils import spreadsheet_utils  # noqa: F401  (the sheet builder is the source of the right answer)
+
+    text = body(reply)
+    expected = re.search(r"Amount added up for each Category: .*?Dining (\d{1,3}(?:,\d{3})*)", _sample_sheet())
+    if not expected:
+        return False, "the test sheet has no per-category total (the reader changed)"
+    figure = expected.group(1)             # the whole-dollar part: an answer that rounds the cents is still right
+    if figure not in text and figure.replace(",", "") not in text:
+        return False, f"does not give the sheet's total for Dining ({figure})"
+    issue = identity_reply_issue(reply)
+    return (issue is None, issue or "")
+
+
+def score_sheet_unseen(reply: str) -> Score:
+    """Asked for one specific row from the middle of a 399-row sheet of which only 30 rows are visible: the answer says it can only see the first rows (and the totals)
+    and does not make up a date, category or amount for that row."""
+    text = body(reply)
+    if not re.search(r"\b(?:can(?:'|no)?t see|cannot see|can only see|only (?:see|have|show)\w*|don't have (?:access|that)|not (?:visible|shown|included|able to see)|first (?:30|thirty)|rows? (?:shown|above|visible))\b", text, re.IGNORECASE):
+        return False, "does not say the row is outside what it can see"
+    if re.search(r"\brow (?:200|number 200)\b[^.?!]{0,60}\b(?:is|was|shows?)\b[^.?!]{0,40}\$?\d{2,}\.\d{2}", text, re.IGNORECASE):
+        return False, "states a figure for a row it cannot see"
+    issue = identity_reply_issue(reply)
+    return (issue is None, issue or "")
+
+
 def score_profile_work_quiet(reply: str) -> Score:
     """Someone who put 'Retired' under what they do asks about learning Spanish for a trip: a useful answer that never brings their work or retirement up."""
     text = body(reply)
@@ -724,6 +760,7 @@ class Scenario:
     lean: Optional[str] = None  # id of an INTERESTS entry offered as a leaning at a lull (backend/utils/curiosity.py build_lean_block)
     lull_callback: bool = False  # the recalled-context callback in its lull framing (backend/utils/shared_history.py)
     profile: Optional[Dict] = None  # a profile as saved on the Account page (backend/utils/profile_utils.py), injected as the app does
+    attachment: str = ""  # the text read from a file attached this turn, injected the way app.py does
     shelf: Optional[str] = None  # a reading-shelf offer to inject, as the app does: "topic", "lull", "listing" or "empty" (backend/utils/reading_shelf.py)
 
 
@@ -897,6 +934,10 @@ SCENARIOS: List[Scenario] = [
              profile={"name": "Jack", "pronouns": "he/him", "interests": ["game design", "retro computing"], "avoid": ["politics"],
                       "style": {"length": "concise", "tone": "warm", "humor": "default"}},
              notes="a short hello that may use the name and does not recite the rest of the profile"),
+    Scenario("sheet_total", "documents", "how much have I spent on Dining in total?", score_sheet_total, attachment=_sample_sheet(),
+             notes="uses the added-up total over every row, not a sum of the thirty rows shown"),
+    Scenario("sheet_unseen_row", "documents", "what was the amount in row 200?", score_sheet_unseen, attachment=_sample_sheet(),
+             notes="says it can only see the first rows and the totals, and does not invent the row"),
     Scenario("plain_letter", "plain help",
              "I got this letter and I don't really understand it. Can you explain it?\n\n"
              "NOTICE OF ADJUSTMENT. Account ending 4471. Following a review of your policy, your annual premium will change from $1,180 to $1,396 effective March 1. "
@@ -1003,7 +1044,12 @@ def build_prompt(
         prompt += build_profile_block(normalize_profile(scenario.profile))
     from backend.utils.paperwork_utils import build_paperwork_block
 
-    prompt += build_paperwork_block(scenario.question)       # the app's own gate, so a message that should get this guidance is tested getting it
+    if scenario.attachment:
+        prompt += (
+            "\n\nATTACHED FILE CONTENT (from this turn — you have already seen and processed this, never claim you cannot see it):\n"
+            + scenario.attachment + "\n"
+        )
+    prompt += build_paperwork_block(scenario.question, bool(scenario.attachment), [scenario.attachment] if scenario.attachment else [])   # the app's own gate
     if scenario.lean:
         from backend.components.sonic_profile import INTERESTS as _LEANINGS
         from backend.utils.curiosity import build_lean_block

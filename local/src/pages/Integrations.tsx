@@ -183,11 +183,25 @@ export const IntegrationsPage: React.FC = () => {
           <div className="card-badge">GOOGLE</div>
           <h2>Google (Calendar, Gmail, Drive, Docs)</h2>
           <p className="card-description">
-            Connect your Google account so the assistant can check your schedule, search and
-            summarize your Gmail and Drive, and — only when you ask and approve — schedule
-            events, send emails, or update a document on your behalf. Each connection is
-            private to your account.
+            Connect your Google account and Sonic can look things up for you when you ask:
           </p>
+          <ul className="card-description" style={{ margin: '0 0 0.75rem', paddingLeft: '1.2rem' }}>
+            <li>Your calendar: what's coming up and when you're free.</li>
+            <li>Your email: find and summarize messages.</li>
+            <li>Your Drive and Docs: find and read your files.</li>
+          </ul>
+          <p className="card-description">
+            Sonic only sends an email, adds an event, or changes a document after you approve
+            that exact action. It doesn't keep a copy of your mailbox, and the connection is private
+            to your account. Disconnect any time and it stops right away.{' '}
+            <a href="#/privacy">Read the details</a>.
+          </p>
+          {!isGuest && !status?.connected && (
+            <p className="card-description">
+              Google may show a notice that this app isn't verified yet. That's expected while
+              Sonic is in early access: choose "Advanced", then continue.
+            </p>
+          )}
 
           {isGuest ? (
             <div className="security-warning-lockout">
@@ -226,6 +240,7 @@ export const IntegrationsPage: React.FC = () => {
           )}
         </section>
 
+        {!isGuest && <h2 className="integrations-group" style={{ margin: '1.5rem 0 0' }}>Advanced</h2>}
         {!isGuest && (
           <section className="service-card">
             <div className="card-badge">TARGET DOCUMENT</div>

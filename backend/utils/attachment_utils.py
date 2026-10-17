@@ -9,6 +9,7 @@ from langchain_core.messages import HumanMessage
 
 # Import your database utility
 from backend.utils.db_utils import get_db
+from backend.utils import spreadsheet_utils
 
 from backend.components.constraints import ATTACHMENT_PROMPT, IMAGE_DESCRIPTION_PROMPT
 from backend.models.attachment import Attachment
@@ -96,7 +97,15 @@ def extract_text_from_attachment(attachment: Attachment) -> str:
         return describe_image_attachment(attachment)
 
     raw_bytes = base64.b64decode(attachment.content)
-    
+
+    # A format this app cannot read says so, so the person is told instead of getting a blank answer. A spreadsheet or CSV becomes a fixed picture of
+    # the table (see spreadsheet_utils); a whole sheet is neither summarized nor pasted whole.
+    note = spreadsheet_utils.unreadable_note(attachment.filename)
+    if note:
+        return note
+    if spreadsheet_utils.is_table_file(attachment.filename):
+        return spreadsheet_utils.table_text(attachment.filename, raw_bytes)
+
     # Create temp directory for processing
     temp_dir = "./temp"
     os.makedirs(temp_dir, exist_ok=True)
@@ -248,6 +257,29 @@ def process_chat_attachments(username: str, session_id: str, attachments) -> tup
                     "content_type": guess_image_mime_type(att.filename),
                 })
     return summaries, refs
+
+
+def delete_session_attachments(username: str, session_id: str) -> Dict[str, int]:
+    """Removes what a conversation's attachments left behind: the text read out of each file (session_documents) and each stored photo (GridFS).
+    Called when a conversation is deleted or cleared, so a photographed letter or bill does not outlive the conversation the person deleted. Only this
+    person's chat attachments for this conversation: knowledge-base files are never touched. Never raises (a cleanup failure must not block the
+    deletion itself); the counts say what went."""
+    removed = {"documents": 0, "files": 0}
+    db = get_db()
+    if db is None:
+        return removed
+    try:
+        removed["documents"] = db["session_documents"].delete_many({"username": username, "session_id": session_id}).deleted_count
+        files = GridFS(db)
+        stored = db["fs.files"].find(
+            {"metadata.username": username, "metadata.session_id": session_id, "metadata.kind": "chat_attachment"}, {"_id": 1}
+        )
+        for row in list(stored):
+            files.delete(row["_id"])
+            removed["files"] += 1
+    except Exception:
+        logger.exception("Failed to delete the attachments of a deleted conversation")
+    return removed
 
 
 def retrieve_from_session(username: str, session_id: str, query: str, top_k: int = 5) -> List[Dict]:

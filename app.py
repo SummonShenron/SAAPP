@@ -73,7 +73,7 @@ from backend.utils.app_utils import (
     index_conversation_turn,
     collect_kb_images
 )
-from backend.utils.attachment_utils import process_chat_attachments
+from backend.utils.attachment_utils import delete_session_attachments, process_chat_attachments
 from backend.utils.memory_utils import (
     fetch_relevant_user_facts,
     fetch_goal_nudge_context,
@@ -166,6 +166,7 @@ from backend.utils.db_utils import get_db, save_error_event, test_connection
 from backend.utils import memory_erase
 from backend.auth.isolation_auth import get_current_user, record_login_event
 from backend.services.checkpoint_retention import run_checkpoint_retention_loop, prune_thread_checkpoints_async
+from backend.services.attachment_retention import run_attachment_retention_loop
 from contextlib import asynccontextmanager
 from settings import DB_DIR
 import aiohttp
@@ -206,12 +207,14 @@ async def lifespan(app: FastAPI):
     # This runs once when the server starts. Chat transcripts are NOT warm-loaded here: each
     # conversation is read from the store the first time it's used (see secure_chat).
     retention_task = spawn_background_task(run_checkpoint_retention_loop())
+    attachment_retention_task = spawn_background_task(run_attachment_retention_loop())
     watchdog_task = loop_watchdog.start()  # logs when the event loop is blocked, and what was waiting (backend/utils/loop_watchdog.py)
     if get_db() is not None:
         ensure_calendar_indexes()
     yield
     # Cleanup tasks would go here
     retention_task.cancel()
+    attachment_retention_task.cancel()
     watchdog_task.cancel()
     await asyncio.to_thread(llm_usage.flush)  # whatever the last calls used, before the process goes
     chat_sessions = {}
@@ -1058,7 +1061,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 prompt = prompt + attachment_context
                 yield f"data: {json.dumps({'event': 'node_progress', 'node': 'attachment_context', 'title': 'Applying attached file content', 'detail': 'Injected description of the attached file into context prompt.'})}\n\n"
 
-            prompt = prompt + paperwork_utils.build_paperwork_block(question, bool(attachment_docs))
+            prompt = prompt + paperwork_utils.build_paperwork_block(question, bool(attachment_docs), [d.page_content for d in attachment_docs])
 
             if source_type == "conversational":
                 semantic_memory_context = await recall_with_second_look(
@@ -1467,6 +1470,7 @@ async def clear_chat(request: Request, user = Depends(get_current_user)):
         # before the clear could resurface on the next message.
         await asyncio.to_thread(save_conversation_turn, username, session_id, [])
         await _delete_checkpoint_thread(username, session_id)
+        await asyncio.to_thread(delete_session_attachments, username, session_id)
         return {"status": "cleared", "count": 1}
 
     # No specific conversation given: wipe every conversation this user has.
@@ -1474,6 +1478,7 @@ async def clear_chat(request: Request, user = Depends(get_current_user)):
     for convo in conversations:
         await asyncio.to_thread(delete_user_conversation, username, convo["session_id"])
         await _delete_checkpoint_thread(username, convo["session_id"])
+        await asyncio.to_thread(delete_session_attachments, username, convo["session_id"])
     return {"status": "cleared", "count": len(conversations)}
 
 @app.post("/api/upload-attachment")
@@ -1747,6 +1752,7 @@ async def remove_conversation(session_id: str, current_user = Depends(get_curren
     if not await asyncio.to_thread(delete_user_conversation, username, session_id):
         raise HTTPException(status_code=404, detail="Conversation not found")
     await _delete_checkpoint_thread(username, session_id)
+    await asyncio.to_thread(delete_session_attachments, username, session_id)
     return {"status": "deleted", "session_id": session_id}
 
 @app.post("/api/chat/feedback")
