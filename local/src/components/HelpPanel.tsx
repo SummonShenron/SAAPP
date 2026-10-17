@@ -38,7 +38,7 @@ const HelpPanel: React.FC<HelpPanelProps> = ({ onClose }) => {
         <p className="help-subtitle">
           {guest
             ? "A personal AI assistant that answers questions, reads what you attach, looks things up, and asks before it changes anything. Here's what it can do."
-            : "Sonic answers questions, reads letters, bills and spreadsheets you attach, looks things up, helps with your email and calendar, and remembers what matters to you. It asks before it changes anything. Pick a topic to see how."}
+            : "Sonic answers questions, reads letters, bills and spreadsheets you attach, answers from your own library of PDFs, looks things up, runs the numbers, helps with your email, calendar and folders, and remembers what matters to you. It asks before it changes anything. Pick a topic to see how."}
         </p>
       </div>
 

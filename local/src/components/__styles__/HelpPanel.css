@@ -126,6 +126,19 @@
   line-height: 1.5;
 }
 
+.help-content h4 {
+  margin: 18px 0 6px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-primary);
+}
+
+.help-content h4:first-child {
+  margin-top: 0;
+}
+
 .help-content ul {
   margin: 0 0 12px;
   padding-left: 20px;

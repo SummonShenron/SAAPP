@@ -108,9 +108,19 @@ def tokens_since(rows: Iterable[Dict[str, Any]], since_minute: str) -> int:
     return sum(_count(row.get("tokens")) for row in rows if str(row.get("minute") or "") >= since_minute)
 
 
-def cost_since(rows: Iterable[Dict[str, Any]], since_minute: str) -> float:
-    """Dollars in `rows` (saved or still in memory) from `since_minute` on. Pure. Rows saved before dollars were counted have none."""
-    return sum(_count(row.get("cost_micro")) for row in rows if str(row.get("minute") or "") >= since_minute) / 1_000_000
+def cost_since(rows: Iterable[Dict[str, Any]], since_minute: str, estimate_rate: Optional[float] = None) -> float:
+    """Dollars in `rows` (saved or still in memory) from `since_minute` on. Pure. A row saved before dollars were counted has no `cost_micro` at all (a row
+    saved since always has one, even if it is 0); with `estimate_rate` (dollars per token, the day's average) such a row is estimated from its tokens, so a
+    person's meter is meaningful from the day it starts counting instead of starting at zero."""
+    total = 0.0
+    for row in rows:
+        if str(row.get("minute") or "") < since_minute:
+            continue
+        if "cost_micro" in row:
+            total += _count(row.get("cost_micro")) / 1_000_000
+        elif estimate_rate:
+            total += _count(row.get("tokens")) * estimate_rate
+    return total
 
 
 def unsaved_rows(user: str) -> List[Dict[str, Any]]:

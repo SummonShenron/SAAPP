@@ -332,9 +332,9 @@ def _billing_day_start_minute(now: datetime) -> str:
     return llm_usage.minute_key(billing_time.next_day_start(now) - timedelta(days=1))
 
 
-def person_totals(rows: List[Dict[str, Any]], now: datetime, anchor: Optional[datetime] = None) -> Dict[str, Any]:
-    """One person's tokens in their own five-hour window (started by their first use, like the shared one) and in today's billing day, from their
-    minute rows (saved plus unsaved). Pure."""
+def person_totals(rows: List[Dict[str, Any]], now: datetime, anchor: Optional[datetime] = None, estimate_rate: Optional[float] = None) -> Dict[str, Any]:
+    """One person's tokens and dollars in their own five-hour window (started by their first use, like the shared one) and in today's billing day, from
+    their minute rows (saved plus unsaved). `estimate_rate` (dollars per token) prices rows saved before dollars were counted. Pure."""
     from backend.utils import user_usage
 
     times = sorted(t for t in (_usage_time(r) for r in rows) if t is not None)
@@ -342,8 +342,8 @@ def person_totals(rows: List[Dict[str, Any]], now: datetime, anchor: Optional[da
     return {
         "my_five_tokens": user_usage.tokens_since(rows, llm_usage.minute_key(window[0])) if window else 0,
         "my_day_tokens": user_usage.tokens_since(rows, _billing_day_start_minute(now)),
-        "my_five_usd": user_usage.cost_since(rows, llm_usage.minute_key(window[0])) if window else 0.0,
-        "my_day_usd": user_usage.cost_since(rows, _billing_day_start_minute(now)),
+        "my_five_usd": user_usage.cost_since(rows, llm_usage.minute_key(window[0]), estimate_rate) if window else 0.0,
+        "my_day_usd": user_usage.cost_since(rows, _billing_day_start_minute(now), estimate_rate),
         "my_five_start": window[0] if window else None,
         "my_five_reset": window[1] if window else now + WINDOW,
     }
@@ -441,7 +441,9 @@ def current_state(db: Any = None, now: Optional[datetime] = None, username: Opti
             who = str(username)
             my_anchor = _read_anchor(db, "my_five", moment, who) if any(key in own for key in MY_FIVE_KEYS) else None
             mine = user_usage.fetch(db, who, person_fetch_since(moment, my_anchor)) + user_usage.unsaved_rows(who)
-            totals.update(person_totals(mine, moment, my_anchor))
+            # Turns recorded before dollars were counted are priced at today's average price per token (known only when a global budget is set).
+            rate = (totals.get("day_usd", 0.0) / totals["day_tokens"]) if totals.get("day_tokens") else None
+            totals.update(person_totals(mine, moment, my_anchor, rate))
             if any(key in own for key in MY_FIVE_KEYS) and totals["my_five_start"] is not None and totals["my_five_start"] != my_anchor:
                 _save_anchor(db, "my_five", totals["my_five_start"], who)
         return evaluate(totals, {**limits, **own}, moment, extensions)

@@ -20,10 +20,10 @@ export const TOPICS: HelpTopicMeta[] = [
   { id: 'start', title: 'What Sonic can do', group: 'Getting started', audience: 'everyone' },
   { id: 'try', title: 'Things to try', group: 'Getting started', audience: 'everyone' },
 
-  { id: 'attach', title: 'Photos, files and spreadsheets', group: 'Your files and accounts', audience: 'everyone' },
-  { id: 'tidy', title: 'Tidy up a folder', group: 'Your files and accounts', audience: 'signedIn' },
-  { id: 'google', title: 'Email, calendar and Google', group: 'Your files and accounts', audience: 'signedIn' },
   { id: 'library', title: 'Your document library', group: 'Your files and accounts', audience: 'signedIn' },
+  { id: 'attach', title: 'Photos, files and spreadsheets', group: 'Your files and accounts', audience: 'everyone' },
+  { id: 'google', title: 'Email, calendar and Google', group: 'Your files and accounts', audience: 'signedIn' },
+  { id: 'tidy', title: 'Tidy up a folder', group: 'Your files and accounts', audience: 'signedIn' },
 
   { id: 'memory', title: 'What Sonic remembers', group: 'You and Sonic', audience: 'signedIn' },
   { id: 'profile', title: 'Telling Sonic about yourself', group: 'You and Sonic', audience: 'signedIn' },

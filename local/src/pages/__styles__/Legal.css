@@ -1,12 +1,11 @@
-/* These pages are reached directly (Google's OAuth review, a user pasting the link) without the
-   app shell's theme wrapper ever mounting, so every color here is hardcoded rather than relying
-   on inherited CSS custom properties that may not be in scope. */
+/* These pages are reached directly (Google's OAuth review, a user pasting the link) without the app shell's theme wrapper ever mounting. The light theme's
+   tokens live on :root, so they are always in scope here; the dark theme's only apply inside the wrapper, so these pages are light unless it mounts. */
 .legal-container {
   max-width: 780px;
   margin: 0 auto;
   padding: 3rem 1.5rem 5rem;
   color: var(--text-main);
-  background-color: var(--input-bg);
+  background-color: var(--bg-main);
   min-height: 100vh;
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   line-height: 1.6;

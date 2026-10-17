@@ -20,22 +20,94 @@ export const EVERYDAY: Record<string, Content> = {
       <p>You're in the guest sandbox: a shared demo of Sonic Assistant, a personal AI assistant built by Jack Harper.</p>
       <ul>
         <li>Ask it anything, including who Jack is, what he has built, and how this system works.</li>
+        <li>Ask what it has been reading lately, or for a dry joke. It has a personality and a profile you can read under "About Sonic".</li>
+        <li>Open the <strong>Trace</strong> in the "…" menu to watch the steps it takes to answer.</li>
+        <li>For questions about the demo library, Sonic answers from its documents only. If you want it to use general knowledge as well, turn on <strong>Open Answers</strong> in the "…" menu.</li>
         <li>Guests share one temporary identity, so nothing here is personal and nothing is remembered about you.</li>
-        <li>Sign in to keep your own conversations, memory and settings, and to connect your own email and calendar.</li>
+      </ul>
+      <h4>With an account you also get</h4>
+      <ul>
+        <li>Your own conversations, memory and settings.</li>
+        <li>Your own document library: upload PDFs once and ask about them in any chat.</li>
+        <li>Email, calendar and Google Drive help, once you connect Google.</li>
+        <li>Folder tools on your computer, including Tidy up.</li>
       </ul>
     </>
   ) : (
     <>
-      <p>Sonic is an assistant you can talk to like a person. It can:</p>
+      <p>Sonic is an assistant you can talk to like a person. It answers, looks things up, reads what you give it, and, with your permission, works in your email, calendar, documents and folders. Here is the whole list.</p>
+
+      <h4>Talk things through</h4>
       <ul>
-        <li><strong>Answer questions</strong> and look things up on the web, saying where the information came from.</li>
-        <li><strong>Read what you attach:</strong> a photo of a letter or bill, a PDF, a Word document or a spreadsheet, and tell you what it says in plain words.</li>
-        <li><strong>Help with your email and calendar</strong> once you connect Google. It asks before it sends or changes anything.</li>
-        <li><strong>Remember what matters to you</strong>, so you don't have to say it twice.</li>
-        <li><strong>Think things through with you</strong> or draft something for you to look over.</li>
-        <li><strong>Tidy up a messy folder</strong> on your computer, with your approval.</li>
+        <li>Answer questions, explain things plainly, and help you think a decision through.</li>
+        <li>Draft messages, emails, letters and summaries for you to look over.</li>
+        <li>Ask you a question when yours is unclear instead of guessing, then pick up where it left off.</li>
+        <li>Stop mid-answer with the stop button, or send a new message to steer it while it's still working.</li>
+        <li>Offer a suggested next question after some answers, which you can tap to send.</li>
       </ul>
-      <p>If a question is unclear, Sonic asks you instead of guessing. And it can be wrong, so check anything important, like dates, amounts, and medical or legal details, with the source.</p>
+
+      <h4>Look things up</h4>
+      <ul>
+        <li>Search the web when a question needs current information, and say where it came from.</li>
+        <li>Read a page when you paste its link, and tell you what it says.</li>
+        <li>Open a page in a real browser when it needs to see how something looks, not only what it says.</li>
+      </ul>
+
+      <h4>Read what you give it</h4>
+      <ul>
+        <li><strong>Letters, bills and notices:</strong> what it says in plain words, what you need to do and by when, and whether it looks like a scam.</li>
+        <li><strong>Photos, screenshots, PDFs and Word documents</strong>, and <strong>spreadsheets</strong>: totals across every row, how much per category, and the first rows as they are.</li>
+      </ul>
+
+      <h4>Answer from your own documents</h4>
+      <ul>
+        <li>Upload PDFs to your own private library once, then ask about them in any conversation. It answers from them and points to the page it used. See "Your document library".</li>
+      </ul>
+
+      <h4>Documents versus what Sonic already knows</h4>
+      <ul>
+        <li>When a question is about your documents, Sonic looks in your library. By default it then answers <strong>only</strong> from what it finds there, and tells you when the answer isn't in your documents, even for something it knows well.</li>
+        <li>That's the <strong>Open Answers</strong> switch in the "…" menu next to the message box. <strong>Off</strong> (the default): only your documents. <strong>On</strong>: Sonic can also use its general knowledge when your documents don't have the answer.</li>
+        <li>So if you ever hear "I couldn't find that in your documents" about something general, like a fact or a definition, turn <strong>Open Answers</strong> on and ask again.</li>
+      </ul>
+
+      <h4>Your email, calendar and Google</h4>
+      <ul>
+        <li>Search and summarize your email, and read text-based attachments.</li>
+        <li>Check what's on your calendar, and create or move events.</li>
+        <li>Find and read your Google Docs and Sheets.</li>
+        <li>Draft and send an email, or add text to a Google Doc you've chosen.</li>
+        <li>Every send, event and edit waits for your approval first.</li>
+      </ul>
+
+      <h4>Do the maths and check the code</h4>
+      <ul>
+        <li>Run a small Python program to work something out for certain: a loan payment, a split bill, the days between two dates, a unit conversion. Sonic checks real results instead of guessing.</li>
+        <li>For developers: read code on GitHub, summarize pull requests, and draft a pull request or issue. See "For developers".</li>
+      </ul>
+
+      <h4>Work on your computer</h4>
+      <ul>
+        <li><strong>Tidy up a messy folder</strong> like Downloads, with a plan you approve and an undo.</li>
+        <li><strong>Connect a folder</strong> so it can read your files there. It can write you a new Word document, such as a resume or letter, or make an edited copy of one. You see a preview first, nothing is written until you press Apply, and your original is never changed.</li>
+      </ul>
+
+      <h4>Remember and follow up</h4>
+      <ul>
+        <li>Keep short notes about what matters to you, so you don't have to say it twice. You can read, fix and remove every one.</li>
+        <li>Ask how it went after something you said was coming up, like an interview or a trip.</li>
+        <li>Check in on a goal or project that has gone quiet for a couple of weeks.</li>
+        <li>Notice when something you say connects to an earlier conversation.</li>
+      </ul>
+
+      <h4>Be itself</h4>
+      <ul>
+        <li>It has a dry sense of humor, a few interests, and a profile you can read under "About Sonic".</li>
+        <li>Ask what it has been reading lately, or what has changed about it.</li>
+        <li>If someone is having a hard time, it starts with the people in their life before suggesting a hotline. It is not a substitute for professional help.</li>
+      </ul>
+
+      <p>Sonic can be wrong, so check anything important, like dates, amounts, and medical or legal details, with the source. Press thumbs down on an answer that looks off, and we'll see it.</p>
     </>
   ),
 
@@ -47,35 +119,102 @@ export const EVERYDAY: Record<string, Content> = {
         <li>"How does Sonic Assistant keep one person's data separate from another's?"</li>
         <li>"What was changed in the last pull request?"</li>
         <li>"What have you been reading lately?"</li>
+        <li>"Tell me a joke about vibe coding."</li>
+        <li>"What's the most famous bug in computing history?"</li>
       </ul>
       <p>Open the <strong>Trace</strong> in the "…" menu to watch the steps Sonic takes to answer.</p>
     </>
   ) : (
     <>
-      <p>Just type it the way you'd say it. For example:</p>
+      <p>Just type it the way you'd say it. Here are things worth trying, by what you're after.</p>
+
+      <h4>Make sense of paperwork</h4>
       <ul>
-        <li><strong>A letter or bill:</strong> attach a photo and ask "What does this say, and do I need to do anything?"</li>
-        <li><strong>Is it a scam?</strong> "I got this text. Is it real?" Paste it or attach a screenshot.</li>
-        <li><strong>A spreadsheet:</strong> attach it and ask "How much did I spend on groceries?"</li>
-        <li><strong>Your day:</strong> "What's on my calendar tomorrow?" or "Any emails I need to answer?" (after you connect Google)</li>
-        <li><strong>Looking something up:</strong> "Look into the best way to learn Spanish and show me your sources."</li>
-        <li><strong>A decision:</strong> "Help me think through whether to take this job."</li>
-        <li><strong>Writing:</strong> "Draft a polite email asking to move my appointment."</li>
-        <li><strong>About Sonic:</strong> "What do you remember about me?" or "What have you been reading lately?"</li>
+        <li>Attach a photo of a letter or bill: "What does this say, and do I need to do anything?"</li>
+        <li>"I got this text. Is it real?" Paste it or attach a screenshot.</li>
+        <li>Attach a spreadsheet: "How much did I spend on groceries?" or "Which month cost the most?"</li>
+      </ul>
+
+      <h4>Ask your own documents</h4>
+      <ul>
+        <li>"What's in my lease about pets?"</li>
+        <li>"Which of my documents mention the roof?"</li>
+        <li>"Summarize the warranty on the dishwasher manual."</li>
+      </ul>
+
+      <h4>Get through your day</h4>
+      <ul>
+        <li>"What's on my calendar tomorrow?" or "Am I free Friday afternoon?" (after you connect Google)</li>
+        <li>"Any emails I need to answer?" or "Find the email from my landlord and tell me what they asked."</li>
+        <li>"Schedule lunch with Sam on Thursday at noon." It shows you the event before it adds it.</li>
+        <li>"Read the CSV my accountant emailed me and add the key numbers to my notes document."</li>
+      </ul>
+
+      <h4>Look something up</h4>
+      <ul>
+        <li>"Look into the best way to learn Spanish and show me your sources."</li>
+        <li>"Read this article and give me the three main points," with the link pasted in.</li>
+        <li>"What's the weather like in Lisbon in March?"</li>
+      </ul>
+
+      <h4>Let Sonic run the numbers (it really runs Python)</h4>
+      <ul>
+        <li>"What's the monthly payment on a $240,000 loan at 6.5% over 30 years?"</li>
+        <li>"Split this $187.40 dinner bill five ways with a 20% tip."</li>
+        <li>"How many days are there between March 3 and October 17?"</li>
+        <li>"Is 2 to the power 61 minus 1 a prime number?" It checks, rather than guessing.</li>
+        <li>"Sort this list and tell me what's repeated," with the list pasted in.</li>
+        <li>Say "run it" at the start of a question if you want it to calculate rather than estimate.</li>
+      </ul>
+
+      <h4>Think and write</h4>
+      <ul>
+        <li>"Help me think through whether to take this job."</li>
+        <li>"Draft a polite email asking to move my appointment."</li>
+        <li>"Explain compound interest like I'm twelve, then like I'm an accountant."</li>
+      </ul>
+
+      <h4>Your computer</h4>
+      <ul>
+        <li>"Make me a one-page resume as a Word document." (connect a folder first)</li>
+        <li>"Add a skills section to my resume." It makes an edited copy and leaves the original alone.</li>
+        <li>Open <strong>Tidy up</strong> and sort your Downloads folder in a minute.</li>
+      </ul>
+
+      <h4>About you and Sonic</h4>
+      <ul>
+        <li>"What do you remember about me?"</li>
+        <li>"What have you been reading lately?"</li>
+        <li>"What's new about you?"</li>
+      </ul>
+
+      <h4>Just for fun</h4>
+      <ul>
+        <li>"Tell me a joke about vibe coding."</li>
+        <li>"What's the most absurd bug in computing history?"</li>
+        <li>"Give me a dry one-liner about meetings that could have been emails."</li>
       </ul>
     </>
   ),
 
   attach: () => (
     <>
-      <p>Press the <strong>+</strong> next to the message box to attach something. On a phone it offers to take a photo, pick one from your photos, or choose a file. You can also paste a screenshot straight into the box.</p>
+      <p>Press the <strong>+</strong> next to the message box to attach something. On a phone it offers to take a photo, pick one from your photos, or choose a file. You can also paste a screenshot straight into the box, and attach several things to one message.</p>
+      <h4>What works</h4>
       <ul>
-        <li><strong>Works:</strong> photos and screenshots, PDFs, Word documents (.docx), Excel and CSV spreadsheets, and plain text files.</li>
+        <li>Photos and screenshots, PDFs, Word documents (.docx), Excel and CSV spreadsheets, and plain text files.</li>
+        <li><strong>Letters, bills and notices:</strong> a clear, well-lit photo of the whole page works best. Ask "What does this say, and do I need to do anything?"</li>
         <li><strong>Spreadsheets:</strong> Sonic sees how big the sheet is, its column names, its first rows, and totals across every row, including how much per category. On a big sheet it tells you when it can't see the rest, rather than guessing.</li>
-        <li><strong>Doesn't work yet:</strong> old .xls, .doc and .ppt files, and Pages, Numbers and Keynote files. Save them as .xlsx, .docx or PDF and try again.</li>
-        <li><strong>iPhone photos:</strong> if a photo won't attach because of its format (HEIC), attach a screenshot of it instead, or set the camera to "Most Compatible" in Settings, Camera, Formats.</li>
-        <li><strong>For a letter:</strong> a clear, well-lit photo of the whole page works best.</li>
+        <li><strong>Short documents</strong> are read in full. Longer ones are summarized, and Sonic looks back through the whole text when you ask about details.</li>
+        <li><strong>Pictures:</strong> it can describe a photo, read the text in a screenshot, and tell you what a chart or diagram shows.</li>
       </ul>
+      <h4>What doesn't work yet</h4>
+      <ul>
+        <li>Old .xls, .doc and .ppt files, and Pages, Numbers and Keynote files. Save them as .xlsx, .docx or PDF and try again.</li>
+        <li><strong>iPhone photos:</strong> if a photo won't attach because of its format (HEIC), attach a screenshot of it instead, or set the camera to "Most Compatible" in Settings, Camera, Formats.</li>
+      </ul>
+      <h4>Attaching versus your library</h4>
+      <p>An attachment is for the conversation you add it to. If you want Sonic to be able to answer from a document any time, add it to your document library instead.</p>
       <p>What you attach is read by Google's Gemini so Sonic can answer. It is kept with the conversation for 30 days, then removed. Deleting the conversation removes it sooner.</p>
     </>
   ),
@@ -91,16 +230,29 @@ export const EVERYDAY: Record<string, Content> = {
         <li>Files it isn't sure about, hidden files, and anything still downloading are left where they are.</li>
       </ul>
       <p>It works in Chrome or Edge on a laptop or desktop, not on a phone. If your browser won't open a folder like Downloads directly, try a folder inside it.</p>
+      <p>Tidy up is different from "Connect local folder" in the "…" menu. Tidy up only sorts files and uploads nothing. Connecting a folder lets Sonic read your text files and Word documents and write new ones, with your approval.</p>
       <p><HelpLink go={ctx.go} path="/tidy">Open Tidy up</HelpLink></p>
     </>
   ),
 
   google: ctx => (
     <>
-      <p>Connect your Google account and Sonic can look at your calendar, search and summarize your email, and find your files in Drive when you ask.</p>
+      <p>Connect your Google account and Sonic can work with your email, calendar and files when you ask. Nothing happens in the background: it only looks when you ask it to.</p>
+      <h4>What it can do</h4>
       <ul>
-        <li>It only sends an email, adds an event or changes a document after you approve that exact action.</li>
-        <li>It doesn't keep a copy of your mailbox. What it says about an email becomes part of that conversation.</li>
+        <li><strong>Email:</strong> search your inbox, summarize messages, read attachments that are text-based (like a CSV or a text file), and draft or send a reply.</li>
+        <li><strong>Calendar:</strong> tell you what's on, check when you're free, and create or move events.</li>
+        <li><strong>Drive:</strong> find and read your Google Docs and Sheets.</li>
+        <li><strong>A document of yours:</strong> add text to a Google Doc you've chosen as your target document on the Integrations page, like a running notes file or weekly report.</li>
+        <li><strong>Put it together:</strong> for example, read a report attached to an email, summarize it, and add the summary to your notes document.</li>
+      </ul>
+      <h4>What it won't do</h4>
+      <ul>
+        <li>It sends an email, adds an event or changes a document only after you approve that exact action on a card.</li>
+        <li>It can't delete or archive your email, and it doesn't keep a copy of your mailbox. What it says about an email becomes part of that conversation.</li>
+      </ul>
+      <h4>Connecting</h4>
+      <ul>
         <li>Google may show a notice that the app isn't verified yet. That's expected during early access: choose "Advanced", then continue.</li>
         <li>You can disconnect at any time and it stops right away.</li>
       </ul>
@@ -110,11 +262,34 @@ export const EVERYDAY: Record<string, Content> = {
 
   library: ctx => (
     <>
-      <p>Your document library is a private collection of PDFs that Sonic can answer from in any conversation. It's separate from attaching a file to one chat, which only lasts for that conversation.</p>
+      <p>Your document library is your own private, searchable collection of PDFs. Add a document once, and Sonic can answer from it in any conversation, from now on. It's like giving Sonic a bookshelf of your own.</p>
+      <h4>How it works</h4>
       <ul>
-        <li>Add PDFs on the Self Service page. They can take a little while to become searchable.</li>
-        <li>Then just ask, for example "What's in my lease?" or "Which of my documents mention the roof?"</li>
-        <li>The "Scope" setting in the "…" menu chooses which library Sonic looks in.</li>
+        <li>Open Self Service, pick your library, and add one or more PDFs. They take a little while to become searchable.</li>
+        <li>Then just ask in the chat: "What's in my lease about pets?", "Which of my documents mention the roof?", "What does my insurance cover for water damage?"</li>
+        <li>Sonic answers from your documents and points to the page it used, so you can check it. Pictures inside a PDF are described too, so they can be found.</li>
+        <li>If your documents don't have the answer, it says so, even for something it could answer from general knowledge. That's because <strong>Open Answers</strong> is off by default. Turn it on in the "…" menu if you'd also like it to use what it knows.</li>
+      </ul>
+      <h4>What it's good for</h4>
+      <ul>
+        <li>Leases, contracts, insurance policies and warranties.</li>
+        <li>Manuals and instructions you never want to dig through again.</li>
+        <li>Course notes, research papers and reports.</li>
+        <li>Anything you'd otherwise search with Ctrl+F across ten files.</li>
+      </ul>
+      <h4>Tips</h4>
+      <ul>
+        <li>PDFs with real, selectable text work best. A scan is a picture of text, so Sonic may not read it word for word.</li>
+        <li>Give files clear names, and keep one subject to a document, so the right page comes up.</li>
+        <li>The "Scope" setting in the "…" menu chooses where Sonic looks: everything you can use, or just one library. Some accounts also have shared libraries.</li>
+      </ul>
+      <h4>Library versus attaching</h4>
+      <p>Attaching a file adds it to one conversation, for 30 days. The library keeps a document until you delete it, and every conversation can use it.</p>
+      <h4>Privacy and control</h4>
+      <ul>
+        <li>Your library belongs to your account. Other people's accounts can't see it.</li>
+        <li>To make a document searchable, its text, and descriptions of its pictures, are processed by Google's Gemini. When you ask a question, the passages that matter are sent to it to write the answer.</li>
+        <li>You can delete any document on the Self Service page, and it stops being searchable.</li>
       </ul>
       <p><HelpLink go={ctx.go} path="/self-service">Open Self Service</HelpLink></p>
     </>
@@ -125,7 +300,9 @@ export const EVERYDAY: Record<string, Content> = {
       <p>As you talk, Sonic keeps short notes about things that matter, like your name, your plans and what you prefer, and brings the relevant ones into later conversations.</p>
       <ul>
         <li>Ask "What do you remember about me?" to hear what it has.</li>
-        <li>The Memory page lists every note. You can remove any of them, or clear them all.</li>
+        <li>The Memory page lists every note, with how sure Sonic is and where it came from. You can <strong>edit</strong> a note if it got something wrong, <strong>remove</strong> it, or clear them all. A note you rewrite counts as something you told Sonic directly, so it won't quietly change it back.</li>
+        <li>Notes that belong together are linked ("Goes with"), like where you work and a project there, so when one comes up the other tags along. Remove a link if two notes don't belong together.</li>
+        <li><strong>Coming up:</strong> if you mention something ahead, like an interview or a trip, Sonic may ask how it went once the day has passed. They're listed on the Memory page, and you can remove any.</li>
         <li>Notes you never mention again slowly fade, so old information doesn't stick forever.</li>
       </ul>
       <p><HelpLink go={ctx.go} path="/memory">Open Memory</HelpLink></p>
@@ -155,7 +332,8 @@ export const EVERYDAY: Record<string, Content> = {
         <li>Your conversations are kept until you delete them. Photos and files you attach are removed after 30 days, or sooner if you delete the conversation.</li>
         <li>{ctx.guest
           ? 'Guests share one temporary identity, so nothing here is tied to you.'
-          : 'Sonic keeps short notes about you. You can read and remove every one on the Memory page.'}</li>
+          : 'Sonic keeps short notes about you. You can read, fix and remove every one on the Memory page.'}</li>
+        {!ctx.guest && <li>Your document library is private to your account, and you can delete any document from it.</li>}
         <li>Sonic only looks at your email, calendar or Drive when you ask, and only changes anything after you approve it.</li>
         <li>Tidy up works entirely on your computer. Nothing from the folder is sent to us.</li>
         <li>We don't sell your data and we don't show ads.</li>
@@ -166,11 +344,13 @@ export const EVERYDAY: Record<string, Content> = {
 
   conversations: () => (
     <>
-      <p>Your past conversations are listed on the left (on a phone, open the menu at the top). Click one to pick it up where you left off, or "New chat" to start fresh.</p>
+      <p>Your past conversations are listed on the left (on a phone, open the menu at the top). Click one to pick it up where you left off, or "New chat" to start fresh. Each one keeps its own history.</p>
       <ul>
         <li>The bin icon beside a conversation deletes it, along with the photos and files attached to it.</li>
         <li>"Export" in the "…" menu downloads the current conversation as a text file.</li>
+        <li>The stop button halts Sonic mid-answer, and a new message while it's working steers it.</li>
         <li>Thumbs up and thumbs down under a reply tell us whether it was good, and why.</li>
+        <li>After some answers there's a suggested next question you can tap to send.</li>
       </ul>
     </>
   ),
@@ -195,10 +375,13 @@ export const EVERYDAY: Record<string, Content> = {
     <>
       <ul>
         <li><strong>"Signing you in…" for a while:</strong> the server may be waking up, which can take up to a minute. If it says it couldn't reach the server, press "Try again".</li>
-        <li><strong>A usage limit message:</strong> Sonic has a usage allowance. When it's used up, Sonic says when it resets.</li>
+        <li><strong>A usage limit message:</strong> Sonic has a daily usage allowance, and each person has their own share. When it's used up, Sonic says when it resets.</li>
         <li><strong>An answer looks wrong:</strong> Sonic can be wrong, especially about numbers and dates. Check important things with the source, and press thumbs down so we can see it.</li>
         <li><strong>A photo won't attach:</strong> see "Photos, files and spreadsheets" for the formats that work.</li>
         <li><strong>Tidy up won't open a folder:</strong> some browsers protect folders like Downloads. Try a folder inside it.</li>
+        <li><strong>A Word document edit says it couldn't be made:</strong> the document may have changed since Sonic read it, or part of it can't be edited safely (like tracked changes). Nothing was written. Ask again after saving your changes.</li>
+        <li><strong>Sonic says it can't find something in your documents, but it's something general:</strong> turn on <strong>Open Answers</strong> in the "…" menu. With it off, Sonic sticks to your documents.</li>
+        <li><strong>Sonic says it can't find something that should be in your library:</strong> check the document finished processing, and that "Scope" in the "…" menu includes that library.</li>
       </ul>
     </>
   ),
@@ -246,6 +429,8 @@ export const DEVELOPER: Record<string, Content> = {
       <ul>
         <li>The text files in the folder are copied to Sonic's server and sent to the AI model. Secrets such as .env files and keys, and folders like node_modules and .git, are never uploaded.</li>
         <li>Access starts read-only. Sonic can propose changes, and they are written only when you press Apply. You can undo them.</li>
+        <li><strong>Word documents:</strong> a .docx in the folder is turned into a numbered text outline on the server (the file itself is not kept), so Sonic can read it. It can write you a new Word document, or an edited copy next to an existing one. Every part of the copy that wasn't named in an edit is checked to be identical to the original, and the original is never written. Paragraphs with tracked changes, fields or text boxes can't be edited.</li>
+        <li>CSV, log, calendar and similar plain-text files are read too.</li>
         <li>Disconnecting deletes the server copy, and it expires on its own after about 12 hours.</li>
       </ul>
     </>

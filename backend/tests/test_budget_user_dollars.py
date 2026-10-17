@@ -175,3 +175,30 @@ def test_an_admin_meets_the_per_person_limits_so_their_testing_cannot_use_up_eve
 def test_both_places_that_judge_a_person_use_the_same_rule():
     source = open("app.py", encoding="utf-8").read()
     assert source.count("budget_guard.limit_username(") == 2 and "None if admin else username" not in source and "None if is_admin_user else username" not in source
+
+
+# ---- turns recorded before dollars were counted ----------------------------------------------------------------------------------------------
+
+def old_row(user, moment, tokens):
+    """A row saved before dollars were counted: it has no cost_micro key at all."""
+    return {"user": user, "minute": minute_of(moment), "tokens": tokens, "calls": 1, "turns": 1}
+
+
+def test_rows_from_before_dollars_were_counted_are_estimated_from_the_days_average_price_so_the_meter_does_not_start_at_zero():
+    rows = [old_row("jack", at(9), 1_000_000), person_cost_row("jack", at(10), 0.10), old_row("jack", at(11), 500_000)]
+    assert user_usage.cost_since(rows, "0000") == pytest.approx(0.10)                                   # no rate: old rows count as nothing
+    assert user_usage.cost_since(rows, "0000", 0.0000004) == pytest.approx(0.10 + 1_500_000 * 0.0000004)
+    zero = {"minute": minute_of(at(9)), "tokens": 5_000_000, "cost_micro": 0}
+    assert user_usage.cost_since([zero], "0000", 0.0000004) == 0.0           # a row saved with dollars on it is believed, even when they are 0
+
+
+def test_a_person_with_only_old_rows_today_sees_an_estimate_on_their_meter_end_to_end(monkeypatch):
+    monkeypatch.setenv("LLM_USER_BUDGET_DAILY_USD", "1")
+    monkeypatch.setenv("LLM_BUDGET_DAILY_USD", "5")
+    # the whole day: 2,000,000 tokens for $0.80, all of it Jack's turns plus 500k of background work that is nobody's
+    day_rows = [{"day": "2026-10-10", "model": "priced", "label": "x", "calls": 10, "input": 1_500_000, "output": 500_000, "reasoning": 0, "cached": 0}]
+    monkeypatch.setenv("LLM_PRICES", json.dumps({"priced": {"input": 0.4, "output": 0.4}}))
+    db = _DB(rows=day_rows, people=[old_row("jack", at(9), 1_500_000)])
+    state = bg.current_state(db, at(15), "jack")
+    mine = next(item for item in state["detail"] if item["scope"] == "my_day")
+    assert mine["spent"] == pytest.approx(1_500_000 * 0.0000004, rel=0.02) and mine["unit"] == "usd"
