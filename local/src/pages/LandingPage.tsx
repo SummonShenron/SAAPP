@@ -86,55 +86,39 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
 
   return (
     <div className="landing-page">
-      {/* Patchy at his laptop, sitting on the bottom edge of this panel with his legs over the panels below */}
+      {/* Patchy at his laptop, sitting on the bottom edge of this panel */}
       <div className="landing-top">
         <PatchyAtLaptop />
       </div>
 
+      {/* Below him, two panels: the title and sign in (with the notice under it) on the left, the logo and the guest sandbox on the right.
+          (On a phone the panels dissolve into one column; the order of that column is in index.css.) */}
       <div className="landing-row">
-      <div className="landing-left">
-        <div className="landing-hero-text">
-          {/* The big logo lives in the right panel; on a phone that panel is hidden, so a small one sits above the name. */}
-          <LogoMark className="landing-mobile-logo" variant="mono" size={56} />
-          <div className="landing-mobile-brand">Sonic Graph Technologies</div>
-          <h2>SONIC ASSISTANT</h2>
-          <h3>RAG Pipeline & Multi-Tenant Data Isolation System.</h3>
-          <h4>Built by Jack Harper.</h4>
-        </div>
+        <div className="landing-left">
+          <div className="landing-id landing-hero-text">
+            <h2>SONIC ASSISTANT</h2>
+            <h3>RAG Pipeline & Multi-Tenant Data Isolation System.</h3>
+            <h4>Built by Jack Harper.</h4>
+          </div>
 
-        <div className="landing-actions-row">
-        <div className="login-actions-container" style={{ margin: '1.4rem 0', width: '100%', maxWidth: '300px', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          
-          <button 
-            className="enter-btn login-btn" 
-            onClick={handleLogin}
-            style={{
-              backgroundColor: 'var(--ld-btn-bg)',
-              color: 'var(--ld-btn-ink)',
-              border: 'none',
-              padding: '0.85rem',
-              borderRadius: '6px',
-              fontWeight: 600,
-              cursor: 'pointer'
-            }}
-          >
-            Sign In / Sign Up
-          </button>
+          <div className="landing-signin">
+            <button
+              className="enter-btn login-btn"
+              onClick={handleLogin}
+              style={{
+                backgroundColor: 'var(--ld-btn-bg)',
+                color: 'var(--ld-btn-ink)',
+                border: 'none',
+                padding: '0.85rem',
+                borderRadius: '6px',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              Sign In / Sign Up
+            </button>
 
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 12,
-              marginTop: 8,
-              fontSize: '0.85rem',
-              color: 'var(--landing-ink-soft)',
-              width: '100%',
-              justifyContent: 'space-between',
-              flexWrap: 'wrap'
-            }}
-          >
-            <div style={{ flex: '1 1 auto', minWidth: 180 }}>
+            <div className="landing-affiliate">
               <strong style={{ color: 'var(--landing-ink)' }}>Affiliate access</strong>
               <div style={{ marginTop: 4 }}>
                 <span style={{ display: 'inline-block', marginRight: 10 }}>
@@ -149,34 +133,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
               </div>
             </div>
           </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', color: 'var(--landing-ink-soft)', fontSize: '0.85rem', margin: '0.5rem 0' }}>
-            <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--landing-rule)' }}></div>
-            <span style={{ padding: '0 10px' }}>OR</span>
-            <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--landing-rule)' }}></div>
-          </div>
-
-          <button 
-            className="enter-btn guest-btn" 
-            onClick={handleGuestEntry}
-            style={{
-              backgroundColor: 'transparent',
-              color: 'var(--landing-ink)',
-              border: '1px solid var(--landing-ink)',
-              padding: '0.85rem',
-              borderRadius: '6px',
-              fontWeight: 600,
-              cursor: 'pointer',
-              transition: 'all 0.2s'
-            }}
-          >
-            Sign in as Guest (One-Click Sandbox)
-          </button>
-          
-          <p style={{ color: 'var(--landing-ink-soft)', fontSize: '0.8rem', textAlign: 'center', lineHeight: '1.4' }}>
-            Guest mode provides interactive, safe access to sandboxed features and Jack's portfolio knowledge base.
-          </p>
-        </div>
 
         {showNotice && (
           <div className="landing-notice">
@@ -223,19 +179,40 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
             </div>
           </div>
         )}
+
+          <div className="landing-links">
+            <a href="#/privacy">Privacy Policy</a>
+            <a href="#/terms">Terms of Service</a>
+          </div>
         </div>
 
-        <div style={{ marginTop: '1rem', display: 'flex', gap: '1rem', fontSize: '0.8rem' }}>
-          <a href="#/privacy" style={{ color: 'var(--landing-ink-soft)' }}>Privacy Policy</a>
-          <a href="#/terms" style={{ color: 'var(--landing-ink-soft)' }}>Terms of Service</a>
-        </div>
-      </div>
+        <div className="landing-right">
+          <LogoMark className="landing-logo" variant="mono" size={64} label="Sonic Graph Technologies" />
+          <div className="landing-name">Sonic Graph Technologies</div>
 
-      {/* Hero Right: Displays Logo directly centered */}
-      <div className="landing-right">
-        <LogoMark className="landing-hero-logo" size={300} label="Sonic Graph Technologies" />
-        <div className="landing-brand">Sonic Graph Technologies</div>
-      </div>
+          <div className="landing-guest">
+            <button
+              className="enter-btn guest-btn"
+              onClick={handleGuestEntry}
+              style={{
+                backgroundColor: 'transparent',
+                color: 'var(--landing-ink)',
+                border: '1px solid var(--landing-ink)',
+                padding: '0.85rem',
+                borderRadius: '6px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'all 0.2s'
+              }}
+            >
+              Sign in as Guest (One-Click Sandbox)
+            </button>
+
+            <p className="landing-guest-note">
+              Guest mode provides interactive, safe access to sandboxed features and Jack's portfolio knowledge base.
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   );

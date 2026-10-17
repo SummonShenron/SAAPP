@@ -320,6 +320,7 @@ body, html {
   .landing-top::after { animation: none; }
 }
 
+/* The lower half: two panels. Left (charcoal): the title, sign in, the notice under it, the legal links. Right (black): the logo and the guest sandbox. */
 .landing-row {
   display: flex;
   flex: 1;
@@ -327,93 +328,50 @@ body, html {
   width: 100%;
 }
 
-.landing-left {
-  flex: 1 1 0;
+.landing-left,
+.landing-right {
+  box-sizing: border-box;
+  flex: 0 0 50%;
+  width: 50%;
   min-width: 0;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 2.4rem clamp(1.25rem, 3vw, 2.75rem) 1.6rem;
+  position: relative;
+}
+
+.landing-left {
+  padding: 1.6rem clamp(1.25rem, 3vw, 2.75rem) 1rem;
   background: var(--ld-left-bg);
-  border-right: none;
   z-index: 2;
 }
 
-/* An exactly even split on a desktop, whatever each side's padding (a phone stacks them instead) */
-@media (min-width: 769px) {
-  .landing-left, .landing-right { box-sizing: border-box; flex: 0 0 50%; width: 50%; }
-}
-
-/* The sign-in buttons and, to their right, the notice (it wraps under them when the panel is too narrow, and on a phone) */
-.landing-actions-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  column-gap: 1.25rem;
-  width: 100%;
-}
-.landing-notice {
-  flex: 1 1 200px;
-  max-width: 340px;
-  margin-top: 1.4rem;
-  padding: 0.9rem;
-  border-radius: 8px;
-  background: rgba(10, 10, 11, 0.9);
-  border: 1px solid rgba(240, 136, 62, 0.45);
-  color: #f0e2d4;
-  text-align: left;
-}
-
 .landing-right {
-  flex: 1 1 0;
-  min-width: 0;
-  display: flex;
   align-items: center;
-  justify-content: center;
-  position: relative;
   background-color: var(--ld-right-bg);
-  flex-direction: column;
   overflow: hidden;
-  padding: 1.5rem 3rem;
+  padding: 1.5rem clamp(1.25rem, 3vw, 2.75rem);
 }
-
-/* Subtle ambient radial light around logo */
+/* a faint warm light behind the logo */
 .landing-right::before {
   content: '';
   position: absolute;
   inset: 0;
-  background: radial-gradient(circle at 50% 55%, var(--ld-right-glow) 0%, transparent 62%);
+  background: radial-gradient(circle at 50% 50%, var(--ld-right-glow) 0%, transparent 62%);
   pointer-events: none;
 }
+.landing-right > * { position: relative; z-index: 1; }
 
-.landing-hero-logo {
-  max-width: 70%;
-  max-height: 60%;
-  object-fit: contain;
-  z-index: 2;
-  margin-top: 0.5rem;
-  transition: transform 0.4s ease;
-}
+.landing-signin, .landing-guest { display: flex; flex-direction: column; gap: 0.9rem; width: 100%; max-width: 320px; }
+.landing-signin { margin: 1.2rem 0 1rem; }
+.landing-guest { align-items: center; margin-top: 1.4rem; }
+.landing-guest .enter-btn { width: 100%; max-width: none; }
 
-.landing-hero-logo:hover {
-  transform: scale(1.02);
-}
+.landing-affiliate { font-size: 0.85rem; color: var(--landing-ink-soft); }
+.landing-guest-note { color: var(--landing-ink-soft); font-size: 0.8rem; text-align: center; line-height: 1.4; margin: 0; }
 
-/* The company line under the logo */
-.landing-brand {
-  z-index: 2;
-  margin-top: 1rem;
-  font-size: 0.95rem;
-  font-weight: 500;
-  letter-spacing: 0.32em;
-  text-transform: uppercase;
-  color: var(--ld-brand);
-  text-align: center;
-}
-
-/* Black copy on the orange panel */
-.landing-mobile-logo { display: none; margin-bottom: 0.4rem; color: var(--landing-ink); } /* the one-colour logo: the full-colour one's orange end would vanish on the orange */
-.landing-mobile-brand { display: none; margin-bottom: 0.9rem; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.3em; text-transform: uppercase; color: var(--landing-ink-soft); }
+.landing-logo { color: var(--landing-ink); } /* the one-colour logo */
+.landing-name { margin-top: 0.7rem; font-size: 0.78rem; font-weight: 600; letter-spacing: 0.32em; text-transform: uppercase; color: var(--ld-brand); text-align: center; }
 
 .landing-hero-text h2 {
   font-size: 2.2rem;
@@ -434,12 +392,21 @@ body, html {
   font-weight: 400;
 }
 
-.landing-hero-text p {
-  color: var(--landing-ink);
-  margin-bottom: 2.5rem;
-  font-size: 1rem;
-  line-height: 1.5;
+.landing-notice {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 420px;
+  margin: 0 0 0.8rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: 8px;
+  background: rgba(10, 10, 11, 0.9);
+  border: 1px solid rgba(240, 136, 62, 0.45);
+  color: #f0e2d4;
+  text-align: left;
 }
+
+.landing-links { display: flex; gap: 1rem; font-size: 0.8rem; }
+.landing-links a { color: var(--landing-ink-soft); }
 
 .enter-btn {
   width: 100%;
@@ -1779,29 +1746,22 @@ select:not(:-internal-list-box):not([multiple]) option {
 
   .landing-top { --ps-h: clamp(150px, 24vh, 200px); }
 
-  .landing-row { flex-direction: column; }
-
-  .landing-left {
-    width: 100% !important;
-    padding: 2.6rem 1.5rem 1.5rem !important;
-    justify-content: center;
-    align-items: center;
-    text-align: center;
-  }
-
-  .landing-mobile-logo { display: inline-block; }
-  .landing-mobile-brand { display: block; }
-
-  .landing-right {
-    display: none; /* Hide the desktop split image panel on mobile to save space */
-  }
-
-  .login-actions-container {
-    width: 100% !important;
-    max-width: 100% !important;
-  }
-
-  .landing-notice { flex-basis: 100%; max-width: 100%; margin-top: 0; }
+  /* One column, in this order: logo and name, title, sign in, guest, notice, links. The two panels dissolve (display: contents) so their parts can be
+     ordered freely. */
+  .landing-row { flex-direction: column; padding: 1.8rem 1.5rem 1rem; gap: 1.4rem; background: var(--ld-left-bg); align-items: center; text-align: center; }
+  .landing-left, .landing-right { display: contents; }
+  .landing-right::before { display: none; }
+  .landing-logo { order: 0; margin-bottom: -0.8rem; }
+  .landing-name { order: 1; margin-top: 0; font-size: 0.7rem; }
+  .landing-id { order: 2; }
+  .landing-hero-text h2 { font-size: 1.9rem; }
+  .landing-hero-text h3 { font-size: 1rem; }
+  .landing-hero-text h4 { font-size: 0.9rem; }
+  .landing-signin { order: 3; max-width: 100%; margin: 0; }
+  .landing-affiliate { text-align: center; }
+  .landing-guest { order: 4; max-width: 100%; margin: 0; }
+  .landing-notice { order: 5; margin: 0; }
+  .landing-links { order: 6; }
 }
 
 /* Hide mobile toggle by default on desktop */

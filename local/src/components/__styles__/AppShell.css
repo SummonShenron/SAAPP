@@ -375,3 +375,34 @@ div.chat-page.chat-page { flex: 1 1 auto; min-height: 0; display: flex; flex-dir
 @media (prefers-reduced-motion: reduce) {
   .app-rail, .app-rail-drawer { transition: none; }
 }
+
+/* ---------- the quiet shell (an experiment: delete this whole block to go back) ----------
+   The rail and the trace blade were filled panels with filled, outlined pills inside them, so they stood out next to the conversation. In the LIGHT
+   theme the blue is now turned down about half way, the pills are gone (a faint tint and the orange tick say where you are), the dividers are softer and
+   your own message bubble is a fainter tint. In the DARK theme nothing but the text changed: the rail's labels are muted. The orange accents are untouched. */
+.app-rail .rail-item,
+.app-rail .rail-convo-main { color: var(--text-muted); }
+.app-rail .rail-item.active,
+.rail-convo.active .rail-convo-main { color: var(--text-main); }
+
+.app-shell:not(.theme-shadow) {
+  --quiet-bg: color-mix(in srgb, var(--bg-alt) 55%, var(--bg-main));
+  --quiet-line: color-mix(in srgb, var(--border-color) 80%, transparent);
+  --quiet-hover: color-mix(in srgb, var(--text-main) 5%, transparent);
+  --bubble-user-bg: color-mix(in srgb, var(--bg-alt) 38%, var(--bg-main));
+  --bubble-user-border: transparent;
+}
+.app-shell:not(.theme-shadow) .app-rail { --rail-bg: var(--quiet-bg); border-right-color: var(--quiet-line); }
+.app-shell:not(.theme-shadow) .trace-blade { background: var(--quiet-bg); border-left-color: var(--quiet-line); }
+.app-shell:not(.theme-shadow) .trace-panel-head,
+.app-shell:not(.theme-shadow) .app-topbar { border-bottom-color: var(--quiet-line); }
+
+.app-shell:not(.theme-shadow) .app-rail .rail-item:hover,
+.app-shell:not(.theme-shadow) .rail-convo:hover,
+.app-shell:not(.theme-shadow) .app-rail .user-chip:hover,
+.app-shell:not(.theme-shadow) .app-rail .rail-icon-btn:hover { background: var(--quiet-hover); }
+.app-shell:not(.theme-shadow) .app-rail .rail-item.active,
+.app-shell:not(.theme-shadow) .rail-convo.active { background: var(--quiet-hover); border-color: transparent; font-weight: 500; }
+.app-shell:not(.theme-shadow) .rail-convo.active .rail-convo-main { font-weight: 500; }
+.app-shell:not(.theme-shadow) .app-rail .rail-new { background: transparent; border-color: var(--quiet-line); }
+.app-shell:not(.theme-shadow) .app-rail .user-chip { background: transparent; border-color: transparent; }
