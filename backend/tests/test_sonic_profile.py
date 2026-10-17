@@ -56,7 +56,9 @@ def test_the_prompt_block_carries_the_profile_and_the_rules_that_keep_it_quiet()
 
 
 def test_the_block_is_small_enough_to_ride_every_prompt():
-    assert len(profile_prompt_block()) < 3000  # about 700 tokens, most of it the guardrail wording
+    # About 800 tokens, most of it the guardrail wording. It was 3000 characters before SELF_TRUTHS (about 160 tokens) was added: the block must not
+    # deny what Sonic really does (read on a schedule, search, read attachments), and the blocks that normally say so are silent in a safety context.
+    assert len(profile_prompt_block()) < 3800
 
 
 def test_the_profile_commits_to_honest_pushback_once_and_never_to_unanchored_hope():
@@ -109,3 +111,56 @@ def test_the_interest_list_for_the_card_is_not_stuffed_into_every_prompt():
     block = profile_prompt_block()
     for line in SONIC_PROFILE["interests"]:
         assert line.rstrip(".") not in block  # they ride only when a message touches the topic
+
+
+# ---- what is true about Sonic, which the "you don't exist between conversations" rules must never be stretched into denying --------------------
+
+def test_the_always_on_block_says_the_reading_shelf_and_the_abilities_are_real_and_never_to_be_denied():
+    from backend.components.sonic_profile import SELF_TRUTHS
+
+    block = profile_prompt_block()
+    assert SELF_TRUTHS in block
+    for needle in ("reading shelf", "yes, a few articles get read for you", "never deny", "search the web", "read what they attach", "calendar and email", "never that you can't"):
+        assert needle in SELF_TRUTHS, needle
+    # the rules it sits beside are all still there: no waiting, no claimed feelings, no claimed reading outside the shelf
+    assert "never say you'll wait for them" in block and "you don't exist between conversations" in block
+    assert "claim nothing that isn't on the shelf" in SELF_TRUTHS and "never say what you were doing or thinking about them" in SELF_TRUTHS
+
+
+def test_a_safety_context_tells_sonic_what_it_can_do_so_a_question_about_itself_is_not_denied():
+    from backend.utils import safety_utils as su
+
+    state = {"escalated": True, "level": su.RISK_ELEVATED, "turns_since": 4, "ladder": {}}
+    for level, fresh in ((su.RISK_ELEVATED, False), (su.RISK_ELEVATED, True), (su.RISK_ACUTE, False)):
+        context = su.plan_safety_turn(level, fresh, state, "", "what can you do?").context
+        assert "IF THEY ASK ABOUT YOU" in context and "Never deny an ability you have" in context and "reading shelf is kept up on a schedule" in context
+        assert "rather than saying you can't" in context
+
+
+def test_the_most_acute_safety_context_stays_exactly_as_focused_as_it_was():
+    from backend.utils import safety_utils as su
+
+    state = {"escalated": True, "level": su.RISK_IMMINENT, "turns_since": 0, "ladder": {}}
+    context = su.plan_safety_turn(su.RISK_IMMINENT, True, state, "", "what can you do?").context
+    assert "IF THEY ASK ABOUT YOU" not in context          # someone in immediate danger gets the handoff and nothing about Sonic
+
+
+def test_the_about_yourself_note_is_brief_and_asks_for_no_list():
+    from backend.utils import safety_utils as su
+
+    assert len(su._ABOUT_YOURSELF) < 800 and "no list" in su._ABOUT_YOURSELF and "come back to them" in su._ABOUT_YOURSELF
+
+
+def test_the_always_on_block_names_the_browser_and_forbids_describing_what_was_not_fetched():
+    from backend.components.sonic_profile import SELF_TRUTHS
+
+    assert "real browser" in SELF_TRUTHS and "screenshots" in SELF_TRUTHS
+    assert "Never describe a page, screenshot or result you did not actually get in this reply" in SELF_TRUTHS
+    assert "offer to do it" in SELF_TRUTHS
+
+
+def test_the_router_sends_a_named_website_to_the_tools_rather_than_answering_from_memory():
+    from backend.components.constraints import REASONER_PROMPT
+
+    assert "names a website or web address" in REASONER_PROMPT and "sonicassistant.com" in REASONER_PROMPT
+    assert "never answered from memory" in REASONER_PROMPT

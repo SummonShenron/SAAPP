@@ -8,12 +8,13 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 import numpy as np
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.utils.db_utils import get_db
 from backend.utils.embedding_utils import embed_text, cosine_similarity
 from backend.components.constraints import FACT_CONFLICT_PROMPT, GOAL_STATUS_PROMPT
 from backend.models.models import lite_llm
+from backend.utils import fact_links
 from backend.services.memory_search import flag_stale_chunks_for_superseded_fact
 
 logger = logging.getLogger("SASS Logger")
@@ -76,6 +77,7 @@ class UserFact(BaseModel):
     goal_status: Optional[str] = None  # "active"|"achieved"|"abandoned"; only meaningful when
                                         # category is "goal"/"project", else always None
     last_nudged_at: Optional[str] = None  # None until find_stale_goal_to_nudge first surfaces it
+    related: List[str] = Field(default_factory=list)  # ids of facts about the same real thing (backend/utils/fact_links.py); recalling one brings these along
 
 
 def fact_for_state(fact: UserFact) -> dict:
@@ -451,6 +453,13 @@ def save_user_fact(
             # stale compacted chunk that still says the OLD thing can otherwise get "genuinely
             # recalled" right alongside the corrected fact with nothing to arbitrate between them.
             flag_stale_chunks_for_superseded_fact(memory_vector_store, username, existing.embedding)
+        if relationship_action == "supersede" and existing.related:
+            # What the fact says has changed ("works at Principal" became "works at Acme"), so what it was bound to may no longer belong with it:
+            # the links are cleared both ways and judged again for the new wording below.
+            for other in all_facts:
+                if existing.id in other.related:
+                    other.related = [linked for linked in other.related if linked != existing.id]
+            existing.related = []
         existing.fact = fact_text
         # Corrects category drift on every re-observation instead of freezing whichever category
         # the fact happened to get on its very first (possibly inconsistent) extraction — this is
@@ -467,6 +476,8 @@ def save_user_fact(
             existing.source = source  # changed content has its own provenance; a remembered support contact stays one
         existing.updated_at = now
         result = existing
+        if relationship_action == "supersede":
+            fact_links.link_new_fact(all_facts, result, cosine_similarity, lite_llm.invoke)
     else:
         result = UserFact(
             id=str(uuid.uuid4()),
@@ -482,8 +493,11 @@ def save_user_fact(
             goal_status="active" if category in ("goal", "project") else None,
         )
         all_facts.append(result)
+        # Bind it to the facts that are about the same thing (it may say "at work" without ever naming the employer).
+        fact_links.link_new_fact(all_facts, result, cosine_similarity, lite_llm.invoke)
 
     all_facts = _prune_excess_facts(all_facts, protect_id=result.id)
+    fact_links.drop_dangling_links(all_facts)     # a pruned fact leaves no link behind
     save_user_facts(username, all_facts)
     logger.info("Saved memory fact for %s: [%s] (%d chars, id %s)", username, category, len(result.fact), result.id)
     return result
@@ -494,8 +508,34 @@ def delete_user_fact(username: str, fact_id: str) -> bool:
     remaining = [f for f in all_facts if f.id != fact_id]
     if len(remaining) == len(all_facts):
         return False
+    fact_links.drop_dangling_links(remaining)     # nothing stays linked to what was just forgotten
     save_user_facts(username, remaining)
     return True
+
+
+def unlink_user_facts(username: str, fact_id: str, other_id: str) -> bool:
+    """Removes the link between two facts, both ways (the person disagrees that they belong together). False when there was no such link."""
+    all_facts = load_user_facts(username)
+    by_id = {f.id: f for f in all_facts}
+    first, second = by_id.get(fact_id), by_id.get(other_id)
+    if first is None or second is None or other_id not in first.related:
+        return False
+    first.related = [linked for linked in first.related if linked != other_id]
+    second.related = [linked for linked in second.related if linked != fact_id]
+    save_user_facts(username, all_facts)
+    return True
+
+
+def linked_fact_summaries(fact: "UserFact", by_id: dict, limit: int = 6) -> list:
+    """[{id, fact}] for the facts this one is linked with that still exist and are active, for showing on the Memory page."""
+    out = []
+    for linked_id in fact.related:
+        other = by_id.get(linked_id)
+        if other is not None and other.active:
+            out.append({"id": other.id, "fact": other.fact})
+        if len(out) >= limit:
+            break
+    return out
 
 
 def delete_all_user_facts(username: str) -> None:
@@ -629,7 +669,10 @@ def fetch_relevant_user_facts(
                 reverse=True,
             )
 
-        top_facts = identity_facts + ranked_other[:remaining_slots]
+        matched = ranked_other[:remaining_slots]
+        # A fact chosen because it matches the question brings along the facts bound to it (the project, and where it is done), so the context the
+        # person already gave about the same thing is not lost. Identity facts are always shown anyway and do not bring anything extra.
+        top_facts = identity_facts + matched + fact_links.linked_extras(matched, facts)
         if not top_facts:
             return ""
 
@@ -665,7 +708,8 @@ def select_relevant_user_facts(
         scored = [(cosine_similarity(embedding, f.embedding), f) for f in facts]
         close = [(sim * effective_confidence(f, now), f) for sim, f in scored if sim >= floor]
         close.sort(key=lambda pair: pair[0], reverse=True)
-        return [f for _, f in close[:limit]]
+        chosen = [f for _, f in close[:limit]]
+        return chosen + fact_links.linked_extras(chosen, facts)
     except Exception:
         logger.exception("[MEMORY WARNING] Could not select relevant facts for %s", username)
         return []

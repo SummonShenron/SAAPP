@@ -435,6 +435,16 @@ _CARRIED_NOTE = (
     "as seriously as the first time.\n"
 )
 
+# Under a safety context the retrieved documents and tool output are dropped and every self-knowledge feature is silent, which is right for the person but
+# leaves Sonic with nothing that says what it is and can do, so a question about itself used to get a confident false "no" (it said it never reads, and
+# that it couldn't look things up). This keeps the answer true without letting it take over: brief, plain, and back to them.
+_ABOUT_YOURSELF = (
+    "\nIF THEY ASK ABOUT YOU (what you can do, what you remember, whether you read or look things up): answer in a sentence or two, truthfully and in plain "
+    "prose with no list, then come back to them. Never deny an ability you have. You can search the web, read what they attach, check their calendar and "
+    "email once they have connected Google, and remember what they tell you, and your reading shelf is kept up on a schedule. Right now you are putting "
+    "them first, so say you can do any of it later, or whenever they want, rather than saying you can't.\n"
+)
+
 _FOLLOW_UP_RE = re.compile(r"<<<FOLLOW_UP:", re.IGNORECASE)
 _EMOJI_RE = re.compile(r"[\U0001F300-\U0001FAFF☀-➿]")
 _BREEZY_RE = re.compile(
@@ -516,9 +526,9 @@ def plan_safety_turn(
     plan.line_allowed = info["exhausted"] or asked or given
     plan.line_required = (info["exhausted"] or asked) and not given
     if not fresh and not info["next"] and not info["available"] and not info["exhausted"]:
-        plan.context = _SAFETY_HEADER + _CARRIED_NOTE
+        plan.context = _SAFETY_HEADER + _CARRIED_NOTE + _ABOUT_YOURSELF
         return plan
-    plan.context = _SAFETY_HEADER + _ladder_block(level, fresh, info, list(people or []), given, line_ok=plan.line_allowed)
+    plan.context = _SAFETY_HEADER + _ladder_block(level, fresh, info, list(people or []), given, line_ok=plan.line_allowed) + _ABOUT_YOURSELF
     return plan
 
 

@@ -13,7 +13,12 @@ from langchain_mongodb import MongoDBAtlasVectorSearch
 logger = logging.getLogger("SASS Logger")
 
 def startup_services():
-    print_logo()
+    try:
+        print_logo()
+    except UnicodeEncodeError:
+        # The banner is decoration. A console that cannot draw it (a legacy Windows code page, or output piped somewhere that is not UTF-8) must not stop
+        # the whole server from starting, which it used to.
+        logger.info("The startup banner could not be shown in this console's encoding; continuing.")
     # 1. CONNECT TO DATABASE
     db = get_db()
     if db is None:

@@ -1075,6 +1075,8 @@ export interface UserFact {
   active: boolean;
   goal_status: string | null;
   last_nudged_at: string | null;
+  /** The notes this one is bound to (about the same thing, like an employer and a project there). They are recalled together. */
+  related_facts?: { id: string; fact: string }[];
 }
 
 export async function listMemoryFacts(): Promise<UserFact[]> {
@@ -1101,6 +1103,18 @@ export async function deleteMemoryFact(factId: string): Promise<any> {
     throw new Error("Failed to delete memory fact.");
   }
   return res.json();
+}
+
+/** Says two notes do not belong together: the link between them is removed (both ways). */
+export async function deleteMemoryLink(factId: string, otherId: string): Promise<void> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/memory/${encodeURIComponent(factId)}/links/${encodeURIComponent(otherId)}`, {
+    method: "DELETE",
+    headers: { ...authHeaders }
+  });
+  if (!res.ok) {
+    throw new Error("Failed to remove that link.");
+  }
 }
 
 /**
@@ -1435,6 +1449,7 @@ export const api = {
   deleteConversation,
   listMemoryFacts,
   deleteMemoryFact,
+  deleteMemoryLink,
   clearMemoryFacts,
   getMemoryStored,
   listOpenLoops,

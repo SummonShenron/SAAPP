@@ -80,6 +80,9 @@ from backend.utils.memory_utils import (
     load_user_facts,
     delete_user_fact,
     effective_confidence,
+    fact_for_state,
+    linked_fact_summaries,
+    unlink_user_facts,
 )
 from backend.services.memory_compaction import compact_user_memory, compact_meta_memory
 from backend.services.memory_search import context_query_for, recall_with_second_look
@@ -1796,7 +1799,22 @@ async def list_memory(current_user = Depends(get_current_user)):
     username = current_user.get("sub")
     facts = await asyncio.to_thread(load_user_facts, username)
     now = datetime.now(timezone.utc)
-    return [{**f.dict(), "effective_confidence": effective_confidence(f, now)} for f in facts]
+    by_id = {f.id: f for f in facts}
+    # fact_for_state leaves out the embedding (about 15 KB a fact, never shown on the page); `related_facts` is what each note is linked with.
+    return [
+        {**fact_for_state(f), "effective_confidence": effective_confidence(f, now), "related_facts": linked_fact_summaries(f, by_id)}
+        for f in facts
+    ]
+
+
+@app.delete("/api/memory/{fact_id}/links/{other_id}")
+async def delete_memory_link(fact_id: str, other_id: str, current_user = Depends(get_current_user)):
+    """The person says two notes do not belong together: the link is removed both ways."""
+    username = current_user.get("sub")
+    removed = await asyncio.to_thread(unlink_user_facts, username, fact_id, other_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="That link was not found")
+    return {"status": "unlinked", "id": fact_id, "other_id": other_id}
 
 
 @app.delete("/api/memory/{fact_id}")

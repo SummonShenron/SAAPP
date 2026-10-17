@@ -102,6 +102,21 @@ export const MemoryPage: React.FC = () => {
     }
   };
 
+  const handleUnlink = async (factId: string, otherId: string) => {
+    try {
+      await api.deleteMemoryLink(factId, otherId);
+      // The link is removed from both notes, so both rows change.
+      setFacts(prev => prev.map(f =>
+        f.id === factId || f.id === otherId
+          ? { ...f, related_facts: (f.related_facts ?? []).filter(r => r.id !== (f.id === factId ? otherId : factId)) }
+          : f
+      ));
+    } catch (err) {
+      console.error('Failed to remove memory link:', err);
+      alert('Failed to remove that link. Please try again.');
+    }
+  };
+
   const handleClearAll = async () => {
     if (!window.confirm("Forget everything Sonic remembers about you? This permanently deletes your saved memories, the notes from your past conversations and any archived copies of them. Your chats and the feedback you've rated aren't affected. This cannot be undone.")) return;
     setClearing(true);
@@ -237,6 +252,25 @@ export const MemoryPage: React.FC = () => {
                       )}
                     </div>
                     <div className="memory-row-text">{fact.fact}</div>
+                    {fact.related_facts && fact.related_facts.length > 0 && (
+                      <div className="memory-links">
+                        <span className="memory-links-label">Goes with:</span>
+                        {fact.related_facts.map(linked => (
+                          <span key={linked.id} className="memory-link-chip">
+                            {linked.fact}
+                            <button
+                              type="button"
+                              className="memory-link-remove"
+                              title="These don't belong together"
+                              aria-label={`Unlink from: ${linked.fact}`}
+                              onClick={() => handleUnlink(fact.id, linked.id)}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     <div className="memory-row-meta">
                       <span className={`memory-confidence ${confidenceTone(fact.effective_confidence)}`}>
                         <span
