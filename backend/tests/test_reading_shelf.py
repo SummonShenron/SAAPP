@@ -494,3 +494,72 @@ def test_the_shelf_counters_are_in_the_closed_key_list():
     from backend.utils.self_counters import KEYS
 
     assert {"shelf_offered", "shelf_taken", "shelf_listed"} <= KEYS
+
+
+# ---- reading on a schedule, not only when someone is around -------------------------------------------------------------------------------
+
+def test_the_shelf_is_due_about_twice_a_day_and_never_more_often():
+    assert shelf.REFRESH_DAYS == 0.5
+    db = Db()
+    assert shelf.claim_refresh(db, NOW)
+    assert not shelf.claim_refresh(db, NOW + timedelta(hours=11)) and not shelf.refresh_due(db, NOW + timedelta(hours=11))
+    assert shelf.refresh_due(db, NOW + timedelta(hours=12, minutes=1)) and shelf.claim_refresh(db, NOW + timedelta(hours=12, minutes=1))
+
+
+def _run_loop_for(monkeypatch, db, allowed=None, passes=2, schedule="true"):
+    """Runs the scheduled loop for a few passes with no waiting, and returns (refreshes started, sleeps made)."""
+    calls, sleeps = [], []
+
+    async def fake_refresh(database, invoke, **kw):
+        calls.append(1)
+        return {"status": "added"}
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) > passes:                    # the first sleep is the start-up delay
+            raise asyncio.CancelledError()
+
+    monkeypatch.setattr(shelf_refresh, "refresh_shelf", fake_refresh)
+    monkeypatch.setattr(shelf_refresh.asyncio, "sleep", fake_sleep)
+    monkeypatch.setenv("SHELF_SCHEDULED", schedule)
+    with pytest.raises(asyncio.CancelledError):
+        run(shelf_refresh.run_scheduled_refresh_loop(lambda: db, Scripted("x"), allowed, check_every=3600, first_delay=300))
+    return calls, sleeps
+
+
+def test_the_scheduled_loop_waits_for_the_server_to_settle_then_reads_when_due(monkeypatch):
+    calls, sleeps = _run_loop_for(monkeypatch, Db())
+    assert sleeps[0] == 300 and calls == [1, 1]      # the fake refresh does not record the attempt, so each hourly check finds the shelf still due
+
+
+def test_the_scheduled_loop_does_nothing_when_it_is_not_due(monkeypatch):
+    db = Db()
+    shelf.force_claim(db)                            # an attempt was just made
+    calls, _ = _run_loop_for(monkeypatch, db)
+    assert calls == []
+
+
+def test_the_cost_guard_pauses_the_scheduled_loop_and_so_do_both_switches(monkeypatch):
+    async def paused():
+        return False
+
+    assert _run_loop_for(monkeypatch, Db(), allowed=paused)[0] == []
+    assert _run_loop_for(monkeypatch, Db(), schedule="false")[0] == []
+    monkeypatch.setenv("SHELF_REFRESH", "false")
+    assert _run_loop_for(monkeypatch, Db())[0] == []
+
+
+def test_a_failing_pass_is_logged_and_the_loop_carries_on(monkeypatch):
+    class Broken(Db):
+        def __getitem__(self, name):
+            raise RuntimeError("database down")
+
+    calls, sleeps = _run_loop_for(monkeypatch, Broken())
+    assert calls == [] and len(sleeps) == 3          # it kept going and slept between passes
+
+
+def test_the_server_starts_the_schedule_with_the_cost_guard_and_stops_it_on_shutdown():
+    source = open("app.py", encoding="utf-8").read()
+    assert "shelf_task = spawn_background_task(_run_shelf_schedule())" in source and "shelf_task.cancel()" in source
+    schedule = source[source.index("async def _run_shelf_schedule"):source.index("# 2. Define the startup/shutdown logic")]
+    assert 'budget_guard.allows("shelf_refresh"' in schedule and "run_scheduled_refresh_loop(get_db" in schedule

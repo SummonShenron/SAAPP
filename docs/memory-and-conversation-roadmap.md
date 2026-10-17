@@ -424,8 +424,13 @@ every sentence Sonic says about the shelf must be backed by a stored item.
 
 - A `reading_shelf` collection and a small service that picks an interest (least recently searched), runs one search plus one fetch, summarises, and stores it
   as pending. Counts only in the log (no content).
-- **Trigger: lazy (decided 2026-10-16).** Sonic runs on the $7 Render tier, which stays up, but the refresh is still lazy, so it does not depend on a loop
-  surviving redeploys, restarts or a crashed task. When a conversation starts and the newest shelf entry (or the last attempt) is older than N days, refresh
+- **Trigger: scheduled twice a day, lazy as the backstop (changed 2026-10-18; it was lazy only, every 2 days).** Sonic runs on the $7 Render tier, which stays
+  up, so it now reads on its own schedule like someone with free time between conversations: an hourly check (`run_scheduled_refresh_loop`) starts a refresh
+  when the shelf is due, which is every 12 hours (`SHELF_REFRESH_DAYS`, default 0.5), so at most two a day, each one free search plus a few small model calls
+  (a fraction of a cent; under the cost guard's low-power mode it pauses). The due check and the claim live in the database, so a redeploy, a restart or a
+  second server cannot make it read more often, and the lazy trigger below still works if the loop is switched off (`SHELF_SCHEDULED=false`) or has crashed.
+  It never touches a conversation, so none of the honesty rules about "while you were away" apply to it: the reading is real. The original reasoning for
+  lazy: it does not depend on a loop surviving redeploys, restarts or a crashed task. When a conversation starts and the newest shelf entry (or the last attempt) is older than N days, refresh
   off the critical path with `asyncio.create_task` (the way other background work is launched), one interest per refresh, least recently searched first. Record
   the attempt time **before** searching, so a failure or empty result does not retry on every conversation, and keep it single-flight (a claim written to the
   database) so two overlapping conversations or instances never run it twice. A failed or empty search is a quiet no-op. A scheduled loop via
@@ -460,9 +465,9 @@ Section 2 stage (a) first, then this shelf, then section 2 stage (b) drawing fro
 - **The summary is checked by fixed rules, then by a second model look:** 8 to 45 words, one plain passage, third person, nothing sensitive (the same list the
   opener uses), nothing that reads as an order (the memory guard's patterns), no name or number the page does not contain; then a second small call must
   confirm the page supports it. The page is shown to the model as untrusted data and only the summary is stored.
-- **Refresh (`backend/services/shelf_refresh.py`):** lazy, as decided: checked when a conversation starts (one database read per process per ten minutes),
+- **Refresh (`backend/services/shelf_refresh.py`):** on a schedule (hourly check, about twice a day) and lazily as a backstop: checked when a conversation starts (one database read per process per ten minutes),
   attempt time written before anything is searched (single-flight, and a failed search is not retried at once), then one search, up to three page reads and two
-  small model calls, off the critical path and skipped under the budget guard's low-power mode. Every `SHELF_REFRESH_DAYS` (default 2). It works against the
+  small model calls, off the critical path and skipped under the budget guard's low-power mode. Every `SHELF_REFRESH_DAYS` (default 0.5, was 2). It works against the
   real search and model: a live run added an item for three of four topics (the fourth was refused by the sensitive-ground rule, which over-matches on purpose).
 - **Surfacing (`app.py`):** three cases, all conversational, non-guest, no safety context. (1) Asked "what have you been reading?": answered from the shelf (up
   to five items with links), and with an empty shelf it says so and invents nothing. (2) The person touches an item's topic (the hand-written triggers):

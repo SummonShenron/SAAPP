@@ -41,7 +41,9 @@ SETTINGS_COLLECTION = "user_settings"
 SEEN_KEY = "shelf_seen"
 SHELF_MARK = "shelf_offered"
 
-REFRESH_DAYS = float(os.getenv("SHELF_REFRESH_DAYS", "2"))
+# Twice a day at most: Sonic reads the way a person with free time does, a little in the morning and a little in the evening, so the shelf always has
+# something recent. Every refresh is one free web search, up to three page reads and two small model calls per page, which is a fraction of a cent.
+REFRESH_DAYS = float(os.getenv("SHELF_REFRESH_DAYS", "0.5"))
 ITEM_MAX_AGE_DAYS = int(os.getenv("SHELF_ITEM_MAX_AGE_DAYS", "180"))
 MAX_LIVE_ITEMS = 60
 LISTING_ITEMS = 5
@@ -61,6 +63,12 @@ def shelf_enabled() -> bool:
 
 def refresh_enabled() -> bool:
     return os.getenv("SHELF_REFRESH", "true").strip().lower() not in ("0", "false", "no", "off")
+
+
+def schedule_enabled() -> bool:
+    """Whether the server reads on its own schedule (backend/services/shelf_refresh.run_scheduled_refresh_loop) and not only when a conversation starts.
+    Switch it off with SHELF_SCHEDULED=false to go back to reading only when someone is around."""
+    return os.getenv("SHELF_SCHEDULED", "true").strip().lower() not in ("0", "false", "no", "off")
 
 
 # ---------------------------------------------------------------------------------------------------------------

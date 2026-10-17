@@ -1,12 +1,15 @@
 """Adds one item to Sonic's reading shelf: search a topic it leans toward, read one page, write a short grounded summary.
 
-The rules for what may be stored live in backend/utils/reading_shelf.py; this is the part that touches the network and a model. Called
-lazily (backend/utils/reading_shelf.refresh_due, checked at the start of a conversation) and from the admin screen's "search now". It never
+The rules for what may be stored live in backend/utils/reading_shelf.py; this is the part that touches the network and a model. Run on
+its own schedule (run_scheduled_refresh_loop, checked hourly, so a refresh happens about every twelve hours whether or not anyone is around), lazily
+as a backstop (backend/utils/reading_shelf.refresh_due, checked at the start of a conversation), and from the admin screen's "search now". All three
+share one attempt claim, so they never run twice for the same window. It never
 raises, logs only names and counts (a topic id, a public site, a reason: no user content exists anywhere in it), and does at most one
 search, a few page fetches and two small model calls per run.
 """
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional
@@ -113,6 +116,37 @@ async def refresh_shelf(
     except Exception:
         logger.warning("[shelf] the refresh failed.", exc_info=True)
         return {"status": "error"}
+
+
+SCHEDULE_CHECK_SECONDS = float(os.getenv("SHELF_SCHEDULE_CHECK_SECONDS", str(60 * 60)))
+SCHEDULE_FIRST_DELAY_SECONDS = float(os.getenv("SHELF_SCHEDULE_FIRST_DELAY_SECONDS", str(5 * 60)))   # let a starting server settle before it goes reading
+
+
+async def run_scheduled_refresh_loop(
+    get_db: Callable[[], Any],
+    invoke: Callable[[str], Awaitable[Any]],
+    allowed: Optional[Callable[[], Awaitable[bool]]] = None,
+    *,
+    check_every: float = SCHEDULE_CHECK_SECONDS,
+    first_delay: float = SCHEDULE_FIRST_DELAY_SECONDS,
+) -> None:
+    """Sonic's reading between conversations. Wakes up every `check_every` seconds and, when the shelf is due (one database read), does one refresh.
+    The due check lives in the database, not in this loop, so a restart or a second server cannot make it read more often than the interval, and a
+    deploy does not make it start over. `allowed` is the cost guard (low-power mode pauses it). One failed pass is logged and the next hour tries
+    again. The reading is real (a search and a page), but nothing here knows anything about any user: it never touches a conversation."""
+    await asyncio.sleep(first_delay)
+    while True:
+        try:
+            if shelf.refresh_enabled() and shelf.schedule_enabled() and (allowed is None or await allowed()):
+                db = get_db()
+                if db is not None and await asyncio.to_thread(shelf.refresh_due, db):
+                    result = await refresh_shelf(db, invoke)
+                    logger.info("[shelf] scheduled refresh: %s.", result.get("status"))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("[shelf] the scheduled refresh pass failed.", exc_info=True)
+        await asyncio.sleep(check_every)
 
 
 async def maybe_refresh(db, invoke: Callable[[str], Awaitable[Any]]) -> Optional[Dict[str, Any]]:

@@ -200,6 +200,15 @@ if sys.platform == "win32":
 
     _ProactorBasePipeTransport._call_connection_lost = _call_connection_lost_quietly
 
+async def _run_shelf_schedule():
+    from backend.models.models import lite_llm as shelf_llm
+
+    async def allowed() -> bool:
+        return budget_guard.allows("shelf_refresh", await asyncio.to_thread(budget_guard.current_state))
+
+    await shelf_refresh.run_scheduled_refresh_loop(get_db, shelf_llm.ainvoke, allowed)
+
+
 # 2. Define the startup/shutdown logic
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -208,6 +217,9 @@ async def lifespan(app: FastAPI):
     # conversation is read from the store the first time it's used (see secure_chat).
     retention_task = spawn_background_task(run_checkpoint_retention_loop())
     attachment_retention_task = spawn_background_task(run_attachment_retention_loop())
+    # Sonic's own reading, a couple of times a day whether or not anyone is chatting (backend/services/shelf_refresh.py). Paused with the other optional
+    # extras when the cost guard is in low-power mode.
+    shelf_task = spawn_background_task(_run_shelf_schedule())
     watchdog_task = loop_watchdog.start()  # logs when the event loop is blocked, and what was waiting (backend/utils/loop_watchdog.py)
     if get_db() is not None:
         ensure_calendar_indexes()
@@ -215,6 +227,7 @@ async def lifespan(app: FastAPI):
     # Cleanup tasks would go here
     retention_task.cancel()
     attachment_retention_task.cancel()
+    shelf_task.cancel()
     watchdog_task.cancel()
     await asyncio.to_thread(llm_usage.flush)  # whatever the last calls used, before the process goes
     chat_sessions = {}
