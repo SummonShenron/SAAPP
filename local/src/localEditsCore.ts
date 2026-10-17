@@ -4,13 +4,26 @@
 // validated the proposal against the server's snapshot — but this runs against the file's CURRENT
 // contents, so an edit made after the snapshot is caught instead of silently clobbered.
 
+/** A Word document as Sonic describes it (see backend/utils/docx_writer.py). The server renders the real .docx when the user applies it. */
+export interface DocxDocument {
+  title: string;
+  blocks: unknown[];
+}
+
 export type EditOp =
   | { type: 'replace'; path: string; old_string: string; new_string: string; replace_all?: boolean }
-  | { type: 'create'; path: string; content: string };
+  | { type: 'create'; path: string; content: string }
+  | { type: 'create_docx'; path: string; document: DocxDocument }
+  /** An edited COPY of an existing Word document: `path` is the original (only ever read), `save_as` the new file. */
+  | { type: 'edit_docx'; path: string; save_as: string; word_edits: unknown[] };
 
 export interface EditProposalFile {
   path: string;
   kind: 'edit' | 'create';
+  /** 'docx' for a new Word document, whose diff is a readable preview rather than the file's bytes. */
+  format?: 'text' | 'docx' | 'docx_edit';
+  /** For an edited copy of a Word document: the original it was made from. */
+  source?: string;
   diff: string;
   additions: number;
   deletions: number;
@@ -29,6 +42,14 @@ export interface FileChange {
   path: string;
   before: string | null;
   after: string;
+  /** Set for a file that is not text (a new Word document): `after` is empty and the bytes come from `document`, rendered by the server at apply time. */
+  binary?: 'docx';
+  /** What to render. Used only while applying; never kept in the undo copy. */
+  document?: DocxDocument;
+  /** For an edited copy: where its bytes come from (the original, read at apply time) and the edits to make. Used only while applying. */
+  docxEdit?: { source: string; word_edits: unknown[] };
+  /** "size:lastModified" of the file right after it was written, so undo can tell whether it was touched since (its bytes can't be compared as text). */
+  stamp?: string;
 }
 
 const NEVER_WRITE_DIRS = new Set([
@@ -98,6 +119,8 @@ export async function planEdits(
   const errors: string[] = [];
   const before = new Map<string, string | null>();
   const working = new Map<string, string | null>();
+  const documents = new Map<string, DocxDocument>();   // new Word documents in this proposal, by path
+  const editedCopies = new Map<string, { source: string; word_edits: unknown[] }>();   // edited copies of existing Word documents, by the copy's path
 
   for (const [index, op] of ops.entries()) {
     const label = `edit ${index + 1} (${op.path})`;
@@ -106,12 +129,37 @@ export async function planEdits(
       errors.push(`${label}: not allowed — ${blocked}`);
       continue;
     }
+    if (documents.has(op.path)) {
+      errors.push(`${label}: this Word document is created by this same proposal, so nothing else can change it`);
+      continue;
+    }
     if (!working.has(op.path)) {
       const current = await readCurrent(op.path);
       before.set(op.path, current);
       working.set(op.path, current);
     }
     const current = working.get(op.path) ?? null;
+    if (op.type === 'edit_docx') {
+      // `op.path` is only ever READ; the result is written to `save_as`, which must be a new name. Checked here against the folder as it is right now.
+      const target = op.save_as;
+      const blockedCopy = writeBlockReason(target);
+      if (blockedCopy) errors.push(`${label}: the copy ${target} is not allowed — ${blockedCopy}`);
+      else if (!op.path.toLowerCase().endsWith('.docx') || !target.toLowerCase().endsWith('.docx')) errors.push(`${label}: both the document and its copy must be .docx files`);
+      else if (target.toLowerCase() === op.path.toLowerCase()) errors.push(`${label}: the copy must have a new name; the original is never changed`);
+      else if (current === null) errors.push(`${label}: ${op.path} is no longer in the folder`);
+      else if (documents.has(target) || editedCopies.has(target) || (await readCurrent(target)) !== null) errors.push(`${label}: ${target} already exists, and Sonic never overwrites a document`);
+      else editedCopies.set(target, { source: op.path, word_edits: op.word_edits });
+      continue;
+    }
+    if (op.type === 'create_docx') {
+      if (!op.path.toLowerCase().endsWith('.docx')) errors.push(`${label}: a Word document must be named something.docx`);
+      else if (current !== null) errors.push(`${label}: a file with that name already exists, and Sonic never overwrites a document`);
+      else {
+        working.set(op.path, '');
+        documents.set(op.path, op.document);
+      }
+      continue;
+    }
     if (op.type === 'create') {
       if (current !== null) errors.push(`${label}: the file already exists`);
       else working.set(op.path, op.content);
@@ -129,9 +177,43 @@ export async function planEdits(
   if (errors.length > 0) return { ok: false, errors };
   const changes: FileChange[] = [];
   for (const [path, after] of working) {
-    if (after !== null && after !== before.get(path)) {
+    const document = documents.get(path);
+    if (document) {
+      changes.push({ path, before: null, after: '', binary: 'docx', document });
+    } else if (after !== null && after !== before.get(path)) {
       changes.push({ path, before: before.get(path) ?? null, after });
     }
   }
+  for (const [path, docxEdit] of editedCopies) {
+    changes.push({ path, before: null, after: '', binary: 'docx', docxEdit });
+  }
   return { ok: true, changes };
+}
+
+/**
+ * Paths whose files are no longer as an applied change left them, so an undo would overwrite or delete the person's later work. Text files are compared
+ * by content; a Word document (whose bytes were never kept) by the size and modified time recorded when it was written, so any later save of it counts.
+ */
+export async function changesMovedSince(
+  changes: FileChange[],
+  readText: (path: string) => Promise<string | null>,
+  readStamp: (path: string) => Promise<string | null>,
+): Promise<string[]> {
+  const moved: string[] = [];
+  for (const change of changes) {
+    if (change.binary) {
+      if (!change.stamp || (await readStamp(change.path)) !== change.stamp) moved.push(change.path);
+    } else if ((await readText(change.path)) !== change.after) {
+      moved.push(change.path);
+    }
+  }
+  return moved;
+}
+
+/** The change as it is kept for undo: what is needed to put things back, without the document description. */
+export function forUndo(change: FileChange): FileChange {
+  const { document: _document, docxEdit: _docxEdit, ...kept } = change;
+  void _document;
+  void _docxEdit;
+  return kept;
 }

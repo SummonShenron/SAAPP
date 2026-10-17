@@ -10,7 +10,7 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 const TIP_MS = 2500; // how long a tapped tooltip stays (a touch screen has no hover)
 
 /** The ring's colour follows the guard's level, so it reads the same way the old chip's colour did. */
-const LEVEL_COLOR: Record<string, string> = { ok: '#3b82f6', notice: '#f59e0b', throttled: '#f97316', blocked: '#ef4444' };
+const LEVEL_COLOR: Record<string, string> = { ok: 'var(--text-muted)', notice: '#f59e0b', throttled: '#f97316', blocked: 'var(--accent-danger)' };
 
 /**
  * A small ring that fills as the usage budget is used (backend/utils/budget_guard.py): the budget that is furthest along, the same one the

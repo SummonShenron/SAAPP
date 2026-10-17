@@ -21,11 +21,12 @@ function useNarrow(): boolean {
   return narrow;
 }
 const MARGIN = { top: 14, right: 12, bottom: 30, left: 54 };
-const PLAIN = '#38bdf8';
-const TOOL = '#f59e0b';
-const COST = '#38bdf8';
-const TOKENS = '#818cf8';
-const EVAL = '#a8a29e'; // eval runs: counted in the totals but shown apart from the app's own use
+// Series colours come from the theme (CSS variables work in an SVG fill), so the charts follow the light and dark themes and stay in the app's orange.
+const PLAIN = 'var(--accent-primary)';
+const TOOL = 'color-mix(in srgb, var(--accent-primary) 45%, var(--bg-main))'; // the same orange, lighter: the second series of a stack
+const COST = 'var(--accent-primary)';
+const TOKENS = 'var(--accent-primary)';
+const EVAL = 'var(--line-strong)'; // eval runs: counted in the totals but shown apart from the app's own use
 
 /** The smallest "round" number (1, 2, 2.5, 5 times a power of ten) at or above `value`, so the axis ends on a clean figure. */
 export function niceCeil(value: number): number {

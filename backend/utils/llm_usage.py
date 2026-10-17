@@ -188,7 +188,7 @@ def record(model: str, label: str, usage: Dict[str, int], day: Optional[str] = N
     except Exception:
         pass
     try:
-        llm_turns.note_call(usage or {})  # the same call, added to the chat turn that made it (backend/utils/llm_turns.py)
+        llm_turns.note_call(usage or {}, model)  # the same call, added to the chat turn that made it (backend/utils/llm_turns.py)
     except Exception:
         pass
 
@@ -403,6 +403,17 @@ def load_prices(raw: Optional[str] = None) -> Dict[str, Dict[str, float]]:
             parsed.setdefault("cached_input", parsed["input"])
             prices[str(model)] = parsed
     return prices
+
+
+_prices_cache: Dict[str, Any] = {"raw": None, "prices": {}}
+
+
+def cached_prices() -> Dict[str, Dict[str, float]]:
+    """load_prices() for the environment as it is now, parsed again only when LLM_PRICES changes (it is read for every model call)."""
+    raw = os.getenv("LLM_PRICES", "")
+    if _prices_cache["raw"] != raw:
+        _prices_cache.update({"raw": raw, "prices": load_prices(raw)})
+    return _prices_cache["prices"]
 
 
 def estimate_cost(model: str, counts: Dict[str, int], prices: Dict[str, Dict[str, float]]) -> Optional[float]:

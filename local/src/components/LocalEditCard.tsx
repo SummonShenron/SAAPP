@@ -83,8 +83,20 @@ export default function LocalEditCard({ proposal, canApply, onApply, onUndo }: L
         <div key={file.path} className="led-file">
           <button type="button" className="led-file-header" onClick={() => toggleFile(file.path)}>
             <span>{openFiles.has(file.path) ? '▾' : '▸'} {file.path}</span>
-            <span className="led-file-kind">{file.kind === 'create' ? 'new file' : `+${file.additions} −${file.deletions}`}</span>
+            <span className="led-file-kind">
+              {file.format === 'docx_edit'
+                ? `+${file.additions} −${file.deletions} · edited copy`
+                : file.format === 'docx' ? 'new Word document' : file.kind === 'create' ? 'new file' : `+${file.additions} −${file.deletions}`}
+            </span>
           </button>
+          {openFiles.has(file.path) && file.format === 'docx_edit' && (
+            <div className="led-note led-preview-note">
+              A new copy of <strong>{file.source}</strong> with these changes. Your original is never changed, and everything else in the copy is checked to be identical to it.
+            </div>
+          )}
+          {openFiles.has(file.path) && file.format === 'docx' && (
+            <div className="led-note led-preview-note">A preview of the text. The Word file itself is made when you press Apply, and your original files are never touched.</div>
+          )}
           {openFiles.has(file.path) && (
             <pre className="led-diff">
               {file.diff.split('\n').map((line, index) => (

@@ -4,9 +4,9 @@
    ========================================================================== */
 
 .sh-select {
-  background-color: #0f172a;
-  color: #f8fafc;
-  border: 1px solid #475569;
+  background-color: var(--input-bg);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
   padding: 0.45rem 0.8rem;
   border-radius: 6px;
   font-size: 0.85rem;
@@ -26,20 +26,20 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  color: #94a3b8;
+  color: var(--text-muted);
   font-size: 0.85rem;
 }
 
 .sh-generated {
   margin-left: auto;
-  color: #64748b;
+  color: var(--text-muted);
   font-size: 0.8rem;
 }
 
 .sh-notice {
-  background-color: rgba(56, 189, 248, 0.08);
-  border: 1px solid rgba(56, 189, 248, 0.35);
-  color: #bae6fd;
+  background-color: color-mix(in srgb, var(--accent-primary) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 35%, transparent);
+  color: var(--text-main);
   border-radius: 8px;
   padding: 0.75rem 1rem;
   margin-bottom: 1rem;
@@ -47,9 +47,9 @@
 }
 
 .sh-btn {
-  background-color: #0f172a;
-  color: #e2e8f0;
-  border: 1px solid #475569;
+  background-color: var(--input-bg);
+  color: var(--text-main);
+  border: 1px solid var(--line-strong);
   padding: 0.45rem 1rem;
   border-radius: 6px;
   font-size: 0.85rem;
@@ -59,7 +59,7 @@
 }
 
 .sh-btn:hover:not(:disabled) {
-  border-color: #94a3b8;
+  border-color: var(--text-muted);
 }
 
 .sh-btn:disabled {
@@ -68,9 +68,9 @@
 }
 
 .sh-btn-primary {
-  background-color: rgba(56, 189, 248, 0.15);
-  border-color: rgba(56, 189, 248, 0.6);
-  color: #7dd3fc;
+  background-color: color-mix(in srgb, var(--accent-primary) 15%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary) 60%, transparent);
+  color: var(--accent-primary);
 }
 
 .sh-actions {
@@ -82,7 +82,7 @@
 }
 
 .sh-hint {
-  color: #94a3b8;
+  color: var(--text-muted);
   font-size: 0.8rem;
 }
 
@@ -95,7 +95,7 @@
   font-size: 0.8rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 .sh-muted {
@@ -103,8 +103,8 @@
 }
 
 .sh-row {
-  background-color: #0f172a;
-  border: 1px solid #334155;
+  background-color: var(--input-bg);
+  border: 1px solid var(--border-color);
   border-radius: 10px;
   padding: 1rem 1.1rem;
   margin-bottom: 0.75rem;
@@ -116,7 +116,7 @@
 
 .sh-row-title {
   font-weight: 700;
-  color: #f1f5f9;
+  color: var(--text);
   margin-bottom: 0.35rem;
 }
 
@@ -133,17 +133,17 @@
   letter-spacing: 0.04em;
   padding: 0.1rem 0.5rem;
   border-radius: 9999px;
-  background-color: #334155;
-  color: #cbd5e1;
+  background-color: var(--chip-bg);
+  color: var(--text-soft);
 }
 
 .sh-row-text {
-  color: #e2e8f0;
+  color: var(--text-main);
   line-height: 1.5;
 }
 
 .sh-row-meta {
-  color: #94a3b8;
+  color: var(--text-muted);
   font-size: 0.8rem;
   margin-top: 0.4rem;
 }
@@ -151,8 +151,8 @@
 .sh-row-current {
   margin-top: 0.5rem;
   padding: 0.5rem 0.7rem;
-  border-left: 3px solid #475569;
-  color: #94a3b8;
+  border-left: 3px solid var(--line-strong);
+  color: var(--text-muted);
   font-size: 0.85rem;
 }
 
@@ -172,15 +172,15 @@
 }
 
 .sh-chip-label {
-  color: #94a3b8;
+  color: var(--text-muted);
   font-size: 0.75rem;
   margin-right: 0.2rem;
 }
 
 .sh-chip {
-  background-color: #1e293b;
-  border: 1px solid #334155;
-  color: #cbd5e1;
+  background-color: var(--chip-bg);
+  border: 1px solid var(--border-color);
+  color: var(--text-soft);
   font-size: 0.75rem;
   padding: 0.15rem 0.55rem;
   border-radius: 9999px;
@@ -195,25 +195,25 @@
 
 .sh-table th {
   text-align: left;
-  color: #94a3b8;
+  color: var(--text-muted);
   font-weight: 600;
   font-size: 0.75rem;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   padding: 0.5rem 0.6rem;
-  border-bottom: 1px solid #334155;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .sh-table td {
   padding: 0.55rem 0.6rem;
-  border-bottom: 1px solid #1e293b;
-  color: #e2e8f0;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-main);
 }
 
 /* Neutral on purpose: a rise is not bad for every row (more relatable offers is not a problem). */
 .sh-up,
-.sh-down { color: #cbd5e1; }
-.sh-flat { color: #64748b; }
+.sh-down { color: var(--text-soft); }
+.sh-flat { color: var(--text-muted); }
 
 .sh-stat-grid {
   display: grid;
@@ -223,8 +223,8 @@
 }
 
 .sh-stat {
-  background-color: #0f172a;
-  border: 1px solid #334155;
+  background-color: var(--input-bg);
+  border: 1px solid var(--border-color);
   border-radius: 10px;
   padding: 0.9rem 1rem;
 }
@@ -232,23 +232,23 @@
 .sh-stat-value {
   font-size: 1.5rem;
   font-weight: 700;
-  color: #f1f5f9;
+  color: var(--text);
 }
 
 .sh-stat-label {
   margin-top: 0.2rem;
-  color: #94a3b8;
+  color: var(--text-muted);
   font-size: 0.78rem;
   line-height: 1.35;
 }
 
 .sh-stat-warn {
-  border-color: rgba(248, 113, 113, 0.6);
-  background-color: rgba(239, 68, 68, 0.08);
+  border-color: color-mix(in srgb, var(--accent-danger) 60%, transparent);
+  background-color: color-mix(in srgb, var(--accent-danger) 8%, transparent);
 }
 
 .sh-stat-warn .sh-stat-value {
-  color: #fca5a5;
+  color: color-mix(in srgb, var(--accent-danger) 78%, var(--text-main));
 }
 
 @media (max-width: 640px) {
@@ -274,14 +274,14 @@
   justify-content: space-between;
   gap: 1rem;
   font-size: 0.85rem;
-  color: #94a3b8;
+  color: var(--text-muted);
   margin-bottom: 0.3rem;
 }
 
 .sh-bar {
   height: 8px;
   border-radius: 999px;
-  background: rgba(148, 163, 184, 0.22);
+  background: color-mix(in srgb, var(--text-muted) 22%, transparent);
   overflow: hidden;
 }
 
@@ -294,7 +294,7 @@
 .sh-bar-ok { background: #22c55e; }
 .sh-bar-notice { background: #f59e0b; }
 .sh-bar-throttled { background: #f97316; }
-.sh-bar-blocked { background: #ef4444; }
+.sh-bar-blocked { background: var(--accent-danger); }
 
 .sh-subhead {
   margin: 1rem 0 0.4rem;
@@ -315,15 +315,15 @@
   padding: 1rem 1.75rem 3rem;
   box-sizing: border-box;
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  color: var(--text-main, #1e3a8a);
+  color: var(--text-main);
   background-color: var(--bg-main);
 }
 
-/* The cards and tiles are dark in both themes, so their text is light whatever the page's own text colour is. */
+/* Cards and tiles take their surface and text from the theme tokens, so they follow the light and dark themes like the rest of the app. */
 .sh-page .service-card,
 .sh-attention,
 .sh-home-tile {
-  color: #f1f5f9;
+  color: var(--text);
 }
 
 .sh-header {
@@ -337,12 +337,12 @@
 .sh-header h1 {
   margin: 0 0 0.25rem;
   font-size: 1.7rem;
-  color: var(--text-main, #1e3a8a);
+  color: var(--text-main);
 }
 
 .sh-header p {
   margin: 0;
-  color: var(--text-muted, #64748b);
+  color: var(--text-muted);
   font-size: 0.9rem;
   max-width: 60rem;
 }
@@ -360,7 +360,7 @@
   display: flex;
   width: 100%;
   margin: 1rem 0 1.25rem;
-  border-bottom: 1px solid #334155;
+  border-bottom: 1px solid var(--border-color);
   overflow-x: auto;
   scrollbar-width: thin;
 }
@@ -374,7 +374,7 @@
   gap: 0.5rem;
   padding: 0.85rem 1.1rem;
   background: transparent;
-  color: #94a3b8;
+  color: var(--text-muted);
   border: none;
   border-bottom: 3px solid transparent;
   font-size: 0.92rem;
@@ -384,20 +384,20 @@
 }
 
 .sh-tab:hover {
-  color: var(--text-main, #1e3a8a);
-  background-color: rgba(148, 163, 184, 0.12);
+  color: var(--text-main);
+  background-color: color-mix(in srgb, var(--text-muted) 12%, transparent);
 }
 
 .sh-tab:focus-visible {
-  outline: 2px solid #38bdf8;
+  outline: 2px solid var(--accent-primary);
   outline-offset: -2px;
 }
 
 .sh-tab-active,
 .sh-tab-active:hover {
-  color: var(--text-main, #1e3a8a);
-  border-bottom-color: #38bdf8;
-  background-color: rgba(56, 189, 248, 0.12);
+  color: var(--text-main);
+  border-bottom-color: var(--accent-primary);
+  background-color: color-mix(in srgb, var(--accent-primary) 12%, transparent);
 }
 
 .sh-tab-badge {
@@ -409,8 +409,8 @@
   text-align: center;
 }
 
-.sh-tab-badge-info { background: rgba(56, 189, 248, 0.2); color: #7dd3fc; }
-.sh-tab-badge-warn { background: rgba(248, 113, 113, 0.22); color: #fca5a5; }
+.sh-tab-badge-info { background: color-mix(in srgb, var(--accent-primary) 20%, transparent); color: var(--accent-primary); }
+.sh-tab-badge-warn { background: color-mix(in srgb, var(--accent-danger) 22%, transparent); color: color-mix(in srgb, var(--accent-danger) 78%, var(--text-main)); }
 
 .sh-panel {
   min-height: 24rem;
@@ -504,8 +504,8 @@
 }
 
 .sh-attention {
-  background-color: #1e293b;
-  border: 1px solid #334155;
+  background-color: var(--chip-bg);
+  border: 1px solid var(--border-color);
   border-radius: 12px;
   padding: 1rem 1.25rem;
 }
@@ -515,7 +515,7 @@
   font-size: 0.8rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 .sh-attention ul {
@@ -533,15 +533,15 @@
   justify-content: space-between;
   gap: 1rem;
   padding: 0.55rem 0.8rem;
-  background-color: #0f172a;
-  border: 1px solid #334155;
+  background-color: var(--input-bg);
+  border: 1px solid var(--border-color);
   border-left-width: 4px;
   border-radius: 8px;
   font-size: 0.88rem;
 }
 
-.sh-attention-info { border-left-color: #38bdf8 !important; }
-.sh-attention-warn { border-left-color: #f87171 !important; }
+.sh-attention-info { border-left-color: var(--accent-primary) !important; }
+.sh-attention-warn { border-left-color: var(--accent-danger) !important; }
 
 /* Three independent stacks (left panels, chart in the middle, right panels). Every stack is its own column, so a panel sits directly under the
    one above it instead of waiting for the tallest panel beside it. Below 1400px the chart moves to the top and the two stacks sit under it;
@@ -589,8 +589,8 @@
 }
 
 .sh-home-tile {
-  background-color: #1e293b;
-  border: 1px solid #334155;
+  background-color: var(--chip-bg);
+  border: 1px solid var(--border-color);
   border-radius: 12px;
   padding: 1.1rem 1.25rem 1rem;
   cursor: pointer;
@@ -599,9 +599,9 @@
 
 .sh-home-tile:hover,
 .sh-home-tile:focus-visible {
-  border-color: #38bdf8;
+  border-color: var(--accent-primary);
   outline: none;
-  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.35);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-primary) 35%, transparent);
 }
 
 .sh-home-tile-head {
@@ -621,12 +621,12 @@
 
 .sh-home-open {
   margin-left: auto;
-  color: #64748b;
+  color: var(--text-muted);
   font-size: 0.78rem;
 }
 
 .sh-home-tile:hover .sh-home-open {
-  color: #7dd3fc;
+  color: var(--accent-primary);
 }
 
 .theme-shadow .sh-attention,
@@ -665,7 +665,7 @@
 }
 
 .sh-chart-tile:hover {
-  border-color: #334155;
+  border-color: var(--border-color);
   box-shadow: none;
 }
 
@@ -678,7 +678,7 @@
 }
 
 .sh-chart-summary {
-  color: #94a3b8;
+  color: var(--text-muted);
   font-size: 0.82rem;
 }
 
@@ -686,7 +686,7 @@
   margin-left: auto;
   background: none;
   border: none;
-  color: #7dd3fc;
+  color: var(--accent-primary);
   font-size: 0.8rem;
   cursor: pointer;
 }
@@ -697,14 +697,14 @@
 
 .sh-seg {
   display: inline-flex;
-  border: 1px solid #475569;
+  border: 1px solid var(--line-strong);
   border-radius: 8px;
   overflow: hidden;
 }
 
 .sh-seg-btn {
-  background: #0f172a;
-  color: #94a3b8;
+  background: var(--input-bg);
+  color: var(--text-muted);
   border: none;
   padding: 0.3rem 0.85rem;
   font-size: 0.8rem;
@@ -713,7 +713,7 @@
 }
 
 .sh-seg-btn + .sh-seg-btn {
-  border-left: 1px solid #475569;
+  border-left: 1px solid var(--line-strong);
 }
 
 .sh-seg-btn:disabled {
@@ -722,8 +722,8 @@
 }
 
 .sh-seg-active {
-  background: rgba(56, 189, 248, 0.2);
-  color: #e0f2fe;
+  background: color-mix(in srgb, var(--accent-primary) 20%, transparent);
+  color: var(--text-main);
 }
 
 .sh-chart-svg {
@@ -734,12 +734,12 @@
 }
 
 .sh-chart-grid {
-  stroke: #334155;
+  stroke: var(--border-color);
   stroke-width: 1;
 }
 
 .sh-chart-axis {
-  fill: #94a3b8;
+  fill: var(--text-muted);
   font-size: 11px;
 }
 
@@ -753,22 +753,22 @@
 }
 
 .sh-chart-day-on .sh-chart-hit {
-  fill: rgba(148, 163, 184, 0.12);
+  fill: color-mix(in srgb, var(--text-muted) 12%, transparent);
 }
 
 .sh-chart-day:focus-visible .sh-chart-hit {
-  stroke: #38bdf8;
+  stroke: var(--accent-primary);
   stroke-width: 1.5;
 }
 
 .sh-chart-limit {
-  stroke: #f87171;
+  stroke: var(--accent-danger);
   stroke-width: 1.5;
   stroke-dasharray: 6 4;
 }
 
 .sh-chart-limit-label {
-  fill: #fca5a5;
+  fill: color-mix(in srgb, var(--accent-danger) 78%, var(--text-main));
   font-size: 11px;
 }
 
@@ -776,7 +776,7 @@
   display: flex;
   gap: 1rem;
   font-size: 0.78rem;
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 .sh-chart-legend i {
@@ -790,13 +790,13 @@
 .sh-chart-detail {
   margin-top: 0.4rem;
   padding: 0.45rem 0.7rem;
-  background: #0f172a;
-  border: 1px solid #334155;
+  background: var(--input-bg);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
-  color: #e2e8f0;
+  color: var(--text-main);
   font-size: 0.85rem;
 }
 
 .sh-err {
-  color: #fca5a5;
+  color: color-mix(in srgb, var(--accent-danger) 78%, var(--text-main));
 }

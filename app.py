@@ -74,6 +74,8 @@ from backend.utils.app_utils import (
     collect_kb_images
 )
 from backend.utils.attachment_utils import delete_session_attachments, process_chat_attachments
+from backend.utils.docx_writer import DOCX_MIME, render_docx, validate_document
+from backend.utils.docx_edit import DocxEditError, apply_edits as apply_docx_edits
 from backend.utils.memory_utils import (
     fetch_relevant_user_facts,
     fetch_goal_nudge_context,
@@ -307,7 +309,8 @@ class SteerRequest(BaseModel):
 
 class LocalWorkspaceFile(BaseModel):
     path: str
-    content: str
+    content: Optional[str] = None           # a text file
+    content_base64: Optional[str] = None    # a .docx, of which the server keeps only a numbered text outline (backend/utils/docx_edit.py)
 
 class LocalWorkspaceSync(BaseModel):
     name: str
@@ -649,8 +652,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     # The usage budget guard (backend/utils/budget_guard.py). Off, and free, unless a budget is configured. In low-power mode deep
     # thinking is off whatever the setting says, and the optional extras further down are skipped.
     is_admin_user = is_global_admin(directory, username)
-    # A person's own limits apply to them (global admins, who manage the budget, are exempt from those and only meet the shared one).
-    budget_state = await asyncio.to_thread(budget_guard.current_state, None, None, None if is_admin_user else username)
+    # A person's own limits apply to them, admins included (so an admin's testing cannot use up the shared budget everyone else draws on).
+    budget_state = await asyncio.to_thread(budget_guard.current_state, None, None, budget_guard.limit_username(username, is_admin_user))
     if not budget_guard.allows("deep_thinking", budget_state):
         effective_deep_thinking = False
 
@@ -1811,6 +1814,46 @@ async def list_memory(current_user = Depends(get_current_user)):
     ]
 
 
+class DocxRender(BaseModel):
+    document: Dict[str, Any]
+
+
+@app.post("/api/local-edits/render-docx")
+async def render_local_docx(payload: DocxRender, current_user = Depends(get_current_user)):
+    """The real .docx for a document Sonic proposed, rendered only when the person presses Apply; the browser then writes it into their folder."""
+    username = current_user.get("sub")
+    if is_guest_username(username):
+        raise HTTPException(status_code=403, detail="Sign in to create documents in your folder.")
+    clean, problems = validate_document(payload.document)
+    if clean is None:
+        raise HTTPException(status_code=400, detail="; ".join(problems))
+    data = await asyncio.to_thread(render_docx, clean)
+    return Response(content=data, media_type=DOCX_MIME)
+
+
+class DocxEditRequest(BaseModel):
+    docx_base64: str
+    word_edits: List[Dict[str, Any]]
+
+
+@app.post("/api/local-edits/edit-docx")
+async def edit_local_docx(payload: DocxEditRequest, current_user = Depends(get_current_user)):
+    """An edited COPY of a Word document, from the document's current bytes (sent by the browser when the person presses Apply) and the edits Sonic proposed.
+    The original is never written; every part but the named paragraphs is checked to be unchanged before anything is returned (backend/utils/docx_edit.py)."""
+    username = current_user.get("sub")
+    if is_guest_username(username):
+        raise HTTPException(status_code=403, detail="Sign in to edit documents in your folder.")
+    try:
+        original = base64.b64decode(payload.docx_base64, validate=True)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="That document could not be read.")
+    try:
+        data = await asyncio.to_thread(apply_docx_edits, original, payload.word_edits)
+    except DocxEditError as err:
+        raise HTTPException(status_code=400, detail=str(err))
+    return Response(content=data, media_type=DOCX_MIME)
+
+
 class MemoryEdit(BaseModel):
     fact: str
     category: Optional[str] = None
@@ -1954,7 +1997,7 @@ async def get_budget(current_user = Depends(get_current_user)):
     only an admin gets amounts. `level` is "off" when no budget is configured."""
     username = current_user.get("sub")
     admin = is_global_admin(load_directory(), username)
-    state = await asyncio.to_thread(budget_guard.current_state, None, None, None if admin else username)
+    state = await asyncio.to_thread(budget_guard.current_state, None, None, budget_guard.limit_username(username, admin))
     return budget_guard.public_view(state, admin)
 
 

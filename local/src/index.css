@@ -46,6 +46,14 @@
   --float-shadow: 0 8px 24px rgba(20, 35, 74, 0.16);
   --popover-bg: #ffffff;        /* menus and popovers */
   --on-accent: #ffffff;         /* text on a solid accent button */
+  /* Surfaces and text for cards, tiles, rows, chips and inputs on the pages built from SelfService.css (Memory, Self Service, Sonic Health, the legal pages).
+     Use these, never a hex: the dark theme overrides every one of them below. */
+  --card-bg: #ffffff;           /* cards and tiles */
+  --input-bg: #f4f7fd;          /* a row or field sunk a little into its card */
+  --chip-bg: #e6edfb;           /* pills, chips, table headers */
+  --line: var(--border-color);
+  --line-strong: #a3b6dc;       /* an input's border, a hover edge */
+  --text-soft: #3f4f78;         /* between --text-main and --text-muted */
 }
 
 /* THEME OVERRIDE: THE DARK THEME. (The class is still called theme-shadow from when this was a deliberately edgy red-and-black "Shadow" theme.)
@@ -93,6 +101,9 @@
   --input-text: var(--text-main);
   --card-text: #e8e8ea;
   --loader-glow: none;
+  --line-strong: #3a3a40;
+  --chip-bg: #1d1d20;
+  --text-soft: #b9b9bf;
   /* Flat theme: every decorative shadow is none; only things that float (menus, popovers, tooltips) get one, and it is plain black. */
   --shadow: none;
   --shadow-hover: none;

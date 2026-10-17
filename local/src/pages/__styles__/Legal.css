@@ -5,8 +5,8 @@
   max-width: 780px;
   margin: 0 auto;
   padding: 3rem 1.5rem 5rem;
-  color: #e2e8f0;
-  background-color: #0f172a;
+  color: var(--text-main);
+  background-color: var(--input-bg);
   min-height: 100vh;
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   line-height: 1.6;
@@ -14,7 +14,7 @@
 
 .legal-header {
   margin-bottom: 2rem;
-  border-bottom: 1px solid #334155;
+  border-bottom: 1px solid var(--border-color);
   padding-bottom: 1.25rem;
 }
 
@@ -28,20 +28,20 @@
 }
 
 .legal-updated {
-  color: #94a3b8;
+  color: var(--text-muted);
   font-size: 0.9rem;
   margin: 0;
 }
 
 .legal-body h2 {
-  color: #f8fafc;
+  color: var(--text);
   font-size: 1.25rem;
   margin: 2rem 0 0.75rem;
 }
 
 .legal-body p,
 .legal-body li {
-  color: #cbd5e1;
+  color: var(--text-soft);
   font-size: 0.95rem;
 }
 
@@ -50,11 +50,11 @@
 }
 
 .legal-body a {
-  color: #38bdf8;
+  color: var(--accent-primary);
 }
 
 .legal-body code {
-  background: #1e293b;
+  background: var(--chip-bg);
   padding: 0.1rem 0.4rem;
   border-radius: 4px;
   font-size: 0.85em;

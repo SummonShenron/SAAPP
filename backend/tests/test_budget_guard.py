@@ -60,7 +60,7 @@ def test_the_thresholds_default_to_80_percent_and_125_percent_and_stay_in_order(
     monkeypatch.setenv("LLM_BUDGET_NOTICE_AT", "1.5")   # would sit above the throttle point
     monkeypatch.setenv("LLM_BUDGET_BLOCK_AT", "0.5")    # would sit below it
     notice, block = bg.thresholds()
-    assert notice < 1.0 < block
+    assert notice < 1.0 <= block                         # a block line of exactly 1.0 is allowed now: it makes a budget a hard cap
 
 
 # ---- judging --------------------------------------------------------------------------------------------------------------------
@@ -354,7 +354,7 @@ def _app_source():
 
 def test_the_chat_turn_decides_the_budget_first_and_pauses_the_extras_and_the_model_when_told_to():
     source = _app_source()
-    state_at = source.index("budget_state = await asyncio.to_thread(budget_guard.current_state, None, None, None if is_admin_user else username)")
+    state_at = source.index("budget_state = await asyncio.to_thread(budget_guard.current_state, None, None, budget_guard.limit_username(username, is_admin_user))")
     assert state_at < source.index('"budget_level": budget_state.get("level")') < source.index("async def token_streamer():")
     assert "effective_deep_thinking = False" in source[state_at: state_at + 300]
     for gate in ('budget_guard.allows("answer_recheck", budget_state)', 'budget_guard.allows("memory_summaries", budget_state)',
@@ -702,9 +702,9 @@ def username_not_logged(block):
     return "username" not in log
 
 
-def test_the_chat_turn_applies_a_persons_own_limits_to_everyone_but_admins_and_says_which_limit_it_was():
+def test_the_chat_turn_applies_a_persons_own_limits_to_everyone_admins_included_and_says_which_limit_it_was():
     source = _app_source()
-    assert "budget_guard.current_state, None, None, None if is_admin_user else username" in source
+    assert "budget_guard.current_state, None, None, budget_guard.limit_username(username, is_admin_user)" in source
     assert "budget_guard.blocked_reply(budget_state.get('resets_at'), crisis, budget_state.get('scope'))" in source
 
 

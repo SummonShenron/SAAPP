@@ -16,6 +16,8 @@ import json
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from backend.services.local_workspace import MAX_FILE_BYTES, path_rejection, safe_relative_path
+from backend.utils.docx_edit import DocxEditError, edited_texts, original_texts, parse_outline, plan_edits
+from backend.utils.docx_writer import preview_text, validate_document
 
 MAX_EDIT_OPS = 25
 MAX_EDIT_FILES = 12
@@ -96,6 +98,7 @@ def _diff_for(path: str, before: Optional[str], after: str) -> Dict[str, Any]:
     return {
         "path": path,
         "kind": "edit" if before is not None else "create",
+        "format": "docx" if path.lower().endswith(".docx") else "text",
         "diff": "\n".join(lines),
         "additions": additions,
         "deletions": deletions,
@@ -107,7 +110,9 @@ def validate_edit_proposal(edits: Any, read_file: Callable[[str], Optional[str]]
     None if it doesn't exist) and returns {"ok": True, "edits": [...normalized...], "files": [diff
     cards]} or {"ok": False, "errors": [...]}. Each edit is either
     {"path","old_string","new_string"} (replace the one exact occurrence) or {"path","content"}
-    (create a new file that doesn't exist yet)."""
+    (create a new file that doesn't exist yet), or {"path": "Existing.docx", "word_edits": [...], "save_as": "Existing (edited).docx"} (an edited COPY of a Word
+    document that was read from the folder; see backend/utils/docx_edit.py for the edit forms and the guarantees), or {"path": "Name.docx", "document": {...}} (create a new Word document from a structured description: see
+    backend/utils/docx_writer.py; the diff shows a readable preview and the real file is rendered only when the user applies it)."""
     if not isinstance(edits, list) or not edits:
         return {"ok": False, "errors": ["edits must be a non-empty list"]}
     if len(edits) > MAX_EDIT_OPS:
@@ -116,7 +121,9 @@ def validate_edit_proposal(edits: Any, read_file: Callable[[str], Optional[str]]
     errors: List[str] = []
     original: Dict[str, Optional[str]] = {}
     working: Dict[str, Optional[str]] = {}
-    normalized: List[Dict[str, str]] = []
+    normalized: List[Dict[str, Any]] = []
+    docx_cards: List[Dict[str, Any]] = []     # the diff cards for edited copies of Word documents (their "before" is the outline Sonic read, not a file)
+    word_documents: set = set()       # paths of Word documents created by this proposal: their "text" is only a preview, so nothing else may edit them
 
     for index, op in enumerate(edits, start=1):
         if not isinstance(op, dict):
@@ -134,6 +141,60 @@ def validate_edit_proposal(edits: Any, read_file: Callable[[str], Optional[str]]
             original[path] = read_file(path)
             working[path] = original[path]
         label = f"edit {index} ({path})"
+
+        if path in word_documents:
+            errors.append(f"{label}: this Word document is created by this same proposal; put everything in its one {{path, document}} edit")
+            continue
+        if "document" in op and "old_string" not in op and "content" not in op:
+            if not path.lower().endswith(".docx"):
+                errors.append(f"{label}: a document can only be written to a path ending in .docx")
+            elif working[path] is not None:
+                errors.append(f"{label}: that file already exists; Sonic only creates new Word documents, it never overwrites one. Pick a new name.")
+            else:
+                clean, problems = validate_document(op.get("document"))
+                if clean is None:
+                    errors.extend(f"{label}: {problem}" for problem in problems)
+                else:
+                    working[path] = preview_text(clean)
+                    word_documents.add(path)
+                    normalized.append({"type": "create_docx", "path": path, "document": clean})
+            continue
+
+        if "word_edits" in op and not any(key in op for key in ("old_string", "content", "document")):
+            if not path.lower().endswith(".docx"):
+                errors.append(f"{label}: word_edits only apply to a .docx file")
+                continue
+            paragraphs = parse_outline(working[path] or "")
+            if not paragraphs:
+                errors.append(f"{label}: no Word document by that name was read from the connected folder. Read it first (read_repo_file on its path shows its numbered paragraphs); only .docx files from the folder can be edited")
+                continue
+            requested = op.get("save_as") or f"{path[:-5]} (edited).docx"
+            save_as = safe_relative_path(requested)
+            if save_as is None or not save_as.lower().endswith(".docx"):
+                errors.append(f"{label}: save_as must be a relative path ending in .docx")
+                continue
+            if save_as.lower() == path.lower():
+                errors.append(f"{label}: the edit is saved as a new copy, so save_as must differ from {path}; the original is never changed")
+                continue
+            reason = path_rejection(save_as)
+            if reason:
+                errors.append(f"{label}: {save_as} is not allowed — {reason}")
+                continue
+            if read_file(save_as) is not None or save_as in working or save_as in word_documents:
+                errors.append(f"{label}: {save_as} already exists; choose a new name for the copy")
+                continue
+            try:
+                plan = plan_edits(paragraphs, op.get("word_edits"))
+            except DocxEditError as problem:
+                errors.append(f"{label}: {problem}")
+                continue
+            card = _diff_for(save_as, "\n".join(original_texts(paragraphs)), "\n".join(edited_texts(paragraphs, plan)))
+            card["diff"] = card["diff"].replace(f"a/{save_as}", f"a/{path}", 1)
+            card.update({"kind": "create", "format": "docx_edit", "source": path})
+            docx_cards.append(card)
+            word_documents.add(save_as)
+            normalized.append({"type": "edit_docx", "path": path, "save_as": save_as, "word_edits": plan["clean"]})
+            continue
 
         if "content" in op and "old_string" not in op:
             content = op.get("content")
@@ -185,5 +246,5 @@ def validate_edit_proposal(edits: Any, read_file: Callable[[str], Optional[str]]
     return {
         "ok": True,
         "edits": normalized,
-        "files": [_diff_for(path, original[path], working[path]) for path in touched],
+        "files": [_diff_for(path, original[path], working[path]) for path in touched] + docx_cards,
     }

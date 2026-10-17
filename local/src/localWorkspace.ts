@@ -1,7 +1,7 @@
 // Browser side of "connect a local folder": the user picks a folder (File System Access API,
 // Chromium desktop only), this module walks it, and uploads its text files to the server as a
 // snapshot that Sonic reads instead of GitHub's copy. Read-only by design — the picker is opened in
-// 'read' mode, so nothing here can write to the user's disk.
+// 'read' mode, so nothing here can write to the user's disk (writing happens only when the user applies a proposal: see localEdits.ts).
 //
 // The browser is the bridge: no helper to install, and the browser itself confines this tab to the
 // one folder the user chose.
@@ -16,7 +16,7 @@ interface FsEntryBase {
   name: string;
 }
 export interface FsWritable {
-  write(data: string): Promise<void>;
+  write(data: string | ArrayBuffer): Promise<void>;
   close(): Promise<void>;
 }
 export interface FsFileHandle extends FsEntryBase {
@@ -40,6 +40,7 @@ type DirectoryPickerWindow = Window & {
 // These limits mirror backend/services/local_workspace.py, which enforces them again server-side —
 // the client filters first so it never even reads, let alone uploads, a file the server would refuse.
 const MAX_FILE_BYTES = 500_000;
+const MAX_DOCX_BYTES = 3_000_000;   // a Word document is sent so the server can make a text outline of it (and keep only that)
 const MAX_TOTAL_BYTES = 60_000_000;
 const MAX_FILES = 8000;
 const BATCH_MAX_BYTES = 2_500_000;
@@ -55,6 +56,8 @@ const SKIP_DIRS = new Set([
 const TEXT_EXTENSIONS = new Set([
   'py', 'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'json', 'md', 'mdx', 'css', 'scss', 'html', 'htm',
   'toml', 'yaml', 'yml', 'txt', 'sh', 'ps1', 'bat', 'sql', 'ini', 'cfg', 'conf', 'xml', 'graphql',
+  // plain-text documents and data a person keeps in a folder (notes, exports, subtitles, calendars)
+  'csv', 'tsv', 'log', 'ics', 'tex', 'rst', 'org', 'srt', 'vtt',
 ]);
 const TEXT_FILENAMES = new Set(['dockerfile', 'makefile', 'procfile', 'license', 'readme']);
 const SKIPPED_FILENAMES = new Set(['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'poetry.lock']);
@@ -104,6 +107,8 @@ export function isSyncableFileName(name: string): boolean {
   if (isSecretName(lower) || SKIPPED_FILENAMES.has(lower) || lower.endsWith('.min.js') || lower.endsWith('.map')) {
     return false;
   }
+  if (lower.startsWith('~$')) return false; // Word's lock file for a document that is open
+  if (lower.endsWith('.docx')) return true;
   if (ENV_TEMPLATE_SUFFIXES.some(s => lower.endsWith(s))) return true;
   if (TEXT_FILENAMES.has(lower)) return true;
   const dot = lower.lastIndexOf('.');
@@ -194,7 +199,7 @@ export async function scanFolder(root: FsDirectoryHandle, prev: Map<string, stri
         skipped += 1;
         continue;
       }
-      if (file.size > MAX_FILE_BYTES) {
+      if (file.size > (entry.name.toLowerCase().endsWith('.docx') ? MAX_DOCX_BYTES : MAX_FILE_BYTES)) {
         skipped += 1;
         continue;
       }
@@ -224,6 +229,19 @@ export interface SyncOutcome {
   truncated: boolean;
 }
 
+/** A file's bytes as base64, built in slices so a large document does not overflow the argument limit. */
+export async function fileToBase64(file: Blob): Promise<string> {
+  return bytesToBase64(new Uint8Array(await file.arrayBuffer()));
+}
+
+export function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
+}
+
 /** Uploads what changed since `prev` (or everything, with reset=true, which also wipes the
  *  server's previous snapshot first) in size-bounded batches. */
 export async function syncFolder(
@@ -242,7 +260,7 @@ export async function syncFolder(
   };
   if (!reset && scan.changed.length === 0 && scan.deleted.length === 0) return outcome;
 
-  let batch: { path: string; content: string }[] = [];
+  let batch: { path: string; content?: string; content_base64?: string }[] = [];
   let batchBytes = 0;
   let firstRequest = true;
   let deletedSent = false;
@@ -265,8 +283,7 @@ export async function syncFolder(
   };
 
   for (const { path, file } of scan.changed) {
-    const content = await file.text();
-    batch.push({ path, content });
+    batch.push(path.toLowerCase().endsWith('.docx') ? { path, content_base64: await fileToBase64(file) } : { path, content: await file.text() });
     batchBytes += file.size;
     if (batchBytes >= BATCH_MAX_BYTES || batch.length >= BATCH_MAX_FILES) await flush();
   }

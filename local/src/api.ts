@@ -1234,7 +1234,7 @@ export async function getLocalWorkspaceStatus(): Promise<LocalWorkspaceStatus> {
 export async function syncLocalWorkspaceBatch(batch: {
   name: string;
   reset: boolean;
-  files: { path: string; content: string }[];
+  files: { path: string; content?: string; content_base64?: string }[];
   deleted: string[];
 }): Promise<LocalWorkspaceSyncResult> {
   const authHeaders = await getAuthHeaders();
@@ -1247,6 +1247,50 @@ export async function syncLocalWorkspaceBatch(batch: {
     throw new Error(res.status === 403 ? "Sign in to connect a local folder." : "Failed to sync the folder.");
   }
   return res.json();
+}
+
+/**
+ * The real .docx for a Word document Sonic proposed. Asked for only when the person presses Apply; the browser then writes the bytes into their folder.
+ * Throws an Error with the server's plain reason when the description is not valid.
+ */
+export async function renderLocalDocx(document: { title: string; blocks: unknown[] }): Promise<ArrayBuffer> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/local-edits/render-docx`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ document })
+  });
+  if (!res.ok) {
+    let reason = "The Word document could not be built.";
+    try {
+      const body = await res.json();
+      if (typeof body?.detail === "string") reason = body.detail;
+    } catch { /* keep the generic message */ }
+    throw new Error(reason);
+  }
+  return res.arrayBuffer();
+}
+
+/**
+ * An edited COPY of a Word document: the document's current bytes (base64) and the edits Sonic proposed go to the server, which edits, checks that nothing but the
+ * named paragraphs changed, and returns the copy's bytes. Throws an Error with the server's plain reason when it can't.
+ */
+export async function editLocalDocx(docxBase64: string, wordEdits: unknown[]): Promise<ArrayBuffer> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/local-edits/edit-docx`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ docx_base64: docxBase64, word_edits: wordEdits })
+  });
+  if (!res.ok) {
+    let reason = "The document could not be edited.";
+    try {
+      const body = await res.json();
+      if (typeof body?.detail === "string") reason = body.detail;
+    } catch { /* keep the generic message */ }
+    throw new Error(reason);
+  }
+  return res.arrayBuffer();
 }
 
 export async function disconnectLocalWorkspace(): Promise<void> {

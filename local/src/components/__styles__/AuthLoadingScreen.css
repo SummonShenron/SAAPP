@@ -10,7 +10,7 @@
   min-height: 60vh;
   padding: 2rem 16px;
   text-align: center;
-  color: var(--text-main, #1f2937);
+  color: var(--text-main);
 }
 
 .auth-loading-title {
@@ -24,7 +24,7 @@
   max-width: 28rem;
   font-size: 0.9rem;
   line-height: 1.45;
-  color: var(--text-muted, #64748b);
+  color: var(--text-muted);
 }
 
 .auth-loading-actions {
@@ -39,8 +39,8 @@
   padding: 0.5rem 1.1rem;
   min-height: 44px; /* a comfortable tap target on a phone */
   border-radius: 8px;
-  border: 1px solid var(--accent-primary, #2563eb);
-  background: var(--accent-primary, #2563eb);
+  border: 1px solid var(--accent-primary);
+  background: var(--accent-primary);
   color: #ffffff;
   font-size: 0.9rem;
   font-weight: 600;

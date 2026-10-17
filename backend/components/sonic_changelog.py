@@ -438,11 +438,11 @@ CHANGELOG = [
         "month": "2026-10",
         "title": "Connecting a local folder",
         "line": (
-            "You can connect a folder from your computer so I can read it, and when I propose changes to its files you see "
-            "a diff with an Apply button and can undo it."
+            "You can connect a folder so I can read it, and I show a diff with Apply and undo before changing its files. "
+            "I can write a new Word document or an edited copy of one, once you approve a preview; your original is never changed."
         ),
-        "keywords": ["local folder", "folder", "local files", "edit files", "apply", "undo", "my computer"],
-        "volunteer": ["my local files", "my folder", "on my machine"],
+        "keywords": ["local folder", "folder", "local files", "edit files", "apply", "undo", "my computer", "word document", "docx", "resume", "letter"],
+        "volunteer": ["my local files", "my folder", "on my machine", "make me a word document", "write a resume"],
     },
     {
         "id": "own_github_token",

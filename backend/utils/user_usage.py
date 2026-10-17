@@ -2,7 +2,7 @@
 
 llm_usage.py (the usage meter) deliberately keeps no user: it says what the calls cost, not who made them. A per-user limit cannot be
 judged without one, so this is a SEPARATE, small store, so the privacy line stays where it was and is easy to see: one row per person and
-UTC minute holding only counts (tokens, calls, turns), never a prompt, a reply or any text. It is written from the end of a chat turn
+UTC minute holding only counts (tokens, calls, turns, dollars), never a prompt, a reply or any text. It is written from the end of a chat turn
 (llm_turns.finish), in memory first and in batches with the other meters (llm_usage.flush), and every failure here is swallowed: counting
 must never cost a reply.
 """
@@ -14,7 +14,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 logger = logging.getLogger("SASS Logger")
 
 COLLECTION = "llm_usage_user_minutely"
-FIELDS = ("tokens", "calls", "turns")
+FIELDS = ("tokens", "calls", "turns", "cost_micro")   # cost_micro: what the person's priced calls cost, in millionths of a dollar
 MAX_USER_LENGTH = 200
 
 _lock = threading.Lock()
@@ -36,18 +36,19 @@ def minute_key(now: Optional[datetime] = None) -> str:
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M")
 
 
-def add(user: Optional[str], tokens: int, calls: int = 0, now: Optional[datetime] = None) -> None:
+def add(user: Optional[str], tokens: int, calls: int = 0, now: Optional[datetime] = None, cost_micro: int = 0) -> None:
     """Counts one finished turn for a person. A turn with no one attached (or nothing used) is not counted. Never raises."""
     try:
         name = str(user or "").strip()[:MAX_USER_LENGTH]
         used = _count(tokens)
-        if not name or not (used or calls):
+        if not name or not (used or calls or cost_micro):
             return
         with _lock:
             slot = _pending.setdefault((name, minute_key(now)), {field: 0 for field in FIELDS})
             slot["tokens"] += used
             slot["calls"] += _count(calls)
             slot["turns"] += 1
+            slot["cost_micro"] += _count(cost_micro)
     except Exception:
         pass
 
@@ -105,6 +106,11 @@ def fetch(db: Any, user: str, since_minute: str) -> List[Dict[str, Any]]:
 def tokens_since(rows: Iterable[Dict[str, Any]], since_minute: str) -> int:
     """Tokens in `rows` (saved or still in memory) from `since_minute` on. Pure."""
     return sum(_count(row.get("tokens")) for row in rows if str(row.get("minute") or "") >= since_minute)
+
+
+def cost_since(rows: Iterable[Dict[str, Any]], since_minute: str) -> float:
+    """Dollars in `rows` (saved or still in memory) from `since_minute` on. Pure. Rows saved before dollars were counted have none."""
+    return sum(_count(row.get("cost_micro")) for row in rows if str(row.get("minute") or "") >= since_minute) / 1_000_000
 
 
 def unsaved_rows(user: str) -> List[Dict[str, Any]]:

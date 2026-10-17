@@ -20,17 +20,21 @@ Several can be set at once; the one that is furthest along decides. Spend is jud
     blocked    125% and over  no model calls for chat at all, until the day or month turns: a plain reply says so. The one exception
                               is a person who has signalled risk: they still get the human support line, in code, no model needed.
 
-Tune with LLM_BUDGET_NOTICE_AT (0.8) and LLM_BUDGET_BLOCK_AT (1.25).
+Tune with LLM_BUDGET_NOTICE_AT (0.8), LLM_BUDGET_THROTTLE_AT (1.0) and LLM_BUDGET_BLOCK_AT (1.25). For a budget that is a HARD CAP (the day's total may not
+pass it), set LLM_BUDGET_BLOCK_AT=1 and keep a low-power step before it with LLM_BUDGET_THROTTLE_AT=0.8. For example, $5 a day:
+LLM_BUDGET_DAILY_USD=5, LLM_BUDGET_NOTICE_AT=0.6, LLM_BUDGET_THROTTLE_AT=0.8, LLM_BUDGET_BLOCK_AT=1.
 
 A FIVE-HOUR WINDOW can be set the same way, in the same units (LLM_BUDGET_5H_USD / LLM_BUDGET_5H_TOKENS). It is a session, not a rolling count: the
 first use starts a window that lasts exactly five hours, whatever happens in it, and when it ends usage counts from zero again. The next window
 starts at the next use after that. So someone who maxes it out three minutes before it ends can use Sonic again in three minutes. It catches a burst
 the daily budget would only notice much later. When it blocks, the message gives the exact time the window ends.
 
-PER-PERSON LIMITS: LLM_USER_BUDGET_5H_TOKENS and LLM_USER_BUDGET_DAILY_TOKENS limit what any one signed-in person may use, in tokens (a
-person's spend is counted from their finished turns, backend/utils/user_usage.py, which has no per-model prices). The same steps apply, but
-only to that person: over 100% they get low-power mode, over the block line they are paused until their window moves on, and nobody else is
-affected. Global admins are exempt (they are the ones who manage the budget). Off until set.
+PER-PERSON LIMITS: LLM_USER_BUDGET_DAILY_USD and LLM_USER_BUDGET_5H_USD (or the _TOKENS forms) limit what any one signed-in person may use. A
+person's spend is counted from their finished turns (backend/utils/user_usage.py: tokens, and dollars priced per call from LLM_PRICES; a model with no
+price adds tokens but no dollars). The same steps apply, but only to that person: over the throttle line they get low-power mode, over the block line
+they are paused until their day or window moves on, and nobody else is affected. EVERYONE meets these, admins included, so that an admin's testing
+cannot use up the shared budget other people's meters are drawn from; set LLM_USER_BUDGET_EXEMPT_ADMINS=true to let admins off. Off until set.
+Evals are not part of any of this: they are counted on the usage page but never against a budget (llm_usage.mark_as_eval).
 
 EXTENDING A BLOCK: when the global budget has blocked chat, a global admin can grant +25% (EXTENSION_STEP) once per click, as many times as
 they like. A grant raises the block line of the scope that is blocking, from 125% to 150%, then 175% and so on, and ends when that scope
@@ -84,17 +88,21 @@ _BUDGET_ENV = {
     "five_usd": "LLM_BUDGET_5H_USD",
     "five_tokens": "LLM_BUDGET_5H_TOKENS",
 }
-# Per-person limits, in tokens (see the module docstring). Their scopes start with "my_".
+# Per-person limits, in tokens or dollars (see the module docstring). Their scopes start with "my_".
 _USER_BUDGET_ENV = {
     "my_day_tokens": "LLM_USER_BUDGET_DAILY_TOKENS",
     "my_five_tokens": "LLM_USER_BUDGET_5H_TOKENS",
+    "my_day_usd": "LLM_USER_BUDGET_DAILY_USD",
+    "my_five_usd": "LLM_USER_BUDGET_5H_USD",
 }
 # A budget key's (scope, unit). "five" is the five-hour window that starts at the first use; "my_" scopes are one person's own share.
 _KEYS = {
     "day_usd": ("day", "usd"), "month_usd": ("month", "usd"), "day_tokens": ("day", "tokens"), "month_tokens": ("month", "tokens"),
     "five_usd": ("five", "usd"), "five_tokens": ("five", "tokens"),
     "my_day_tokens": ("my_day", "tokens"), "my_five_tokens": ("my_five", "tokens"),
+    "my_day_usd": ("my_day", "usd"), "my_five_usd": ("my_five", "usd"),
 }
+MY_FIVE_KEYS = ("my_five_tokens", "my_five_usd")
 GLOBAL_SCOPES = ("day", "month", "five")
 FIVE_HOURS = 5
 WINDOW = timedelta(hours=FIVE_HOURS)
@@ -130,7 +138,7 @@ def budgets() -> Dict[str, float]:
 
 
 def user_budgets() -> Dict[str, float]:
-    """The per-person limits that are set ("my_day_tokens", "my_five_tokens"). Empty means there are none."""
+    """The per-person limits that are set ("my_day_tokens", "my_five_tokens", "my_day_usd", "my_five_usd"). Empty means there are none."""
     found = {key: _positive(env) for key, env in _USER_BUDGET_ENV.items()}
     return {key: value for key, value in found.items() if value is not None}
 
@@ -150,11 +158,25 @@ def month_already_spent(now: datetime) -> float:
 
 
 def thresholds() -> Tuple[float, float]:
-    """(notice_at, block_at) as fractions of a budget, kept in a sane order whatever was typed."""
+    """(notice_at, block_at) as fractions of a budget, kept in a sane order whatever was typed. The block line may be as low as 1.0: a budget that is
+    a hard cap, not a soft one (set LLM_BUDGET_BLOCK_AT=1 and, to keep a low-power step before it, LLM_BUDGET_THROTTLE_AT=0.8)."""
     notice = _positive("LLM_BUDGET_NOTICE_AT") or 0.8
     block = _positive("LLM_BUDGET_BLOCK_AT") or 1.25
-    notice = min(notice, 0.99)
-    return notice, max(block, 1.01)
+    return min(notice, 0.99), max(block, 1.0)
+
+
+def throttle_at() -> float:
+    """The fraction of a budget at which low-power mode starts (default 1.0, as it always was), never above the block line."""
+    notice, block = thresholds()
+    return min(_positive("LLM_BUDGET_THROTTLE_AT") or 1.0, block)
+
+
+def limit_username(username: Optional[str], is_admin: bool) -> Optional[str]:
+    """Who the per-person limits are judged for: the person, admins included, so an admin's own testing cannot use up the shared budget that
+    everyone else's meter is drawn from. An admin is let off only when LLM_USER_BUDGET_EXEMPT_ADMINS is set to true."""
+    if is_admin and os.getenv("LLM_USER_BUDGET_EXEMPT_ADMINS", "").strip().lower() in ("1", "true", "yes"):
+        return None
+    return username
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -320,6 +342,8 @@ def person_totals(rows: List[Dict[str, Any]], now: datetime, anchor: Optional[da
     return {
         "my_five_tokens": user_usage.tokens_since(rows, llm_usage.minute_key(window[0])) if window else 0,
         "my_day_tokens": user_usage.tokens_since(rows, _billing_day_start_minute(now)),
+        "my_five_usd": user_usage.cost_since(rows, llm_usage.minute_key(window[0])) if window else 0.0,
+        "my_day_usd": user_usage.cost_since(rows, _billing_day_start_minute(now)),
         "my_five_start": window[0] if window else None,
         "my_five_reset": window[1] if window else now + WINDOW,
     }
@@ -345,6 +369,8 @@ def evaluate(totals: Dict[str, Any], limits: Dict[str, float], now: datetime, ex
     """The guard's state from what has been spent and the limits that are set. Pure. `extensions` is {scope: extra fraction} an admin has
     granted: it raises only that global scope's block line (the throttle line stays at 100%)."""
     notice_at, block_at = thresholds()
+    throttle = throttle_at()
+    notice_at = min(notice_at, max(throttle - 0.01, 0.01))
     extensions = extensions or {}
     detail: List[Dict[str, Any]] = []
     levels: List[str] = []
@@ -353,7 +379,7 @@ def evaluate(totals: Dict[str, Any], limits: Dict[str, float], now: datetime, ex
         used = float(totals.get(key, 0) or 0)
         fraction = round(used / limit, 4)
         line = block_at + (float(extensions.get(scope, 0) or 0) if scope in GLOBAL_SCOPES else 0.0)
-        levels.append(BLOCKED if fraction >= line else THROTTLED if fraction >= 1.0 else NOTICE if fraction >= notice_at else OK)
+        levels.append(BLOCKED if fraction >= line else THROTTLED if fraction >= throttle else NOTICE if fraction >= notice_at else OK)
         detail.append({"scope": scope, "unit": unit, "spent": round(used, 4), "limit": limit, "fraction": fraction})
     if not detail:
         return {"level": OFF, "detail": [], "paused": []}
@@ -380,7 +406,7 @@ def evaluate(totals: Dict[str, Any], limits: Dict[str, float], now: datetime, ex
 def current_state(db: Any = None, now: Optional[datetime] = None, username: Optional[str] = None) -> Dict[str, Any]:
     """The guard's state right now. Blocking (a database read when the cache is stale): call it off the event loop. It never
     raises: if the usage can't be read, the guard is off for this call, so cost control can't take chat down. `username` adds that person's
-    own limits (user_budgets) to the global ones; leave it out for an admin, who is exempt, and for anything that is not a person's turn."""
+    own limits (user_budgets) to the global ones; leave it out for anything that is not a person's turn (use limit_username to decide for an admin)."""
     limits = budgets()
     own = user_budgets() if username else {}
     if not limits and not own:
@@ -413,10 +439,10 @@ def current_state(db: Any = None, now: Optional[datetime] = None, username: Opti
             from backend.utils import user_usage
 
             who = str(username)
-            my_anchor = _read_anchor(db, "my_five", moment, who) if "my_five_tokens" in own else None
+            my_anchor = _read_anchor(db, "my_five", moment, who) if any(key in own for key in MY_FIVE_KEYS) else None
             mine = user_usage.fetch(db, who, person_fetch_since(moment, my_anchor)) + user_usage.unsaved_rows(who)
             totals.update(person_totals(mine, moment, my_anchor))
-            if "my_five_tokens" in own and totals["my_five_start"] is not None and totals["my_five_start"] != my_anchor:
+            if any(key in own for key in MY_FIVE_KEYS) and totals["my_five_start"] is not None and totals["my_five_start"] != my_anchor:
                 _save_anchor(db, "my_five", totals["my_five_start"], who)
         return evaluate(totals, {**limits, **own}, moment, extensions)
     except Exception:

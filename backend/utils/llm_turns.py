@@ -67,6 +67,7 @@ class Turn:
         self.input = 0
         self.output = 0
         self.reasoning = 0
+        self.cost_micro = 0  # what the turn's priced calls cost, in millionths of a dollar (a model with no price in LLM_PRICES adds nothing)
         self.tool_agent = False
         self.engine: Optional[str] = None
         self.deep_source: Optional[str] = None  # "setting", "audit" or "both" when deep mode ran
@@ -107,13 +108,21 @@ def current() -> Optional[Turn]:
         return None
 
 
-def note_call(usage: Dict[str, int]) -> None:
-    """Adds one model call (as llm_usage records it) to the turn running in this context, if any. Never raises."""
+def note_call(usage: Dict[str, int], model: Optional[str] = None) -> None:
+    """Adds one model call (as llm_usage records it) to the turn running in this context, if any. `model` lets its price be added to the turn's
+    dollars (what a per-person dollar limit is judged against). Never raises."""
     try:
         turn = _current.get()
         if turn is None or turn.done:
             return
+        cost_micro = 0
+        if model:
+            from backend.utils import llm_usage
+
+            dollars = llm_usage.estimate_cost(str(model), {k: _count(usage.get(k)) for k in ("input", "output", "cached")}, llm_usage.cached_prices())
+            cost_micro = int(round((dollars or 0.0) * 1_000_000))
         with turn._lock:
+            turn.cost_micro += cost_micro
             turn.calls += 1
             turn.input += _count(usage.get("input"))
             turn.output += _count(usage.get("output"))
@@ -221,7 +230,7 @@ def finish(turn: Optional[Turn], outcome: str = "ok", day: Optional[str] = None)
         if turn.user and outcome != "blocked":
             from backend.utils import user_usage
 
-            user_usage.add(turn.user, turn.input + turn.output, turn.calls)
+            user_usage.add(turn.user, turn.input + turn.output, turn.calls, cost_micro=turn.cost_micro)
         with _lock:
             slot = _pending.setdefault(key, {field: 0 for field in FIELDS})
             if outcome == "blocked":

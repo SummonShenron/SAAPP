@@ -4,8 +4,9 @@
 // original contents of every touched file are saved before anything is written so one click can
 // put it all back.
 import { keyValueStore } from './idb';
-import { hasPermission, type FsDirectoryHandle } from './localWorkspace';
-import { planEdits, type EditProposal, type FileChange } from './localEditsCore';
+import { editLocalDocx, renderLocalDocx } from './api';
+import { bytesToBase64, hasPermission, type FsDirectoryHandle } from './localWorkspace';
+import { changesMovedSince, forUndo, planEdits, type EditProposal, type FileChange } from './localEditsCore';
 
 export interface UndoBatch {
   id: string; // the proposal id
@@ -39,6 +40,19 @@ async function resolveDirectory(root: FsDirectoryHandle, segments: string[], cre
   return dir;
 }
 
+/** The file's bytes, or null if it (or a directory on the way to it) doesn't exist. */
+export async function readFileBytes(root: FsDirectoryHandle, path: string): Promise<Uint8Array | null> {
+  const segments = path.split('/');
+  const name = segments.pop() as string;
+  try {
+    const dir = await resolveDirectory(root, segments, false);
+    return new Uint8Array(await (await (await dir.getFileHandle(name)).getFile()).arrayBuffer());
+  } catch (error) {
+    if (error instanceof DOMException && (error.name === 'NotFoundError' || error.name === 'TypeMismatchError')) return null;
+    throw error;
+  }
+}
+
 /** The file's text, or null if it (or a directory on the way to it) doesn't exist. */
 export async function readFileText(root: FsDirectoryHandle, path: string): Promise<string | null> {
   const segments = path.split('/');
@@ -61,6 +75,29 @@ async function writeFileText(root: FsDirectoryHandle, path: string, text: string
   const writable = await (await dir.getFileHandle(name, { create: true })).createWritable();
   await writable.write(text);
   await writable.close();
+}
+
+async function writeFileBytes(root: FsDirectoryHandle, path: string, bytes: ArrayBuffer): Promise<void> {
+  const segments = path.split('/');
+  const name = segments.pop() as string;
+  const dir = await resolveDirectory(root, segments, true);
+  const writable = await (await dir.getFileHandle(name, { create: true })).createWritable();
+  await writable.write(bytes);
+  await writable.close();
+}
+
+/** "size:lastModified" of the file, or null when it does not exist. */
+export async function fileStamp(root: FsDirectoryHandle, path: string): Promise<string | null> {
+  const segments = path.split('/');
+  const name = segments.pop() as string;
+  try {
+    const dir = await resolveDirectory(root, segments, false);
+    const file = await (await dir.getFileHandle(name)).getFile();
+    return `${file.size}:${file.lastModified}`;
+  } catch (error) {
+    if (error instanceof DOMException && (error.name === 'NotFoundError' || error.name === 'TypeMismatchError')) return null;
+    throw error;
+  }
 }
 
 async function removeFile(root: FsDirectoryHandle, path: string): Promise<void> {
@@ -100,11 +137,38 @@ export async function applyProposal(root: FsDirectoryHandle, proposal: EditPropo
     };
   }
 
+  // A new Word document is built by the server from Sonic's description, here and now, before anything is written, so a failure
+  // to build one leaves the folder exactly as it was (the same all-or-nothing rule as the text edits).
+  const documentBytes = new Map<string, ArrayBuffer>();
+  for (const change of plan.changes) {
+    try {
+      if (change.document) {
+        documentBytes.set(change.path, await renderLocalDocx(change.document));
+      } else if (change.docxEdit) {
+        // An edited copy: the original's CURRENT bytes (read here, never written) go to the server with the edits; what comes back has been checked to differ
+        // from the original only where the edits say, and is saved under the new name.
+        const original = await readFileBytes(root, change.docxEdit.source);
+        if (!original) return { ok: false, errors: [`${change.docxEdit.source} is no longer in the folder, so nothing was changed.`] };
+        documentBytes.set(change.path, await editLocalDocx(bytesToBase64(original), change.docxEdit.word_edits));
+      }
+    } catch (error) {
+      return { ok: false, errors: [`Couldn't make ${change.path}: ${error instanceof Error ? error.message : String(error)} Nothing was changed.`] };
+    }
+  }
+
   const written: FileChange[] = [];
   try {
     for (const change of plan.changes) {
-      await writeFileText(root, change.path, change.after);
-      written.push(change);
+      const bytes = documentBytes.get(change.path);
+      if (bytes) {
+        await writeFileBytes(root, change.path, bytes);
+        const entry: FileChange = { ...change };
+        written.push(entry);                       // recorded before anything else can fail, so a rollback removes this file too
+        entry.stamp = (await fileStamp(root, change.path)) ?? undefined;
+      } else {
+        await writeFileText(root, change.path, change.after);
+        written.push(change);
+      }
     }
   } catch (error) {
     // All-or-nothing: put back whatever was already written before reporting the failure.
@@ -123,7 +187,7 @@ export async function applyProposal(root: FsDirectoryHandle, proposal: EditPropo
     folder: proposal.folder,
     summary: proposal.summary,
     appliedAt: Date.now(),
-    files: plan.changes,
+    files: written.map(forUndo),
   });
   return { ok: true, filesChanged: plan.changes.length };
 }
@@ -143,10 +207,7 @@ export async function undoBatch(root: FsDirectoryHandle, batchId: string): Promi
   }
 
   try {
-    const moved = [];
-    for (const change of batch.files) {
-      if ((await readFileText(root, change.path)) !== change.after) moved.push(change.path);
-    }
+    const moved = await changesMovedSince(batch.files, path => readFileText(root, path), path => fileStamp(root, path));
     if (moved.length > 0) {
       return {
         ok: false,

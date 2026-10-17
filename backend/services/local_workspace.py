@@ -12,6 +12,7 @@ it manages real lifecycle state on disk (per-user directories with a TTL).
 
 Every public function is sync and blocking; async callers run them via asyncio.to_thread.
 """
+import base64
 import fnmatch
 import hashlib
 import json
@@ -25,6 +26,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from backend.services.repo_checkout import CheckoutHandle
+from backend.utils import docx_edit
 
 logger = logging.getLogger("SASS Logger")
 
@@ -133,6 +135,20 @@ def _write_manifest(username: str, manifest: Dict[str, Any]) -> None:
     _manifest_path(username).write_text(json.dumps(manifest), encoding="utf-8")
 
 
+def _docx_outline(path: str, encoded: str) -> tuple:
+    """(outline text, "") for a base64 .docx, or (None, why it was not taken)."""
+    if not path.lower().endswith(".docx"):
+        return None, "only .docx files can be sent as documents"
+    try:
+        data = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError):
+        return None, "could not be read"
+    try:
+        return docx_edit.outline_text(data), ""
+    except docx_edit.DocxEditError as error:
+        return None, str(error)[:120]
+
+
 def clear_workspace(username: str) -> None:
     with _lock:
         shutil.rmtree(_workspace_dir(username), ignore_errors=True)
@@ -189,6 +205,13 @@ def apply_sync(
             if path is None:
                 _reject(raw_path, "unsafe path")
                 continue
+            encoded = entry.get("content_base64") if isinstance(entry, dict) else None
+            if isinstance(encoded, str) and content is None:
+                # A Word document: only a numbered text outline of it is kept (so Sonic can read it and propose edits), never the file itself.
+                content, problem = _docx_outline(path, encoded)
+                if content is None:
+                    _reject(path, problem)
+                    continue
             if not isinstance(content, str):
                 _reject(path, "content is not text")
                 continue

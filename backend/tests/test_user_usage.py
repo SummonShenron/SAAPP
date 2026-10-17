@@ -49,7 +49,7 @@ def _clean():
 def test_a_turn_is_counted_for_the_person_by_the_minute_it_ended_in():
     uu.add("jack", 900, 3, now=NOW)
     uu.add("jack", 100, 1, now=NOW)
-    assert uu.snapshot() == {("jack", "2026-10-10T15:30"): {"tokens": 1_000, "calls": 4, "turns": 2}}
+    assert uu.snapshot() == {("jack", "2026-10-10T15:30"): {"tokens": 1_000, "calls": 4, "turns": 2, "cost_micro": 0}}
 
 
 def test_nobody_and_nothing_are_not_counted():
@@ -66,7 +66,7 @@ def test_what_is_saved_is_only_counts_keyed_by_person_and_minute():
     assert uu.flush(db) == 1 and uu.snapshot() == {}
     uu.add("jack", 100, 1, now=NOW)
     uu.flush(db)
-    assert db.col.rows == [{"user": "jack", "minute": "2026-10-10T15:30", "tokens": 1_000, "calls": 4, "turns": 2}]
+    assert db.col.rows == [{"user": "jack", "minute": "2026-10-10T15:30", "tokens": 1_000, "calls": 4, "turns": 2, "cost_micro": 0}]
     assert uu.flush(db) == 0  # nothing new, nothing written
 
 

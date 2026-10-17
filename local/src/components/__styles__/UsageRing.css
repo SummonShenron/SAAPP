@@ -11,7 +11,7 @@
 }
 
 .usage-ring-track {
-  stroke: rgba(100, 116, 139, 0.3);
+  stroke: color-mix(in srgb, var(--text-muted) 30%, transparent);
 }
 
 /* It fills smoothly when usage grows. */
@@ -20,7 +20,7 @@
 }
 
 .usage-ring:focus-visible .usage-ring-track {
-  stroke: rgba(100, 116, 139, 0.6);
+  stroke: color-mix(in srgb, var(--text-muted) 60%, transparent);
 }
 
 /* The words, shown above the ring on hover, keyboard focus or a tap. Anchored to the ring's right edge so it grows leftward, away from the
@@ -31,9 +31,9 @@
   bottom: calc(100% + 8px);
   padding: 0.3rem 0.6rem;
   border-radius: 8px;
-  background: #0f172a;
-  color: #f8fafc;
-  border: 1px solid #334155;
+  background: var(--input-bg);
+  color: var(--text);
+  border: 1px solid var(--border-color);
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
   font-size: 0.74rem;
   font-weight: 600;
