@@ -67,6 +67,46 @@
   font-weight: 600;
 }
 
+.help-nav-group {
+  margin: 12px 0 2px;
+  padding: 0 12px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.help-nav-group:first-child {
+  margin-top: 0;
+}
+
+.help-nav-more {
+  margin-top: 12px;
+  color: var(--text-muted);
+}
+
+/* A button inside the words that takes you to a page ("Open Tidy up"). */
+.help-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent-primary);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.theme-shadow .help-link {
+  color: var(--text-main);
+}
+
+.help-link:focus-visible,
+.help-nav-item:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
 .help-content {
   flex: 1;
   min-width: 0;
@@ -210,5 +250,14 @@
   .help-nav-item {
     flex-shrink: 0;
     white-space: nowrap;
+  }
+
+  /* On a phone the list is one scrolling row, so the group headings stay out of the way. */
+  .help-nav-group {
+    display: none;
+  }
+
+  .help-nav-more {
+    margin-top: 0;
   }
 }

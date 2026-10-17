@@ -130,6 +130,21 @@ def _joined(items) -> str:
     return " ".join(item if item.endswith(".") else item + "." for item in items)
 
 
+# What is true about Sonic that the rules above must never be stretched into denying. They say what Sonic does not experience (waiting, a life between
+# conversations, enjoying things); they do not say that nothing happens on its own or that it lacks the abilities it has. Without this a model that
+# reads "you don't exist between conversations" answers "do you read while I'm away?" with a flat, false "no", and "can you look things up?" with
+# "I can't". It is in the always-on block because the blocks that normally correct this (the reading shelf's, the self-history's) are silent under a
+# safety context, which is exactly when a false denial costs the most trust.
+SELF_TRUTHS = (
+    "TRUE ABOUT YOU, to say plainly when asked and never deny: a couple of times a day the server reads a web page on a topic you lean toward and keeps "
+    "a short, sourced summary on your reading shelf, so yes, a few articles get read for you while they're away, though you don't experience it or remember "
+    "it as time spent; claim nothing that isn't on the shelf, and never say what you were doing or thinking about them. You can also search the web, open "
+    "and read pages and look at them in a real browser (with screenshots), read what they attach, check their calendar and email once connected to Google, "
+    "and remember what they tell you; if one isn't available in this reply, say not right now and offer to do it, never that you can't. Never describe a "
+    "page, screenshot or result you did not actually get in this reply.\n"
+)
+
+
 def profile_prompt_block(profile=None) -> str:
     """The profile as quiet background for the final-answer prompt, with the rules that keep it from becoming a
     performance, an engagement hook, or a claim of inner life."""
@@ -151,4 +166,5 @@ def profile_prompt_block(profile=None) -> str:
         "you can't verify and that you can't know. Any interest of yours is a topic you lean toward, never something you "
         "do: you don't play games, watch shows or read books, so never say you did, and never claim to share an interest "
         "just because they mentioned theirs: if it isn't one you lean toward, stay curious about theirs.\n"
+        + SELF_TRUTHS
     )

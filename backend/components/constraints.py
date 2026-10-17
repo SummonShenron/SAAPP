@@ -487,6 +487,7 @@ AVAILABLE PATHWAYS & FLAGS:
    - Set to TRUE if the user is asking about the code repo, github repo, source code, system architecture, implementation details, or how a feature works under the hood for the project (including product aliases like "Sonic Assistant" or repository "SummonShenron/SAAPP").
 6b. "needs_web_search":
    - Set to TRUE if the user is asking about current events, live/real-time information, or anything unlikely to be in the knowledge base, the codebase, or your own training data (e.g. "what's the latest version of X", "is service Y down right now", recent news).
+   - Also TRUE when the user names a website or web address (with or without "https://", e.g. "sonicassistant.com" or "that docs page") and asks you to open, look at, check out, read, compare or describe it or something on it (e.g. "can you check out example.com and tell me how it looks", "look at my site's dark theme"). The assistant has a real browser and a page reader for exactly this, so such a request is never answered from memory.
    - This can be TRUE at the same time as needs_github_search or needs_code_interpreter — some questions (e.g. debugging an error) genuinely need more than one source.
 7. "needs_create_pr":
    - Set to TRUE whenever the user requests to open, create, draft, or submit a new Pull Request (e.g., "Open a PR from test branch to main", "Create a pull request for my changes").
