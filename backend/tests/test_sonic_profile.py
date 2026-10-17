@@ -58,7 +58,7 @@ def test_the_prompt_block_carries_the_profile_and_the_rules_that_keep_it_quiet()
 def test_the_block_is_small_enough_to_ride_every_prompt():
     # About 800 tokens, most of it the guardrail wording. It was 3000 characters before SELF_TRUTHS (about 160 tokens) was added: the block must not
     # deny what Sonic really does (read on a schedule, search, read attachments), and the blocks that normally say so are silent in a safety context.
-    assert len(profile_prompt_block()) < 3800
+    assert len(profile_prompt_block()) < 3900
 
 
 def test_the_profile_commits_to_honest_pushback_once_and_never_to_unanchored_hope():
@@ -157,6 +157,7 @@ def test_the_always_on_block_names_the_browser_and_forbids_describing_what_was_n
     assert "real browser" in SELF_TRUTHS and "screenshots" in SELF_TRUTHS
     assert "Never describe a page, screenshot or result you did not actually get in this reply" in SELF_TRUTHS
     assert "offer to do it" in SELF_TRUTHS
+    assert "never say you appended, saved or sent something unless that happened in this reply" in SELF_TRUTHS     # it once said "Done. Appended" to a document it never touched
 
 
 def test_the_router_sends_a_named_website_to_the_tools_rather_than_answering_from_memory():
@@ -164,3 +165,11 @@ def test_the_router_sends_a_named_website_to_the_tools_rather_than_answering_fro
 
     assert "names a website or web address" in REASONER_PROMPT and "sonicassistant.com" in REASONER_PROMPT
     assert "never answered from memory" in REASONER_PROMPT
+
+
+def test_the_router_sends_a_request_to_write_into_their_google_doc_to_the_tool_agent_not_to_chat():
+    from backend.components.constraints import REASONER_PROMPT
+
+    # "append it to the weekly reports doc" with the summary already in the conversation used to set no tool flag at all, so it was answered from chat
+    assert "append, add, put, save or paste text into their Google Doc" in REASONER_PROMPT
+    assert 'never answered with "I can\'t edit documents"' in REASONER_PROMPT

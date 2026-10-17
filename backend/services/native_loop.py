@@ -93,7 +93,9 @@ _OLD_ENGINE_ONLY_RE = re.compile(
     r"browser|screenshots?|navigate|click|"
     r"pytest|unit\s+tests?|run\s+(?:the\s+)?(?:tests?|ci)|"
     r"(?:send|draft|write|compose|reply(?:\s+to)?|forward)\b[^.\n]{0,40}\be-?mails?|"
-    r"(?:append|add)\s+(?:this\s+)?to\s+(?:my|the)\s+doc|(?:implementation|code)\s+plan)\b",
+    # writing into a Google Doc, however it is phrased ("append it to my weekly reports google doc", "put the summary in the doc", "add that to my notes document")
+    r"(?:append|add|put|write|save|paste|insert|copy)\b[^.\n]{0,60}\b(?:google\s+docs?|docs?|documents?)|"
+    r"(?:implementation|code)\s+plan)\b",
     re.IGNORECASE,
 )
 _OLD_ENGINE_ONLY_FLAGS = ("needs_send_email",)

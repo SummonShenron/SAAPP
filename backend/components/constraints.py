@@ -507,6 +507,7 @@ AVAILABLE PATHWAYS & FLAGS:
 8f. "needs_gmail_lookup":
    - Set to TRUE whenever the user asks to check, search, read, or summarize their real Gmail inbox (e.g., "what are the job-related emails in my inbox", "check for an email from X", "summarize my unread emails").
    - Also set this TRUE for a request that ultimately ends in a write elsewhere (e.g. "check for my report email and update my document") — the task starts as a Gmail read here, the same way a database write starts from needs_code_interpreter before anything is actually written.
+   - Also set this TRUE whenever the user asks to append, add, put, save or paste text into their Google Doc or "target document" ("append it to my weekly reports doc", "put that summary in the doc", "add this to my notes document"), even when the text to add is already in the conversation and no email or file needs reading. Writing to their document is a proposal only the tool agent can make (the user then approves it), so it is never answered from chat, and never answered with "I can't edit documents".
    - Do NOT set this for needs_send_email below (composing/sending is a write, this is read-only).
 8g. "needs_drive_lookup":
    - Set to TRUE whenever the user asks to find, search, read, or summarize the contents of a file in their real Google Drive (e.g., "find my budget spreadsheet", "what's in the Q3 planning doc").

@@ -28,6 +28,10 @@ def ok(text="", flags=None, **kw):
     "run the tests for this branch",
     "write an implementation plan for this",
     "add this to my doc",
+    "summarize the attached json and append it to my weekly reports google doc please?",
+    "so now please append it to the weekly reports doc",
+    "put the summary in my google doc",
+    "save that to the notes document",
     "send an email to Dana about the invoice",
     "draft a reply email to the landlord",
 ])
@@ -36,6 +40,9 @@ def test_requests_that_need_a_tool_only_the_old_engine_has_do_not_go_native(text
 
 
 @pytest.mark.parametrize("text", [
+    "what does the doc say about retries?",
+    "explain the docstring of this function",
+    "find my budget spreadsheet in drive",
     "Search my Gmail inbox for the last two messages from Harper.jack",
     "feel free to read the last two emails from myself",
     "what's in my inbox",
