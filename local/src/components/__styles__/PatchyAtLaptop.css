@@ -1,0 +1,102 @@
+/* The landing page's Patchy (PatchyAtLaptop.tsx). It reuses the chat input Patchy's classes (MiniPatchy.css) for his colours and his typing, and only places
+   him and turns him. He is sized by --ps-h (the height of his drawing) and sits on the floor, which is the bottom edge of the panel he is in: the drawing's
+   floor is at 94 of 96 units, so he stands a hair below the edge and nothing hangs over the panels beneath. */
+.ps-root.mp-root {
+  position: absolute;
+  left: 50%;
+  right: auto;
+  bottom: calc(var(--ps-h) * -0.02);
+  height: var(--ps-h);
+  aspect-ratio: 112 / 96;
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 5;
+  --mp-accent: var(--ps-accent, #f0883e);
+}
+
+/* His own orange is on his face, hands, chest and antenna, which sit on dark. The steam and the bits of code float against the page, so they are a lighter orange. */
+/* The light on his antenna is the source of the glow around him: it is his own orange, glowing, and flickering on the same beat as the light behind him. */
+.ps-root .mp-antenna {
+  transform-box: fill-box;
+  transform-origin: center;
+  filter: drop-shadow(0 0 1.4px #f0883e) drop-shadow(0 0 3.6px rgba(240, 136, 62, 0.8));
+  animation: ld-flame 3.7s linear infinite;
+}
+.ps-root .ps-steam { stroke: var(--ps-glint, #ffe3c2); }
+.ps-root .ps-bits { fill: var(--ps-glint, #ffe3c2); }
+
+.ps-root svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+/* Hunched over: everything above the hips leans toward the laptop (to his left, our left). */
+.ps-upper { transform: rotate(-13deg); transform-origin: 58px 94px; }
+
+/* The turn: the head bows over the screen and the face slides across the shell. His near ear is drawn on the side of the head (PatchyHead, focused), so
+   the two ears that sit behind the shell are hidden. */
+.ps-head { transform: rotate(-7deg); transform-origin: 58px 64px; }
+.ps-root .mp-face { transform: translateX(-5px); }
+.ps-root .mp-shell { transform: scaleX(0.9); }
+.ps-root .mp-ear-r, .ps-root .mp-ear-l { opacity: 0; }
+
+/* Too busy to notice anyone: his eyes are flat dashes ("-_-") most of the time; every so often they turn into two little dots that sweep right to left, snap back and
+   sweep again, three times, as if he had just read three lines of code, and then go back, with his mouth falling open a little ("oooh") while he reads. (Under "reduce motion" nothing animates and he keeps the dash face.) */
+.ps-eyes-dash { animation: ps-dash 9s ease-in-out infinite; }
+.ps-mouth-flat { animation: ps-dash 9s ease-in-out infinite; }
+.ps-eyes-dots { opacity: 0; animation: ps-dots 9s ease-in-out infinite; }
+@keyframes ps-dash { 0%, 42% { opacity: 1; } 47%, 90% { opacity: 0; } 95%, 100% { opacity: 1; } }
+@keyframes ps-dots { 0%, 42% { opacity: 0; } 47%, 90% { opacity: 1; } 95%, 100% { opacity: 0; } }
+.ps-dots-run { animation: ps-run 9s ease-in-out infinite; }
+@keyframes ps-run {
+  0%, 47% { transform: translateX(3.5px); }
+  57% { transform: translateX(-3.5px); }
+  58% { transform: translateX(3.5px); }
+  68% { transform: translateX(-3.5px); }
+  69% { transform: translateX(3.5px); }
+  79%, 100% { transform: translateX(-3.5px); }
+}
+
+/* His feet tip a little now and then, like someone who is concentrating. */
+.ps-foot { transform-box: fill-box; transform-origin: 50% 100%; animation: ps-toes 3.1s ease-in-out infinite; }
+.ps-foot-far { animation-delay: -1.2s; }
+.ps-foot-front { animation-delay: -2.2s; }
+@keyframes ps-toes { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(-9deg); } }
+
+/* The laptop's light breathes a little. */
+.ps-glow { animation: ps-breathe 4.2s ease-in-out infinite; }
+@keyframes ps-breathe { 0%, 100% { opacity: 0.75; } 50% { opacity: 1; } }
+
+/* Steam from the mug. */
+.ps-steam { opacity: 0; animation: ps-steam 3.4s ease-in-out infinite; }
+.ps-steam-2 { animation-delay: 1.5s; }
+@keyframes ps-steam {
+  0% { opacity: 0; transform: translateY(2px); }
+  35% { opacity: 0.7; }
+  100% { opacity: 0; transform: translateY(-4px); }
+}
+
+/* Bits of code float up off the laptop and fade, a few at a time. */
+.ps-bit { opacity: 0; animation: ps-bit 3.6s ease-in infinite; }
+.ps-bit-2 { animation-delay: 0.9s; animation-duration: 4.1s; }
+.ps-bit-3 { animation-delay: 1.8s; animation-duration: 3.3s; }
+.ps-bit-4 { animation-delay: 2.5s; animation-duration: 4.4s; }
+@keyframes ps-bit {
+  0% { opacity: 0; transform: translateY(2px); }
+  15% { opacity: 0.85; }
+  100% { opacity: 0; transform: translateY(-22px) translateX(-4px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ps-bit { animation: none; opacity: 0.5; }
+  .ps-glow, .ps-steam { animation: none; }
+  .ps-steam { opacity: 0.45; }
+  .ps-root *, .ps-root { animation: none !important; }
+}
+
+/* A phone: smaller, and a little further in from the edge so his mug is not cut off. */
+@media (max-width: 768px) {
+  .ps-root.mp-root { --mp-leg: 1.6s; }
+}

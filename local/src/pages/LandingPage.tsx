@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useSignIn, useAuth, useClerk } from '@clerk/clerk-react';
 import { useNavigate } from 'react-router-dom';
 import LogoMark from '../components/LogoMark';
+import PatchyAtLaptop from '../components/PatchyAtLaptop';
 import { getMe, logLogin } from '../api';
 import Spinner from '../components/Spinner';
 
@@ -85,6 +86,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
 
   return (
     <div className="landing-page">
+      {/* Patchy at his laptop, sitting on the bottom edge of this panel with his legs over the panels below */}
+      <div className="landing-top">
+        <PatchyAtLaptop />
+      </div>
+
+      <div className="landing-row">
       <div className="landing-left">
         <div className="landing-hero-text">
           {/* The big logo lives in the right panel; on a phone that panel is hidden, so a small one sits above the name. */}
@@ -95,14 +102,15 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
           <h4>Built by Jack Harper.</h4>
         </div>
 
-        <div className="login-actions-container" style={{ margin: '3rem 0', width: '100%', maxWidth: '350px', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <div className="landing-actions-row">
+        <div className="login-actions-container" style={{ margin: '1.4rem 0', width: '100%', maxWidth: '300px', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           
           <button 
             className="enter-btn login-btn" 
             onClick={handleLogin}
             style={{
-              backgroundColor: 'var(--landing-ink)',
-              color: 'white',
+              backgroundColor: 'var(--ld-btn-bg)',
+              color: 'var(--ld-btn-ink)',
               border: 'none',
               padding: '0.85rem',
               borderRadius: '6px',
@@ -168,66 +176,56 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
           <p style={{ color: 'var(--landing-ink-soft)', fontSize: '0.8rem', textAlign: 'center', lineHeight: '1.4' }}>
             Guest mode provides interactive, safe access to sandboxed features and Jack's portfolio knowledge base.
           </p>
-
-          {showNotice && (
-            <div style={{
-              marginTop: '1rem',
-              padding: '0.9rem',
-              borderRadius: 8,
-              background: 'rgba(10, 10, 11, 0.9)',
-              border: '1px solid rgba(240, 136, 62, 0.45)',
-              color: '#f0e2d4',
-              maxWidth: 420,
-              marginLeft: 'auto',
-              marginRight: 'auto',
-              textAlign: 'left'
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
-                <div style={{ flex: 1 }}>
-                  <strong>Notice</strong>
-                  <div style={{ fontSize: '0.85rem', marginTop: 6 }}>
-                    Services may take a moment to start. First request after inactivity can be slow while the server spins up.
-                  </div>
-
-                  <details style={{ marginTop: 8, fontSize: '0.82rem', color: '#a8a29e' }}>
-                    <summary style={{ cursor: 'pointer' }}>Learn more</summary>
-                    <div style={{ marginTop: 8 }}>
-                      We run on cost‑sensitive infrastructure and use third‑party LLMs on free tiers. This can cause longer response times or temporary unavailability during peak demand. If the app appears to hang after signing in, wait 30–60 seconds and try again. You may be redirected to the chat page while the backend starts.
-                    </div>
-                  </details>
-                </div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
-                  <button
-                    onClick={() => {
-                      setShowNotice(false);
-                      localStorage.setItem('hideNotice', '1');
-                    }}
-                    aria-label="Dismiss notice"
-                    style={{
-                      background: 'transparent',
-                      border: 'none',
-                      color: '#f0e2d4',
-                      cursor: 'pointer',
-                      fontSize: '0.9rem'
-                    }}
-                  >
-                    Dismiss
-                  </button>
-
-                  {serverStarting && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <Spinner size={18} />
-                      <span style={{ fontSize: '0.82rem', color: '#a8a29e' }}>Starting server…</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
         </div>
 
-        <div style={{ marginTop: '2rem', display: 'flex', gap: '1rem', fontSize: '0.8rem' }}>
+        {showNotice && (
+          <div className="landing-notice">
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
+              <div style={{ flex: 1 }}>
+                <strong>Notice</strong>
+                <div style={{ fontSize: '0.85rem', marginTop: 6 }}>
+                  Services may take a moment to start. First request after inactivity can be slow while the server spins up.
+                </div>
+
+                <details style={{ marginTop: 8, fontSize: '0.82rem', color: '#a8a29e' }}>
+                  <summary style={{ cursor: 'pointer' }}>Learn more</summary>
+                  <div style={{ marginTop: 8 }}>
+                    We run on cost‑sensitive infrastructure and use third‑party LLMs on free tiers. This can cause longer response times or temporary unavailability during peak demand. If the app appears to hang after signing in, wait 30–60 seconds and try again. You may be redirected to the chat page while the backend starts.
+                  </div>
+                </details>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+                <button
+                  onClick={() => {
+                    setShowNotice(false);
+                    localStorage.setItem('hideNotice', '1');
+                  }}
+                  aria-label="Dismiss notice"
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#f0e2d4',
+                    cursor: 'pointer',
+                    fontSize: '0.9rem'
+                  }}
+                >
+                  Dismiss
+                </button>
+
+                {serverStarting && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Spinner size={18} />
+                    <span style={{ fontSize: '0.82rem', color: '#a8a29e' }}>Starting server…</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+        </div>
+
+        <div style={{ marginTop: '1rem', display: 'flex', gap: '1rem', fontSize: '0.8rem' }}>
           <a href="#/privacy" style={{ color: 'var(--landing-ink-soft)' }}>Privacy Policy</a>
           <a href="#/terms" style={{ color: 'var(--landing-ink-soft)' }}>Terms of Service</a>
         </div>
@@ -237,6 +235,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
       <div className="landing-right">
         <LogoMark className="landing-hero-logo" size={300} label="Sonic Graph Technologies" />
         <div className="landing-brand">Sonic Graph Technologies</div>
+      </div>
       </div>
     </div>
   );

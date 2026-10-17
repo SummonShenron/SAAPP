@@ -113,9 +113,11 @@ interface HeadProps {
   look: PatchyLook;
   energy: PatchyEnergy;
   budget: PatchyBudget;
+  /** Locked in on what he is doing and too busy to look up: no round eyes: flat dashes ("-_-") that now and then turn into two little dots that sweep right to left three times, like reading three lines of code (the landing page's Patchy; the timing is in PatchyAtLaptop.css). */
+  focused?: boolean;
 }
 
-export function PatchyHead({ mood, look, energy, budget }: HeadProps) {
+export function PatchyHead({ mood, look, energy, budget, focused = false }: HeadProps) {
   const doing: PatchyLook = mood === 'active' ? look : 'idle';
   const laughing = mood === 'laugh';
   const closedEyes = mood === 'soft' || mood === 'asleep';
@@ -137,6 +139,7 @@ export function PatchyHead({ mood, look, energy, budget }: HeadProps) {
     : energy === 'subdued' ? quad(45, 43.5, 50, 40.5, 55, 43.5)
     : energy === 'easing' ? quad(44, 41.5, 50, 44.5, 56, 41.5)
     : mood === 'done' ? quad(41, 40, 50, 48, 59, 40)
+    : focused ? flat(46.5, 43.6, 53.5)
     : doing === 'writing' ? flat(43, 43, 57)
     : quad(43, 41, 50, 46, 57, 41);
   const mouthShown = !laughing && mood !== 'soft';
@@ -168,7 +171,7 @@ export function PatchyHead({ mood, look, energy, budget }: HeadProps) {
           <rect x="33" y="25" width="34" height="24" rx="6" fill="#0C1016" stroke="#1F242D" />
 
           {/* Eyes open */}
-          <g className={fade(eyesOpen)}>
+          <g className={fade(eyesOpen && !focused)}>
             <g className="mp-eyes">
               <circle className="mp-accent" cx="42" cy="35" r="3.5" />
               <circle className="mp-accent" cx="58" cy="35" r="3.5" />
@@ -187,6 +190,24 @@ export function PatchyHead({ mood, look, energy, budget }: HeadProps) {
             </g>
           </g>
 
+          {/* Focused: dashes for eyes, swapped now and then for two dots that sweep from right to left and snap back, three times */}
+          {focused && eyesOpen && (
+            <g>
+              <g className="ps-eyes-dash mp-stroke-accent" strokeWidth="2.4" strokeLinecap="round" fill="none">
+                <path d="M38.5 38 H45.5" />
+                <path d="M54.5 38 H61.5" />
+              </g>
+              <g className="ps-eyes-dots">
+                <g className="ps-dots-run mp-accent">
+                  <circle cx="42" cy="38" r="1.9" />
+                  <circle cx="58" cy="38" r="1.9" />
+                </g>
+              </g>
+              {/* and his mouth falls open a little, "oooh", while he reads (the flat mouth below is faded out for that stretch) */}
+              <circle className="ps-eyes-dots mp-accent" cx="50" cy="43.4" r="2.3" />
+            </g>
+          )}
+
           {/* Eyes closed: asleep, or a soft nod */}
           <g className={`mp-stroke-accent ${fade(closedEyes)}`} strokeWidth="2.2" strokeLinecap="round" fill="none">
             <path d="M 38 36 Q 42 39 46 36" />
@@ -202,10 +223,22 @@ export function PatchyHead({ mood, look, energy, budget }: HeadProps) {
             <path className="mp-accent" d="M41 39 Q50 50 59 39 Z" opacity="0.9" />
           </g>
 
-          <g className={fade(mouthShown)}>
+          <g className={`${fade(mouthShown)}${focused ? ' ps-mouth-flat' : ''}`}>
             <path ref={mouthRef} className="mp-stroke-accent" d={firstMouth} strokeWidth="2" strokeLinecap="round" fill="none" />
           </g>
         </g>
+
+        {/* Focused (turned toward the screen): the near ear is seen on the side of the head, in front of the shell, and the far one is hidden */}
+        {focused && (
+          <g className="ps-ear-near" transform="translate(67.6 39.5) scale(0.7 1) translate(-67.4 -39.5)">
+            {/* the ear-cup, a disc with a recessed ring, a bright rim on its upper edge and a small light in the middle; seen at about 45 degrees, so it is squeezed
+                sideways into an oval */}
+            <circle cx="67.4" cy="39.5" r="4.5" fill="#8E95A2" stroke="#3A3F4C" strokeWidth="0.9" />
+            <circle cx="67.4" cy="39.5" r="2.8" fill="#5F6674" />
+            <circle className="mp-accent" cx="67.4" cy="39.5" r="1" opacity="0.9" />
+            <path d="M64.2 36.9 A4.1 4.1 0 0 1 69.6 36.1" stroke="#fff" strokeWidth="0.8" strokeLinecap="round" fill="none" opacity="0.4" />
+          </g>
+        )}
 
         <g className={fade(sweat)}>
           <path className="mp-sweat" d="M74 22 C72 20, 70 23, 71 25 C72 27, 74 27, 75 25 C76 23, 76 22, 74 22 Z" fill="#38C2DE" />

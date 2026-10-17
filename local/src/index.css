@@ -210,48 +210,171 @@ body, html {
 
 /* ==========================================================================
    2. LANDING PAGE STYLES (Identity Gatekeeper)
-   An orange panel that darkens to black at the seam, with the logo on the black side. The copy is black, which reads on the orange part of the panel (the
-   copy sits in its first half; the fade to black happens beyond it).
+   Three panels: a full-width top panel with Patchy at his laptop, and under it the sign-in panel and the logo panel. Every colour comes from the
+   --ld-* variables below ("firelit": a dark space with orange as the only colour, Patchy the light source), so changing the look is one block.
    ========================================================================== */
 .landing-page {
-  --landing-ink: #0a0a0b;
-  --landing-ink-soft: #3a1d0b;
-  --landing-rule: rgba(10, 10, 11, 0.3);
+  --ld-top-bg: radial-gradient(ellipse 70% 120% at 50% 100%, #24211f 0%, #151517 55%, #0d0d0f 100%);
+  --ld-top-glow: rgba(240, 136, 62, 0.5);
+  --ld-edge: rgba(240, 136, 62, 0.55);
+  --ps-accent: #f0883e;
+  --ps-glint: #f5a25f;
+  --ld-left-bg: linear-gradient(90deg, #17181b 0%, #131416 100%);
+  --landing-ink: #f1e9de;
+  --landing-ink-soft: #a89a8b;
+  --landing-rule: rgba(241, 233, 222, 0.2);
+  --ld-btn-bg: #f0883e;
+  --ld-btn-ink: #0a0a0b;
+  --ld-btn-hover: #f79a56;
+  --ld-btn-wash: rgba(241, 233, 222, 0.08);
+  --ld-right-bg: #0a0a0b;
+  --ld-brand: #cf8a5a;
+  --ld-right-glow: rgba(240, 136, 62, 0.14);
   display: flex;
-  width: 100vw;
-  height: 100vh;
+  flex-direction: column;
+  width: 100%;
+  min-height: 100vh;
+  background: var(--ld-left-bg);
+}
+
+/* The top panel. Patchy sits on its bottom edge, which is his floor (--ps-h is the height of his drawing). */
+.landing-top {
+  --ps-h: clamp(190px, 33vh, 310px);
+  position: relative;
+  flex: 0 0 auto;
+  height: calc(var(--ps-h) * 1.03);
+  width: 100%;
+  background: var(--ld-top-bg);
+  border-bottom: 1px solid var(--ld-edge);
+  z-index: 3;
+}
+.landing-top::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 34% 90% at 50% 100%, var(--ld-top-glow) 0%, transparent 70%);
+  pointer-events: none;
+}
+/* A large soft ring behind him, so the wide panel has a centre of gravity */
+.landing-top::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: calc(var(--ps-h) * 2.1);
+  height: calc(var(--ps-h) * 1.05);
+  transform: translateX(-50%);
+  border-radius: calc(var(--ps-h) * 2.1) calc(var(--ps-h) * 2.1) 0 0;
+  border: 1px solid var(--ld-edge);
+  border-bottom: none;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+/* the light he gives off: a wide warm glow on the floor behind him, and a ring that catches it */
+.landing-top::before {
+  background:
+    radial-gradient(ellipse 21% 82% at 50% 100%, rgba(240, 136, 62, 0.4) 0%, rgba(240, 136, 62, 0.12) 50%, transparent 78%);
+  animation: ld-flame 3.7s linear infinite;
+  transform-origin: 50% 100%;
+}
+.landing-top::after {
+  border-color: rgba(247, 168, 98, 0.8);
+  opacity: 1;
+  box-shadow: 0 0 14px rgba(240, 136, 62, 0.34), inset 0 0 22px rgba(240, 136, 62, 0.12);
+  -webkit-mask-image: linear-gradient(to top, #000 30%, rgba(0, 0, 0, 0.35) 100%);
+  mask-image: linear-gradient(to top, #000 30%, rgba(0, 0, 0, 0.35) 100%);
+  animation: ld-flame-ring 2.9s linear infinite;
+}
+/* A flame does not pulse evenly: uneven steps, a quick dip, a flare */
+@keyframes ld-flame {
+  0% { opacity: 0.86; transform: scale(1); }
+  7% { opacity: 0.68; transform: scale(0.97); }
+  13% { opacity: 0.96; transform: scale(1.03); }
+  21% { opacity: 0.76; transform: scale(0.98); }
+  30% { opacity: 1; transform: scale(1.05); }
+  38% { opacity: 0.8; transform: scale(0.99); }
+  47% { opacity: 0.92; transform: scale(1.02); }
+  55% { opacity: 0.7; transform: scale(0.97); }
+  63% { opacity: 0.98; transform: scale(1.04); }
+  72% { opacity: 0.8; transform: scale(1); }
+  81% { opacity: 1; transform: scale(1.05); }
+  90% { opacity: 0.74; transform: scale(0.98); }
+  100% { opacity: 0.86; transform: scale(1); }
+}
+@keyframes ld-flame-ring {
+  0% { opacity: 0.8; }
+  9% { opacity: 0.6; }
+  17% { opacity: 0.95; }
+  26% { opacity: 0.72; }
+  35% { opacity: 1; }
+  46% { opacity: 0.66; }
+  58% { opacity: 0.92; }
+  67% { opacity: 0.7; }
+  79% { opacity: 1; }
+  89% { opacity: 0.68; }
+  100% { opacity: 0.8; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .landing-top::before,
+  .landing-top::after { animation: none; }
+}
+
+.landing-row {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
 }
 
 .landing-left {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 10% 5%;
-  /* Orange across the first half, then darkening to black at the center seam */
-  background: linear-gradient(
-    90deg,
-    #e8752a 0%,
-    #ee8238 35%,
-    #e5762a 55%,
-    #a8491a 74%,
-    #4a2008 90%,
-    #0a0a0b 100%
-  );
+  padding: 2.4rem clamp(1.25rem, 3vw, 2.75rem) 1.6rem;
+  background: var(--ld-left-bg);
   border-right: none;
   z-index: 2;
 }
 
+/* An exactly even split on a desktop, whatever each side's padding (a phone stacks them instead) */
+@media (min-width: 769px) {
+  .landing-left, .landing-right { box-sizing: border-box; flex: 0 0 50%; width: 50%; }
+}
+
+/* The sign-in buttons and, to their right, the notice (it wraps under them when the panel is too narrow, and on a phone) */
+.landing-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  column-gap: 1.25rem;
+  width: 100%;
+}
+.landing-notice {
+  flex: 1 1 200px;
+  max-width: 340px;
+  margin-top: 1.4rem;
+  padding: 0.9rem;
+  border-radius: 8px;
+  background: rgba(10, 10, 11, 0.9);
+  border: 1px solid rgba(240, 136, 62, 0.45);
+  color: #f0e2d4;
+  text-align: left;
+}
+
 .landing-right {
-  flex: 1.2;
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   position: relative;
-  background-color: #0a0a0b; /* Black backdrop to pop the logo */
+  background-color: var(--ld-right-bg);
   flex-direction: column;
   overflow: hidden;
-  padding: 2rem 3rem;
+  padding: 1.5rem 3rem;
 }
 
 /* Subtle ambient radial light around logo */
@@ -259,16 +382,16 @@ body, html {
   content: '';
   position: absolute;
   inset: 0;
-  background: radial-gradient(circle at 50% 55%, rgba(240, 136, 62, 0.12) 0%, transparent 62%);
+  background: radial-gradient(circle at 50% 55%, var(--ld-right-glow) 0%, transparent 62%);
   pointer-events: none;
 }
 
 .landing-hero-logo {
-  max-width: 78%;
-  max-height: 68%;
+  max-width: 70%;
+  max-height: 60%;
   object-fit: contain;
   z-index: 2;
-  margin-top: 3rem;
+  margin-top: 0.5rem;
   transition: transform 0.4s ease;
 }
 
@@ -279,12 +402,12 @@ body, html {
 /* The company line under the logo */
 .landing-brand {
   z-index: 2;
-  margin-top: 1.4rem;
+  margin-top: 1rem;
   font-size: 0.95rem;
   font-weight: 500;
   letter-spacing: 0.32em;
   text-transform: uppercase;
-  color: #cf8a5a;
+  color: var(--ld-brand);
   text-align: center;
 }
 
@@ -338,10 +461,10 @@ body, html {
   box-shadow: none;
   transform: translateY(-2px);
 }
-/* On the landing page the buttons sit on orange, so the accent hover would vanish: black lifts a shade, the outlined one takes a faint dark wash. No lift. */
+/* On the landing page the accent hover would vanish against some palettes, so each button lifts a shade or takes a faint wash instead. No lift. */
 .landing-page .enter-btn:hover:not(:disabled) { transform: none; }
-.landing-page .login-btn:hover:not(:disabled) { background-color: #26262b !important; }
-.landing-page .guest-btn:hover:not(:disabled) { background-color: rgba(10, 10, 11, 0.1) !important; }
+.landing-page .login-btn:hover:not(:disabled) { background-color: var(--ld-btn-hover) !important; }
+.landing-page .guest-btn:hover:not(:disabled) { background-color: var(--ld-btn-wash) !important; }
 .enter-btn:active:not(:disabled) {
   background: var(--accent-hover);
   transform: translateY(2px);
@@ -1646,7 +1769,7 @@ select:not(:-internal-list-box):not([multiple]) option {
 
 /* --- Mobile Responsive Overrides --- */
 @media (max-width: 768px) {
-  /* Stack the landing page split screen into a single column */
+  /* One column: Patchy's panel on top (smaller), then the sign-in copy */
   .landing-page {
     flex-direction: column;
     height: auto;
@@ -1654,14 +1777,16 @@ select:not(:-internal-list-box):not([multiple]) option {
     overflow-y: auto;
   }
 
+  .landing-top { --ps-h: clamp(150px, 24vh, 200px); }
+
+  .landing-row { flex-direction: column; }
+
   .landing-left {
     width: 100% !important;
-    padding: 1.5rem !important;
+    padding: 2.6rem 1.5rem 1.5rem !important;
     justify-content: center;
     align-items: center;
     text-align: center;
-    /* One column: the orange deepens a little down the page instead of fading to black (the copy runs the whole length) */
-    background: linear-gradient(180deg, #ee8238 0%, #e8752a 55%, #c75d1d 100%);
   }
 
   .landing-mobile-logo { display: inline-block; }
@@ -1675,6 +1800,8 @@ select:not(:-internal-list-box):not([multiple]) option {
     width: 100% !important;
     max-width: 100% !important;
   }
+
+  .landing-notice { flex-basis: 100%; max-width: 100%; margin-top: 0; }
 }
 
 /* Hide mobile toggle by default on desktop */
