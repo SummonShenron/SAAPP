@@ -32,3 +32,12 @@ export function budgetAmount(unit: 'usd' | 'tokens', value: number): string {
 export function budgetTone(fraction: number): 'ok' | 'notice' | 'throttled' | 'blocked' {
   return fraction >= 1.25 ? 'blocked' : fraction >= 1 ? 'throttled' : fraction >= 0.8 ? 'notice' : 'ok';
 }
+
+/** The knowledge bases by what they hold; an id that is not listed is shown as it is. */
+export const KB_LABELS: Record<string, string> = {
+  Affiliate_A: 'Sonic lore',
+  Affiliate_B: 'Dragon Ball',
+  Affiliate_C: "Jack's portfolio",
+  Affiliate_D: 'BTY Fitness',
+  personal: 'Personal knowledge bases (counts only)',
+};

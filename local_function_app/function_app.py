@@ -4,6 +4,8 @@ import glob
 import shutil
 import tempfile
 import logging
+import re
+import json
 import time
 import base64
 from pymongo import MongoClient
@@ -62,6 +64,38 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 logger = logging.getLogger("StandaloneIngestion")
 logger.setLevel(logging.INFO)
 
+# --- Knowledge graph (GraphRAG) -----------------------------------------------------------------------------
+# After a document's chunks are indexed, the key entities in them and the relationships between those entities are extracted by a small model and
+# stored as edges in the `graph_edges` collection: one document per edge, {affiliate, source, s, t, relation}. Retrieval (backend/state/graph_db.py)
+# reads only the edges of the knowledge bases a person may use, and the delete endpoint removes a file's edges with its chunks. The edge shape is the
+# contract between the two sides. This is best effort by design: a failure here is logged and skipped, it never fails or rolls back an upload.
+# Keep the prompt in sync with backend/components/constraints.py:RELATIONSHIP_PROMPT.
+RELATIONSHIP_PROMPT = """
+Read the text below and list the facts about how its key entities relate to each other. An entity is a person, character, place, organization,
+product, technology, event or concept that the text names.
+
+Rules:
+- Use short, canonical names for entities (a person's usual name, not "he" or "the author").
+- Each relationship is one direct statement from the text: subject ('s'), target ('t'), and a short relation phrase of one to four words ('relationship').
+- Only include relationships the text actually states. Do not guess or add outside knowledge.
+- At most 25 relationships.
+
+Return ONLY a JSON object with the key 'relationships', for example:
+{{"relationships": [{{"s": "Tails", "t": "Sonic", "relationship": "best friend of"}}]}}
+
+Text: {text}
+
+JSON Output:
+"""
+GRAPH_EDGES_COLLECTION = "graph_edges"
+GRAPH_BUILD_ON_INGEST = os.getenv("GRAPH_BUILD_ON_INGEST", "true").strip().lower() not in ("0", "false", "no", "off")
+GRAPH_MODEL_NAME = os.getenv("GRAPH_MODEL_NAME", "gemini-3.1-flash-lite")
+GRAPH_BATCH_CHARS = int(os.getenv("GRAPH_BATCH_CHARS", "6000"))                 # text sent to the model per call
+GRAPH_MAX_BATCHES = int(os.getenv("GRAPH_MAX_BATCHES", "12"))                   # calls per file, however long it is
+GRAPH_TIME_BUDGET_SECONDS = float(os.getenv("GRAPH_TIME_BUDGET_SECONDS", "45"))  # the upload request waits for this, so it stops at a budget
+GRAPH_MAX_NAME_CHARS = 80
+GRAPH_MAX_EDGES_PER_SOURCE = 300
+
 def get_db_client():
     """Independent DB connection with a short timeout to prevent locking up."""
     try:
@@ -72,6 +106,122 @@ def get_db_client():
     except Exception as e:
         logger.warning(f"[-] MongoDB connection failed: {e}. Falling back to Local Mode.")
         return None
+
+
+def _batch_texts(texts, limit):
+    """Consecutive texts grouped into blocks of about `limit` characters (a single text longer than the limit is its own block, cut to it)."""
+    batches, current, size = [], [], 0
+    for text in texts:
+        text = (text or "").strip()
+        if not text:
+            continue
+        if current and size + len(text) > limit:
+            batches.append("\n\n".join(current))
+            current, size = [], 0
+        current.append(text[:limit])
+        size += min(len(text), limit)
+    if current:
+        batches.append("\n\n".join(current))
+    return batches
+
+
+def _parse_relationships(raw) -> list:
+    """The relationships list out of a model reply (which may wrap its JSON in a code fence); [] when it is not usable JSON."""
+    text = str(raw or "").strip()
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE)
+    try:
+        data = json.loads(text)
+    except Exception:
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end <= start:
+            return []
+        try:
+            data = json.loads(text[start:end + 1])
+        except Exception:
+            return []
+    items = data.get("relationships") if isinstance(data, dict) else None
+    return items if isinstance(items, list) else []
+
+
+def _clean_relationships(items) -> list:
+    """Both ends and the relation are short non-empty strings, no self-loops, no duplicates, a cap per file."""
+    kept, seen = [], set()
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        s_name, t_name, relation = (re.sub(r"\s+", " ", str(item.get(k) or "")).strip() for k in ("s", "t", "relationship"))
+        if not s_name or not t_name or not relation:
+            continue
+        if max(len(s_name), len(t_name), len(relation)) > GRAPH_MAX_NAME_CHARS or s_name.lower() == t_name.lower():
+            continue
+        key = (s_name.lower(), t_name.lower(), relation.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append({"s": s_name, "t": t_name, "relationship": relation})
+        if len(kept) >= GRAPH_MAX_EDGES_PER_SOURCE:
+            break
+    return kept
+
+
+def extract_relationships(texts) -> list:
+    """Relationships from a file's text, a few thousand characters per model call, within a call and time budget. Never raises."""
+    batches = _batch_texts(texts, GRAPH_BATCH_CHARS)[:GRAPH_MAX_BATCHES]
+    if not batches:
+        return []
+    started = time.monotonic()
+    found = []
+    try:
+        graph_llm = ChatGoogleGenerativeAI(model=GRAPH_MODEL_NAME, api_key=os.getenv("GOOGLE_API_KEY"), temperature=0)
+    except Exception as e:
+        logger.error(f"Knowledge graph model could not be created: {e}")
+        return []
+    for batch in batches:
+        if time.monotonic() - started > GRAPH_TIME_BUDGET_SECONDS:
+            logger.info("   -> Knowledge graph: time budget reached, keeping what was found so far.")
+            break
+        try:
+            response = graph_llm.invoke(RELATIONSHIP_PROMPT.format(text=batch))
+            content = response.content if hasattr(response, "content") else str(response)
+            if isinstance(content, list):
+                content = "".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in content)
+            found.extend(_parse_relationships(content))
+        except Exception as e:
+            logger.error(f"   -> Knowledge graph extraction failed for one block: {e}")
+    return _clean_relationships(found)
+
+
+def save_graph_edges(db, affiliate: str, source: str, relationships) -> int:
+    """Replace the edges one file produced in one knowledge base. Returns how many were stored."""
+    edges = _clean_relationships(relationships)
+    collection = db[GRAPH_EDGES_COLLECTION]
+    collection.delete_many({"affiliate": affiliate, "source": source})
+    if edges:
+        collection.insert_many([{"affiliate": affiliate, "source": source, "s": e["s"], "t": e["t"], "relation": e["relationship"]} for e in edges])
+    return len(edges)
+
+
+def index_graph_for_source(db, affiliate: str, source: str, texts) -> int:
+    """Extract and store a file's relationships. Best effort: logs and returns 0 on any failure, so an upload never fails because of the graph."""
+    if not GRAPH_BUILD_ON_INGEST or db is None:
+        return 0
+    try:
+        edges = extract_relationships(texts)
+        stored = save_graph_edges(db, affiliate, source, edges)
+        logger.info(f"   -> Knowledge graph: {stored} relationships stored for {source}.")
+        return stored
+    except Exception as e:
+        logger.error(f"   -> Knowledge graph step failed for {source}: {e}")
+        return 0
+
+
+def delete_graph_edges(db, affiliate: str, source: str) -> None:
+    """Remove a file's edges (used when its ingestion is rolled back). Never raises."""
+    try:
+        if db is not None:
+            db[GRAPH_EDGES_COLLECTION].delete_many({"affiliate": affiliate, "source": source})
+    except Exception as e:
+        logger.error(f"   -> Could not clear knowledge graph edges for {source}: {e}")
 
 
 def _is_image_filename(filename: str) -> bool:
@@ -233,6 +383,8 @@ def run_ingestion_pipeline():
                         index_name="vector_index"
                     )
 
+                    index_graph_for_source(db, affiliate, filename, [c.page_content for c in chunks])
+
                     db["fs.files"].update_one(
                         {"_id": file_obj._id},
                         {"$set": {"metadata.status": "pages", "metadata.content_type": mime_type}}
@@ -243,6 +395,7 @@ def run_ingestion_pipeline():
                     logger.error(f"   [X] Error processing image {filename}: {e}. Initiating rollback...")
                     fs.delete(file_obj._id)
                     logger.info(f"       -> Deleted {filename} from GridFS storage.")
+                    delete_graph_edges(db, affiliate, filename)
                     if vector_store is not None:
                         try:
                             vector_store.delete(where={"source": filename})
@@ -307,7 +460,8 @@ def run_ingestion_pipeline():
                     index_name="vector_index"
                 )
 
-                # 3. Success (Move to pages container)
+                # 3. Knowledge graph (best effort, never fails the upload), then success (move to pages container)
+                index_graph_for_source(db, affiliate, filename, [c.page_content for c in chunks])
                 db["fs.files"].update_one(
                     {"_id": file_obj._id},
                     {"$set": {"metadata.status": "pages"}}
@@ -320,6 +474,7 @@ def run_ingestion_pipeline():
 
                 fs.delete(file_obj._id)
                 logger.info(f"       -> Deleted {filename} from GridFS storage.")
+                delete_graph_edges(db, affiliate, filename)
 
                 if vector_store is not None:
                     try:

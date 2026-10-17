@@ -258,7 +258,9 @@ export const IntegrationsPage: React.FC = () => {
                 value={targetDocInput}
                 onChange={(e) => setTargetDocInput(e.target.value)}
                 placeholder="https://docs.google.com/document/d/..."
-                style={{ width: '100%', boxSizing: 'border-box' }}
+                className="manifest-search-input"
+                style={{ width: '100%', boxSizing: 'border-box', marginBottom: '0.5rem' }}
+                
               />
             </div>
             <button className="action-button" onClick={handleSaveTargetDoc} disabled={savingDoc}>
@@ -297,7 +299,8 @@ export const IntegrationsPage: React.FC = () => {
                 value={githubTokenInput}
                 onChange={(e) => setGithubTokenInput(e.target.value)}
                 placeholder={githubStatus.configured ? 'Paste a new token to replace it' : 'ghp_… or github_pat_…'}
-                style={{ width: '100%', boxSizing: 'border-box' }}
+                className="manifest-search-input"
+                style={{ width: '100%', boxSizing: 'border-box', marginBottom: '0.5rem' }}
               />
             </div>
             <button

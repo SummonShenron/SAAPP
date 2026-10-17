@@ -15,6 +15,7 @@ from backend.services.memory_search import embed_and_store_memory_chunk
 from backend.services.memory_compaction import maybe_trigger_compaction
 from backend.utils.db_utils import get_db, resolve_service_registry_repo
 from backend.utils.embedding_utils import embed_text, cosine_similarity
+from backend.utils import correction_kinds
 from backend.utils.time_utils import SENT_AT_KEY, history_gap_marker
 from fastapi import HTTPException
 import subprocess
@@ -391,10 +392,11 @@ def format_history_as_text(messages) -> str:
             formatted.append(f"Assistant: {msg.content}")
     return "\n".join(formatted)
 
-def save_correction(username: str, user_prompt: str, bad_response: str, reason: str, tag: str, rating: str = "negative") -> None:
+def save_correction(username: str, user_prompt: str, bad_response: str, reason: str, tag: str, rating: str = "negative", source: str = "user") -> None:
     """Writes a correction/feedback record, shared by the manual feedback endpoint and the
-    reward evaluator's self-correction path. `rating` must actually be persisted for
-    fetch_relevant_corrections' "positive"/"negative" split to work."""
+    reward evaluator's self-correction path. The rating is stored as "positive" or "negative"
+    (the page sends "like"/"dislike"; see backend/utils/correction_kinds.py) and `source` says who
+    gave it ("user", or "evaluator" for the answer checker) so the Sonic Health page can tell them apart."""
     db = get_db()
     if db is None:
         return
@@ -405,7 +407,8 @@ def save_correction(username: str, user_prompt: str, bad_response: str, reason: 
         "bad_response": bad_response[:400],
         "reason": reason,
         "tag": tag,
-        "rating": rating,
+        "rating": correction_kinds.normalize_rating(rating),
+        "source": source if source in (correction_kinds.USER, correction_kinds.EVALUATOR) else correction_kinds.USER,
         "embedding": embed_text(user_prompt),
         "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     })
@@ -422,17 +425,9 @@ def _fetch_relevant_corrections_by_substring(db, username: str, question: str) -
 
     pattern = re.compile(re.escape(clean_prompt), re.IGNORECASE)
 
-    past_negatives = list(db["corrections"].find({
-        "username": username,
-        "rating": {"$ne": "positive"},
-        "user_prompt": pattern
-    }).limit(2))
-
-    past_positives = list(db["corrections"].find({
-        "username": username,
-        "rating": "positive",
-        "user_prompt": pattern
-    }).limit(1))
+    matches = list(db["corrections"].find({"username": username, "user_prompt": pattern}))
+    past_negatives = [c for c in matches if correction_kinds.polarity(c) == correction_kinds.NEGATIVE][:2]
+    past_positives = [c for c in matches if correction_kinds.polarity(c) == correction_kinds.POSITIVE][:1]
 
     return past_negatives, past_positives
 
@@ -453,7 +448,7 @@ def _fetch_relevant_corrections_by_embedding(db, username: str, question_embeddi
     def _ranked(rating_filter) -> list:
         scored = []
         for corr in all_corrections:
-            if not rating_filter(corr.get("rating")):
+            if not rating_filter(corr):
                 continue
             embedding = corr.get("embedding")
             if not embedding:
@@ -464,8 +459,8 @@ def _fetch_relevant_corrections_by_embedding(db, username: str, question_embeddi
         scored.sort(key=lambda item: item[0], reverse=True)
         return [corr for _, corr in scored]
 
-    past_negatives = _ranked(lambda r: r != "positive")[:2]
-    past_positives = _ranked(lambda r: r == "positive")[:1]
+    past_negatives = _ranked(lambda c: correction_kinds.polarity(c) == correction_kinds.NEGATIVE)[:2]
+    past_positives = _ranked(lambda c: correction_kinds.polarity(c) == correction_kinds.POSITIVE)[:1]
     return past_negatives, past_positives
 
 

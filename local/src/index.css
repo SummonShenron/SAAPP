@@ -530,7 +530,45 @@ body, html {
   font-weight: 600;
 }
 
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 400px;
+  /* box-shadow: var(--shadow); */
+  transition: all 0.2s ease;
+}
 
+.form-group:hover {
+  box-shadow: var(--shadow-hover);
+  transition: all 0.2s ease;
+}
+
+.form-group label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-soft);
+}
+
+.form-group select {
+  background-color: var(--input-bg);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  padding: 0.75rem;
+  border-radius: 6px;
+  font-size: 1rem;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.form-group select:focus {
+  border-color: var(--accent-primary);
+}
+
+.form-group select:hover {
+  box-shadow: var(--shadow-hover) !important;
+}
 
 
 .nav-links span.nav-exit:hover {

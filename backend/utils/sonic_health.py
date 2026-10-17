@@ -4,6 +4,7 @@ here is an aggregate count or approved wording; none of it contains a user's wor
 self_counters.py, self_observations.py, llm_usage.py).
 """
 import datetime
+import logging
 from datetime import timezone
 from typing import Any, Dict, List, Optional
 
@@ -14,6 +15,9 @@ from backend.utils.llm_usage import fetch_route_docs, fetch_usage_docs, load_pri
 from backend.utils.safety_stats import fetch_recent_events, summarize_safety_events
 from backend.utils.self_counters import fetch_counter_docs, summarize_counters
 from backend.utils.self_observations import list_observations
+from backend.utils.feedback_stats import fetch_corrections, summarize_feedback, summarize_graph
+
+logger = logging.getLogger("SASS Logger")
 
 
 
@@ -21,6 +25,15 @@ def billing_days(days: int, now: datetime.datetime) -> List[str]:
     """The billing days (Pacific, see billing_time.py) of a period of `days` days ending today, oldest first, as "YYYY-MM-DD"."""
     today = billing_time.local(now).date()
     return [(today - datetime.timedelta(days=offset)).isoformat() for offset in range(max(days, 1) - 1, -1, -1)]
+
+
+def _section(name: str, build) -> Optional[Dict[str, Any]]:
+    """One part of the page, or None when it cannot be built: a problem reading one collection must not take the rest of the page down."""
+    try:
+        return build()
+    except Exception as exc:
+        logger.warning("Sonic Health: the %s section could not be built: %s", name, type(exc).__name__)
+        return None
 
 
 def build_sonic_health(db: Any, days: int, now: Optional[datetime.datetime] = None) -> Dict[str, Any]:
@@ -35,11 +48,17 @@ def build_sonic_health(db: Any, days: int, now: Optional[datetime.datetime] = No
         {**row, **{key: per_day_turns.get(row["day"], {}).get(key, 0) for key in ("turns", "tool_turns")}}
         for row in summarize_daily(usage_docs, prices, billing_days(days, now))
     ]
+    counters = summarize_counters(fetch_counter_docs(db, days, now), now, days)
     return {
         "days": days,
         "generated_at": now.isoformat(),
         "safety": summarize_safety_events(fetch_recent_events(db, days, now), now, days),
-        "counters": summarize_counters(fetch_counter_docs(db, days, now), now, days),
+        "counters": counters,
+        # Feedback is reused: a person's thumbs and the answer checker's redos are shown to the model on later, similar questions.
+        "feedback": _section("feedback", lambda: summarize_feedback(
+            fetch_corrections(db), counters["totals"].get("guardrail_applied", 0), counters["totals"].get("turns_total", 0), now, days)),
+        # The knowledge graph retrieval adds to answers: an empty one looks like one that found nothing, so it is counted here.
+        "graph": _section("graph", lambda: summarize_graph(db)),
         "observations": list_observations(db, now),
         "usage": {
             **summarize_usage(usage_docs, prices),

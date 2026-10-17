@@ -168,6 +168,7 @@ from backend.utils.fallback_utils import rewrite_fallback
 from backend.services.reward_evaluator import evaluate_response, build_correction_prompt, REWARD_EVAL_SOURCE_TYPES
 from backend.logging.sass_logger import setup_logging
 from backend.services.orchestrator import startup_services
+from backend.state import graph_db
 from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, load_directory, make_personal_kb_id, new_personal_kb, personal_kb_groups, personal_kb_update, resolve_kb_display_names
 from backend.utils.db_utils import get_db, save_error_event, test_connection
 from backend.utils import memory_erase
@@ -1056,6 +1057,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             goal_nudge_context = "" if (risk_level != RISK_NONE or open_loop_entry) else await asyncio.to_thread(fetch_goal_nudge_context, username)
 
             if guardrail_context:
+                tally(turn_counts, "guardrail_applied")
                 prompt = prompt + guardrail_context
                 # Emit trace event to frontend execution trace drawer!
                 yield f"data: {json.dumps({'event': 'node_progress', 'node': 'self_correction_guardrail', 'title': 'Applying Lessons Learned Guardrail', 'detail': f'Injected past failure constraint into context prompt.'})}\n\n"
@@ -1329,6 +1331,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                         reason=verdict["reason"],
                         tag=verdict["tag"],
                         rating="negative",
+                        source="evaluator",
                     )
                     logger.info(
                         "Reward evaluator correction applied — original %d chars, corrected %d chars.",
@@ -1733,6 +1736,9 @@ async def delete_document(
         
         result = vector_collection.delete_many(query)
         logger.info(f"Successfully cleared {result.deleted_count} vector fragments.")
+        # The knowledge-graph edges that file produced go with it (backend/state/graph_db.py)
+        for edge_source in {raw_filename, base_filename}:
+            graph_db.delete_source_edges(db, edge_source, affiliate)
         # 4. Remove target file from GridFS
         fs.delete(ObjectId(doc_id))
 
@@ -1795,7 +1801,8 @@ async def store_feedback(
         bad_response=payload.bad_response,
         reason=payload.reason,
         tag=payload.tag,
-        rating=payload.rating or "negative",
+        rating=payload.rating or "negative",   # the page sends "like" or "dislike"; save_correction stores positive or negative
+        source="user",
     )
     logger.info(f"[+] Correction stored for {username} (Tag: {payload.tag}).")
     return {"status": "success", "message": "Feedback indexed for dynamic self-correction."}

@@ -1197,22 +1197,17 @@ async def retrieve_node(state: GraphState, vector_store) -> dict:
                 logger.exception("Session retrieval failed.")
             return []
 
-        # Parallel Task 3: Knowledge Graph Search
+        # Parallel Task 3: Knowledge Graph Search. Only the knowledge bases this person may use (target_scope) are read, the same isolation the
+        # vector search has; the edges are stored per knowledge base in MongoDB (backend/state/graph_db.py).
         def fetch_graph_docs():
-            graph_docs = []
             try:
-                question_lower = question.lower()
-                for entity in graph_db.knowledge_graph.nodes:
-                    if str(entity).lower() in question_lower:
-                        relations = graph_db.get_dynamic_context(entity, hops=2)
-                        for fact in relations:
-                            graph_docs.append(Document(
-                                page_content=f"Connection: {fact}",
-                                metadata={"source": "knowledge_graph_db", "type": "relationship"}
-                            ))
+                return [
+                    Document(page_content=f"Connection: {fact}", metadata={"source": "knowledge_graph_db", "type": "relationship"})
+                    for fact in graph_db.scoped_context(question, target_scope or [], hops=2)
+                ]
             except Exception:
                 logger.exception("GraphRAG Entity scanner failed.")
-            return graph_docs
+                return []
 
         # Execute all 3 fetches concurrently
         with ThreadPoolExecutor(max_workers=3) as executor:

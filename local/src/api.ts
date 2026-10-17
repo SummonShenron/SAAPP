@@ -815,6 +815,39 @@ export interface UsageSummary {
   daily?: UsageDay[];
 }
 
+/** Feedback as the page counts it (counts only): see backend/utils/feedback_stats.py. */
+export interface FeedbackSummary {
+  period: {
+    positive: number; negative: number; user_positive: number; user_negative: number; evaluator_negative: number;
+    people: number; negative_share: number | null;
+  };
+  by_tag: { tag: string; count: number }[];
+  daily: { day: string; positive: number; negative: number }[];
+  /** Everything stored, which is what can still be shown to the model on a later question. */
+  stored: {
+    total: number; positive: number; negative: number; matchable: number; unmatchable: number; people: number;
+    positives_old_rule_misread: number;
+  };
+  applied: { turns: number; share: number | null };
+}
+
+export interface GraphAffiliateRow {
+  affiliate: string;
+  documents: number;
+  chunks: number;
+  edges: number;
+  documents_without_edges: number;
+  missing: string[];
+}
+
+/** The knowledge graph retrieval reads, per knowledge base. */
+export interface GraphSummary {
+  edges_total: number;
+  documents_total: number;
+  documents_without_edges: number;
+  by_affiliate: GraphAffiliateRow[];
+}
+
 export interface SonicHealth {
   days: number;
   generated_at: string;
@@ -823,6 +856,9 @@ export interface SonicHealth {
   observations: ObservationView[];
   usage?: UsageSummary;
   budget?: BudgetView;
+  /** null when that part could not be read. */
+  feedback?: FeedbackSummary | null;
+  graph?: GraphSummary | null;
 }
 
 export interface ReflectionResult {

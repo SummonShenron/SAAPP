@@ -423,10 +423,20 @@ the observations, even if not a byte-for-byte copy, is NOT what this checks for.
 about whether code is genuinely generic versus a fair, real adaptation, do not flag it.
 """
 
+# Keep in sync with local_function_app/function_app.py:RELATIONSHIP_PROMPT (the function app builds the knowledge graph when a document is indexed;
+# it deliberately imports nothing from this package, so it carries its own copy).
 RELATIONSHIP_PROMPT = """
-Analyze the following text and extract relationships. 
-Return ONLY a JSON object with the key 'relationships'.
-Each item should have 's' (subject), 't' (target), and 'relationship'.
+Read the text below and list the facts about how its key entities relate to each other. An entity is a person, character, place, organization,
+product, technology, event or concept that the text names.
+
+Rules:
+- Use short, canonical names for entities (a person's usual name, not "he" or "the author").
+- Each relationship is one direct statement from the text: subject ('s'), target ('t'), and a short relation phrase of one to four words ('relationship').
+- Only include relationships the text actually states. Do not guess or add outside knowledge.
+- At most 25 relationships.
+
+Return ONLY a JSON object with the key 'relationships', for example:
+{{"relationships": [{{"s": "Tails", "t": "Sonic", "relationship": "best friend of"}}]}}
 
 Text: {text}
 

@@ -2,7 +2,7 @@ import React from 'react';
 import type { SonicHealth } from '../api';
 import { BarRow, BudgetBars, StatTile } from './sonicHealthParts';
 import { DailyChart } from './SonicHealthChart';
-import { pct, tokens, usd } from './sonicHealthFormat';
+import { KB_LABELS, pct, tokens, usd } from './sonicHealthFormat';
 
 export interface AttentionItem {
   key: string;
@@ -25,6 +25,12 @@ export function attentionItems(health: SonicHealth, awaiting: number, suggestion
   }
   if (health.safety.outage_fallbacks > 0) {
     items.push({ key: 'outage', tab: 'safety', tone: 'warn', text: `The model was down on ${health.safety.outage_fallbacks} turn(s) where risk had been raised.` });
+  }
+  const graph = health.graph;
+  if (graph && graph.documents_total > 0 && graph.edges_total === 0) {
+    items.push({ key: 'graph', tab: 'knowledge', tone: 'warn', text: 'The knowledge graph is empty, so graph retrieval is adding nothing to answers.' });
+  } else if (graph && graph.documents_without_edges > 0) {
+    items.push({ key: 'graph', tab: 'knowledge', tone: 'warn', text: `${graph.documents_without_edges} document(s) have no knowledge-graph relationships.` });
   }
   if (awaiting > 0) items.push({ key: 'observations', tab: 'observations', tone: 'info', text: `${awaiting} self-observation(s) are waiting for your approval.` });
   if (suggestionsWaiting > 0) items.push({ key: 'suggestions', tab: 'suggestions', tone: 'info', text: `${suggestionsWaiting} suggestion(s) are waiting for a decision.` });
@@ -124,6 +130,31 @@ export const HomeTab: React.FC<HomeProps> = ({ health, awaiting, suggestionsWait
               </tbody>
             </table>
           </Tile>
+
+          {health.feedback && (
+            <Tile title="Feedback" tab="feedback" onOpen={onOpen} badge={`${health.feedback.period.positive + health.feedback.period.negative} IN PERIOD`}>
+              <div className="sh-stat-grid sh-stat-grid-tight">
+                <StatTile value={health.feedback.period.user_positive} label="thumbs-up from people" />
+                <StatTile value={health.feedback.period.user_negative} label="thumbs-down from people" warn={health.feedback.period.user_negative > 0} />
+                <StatTile value={health.feedback.period.evaluator_negative} label="redone by the answer checker" />
+                <StatTile value={health.feedback.applied.turns} label="turns it was shown to the model on" />
+              </div>
+            </Tile>
+          )}
+
+          {health.graph && (
+            <Tile title="Knowledge graph" tab="knowledge" onOpen={onOpen} badge={`${health.graph.edges_total} RELATIONSHIPS`}>
+              {health.graph.by_affiliate.map(row => (
+                <BarRow
+                  key={row.affiliate}
+                  label={KB_LABELS[row.affiliate] ?? row.affiliate}
+                  value={<>{row.edges}{row.documents_without_edges > 0 && <span className="sh-err"> · {row.documents_without_edges} doc(s) with none</span>}</>}
+                  fraction={health.graph && health.graph.edges_total > 0 ? row.edges / Math.max(...health.graph.by_affiliate.map(r => r.edges), 1) : 0}
+                  tone={row.documents_without_edges > 0 ? 'notice' : 'ok'}
+                />
+              ))}
+            </Tile>
+          )}
         </div>
 
         <div className="sh-home-center">
