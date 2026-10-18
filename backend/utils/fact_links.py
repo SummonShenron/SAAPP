@@ -17,7 +17,7 @@ Nothing here ever raises: with no model, no embedding or a bad answer the result
 import json
 import logging
 import os
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger("SASS Logger")
 
@@ -80,9 +80,9 @@ def build_link_prompt(new_text: str, candidates: Sequence[Any]) -> str:
     return FACT_LINK_PROMPT.format(new_fact=new_text, candidates=lines, limit=MAX_NEW_LINKS)
 
 
-def parse_related(raw: Any, count: int) -> List[int]:
-    """The 1-based positions the model named, as ints within 1..count, in order and without repeats; [] for anything unreadable. The prompt numbers the
-    candidates 1..n instead of showing their ids, so a long id can never be mistyped into a link to the wrong fact."""
+def parse_links(raw: Any, count: int) -> List[Tuple[int, str]]:
+    """The 1-based positions the model named, as ints within 1..count, in order and without repeats, each with the real thing it named ("" in an older plain list); []
+    for anything unreadable. The prompt numbers the candidates 1..n instead of showing their ids, so a long id can never be mistyped into a link to the wrong fact."""
     if isinstance(raw, list):
         raw = "".join(block.get("text", "") if isinstance(block, dict) else str(block) for block in raw)
     text = str(raw or "").replace("```json", "").replace("```", "").strip()
@@ -93,32 +93,81 @@ def parse_related(raw: Any, count: int) -> List[int]:
         return []
     if not isinstance(related, list):
         return []
-    picked: List[int] = []
+    picked: List[Tuple[int, str]] = []
     for item in related:
+        thing = ""
         if isinstance(item, dict):
-            if not str(item.get("thing") or "").strip():
+            thing = " ".join(str(item.get("thing") or "").split())
+            if not thing:
                 continue              # a link with no real thing named is not made
             item = item.get("n")
         try:
             position = int(str(item).strip())
         except (TypeError, ValueError):
             continue
-        if 1 <= position <= count and position not in picked:
-            picked.append(position)
+        if 1 <= position <= count and position not in [p for p, _ in picked]:
+            picked.append((position, thing))
     return picked[:MAX_NEW_LINKS]
 
 
-def judge_links(new_text: str, candidates: Sequence[Any], invoke: Callable[[str], Any]) -> List[Any]:
-    """The candidate facts the model says belong with the new one. [] on any failure."""
+def parse_related(raw: Any, count: int) -> List[int]:
+    """Just the positions from parse_links."""
+    return [position for position, _ in parse_links(raw, count)]
+
+
+def judge_links_with_things(new_text: str, candidates: Sequence[Any], invoke: Callable[[str], Any]) -> List[Tuple[Any, str]]:
+    """The candidate facts the model says belong with the new one, each with the real thing it named. [] on any failure."""
     if not candidates:
         return []
     try:
         response = invoke(build_link_prompt(new_text, candidates))
         raw = response.content if hasattr(response, "content") else response
-        return [candidates[position - 1] for position in parse_related(raw, len(candidates))]
+        return [(candidates[position - 1], thing) for position, thing in parse_links(raw, len(candidates))]
     except Exception:
         logger.exception("[FactLinks] The link judgment failed; no link was made.")
         return []
+
+
+def judge_links(new_text: str, candidates: Sequence[Any], invoke: Callable[[str], Any]) -> List[Any]:
+    """The candidate facts the model says belong with the new one. [] on any failure."""
+    return [fact for fact, _ in judge_links_with_things(new_text, candidates, invoke)]
+
+
+# A second, stricter look at a pair the first look picked. Measured on a real store of 400 facts: the first look alone proposed 562 links, and about 60% of them were
+# themes ("the Dark Souls series", "personal software projects") or a feeling pulled in beside something unrelated ("coping", beside a coding project). Each pair is
+# asked again on its own, and anything but a clear yes is dropped.
+VERIFY_PROMPT = """Two saved notes about a person. Decide whether they are about the SAME specific thing in the person's life, so that when one comes up in conversation the other is useful background.
+
+NOTE A: {first}
+NOTE B: {second}
+(The first model that looked at these said they share: {thing})
+
+Answer yes ONLY when both notes are about the same specific job or employer, the same named project, the same particular person, the same trip or event, or the same single goal, so that each one describes the same thing from a different side.
+
+Answer no when:
+- they share a broad theme, interest or field (gaming, coding, fitness, music, a game series), or one is a general preference, trait or method that merely applies to the other;
+- they are two different aspects of the person's inner life or habits (feelings, coping, recovery, relationships) or one is a general description of how the person works;
+- one note is about their feelings, health, recovery, addiction or a relationship and the other is about something else (work, a hobby, software): what is said about the person's feelings must never be pulled into a discussion of something unrelated;
+- they only mention the same word.
+
+If you are not sure, answer no. Return ONLY a JSON object with no preamble or markdown: {{"same": true}} or {{"same": false}}."""
+
+
+def verify_enabled() -> bool:
+    return os.getenv("FACT_LINK_VERIFY", "true").strip().lower() not in ("0", "false", "no", "off")
+
+
+def verify_pair(first: str, second: str, thing: str, invoke: Callable[[str], Any]) -> bool:
+    """True only on a clear yes. A model that fails, or an answer that is not exactly {"same": true}, is a no."""
+    try:
+        response = invoke(VERIFY_PROMPT.format(first=first, second=second, thing=thing or "(no name)"))
+        raw = response.content if hasattr(response, "content") else response
+        if isinstance(raw, list):
+            raw = "".join(block.get("text", "") if isinstance(block, dict) else str(block) for block in raw)
+        text = str(raw or "").replace("```json", "").replace("```", "").strip()
+        return json.loads(text).get("same") is True
+    except Exception:
+        return False
 
 
 def add_links(new_fact: Any, others: Iterable[Any]) -> int:
@@ -140,7 +189,10 @@ def link_new_fact(facts: Sequence[Any], new_fact: Any, similarity: Callable[[Seq
         return 0
     try:
         candidates = candidate_facts(facts, new_fact, similarity)
-        return add_links(new_fact, judge_links(new_fact.fact, candidates, invoke))
+        picks = judge_links_with_things(new_fact.fact, candidates, invoke)
+        if verify_enabled():
+            picks = [(other, thing) for other, thing in picks if verify_pair(new_fact.fact, other.fact, thing, invoke)]
+        return add_links(new_fact, [other for other, _ in picks])
     except Exception:
         logger.exception("[FactLinks] Could not link a new fact.")
         return 0

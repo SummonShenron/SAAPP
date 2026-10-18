@@ -25,6 +25,12 @@ const SHAPES = {
       <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
     </>
   ),
+  tasks: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <polyline points="12 7 12 12 15.5 14" />
+    </>
+  ),
   activity: <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />,
   help: (
     <>

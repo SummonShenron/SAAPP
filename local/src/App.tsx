@@ -10,6 +10,7 @@ import { api } from "./api";
 const SelfServicePage = lazy(() => import("./pages/SelfService").then(m => ({ default: m.SelfServicePage })));
 const TidyPage = lazy(() => import("./pages/Tidy").then(m => ({ default: m.TidyPage })));
 const MemoryPage = lazy(() => import("./pages/Memory").then(m => ({ default: m.MemoryPage })));
+const TasksPage = lazy(() => import("./pages/Tasks").then(m => ({ default: m.TasksPage })));
 const IntegrationsPage = lazy(() => import("./pages/Integrations").then(m => ({ default: m.IntegrationsPage })));
 const AccountPage = lazy(() => import("./pages/Account").then(m => ({ default: m.AccountPage })));
 const SonicHealthPage = lazy(() => import("./pages/SonicHealth").then(m => ({ default: m.SonicHealthPage })));
@@ -81,6 +82,7 @@ function App() {
         <Route path="/self-service" element={<SelfServicePage />} />
         <Route path="/tidy" element={<TidyPage />} />
         <Route path="/memory" element={<MemoryPage />} />
+        <Route path="/tasks" element={<TasksPage />} />
         <Route path="/integrations" element={<IntegrationsPage />} />
         <Route path="/account" element={<AccountPage theme={theme} toggleTheme={toggleTheme} />} />
         {/* Admin only: the server enforces Global_Admins on every endpoint this page calls. */}

@@ -11,7 +11,7 @@ import urllib.parse
 import re
 from gridfs import GridFSBucket
 from bson import ObjectId, errors
-from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Query, Form, Request, Depends, BackgroundTasks, status, Response
+from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Query, Form, Request, Depends, BackgroundTasks, status, Response, Body
 from typing import List, Dict, Any, Optional
 import uuid
 import traceback
@@ -140,6 +140,8 @@ from backend.utils.self_history_utils import SELF_HISTORY_MARK, build_self_histo
 from backend.utils import routines as routines_utils
 from backend.utils import followups as followups_utils
 from backend.services import routine_scheduler
+from backend.services import user_task_scheduler
+from backend.utils import user_tasks as user_tasks_utils
 from backend.utils.shared_history import CALLBACK_MARK, build_callback_block, callback_allowed
 from backend.utils.user_settings_utils import (
     get_user_rag_mode, set_user_rag_mode, VALID_RAG_MODES,
@@ -220,6 +222,17 @@ async def _run_shelf_schedule():
     await shelf_refresh.run_scheduled_refresh_loop(get_db, shelf_llm.ainvoke, allowed)
 
 
+async def _run_user_task_schedule():
+    from backend.models.models import lite_llm as task_llm
+
+    def allowed(owner):
+        # The shared budget, then that person's own: a task is an optional extra, so it yields to low-power mode like the others.
+        return (budget_guard.allows("user_tasks", budget_guard.current_state())
+                and (owner is None or budget_guard.allows("user_tasks", budget_guard.current_state(username=owner))))
+
+    await user_task_scheduler.run_user_task_schedule(get_db, task_llm.ainvoke, allowed)
+
+
 # 2. Define the startup/shutdown logic
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -233,6 +246,8 @@ async def lifespan(app: FastAPI):
     shelf_task = spawn_background_task(_run_shelf_schedule())
     # Sonic's routines that have no loop of their own (today the health check), run on a schedule and written down (backend/services/routine_scheduler.py).
     routine_task = spawn_background_task(routine_scheduler.run_routine_schedule(get_db))
+    # The research tasks people have set up for Sonic, run when due and within limits (backend/services/user_task_scheduler.py).
+    user_task_task = spawn_background_task(_run_user_task_schedule())
     watchdog_task = loop_watchdog.start()  # logs when the event loop is blocked, and what was waiting (backend/utils/loop_watchdog.py)
     if get_db() is not None:
         ensure_calendar_indexes()
@@ -242,6 +257,7 @@ async def lifespan(app: FastAPI):
     attachment_retention_task.cancel()
     shelf_task.cancel()
     routine_task.cancel()
+    user_task_task.cancel()
     watchdog_task.cancel()
     await asyncio.to_thread(llm_usage.flush)  # whatever the last calls used, before the process goes
     chat_sessions = {}
@@ -1009,6 +1025,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     and routines_utils.asks_about_routines(final_state.get("original_question", question))):
                 routines_context = await asyncio.to_thread(
                     lambda: routines_utils.build_routines_context(get_db(), user_tz, is_admin=is_admin_user)
+                    + ("" if is_guest_username(username) else user_tasks_utils.build_tasks_context(get_db(), username, user_tz))
                 )
                 tally(turn_counts, "routines_offered")
             # "What are you going to follow up on / do you have anything planned for me?", and the same when asked what it has planned (backend/utils/followups.py):
@@ -1019,6 +1036,16 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 followups_context = await asyncio.to_thread(followups_utils.build_followups_context, username, user_tz)
                 if followups_context:
                     tally(turn_counts, "followups_offered")
+            # Results of the tasks this person set up (backend/utils/user_tasks.py): mentioned once when they are back, or told when asked. Never for a guest, under a
+            # safety context, on a closing message, while the emotional layer is holding things down, or on a turn another proactive item already took.
+            task_results_context, task_result_ids = "", []
+            if (risk_level == RISK_NONE and source_type == "conversational" and not is_closing_message(question) and not is_guest_username(username) and not open_loop_entry):
+                _asked_results = user_tasks_utils.asks_about_task_results(final_state.get("original_question", question))
+                _now = datetime.now(timezone.utc)
+                if _asked_results or (user_tasks_utils.is_return(last_message_at, _now) and energy_tier(final_state.get("emotional_state"), _now) == "open"):
+                    task_results_context, task_result_ids = await asyncio.to_thread(user_tasks_utils.build_results_context, username, asked=_asked_results)
+                    if task_results_context:
+                        tally(turn_counts, "task_results_offered")
             # Only when asked "how long have we been talking?": the earliest saved conversation, as a plain fact with no
             # feeling or milestone attached (backend/utils/duration_utils.py). Never for guests, whose "we" is many people.
             duration_context = ""
@@ -1045,6 +1072,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 self_history_context=build_self_history_block(self_history),
                 routines_context=routines_context,
                 followups_context=followups_context,
+                task_results_context=task_results_context,
                 duration_context=duration_context,
                 self_knowledge_context=build_self_knowledge_block(
                     self_knowledge_lines, asks_about_itself(final_state.get("original_question", question))
@@ -1138,7 +1166,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                         True, chat_sessions[history_key], source_type=source_type, risk_active=risk_level != RISK_NONE,
                         energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
                         closing=is_closing_message(question),
-                        proactive_taken=bool(open_loop_entry or relatable_entry or encouragement_entry or self_history),
+                        proactive_taken=bool(open_loop_entry or task_results_context or relatable_entry or encouragement_entry or self_history),
                     ):
                         prompt = prompt + build_callback_block(lull=callback_lull)
                         callback_offered = True
@@ -1155,7 +1183,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 slot = dict(
                     source_type=source_type, risk_active=False,
                     energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
-                    proactive_taken=bool(open_loop_entry or relatable_entry or encouragement_entry or self_history
+                    proactive_taken=bool(open_loop_entry or task_results_context or relatable_entry or encouragement_entry or self_history
                                          or callback_offered or goal_nudge_context),
                 )
                 asked_listing = shelf_utils.shelf_enabled() and shelf_utils.asks_what_reading(question)
@@ -1416,6 +1444,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # Asked once: an offered loop is closed for good, and anything new they said is noted for later.
             if open_loop_entry:
                 await asyncio.to_thread(open_loops_utils.mark_asked, username, open_loop_entry["id"])
+            if task_result_ids:
+                await asyncio.to_thread(user_tasks_utils.mark_announced, username, task_result_ids)
             if open_loops_utils.open_loops_enabled() and not is_guest_username(username) and budget_guard.allows("open_loops", budget_state):
                 spawn_background_task(open_loops_utils.capture_open_loops(
                     username, question, user_tz, risk_active=risk_level != RISK_NONE, previous_reply=previous_reply,
@@ -1936,6 +1966,7 @@ async def clear_memory(current_user = Depends(get_current_user)):
     username = current_user.get("sub")
     result = await asyncio.to_thread(memory_erase.erase_user_memory, get_db(), username)
     await asyncio.to_thread(open_loops_utils.forget_all_loops, username)
+    await asyncio.to_thread(user_tasks_utils.forget_all, username)
     if result["failed"]:
         # Never report a partial wipe as success: the page says it permanently deletes everything.
         raise HTTPException(status_code=500, detail="Some of your memory could not be deleted. Please try again.")
@@ -1954,6 +1985,111 @@ async def delete_open_loop(loop_id: str, current_user = Depends(get_current_user
     if not deleted:
         raise HTTPException(status_code=404, detail="That upcoming item was not found")
     return {"status": "deleted", "id": loop_id}
+
+
+def _tasks_db_or_503():
+    db = get_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="Tasks are not available right now.")
+    return db
+
+
+def _tasks_user(current_user) -> str:
+    username = current_user.get("sub")
+    if is_guest_username(username):
+        raise HTTPException(status_code=403, detail="Tasks are for signed-in accounts, so the results have someone to belong to.")
+    return username
+
+
+@app.get("/api/tasks")
+async def list_user_tasks(current_user = Depends(get_current_user)):
+    """The research tasks this person set up for Sonic, and the limits they work within."""
+    username = _tasks_user(current_user)
+    db = _tasks_db_or_503()
+    now = datetime.now(timezone.utc)
+    docs = await asyncio.to_thread(user_tasks_utils.list_tasks, db, username)
+    used = await asyncio.to_thread(user_tasks_utils.runs_in_last_day, db, username, now)
+    return {
+        "tasks": [user_tasks_utils.public_task(d) for d in docs],
+        "limits": {"max_tasks": user_tasks_utils.MAX_TASKS_PER_USER, "runs_per_day": user_tasks_utils.MAX_RUNS_PER_USER_PER_DAY, "runs_today": used,
+                   "sources": user_tasks_utils.available_sources(), "source_labels": user_tasks_utils.SOURCE_LABELS},
+    }
+
+
+@app.post("/api/tasks")
+async def create_user_task(payload: dict = Body(...), current_user = Depends(get_current_user)):
+    username = _tasks_user(current_user)
+    db = _tasks_db_or_503()
+    tz = await asyncio.to_thread(get_user_timezone, username)
+    spec, issue = user_tasks_utils.validate_spec({**payload, "tz": tz}, tz)
+    if issue:
+        raise HTTPException(status_code=400, detail=issue)
+    task, issue = await asyncio.to_thread(user_tasks_utils.create_task, db, username, spec)
+    if issue:
+        raise HTTPException(status_code=400, detail=issue)
+    return user_tasks_utils.public_task(task)
+
+
+@app.patch("/api/tasks/{task_id}")
+async def update_user_task(task_id: str, payload: dict = Body(...), current_user = Depends(get_current_user)):
+    username = _tasks_user(current_user)
+    task, issue = await asyncio.to_thread(user_tasks_utils.update_task, _tasks_db_or_503(), username, task_id, payload)
+    if issue:
+        raise HTTPException(status_code=404 if "isn't there" in issue else 400, detail=issue)
+    return user_tasks_utils.public_task(task)
+
+
+@app.delete("/api/tasks/{task_id}")
+async def delete_user_task(task_id: str, current_user = Depends(get_current_user)):
+    username = _tasks_user(current_user)
+    if not await asyncio.to_thread(user_tasks_utils.delete_task, _tasks_db_or_503(), username, task_id):
+        raise HTTPException(status_code=404, detail="That task isn't there.")
+    return {"status": "deleted", "id": task_id}
+
+
+@app.get("/api/tasks/{task_id}/runs")
+async def list_user_task_runs(task_id: str, current_user = Depends(get_current_user)):
+    """What a task has found, newest first. Opening them is what clears the "new" mark."""
+    username = _tasks_user(current_user)
+    db = _tasks_db_or_503()
+    if await asyncio.to_thread(user_tasks_utils.get_task, db, username, task_id) is None:
+        raise HTTPException(status_code=404, detail="That task isn't there.")
+    runs = await asyncio.to_thread(user_tasks_utils.runs_for_task, db, username, task_id)
+    return {"runs": [user_tasks_utils.public_run(r) for r in runs]}
+
+
+@app.post("/api/tasks/{task_id}/seen")
+async def mark_user_task_seen(task_id: str, current_user = Depends(get_current_user)):
+    username = _tasks_user(current_user)
+    await asyncio.to_thread(user_tasks_utils.mark_seen, _tasks_db_or_503(), username, task_id)
+    return {"status": "ok"}
+
+
+@app.post("/api/tasks/{task_id}/run")
+async def run_user_task_now(task_id: str, current_user = Depends(get_current_user)):
+    """Runs one task now, in the background (it counts toward the day's runs). The page checks back for the result."""
+    username = _tasks_user(current_user)
+    db = _tasks_db_or_503()
+    now = datetime.now(timezone.utc)
+    if await asyncio.to_thread(user_tasks_utils.runs_in_last_day, db, username, now) >= user_tasks_utils.MAX_RUNS_PER_USER_PER_DAY:
+        raise HTTPException(status_code=429, detail=f"You've used your {user_tasks_utils.MAX_RUNS_PER_USER_PER_DAY} task runs for today. Scheduled runs pick up again tomorrow.")
+    state = await asyncio.to_thread(budget_guard.current_state, None, None, username)
+    if not budget_guard.allows("user_tasks", state):
+        raise HTTPException(status_code=503, detail="Sonic is in low-power mode right now, so tasks are paused for a while.")
+    task = await asyncio.to_thread(user_tasks_utils.claim_task, db, username, task_id, now)
+    if task is None:
+        raise HTTPException(status_code=409, detail="That task is missing or already running.")
+    from backend.models.models import lite_llm as task_llm
+
+    async def _run():
+        try:
+            await user_task_scheduler.run_one(db, task, task_llm.ainvoke, "manual")
+        except Exception:
+            logger.warning("[tasks] a manual run failed.", exc_info=True)
+            await asyncio.to_thread(user_tasks_utils.reschedule, db, task, datetime.now(timezone.utc))
+
+    spawn_background_task(_run())
+    return {"status": "started"}
 
 
 @app.get("/api/local-workspace")

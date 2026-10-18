@@ -7,6 +7,12 @@ coding-agent side.
 
 ## 1. Facts that attach to facts
 
+> **Status (2026-10-17): built, in a simpler shape than the plan below.** `backend/utils/fact_links.py` (PR #110) binds facts about the same real thing with a symmetric `related` list rather than
+> a directed `parent_id`, using its own small-model judgment per new fact (so it does add a call, only when the similarity shortlist is not empty). Recalling a fact brings its links along
+> (`linked_extras`), the Memory page shows them and lets a link be removed, and `fact_links_eval.py` covers it. Not built: the directed parent/child `extends` verdict, family-aware pruning.
+> Added since: a strict second look at every pair the first look picks (`verify_pair`, switch `FACT_LINK_VERIFY`), after a dry run over a real 400-fact store proposed 562 links of which about
+> 60% were themes or a feeling pulled in beside something unrelated; and `fact_links_backfill.py` (propose, `--verify`, read, then `--apply --skip N,N`), because only 2 of 400 existing facts had links.
+
 ### What was observed
 
 Jack said he is building a frontend in Next.js *for work*. Sonic then assumed *Sonic itself* was a Next.js app. The two statements are both

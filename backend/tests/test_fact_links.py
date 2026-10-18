@@ -151,6 +151,8 @@ def store(tmp_path, monkeypatch):
     monkeypatch.setattr(memory_utils, "embed_text", lambda text: list(VECTORS[text.strip()]) if text and text.strip() in VECTORS else None)
 
     def invoke(prompt):
+        if "NOTE A:" in prompt:                             # the strict second look at a pair the first look picked
+            return SimpleNamespace(content=json.dumps({"same": True}))
         if "SAVED NOTES" in prompt:                         # the link judgment: bind the new note to the employer note
             lines = [line for line in prompt.splitlines() if line[:2] in ("1:", "2:", "3:")]
             picks = [int(line[0]) for line in lines if "Works at Principal" in line]
@@ -250,3 +252,40 @@ def test_the_memory_endpoints_send_no_embeddings_and_let_a_link_be_removed():
     assert "fact_for_state(f)" in listing and "linked_fact_summaries(f, by_id)" in listing and "f.dict()" not in listing
     unlink = source[source.index('@app.delete("/api/memory/{fact_id}/links/{other_id}")'):source.index('@app.delete("/api/memory/{fact_id}")')]
     assert "Depends(get_current_user)" in unlink and "unlink_user_facts" in unlink and "status_code=404" in unlink
+
+
+def refusing_second_look(monkeypatch, verdict):
+    def invoke(prompt):
+        if "NOTE A:" in prompt:
+            return SimpleNamespace(content=json.dumps({"same": verdict}))
+        if "SAVED NOTES" in prompt:
+            lines = [line for line in prompt.splitlines() if line[:2] in ("1:", "2:", "3:")]
+            return answer([int(line[0]) for line in lines if "Works at Principal" in line])
+        return SimpleNamespace(content=json.dumps({"action": "distinct"}))
+
+    mock = Mock(side_effect=invoke)
+    monkeypatch.setattr(memory_utils.lite_llm, "invoke", mock)
+    return mock
+
+
+def test_a_pair_the_first_look_picks_is_not_linked_when_the_second_look_says_no(store, monkeypatch):
+    memory_utils.save_user_fact("jack", "Works at Principal.", category="career")
+    mock = refusing_second_look(monkeypatch, False)
+    saved = memory_utils.save_user_fact("jack", "Is working on the PAG UI redesign at work.", category="project")
+    assert saved.related == []
+    assert any("NOTE A:" in call.args[0] for call in mock.call_args_list)
+
+
+def test_the_second_look_can_be_switched_off_and_then_the_first_look_decides(store, monkeypatch):
+    monkeypatch.setenv("FACT_LINK_VERIFY", "false")
+    memory_utils.save_user_fact("jack", "Works at Principal.", category="career")
+    mock = refusing_second_look(monkeypatch, False)
+    saved = memory_utils.save_user_fact("jack", "Is working on the PAG UI redesign at work.", category="project")
+    assert len(saved.related) == 1 and not any("NOTE A:" in call.args[0] for call in mock.call_args_list)
+
+
+def test_no_second_look_is_asked_for_when_the_first_look_picks_nothing(store, monkeypatch):
+    memory_utils.save_user_fact("jack", "Works at Principal.", category="career")
+    mock = refusing_second_look(monkeypatch, True)
+    memory_utils.save_user_fact("jack", "Has a dog named Max.", category="relationship")
+    assert not any("NOTE A:" in call.args[0] for call in mock.call_args_list)

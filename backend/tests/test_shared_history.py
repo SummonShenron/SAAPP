@@ -93,7 +93,7 @@ def test_a_callback_yields_to_every_other_proactive_item_not_only_an_open_loop()
     source = (pathlib.Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
     start = source.index("callback_slot_ok and callback_allowed(")
     window = source[start: start + 600]
-    assert "proactive_taken=bool(open_loop_entry or relatable_entry or encouragement_entry or self_history)" in window
+    assert "proactive_taken=bool(open_loop_entry or task_results_context or relatable_entry or encouragement_entry or self_history)" in window
 
 
 def test_a_summary_of_notes_spread_over_months_is_dated_as_a_stretch_from_its_oldest_note():
