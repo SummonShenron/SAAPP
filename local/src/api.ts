@@ -1219,6 +1219,86 @@ export async function deleteOpenLoop(loopId: string): Promise<any> {
   return res.json();
 }
 
+/** A research task the person set up for Sonic to run on a schedule, and what it has found. */
+export interface UserTask {
+  id: string;
+  title: string;
+  topic: string;
+  details: string;
+  cadence: 'daily' | 'weekly';
+  hour: number;
+  weekday: number | null;
+  sources: string[];
+  location: string;
+  schedule: string;
+  status: 'active' | 'paused';
+  paused_because: string | null;
+  next_run_at: string | null;
+  last_run_at: string | null;
+  last_status: string | null;
+  waiting: number;
+}
+
+export interface TaskSpec {
+  title: string;
+  topic: string;
+  details: string;
+  cadence: 'daily' | 'weekly';
+  hour: number;
+  weekday: number;
+  sources: string[];
+  location: string;
+}
+
+export interface TaskResultItem {
+  title: string;
+  url: string;
+  domain: string;
+  note: string;
+}
+
+export interface TaskRun {
+  id: string;
+  task_id: string;
+  status: 'ok' | 'nothing_new' | 'failed';
+  trigger: 'scheduled' | 'manual';
+  started_at: string | null;
+  headline: string;
+  items: TaskResultItem[];
+  seen: boolean;
+}
+
+export interface TasksResponse {
+  tasks: UserTask[];
+  limits: { max_tasks: number; runs_per_day: number; runs_today: number; sources: string[]; source_labels: Record<string, string> };
+}
+
+async function taskRequest<T>(path: string, init: RequestInit, fallback: string): Promise<T> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}${path}`, {
+    ...init,
+    headers: { ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...authHeaders },
+  });
+  if (!res.ok) {
+    throw new Error(await readErrorDetail(res, fallback));
+  }
+  return res.json();
+}
+
+export const listTasks = (): Promise<TasksResponse> => taskRequest('/api/tasks', {}, 'Failed to load your tasks.');
+export const createTask = (spec: TaskSpec): Promise<UserTask> =>
+  taskRequest('/api/tasks', { method: 'POST', body: JSON.stringify(spec) }, 'Failed to create that task.');
+export const updateTask = (id: string, changes: Partial<TaskSpec> & { status?: 'active' | 'paused' }): Promise<UserTask> =>
+  taskRequest(`/api/tasks/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(changes) }, 'Failed to update that task.');
+export const deleteTask = (id: string): Promise<{ status: string }> =>
+  taskRequest(`/api/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'Failed to delete that task.');
+export const listTaskRuns = (id: string): Promise<{ runs: TaskRun[] }> =>
+  taskRequest(`/api/tasks/${encodeURIComponent(id)}/runs`, {}, 'Failed to load what that task found.');
+export const markTaskSeen = (id: string): Promise<{ status: string }> =>
+  taskRequest(`/api/tasks/${encodeURIComponent(id)}/seen`, { method: 'POST' }, 'Failed to update that task.');
+export const runTaskNow = (id: string): Promise<{ status: string }> =>
+  taskRequest(`/api/tasks/${encodeURIComponent(id)}/run`, { method: 'POST' }, 'Failed to start that task.');
+
 /** What Sonic keeps besides the facts the Memory page lists: notes from past conversations, and archived copies of notes and facts. */
 export interface MemoryStored {
   notes: number;
@@ -1569,6 +1649,13 @@ export const api = {
   getMemoryStored,
   listOpenLoops,
   deleteOpenLoop,
+  listTasks,
+  createTask,
+  updateTask,
+  deleteTask,
+  listTaskRuns,
+  markTaskSeen,
+  runTaskNow,
   getRagMode,
   updateRagMode,
   getDeepThinking,

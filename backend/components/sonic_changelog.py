@@ -70,6 +70,22 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "tasks",
+        "requires": [
+            "backend/utils/user_tasks.py::def build_results_context",
+            "backend/services/user_task_runner.py::async def run_task",
+            "app.py::user_tasks_utils.build_results_context",
+        ],
+        "month": "2026-10",
+        "title": "Tasks you set up for me",
+        "line": (
+            "You can set up a few research tasks on the Tasks page, like new jobs of a kind every Monday, and I'll search the web on that schedule and keep what's new. "
+            "The results wait on the page, and I'll mention them once when you come back."
+        ),
+        "keywords": ["task", "tasks", "scheduled", "schedule", "job search", "research for me", "keep an eye on", "watch for", "digest", "on a schedule"],
+        "volunteer": [],
+    },
+    {
         "id": "followups",
         "requires": [
             "backend/utils/followups.py::def build_followups_context",
