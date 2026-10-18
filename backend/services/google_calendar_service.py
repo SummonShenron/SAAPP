@@ -41,6 +41,8 @@ def list_events_for_day(access_token: str, date_iso: str, tz: str) -> list[dict]
             "summary": event.get("summary", "Untitled event"),
             "start": event["start"].get("dateTime", event["start"].get("date")),
             "end": event["end"].get("dateTime", event["end"].get("date")),
+            # The series a repeating event belongs to, so a meeting still matches after its title is edited (backend/utils/meetings.py).
+            "recurring_event_id": event.get("recurringEventId"),
         })
     return items
 

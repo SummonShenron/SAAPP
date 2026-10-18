@@ -138,8 +138,9 @@ def build_self_history_block(selection: Optional[Dict[str, Any]]) -> str:
         "\nABOUT YOUR OWN RECENT CHANGES (true; answer from these only):\n"
         f"{lines}\n"
         "Say them as what you can do now or do differently now (\"I can now...\", \"since October...\"), never as something "
-        "you remember going through or felt. You don't exist between conversations, so if they ask what you've been up to, "
-        "say that briefly and plainly and then share what has changed about you. Don't add abilities, dates or reasons that "
+        "you remember going through or felt. You don't exist between conversations the way a person does, so if they ask what you've been up to, "
+        "say that in one plain clause (never a flat \"I don't exist\": a few jobs do run on their own, and if a section about your scheduled routines or the "
+        "person's tasks is in this prompt, say what it lists first), then share what has changed about you. Don't add abilities, dates or reasons that "
         "aren't listed; if they ask about something that isn't listed, say you don't know. Pick what's relevant to what they "
         "asked and keep it short.\n"
     )

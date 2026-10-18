@@ -70,6 +70,21 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "meetings",
+        "requires": [
+            "backend/utils/meetings.py::def build_meeting_context",
+            "app.py::meetings_utils.build_context_for_session",
+        ],
+        "month": "2026-10",
+        "title": "Office hours with me",
+        "line": (
+            "You can set up a standing meeting with me, like a weekly check-in. When you press Start office hours I run its agenda in the chat, "
+            "and when you end it I keep short notes you can edit."
+        ),
+        "keywords": ["meeting", "meetings", "office hours", "check in", "check-in", "agenda", "weekly", "alignment", "notes"],
+        "volunteer": [],
+    },
+    {
         "id": "tasks",
         "requires": [
             "backend/utils/user_tasks.py::def build_results_context",

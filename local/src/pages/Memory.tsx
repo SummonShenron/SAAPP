@@ -161,7 +161,7 @@ export const MemoryPage: React.FC = () => {
   };
 
   const handleClearAll = async () => {
-    if (!window.confirm("Forget everything Sonic remembers about you? This permanently deletes your saved memories, the notes from your past conversations, any archived copies of them, and the tasks you set up for Sonic along with what they found. Your chats and the feedback you've rated aren't affected. This cannot be undone.")) return;
+    if (!window.confirm("Forget everything Sonic remembers about you? This permanently deletes your saved memories, the notes from your past conversations, any archived copies of them, the tasks you set up for Sonic along with what they found, and your meetings with Sonic and their notes. Your chats and the feedback you've rated aren't affected. This cannot be undone.")) return;
     setClearing(true);
     try {
       await api.clearMemoryFacts();

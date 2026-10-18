@@ -252,6 +252,7 @@ _ASKS_RE = re.compile(
     r"\bwhat(?:'s| is| are| do| have| did)?\s+(?:you|u)\s+(?:have\s+|got\s+)?(?:planned|going on|doing|up to|scheduled|on)\b[^.?!]{0,40}" + _WHEN +
     r"|\bwhat(?:'s| is)\s+(?:on\s+)?your\s+(?:schedule|agenda|plate|plans?)\b"
     r"|\bwhat(?:'s| is)\s+planned\s+for\s+you\b"
+    r"|\bwhat(?:'ve| have)?\s+(?:you|u)\s+been\s+(?:up to|doing|working on)\b|\bwhat(?:'re| are)\s+(?:you|u)\s+up to\b|\bwhat(?:cha|'ve ya| ya)\s+(?:been\s+)?(?:up to|doing)\b"
     r"|\bwhat do you have (?:planned|on|scheduled|coming up)\b"
     r"|\bany plans\b[^.?!]{0,25}\b(?:later|today|tonight|tomorrow)\b"
     r"|\bwhat did you (?:do|get up to)\b[^.?!]{0,30}\b(?:today|last night|overnight|this morning|yesterday|earlier)\b"

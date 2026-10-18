@@ -1,0 +1,32 @@
+/* The Meetings page reuses the Tasks and Memory page cards, rows, badges and buttons. */
+
+.meeting-agenda {
+  margin: 0.5rem 0 0;
+  padding-left: 1.3rem;
+  color: var(--text-soft);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.meeting-note-block {
+  margin-top: 0.4rem;
+  font-size: 0.9rem;
+}
+
+.meeting-note-list {
+  margin: 0.2rem 0 0;
+  padding-left: 1.3rem;
+  color: var(--text-soft);
+  line-height: 1.5;
+}
+
+.meeting-note-actions {
+  margin-top: 0.6rem;
+  justify-content: flex-start;
+}
+
+.meeting-note-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
