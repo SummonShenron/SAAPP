@@ -84,14 +84,11 @@ def test_nothing_real_is_reachable_during_a_run_and_everything_is_put_back_after
     real_posts, real_searches = [], []
     monkeypatch.setattr(aw.requests, "post", lambda *a, **k: real_posts.append(a) or SimpleNamespace(status_code=500, json=lambda: {}, text=""))
 
-    class RealSearch:
-        def __init__(self):
-            real_searches.append(1)
+    async def real_search(*a, **k):
+        real_searches.append(1)
+        return []
 
-        def results(self, *a, **k):
-            return []
-
-    monkeypatch.setattr(aw, "DuckDuckGoSearchAPIWrapper", RealSearch)
+    monkeypatch.setattr(aw, "run_web_search", real_search)
     monkeypatch.setenv("BROWSERLESS_WS_ENDPOINT", "wss://real.example")
     monkeypatch.setenv("GITHUB_TOKEN", "the-real-token")
     before_env = dict(os.environ)

@@ -157,7 +157,7 @@ from backend.utils.user_settings_utils import (
     get_user_has_seen_help, set_user_has_seen_help,
     get_user_timezone, set_user_timezone,
     get_user_target_doc_id, set_user_target_doc_id,
-    get_github_token_status, find_github_token_for_repo,
+    get_github_token_status, find_github_token_for_repo, get_user_github_token,
     GitHubTokenInvalid, GitHubTokenNotAllowed,
     TOGGLE_LOCKED_USERS,
 )
@@ -2100,7 +2100,10 @@ async def list_user_tasks(current_user = Depends(get_current_user)):
     return {
         "tasks": [user_tasks_utils.public_task(d) for d in docs],
         "limits": {"max_tasks": user_tasks_utils.MAX_TASKS_PER_USER, "runs_per_day": user_tasks_utils.MAX_RUNS_PER_USER_PER_DAY, "runs_today": used,
-                   "sources": user_tasks_utils.available_sources(), "source_labels": user_tasks_utils.SOURCE_LABELS},
+                   "sources": user_tasks_utils.available_sources(), "source_labels": user_tasks_utils.SOURCE_LABELS,
+                   # Repository tasks run on the person's OWN GitHub token (backend/services/repo_tasks.py), so the page needs to know whether they have stored one.
+                   "kinds": list(user_tasks_utils.KINDS), "kind_labels": user_tasks_utils.KIND_LABELS,
+                   "github_connected": bool(await asyncio.to_thread(get_user_github_token, username))},
     }
 
 
@@ -2112,6 +2115,9 @@ async def create_user_task(payload: dict = Body(...), current_user = Depends(get
     spec, issue = user_tasks_utils.validate_spec({**payload, "tz": tz}, tz)
     if issue:
         raise HTTPException(status_code=400, detail=issue)
+    if spec["kind"] in user_tasks_utils.REPO_KINDS and not await asyncio.to_thread(get_user_github_token, username):
+        # A repository task reads only what its owner's own key can read, so there has to be one (Integrations). The server's shared token is never used for it.
+        raise HTTPException(status_code=400, detail="Add your own GitHub token under Integrations first. These tasks read the repository with your key, so they can only see what you can.")
     task, issue = await asyncio.to_thread(user_tasks_utils.create_task, db, username, spec)
     if issue:
         raise HTTPException(status_code=400, detail=issue)

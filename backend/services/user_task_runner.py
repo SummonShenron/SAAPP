@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from backend.services import job_sources
+from backend.services import repo_tasks
 from backend.services.shelf_refresh import default_fetch, default_search
 from backend.utils import reading_shelf as shelf
 from backend.utils import user_tasks as tasks
@@ -151,14 +152,24 @@ async def run_task(
     search: Callable[[str], List[Dict[str, Any]]] = default_search,
     fetch: Callable[[str], Any] = default_fetch,
     job_search: Callable[[str, str, str], List[Dict[str, Any]]] = job_sources.search,
+    repo_deps: Optional[repo_tasks.Deps] = None,
+    review_invoke: Optional[Callable[[str], Awaitable[Any]]] = None,
 ) -> Dict[str, Any]:
-    """{"status": ok|nothing_new|failed, "headline", "items", "new_keys"}. Never raises."""
+    """{"status": ok|nothing_new|failed, "headline", "items", "new_keys"}. Never raises. A repository task (backend/services/repo_tasks.py) is read on the owner's own
+    GitHub key with the stronger model, and gets longer than a web search does."""
+    is_repo_task = task.get("kind") in tasks.REPO_KINDS
     try:
+        if is_repo_task:
+            return await asyncio.wait_for(repo_tasks.run(task, review_invoke, repo_deps), timeout=repo_tasks.REPO_RUN_TIMEOUT_SECONDS)
         return await asyncio.wait_for(_run(db, task, invoke, search, fetch, job_search), timeout=RUN_TIMEOUT_SECONDS)
     except asyncio.CancelledError:
         raise
-    except Exception:
-        logger.warning("[tasks] a run failed.", exc_info=True)
+    except repo_tasks.RepoTaskError as error:
+        logger.warning("[tasks] a repository task could not run: %s.", error)      # its messages are fixed words, never a repository's name or text
+        return {"status": tasks.FAILED, "headline": "", "items": [], "new_keys": []}
+    except Exception as error:
+        error_name = type(error).__name__
+        logger.warning("[tasks] a run failed (%s).", error_name, exc_info=not is_repo_task)    # a repository task's traceback could carry a URL, so it is not printed
         return {"status": tasks.FAILED, "headline": "", "items": [], "new_keys": []}
 
 

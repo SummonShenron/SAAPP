@@ -27,10 +27,9 @@ _next_check = 0.0
 
 
 def default_search(query: str) -> List[Dict[str, Any]]:
-    from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
+    from backend.services.web_search import search
 
-    results = DuckDuckGoSearchAPIWrapper().results(query, max_results=MAX_RESULTS)
-    return [r for r in (results or []) if isinstance(r, dict)]
+    return [r for r in (search(query, MAX_RESULTS, news=False) or []) if isinstance(r, dict)]   # a topic query, never a news lookup (backend/services/web_search.py)
 
 
 def default_fetch(url: str):

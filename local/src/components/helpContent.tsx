@@ -22,7 +22,7 @@ export const EVERYDAY: Record<string, Content> = {
         <li>Ask it anything, including who Jack is, what he has built, and how this system works.</li>
         <li>Ask what it has been reading lately, or for a dry joke. It has a personality and a profile you can read under "About Sonic".</li>
         <li>Open the <strong>Trace</strong> in the "…" menu to watch the steps it takes to answer.</li>
-        <li>For questions about the demo library, Sonic answers from its documents only. If you want it to use general knowledge as well, turn on <strong>Open Answers</strong> in the "…" menu.</li>
+        <li>For questions about the demo library, Sonic uses its documents first and cites the page. For anything they don't cover, it answers from general knowledge. If you'd rather it stuck to the documents, turn off <strong>Open Answers</strong> in the "…" menu.</li>
         <li>Guests share one temporary identity, so nothing here is personal and nothing is remembered about you.</li>
       </ul>
       <h4>With an account you also get</h4>
@@ -66,9 +66,9 @@ export const EVERYDAY: Record<string, Content> = {
 
       <h4>Documents versus what Sonic already knows</h4>
       <ul>
-        <li>When a question is about your documents, Sonic looks in your library. By default it then answers <strong>only</strong> from what it finds there, and tells you when the answer isn't in your documents, even for something it knows well.</li>
-        <li>That's the <strong>Open Answers</strong> switch in the "…" menu next to the message box. <strong>Off</strong> (the default): only your documents. <strong>On</strong>: Sonic can also use its general knowledge when your documents don't have the answer.</li>
-        <li>So if you ever hear "I couldn't find that in your documents" about something general, like a fact or a definition, turn <strong>Open Answers</strong> on and ask again.</li>
+        <li>When a question is about your documents, Sonic looks in your library and uses what it finds, with the page it came from. When your documents don't have the answer, it says so in its answer and uses its general knowledge.</li>
+        <li>That's the <strong>Open Answers</strong> switch in the "…" menu next to the message box. <strong>On</strong> (the default): documents first, general knowledge when they don't cover it. <strong>Off</strong>: only your documents.</li>
+        <li>If you want strictly what's in your documents, for example to check what a file actually says, turn <strong>Open Answers</strong> off. Then Sonic tells you when the answer isn't there instead of filling in.</li>
       </ul>
 
       <h4>Your email, calendar and Google</h4>
@@ -268,7 +268,7 @@ export const EVERYDAY: Record<string, Content> = {
         <li>Open Self Service, pick your library, and add one or more PDFs. They take a little while to become searchable.</li>
         <li>Then just ask in the chat: "What's in my lease about pets?", "Which of my documents mention the roof?", "What does my insurance cover for water damage?"</li>
         <li>Sonic answers from your documents and points to the page it used, so you can check it. Pictures inside a PDF are described too, so they can be found.</li>
-        <li>If your documents don't have the answer, it says so, even for something it could answer from general knowledge. That's because <strong>Open Answers</strong> is off by default. Turn it on in the "…" menu if you'd also like it to use what it knows.</li>
+        <li>If your documents don't have the answer, Sonic says so and answers from what it knows. <strong>Open Answers</strong> is on by default. Turn it off in the "…" menu if you want it to stick strictly to your documents.</li>
       </ul>
       <h4>What it's good for</h4>
       <ul>
@@ -363,7 +363,7 @@ export const EVERYDAY: Record<string, Content> = {
         <li><strong>Trace:</strong> shows the steps Sonic took to answer, such as searching or reading a file.</li>
         <li><strong>Export</strong> and <strong>Delete:</strong> save this conversation as a file, or delete it.</li>
         <li><strong>Scope:</strong> which library Sonic looks in: everything you can use, or just one.</li>
-        <li><strong>Open Answers:</strong> on, Sonic can also use its general knowledge when your documents don't have the answer. Off, it sticks to your documents.</li>
+        <li><strong>Open Answers:</strong> on (the default), Sonic can also use its general knowledge when your documents don't have the answer. Off, it sticks to your documents.</li>
         <li><strong>Deep Thinking:</strong> slower but more thorough, for tricky questions with several parts.</li>
         <li><strong>Message First:</strong> lets Sonic open a conversation with one question about something you told it. Off until you turn it on.</li>
         <li><strong>SAAPP:</strong> shows or hides the little robot.</li>
@@ -380,7 +380,7 @@ export const EVERYDAY: Record<string, Content> = {
         <li><strong>A photo won't attach:</strong> see "Photos, files and spreadsheets" for the formats that work.</li>
         <li><strong>Tidy up won't open a folder:</strong> some browsers protect folders like Downloads. Try a folder inside it.</li>
         <li><strong>A Word document edit says it couldn't be made:</strong> the document may have changed since Sonic read it, or part of it can't be edited safely (like tracked changes). Nothing was written. Ask again after saving your changes.</li>
-        <li><strong>Sonic says it can't find something in your documents, but it's something general:</strong> turn on <strong>Open Answers</strong> in the "…" menu. With it off, Sonic sticks to your documents.</li>
+        <li><strong>Sonic says it can't find something in your documents, but it's something general:</strong> check that <strong>Open Answers</strong> is on in the "…" menu. With it off, Sonic sticks to your documents.</li>
         <li><strong>Sonic says it can't find something that should be in your library:</strong> check the document finished processing, and that "Scope" in the "…" menu includes that library.</li>
       </ul>
     </>
@@ -441,7 +441,7 @@ export const DEVELOPER: Record<string, Content> = {
       <ul>
         <li><strong>Deep Thinking</strong> uses a stronger model and more steps for questions that need real investigation. It's slower and costs more, so it's off by default.</li>
         <li><strong>Target Repo</strong> pins a GitHub "owner/repo" so Sonic always knows which repo you mean. It persists until you change or clear it, and naming another repo in a message overrides it for that message.</li>
-        <li><strong>Open Answers</strong> lets it use general knowledge beyond your indexed documents.</li>
+        <li><strong>Open Answers</strong> (on by default) lets it use general knowledge beyond your indexed documents. Turn it off to keep answers strictly to them.</li>
       </ul>
     </>
   ),

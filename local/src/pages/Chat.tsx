@@ -557,7 +557,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const principal = getEffectivePrincipal();
   const [selectedAffiliate, setSelectedAffiliate] = useState<string>('All');
-  const [ragMode, setRagMode] = useState<string>('strict');
+  const [ragMode, setRagMode] = useState<string>('open');
   const [deepThinking, setDeepThinking] = useState<boolean>(false);
   const [proactiveOpening, setProactiveOpening] = useState<boolean>(false);
   const [opsDigest, setOpsDigest] = useState<{ enabled: boolean; available: boolean }>({ enabled: false, available: false });

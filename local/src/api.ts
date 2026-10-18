@@ -1223,9 +1223,13 @@ export async function deleteOpenLoop(loopId: string): Promise<any> {
   return res.json();
 }
 
-/** A research task the person set up for Sonic to run on a schedule, and what it has found. */
+export type TaskKind = 'research' | 'pr_review' | 'code_audit';
+
+/** A task the person set up for Sonic to run on a schedule (a web search, or a read-only look at their own repository), and what it has found. */
 export interface UserTask {
   id: string;
+  kind: TaskKind;
+  repo: string;
   title: string;
   topic: string;
   details: string;
@@ -1244,6 +1248,8 @@ export interface UserTask {
 }
 
 export interface TaskSpec {
+  kind?: TaskKind;
+  repo?: string;
   title: string;
   topic: string;
   details: string;
@@ -1274,7 +1280,10 @@ export interface TaskRun {
 
 export interface TasksResponse {
   tasks: UserTask[];
-  limits: { max_tasks: number; runs_per_day: number; runs_today: number; sources: string[]; source_labels: Record<string, string> };
+  limits: {
+    max_tasks: number; runs_per_day: number; runs_today: number; sources: string[]; source_labels: Record<string, string>;
+    kinds?: TaskKind[]; kind_labels?: Record<string, string>; github_connected?: boolean;
+  };
 }
 
 async function taskRequest<T>(path: string, init: RequestInit, fallback: string): Promise<T> {

@@ -12,8 +12,26 @@ def isolated_settings_dir(tmp_path, monkeypatch):
     yield
 
 
-def test_default_rag_mode_is_strict():
+def test_default_rag_mode_is_open():
+    assert usu.get_user_rag_mode("jack") == "open"
+
+
+def test_a_stored_strict_choice_is_kept():
+    usu.set_user_rag_mode("jack", "strict")
     assert usu.get_user_rag_mode("jack") == "strict"
+
+
+def test_an_unreadable_stored_mode_falls_back_to_strict_not_the_default():
+    import json
+    with open(usu._get_user_file("jack"), "w") as f:
+        json.dump({"rag_mode": "wide-open"}, f)
+    assert usu.get_user_rag_mode("jack") == "strict"
+
+
+def test_the_recruiter_guest_gets_the_open_default_but_the_widget_guest_does_not():
+    assert usu.get_user_rag_mode("guest-recruiter@example.com") == "open"
+    assert usu.get_user_rag_mode("guest_bty") == "strict"
+    assert usu.get_user_settings_bundle("guest_bty")["rag_mode"] == "strict"
 
 
 def test_set_and_get_rag_mode_round_trip():
@@ -174,7 +192,7 @@ def _settings_only(bundle):
 
 def test_settings_bundle_defaults():
     bundle = usu.get_user_settings_bundle("jack")
-    assert _settings_only(bundle) == {"rag_mode": "strict", "deep_thinking": False, "target_repo": None}
+    assert _settings_only(bundle) == {"rag_mode": "open", "deep_thinking": False, "target_repo": None}
     assert bundle["profile"]["name"] == "" and bundle["profile"]["offers"] is True      # nothing set: an empty profile, never a missing one
 
 

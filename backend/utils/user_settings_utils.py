@@ -18,6 +18,9 @@ os.makedirs(DATA_DIR, exist_ok=True)
 RAG_MODE_STRICT = "strict"
 RAG_MODE_OPEN = "open"
 VALID_RAG_MODES = {RAG_MODE_STRICT, RAG_MODE_OPEN}
+# Open for anyone who has never chosen: a first-time visitor asking a plain factual question should get an answer, not "I cannot find
+# that in the knowledge base". A stored choice of strict is kept, and TOGGLE_LOCKED_USERS (below) stay strict whatever is stored.
+DEFAULT_RAG_MODE = RAG_MODE_OPEN
 
 DEFAULT_DEEP_THINKING = False
 
@@ -82,7 +85,9 @@ def _fetch_settings_doc(username: str) -> dict:
 
 def _resolve_rag_mode(doc: dict) -> str:
     mode = doc.get("rag_mode")
-    return mode if mode in VALID_RAG_MODES else RAG_MODE_STRICT
+    if mode is None:
+        return DEFAULT_RAG_MODE
+    return mode if mode in VALID_RAG_MODES else RAG_MODE_STRICT  # a stored value that is not a mode is unexplained, so take the safe side
 
 
 def _resolve_deep_thinking(doc: dict) -> bool:
@@ -124,7 +129,7 @@ def _resolve_timezone(doc: dict) -> str:
 
 
 def get_user_rag_mode(username: str) -> str:
-    """Returns the user's stored RAG mode, defaulting to (and locking) 'strict'."""
+    """Returns the user's stored RAG mode: open until they choose otherwise, and always strict for a locked identity."""
     if username in TOGGLE_LOCKED_USERS:
         return RAG_MODE_STRICT
     return _resolve_rag_mode(_fetch_settings_doc(username))

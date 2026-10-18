@@ -70,6 +70,22 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "repo_tasks",
+        "requires": [
+            "backend/services/repo_tasks.py::async def run_pr_review",
+            "backend/services/repo_tasks.py::async def run_code_audit",
+            "backend/services/user_task_runner.py::repo_tasks.run",
+        ],
+        "month": "2026-10",
+        "title": "Weekly pull request reviews and code audits",
+        "line": (
+            "On the Tasks page you can have me review your repository's open pull requests, or audit its code for security problems, every week. "
+            "I only read, using your own GitHub token, and the notes are written by an AI model, so check before you act on one."
+        ),
+        "keywords": ["pull request review", "review my prs", "review my pull requests", "code audit", "audit my code", "security scan", "scan my code", "vulnerabilities in my code"],
+        "volunteer": [],
+    },
+    {
         "id": "getting_to_know_you",
         "requires": [
             "backend/utils/clarifications.py::def select_question",

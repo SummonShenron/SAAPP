@@ -161,3 +161,37 @@
     justify-content: flex-start;
   }
 }
+
+/* The kind of task, chosen first: three plain options, each saying what it does. */
+.task-kinds {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.task-kind {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 0.7rem;
+  row-gap: 0.15rem;
+  align-items: start;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background-color: var(--input-bg);
+  cursor: pointer;
+}
+
+.task-kind input {
+  grid-row: 1 / span 2;
+  margin-top: 0.25rem;
+}
+
+.task-kind-on {
+  border-color: color-mix(in srgb, var(--accent-primary) 60%, transparent);
+  background-color: color-mix(in srgb, var(--accent-primary) 10%, var(--input-bg));
+}
+
+.task-kind-label {
+  font-weight: 600;
+}

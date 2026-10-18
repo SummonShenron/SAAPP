@@ -1611,6 +1611,14 @@ async def test_repo_tree_only_fetched_once_across_multiple_actions(monkeypatch):
     assert tree_fetch_count["n"] == 1
 
 
+def _as_search(fake_class):
+    """The tool agent's web search is one async function (backend/services/web_search.py); these tests describe a search by a class with a `results` method."""
+    async def run_web_search(query, max_results=3, **kwargs):
+        return fake_class().results(query, max_results=max_results)
+
+    return run_web_search
+
+
 @run_async
 async def test_non_admin_can_freely_use_github_and_web_actions(monkeypatch):
     monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
@@ -1620,7 +1628,7 @@ async def test_non_admin_can_freely_use_github_and_web_actions(monkeypatch):
         def results(self, query, max_results=3):
             return [{"title": "Result", "snippet": "Info", "link": "https://example.com"}]
 
-    monkeypatch.setattr(aw, "DuckDuckGoSearchAPIWrapper", _FakeDDG)
+    monkeypatch.setattr(aw, "run_web_search", _as_search(_FakeDDG))
 
     responses = [
         _llm_response(action="query", purpose="Search the web", tool_action="web_search", args={"query": "some topic"}),
@@ -1651,7 +1659,7 @@ async def test_web_search_reformulates_after_poor_first_query(monkeypatch):
                 return []
             return [{"title": "Real result", "snippet": "Relevant", "link": "https://example.com/real"}]
 
-    monkeypatch.setattr(aw, "DuckDuckGoSearchAPIWrapper", _FakeDDG)
+    monkeypatch.setattr(aw, "run_web_search", _as_search(_FakeDDG))
 
     responses = [
         _llm_response(action="query", purpose="Narrow search", tool_action="web_search", args={"query": "too specific"}),
@@ -1695,7 +1703,7 @@ async def test_stack_trace_escalates_from_repo_to_web_search(monkeypatch):
                 "link": "https://stackoverflow.com/questions/12345",
             }]
 
-    monkeypatch.setattr(aw, "DuckDuckGoSearchAPIWrapper", _FakeDDG)
+    monkeypatch.setattr(aw, "run_web_search", _as_search(_FakeDDG))
 
     responses = [
         _llm_response(

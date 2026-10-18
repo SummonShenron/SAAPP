@@ -145,20 +145,6 @@ export const HomeTab: React.FC<HomeProps> = ({ health, awaiting, suggestionsWait
               </div>
             </Tile>
           )}
-
-          {health.graph && (
-            <Tile title="Knowledge graph" tab="knowledge" onOpen={onOpen} badge={`${health.graph.edges_total} RELATIONSHIPS`}>
-              {health.graph.by_affiliate.map(row => (
-                <BarRow
-                  key={row.affiliate}
-                  label={KB_LABELS[row.affiliate] ?? row.affiliate}
-                  value={<>{row.edges}{row.documents_without_edges > 0 && <span className="sh-err"> · {row.documents_without_edges} doc(s) with none</span>}</>}
-                  fraction={health.graph && health.graph.edges_total > 0 ? row.edges / Math.max(...health.graph.by_affiliate.map(r => r.edges), 1) : 0}
-                  tone={row.documents_without_edges > 0 ? 'notice' : 'ok'}
-                />
-              ))}
-            </Tile>
-          )}
         </div>
 
         <div className="sh-home-center">
@@ -177,6 +163,20 @@ export const HomeTab: React.FC<HomeProps> = ({ health, awaiting, suggestionsWait
                   label={<span title={`${row.label} (${row.model})`}>{row.label}</span>}
                   value={`${tokens(row.tokens)}${usage?.priced && row.cost !== null && row.cost !== undefined ? ` · ${usd(row.cost) || '$0.00'}` : ''}`}
                   fraction={biggest > 0 ? row.tokens / biggest : 0}
+                />
+              ))}
+            </Tile>
+          )}
+
+          {health.graph && (
+            <Tile title="Knowledge graph" tab="knowledge" onOpen={onOpen} badge={`${health.graph.edges_total} RELATIONSHIPS`}>
+              {health.graph.by_affiliate.map(row => (
+                <BarRow
+                  key={row.affiliate}
+                  label={KB_LABELS[row.affiliate] ?? row.affiliate}
+                  value={<>{row.edges}{row.documents_without_edges > 0 && <span className="sh-err"> · {row.documents_without_edges} doc(s) with none</span>}</>}
+                  fraction={health.graph && health.graph.edges_total > 0 ? row.edges / Math.max(...health.graph.by_affiliate.map(r => r.edges), 1) : 0}
+                  tone={row.documents_without_edges > 0 ? 'notice' : 'ok'}
                 />
               ))}
             </Tile>

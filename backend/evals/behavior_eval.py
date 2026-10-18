@@ -235,9 +235,8 @@ async def run_tool_agent(
         observation.outbound.append(str(args[0]) if args else "")
         return "(page text)"
 
-    class NoSearch:
-        def results(self, *args, **kwargs):
-            return []
+    async def no_search(*args, **kwargs):
+        return []
 
     def fake_http(*args, **kwargs):
         reply = Mock()
@@ -293,7 +292,7 @@ async def run_tool_agent(
         stack.enter_context(patch.object(aw, "get_db", lambda: db))
         stack.enter_context(patch.object(aw, "build_user_memory_block", fake_memory))
         stack.enter_context(patch.object(aw, "read_url", fake_read_url))
-        stack.enter_context(patch.object(aw, "DuckDuckGoSearchAPIWrapper", NoSearch))
+        stack.enter_context(patch.object(aw, "run_web_search", no_search))
         stack.enter_context(patch.object(aw.lite_llm, "ainvoke", spy))
         stack.enter_context(patch.object(llm_usage, "record", usage_spy))
         if engine == "native":

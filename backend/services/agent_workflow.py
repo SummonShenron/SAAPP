@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from backend.models.attachment import Attachment
-from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
+from backend.services.web_search import search_async as run_web_search, SearchUnavailable, UNAVAILABLE_MESSAGE as WEB_SEARCH_UNAVAILABLE
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langchain_core.documents import Document
 from backend.services.search import get_secure_retriever
@@ -2807,8 +2807,10 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 return await asyncio.to_thread(_run_snippet, args.get("code"), args.get("branch"))
             if tool_action == "web_search":
                 query = args.get("query") or msg
-                search = DuckDuckGoSearchAPIWrapper()
-                results = await asyncio.to_thread(search.results, query, max_results=3)
+                try:
+                    results = await run_web_search(query, max_results=3, username=username)
+                except SearchUnavailable:
+                    return WEB_SEARCH_UNAVAILABLE   # every provider is down or resting: say so once, so the model does not retry with reworded queries
                 return [r for r in results if isinstance(r, dict)] if results else []
             if tool_action == "read_url":
                 return await read_url(args.get("url"), _get_browser_session, browser_fallback_lock, _announce_live_view_once)

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { api, type UserTask, type TaskRun, type TaskSpec, type TasksResponse } from '../api';
+import { useNavigate } from 'react-router-dom';
+import { api, type TaskKind, type UserTask, type TaskRun, type TaskSpec, type TasksResponse } from '../api';
 import './__styles__/SelfService.css';
 import './__styles__/Memory.css';
 import './__styles__/Tasks.css';
@@ -10,7 +11,14 @@ const JOB_SOURCES = ['jooble', 'adzuna'];
 const POLL_EVERY_MS = 4000;
 const POLL_FOR_MS = 120000;
 
-const EMPTY_DRAFT: TaskSpec = { title: '', topic: '', details: '', cadence: 'weekly', hour: 8, weekday: 0, sources: ['web'], location: '' };
+const EMPTY_DRAFT: TaskSpec = { kind: 'research', repo: '', title: '', topic: '', details: '', cadence: 'weekly', hour: 8, weekday: 0, sources: ['web'], location: '' };
+const KIND_CHOICES: { kind: TaskKind; label: string; blurb: string }[] = [
+  { kind: 'research', label: 'Look something up', blurb: 'Searches the web (and job boards) for what you describe, and keeps what is new.' },
+  { kind: 'pr_review', label: 'Review my pull requests', blurb: 'Reads your repository\'s open pull requests and tells you what a careful reviewer would flag.' },
+  { kind: 'code_audit', label: 'Audit my code', blurb: 'Scans your repository for security problems and risky code, and tells you what is worth a look.' },
+];
+const REPO_KINDS: TaskKind[] = ['pr_review', 'code_audit'];
+const REPO_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,38}\/[A-Za-z0-9_.-]{1,100}$/;
 
 function hourLabel(hour: number): string {
   return `${hour % 12 || 12} ${hour < 12 ? 'AM' : 'PM'}`;
@@ -38,11 +46,13 @@ function lastLine(task: UserTask): string {
 }
 
 export const TasksPage: React.FC = () => {
+  const navigate = useNavigate();
   const [data, setData] = useState<TasksResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [wizard, setWizard] = useState<number>(0); // 0 closed, 1 what, 2 when, 3 review
+  const [wizard, setWizard] = useState<number>(0); // 0 closed, 1 kind, 2 what, 3 when, 4 review
   const [draft, setDraft] = useState<TaskSpec>(EMPTY_DRAFT);
+  const isRepo = REPO_KINDS.includes(draft.kind ?? 'research');
   const [creating, setCreating] = useState(false);
   const [wizardError, setWizardError] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
@@ -155,7 +165,9 @@ export const TasksPage: React.FC = () => {
     setCreating(true);
     setWizardError('');
     try {
-      await api.createTask({ ...draft, title: draft.title.trim() || draft.topic.trim().slice(0, 60) });
+      await api.createTask(isRepo
+        ? { ...draft, repo: (draft.repo ?? '').trim(), title: draft.title.trim(), cadence: draft.kind === 'code_audit' ? 'weekly' : draft.cadence }
+        : { ...draft, title: draft.title.trim() || draft.topic.trim().slice(0, 60) });
       closeWizard();
       await reload();
     } catch (err) {
@@ -172,7 +184,10 @@ export const TasksPage: React.FC = () => {
   const atLimit = !!limits && tasks.length >= limits.max_tasks;
   const patch = (changes: Partial<TaskSpec>) => setDraft(prev => ({ ...prev, ...changes }));
   const labels = { ...FALLBACK_SOURCE_LABELS, ...(limits?.source_labels ?? {}) };
-  const wantsJobs = draft.sources.some(source => JOB_SOURCES.includes(source));
+  const wantsJobs = !isRepo && draft.sources.some(source => JOB_SOURCES.includes(source));
+  const githubConnected = limits?.github_connected !== false;
+  const repoOk = REPO_PATTERN.test((draft.repo ?? '').trim());
+  const kindLabel = KIND_CHOICES.find(choice => choice.kind === draft.kind)?.label ?? '';
 
   return (
     <div className="self-service-container">
@@ -186,7 +201,7 @@ export const TasksPage: React.FC = () => {
           <div className="card-badge">{tasks.length}{limits ? ` OF ${limits.max_tasks}` : ''}</div>
           <h2>Your Tasks</h2>
           <p className="card-description">
-            Each task searches the web at the time you pick and keeps what's new since the last time. Times are in your own timezone.
+            Each task runs at the time you pick and keeps what's new since the last time: a web search, or a read-only look at your own repository. Times are in your own timezone.
             {limits ? ` You can use ${limits.runs_per_day} runs a day (${limits.runs_today} used in the last 24 hours), including "Run now".` : ''}
           </p>
           {error && <div className="memory-edit-error" role="alert">{error}</div>}
@@ -206,8 +221,17 @@ export const TasksPage: React.FC = () => {
                       {task.waiting > 0 && <span className="memory-badge task-new-badge">{task.waiting} new</span>}
                     </div>
                     <div className="memory-row-text task-title">{task.title}</div>
-                    <div className="task-meta">{task.topic}{task.details ? ` · ${task.details}` : ''}{task.location ? ` · near ${task.location}` : ''}</div>
-                    <div className="task-meta">Looks at: {task.sources.map(source => labels[source] ?? source).join(', ')}</div>
+                    {REPO_KINDS.includes(task.kind) ? (
+                      <>
+                        <div className="task-meta">{task.kind === 'pr_review' ? 'Reviews the open pull requests in' : 'Audits the code in'} {task.repo}{task.details ? ` · ${task.details}` : ''}</div>
+                        <div className="task-meta">Reads with your own GitHub token, read-only. It never comments, opens or changes anything.</div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="task-meta">{task.topic}{task.details ? ` · ${task.details}` : ''}{task.location ? ` · near ${task.location}` : ''}</div>
+                        <div className="task-meta">Looks at: {task.sources.map(source => labels[source] ?? source).join(', ')}</div>
+                      </>
+                    )}
                     <div className="task-meta">{statusLine(task)} · {lastLine(task)}</div>
                   </div>
                   <div className="task-actions">
@@ -252,7 +276,11 @@ export const TasksPage: React.FC = () => {
                       </div>
                     ))}
                     {runs.some(r => r.status === 'ok') && (
-                      <div className="memory-edit-hint">Summaries are written by Sonic from public pages and can be wrong. Check the page before you act on it.</div>
+                      <div className="memory-edit-hint">
+                        {REPO_KINDS.includes(task.kind)
+                          ? 'These notes are written by an AI model from your code and pull requests and can be wrong or miss things. Check the code before you act on one.'
+                          : 'Summaries are written by Sonic from public pages and can be wrong. Check the page before you act on it.'}
+                      </div>
                     )}
                   </div>
                 )}
@@ -270,10 +298,50 @@ export const TasksPage: React.FC = () => {
 
         {wizard > 0 && (
           <section className="service-card memory-card">
-            <div className="card-badge">STEP {wizard} OF 3</div>
+            <div className="card-badge">STEP {wizard} OF 4</div>
             <h2>New Task</h2>
 
             {wizard === 1 && (
+              <div className="task-form">
+                <div className="task-label">What kind of task?</div>
+                <div className="task-kinds" role="radiogroup" aria-label="Kind of task">
+                  {KIND_CHOICES.map(choice => (
+                    <label key={choice.kind} className={`task-kind${draft.kind === choice.kind ? ' task-kind-on' : ''}`}>
+                      <input type="radio" name="task-kind" checked={draft.kind === choice.kind}
+                        onChange={() => patch({ kind: choice.kind, cadence: choice.kind === 'code_audit' ? 'weekly' : draft.cadence })} />
+                      <span className="task-kind-label">{choice.label}</span>
+                      <span className="task-meta">{choice.blurb}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {wizard === 2 && isRepo && (
+              <div className="task-form">
+                {!githubConnected && (
+                  <div className="memory-edit-error" role="alert">
+                    These tasks read your repository with your own GitHub token, so they can only see what you can. Add one first.{' '}
+                    <button type="button" className="memory-edit-cancel" onClick={() => navigate('/integrations')}>Open Integrations</button>
+                  </div>
+                )}
+                <label className="task-label" htmlFor="task-repo">Which repository?</label>
+                <input id="task-repo" className="manifest-search-input" type="text" maxLength={141} autoFocus value={draft.repo ?? ''}
+                  placeholder="owner/name, e.g. SummonShenron/SAAPP" onChange={e => patch({ repo: e.target.value })} />
+                <label className="task-label" htmlFor="task-details-repo">Anything to focus on? <span className="task-optional">optional</span></label>
+                <input id="task-details-repo" className="manifest-search-input" type="text" maxLength={240} value={draft.details}
+                  placeholder="e.g. authentication and input handling" onChange={e => patch({ details: e.target.value })} />
+                <label className="task-label" htmlFor="task-title-repo">Give it a name <span className="task-optional">optional</span></label>
+                <input id="task-title-repo" className="manifest-search-input" type="text" maxLength={60} value={draft.title}
+                  placeholder={draft.kind === 'pr_review' ? 'e.g. Weekly PR review' : 'e.g. Weekly security audit'} onChange={e => patch({ title: e.target.value })} />
+                <div className="memory-edit-hint">
+                  Sonic only reads: it never comments, opens issues, pushes or changes anything. To do the work it sends {draft.kind === 'pr_review' ? "each pull request's changes" : 'short excerpts of your code'} to
+                  the AI model it answers with, so only use it on code you are happy to share with that service.
+                </div>
+              </div>
+            )}
+
+            {wizard === 2 && !isRepo && (
               <div className="task-form">
                 <label className="task-label" htmlFor="task-topic">What should Sonic look for?</label>
                 <input id="task-topic" className="manifest-search-input" type="text" maxLength={160} autoFocus value={draft.topic}
@@ -288,10 +356,11 @@ export const TasksPage: React.FC = () => {
               </div>
             )}
 
-            {wizard === 2 && (
+            {wizard === 3 && (
               <div className="task-form">
                 <label className="task-label" htmlFor="task-cadence">How often?</label>
-                <select id="task-cadence" className="memory-category-select" value={draft.cadence} onChange={e => patch({ cadence: e.target.value as 'daily' | 'weekly' })}>
+                <select id="task-cadence" className="memory-category-select" value={draft.kind === 'code_audit' ? 'weekly' : draft.cadence} disabled={draft.kind === 'code_audit'}
+                  onChange={e => patch({ cadence: e.target.value as 'daily' | 'weekly' })}>
                   <option value="daily">Every day</option>
                   <option value="weekly">Every week</option>
                 </select>
@@ -307,9 +376,9 @@ export const TasksPage: React.FC = () => {
                 <select id="task-hour" className="memory-category-select" value={draft.hour} onChange={e => patch({ hour: Number(e.target.value) })}>
                   {Array.from({ length: 24 }, (_, hour) => <option key={hour} value={hour}>{hourLabel(hour)}</option>)}
                 </select>
-                <label className="task-label">Where to look</label>
+                {!isRepo && <label className="task-label">Where to look</label>}
                 <div className="task-sources">
-                  {(limits?.sources ?? ['web']).map(source => (
+                  {!isRepo && (limits?.sources ?? ['web']).map(source => (
                     <label key={source} className="task-source">
                       <input type="checkbox" checked={draft.sources.includes(source)}
                         onChange={e => patch({ sources: e.target.checked ? [...draft.sources, source] : draft.sources.filter(s => s !== source) })} />
@@ -327,16 +396,30 @@ export const TasksPage: React.FC = () => {
               </div>
             )}
 
-            {wizard === 3 && (
+            {wizard === 4 && (
               <div className="task-form">
                 <div className="task-review">
-                  <div><strong>Looking for:</strong> {draft.topic}</div>
-                  {draft.details && <div><strong>Narrowed by:</strong> {draft.details}</div>}
-                  <div><strong>Runs:</strong> {draft.cadence === 'weekly' ? `every ${WEEKDAYS[draft.weekday]}` : 'every day'} around {hourLabel(draft.hour)}</div>
-                  <div><strong>Where:</strong> {draft.sources.map(s => labels[s] ?? s).join(', ')}</div>
+                  {isRepo ? (
+                    <>
+                      <div><strong>Task:</strong> {kindLabel}</div>
+                      <div><strong>Repository:</strong> {(draft.repo ?? '').trim()}</div>
+                      {draft.details && <div><strong>Focus:</strong> {draft.details}</div>}
+                    </>
+                  ) : (
+                    <>
+                      <div><strong>Looking for:</strong> {draft.topic}</div>
+                      {draft.details && <div><strong>Narrowed by:</strong> {draft.details}</div>}
+                    </>
+                  )}
+                  <div><strong>Runs:</strong> {(draft.kind === 'code_audit' ? 'weekly' : draft.cadence) === 'weekly' ? `every ${WEEKDAYS[draft.weekday]}` : 'every day'} around {hourLabel(draft.hour)}</div>
+                  {!isRepo && <div><strong>Where:</strong> {draft.sources.map(s => labels[s] ?? s).join(', ')}</div>}
                   {wantsJobs && draft.location.trim() && <div><strong>Jobs near:</strong> {draft.location}</div>}
                 </div>
-                <div className="memory-edit-hint">Sonic reads a handful of public pages each time and keeps only what's new since the last run. It uses a little of your daily allowance each run.</div>
+                <div className="memory-edit-hint">
+                  {isRepo
+                    ? 'Read-only, with your own GitHub token. Each pull request is reviewed once per commit, and each finding is reported once. It uses a little of your daily allowance each run.'
+                    : "Sonic reads a handful of public pages each time and keeps only what's new since the last run. It uses a little of your daily allowance each run."}
+                </div>
               </div>
             )}
 
@@ -345,8 +428,10 @@ export const TasksPage: React.FC = () => {
               <button type="button" className="memory-edit-cancel" onClick={wizard === 1 ? closeWizard : () => setWizard(wizard - 1)} disabled={creating}>
                 {wizard === 1 ? 'Cancel' : 'Back'}
               </button>
-              {wizard < 3 ? (
-                <button type="button" className="memory-edit-save" disabled={wizard === 1 && draft.topic.trim().length < 4 || wizard === 2 && draft.sources.length === 0} onClick={() => setWizard(wizard + 1)}>Next</button>
+              {wizard < 4 ? (
+                <button type="button" className="memory-edit-save"
+                  disabled={wizard === 2 && (isRepo ? !repoOk || !githubConnected : draft.topic.trim().length < 4) || wizard === 3 && !isRepo && draft.sources.length === 0}
+                  onClick={() => setWizard(wizard + 1)}>Next</button>
               ) : (
                 <button type="button" className="memory-edit-save" disabled={creating} onClick={handleCreate}>{creating ? 'Creating...' : 'Create task'}</button>
               )}
