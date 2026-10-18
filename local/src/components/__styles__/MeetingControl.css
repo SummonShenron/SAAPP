@@ -20,6 +20,12 @@
   white-space: nowrap;
 }
 
+.meeting-btn-now {
+  background-color: var(--accent-primary);
+  color: var(--on-accent);
+  border-color: var(--accent-primary);
+}
+
 .meeting-btn-active {
   border-color: var(--accent-primary);
 }
@@ -61,6 +67,10 @@
 
 .meeting-menu-item:hover {
   background-color: color-mix(in srgb, var(--text-muted) 14%, transparent);
+}
+
+.meeting-menu-item-now {
+  font-weight: 700;
 }
 
 @media (max-width: 640px) {

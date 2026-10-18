@@ -1039,7 +1039,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     and routines_utils.asks_about_routines(final_state.get("original_question", question))):
                 routines_context = await asyncio.to_thread(
                     lambda: routines_utils.build_routines_context(get_db(), user_tz, is_admin=is_admin_user)
-                    + ("" if is_guest_username(username) else user_tasks_utils.build_tasks_context(get_db(), username, user_tz))
+                    + ("" if is_guest_username(username) else user_tasks_utils.build_tasks_context(get_db(), username, user_tz) + meetings_utils.build_schedule_context(username, user_tz))
                 )
                 tally(turn_counts, "routines_offered")
             # "What are you going to follow up on / do you have anything planned for me?", and the same when asked what it has planned (backend/utils/followups.py):
@@ -2133,7 +2133,9 @@ def _meetings_user(current_user) -> str:
 async def list_user_meetings(current_user = Depends(get_current_user)):
     """The meetings this person has with Sonic (backend/utils/meetings.py)."""
     username = _meetings_user(current_user)
-    docs = await asyncio.to_thread(meetings_utils.list_meetings, _meetings_db_or_503(), username)
+    db = _meetings_db_or_503()
+    tz = await asyncio.to_thread(get_user_timezone, username)
+    docs = await asyncio.to_thread(lambda: meetings_utils.decorate(db, username, meetings_utils.list_meetings(db, username), tz))
     return {"meetings": [meetings_utils.public_meeting(d) for d in docs], "limits": {"max_meetings": meetings_utils.MAX_MEETINGS}}
 
 
@@ -2142,7 +2144,8 @@ async def meetings_state(session_id: str = Query(""), current_user = Depends(get
     """For the chat header: the person's meetings and the one running in this conversation (if any). Nothing here reads the calendar: a meeting can be started any time."""
     username = _meetings_user(current_user)
     db = _meetings_db_or_503()
-    docs = await asyncio.to_thread(meetings_utils.list_meetings, db, username)
+    tz = await asyncio.to_thread(get_user_timezone, username)
+    docs = await asyncio.to_thread(lambda: meetings_utils.decorate(db, username, meetings_utils.list_meetings(db, username), tz))
     if not docs:
         return {"meetings": [], "active": None}
     run = await asyncio.to_thread(meetings_utils.active_run, db, username, session_id) if session_id else None
@@ -2150,13 +2153,13 @@ async def meetings_state(session_id: str = Query(""), current_user = Depends(get
     if run:
         meeting = next((d for d in docs if d["id"] == run["meeting_id"]), None)
         active = {"run_id": run["id"], "meeting_id": run["meeting_id"], "name": meeting.get("name", "")} if meeting else None
-    return {"meetings": [{"id": d["id"], "name": d["name"]} for d in docs], "active": active}
+    return {"meetings": [{"id": d["id"], "name": d["name"], "due_today": d["due_today"], "schedule": d["schedule"]} for d in docs], "active": active}
 
 
 @app.post("/api/meetings")
 async def create_user_meeting(payload: dict = Body(...), current_user = Depends(get_current_user)):
     username = _meetings_user(current_user)
-    spec, issue = meetings_utils.validate_meeting(payload)
+    spec, issue = meetings_utils.validate_meeting({**payload, "tz": await asyncio.to_thread(get_user_timezone, username)})
     if issue:
         raise HTTPException(status_code=400, detail=issue)
     meeting, issue = await asyncio.to_thread(meetings_utils.create_meeting, _meetings_db_or_503(), username, spec)

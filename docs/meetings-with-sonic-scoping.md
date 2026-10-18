@@ -4,6 +4,9 @@
 > Differences from the plan below: **there is no "on now" highlight and no calendar polling.** A meeting can be started any time (early, late, or not at all that week), so nothing needs to know when
 > the event is; each card shows when its latest note was written instead. The recurring-series id is learned from the calendar read Sonic already does when asked, and prep uses goals, task findings and
 > the last notes (open loops left out).
+> **Added after the first build:** the calendar is optional. A meeting can carry a schedule the person sets (never, every day, or every week on a day, at a time, in their timezone), so someone with no
+> Google Calendar gets the whole feature. The schedule only marks a meeting as **due today** (the button is emphasised, and Sonic can say so when asked what it has planned): it is due for that whole day, a
+> meeting held any time that day counts, and the next day it is simply not due. It is worked out from the schedule alone, so the cue needs no calendar read and no polling. The calendar title is now blank by default.
 > **Not built yet:** step 4 (marking a meeting by telling Sonic, with the confirmation card) and step 6 (character evals for the meeting wording). Real-model spot checks so far: it opens with "our", asks one
 > item at a time, says plainly when there are no notes, and does not claim to have prepared or looked forward to it.
 

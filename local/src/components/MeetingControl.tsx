@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type MeetingsState } from '../api';
 import './__styles__/MeetingControl.css';
 
@@ -17,18 +17,30 @@ export const MeetingControl: React.FC<Props> = ({ sessionId, onStarted }) => {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
+  const fetchedDay = useRef<string>('');
 
   useEffect(() => {
     let cancelled = false;
     api.getMeetingsState(sessionId)
-      .then(next => { if (!cancelled) setState(next); })
+      .then(next => { if (!cancelled) { fetchedDay.current = new Date().toDateString(); setState(next); } })
       .catch(() => { /* no meetings control is the normal outcome when there is nothing to show */ });
     return () => { cancelled = true; };
   }, [sessionId]);
 
   const refresh = useCallback(async () => {
     setState(await api.getMeetingsState(sessionId));
+    fetchedDay.current = new Date().toDateString();
   }, [sessionId]);
+
+  // A tab left open for days: what is due today is asked for again when the tab is looked at on a new day. It is a cheap read of the person's own meetings; it never touches a calendar.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible' || fetchedDay.current === new Date().toDateString()) return;
+      void refresh().catch(() => undefined);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [refresh]);
 
   if (!state || state.meetings.length === 0) return null;
 
@@ -75,21 +87,21 @@ export const MeetingControl: React.FC<Props> = ({ sessionId, onStarted }) => {
           {busy ? 'Saving...' : 'End and save notes'}
         </button>
       ) : state.meetings.length === 1 ? (
-        <button type="button" className="topbar-btn meeting-btn" disabled={busy}
+        <button type="button" className={`topbar-btn meeting-btn${state.meetings[0].due_today ? ' meeting-btn-now' : ''}`} disabled={busy}
           onClick={() => start(state.meetings[0].id, state.meetings[0].name)}
-          title={`Start ${state.meetings[0].name} with Sonic`}>
+          title={state.meetings[0].due_today ? `${state.meetings[0].name} is due today (${state.meetings[0].schedule})` : `Start ${state.meetings[0].name} with Sonic`}>
           Start office hours
         </button>
       ) : (
         <div className="meeting-menu-wrap">
-          <button type="button" className="topbar-btn meeting-btn" disabled={busy} aria-expanded={menuOpen} onClick={() => setMenuOpen(open => !open)}>
+          <button type="button" className={`topbar-btn meeting-btn${state.meetings.some(m => m.due_today) ? ' meeting-btn-now' : ''}`} disabled={busy} aria-expanded={menuOpen} onClick={() => setMenuOpen(open => !open)}>
             Start office hours
           </button>
           {menuOpen && (
             <div className="meeting-menu" role="menu">
               {state.meetings.map(meeting => (
-                <button key={meeting.id} type="button" role="menuitem" className="meeting-menu-item" onClick={() => start(meeting.id, meeting.name)}>
-                  {meeting.name}
+                <button key={meeting.id} type="button" role="menuitem" className={`meeting-menu-item${meeting.due_today ? ' meeting-menu-item-now' : ''}`} onClick={() => start(meeting.id, meeting.name)}>
+                  {meeting.name}{meeting.due_today ? ' (due today)' : ''}
                 </button>
               ))}
             </div>

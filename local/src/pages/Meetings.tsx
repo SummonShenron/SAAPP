@@ -11,9 +11,17 @@ interface Draft {
   match: string;
   purpose: string;
   agenda: string;
+  cadence: 'none' | 'daily' | 'weekly';
+  weekday: number;
+  time: string;
 }
 
-const EMPTY_DRAFT: Draft = { name: '', match: '', purpose: '', agenda: '' };
+const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const EMPTY_DRAFT: Draft = { name: '', match: '', purpose: '', agenda: '', cadence: 'none', weekday: 6, time: '12:00' };
+
+function pad(n: number): string {
+  return String(n).padStart(2, '0');
+}
 
 function formatHeld(iso: string | null): string {
   if (!iso) return '';
@@ -25,9 +33,12 @@ function formatHeld(iso: string | null): string {
 function toSpec(draft: Draft): MeetingSpec {
   return {
     name: draft.name.trim(),
-    match: draft.match.trim() || draft.name.trim(),
+    match: draft.match.trim(),
     purpose: draft.purpose.trim(),
     agenda: draft.agenda.split('\n').map(line => line.trim()).filter(Boolean),
+    cadence: draft.cadence,
+    weekday: draft.weekday,
+    time: draft.time,
   };
 }
 
@@ -61,7 +72,10 @@ export const MeetingsPage: React.FC = () => {
     setFormError('');
     if (meeting) {
       setEditing(meeting.id);
-      setDraft({ name: meeting.name, match: meeting.match, purpose: meeting.purpose, agenda: meeting.agenda.join('\n') });
+      setDraft({
+        name: meeting.name, match: meeting.match, purpose: meeting.purpose, agenda: meeting.agenda.join('\n'),
+        cadence: meeting.cadence, weekday: meeting.weekday ?? 6, time: meeting.hour === null ? '12:00' : `${pad(meeting.hour)}:${pad(meeting.minute ?? 0)}`,
+      });
     } else {
       setEditing('new');
       setDraft(EMPTY_DRAFT);
@@ -78,7 +92,7 @@ export const MeetingsPage: React.FC = () => {
         setMeetings(prev => [...prev, created]);
       } else if (editing) {
         const updated = await api.updateMeeting(editing, spec);
-        setMeetings(prev => prev.map(m => (m.id === updated.id ? { ...updated, notes: m.notes } : m)));
+        setMeetings(prev => prev.map(m => (m.id === updated.id ? { ...updated, notes: m.notes, last_held: m.last_held } : m)));
       }
       setEditing(null);
     } catch (err) {
@@ -177,8 +191,8 @@ export const MeetingsPage: React.FC = () => {
           <div className="card-badge">{meetings.length} OF {maxMeetings}</div>
           <h2>Your Meetings</h2>
           <p className="card-description">
-            A meeting starts only when you press the button, whenever you like: early, late, or not at all that week. Add the title it has on your Google Calendar and Sonic will call that
-            event "our" meeting when you ask about your calendar.
+            A meeting starts only when you press the button, whenever you like: early, late, or not at all that week. You can say when you mean to hold it, and it is marked due for that day. A Google Calendar
+            is optional: add the event's title and Sonic will call it "our" meeting when you ask about your calendar.
           </p>
           {error && <div className="memory-edit-error" role="alert">{error}</div>}
 
@@ -192,6 +206,8 @@ export const MeetingsPage: React.FC = () => {
                 <div className="memory-row task-row">
                   <div className="memory-row-main">
                     <div className="memory-row-badges">
+                      {meeting.schedule && <span className="memory-badge memory-source-badge">{meeting.schedule}</span>}
+                      {meeting.due_today && <span className="memory-badge task-new-badge">due today</span>}
                       {meeting.match && <span className="memory-badge memory-source-badge">on calendar as: {meeting.match}</span>}
                       {meeting.last_held && <span className="memory-badge memory-source-badge">last held {formatHeld(meeting.last_held)}</span>}
                     </div>
@@ -204,7 +220,7 @@ export const MeetingsPage: React.FC = () => {
                     )}
                   </div>
                   <div className="task-actions">
-                    <button type="button" className="memory-edit-save" disabled={busyId === meeting.id} onClick={() => handleStart(meeting)}>
+                    <button type="button" className={`memory-edit-save${meeting.due_today ? ' meeting-start-now' : ''}`} disabled={busyId === meeting.id} onClick={() => handleStart(meeting)}>
                       Start office hours
                     </button>
                     <button type="button" className="memory-edit-cancel" onClick={() => toggleNotes(meeting)}>
@@ -271,9 +287,26 @@ export const MeetingsPage: React.FC = () => {
               <label className="task-label" htmlFor="meeting-name">Name</label>
               <input id="meeting-name" className="manifest-search-input" type="text" maxLength={60} autoFocus value={draft.name}
                 placeholder="e.g. Weekly alignment check-in" onChange={e => patch({ name: e.target.value })} />
-              <label className="task-label" htmlFor="meeting-match">Title on your Google Calendar <span className="task-optional">optional, defaults to the name</span></label>
+              <label className="task-label" htmlFor="meeting-cadence">When do you mean to hold it? <span className="task-optional">optional</span></label>
+              <div className="meeting-when-row">
+                <select id="meeting-cadence" className="memory-category-select" value={draft.cadence} onChange={e => patch({ cadence: e.target.value as Draft['cadence'] })}>
+                  <option value="none">No set time</option>
+                  <option value="weekly">Every week</option>
+                  <option value="daily">Every day</option>
+                </select>
+                {draft.cadence === 'weekly' && (
+                  <select className="memory-category-select" aria-label="Day of the week" value={draft.weekday} onChange={e => patch({ weekday: Number(e.target.value) })}>
+                    {WEEKDAYS.map((day, index) => <option key={day} value={index}>{day}</option>)}
+                  </select>
+                )}
+                {draft.cadence !== 'none' && (
+                  <input className="memory-category-select" type="time" aria-label="Time of day" value={draft.time} onChange={e => patch({ time: e.target.value })} />
+                )}
+              </div>
+              <div className="memory-edit-hint">It only marks the meeting as due that day, in your timezone. You can still start it early, late, or skip it.</div>
+              <label className="task-label" htmlFor="meeting-match">Title on your Google Calendar <span className="task-optional">optional</span></label>
               <input id="meeting-match" className="manifest-search-input" type="text" maxLength={80} value={draft.match}
-                placeholder="e.g. alignment check in" onChange={e => patch({ match: e.target.value })} />
+                placeholder="Only if it is on a calendar, e.g. alignment check in" onChange={e => patch({ match: e.target.value })} />
               <label className="task-label" htmlFor="meeting-purpose">What is it for? <span className="task-optional">optional</span></label>
               <textarea id="meeting-purpose" className="memory-edit-text" rows={3} maxLength={300} value={draft.purpose}
                 placeholder="e.g. Review the week and how aligned it was with getting back to enterprise AI." onChange={e => patch({ purpose: e.target.value })} />

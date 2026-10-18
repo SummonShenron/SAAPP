@@ -8,6 +8,17 @@
   line-height: 1.5;
 }
 
+.meeting-start-now {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 45%, transparent);
+}
+
+.meeting-when-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+}
+
 .meeting-note-block {
   margin-top: 0.4rem;
   font-size: 0.9rem;

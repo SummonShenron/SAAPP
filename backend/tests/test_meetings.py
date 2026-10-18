@@ -41,7 +41,7 @@ class Resp:
 
 def test_a_meeting_is_cleaned_and_the_agenda_can_be_a_list_or_lines():
     spec, issue = mt.validate_meeting({"name": "  Weekly\n check-in ", "agenda": "one\n\n two \n"})
-    assert issue is None and spec["name"] == "Weekly check-in" and spec["match"] == "Weekly check-in" and spec["agenda"] == ["one", "two"] and spec["purpose"] == ""
+    assert issue is None and spec["name"] == "Weekly check-in" and spec["match"] == "" and spec["cadence"] == "none" and spec["agenda"] == ["one", "two"] and spec["purpose"] == ""
 
 
 @pytest.mark.parametrize("change,fragment", [

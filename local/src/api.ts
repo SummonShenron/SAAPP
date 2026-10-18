@@ -1306,6 +1306,13 @@ export interface Meeting {
   match: string;
   purpose: string;
   agenda: string[];
+  cadence: 'none' | 'daily' | 'weekly';
+  weekday: number | null;
+  hour: number | null;
+  minute: number | null;
+  schedule: string;
+  next_at: string | null;
+  due_today: boolean;
   notes: number;
   last_held: string | null;
 }
@@ -1315,6 +1322,9 @@ export interface MeetingSpec {
   match: string;
   purpose: string;
   agenda: string[];
+  cadence: 'none' | 'daily' | 'weekly';
+  weekday: number;
+  time: string; // HH:MM, used when there is a schedule
 }
 
 export interface MeetingNote {
@@ -1328,7 +1338,7 @@ export interface MeetingNote {
 }
 
 export interface MeetingsState {
-  meetings: { id: string; name: string }[];
+  meetings: { id: string; name: string; due_today: boolean; schedule: string }[];
   active: { run_id: string; meeting_id: string; name: string } | null;
 }
 
