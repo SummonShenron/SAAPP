@@ -80,6 +80,7 @@ PAUSED_FEATURES = [
     "conversation openers",
     "scheduled tasks",
     "meeting notes",
+    "calendar heads-ups",
 ]
 
 _BUDGET_ENV = {
@@ -543,6 +544,14 @@ def blocked_reply(resets_at: Optional[str], crisis: bool = False, scope: Optiona
     )
 
 
+def fraction_level(fraction: float) -> str:
+    """The level a single budget at this fraction is at (the same lines evaluate() uses), for showing one person their own limit by itself."""
+    notice_at, block_at = thresholds()
+    throttle = throttle_at()
+    notice_at = min(notice_at, max(throttle - 0.01, 0.01))
+    return BLOCKED if fraction >= block_at else THROTTLED if fraction >= throttle else NOTICE if fraction >= notice_at else OK
+
+
 def public_view(state: Optional[Dict[str, Any]], admin: bool) -> Dict[str, Any]:
     """What the app is told. Everyone gets the level, what is paused and when it ends; only an admin gets amounts and percentages,
     and only an admin is told about the early 'notice' step (for everyone else it is invisible, since nothing has changed yet)."""
@@ -554,6 +563,11 @@ def public_view(state: Optional[Dict[str, Any]], admin: bool) -> Dict[str, Any]:
     view: Dict[str, Any] = {"level": shown, "paused": state.get("paused", []), "resets_at": state.get("resets_at")}
     if own and shown in LOW_POWER_LEVELS:
         view["own_limit"] = True  # lets the banner say "your" limit without sending anyone an amount
+    # Everyone may see how far along THEIR OWN limit is, as a percentage and nothing else (no amount, and nothing about the shared budget or anyone else's use).
+    mine = [d for d in state.get("detail", []) if d.get("scope") in ("my_day", "my_five")]
+    if mine and level != OFF:
+        lead = max(mine, key=lambda d: d["fraction"])
+        view.update({"own_fraction": lead["fraction"], "own_scope": lead["scope"], "own_level": fraction_level(lead["fraction"])})
     if shown == THROTTLED:
         view["message"] = (
             "Low-power mode for you: deep thinking and some background extras are paused to stay within your usage limit."

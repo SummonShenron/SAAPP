@@ -144,6 +144,7 @@ from backend.services import user_task_scheduler
 from backend.services import meeting_sweep
 from backend.utils import user_tasks as user_tasks_utils
 from backend.utils import meetings as meetings_utils
+from backend.utils import calendar_headsups as headsups_utils
 from backend.utils.shared_history import CALLBACK_MARK, build_callback_block, callback_allowed
 from backend.utils.user_settings_utils import (
     get_user_rag_mode, set_user_rag_mode, VALID_RAG_MODES,
@@ -969,6 +970,13 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             )
             user_tz = await asyncio.to_thread(get_user_timezone, username)
             today_local = local_today(user_tz)
+            # A meeting the person started in THIS conversation with the Start office hours button (backend/utils/meetings.py): its agenda, last notes and prep, for as long as it runs.
+            # Never for a guest, and set aside under a safety context (the person comes first); one indexed read when no meeting is running.
+            meeting_context = ""
+            if not is_guest_username(username) and risk_level == RISK_NONE and source_type == "conversational":
+                meeting_context = await asyncio.to_thread(meetings_utils.build_context_for_session, username, session_id, user_tz)
+                if meeting_context:
+                    tally(turn_counts, "meeting_turns")
             # Something they said was coming up, whose day has now passed, asked about once at the start of a
             # conversation (backend/utils/open_loops.py). The same gates as the relatable lines, plus: only at the
             # start of a conversation or after a real pause. It takes the turn's one proactive slot, so it also
@@ -983,10 +991,22 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
                     closing=is_closing_message(question),
                 )
+            # Something coming up on their calendar (backend/utils/calendar_headsups.py): off until they turn it on, one short line, only at the start of a conversation or at a lull, and never
+            # in a meeting, under a safety context, on a closing message or while the emotional layer is holding things down. An event starting within about two hours outranks an open loop; otherwise it yields to it.
+            headsup_entry = None
+            if (not meeting_context and not is_guest_username(username) and risk_level == RISK_NONE and source_type == "conversational" and not is_closing_message(question)
+                    and energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)) == "open"
+                    and (headsups_utils.is_return(last_message_at, datetime.now(timezone.utc)) or curiosity_utils.is_lull(question))):
+                headsup_entry = await asyncio.to_thread(headsups_utils.headsup_for_turn, username, user_tz, allow_model=budget_guard.allows("calendar_headsups", budget_state))
+            if headsup_entry and open_loop_entry:
+                if headsup_entry["urgent"]:
+                    open_loop_entry = None
+                else:
+                    headsup_entry = None
             # Occasionally Sonic may mention a habit of its own when what the user said genuinely overlaps with one
             # (backend/utils/relatable_utils.py); silent under a safety or held-down emotional context, on a closing
             # message, on grounded KB answers, and rate-limited.
-            relatable_entry = None if open_loop_entry else select_relatable(
+            relatable_entry = None if (open_loop_entry or headsup_entry) else select_relatable(
                 final_state.get("original_question", question), chat_sessions[history_key],
                 source_type=source_type, risk_active=risk_level != RISK_NONE,
                 energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
@@ -1019,8 +1039,11 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             if encouragement_entry:
                 tally(turn_counts, "encouragement_offered")
                 open_loop_entry = None  # someone voicing self-doubt gets that, not a "how did it go"
+                headsup_entry = None    # nor a calendar line
             if open_loop_entry:
                 tally(turn_counts, "open_loop_offered")
+            if headsup_entry:
+                tally(turn_counts, "headsup_offered")
             # What has changed about Sonic itself (backend/components/sonic_changelog.py): said when asked what's new or
             # what it can do, and only rarely volunteered, never when another proactive item already took the turn.
             self_history = select_self_history(
@@ -1028,7 +1051,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 source_type=source_type, risk_active=risk_level != RISK_NONE,
                 energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
                 closing=is_closing_message(question),
-                proactive_taken=bool(open_loop_entry or relatable_entry or encouragement_entry),
+                proactive_taken=bool(open_loop_entry or headsup_entry or relatable_entry or encouragement_entry),
             )
             if self_history:
                 tally(turn_counts, "self_history_offered")
@@ -1050,13 +1073,6 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 followups_context = await asyncio.to_thread(followups_utils.build_followups_context, username, user_tz)
                 if followups_context:
                     tally(turn_counts, "followups_offered")
-            # A meeting the person started in THIS conversation with the Start office hours button (backend/utils/meetings.py): its agenda, last notes and prep, for as long as it runs.
-            # Never for a guest, and set aside under a safety context (the person comes first); one indexed read when no meeting is running.
-            meeting_context = ""
-            if not is_guest_username(username) and risk_level == RISK_NONE and source_type == "conversational":
-                meeting_context = await asyncio.to_thread(meetings_utils.build_context_for_session, username, session_id, user_tz)
-                if meeting_context:
-                    tally(turn_counts, "meeting_turns")
             # Results of the tasks this person set up (backend/utils/user_tasks.py): mentioned once when they are back, or told when asked. Never for a guest, under a
             # safety context, on a closing message, while the emotional layer is holding things down, or on a turn another proactive item already took.
             task_results_context, task_result_ids = "", []
@@ -1090,6 +1106,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 relatable_context=build_relatable_block(relatable_entry),
                 encouragement_context=build_encouragement_block(encouragement_entry),
                 open_loop_context=open_loops_utils.build_open_loop_block(open_loop_entry, today_local),
+                headsup_context=headsups_utils.build_headsup_block(headsup_entry, bool(headsup_entry and headsup_entry.get("discreet"))),
                 self_history_context=build_self_history_block(self_history),
                 routines_context=routines_context,
                 followups_context=followups_context,
@@ -1188,7 +1205,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                         True, chat_sessions[history_key], source_type=source_type, risk_active=risk_level != RISK_NONE,
                         energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
                         closing=is_closing_message(question),
-                        proactive_taken=bool(open_loop_entry or task_results_context or meeting_context or relatable_entry or encouragement_entry or self_history),
+                        proactive_taken=bool(open_loop_entry or headsup_entry or task_results_context or meeting_context or relatable_entry or encouragement_entry or self_history),
                     ):
                         prompt = prompt + build_callback_block(lull=callback_lull)
                         callback_offered = True
@@ -1205,7 +1222,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 slot = dict(
                     source_type=source_type, risk_active=False,
                     energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
-                    proactive_taken=bool(open_loop_entry or task_results_context or meeting_context or relatable_entry or encouragement_entry or self_history
+                    proactive_taken=bool(open_loop_entry or headsup_entry or task_results_context or meeting_context or relatable_entry or encouragement_entry or self_history
                                          or callback_offered or goal_nudge_context),
                 )
                 asked_listing = shelf_utils.shelf_enabled() and shelf_utils.asks_what_reading(question)
@@ -1466,6 +1483,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # Asked once: an offered loop is closed for good, and anything new they said is noted for later.
             if open_loop_entry:
                 await asyncio.to_thread(open_loops_utils.mark_asked, username, open_loop_entry["id"])
+            if headsup_entry and headsups_utils.was_mentioned(headsup_entry, full_response):    # recorded only if the reply really said it
+                await asyncio.to_thread(headsups_utils.mark_mentioned, username, headsup_entry["event_id"], headsup_entry["phase"])
             if task_result_ids:
                 await asyncio.to_thread(user_tasks_utils.mark_announced, username, task_result_ids)
             if open_loops_utils.open_loops_enabled() and not is_guest_username(username) and budget_guard.allows("open_loops", budget_state):
@@ -1990,6 +2009,7 @@ async def clear_memory(current_user = Depends(get_current_user)):
     await asyncio.to_thread(open_loops_utils.forget_all_loops, username)
     await asyncio.to_thread(user_tasks_utils.forget_all, username)
     await asyncio.to_thread(meetings_utils.forget_all, username)
+    await asyncio.to_thread(headsups_utils.forget_all, username)
     if result["failed"]:
         # Never report a partial wipe as success: the page says it permanently deletes everything.
         raise HTTPException(status_code=500, detail="Some of your memory could not be deleted. Please try again.")
@@ -2247,6 +2267,44 @@ async def end_user_meeting(run_id: str, current_user = Depends(get_current_user)
             note = await asyncio.to_thread(meetings_utils.write_note, db, username, run, meeting, list(messages), note_llm.invoke)
             reason = None if note else "nothing_to_note"
     return {"status": "ended", "note": meetings_utils.public_note(note) if note else None, "reason": reason}
+
+
+def _headsups_user(current_user) -> str:
+    username = current_user.get("sub")
+    if is_guest_username(username):
+        raise HTTPException(status_code=403, detail="Calendar heads-ups are for signed-in accounts.")
+    return username
+
+
+@app.get("/api/calendar-headsups")
+async def get_calendar_headsups(current_user = Depends(get_current_user)):
+    """The person's three switches, and whether a calendar is connected (the feature needs one)."""
+    username = _headsups_user(current_user)
+    db = get_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="Calendar heads-ups are not available right now.")
+    settings = await asyncio.to_thread(headsups_utils.get_settings, db, username)
+    status = await asyncio.to_thread(get_calendar_connection_status, username)
+    return {"settings": settings, "connected": bool(status.get("connected"))}
+
+
+@app.put("/api/calendar-headsups")
+async def put_calendar_headsups(payload: dict = Body(...), current_user = Depends(get_current_user)):
+    username = _headsups_user(current_user)
+    db = get_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="Calendar heads-ups are not available right now.")
+    return {"settings": await asyncio.to_thread(headsups_utils.set_settings, db, username, payload)}
+
+
+@app.get("/api/calendar-headsups/preview")
+async def preview_calendar_headsups(current_user = Depends(get_current_user)):
+    """What Sonic would mention from today's and tomorrow's calendar, shown to the person on their own settings page. Nothing is recorded."""
+    username = _headsups_user(current_user)
+    tz = await asyncio.to_thread(get_user_timezone, username)
+    state = await asyncio.to_thread(budget_guard.current_state, None, None, username)
+    items = await asyncio.to_thread(lambda: headsups_utils.preview(username, tz, allow_model=budget_guard.allows("calendar_headsups", state)))
+    return {"items": items}
 
 
 @app.get("/api/local-workspace")

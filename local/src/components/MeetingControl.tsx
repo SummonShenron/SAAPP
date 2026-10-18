@@ -84,18 +84,18 @@ export const MeetingControl: React.FC<Props> = ({ sessionId, onStarted }) => {
       {state.active ? (
         <button type="button" className="topbar-btn meeting-btn meeting-btn-active" disabled={busy} onClick={() => end(state.active!.run_id)}
           title={`Ends ${state.active.name} and saves its notes`}>
-          {busy ? 'Saving...' : 'End and save notes'}
+          {busy ? 'Saving...' : <><span className="meeting-btn-long">End and save notes</span><span className="meeting-btn-short">End &amp; save</span></>}
         </button>
       ) : state.meetings.length === 1 ? (
         <button type="button" className={`topbar-btn meeting-btn${state.meetings[0].due_today ? ' meeting-btn-now' : ''}`} disabled={busy}
           onClick={() => start(state.meetings[0].id, state.meetings[0].name)}
           title={state.meetings[0].due_today ? `${state.meetings[0].name} is due today (${state.meetings[0].schedule})` : `Start ${state.meetings[0].name} with Sonic`}>
-          Start office hours
+          <span className="meeting-btn-long">Start office hours</span><span className="meeting-btn-short">Office hours</span>
         </button>
       ) : (
         <div className="meeting-menu-wrap">
           <button type="button" className={`topbar-btn meeting-btn${state.meetings.some(m => m.due_today) ? ' meeting-btn-now' : ''}`} disabled={busy} aria-expanded={menuOpen} onClick={() => setMenuOpen(open => !open)}>
-            Start office hours
+            <span className="meeting-btn-long">Start office hours</span><span className="meeting-btn-short">Office hours</span>
           </button>
           {menuOpen && (
             <div className="meeting-menu" role="menu">

@@ -695,6 +695,10 @@ export interface BudgetView {
   unpriced_tokens?: number;
   /** Everyone: the limit in force is this person's own, not the shared one. */
   own_limit?: boolean;
+  /** Everyone with a limit of their own: how far along that limit is (0 to over 1), which one it is, and the level it is at. A percentage only: never an amount, never the shared budget. */
+  own_fraction?: number;
+  own_scope?: 'my_day' | 'my_five';
+  own_level?: 'ok' | 'notice' | 'throttled' | 'blocked';
   /** Admins only: the shared budget has paused chat and +25% is on offer. */
   can_extend?: boolean;
   /** Admins only: how far the block line has already been raised (0.25 = +25%). */
@@ -1362,6 +1366,24 @@ export const startMeeting = (id: string, sessionId: string): Promise<{ run_id: s
 export const endMeeting = (runId: string): Promise<{ status: string; note: MeetingNote | null; reason: string | null }> =>
   taskRequest(`/api/meetings/runs/${encodeURIComponent(runId)}/end`, { method: 'POST' }, 'Failed to end the meeting.');
 
+/** The person's three switches for calendar heads-ups (backend/utils/calendar_headsups.py), and what Sonic would mention. */
+export interface HeadsUpSettings {
+  enabled: boolean;
+  include_health: boolean;
+  discreet: boolean;
+}
+
+export interface HeadsUpItem {
+  title: string;
+  when: string;
+  kind: string;
+}
+
+export const getCalendarHeadsUps = (): Promise<{ settings: HeadsUpSettings; connected: boolean }> => taskRequest('/api/calendar-headsups', {}, 'Failed to load these settings.');
+export const putCalendarHeadsUps = (changes: Partial<HeadsUpSettings>): Promise<{ settings: HeadsUpSettings }> =>
+  taskRequest('/api/calendar-headsups', { method: 'PUT', body: JSON.stringify(changes) }, 'Failed to save that.');
+export const previewCalendarHeadsUps = (): Promise<{ items: HeadsUpItem[] }> => taskRequest('/api/calendar-headsups/preview', {}, 'Failed to look at your calendar.');
+
 /** What Sonic keeps besides the facts the Memory page lists: notes from past conversations, and archived copies of notes and facts. */
 export interface MemoryStored {
   notes: number;
@@ -1729,6 +1751,9 @@ export const api = {
   deleteMeetingNote,
   startMeeting,
   endMeeting,
+  getCalendarHeadsUps,
+  putCalendarHeadsUps,
+  previewCalendarHeadsUps,
   getRagMode,
   updateRagMode,
   getDeepThinking,

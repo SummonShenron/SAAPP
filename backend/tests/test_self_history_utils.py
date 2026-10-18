@@ -174,7 +174,7 @@ def test_the_app_selects_offers_marks_and_counts_self_history():
     source = (pathlib.Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
     for needle in (
         "self_history = select_self_history(",
-        "proactive_taken=bool(open_loop_entry or relatable_entry or encouragement_entry)",
+        "proactive_taken=bool(open_loop_entry or headsup_entry or relatable_entry or encouragement_entry)",
         "self_history_context=build_self_history_block(self_history)",
         'tally(turn_counts, "self_history_offered")',
         'self_history["mode"] == "volunteer"',

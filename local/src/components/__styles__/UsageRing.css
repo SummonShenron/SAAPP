@@ -1,5 +1,7 @@
 /* The usage ring beside the "..." button (components/UsageRing.tsx). */
 .usage-ring {
+  /* The colour while usage is low, before it reaches the first threshold (the amber notice level). A blue that reads on the light page and on the dark one. */
+  --usage-ok: #2f7de1;
   position: relative;
   flex: 0 0 auto;
   align-self: center; /* the buttons beside it are taller: keep it on their middle line */
@@ -8,6 +10,10 @@
   justify-content: center;
   cursor: default;
   outline: none;
+}
+
+.theme-shadow .usage-ring {
+  --usage-ok: #5aa2f5;
 }
 
 .usage-ring-track {

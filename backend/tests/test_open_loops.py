@@ -506,7 +506,7 @@ def test_the_app_selects_the_loop_offers_it_counts_it_marks_it_asked_and_capture
         'tally(turn_counts, "open_loop_offered")',
         "open_loops_utils.mark_asked",
         "open_loops_utils.capture_open_loops(",
-        "relatable_entry = None if open_loop_entry else select_relatable(",
+        "relatable_entry = None if (open_loop_entry or headsup_entry) else select_relatable(",
         "risk_level != RISK_NONE or open_loop_entry",
         "is_guest_username(username)",
     ):

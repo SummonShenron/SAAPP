@@ -118,3 +118,35 @@ def _offset_suffix(tz: str) -> str:
     from zoneinfo import ZoneInfo
     offset = datetime.datetime.now(ZoneInfo(tz)).strftime("%z")
     return f"{offset[:3]}:{offset[3:]}" if offset else "+00:00"
+
+
+def list_events_in_range(access_token: str, start: datetime.datetime, end: datetime.datetime) -> list[dict]:
+    """Events between two aware datetimes on the primary calendar, with what calendar heads-ups (backend/utils/calendar_headsups.py) need to tell a person's own plans from invitations
+    from strangers: the person's own reply, who organized it, whether it has other attendees, its visibility and status. Repeats are expanded (singleEvents). Never returns the description."""
+    service = _service(access_token)
+    result = service.events().list(
+        calendarId="primary",
+        timeMin=start.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        timeMax=end.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        singleEvents=True, orderBy="startTime", maxResults=60,
+    ).execute()
+    items = []
+    for event in result.get("items", []):
+        attendees = event.get("attendees") or []
+        mine = next((a for a in attendees if a.get("self")), None)
+        items.append({
+            "id": event.get("id"),
+            "summary": event.get("summary", ""),
+            "start": (event.get("start") or {}).get("dateTime", (event.get("start") or {}).get("date")),
+            "end": (event.get("end") or {}).get("dateTime", (event.get("end") or {}).get("date")),
+            "location": event.get("location", ""),
+            "status": event.get("status"),
+            "visibility": event.get("visibility"),
+            "event_type": event.get("eventType"),
+            "recurring_event_id": event.get("recurringEventId"),
+            "self_response": (mine or {}).get("responseStatus"),
+            "has_attendees": len([a for a in attendees if not a.get("self")]) > 0,
+            "organizer_self": bool((event.get("organizer") or {}).get("self")),
+            "creator_self": bool((event.get("creator") or {}).get("self")),
+        })
+    return items

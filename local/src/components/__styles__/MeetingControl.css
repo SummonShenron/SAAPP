@@ -12,27 +12,36 @@
   line-height: 1.3;
 }
 
-.meeting-btn {
+/* The top bar's .topbar-btn is a fixed 34px icon square and loads after this file, so these are one class more specific: a button with words in it has to be allowed to be as wide as them. */
+.topbar-btn.meeting-btn {
   width: auto;
-  padding: 0 0.8rem;
-  font-size: 0.82rem;
+  min-width: 34px;
+  flex: 0 0 auto;
+  padding: 0 0.75rem;
+  border: 1px solid var(--line-strong);
+  font-size: 0.8rem;
   font-weight: 600;
   white-space: nowrap;
 }
 
-.meeting-btn-now {
+.topbar-btn.meeting-btn.meeting-btn-now,
+.theme-shadow .topbar-btn.meeting-btn.meeting-btn-now {
   background-color: var(--accent-primary);
   color: var(--on-accent);
   border-color: var(--accent-primary);
 }
 
-.meeting-btn-active {
+.topbar-btn.meeting-btn.meeting-btn-active {
   border-color: var(--accent-primary);
 }
 
-.meeting-btn:disabled {
+.topbar-btn.meeting-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.meeting-btn-short {
+  display: none;
 }
 
 .meeting-menu-wrap {
@@ -76,5 +85,23 @@
 @media (max-width: 640px) {
   .meeting-control-msg {
     display: none;
+  }
+
+  .meeting-btn-long {
+    display: none;
+  }
+
+  .meeting-btn-short {
+    display: inline;
+  }
+
+  .topbar-btn.meeting-btn {
+    padding: 0 0.55rem;
+    font-size: 0.75rem;
+  }
+
+  .meeting-menu {
+    right: -40px;
+    min-width: 200px;
   }
 }

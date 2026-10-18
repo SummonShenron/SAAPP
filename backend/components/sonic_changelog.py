@@ -70,6 +70,20 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "calendar_headsups",
+        "requires": [
+            "backend/utils/calendar_headsups.py::def headsup_for_turn",
+            "app.py::headsups_utils.headsup_for_turn",
+        ],
+        "month": "2026-10",
+        "title": "Heads-ups from your calendar",
+        "line": (
+            "If you turn it on under Integrations, I can mention something coming up on your calendar when you open a chat, like an appointment today, once and without pressing you about it."
+        ),
+        "keywords": ["heads up", "heads-up", "reminder", "remind me", "dont forget", "don't forget"],
+        "volunteer": [],
+    },
+    {
         "id": "meetings",
         "requires": [
             "backend/utils/meetings.py::def build_meeting_context",

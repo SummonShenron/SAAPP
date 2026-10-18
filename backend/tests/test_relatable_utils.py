@@ -113,7 +113,7 @@ def test_mentions_itself_spots_stated_leanings(reply, expected):
 def test_the_app_selects_the_line_offers_it_marks_the_reply_and_counts_it():
     source = (pathlib.Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
     for needle in (
-        "relatable_entry = None if open_loop_entry else select_relatable(",
+        "relatable_entry = None if (open_loop_entry or headsup_entry) else select_relatable(",
         "relatable_context=build_relatable_block(relatable_entry)",
         "ai_message.additional_kwargs[RELATABLE_MARK] = True",
         'tally(turn_counts, "relatable_offered")',

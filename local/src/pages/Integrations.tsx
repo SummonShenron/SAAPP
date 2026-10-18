@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import CalendarHeadsUps from '../components/CalendarHeadsUps';
 import { api, getEffectivePrincipal, isGuestPrincipal, type CalendarConnectionStatus, type GitHubTokenStatus } from '../api';
 import '../pages/__styles__/SelfService.css';
 
@@ -239,6 +240,7 @@ export const IntegrationsPage: React.FC = () => {
             </div>
           )}
         </section>
+        {!isGuest && status?.connected && <CalendarHeadsUps />}
 
         {!isGuest && <h2 className="integrations-group" style={{ margin: '1.5rem 0 0' }}>Advanced</h2>}
         {!isGuest && (
