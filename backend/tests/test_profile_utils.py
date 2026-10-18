@@ -30,7 +30,7 @@ def good(**over):
 def test_a_good_profile_is_saved_as_given_with_tidy_whitespace():
     out = pu.normalize_profile(good(name="  Jack   Harper ", interests=["game  design", "Game Design", "retro computing"]))
     assert out["name"] == "Jack Harper" and out["interests"] == ["game design", "retro computing"]      # the repeat (any case) is dropped
-    assert out["style"] == {"length": "concise", "tone": "direct", "humor": "more"} and out["offers"] is True
+    assert out["style"] == {"length": "concise", "tone": "direct", "humor": "more", "questions": "balanced"} and out["offers"] is True
 
 
 def test_an_empty_profile_has_the_defaults_and_is_reported_empty():

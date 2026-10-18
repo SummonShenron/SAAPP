@@ -523,7 +523,7 @@ export interface UserProfile {
   pronouns: string;
   work?: string;
   interests: string[];
-  style: { length: string; tone: string; humor: string };
+  style: { length: string; tone: string; humor: string; questions?: string };
   avoid: string[];
   offers: boolean;
 }

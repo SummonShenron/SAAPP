@@ -70,6 +70,21 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "getting_to_know_you",
+        "requires": [
+            "backend/utils/clarifications.py::def select_question",
+            "app.py::clarify_utils.select_question",
+        ],
+        "month": "2026-10",
+        "title": "Asking how things fit into your life",
+        "line": (
+            "When you mention something new in your life, like a project, a team or a person, I may ask one light question about how it fits, "
+            "and remember your answer with what it belongs to. Set \"Questions about you\" to less, balanced or more on the Account page."
+        ),
+        "keywords": ["questions about me", "ask me questions", "follow up questions", "follow-up questions", "get to know me", "getting to know"],
+        "volunteer": [],
+    },
+    {
         "id": "calendar_headsups",
         "requires": [
             "backend/utils/calendar_headsups.py::def headsup_for_turn",

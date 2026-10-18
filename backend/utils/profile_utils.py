@@ -33,7 +33,9 @@ PRONOUN_CHOICES = ("she/her", "he/him", "they/them", "any")
 LENGTHS = ("concise", "balanced", "detailed")
 TONES = ("direct", "balanced", "warm")
 HUMOR = ("none", "default", "more")
-DEFAULT_STYLE = {"length": "balanced", "tone": "balanced", "humor": "default"}
+# How many getting-to-know-you questions Sonic asks (backend/utils/clarifications.py): "less" is none at all, for someone who wants Sonic as a tool.
+QUESTIONS = ("less", "balanced", "more")
+DEFAULT_STYLE = {"length": "balanced", "tone": "balanced", "humor": "default", "questions": "balanced"}
 
 
 class ProfileError(ValueError):
@@ -109,6 +111,7 @@ def normalize_profile(raw: Any) -> Dict[str, Any]:
             "length": _choice(style_in.get("length"), "style", LENGTHS, DEFAULT_STYLE["length"]),
             "tone": _choice(style_in.get("tone"), "style", TONES, DEFAULT_STYLE["tone"]),
             "humor": _choice(style_in.get("humor"), "style", HUMOR, DEFAULT_STYLE["humor"]),
+            "questions": _choice(style_in.get("questions"), "style", QUESTIONS, DEFAULT_STYLE["questions"]),
         },
         "avoid": _clean_list(raw.get("avoid"), "avoid", AVOID_MAX, MAX_AVOID),
         # Sonic may bring something up by itself at a quiet moment: the open question, a leaning, something it read.

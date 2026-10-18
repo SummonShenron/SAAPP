@@ -50,6 +50,8 @@ def _match(doc, query):
                     return False
                 if op == "$lt" and not (value is not None and value < arg):
                     return False
+                if op == "$in" and value not in arg:
+                    return False
         elif _get(doc, key) != cond:
             return False
     return True
@@ -85,6 +87,8 @@ class Collection:
             created = target.get("_id", "new")
         for key, value in update.get("$set", {}).items():
             _set(target, key, value)
+        for key in update.get("$unset", {}):
+            target.pop(key, None)
         for key, value in update.get("$inc", {}).items():
             _set(target, key, (_get(target, key) or 0) + value)
         for key, value in update.get("$addToSet", {}).items():
@@ -98,6 +102,21 @@ class Collection:
             current = (_get(target, key) or []) + list(spec["$each"])
             _set(target, key, current[spec["$slice"]:] if spec.get("$slice") else current)
         return SimpleNamespace(modified_count=0 if created else 1, upserted_id=created)
+
+
+    def update_many(self, query, update):
+        count = 0
+        for doc in self.docs:
+            if _match(doc, query):
+                for key in update.get("$unset", {}):
+                    doc.pop(key, None)
+                count += 1
+        return SimpleNamespace(modified_count=count)
+
+    def delete_many(self, query):
+        keep = [d for d in self.docs if not _match(d, query)]
+        removed, self.docs = len(self.docs) - len(keep), keep
+        return SimpleNamespace(deleted_count=removed)
 
 
 class Db(dict):
@@ -291,6 +310,136 @@ def test_a_topic_that_matches_nothing_on_the_shelf_offers_nothing_unless_it_is_a
     db = Db()
     stock(db, url="https://a.example.com/bug", topic="bug_hunts")
     assert shelf.offer_for_turn(db, "sam", "my boss fight difficulty curve is off", listing=False, topic_ok=True, lull_ok=False, now=NOW) is None
+
+
+def test_a_lull_prefers_the_item_closest_to_what_the_conversation_has_been_about_and_falls_back_to_the_newest():
+    db = Db()
+    game = stock(db, url="https://a.example.com/game", topic="game_design", days_ago=3)
+    bug = stock(db, url="https://a.example.com/bug", topic="bug_hunts", days_ago=1)
+    context = "my platformer's boss fight difficulty curve feels off. ok"
+    assert shelf.offer_for_turn(db, "sam", "ok", listing=False, topic_ok=False, lull_ok=True, context=context, now=NOW)["item"]["_id"] == game["_id"]
+    assert shelf.offer_for_turn(db, "sam", "ok", listing=False, topic_ok=False, lull_ok=True, context="ok", now=NOW)["item"]["_id"] == bug["_id"]
+
+
+def test_a_soft_lull_offers_like_a_lull_but_a_message_that_is_neither_offers_nothing():
+    db = Db()
+    stock(db, url="https://a.example.com/game", topic="game_design")
+    soft = shelf.offer_for_turn(db, "sam", "huh, that makes sense now", listing=False, topic_ok=False, lull_ok=False, soft_ok=True, now=NOW)
+    assert soft["kind"] == "lull"
+    assert shelf.offer_for_turn(db, "sam", "huh, that makes sense now", listing=False, topic_ok=False, lull_ok=False, soft_ok=False, now=NOW) is None
+
+
+def test_the_recent_conversation_is_only_what_the_person_said_over_their_last_few_messages():
+    messages = [SimpleNamespace(type=t, content=c) for t, c in [("human", "one"), ("ai", "reply"), ("human", "two"), ("human", "three"), ("human", "four"), ("human", "five")]]
+    assert shelf.recent_user_text(messages, n=4) == "two three four five" and "reply" not in shelf.recent_user_text(messages)
+
+
+@pytest.mark.parametrize("text,yes", [
+    ("huh, that makes sense now", True), ("yeah that's good to know", True), ("ha that's funny", True), ("wow that's wild", True), ("oh that's interesting", True),
+    ("ok cool", False), ("nice, that worked", False),                                 # a sign-off is a closing, which gets a clean close and never an offer
+    ("ok now add a button", False), ("yeah I'm so tired", False), ("nice, that worked?", False), ("thanks, that worked", False), ("cool 3 of them", False),
+    ("nice, that worked, so what about the other one over there then", False), ("", False),
+])
+def test_a_soft_lull_is_a_short_reaction_made_only_of_reaction_words(text, yes):
+    from backend.utils import curiosity
+
+    assert curiosity.is_soft_lull(text) is yes
+
+
+def test_a_soft_lull_waits_for_its_own_longer_gap_since_the_last_shelf_item_this_person_was_offered():
+    db = Db()
+    item = stock(db, url="https://a.example.com/game")
+    assert shelf.last_shelf_offer_at(db, "sam") is None and shelf.soft_gap_clear(None, NOW)
+    shelf.mark_offered(db, "sam", item["_id"], now=NOW)
+    last = shelf.last_shelf_offer_at(db, "sam")
+    assert last == NOW and not shelf.soft_gap_clear(last, NOW + timedelta(hours=shelf.SOFT_MIN_HOURS - 1)) and shelf.soft_gap_clear(last, NOW + timedelta(hours=shelf.SOFT_MIN_HOURS))
+
+
+def test_soft_lulls_can_be_switched_off(monkeypatch):
+    assert shelf.soft_lulls_enabled()
+    monkeypatch.setenv("SHELF_SOFT_LULLS", "false")
+    assert not shelf.soft_lulls_enabled()
+
+
+# ---- storage: the shelf cannot grow past a fixed size -----------------------------------------------------------------------------------------
+
+def _bytes(doc):
+    return len(json.dumps(doc, ensure_ascii=False).encode("utf-8")) + 64        # the 64 stands in for BSON's per-field type and length bytes
+
+
+def test_an_address_too_long_to_keep_is_never_read():
+    long_url = "https://blog.example.com/p?" + "q=" + "x" * shelf.MAX_URL_CHARS
+    assert shelf.acceptable_source(long_url, [], []) == "an address too long to keep"
+    assert shelf.acceptable_source("https://blog.example.com/p", [], []) is None
+
+
+def test_a_summary_has_a_character_limit_as_well_as_a_word_limit():
+    words = " ".join(["Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"] * 12)      # 12 words, over 400 characters
+    assert shelf.summary_issue(words, words) is not None
+
+
+def test_the_largest_item_that_can_be_stored_fits_the_ceiling_and_so_does_the_largest_tombstone():
+    db = Db()
+    url = "https://" + "h" * 60 + ".example.com/" + "é" * 150                       # kept short enough to pass acceptable_source after normalising
+    doc = shelf.add_item(db, url=url, title="é" * 200, summary="é" * 400, topic="bug_hunts", now=NOW)
+    assert len(doc["title"]) <= shelf.TITLE_MAX_CHARS and _bytes(doc) <= shelf.LIVE_DOC_BYTES
+    shelf.remove_item(db, doc["_id"], by="a" * 300 + "@example.com", now=NOW)
+    tomb = db["sonic_reading_shelf"].find_one({"_id": doc["_id"]})
+    assert "summary" not in tomb and "title" not in tomb and "url" not in tomb          # the page is remembered, what it said is not
+    assert len(tomb["removed_by"]) <= shelf.REMOVED_BY_MAX_CHARS and _bytes(tomb) <= shelf.TOMBSTONE_BYTES
+    assert doc["_id"] in shelf.known_keys(db)                                           # and it is still never read again
+
+
+def test_trimming_turns_old_items_into_small_tombstones_and_never_loses_the_memory_of_a_page_while_under_the_cap():
+    db = Db()
+    for n in range(8):
+        stock(db, url=f"https://b.example.com/{n}", days_ago=n)
+    assert shelf.trim_to_limit(db, limit=5, max_tombstones=100) == 3
+    docs = db["sonic_reading_shelf"].docs
+    assert sum(d["status"] == shelf.LIVE for d in docs) == 5 and sum(d["status"] == shelf.REMOVED for d in docs) == 3
+    assert all("summary" not in d for d in docs if d["status"] == shelf.REMOVED) and len(shelf.known_keys(db)) == 8
+
+
+def test_tombstones_written_before_they_were_slimmed_are_cut_down_on_the_next_trim():
+    db = Db()
+    old = stock(db, url="https://b.example.com/old")
+    db["sonic_reading_shelf"].update_one({"_id": old["_id"]}, {"$set": {"status": shelf.REMOVED, "removed_at": NOW.isoformat()}})
+    assert "summary" in db["sonic_reading_shelf"].find_one({"_id": old["_id"]})
+    shelf.trim_to_limit(db, limit=5, max_tombstones=100)
+    assert "summary" not in db["sonic_reading_shelf"].find_one({"_id": old["_id"]})
+
+
+def test_past_the_tombstone_cap_the_oldest_are_forgotten_and_nothing_live_is_touched():
+    db = Db()
+    for n in range(12):
+        doc = stock(db, url=f"https://c.example.com/{n}", days_ago=1)
+        shelf.remove_item(db, doc["_id"], now=NOW + timedelta(minutes=n))
+    live = stock(db, url="https://c.example.com/live")
+    assert shelf.compact_tombstones(db, cap=5) == 7
+    left = {d["_id"]: d for d in db["sonic_reading_shelf"].docs}
+    assert len(left) == 6 and left[live["_id"]]["status"] == shelf.LIVE
+    assert sorted(d["removed_at"] for d in left.values() if d["status"] == shelf.REMOVED) == [(NOW + timedelta(minutes=n)).isoformat() for n in range(7, 12)]
+
+
+def test_two_years_of_reading_at_the_fastest_pace_stays_inside_the_stated_bound(monkeypatch):
+    db = Db()
+    for n in range(2 * 365 * 2):                                                        # two refreshes a day, each adding its one item, trimmed after every add
+        shelf.add_item(db, url=f"https://d.example.com/{n}", title="t" * 120, summary="s" * 400, topic="security", now=NOW + timedelta(hours=12 * n))
+        shelf.trim_to_limit(db, limit=shelf.MAX_LIVE_ITEMS, max_tombstones=300)
+        docs = db["sonic_reading_shelf"].docs
+        assert sum(d["status"] == shelf.LIVE for d in docs) <= shelf.MAX_LIVE_ITEMS
+        assert len(docs) <= shelf.MAX_LIVE_ITEMS + 300
+    assert sum(_bytes(d) for d in db["sonic_reading_shelf"].docs) <= 60 * shelf.LIVE_DOC_BYTES + 300 * shelf.TOMBSTONE_BYTES
+
+
+def test_the_stated_worst_case_is_a_small_fraction_of_the_free_database_tier():
+    assert shelf.worst_case_bytes() == shelf.MAX_LIVE_ITEMS * shelf.LIVE_DOC_BYTES + shelf.MAX_TOMBSTONES * shelf.TOMBSTONE_BYTES
+    assert shelf.worst_case_bytes() < 512 * 1024 * 1024 / 100                           # under 1% of Atlas's 512 MB
+
+
+def test_the_oldest_unused_items_leave_the_shelf_within_weeks_at_the_normal_pace():
+    live_days = shelf.MAX_LIVE_ITEMS * shelf.REFRESH_DAYS                               # one new item per refresh, so a full shelf turns over in this many days
+    assert live_days <= shelf.ITEM_MAX_AGE_DAYS                                         # the 60-item cap, not the age limit, is what retires an item
 
 
 # ---- what Sonic is told, and what it may say ---------------------------------------------------------------------------------------------

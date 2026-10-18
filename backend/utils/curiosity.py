@@ -69,6 +69,27 @@ def is_lull(text: Optional[str]) -> bool:
     return not re.search(r"[0-9]|https?://", text) and all(w in _LULL_WORDS for w in words)
 
 
+# A softer lull: a short reaction to what Sonic just said ("huh, that makes sense now", "ha, that's funny"). Every word must come from this closed
+# vocabulary, so a message that carries a request, a feeling or any new content ("ok now add a button", "yeah I'm so tired") is never one.
+_SOFT_WORDS = _LULL_WORDS | {
+    "cool", "nice", "neat", "great", "awesome", "sweet", "perfect", "good", "funny", "wild", "crazy", "worked", "works", "working", "got",
+    "helps", "helpful", "helped", "clear", "clearer", "understand", "understood", "useful", "fun", "ha", "hah", "love", "like", "better",
+    "easier", "stellar", "simple", "simpler", "okay", "all", "the", "same", "good", "to", "know", "learn", "learned",
+}
+MAX_SOFT_LULL_WORDS = 10
+
+
+def is_soft_lull(text: Optional[str]) -> bool:
+    """True when the message is a short, content-free reaction: no question, no sign-off, no number or link or code, at most MAX_SOFT_LULL_WORDS words,
+    all of them from a closed list of reactions. A superset of is_lull; used only for the reading shelf, which is rarer than the plain open question."""
+    if not text or "?" in text or "`" in text or is_closing_message(text):
+        return False
+    words = re.findall(r"[a-z']+", text.lower())
+    if not words or len(words) > MAX_SOFT_LULL_WORDS:
+        return False
+    return not re.search(r"[0-9]|https?://", text) and all(w in _SOFT_WORDS for w in words)
+
+
 def _type_of(message: Any) -> str:
     return str(getattr(message, "type", "") or "")
 

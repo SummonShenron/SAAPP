@@ -15,8 +15,13 @@ that sentence true and to keep it from being said otherwise.
 - NO PRE-APPROVAL, EASY REMOVAL. Items go live when they pass the checks; an admin can see everything on the shelf and remove an item (or
   a whole source) in one click (/api/admin/reading-shelf). Removal is read live on the next turn.
 - RARE, AND NEVER AT THE EXPENSE OF A QUIET REPLY. It rides the same single proactive slot, per-conversation limit and per-person gap as
-  the open question (backend/utils/curiosity.py): at a lull, or when the person's message touches the item's topic. An item is offered to
-  a given person at most once. Asking "what have you been reading?" gets the list, and an honest "nothing yet" when the shelf is empty.
+  the open question (backend/utils/curiosity.py): at a lull, or when the person's message touches the item's topic. A softer lull (a short
+  reaction like "huh, that makes sense now") also counts, but only 8 hours after the last item that person was offered. At a lull the item
+  closest to what they have been talking about is chosen. An item is offered to a given person at most once. Asking "what have you been
+  reading?" gets the list, and an honest "nothing yet" when the shelf is empty.
+- BOUNDED STORAGE. One item is added per refresh at most, the live shelf is trimmed to MAX_LIVE_ITEMS after every add, removed and trimmed
+  items shrink to small tombstones, and tombstones are capped (worst_case_bytes gives the ceiling). The 60-item cap, not the 180-day age
+  limit, is what retires an item: at two a day a full shelf turns over in about a month.
 
 This module is the pure part (checks, prompts, selection) and the database part. The searching is in backend/services/shelf_refresh.py.
 """
@@ -39,13 +44,28 @@ STATE_COLLECTION = "sonic_reading_shelf_state"
 STATE_ID = "refresh"
 SETTINGS_COLLECTION = "user_settings"
 SEEN_KEY = "shelf_seen"
+LAST_SHELF_KEY = "last_shelf_offer_at"
 SHELF_MARK = "shelf_offered"
+# A softer lull ("huh, that makes sense now") may bring up a shelf item, but only this long after the last shelf item this person was offered: the plain
+# lull and a topic they touch are not held to it. This is what keeps the shelf from being mentioned in every chat that goes quiet.
+SOFT_MIN_HOURS = float(os.getenv("SHELF_SOFT_MIN_HOURS", "8"))
 
 # Twice a day at most: Sonic reads the way a person with free time does, a little in the morning and a little in the evening, so the shelf always has
 # something recent. Every refresh is one free web search, up to three page reads and two small model calls per page, which is a fraction of a cent.
 REFRESH_DAYS = float(os.getenv("SHELF_REFRESH_DAYS", "0.5"))
 ITEM_MAX_AGE_DAYS = int(os.getenv("SHELF_ITEM_MAX_AGE_DAYS", "180"))
 MAX_LIVE_ITEMS = 60
+# STORAGE BOUND. At most one item is added per refresh (every SHELF_REFRESH_DAYS, so two a day), live items are trimmed to MAX_LIVE_ITEMS after every add, and
+# a trimmed or removed item is cut down to a tombstone of a few fields (the page is remembered, the text is not). Tombstones are capped too, so the whole
+# collection can never pass about MAX_LIVE_ITEMS * LIVE_DOC_BYTES + MAX_TOMBSTONES * TOMBSTONE_BYTES, whatever happens (see worst_case_bytes and its test).
+MAX_TOMBSTONES = int(os.getenv("SHELF_MAX_TOMBSTONES", "5000"))
+MAX_URL_CHARS = 500
+SUMMARY_MAX_CHARS = 400
+REMOVED_BY_MAX_CHARS = 40
+# Ceilings in bytes, counting every character as four (UTF-8's worst case): a live item is url <= 500 + title <= 120 + summary <= 400 characters + domain (<= 253)
+# + about 300 for the fixed fields and key names; a tombstone is id, domain, topic, status, three timestamps and removed_by.
+LIVE_DOC_BYTES = 4096
+TOMBSTONE_BYTES = 768
 LISTING_ITEMS = 5
 MAX_SEEN = 200
 MIN_PAGE_CHARS = 700
@@ -63,6 +83,16 @@ def shelf_enabled() -> bool:
 
 def refresh_enabled() -> bool:
     return os.getenv("SHELF_REFRESH", "true").strip().lower() not in ("0", "false", "no", "off")
+
+
+def soft_lulls_enabled() -> bool:
+    """Whether a short reaction ("huh, that makes sense now") also counts as a moment to mention a shelf item. SHELF_SOFT_LULLS=false goes back to real lulls only."""
+    return os.getenv("SHELF_SOFT_LULLS", "true").strip().lower() not in ("0", "false", "no", "off")
+
+
+def worst_case_bytes() -> int:
+    """The most the shelf collection can occupy, from the limits above. Atlas's free tier is 512 MB; this is about a hundredth of that."""
+    return MAX_LIVE_ITEMS * LIVE_DOC_BYTES + MAX_TOMBSTONES * TOMBSTONE_BYTES
 
 
 def schedule_enabled() -> bool:
@@ -237,6 +267,8 @@ def acceptable_source(url: str, known_keys: Iterable[str], blocked: Iterable[str
     """Why a search result may not be read, or None. A page already on the shelf, or removed from it, is never read again."""
     if not url or urlsplit(url).scheme != "https":
         return "not an https page"
+    if len(normalize_url(url)) > MAX_URL_CHARS:
+        return "an address too long to keep"
     if domain_blocked(url, list(DEFAULT_BLOCKED_DOMAINS) + list(blocked)):
         return "a source that is not read"
     if item_key(url) in set(known_keys):
@@ -307,7 +339,7 @@ def summary_issue(summary: str, page_text: str) -> Optional[str]:
 
     text = (summary or "").strip()
     words = text.split()
-    if not (SUMMARY_MIN_WORDS <= len(words) <= SUMMARY_MAX_WORDS):
+    if not (SUMMARY_MIN_WORDS <= len(words) <= SUMMARY_MAX_WORDS) or len(text) > SUMMARY_MAX_CHARS:
         return f"not {SUMMARY_MIN_WORDS}-{SUMMARY_MAX_WORDS} words"
     if "\n" in text or _URL_RE.search(text):
         return "not one plain passage"
@@ -415,12 +447,32 @@ def live_items(db, now: Optional[datetime] = None, *, include_expired: bool = Fa
     return [d for d in docs if (_parse(d.get("read_at")) or now) >= cutoff]
 
 
-def trim_to_limit(db, limit: int = MAX_LIVE_ITEMS) -> int:
-    """Keeps the shelf small: the oldest live items past `limit` become tombstones (never offered, never read again)."""
+_TOMBSTONE_DROPS = {"url": "", "title": "", "summary": ""}   # what a tombstone no longer keeps: only that the page was read, never what it said
+
+
+def trim_to_limit(db, limit: int = MAX_LIVE_ITEMS, max_tombstones: int = MAX_TOMBSTONES) -> int:
+    """Keeps the shelf small: the oldest live items past `limit` become tombstones (never offered, never read again), then the tombstones are
+    compacted (see compact_tombstones). Returns how many live items were trimmed."""
     docs = live_items(db, include_expired=True)
     for doc in docs[limit:]:
-        db[COLLECTION].update_one({"_id": doc["_id"]}, {"$set": {"status": REMOVED, "removed_at": _iso(_now()), "removed_by": "trim"}})
+        db[COLLECTION].update_one(
+            {"_id": doc["_id"]}, {"$set": {"status": REMOVED, "removed_at": _iso(_now()), "removed_by": "trim"}, "$unset": _TOMBSTONE_DROPS}
+        )
+    compact_tombstones(db, max_tombstones)
     return max(0, len(docs) - limit)
+
+
+def compact_tombstones(db, cap: int = MAX_TOMBSTONES) -> int:
+    """Bounds what is kept of pages that are gone: every tombstone is cut down to a few fields (this also shrinks ones written before they were),
+    and past `cap` the oldest are forgotten for good, which is years of reading at two items a day. Returns how many were forgotten."""
+    db[COLLECTION].update_many({"status": REMOVED, "summary": {"$exists": True}}, {"$unset": _TOMBSTONE_DROPS})
+    gone = list(db[COLLECTION].find({"status": REMOVED}, {"_id": 1, "removed_at": 1}))
+    if len(gone) <= cap:
+        return 0
+    gone.sort(key=lambda d: d.get("removed_at") or "")
+    forget = [d["_id"] for d in gone[: len(gone) - cap]]
+    db[COLLECTION].delete_many({"_id": {"$in": forget}})
+    return len(forget)
 
 
 def remove_item(db, key: str, by: Optional[str] = None, block_source: bool = False, now: Optional[datetime] = None) -> bool:
@@ -429,7 +481,9 @@ def remove_item(db, key: str, by: Optional[str] = None, block_source: bool = Fal
     if not doc:
         return False
     when = _iso(now or _now())
-    db[COLLECTION].update_one({"_id": key}, {"$set": {"status": REMOVED, "removed_at": when, "removed_by": by or "admin"}})
+    db[COLLECTION].update_one(
+        {"_id": key}, {"$set": {"status": REMOVED, "removed_at": when, "removed_by": str(by or "admin")[:REMOVED_BY_MAX_CHARS]}, "$unset": _TOMBSTONE_DROPS}
+    )
     if block_source and doc.get("domain"):
         db[STATE_COLLECTION].update_one({"_id": STATE_ID}, {"$addToSet": {"blocked_domains": doc["domain"]}}, upsert=True)
     return True
@@ -444,12 +498,24 @@ def seen_keys(db, username: str) -> set:
     return {str(k) for k in (doc.get(SEEN_KEY) or [])}
 
 
-def mark_offered(db, username: str, key: str) -> None:
-    """This person has now been offered this item (never again), and the item's own count goes up."""
+def mark_offered(db, username: str, key: str, now: Optional[datetime] = None) -> None:
+    """This person has now been offered this item (never again), when that was, and the item's own count goes up."""
     db[SETTINGS_COLLECTION].update_one(
-        {"username": username}, {"$push": {SEEN_KEY: {"$each": [key], "$slice": -MAX_SEEN}}}, upsert=True
+        {"username": username},
+        {"$push": {SEEN_KEY: {"$each": [key], "$slice": -MAX_SEEN}}, "$set": {LAST_SHELF_KEY: _iso(now or _now())}},
+        upsert=True,
     )
     db[COLLECTION].update_one({"_id": key}, {"$inc": {"offered": 1}})
+
+
+def last_shelf_offer_at(db, username: str) -> Optional[datetime]:
+    doc = db[SETTINGS_COLLECTION].find_one({"username": username}, {"_id": 0, LAST_SHELF_KEY: 1}) or {}
+    return _parse(doc.get(LAST_SHELF_KEY))
+
+
+def soft_gap_clear(last: Optional[datetime], now: Optional[datetime] = None, hours: Optional[float] = None) -> bool:
+    """Whether enough time has passed since this person was last offered a shelf item for a soft lull to bring up another."""
+    return last is None or (now or _now()) - last >= timedelta(hours=SOFT_MIN_HOURS if hours is None else hours)
 
 
 def describe_item(doc: Dict[str, Any]) -> Dict[str, Any]:
@@ -502,18 +568,28 @@ def topic_for(message: str) -> Optional[str]:
     return best
 
 
+def recent_user_text(messages: Iterable[Any], n: int = 4) -> str:
+    """What the person has said over the last `n` of their messages (the latest included): the conversation's subject, for choosing which item
+    to bring up at a lull, when the latest message is only "ok". Only used to rank; nothing here is stored or sent anywhere."""
+    said = [str(getattr(m, "content", "") or "") for m in messages if str(getattr(m, "type", "")) == "human"]
+    return " ".join(s for s in said[-n:] if isinstance(s, str))
+
+
 def offer_for_turn(
-    db, username: str, question: str, *, listing: bool, topic_ok: bool, lull_ok: bool, now: Optional[datetime] = None
+    db, username: str, question: str, *, listing: bool, topic_ok: bool, lull_ok: bool, soft_ok: bool = False, context: str = "",
+    now: Optional[datetime] = None,
 ) -> Optional[Dict[str, Any]]:
     """What the shelf offers this turn, or None. The caller has already applied every gate that depends on the conversation (route,
     safety, mood, the one slot, once per conversation, the per-person gap); this only reads the shelf.
     {"kind": "listing", "items": [...]} for a direct ask (always answered, even with an empty shelf);
-    {"kind": "topic"|"lull", "item": {...}} for an item this person has not been offered, matching the topic they touched or any at a lull."""
+    {"kind": "topic"|"lull", "item": {...}} for an item this person has not been offered, matching the topic they touched or, at a lull, the one
+    closest to what the conversation has been about (`context`, their last few messages), else the newest. `soft_ok` is a softer lull ("nice, that
+    worked"): the caller has held it to its own, longer gap; it picks the same way."""
     now = now or _now()
     items = live_items(db, now)
     if listing:
         return {"kind": "listing", "items": items[:LISTING_ITEMS]}
-    if not (topic_ok or lull_ok) or not items:
+    if not (topic_ok or lull_ok or soft_ok) or not items:
         return None
     seen = seen_keys(db, username)
     fresh = [i for i in items if i["_id"] not in seen]
@@ -522,8 +598,9 @@ def offer_for_turn(
         match = next((i for i in fresh if topic and i.get("topic") == topic), None)
         if match:
             return {"kind": "topic", "item": match}
-    if lull_ok and fresh:
-        return {"kind": "lull", "item": fresh[0]}
+    if (lull_ok or soft_ok) and fresh:
+        about = topic_for(context) or topic_for(question)
+        return {"kind": "lull", "item": next((i for i in fresh if about and i.get("topic") == about), fresh[0])}
     return None
 
 

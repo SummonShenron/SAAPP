@@ -9,7 +9,7 @@ const PRONOUN_MAX = 30;
 const WORK_MAX = 60;
 
 const EMPTY: UserProfile = {
-  name: '', pronouns: '', work: '', interests: [], style: { length: 'balanced', tone: 'balanced', humor: 'default' }, avoid: [], offers: true,
+  name: '', pronouns: '', work: '', interests: [], style: { length: 'balanced', tone: 'balanced', humor: 'default', questions: 'balanced' }, avoid: [], offers: true,
 };
 
 /**
@@ -126,8 +126,13 @@ const ProfileCard: React.FC = () => {
               <option value="none">None</option><option value="default">Sonic's usual</option><option value="more">More</option>
             </select>
           </label>
+          <label>Questions about you
+            <select className="account-input" value={profile.style.questions ?? 'balanced'} onChange={e => updateStyle({ questions: e.target.value })}>
+              <option value="less">Less</option><option value="balanced">Balanced</option><option value="more">More</option>
+            </select>
+          </label>
         </div>
-        <div className="account-hint">When you're having a hard time, Sonic still softens and slows down whatever you pick.</div>
+        <div className="account-hint">When you're having a hard time, Sonic still softens and slows down whatever you pick. "Questions about you" is how often Sonic asks how something you mentioned fits into your life, like whether a project is for work. Less means never, and your answers help it remember things in the right place.</div>
         {fieldError('style')}
       </div>
 

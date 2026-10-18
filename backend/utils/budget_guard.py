@@ -81,6 +81,7 @@ PAUSED_FEATURES = [
     "scheduled tasks",
     "meeting notes",
     "calendar heads-ups",
+    "getting-to-know-you questions",
 ]
 
 _BUDGET_ENV = {

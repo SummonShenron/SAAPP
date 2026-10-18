@@ -574,6 +574,20 @@ def edit_user_fact(username: str, fact_id: str, text: str, category: Optional[st
     return fact
 
 
+def link_user_facts(username: str, fact_id: str, other_id: str) -> bool:
+    """Links two saved facts both ways because the person said they belong together (no embedding or model guess), within the per-fact cap. False when either is
+    gone, they are the same fact, they were already linked, or a cap stopped it."""
+    all_facts = load_user_facts(username)
+    by_id = {f.id: f for f in all_facts}
+    first, second = by_id.get(fact_id), by_id.get(other_id)
+    if first is None or second is None or first.id == second.id:
+        return False
+    if not fact_links.add_links(first, [second]):
+        return False
+    save_user_facts(username, all_facts)
+    return True
+
+
 def unlink_user_facts(username: str, fact_id: str, other_id: str) -> bool:
     """Removes the link between two facts, both ways (the person disagrees that they belong together). False when there was no such link."""
     all_facts = load_user_facts(username)

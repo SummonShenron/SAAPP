@@ -125,6 +125,7 @@ from backend.utils.example_questions import build_example_questions, build_welco
 from backend.components.sonic_profile import SONIC_PROFILE
 from backend.utils.time_utils import build_time_context, local_today, sent_at, stamp
 from backend.utils import open_loops as open_loops_utils
+from backend.utils import clarifications as clarify_utils
 from backend.utils import initiation as initiation_utils
 from backend.utils import budget_guard
 from backend.utils import llm_turns, llm_usage, loop_watchdog
@@ -717,6 +718,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     previous_marks = (getattr(chat_sessions[history_key][-1], "additional_kwargs", None) or {}) if chat_sessions[history_key] else {}
     answers_curiosity = bool(previous_marks.get(curiosity_utils.CURIOSITY_MARK)) and curiosity_utils.taken(question)
     answers_shelf = bool(previous_marks.get(shelf_utils.SHELF_MARK)) and curiosity_utils.taken(question)
+    clarify_reply_to = previous_marks.get(clarify_utils.CLARIFY_MARK)  # Sonic's last reply asked how a thing fits into their life: this message is the answer (or not)
     previous_reply = open_loops_utils.previous_reply(chat_sessions[history_key])  # so "Friday at 2" can be tied to what Sonic just asked about
     chat_sessions[history_key].append(stamp(HumanMessage(content=question)))
 
@@ -1218,6 +1220,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # Asking what it has been reading is answered from the shelf whatever else is going on.
             curiosity_invited = False
             shelf_offer = None
+            clarify_entry = None
             if source_type == "conversational" and not is_guest_username(username) and risk_level == RISK_NONE:
                 slot = dict(
                     source_type=source_type, risk_active=False,
@@ -1225,19 +1228,38 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     proactive_taken=bool(open_loop_entry or headsup_entry or task_results_context or meeting_context or relatable_entry or encouragement_entry or self_history
                                          or callback_offered or goal_nudge_context),
                 )
+                # A getting-to-know-you question (backend/utils/clarifications.py): takes the turn's one slot, so nothing below stacks with it.
+                clarify_level = clarify_utils.level_of(user_profile)
+                if (clarify_utils.clarify_enabled() and clarify_level != clarify_utils.LESS and not slot["proactive_taken"] and slot["energy_tier"] == "open"
+                        and not is_closing_message(question) and not curiosity_utils.last_reply_asked(chat_sessions[history_key]) and get_db() is not None
+                        and not shelf_utils.asks_what_reading(question)):
+                    clarify_entry = await asyncio.to_thread(clarify_utils.select_question, get_db(), username, clarify_level, datetime.now(timezone.utc))
+                    if clarify_entry:
+                        parent_text = await asyncio.to_thread(
+                            lambda: clarify_utils.parent_text_for(load_user_facts(username), clarify_entry.get("parent_fact_id")))
+                        prompt = prompt + clarify_utils.build_question_block(clarify_entry, parent_text)
+                        slot["proactive_taken"] = True
                 asked_listing = shelf_utils.shelf_enabled() and shelf_utils.asks_what_reading(question)
                 offers = profile_utils.offers_allowed(user_profile)  # the person's own switch for Sonic bringing something up by itself
                 topic_ok = offers and shelf_utils.shelf_enabled() and shelf_utils.topic_for(question) is not None and curiosity_utils.slot_open(
                     question, chat_sessions[history_key], min_turns=2, **slot)
                 lull_ok = offers and curiosity_utils.curiosity_allowed(question, chat_sessions[history_key], **slot)
+                # A softer lull (a short reaction like "huh, that makes sense now") may also bring up a shelf item, never the plain question, and only after its own
+                # longer gap since the last shelf item this person was offered (backend/utils/reading_shelf.py soft_gap_clear).
+                soft_ok = bool(not lull_ok and offers and shelf_utils.shelf_enabled() and shelf_utils.soft_lulls_enabled() and curiosity_utils.is_soft_lull(question)
+                               and curiosity_utils.slot_open(question, chat_sessions[history_key], **slot)
+                               and not curiosity_utils.last_reply_asked(chat_sessions[history_key]))
                 db_for_shelf = get_db()
                 if asked_listing and db_for_shelf is not None:
                     shelf_offer = await asyncio.to_thread(shelf_utils.offer_for_turn, db_for_shelf, username, question, listing=True, topic_ok=False, lull_ok=False)
-                elif (topic_ok or lull_ok) and curiosity_utils.gap_clear(
+                elif (topic_ok or lull_ok or soft_ok) and curiosity_utils.gap_clear(
                         await asyncio.to_thread(curiosity_utils.last_offer_at, username), datetime.now(timezone.utc)):
-                    if db_for_shelf is not None:
+                    if soft_ok and not (topic_ok or lull_ok) and db_for_shelf is not None:
+                        soft_ok = shelf_utils.soft_gap_clear(await asyncio.to_thread(shelf_utils.last_shelf_offer_at, db_for_shelf, username))
+                    if db_for_shelf is not None and (topic_ok or lull_ok or soft_ok):
                         shelf_offer = await asyncio.to_thread(
                             shelf_utils.offer_for_turn, db_for_shelf, username, question, listing=False, topic_ok=bool(topic_ok), lull_ok=bool(lull_ok),
+                            soft_ok=soft_ok, context=shelf_utils.recent_user_text(chat_sessions[history_key]),
                         )
                     if shelf_offer and shelf_offer["kind"] != "listing" and profile_utils.touches_avoided(
                             f"{shelf_offer['item'].get('title', '')} {shelf_offer['item'].get('summary', '')} {shelf_offer['item'].get('topic', '')}", user_profile):
@@ -1462,6 +1484,14 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 tally(turn_counts, "shelf_offered")
                 await asyncio.to_thread(curiosity_utils.record_offer, username)
                 await asyncio.to_thread(shelf_utils.mark_offered, get_db(), username, shelf_offer["item"]["_id"])
+            if clarify_entry:
+                # A getting-to-know-you question is recorded as asked only if the reply really asked something; otherwise it waits for one more try.
+                if curiosity_utils.asked_a_question(full_response):
+                    ai_message.additional_kwargs[clarify_utils.CLARIFY_MARK] = clarify_entry["id"]
+                    tally(turn_counts, "clarify_asked")
+                    await asyncio.to_thread(clarify_utils.set_status, get_db(), username, clarify_entry["id"], clarify_utils.ASKED, datetime.now(timezone.utc))
+                else:
+                    await asyncio.to_thread(clarify_utils.bump_tries, get_db(), username, clarify_entry["id"], datetime.now(timezone.utc))
             if self_history and self_history["mode"] == "volunteer":
                 ai_message.additional_kwargs[SELF_HISTORY_MARK] = True  # only a volunteered mention is rate-limited
             if mentions_itself(full_response):
@@ -1491,6 +1521,20 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 spawn_background_task(open_loops_utils.capture_open_loops(
                     username, question, user_tz, risk_active=risk_level != RISK_NONE, previous_reply=previous_reply,
                 ))
+            # Getting-to-know-you questions (backend/utils/clarifications.py): what they said after being asked is the answer (saved as a fact and linked to what it
+            # belongs under), and anything new about their own life is noted for one later question. Both off the response path, and only for someone who wants them.
+            if clarify_utils.clarify_enabled() and not is_guest_username(username) and get_db() is not None:
+                if clarify_reply_to:
+                    from backend.models.models import lite_llm as clarify_llm
+
+                    spawn_background_task(clarify_utils.apply_reply(
+                        username, str(clarify_reply_to), question, risk_active=risk_level != RISK_NONE, invoke=clarify_llm.ainvoke,
+                        memory_vector_store=services.get("user_memory_vector_store"),
+                    ))
+                elif clarify_utils.level_of(user_profile) != clarify_utils.LESS and budget_guard.allows("getting-to-know-you questions", budget_state):
+                    spawn_background_task(clarify_utils.capture(
+                        username, question, level=clarify_utils.level_of(user_profile), previous_reply=previous_reply, risk_active=risk_level != RISK_NONE,
+                    ))
             # Bounds this conversation's checkpoint history right now rather than waiting for the daily pass.
             spawn_background_task(prune_thread_checkpoints_async(history_key))
             await asyncio.to_thread(record_turn_counts, turn_counts)
@@ -2010,6 +2054,7 @@ async def clear_memory(current_user = Depends(get_current_user)):
     await asyncio.to_thread(user_tasks_utils.forget_all, username)
     await asyncio.to_thread(meetings_utils.forget_all, username)
     await asyncio.to_thread(headsups_utils.forget_all, username)
+    await asyncio.to_thread(clarify_utils.forget_all, username)
     if result["failed"]:
         # Never report a partial wipe as success: the page says it permanently deletes everything.
         raise HTTPException(status_code=500, detail="Some of your memory could not be deleted. Please try again.")

@@ -315,7 +315,7 @@ export const EVERYDAY: Record<string, Content> = {
       <ul>
         <li><strong>Name and pronouns</strong>, and <strong>what you do</strong> (a job title, or "retired" or "student").</li>
         <li><strong>Interests</strong>, and <strong>topics you'd rather Sonic didn't bring up</strong>. If you raise one yourself, it talks about it normally.</li>
-        <li><strong>How you like answers:</strong> short or detailed, direct or warm, and how much humor.</li>
+        <li><strong>How you like answers:</strong> short or detailed, direct or warm, how much humor, and how many questions Sonic asks about your life (less, balanced or more).</li>
         <li><strong>Two switches:</strong> whether Sonic may bring something up by itself at a quiet moment, and whether it may start a conversation with one question about something you told it. Both can be turned off.</li>
       </ul>
       <p><HelpLink go={ctx.go} path="/account">Open Account settings</HelpLink></p>
