@@ -267,7 +267,7 @@ _INVENTED_LIFE_RE = re.compile(
     r"|\bI (?:spent|had) (?:a |the )?(?:day|week|weekend)\b|\bI(?:'ve| have) been up to\b",
     re.IGNORECASE,
 )
-_FALSE_ABILITY_RE = re.compile(r"\bvoice (?:mode|chat|calls?)\b|\bgenerate images?\b|\bphone calls?\b|\bimage generation\b|\bbrowse (?:the )?(?:web|internet) (?:live|in real time)\b", re.IGNORECASE)
+_FALSE_ABILITY_RE = re.compile(r"\bvoice (?:mode|chat|calls?)\b|\bphone calls?\b|\bbrowse (?:the )?(?:web|internet) (?:live|in real time)\b", re.IGNORECASE)   # image generation is real now (backend/services/image_gen.py)
 
 
 def score_self_history(reply: str) -> Score:

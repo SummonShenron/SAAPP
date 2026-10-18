@@ -35,8 +35,8 @@ DAILY_IMAGES = int(os.getenv("IMAGE_GEN_DAILY_LIMIT", "3"))
 TIMEOUT_SECONDS = 60
 ASPECTS = ("1:1", "3:4", "4:3", "2:3", "3:2", "9:16", "16:9")
 DEFAULT_ASPECT = "4:3"
-MAX_REQUEST_CHARS = 600
-MAX_PROMPT_CHARS = 900
+MAX_REQUEST_CHARS = 2500         # a detailed description of a picture can run to a page; it must reach the model whole
+MAX_PROMPT_CHARS = 2000
 MAX_OUT_EDGE = 2400
 JPEG_QUALITY = 86
 ASSUMED_OUTPUT_TOKENS = 1300     # what a 1K picture costs when the response does not say, so the meter never counts a picture as free
@@ -63,13 +63,14 @@ REFUSAL_REASONS = {
 
 _VERB = r"(?:generate|create|make|draw|paint|design|illustrate|render|produce|sketch|imagine|come up with|whip up)"
 _NOUN = r"(?:image|picture|illustration|drawing|painting|artwork|poster|wallpaper|portrait|cartoon|scene|graphic|photo|photograph|background|art)"
-_ASK_RE = re.compile(rf"\b{_VERB}\b.{{0,40}}\b{_NOUN}s?\b", re.IGNORECASE)
+_ASK_RE = re.compile(rf"\b{_VERB}\b.{{0,40}}\b{_NOUN}s?\b(?:\s+\w+){{0,2}}", re.IGNORECASE)
 _DRAW_RE = re.compile(r"\b(?:draw|paint|sketch|illustrate)\s+(?:me\s+)?(?:a|an|the|some|my|our)\s+\w+", re.IGNORECASE)
-# The word means something else: a container image, a diagram, a chart, code.
+# The word means something else: a container image, a diagram, a chart, code. Checked only against the few words of the request itself (the verb up to just
+# after the picture word), never the whole message: a long description of the picture is full of words like "line", "table" or "frame" that mean nothing here.
 _NOT_RE = re.compile(
-    r"\b(?:docker|dockerfile|container|kubernetes|k8s|disk image|iso|vm|virtual machine|base image|ami|screenshot|diagram|flowchart|chart|graph|uml|architecture|table|ascii|svg|"
+    r"\b(?:docker|dockerfile|container|kubernetes|k8s|disk image|iso|vm|virtual machine|base image|ami|screenshot|diagram|flowchart|chart|graph|uml|architecture|ascii|svg|"
     r"code|css|html|react|component|function|script|sql|query|spreadsheet|document|resume|email|letter|essay|story|summary|"
-    r"frame|frames|album|conclusion|conclusions|attention|comparison|parallel|distinction|line|lines|breath|blood)\b",
+    r"frame|frames|album|conclusion|conclusions|attention|comparison|parallel|distinction|breath|blood)\b",
     re.IGNORECASE,
 )
 # "make me a Christmas card": with no photo to put words on, that is a request for the picture of one.
@@ -86,10 +87,12 @@ MAX_REFINE_WORDS = 30
 
 
 def asks_to_generate(message: str) -> bool:
+    """Whether the message asks for a picture to be made. Each place a request could be (a verb near a picture word, "draw a ...", "make me a Christmas card")
+    is judged on its own few words, so a technical use of the word ("a docker image") does not stop a later, real request in the same message."""
     text = message or ""
-    if not text.strip() or _NOT_RE.search(text):
+    if not text.strip():
         return False
-    return bool(_ASK_RE.search(text) or _DRAW_RE.search(text) or _CARD_RE.search(text))
+    return any(not _NOT_RE.search(found.group(0)) for pattern in (_ASK_RE, _DRAW_RE, _CARD_RE) for found in pattern.finditer(text))
 
 
 def asks_to_refine(message: str) -> bool:
@@ -206,7 +209,8 @@ def _facts_made(prompt_idea: str, left: int, words: str) -> str:
     return (
         "A picture was just made from the user's description and is shown to them right below your reply, with a Download button under it. "
         f"What was asked of the image model: {prompt_idea[:300]} "
-        "You have not seen the result, so say it is ready and what you asked for, do not describe details of how it came out. "
+        "You have NOT seen the result. Say only that it is ready and that it was made from their description. Do not say it matches, fits, hits the mark, captures or shows anything, "
+        "do not describe how it looks, and do not name the image model or any service. Ask what they think. "
         f"{wording}{more} Offer ONE specific change or next step, not a list."
     )
 

@@ -52,6 +52,27 @@ def test_ordinary_and_technical_messages_are_not(message):
     assert ig.asks_to_generate(message) is False
 
 
+LONG_DESCRIPTION = (
+    'generate A high-quality, flat-style vector illustration of the robot mascot "Minipatchy" on a solid dark grey/black background. The robot has a dark grey, rounded, '
+    "television-style screen head with a single antenna topped by a tan/orange ball, and small grey knobs on the sides of its head. Its face features two simple orange circular eyes "
+    "and a warm orange crescent smile. The robot is sitting upright with short, light-grey blocky feet resting on a thin, light-grey horizontal line that curves downward into a "
+    "rounded corner at the bottom right. It holds a miniature open laptop with abstract white and orange lines on the screen, and the table, the frame and the code panel are plain. "
+    "On the far right, there is a vertical, dark grey pill-shaped UI element. Clean, minimalist, tech-themed dark mode asset."
+)
+
+
+def test_a_long_description_full_of_words_like_line_and_frame_is_still_a_request_for_a_picture():
+    """Regression from a real chat: the technical-use exclusion was applied to the whole message, so the words "line", "table", "frame" and "code" inside a
+    detailed description of the picture made Sonic treat it as ordinary chat, and the chat model then invented a rendering pipeline."""
+    assert ig.asks_to_generate(LONG_DESCRIPTION) is True
+
+
+def test_a_technical_use_stays_excluded_and_does_not_hide_a_real_request_later_in_the_same_message():
+    assert ig.asks_to_generate("build a docker image for the api") is False
+    assert ig.asks_to_generate("how do I make a picture frame") is False
+    assert ig.asks_to_generate("build a docker image for the api, then draw a picture of a dog") is True
+
+
 def _picture_reply(kind):
     return AIMessage(content="here", additional_kwargs={"kb_images": [{"filename": "x.jpg", "fileId": "i1", "generated": kind}]})
 
@@ -330,3 +351,32 @@ def test_nothing_the_person_asked_for_is_logged(allowance, caplog):
 
 def test_the_price_of_the_model_is_something_an_operator_can_set():
     assert ig.MODEL.startswith("gemini-") and "image" in ig.MODEL
+
+
+def test_a_detailed_description_reaches_the_planner_whole(allowance):
+    planner = Planner(GOOD)
+    _make(Store(), planner, message=LONG_DESCRIPTION)
+    assert "pill-shaped UI element" in planner.prompts[0] and "crescent smile" in planner.prompts[0]
+
+
+def test_the_reply_is_told_it_has_not_seen_the_picture_and_must_not_say_it_matches(allowance):
+    outcome, _ = _make(Store(), Planner(GOOD))
+    for needed in ("NOT seen", "Do not say it matches", "do not name the image model"):
+        assert needed in outcome.facts
+
+
+def test_every_voice_prompt_carries_the_rule_against_narrating_work_that_did_not_happen():
+    from backend.components import constraints
+
+    for grounding in ("conversational", "tool_output", "kb_strict", "kb_open", "web"):
+        prompt = constraints.build_voice_prompt(constraints.GROUNDING_BLOCKS[grounding], "", "", "hi")
+        assert constraints.ACTION_HONESTY in prompt
+    for forbidden in ("triggered", "pipeline", "drop", "Imagen"):
+        assert forbidden in constraints.ACTION_HONESTY
+
+
+def test_the_character_eval_no_longer_calls_image_generation_a_false_claim():
+    from backend.evals import character_eval
+
+    assert not character_eval._FALSE_ABILITY_RE.search("I can generate images for your card, and image generation is available")
+    assert character_eval._FALSE_ABILITY_RE.search("sure, I'll phone calls you")

@@ -238,6 +238,16 @@ def get_affiliate_override(affiliate: str = "All") -> str:
     return ""
 
 
+ACTION_HONESTY = """
+ACTION HONESTY (applies to everything you say): you can only reply right now. You have no background work and no way to deliver anything later in this chat. So never say you
+"triggered", "started", "queued" or "are rendering/processing" something, or that you will "drop", "send" or "post" it here when it is ready, and never say something "stalled",
+"dropped" or failed in "the pipeline" or "the logs", unless DATA above says a real action ran this turn. Do not name internal services or models (a pipeline, Vertex, Imagen and
+the like) as what you used unless DATA names it. If they asked for something you can do (a picture from a description, words on a photo) and DATA shows nothing was made, say plainly
+that it didn't run this time and suggest asking again in a short sentence such as "generate an image of ...". Never claim to have seen a picture you were not shown, or that it
+matches what they wanted.
+"""
+
+
 def build_voice_prompt(
     grounding_block: str,
     data: str,
@@ -266,6 +276,7 @@ def build_voice_prompt(
     if affiliate_override:
         sections.append(affiliate_override)
     sections.append(grounding_block)
+    sections.append(ACTION_HONESTY)
     sections.append(f"\nDATA:\n{data}\n" if data else "\nDATA:\n(none for this turn)\n")
     if insight:
         sections.append(
@@ -752,8 +763,9 @@ Reply with JSON only, with these keys:
   "real_person" (a named real person, public or private, or the likeness of a specific real person), "sexual" (sexual or nude content), "violence" (graphic injury or gore),
   "hate" (hate symbols or demeaning images of a group), "deception" (a realistic fake photo of a real event, a forged document, ID or money), "minors" (any sexualised or unsafe
   picture of a child), "other" (clearly harmful). When refusing, give no other key.
-- "prompt": one paragraph of at most 120 words describing the subject, setting, style, lighting and composition. Keep everything the person asked for, and add only what a good
-  picture needs (style, lighting, a calm composition with some empty space). Do not add people, brands, animals or objects they did not ask for. NEVER ask for words, letters, numbers, signs,
+- "prompt": one paragraph describing the subject, setting, style, lighting and composition, at most 120 words for a short request. When the person wrote a detailed description,
+  keep EVERY detail they gave (colours, shapes, positions, style), tidied into one paragraph of at most 250 words, and do not summarise it. Keep everything the person asked for, and
+  add only what a good picture needs (style, lighting, a calm composition with some empty space). Do not add people, brands, animals or objects they did not ask for. NEVER ask for words, letters, numbers, signs,
   logos or captions in the picture (any words are added afterwards, exactly, by code): end the prompt with "No text, letters or numbers." For a CHANGE to the last picture, rewrite that
   prompt with only the change.
 - "aspect": one of "1:1", "3:4", "4:3", "2:3", "3:2", "9:16", "16:9". Use "3:4" for a card or a phone wallpaper, "4:3" for most scenes, "16:9" for a wide landscape or banner.
