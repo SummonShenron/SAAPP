@@ -848,6 +848,17 @@ export interface GraphSummary {
   by_affiliate: GraphAffiliateRow[];
 }
 
+/** One scheduled routine, its last run and when it is next due (backend/utils/routines.py). */
+export interface RoutineRow {
+  id: string;
+  label: string;
+  does: string;
+  every_hours: number;
+  uses_model: boolean;
+  last: { status: 'ok' | 'attention' | 'failed' | 'skipped'; started_at: string; counts: Record<string, number>; result: string } | null;
+  next_due_at: string | null;
+}
+
 export interface SonicHealth {
   days: number;
   generated_at: string;
@@ -859,6 +870,7 @@ export interface SonicHealth {
   /** null when that part could not be read. */
   feedback?: FeedbackSummary | null;
   graph?: GraphSummary | null;
+  routines?: RoutineRow[] | null;
 }
 
 export interface ReflectionResult {

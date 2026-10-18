@@ -253,6 +253,8 @@ def build_voice_prompt(
     open_loop_context: str = "",
     self_history_context: str = "",
     duration_context: str = "",
+    routines_context: str = "",
+    followups_context: str = "",
 ) -> str:
     """Composes the single unified final-answer prompt used by every response path (RAG,
     conversational, web search, code interpreter, GitHub search, PR summary) — one persona,
@@ -273,6 +275,10 @@ def build_voice_prompt(
         sections.append(relatable_context)
     if self_history_context:
         sections.append(self_history_context)
+    if routines_context:
+        sections.append(routines_context)
+    if followups_context:
+        sections.append(followups_context)
     if duration_context:
         sections.append(duration_context)
     if self_knowledge_context:

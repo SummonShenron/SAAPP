@@ -54,6 +54,37 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "routines",
+        "requires": [
+            "backend/utils/routines.py::def build_routines_context",
+            "backend/services/routine_scheduler.py::async def run_routine_schedule",
+            "app.py::routines_utils.build_routines_context(",
+        ],
+        "month": "2026-10",
+        "title": "Running routines on a schedule",
+        "line": (
+            "A few jobs run on a schedule whether or not anyone is here, like a health check and the reading refresh. "
+            "You can ask what is planned or what ran; I only say what the schedule and its records show."
+        ),
+        "keywords": ["routine", "routines", "schedule", "scheduled", "planned", "background", "health check", "later today", "on your own"],
+        "volunteer": [],
+    },
+    {
+        "id": "followups",
+        "requires": [
+            "backend/utils/followups.py::def build_followups_context",
+            "app.py::followups_utils.build_followups_context",
+        ],
+        "month": "2026-10",
+        "title": "Telling you what I may follow up on",
+        "line": (
+            "You can ask what I may follow up on with you: things you said were coming up and goals that have gone quiet. "
+            "I only bring them up when you open a conversation, never in between, and you can delete them on the Memory page."
+        ),
+        "keywords": ["follow up", "check in", "plan to ask", "going to ask", "keeping track", "coming up", "remember about"],
+        "volunteer": [],
+    },
+    {
         "id": "open_question",
         "requires": [
             "backend/utils/curiosity.py::def curiosity_allowed",

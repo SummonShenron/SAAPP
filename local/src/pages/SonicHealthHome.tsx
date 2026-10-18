@@ -32,6 +32,10 @@ export function attentionItems(health: SonicHealth, awaiting: number, suggestion
   } else if (graph && graph.documents_without_edges > 0) {
     items.push({ key: 'graph', tab: 'knowledge', tone: 'warn', text: `${graph.documents_without_edges} document(s) have no knowledge-graph relationships.` });
   }
+  const check = health.routines?.find(r => r.id === 'health_check')?.last;
+  if (check && (check.status === 'attention' || check.status === 'failed')) {
+    items.push({ key: 'health_check', tab: 'routines', tone: 'warn', text: check.status === 'failed' ? 'The last health check could not finish.' : `The last health check flagged something: ${check.result.replace(/^flagged /, '')}.` });
+  }
   if (awaiting > 0) items.push({ key: 'observations', tab: 'observations', tone: 'info', text: `${awaiting} self-observation(s) are waiting for your approval.` });
   if (suggestionsWaiting > 0) items.push({ key: 'suggestions', tab: 'suggestions', tone: 'info', text: `${suggestionsWaiting} suggestion(s) are waiting for a decision.` });
   const failed = health.usage?.turns?.error_turns ?? 0;

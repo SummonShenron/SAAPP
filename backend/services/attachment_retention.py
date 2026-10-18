@@ -8,6 +8,8 @@ from gridfs import GridFS
 
 from backend.utils.db_utils import get_db
 
+from backend.utils import routines
+
 logger = logging.getLogger("SASS Logger")
 
 # Photos and files attached in a chat are kept with the conversation, which can be forever, and a photo of a letter or a bill is among the most
@@ -47,8 +49,15 @@ async def run_attachment_retention_loop(
     """Runs prune_expired_attachments on a fixed interval for the life of the process (launched once from app.py's lifespan). One failed pass is
     logged and the next gets another chance, the same as the checkpoint clean-up."""
     while True:
+        started = datetime.now(timezone.utc)
         try:
-            await asyncio.to_thread(prune_expired_attachments, max_age_days)
+            result = await asyncio.to_thread(prune_expired_attachments, max_age_days)
+            deleted = int((result or {}).get("deleted_photos", 0)) + int((result or {}).get("deleted_file_texts", 0))
+            await asyncio.to_thread(
+                routines.record_run_safely, "attachment_cleanup",
+                routines.STATUS_SKIPPED if (result or {}).get("skipped") else routines.STATUS_OK, {"deleted": deleted}, started,
+            )
         except Exception:
             logger.exception("[attachment_retention] clean-up pass failed")
+            await asyncio.to_thread(routines.record_run_safely, "attachment_cleanup", routines.STATUS_FAILED, {}, started)
         await asyncio.sleep(interval_seconds)
