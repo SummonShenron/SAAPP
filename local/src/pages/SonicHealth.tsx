@@ -17,6 +17,7 @@ import {
 import { HomeTab } from './SonicHealthHome';
 import { ShelfTab } from './SonicHealthShelf';
 import { FeedbackTab, KnowledgeTab } from './SonicHealthFeedback';
+import { RoutinesTab } from './SonicHealthRoutines';
 import { BarRow, BudgetBars, StatTile } from './sonicHealthParts';
 import { budgetAmount, pct, shortDate, tokens, usd } from './sonicHealthFormat';
 import './__styles__/SelfService.css';
@@ -32,6 +33,7 @@ const TABS = [
   { id: 'behavior', label: 'Behavior' },
   { id: 'feedback', label: 'Feedback' },
   { id: 'knowledge', label: 'Knowledge graph' },
+  { id: 'routines', label: 'Routines' },
   { id: 'safety', label: 'Safety' },
   { id: 'observations', label: 'Observations' },
   { id: 'shelf', label: 'Reading shelf' },
@@ -308,6 +310,8 @@ export const SonicHealthPage: React.FC = () => {
   if (budgetLevel === 'notice') badges.budget = { text: '80%+', tone: 'info' };
   if (budgetLevel === 'throttled' || budgetLevel === 'blocked') badges.budget = { text: budgetLevel === 'blocked' ? 'PAUSED' : 'LOW', tone: 'warn' };
   if (health.safety.last_resort_line > 0) badges.safety = { text: '!', tone: 'warn' };
+  const lastCheck = health.routines?.find(r => r.id === 'health_check')?.last;
+  if (lastCheck && (lastCheck.status === 'attention' || lastCheck.status === 'failed')) badges.routines = { text: '!', tone: 'warn' };
   if ((health.feedback?.period.user_negative ?? 0) > 0) badges.feedback = { text: `${health.feedback?.period.user_negative} down`, tone: 'info' };
   if (health.graph && (health.graph.documents_without_edges > 0 || (health.graph.edges_total === 0 && health.graph.documents_total > 0))) badges.knowledge = { text: '!', tone: 'warn' };
   if ((health.usage?.turns?.error_turns ?? 0) > 0) badges.turns = { text: String(health.usage?.turns?.error_turns), tone: 'warn' };
@@ -375,6 +379,7 @@ export const SonicHealthPage: React.FC = () => {
         {tab === 'behavior' && <CountersCard counters={health.counters} />}
         {tab === 'feedback' && <FeedbackTab feedback={health.feedback} />}
         {tab === 'knowledge' && <KnowledgeTab graph={health.graph} />}
+        {tab === 'routines' && <RoutinesTab routines={health.routines} />}
         {tab === 'safety' && <SafetyCard safety={health.safety} />}
         {tab === 'observations' && (
           <ObservationsCard

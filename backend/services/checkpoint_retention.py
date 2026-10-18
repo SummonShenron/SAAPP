@@ -7,6 +7,8 @@ from bson import ObjectId
 
 from backend.utils.db_utils import get_db
 
+from backend.utils import routines
+
 logger = logging.getLogger("SASS Logger")
 
 # LangGraph's MongoDB checkpointer writes a brand-new checkpoint on every single
@@ -172,8 +174,16 @@ async def run_checkpoint_retention_loop(
     — the next scheduled run gets another chance, the same resilience the rest of this
     app's fire-and-forget background tasks already rely on."""
     while True:
+        started = datetime.now(timezone.utc)
         try:
-            await asyncio.to_thread(prune_old_checkpoints, keep_per_thread, max_age_days)
+            result = await asyncio.to_thread(prune_old_checkpoints, keep_per_thread, max_age_days)
+            skipped = bool((result or {}).get("skipped"))
+            await asyncio.to_thread(
+                routines.record_run_safely, "checkpoint_cleanup",
+                routines.STATUS_SKIPPED if skipped else routines.STATUS_OK,
+                {"deleted": int((result or {}).get("deleted_checkpoints", 0))}, started,
+            )
         except Exception:
             logger.exception("[checkpoint_retention] pruning pass failed")
+            await asyncio.to_thread(routines.record_run_safely, "checkpoint_cleanup", routines.STATUS_FAILED, {}, started)
         await asyncio.sleep(interval_seconds)

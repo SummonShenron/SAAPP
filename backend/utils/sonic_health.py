@@ -16,6 +16,7 @@ from backend.utils.safety_stats import fetch_recent_events, summarize_safety_eve
 from backend.utils.self_counters import fetch_counter_docs, summarize_counters
 from backend.utils.self_observations import list_observations
 from backend.utils.feedback_stats import fetch_corrections, summarize_feedback, summarize_graph
+from backend.utils import routines as routines_utils
 
 logger = logging.getLogger("SASS Logger")
 
@@ -59,6 +60,8 @@ def build_sonic_health(db: Any, days: int, now: Optional[datetime.datetime] = No
             fetch_corrections(db), counters["totals"].get("guardrail_applied", 0), counters["totals"].get("turns_total", 0), now, days)),
         # The knowledge graph retrieval adds to answers: an empty one looks like one that found nothing, so it is counted here.
         "graph": _section("graph", lambda: summarize_graph(db)),
+        # The jobs the server runs on a schedule, and the last result of each: what Sonic can truthfully say it does on its own (backend/utils/routines.py).
+        "routines": _section("routines", lambda: routines_utils.routines_view(db, now)),
         "observations": list_observations(db, now),
         "usage": {
             **summarize_usage(usage_docs, prices),

@@ -137,6 +137,9 @@ from backend.utils import profile_utils
 from backend.utils import reading_shelf as shelf_utils
 from backend.services import shelf_refresh
 from backend.utils.self_history_utils import SELF_HISTORY_MARK, build_self_history_block, select_self_history
+from backend.utils import routines as routines_utils
+from backend.utils import followups as followups_utils
+from backend.services import routine_scheduler
 from backend.utils.shared_history import CALLBACK_MARK, build_callback_block, callback_allowed
 from backend.utils.user_settings_utils import (
     get_user_rag_mode, set_user_rag_mode, VALID_RAG_MODES,
@@ -228,6 +231,8 @@ async def lifespan(app: FastAPI):
     # Sonic's own reading, a couple of times a day whether or not anyone is chatting (backend/services/shelf_refresh.py). Paused with the other optional
     # extras when the cost guard is in low-power mode.
     shelf_task = spawn_background_task(_run_shelf_schedule())
+    # Sonic's routines that have no loop of their own (today the health check), run on a schedule and written down (backend/services/routine_scheduler.py).
+    routine_task = spawn_background_task(routine_scheduler.run_routine_schedule(get_db))
     watchdog_task = loop_watchdog.start()  # logs when the event loop is blocked, and what was waiting (backend/utils/loop_watchdog.py)
     if get_db() is not None:
         ensure_calendar_indexes()
@@ -236,6 +241,7 @@ async def lifespan(app: FastAPI):
     retention_task.cancel()
     attachment_retention_task.cancel()
     shelf_task.cancel()
+    routine_task.cancel()
     watchdog_task.cancel()
     await asyncio.to_thread(llm_usage.flush)  # whatever the last calls used, before the process goes
     chat_sessions = {}
@@ -995,6 +1001,23 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             )
             if self_history:
                 tally(turn_counts, "self_history_offered")
+            # "What do you have planned later / what did you do today?": answered from the real schedule and the real run records, in the person's own
+            # time (backend/utils/routines.py). Not under a safety context, and not on a closing message.
+            routines_context = ""
+            if (risk_level == RISK_NONE and source_type == "conversational" and not is_closing_message(question)
+                    and routines_utils.asks_about_routines(final_state.get("original_question", question))):
+                routines_context = await asyncio.to_thread(
+                    lambda: routines_utils.build_routines_context(get_db(), user_tz, is_admin=is_admin_user)
+                )
+                tally(turn_counts, "routines_offered")
+            # "What are you going to follow up on / do you have anything planned for me?", and the same when asked what it has planned (backend/utils/followups.py):
+            # the person's own open loops, quiet goals and Message First setting, said only as what can come up when they next open a conversation. Never for a guest.
+            followups_context = ""
+            if (risk_level == RISK_NONE and source_type == "conversational" and not is_closing_message(question) and not is_guest_username(username)
+                    and (followups_utils.asks_about_followups(final_state.get("original_question", question)) or bool(routines_context))):
+                followups_context = await asyncio.to_thread(followups_utils.build_followups_context, username, user_tz)
+                if followups_context:
+                    tally(turn_counts, "followups_offered")
             # Only when asked "how long have we been talking?": the earliest saved conversation, as a plain fact with no
             # feeling or milestone attached (backend/utils/duration_utils.py). Never for guests, whose "we" is many people.
             duration_context = ""
@@ -1019,6 +1042,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 encouragement_context=build_encouragement_block(encouragement_entry),
                 open_loop_context=open_loops_utils.build_open_loop_block(open_loop_entry, today_local),
                 self_history_context=build_self_history_block(self_history),
+                routines_context=routines_context,
+                followups_context=followups_context,
                 duration_context=duration_context,
                 self_knowledge_context=build_self_knowledge_block(
                     self_knowledge_lines, asks_about_itself(final_state.get("original_question", question))

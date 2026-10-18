@@ -16,6 +16,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from backend.utils import reading_shelf as shelf
 
+from backend.utils import routines
 logger = logging.getLogger("SASS Logger")
 
 MAX_RESULTS = 6
@@ -68,7 +69,31 @@ async def refresh_shelf(
     now: Optional[datetime] = None,
     force: bool = False,
 ) -> Dict[str, Any]:
-    """{"status": "added"|"nothing"|"skipped"|"error", ...}. `force` (the admin's "search now") ignores the interval."""
+    """{"status": "added"|"nothing"|"skipped"|"error", ...}. `force` (the admin's "search now") ignores the interval. Every real attempt (not a skip)
+    is written down as a run of the "reading_shelf" routine (backend/utils/routines.py), which is what Sonic can later say it did."""
+    started = datetime.now(timezone.utc)
+    result = await _refresh_shelf(db, invoke, search=search, fetch=fetch, now=now, force=force)
+    if result.get("status") != "skipped":
+        try:
+            await asyncio.to_thread(
+                routines.record_run, db, "reading_shelf",
+                routines.STATUS_FAILED if result.get("status") == "error" else routines.STATUS_OK,
+                {"items_added": int(result.get("status") == "added")}, started,
+            )
+        except Exception:
+            logger.warning("[shelf] could not record the run.", exc_info=True)
+    return result
+
+
+async def _refresh_shelf(
+    db,
+    invoke: Callable[[str], Awaitable[Any]],
+    *,
+    search: Callable[[str], List[Dict[str, Any]]] = default_search,
+    fetch: Callable[[str], Any] = default_fetch,
+    now: Optional[datetime] = None,
+    force: bool = False,
+) -> Dict[str, Any]:
     now = now or datetime.now(timezone.utc)
     try:
         if force:
