@@ -58,15 +58,24 @@ def open_loops_enabled() -> bool:
 
 _WEEKDAY = r"(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)"  # full names only: "sat", "sun", "wed" are ordinary words
 _MONTH = r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+_ORDINAL_WORD = r"(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|twenty[- ](?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth)|thirtieth|thirty[- ]first)"
+# The things people say are coming up, for the one cue that is too common on its own ("later", "in the morning").
+_EVENT_NOUN = r"(?:interview|meeting|demo|date|exam|final|flight|presentation|appointment|game|match|wedding|party|recital|test|launch|deadline|trip|call|review|defense|pitch|dinner|show|concert|race|class|shift)"
 _FUTURE_CUE_RE = re.compile(
     r"\b(?:"
     r"tomorrow|tonight|later today|later this week|coming up|upcoming"
-    r"|this (?:morning|afternoon|evening|weekend)"
-    r"|next (?:week|month|weekend)"
+    r"|this (?:morning|afternoon|evening|weekend|week)|(?:on|over) the weekend|in the (?:morning|evening|afternoon)"
+    r"|next (?:week|month|weekend|few days)|(?:the )?(?:rest|end|start|beginning|middle) of (?:the |this |next )?(?:week|month)"
     r"|" + _WEEKDAY +  # "interview Friday", "on Friday", "next Friday": a weekday name alone is enough to ask the model
-    r"|in (?:a|an|\d+|a couple of|a few|two|three|four|five|six|seven) (?:days?|weeks?)"
+    r"|(?:in|within) (?:a|an|\d+|a couple of|a few|two|three|four|five|six|seven) (?:minutes?|hours?|days?|weeks?)"
+    r"|(?:a|one|two|three|\d+) (?:days?|weeks?) from (?:today|now|" + _WEEKDAY + r")"
     r"|" + _MONTH + r"\.? \d{1,2}"
     r"|\d{1,2}/\d{1,2}"
+    r"|on the (?:\d{1,2}(?:st|nd|rd|th)|" + _ORDINAL_WORD + r")"
+    r"|after (?:work|school|class|lunch|dinner)"
+    r"|at \d{1,2}(?::\d{2})? ?(?:am|pm)"
+    r"|(?:leaves|leaving|departs|starts|begins|kicks off|is due|are due) at"
+    r"|" + _EVENT_NOUN + r"s?\b[^.!?\n]{0,40}\blater"
     r")\b",
     re.IGNORECASE,
 )
@@ -346,6 +355,18 @@ def parse_extraction(raw_text: str) -> Dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+MAX_PREVIOUS_REPLY_CHARS = 400
+
+
+def previous_reply(history: List[Any]) -> str:
+    """What Sonic said last, if the conversation so far ends on a reply of its own, clipped; "" otherwise. Context only, so a bare
+    answer ("Friday at 2") to Sonic's question can be tied to what it was about."""
+    if not history or getattr(history[-1], "type", "") != "ai":
+        return ""
+    text = " ".join(_response_text(history[-1]).split())
+    return text[-MAX_PREVIOUS_REPLY_CHARS:]
+
+
 def _existing_lines(loops: List[Dict[str, Any]]) -> str:
     if not loops:
         return "(none)"
@@ -358,6 +379,7 @@ async def capture_open_loops(
     tz_name: Optional[str],
     *,
     risk_active: bool = False,
+    previous_reply: str = "",
     now: Optional[datetime] = None,
     invoke: Optional[Callable[[str], Awaitable[Any]]] = None,
     get_db_fn: Optional[Callable[[], Any]] = None,
@@ -388,8 +410,9 @@ async def capture_open_loops(
         from backend.components.constraints import OPEN_LOOP_EXTRACTION_PROMPT
 
         prompt = OPEN_LOOP_EXTRACTION_PROMPT.format(
-            today=today.isoformat(), weekday=local.strftime("%A"),
+            today=today.isoformat(), weekday=local.strftime("%A"), clock=local.strftime("%I:%M %p").lstrip("0"),
             existing=_existing_lines(existing), message=message.strip()[:MAX_MESSAGE_CHARS],
+            previous=(previous_reply or "").strip()[-MAX_PREVIOUS_REPLY_CHARS:] or "(none)",
         )
         if invoke is None:
             from backend.models.models import lite_llm

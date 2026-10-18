@@ -641,10 +641,14 @@ OPEN_LOOP_EXTRACTION_PROMPT = """
 You read ONE message from a user and note any specific upcoming thing THEY said they will do, attend or
 face, so a friendly assistant can ask how it went once the day has passed.
 
-TODAY: {today} ({weekday}), on the user's own calendar.
+TODAY: {today} ({weekday}), {clock} on the user's own clock and calendar.
 
 ALREADY NOTED (id: what, due date):
 {existing}
+
+WHAT THE ASSISTANT SAID JUST BEFORE (context only, to tell what a short answer is about; never a source of plans: only
+what the USER says counts):
+{previous}
 
 USER MESSAGE:
 {message}
@@ -657,12 +661,21 @@ RULES:
 - Never anything medical, legal, about money trouble, a loss or a death, therapy, or anything painful or private.
   If the upcoming thing is one of those, use kind "sensitive".
 - Skip ordinary everyday plans (a regular meal, an errand, a routine meeting) unless the user shows it matters to
-  them: nervous, excited, "big", "first", or something they prepared for.
+  them: nervous, excited, "big", "first", "wish me luck", or something they prepared for.
+- Ongoing work is not an event: "I'm working on the landing page", "finishing the update", "fixing the bug today" are
+  tasks, not something to ask "how did it go?" about. A dated moment inside that work (a launch, a demo, a deadline,
+  a presentation) is.
 - "what": a short third-person phrase of at most 12 words with no personal names and no extra detail, e.g. "has a
   first date", "has a job interview", "is giving a team presentation". A role word like "sister" or "manager" is
   fine; a name is not.
 - "due_date": the real calendar date as YYYY-MM-DD, worked out from TODAY ("tonight" is today). If you cannot
-  tell the date, leave the thing out.
+  tell the date, leave the thing out. How to work it out:
+  - "the 25th" / "on the third" with no month is the next time that day of the month comes round (this month if it
+    has not passed, otherwise next month). "the end of the month" is the last day of this month.
+  - "in the morning" or "first thing" said in the evening or at night means tomorrow; said earlier in the day it
+    means today. "later", "after work" and "in a few hours" mean today.
+  - "a week from Monday" is the Monday after next; "next Friday" is the Friday of next week, not this week's.
+  - A time with no day ("at 3pm") means today if that time is still ahead on the user's clock, otherwise tomorrow.
 - Do not repeat something already noted.
 - "resolved_ids": ids from ALREADY NOTED that this message clearly reports on as having already happened
   ("the date went great", "I got the job").

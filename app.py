@@ -686,6 +686,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     previous_marks = (getattr(chat_sessions[history_key][-1], "additional_kwargs", None) or {}) if chat_sessions[history_key] else {}
     answers_curiosity = bool(previous_marks.get(curiosity_utils.CURIOSITY_MARK)) and curiosity_utils.taken(question)
     answers_shelf = bool(previous_marks.get(shelf_utils.SHELF_MARK)) and curiosity_utils.taken(question)
+    previous_reply = open_loops_utils.previous_reply(chat_sessions[history_key])  # so "Friday at 2" can be tied to what Sonic just asked about
     chat_sessions[history_key].append(stamp(HumanMessage(content=question)))
 
     messages_state = chat_sessions[history_key][-10:]
@@ -1417,7 +1418,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 await asyncio.to_thread(open_loops_utils.mark_asked, username, open_loop_entry["id"])
             if open_loops_utils.open_loops_enabled() and not is_guest_username(username) and budget_guard.allows("open_loops", budget_state):
                 spawn_background_task(open_loops_utils.capture_open_loops(
-                    username, question, user_tz, risk_active=risk_level != RISK_NONE,
+                    username, question, user_tz, risk_active=risk_level != RISK_NONE, previous_reply=previous_reply,
                 ))
             # Bounds this conversation's checkpoint history right now rather than waiting for the daily pass.
             spawn_background_task(prune_thread_checkpoints_async(history_key))

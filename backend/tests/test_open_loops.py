@@ -101,6 +101,37 @@ def test_ordinary_messages_do_not(message):
     assert not ol.should_extract(message)
 
 
+@pytest.mark.parametrize("message", [
+    "I have my final interview on the 25th and I'm kind of nervous",
+    "I've got a first date after work",
+    "big demo at 3pm, I'm freaking out a little",
+    "taking my driving test at the end of the month",
+    "heading to the airport in a few hours for my trip",
+    "I have a recital on the 3rd",
+    "my thesis defense is a week from today",
+    "I have a job interview in the morning",
+    "I've got a big meeting later",
+    "my flight leaves at 6am",
+    "the board meeting is on the fifteenth",
+    "after class I have to meet my advisor",
+    "I'm so nervous about this week",
+])
+def test_the_ways_people_really_say_a_day_pass_the_gate(message):
+    assert ol.should_extract(message)
+
+
+@pytest.mark.parametrize("message", [
+    "I work mondays through fridays",
+    "what happened on may 5th 1945",
+    "can you remind me what the 25th amendment says",
+    "talk to you later",
+    "i'll look at it later",
+    "what is the first rule of fight club",
+])
+def test_plain_uses_of_the_same_words_do_not(message):
+    assert not ol.should_extract(message)
+
+
 def test_a_past_tense_report_only_passes_when_a_loop_is_due_to_close():
     report = "the date went great, we got dinner"
     assert not ol.should_extract(report, has_due_loop=False)
@@ -349,6 +380,22 @@ def test_a_future_message_is_captured_with_its_resolved_date(monkeypatch):
     assert db.col.docs[0]["due_date"] == "2026-10-10"
     # The model is told the user's own calendar date and weekday so it never does that arithmetic blind.
     assert "2026-10-09" in calls[0] and "Friday" in calls[0]
+
+
+def test_the_model_is_given_the_users_clock_and_what_sonic_just_said():
+    _, _, calls = run_capture("Friday at 2", '{"loops": []}', previous_reply="When is your interview with Acme?")
+    assert "10:00 AM" in calls[0] and "When is your interview with Acme?" in calls[0]
+    _, _, bare = run_capture("Friday at 2", '{"loops": []}')
+    assert "(none)" in bare[0].split("WHAT THE ASSISTANT SAID JUST BEFORE")[1].split("USER MESSAGE")[0]
+
+
+def test_the_previous_reply_is_only_taken_when_the_conversation_ends_on_one_and_is_clipped():
+    from types import SimpleNamespace as NS
+    assert ol.previous_reply([]) == ""
+    assert ol.previous_reply([NS(type="human", content="hi")]) == ""
+    assert ol.previous_reply([NS(type="ai", content="When   is\nit?")]) == "When is it?"
+    assert len(ol.previous_reply([NS(type="ai", content="x" * 5000)])) == ol.MAX_PREVIOUS_REPLY_CHARS
+    assert ol.previous_reply([NS(type="ai", content=[{"type": "text", "text": "Which day?"}])]) == "Which day?"
 
 
 def test_a_message_with_no_time_language_never_reaches_the_model_or_the_store():
