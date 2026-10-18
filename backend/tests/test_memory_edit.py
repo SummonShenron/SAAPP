@@ -25,6 +25,8 @@ def store(tmp_path, monkeypatch):
     monkeypatch.setattr(memory_utils, "flag_stale_chunks_for_superseded_fact", Mock(return_value=0))
 
     def invoke(prompt):
+        if "NOTE A:" in prompt:                             # the strict second look at a pair the first look picked
+            return SimpleNamespace(content=json.dumps({"same": True}))
         if "SAVED NOTES" in prompt:                         # the link judgment: bind a note to the employer note
             lines = [line for line in prompt.splitlines() if line[:2] in ("1:", "2:", "3:")]
             picks = [int(line[0]) for line in lines if "Works at" in line]

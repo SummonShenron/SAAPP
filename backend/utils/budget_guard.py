@@ -79,6 +79,7 @@ PAUSED_FEATURES = [
     "re-checking grounded answers",
     "conversation openers",
     "scheduled tasks",
+    "meeting notes",
 ]
 
 _BUDGET_ENV = {

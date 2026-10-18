@@ -1299,6 +1299,59 @@ export const markTaskSeen = (id: string): Promise<{ status: string }> =>
 export const runTaskNow = (id: string): Promise<{ status: string }> =>
   taskRequest(`/api/tasks/${encodeURIComponent(id)}/run`, { method: 'POST' }, 'Failed to start that task.');
 
+/** A standing meeting the person has with Sonic (a weekly check-in), run as an agenda inside a chat. */
+export interface Meeting {
+  id: string;
+  name: string;
+  match: string;
+  purpose: string;
+  agenda: string[];
+  notes: number;
+  last_held: string | null;
+}
+
+export interface MeetingSpec {
+  name: string;
+  match: string;
+  purpose: string;
+  agenda: string[];
+}
+
+export interface MeetingNote {
+  id: string;
+  meeting_id: string;
+  held_at: string | null;
+  summary: string;
+  decisions: string[];
+  action_items: string[];
+  automatic: boolean;
+}
+
+export interface MeetingsState {
+  meetings: { id: string; name: string }[];
+  active: { run_id: string; meeting_id: string; name: string } | null;
+}
+
+export const listMeetings = (): Promise<{ meetings: Meeting[]; limits: { max_meetings: number } }> => taskRequest('/api/meetings', {}, 'Failed to load your meetings.');
+export const getMeetingsState = (sessionId: string): Promise<MeetingsState> =>
+  taskRequest(`/api/meetings/state?session_id=${encodeURIComponent(sessionId)}`, {}, 'Failed to load your meetings.');
+export const createMeeting = (spec: MeetingSpec): Promise<Meeting> =>
+  taskRequest('/api/meetings', { method: 'POST', body: JSON.stringify(spec) }, 'Failed to create that meeting.');
+export const updateMeeting = (id: string, changes: Partial<MeetingSpec>): Promise<Meeting> =>
+  taskRequest(`/api/meetings/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(changes) }, 'Failed to update that meeting.');
+export const deleteMeeting = (id: string): Promise<{ status: string }> =>
+  taskRequest(`/api/meetings/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'Failed to delete that meeting.');
+export const listMeetingNotes = (id: string): Promise<{ notes: MeetingNote[] }> =>
+  taskRequest(`/api/meetings/${encodeURIComponent(id)}/notes`, {}, 'Failed to load the notes.');
+export const updateMeetingNote = (noteId: string, changes: Partial<Pick<MeetingNote, 'summary' | 'decisions' | 'action_items'>>): Promise<MeetingNote> =>
+  taskRequest(`/api/meetings/notes/${encodeURIComponent(noteId)}`, { method: 'PATCH', body: JSON.stringify(changes) }, 'Failed to update that note.');
+export const deleteMeetingNote = (noteId: string): Promise<{ status: string }> =>
+  taskRequest(`/api/meetings/notes/${encodeURIComponent(noteId)}`, { method: 'DELETE' }, 'Failed to delete that note.');
+export const startMeeting = (id: string, sessionId: string): Promise<{ run_id: string; meeting_id: string }> =>
+  taskRequest(`/api/meetings/${encodeURIComponent(id)}/start`, { method: 'POST', body: JSON.stringify({ session_id: sessionId }) }, 'Failed to start the meeting.');
+export const endMeeting = (runId: string): Promise<{ status: string; note: MeetingNote | null; reason: string | null }> =>
+  taskRequest(`/api/meetings/runs/${encodeURIComponent(runId)}/end`, { method: 'POST' }, 'Failed to end the meeting.');
+
 /** What Sonic keeps besides the facts the Memory page lists: notes from past conversations, and archived copies of notes and facts. */
 export interface MemoryStored {
   notes: number;
@@ -1656,6 +1709,16 @@ export const api = {
   listTaskRuns,
   markTaskSeen,
   runTaskNow,
+  listMeetings,
+  getMeetingsState,
+  createMeeting,
+  updateMeeting,
+  deleteMeeting,
+  listMeetingNotes,
+  updateMeetingNote,
+  deleteMeetingNote,
+  startMeeting,
+  endMeeting,
   getRagMode,
   updateRagMode,
   getDeepThinking,

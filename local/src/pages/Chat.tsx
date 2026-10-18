@@ -15,6 +15,7 @@ import OptionWheel, { type OptionWheelItem } from '../components/OptionWheel';
 import { getWelcomeCards } from '../utils/Example_List';
 import type { WelcomeCard } from '../welcomeCards';
 import { HEIC_NOTICE, isUnreadableHeic, shrinkImageFile } from '../utils/imageShrink';
+import MeetingControl from '../components/MeetingControl';
 import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type BudgetView, type KnowledgeBase } from '../api';
 import BudgetBanner from '../components/BudgetBanner';
 import UsageRing from '../components/UsageRing';
@@ -848,6 +849,7 @@ useEffect(() => {
       routeNavigate(routeLocation.pathname, { replace: true, state: null });
     }
   }, [routeLocation.state, routeLocation.pathname, routeNavigate]);
+  const meetingStartedRef = useRef<(name: string) => void>(() => {});
   const [loading, setLoading] = useState<boolean>(false);
   const [currentExampleQuestions, setCurrentExampleQuestions] = useState<WelcomeCard[]>([]);
   const [loadingCards, setLoadingCards] = useState<boolean>(false);
@@ -1136,20 +1138,23 @@ useEffect(() => {
     if (isEmbedded) return;
     const traceOpen = isMobileView ? isMobileTraceOpen : showTracePanel;
     shell.setTopBarActions(
-      <button
-        type="button"
-        className="topbar-btn"
-        onClick={() => (isMobileView ? setIsMobileTraceOpen(v => !v) : toggleTracePanel())}
-        aria-pressed={traceOpen}
-        aria-label="Toggle execution trace"
-        title={traceOpen ? 'Hide execution trace' : 'Show execution trace'}
-      >
-        <Icon name="microscope" size={18} />
-        {loading && !traceOpen && <span className="topbar-btn-dot" aria-hidden="true" />}
-      </button>
+      <>
+        {!isGuestPrincipal(principal) && <MeetingControl sessionId={sessionId} onStarted={(name) => meetingStartedRef.current(name)} />}
+        <button
+          type="button"
+          className="topbar-btn"
+          onClick={() => (isMobileView ? setIsMobileTraceOpen(v => !v) : toggleTracePanel())}
+          aria-pressed={traceOpen}
+          aria-label="Toggle execution trace"
+          title={traceOpen ? 'Hide execution trace' : 'Show execution trace'}
+        >
+          <Icon name="microscope" size={18} />
+          {loading && !traceOpen && <span className="topbar-btn-dot" aria-hidden="true" />}
+        </button>
+      </>
     );
     return () => shell.setTopBarActions(null);
-  }, [isEmbedded, showTracePanel, isMobileView, isMobileTraceOpen, loading]);
+  }, [isEmbedded, showTracePanel, isMobileView, isMobileTraceOpen, loading, sessionId, principal]);
 
   // Prepends the page of saved messages just before the ones on screen. The smooth scroll-to-bottom
   // that normally fires when the message count changes is skipped here, and the viewport is held
@@ -1731,6 +1736,15 @@ useEffect(() => {
   await sendFeedbackPayload(messageId, 'like', 'Positive feedback', 'positive');
 };
 
+// The Meetings page starts a meeting and opens the chat with its first line to send (`autoSend`), once, in the fresh conversation it made.
+useEffect(() => {
+  const autoSend = (routeLocation.state as { autoSend?: unknown } | null)?.autoSend;
+  if (typeof autoSend === 'string' && autoSend.trim() && !loading) {
+    routeNavigate(routeLocation.pathname, { replace: true, state: null });
+    void handleSendMessageRef.current(autoSend, []);
+  }
+}, [routeLocation.state, routeLocation.pathname, routeNavigate, loading]);
+
 // Refs kept in sync with the latest closures on every render, so the memoized ChatMessageList
 // below can skip re-rendering on unrelated state changes (e.g. typing) without ever calling a
 // stale version of these handlers — the same stale-closure fix applied earlier to attachmentsRef.
@@ -1739,6 +1753,8 @@ const handleFeedbackRef = useRef(handleFeedback);
 const getTokenRef = useRef(getToken);
 const localEditActionsRef = useRef({ apply: workspace.applyEdits, undo: workspace.undoEdits });
 useEffect(() => {
+  // Pressing Start office hours is the person saying "let's begin": the first line goes in for them, and Sonic opens the meeting.
+  meetingStartedRef.current = (name: string) => { void handleSendMessageRef.current(`Let's start our ${name}.`, []); };
   handleSendMessageRef.current = handleSendMessage;
   handleFeedbackRef.current = handleFeedback;
   getTokenRef.current = getToken;

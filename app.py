@@ -141,7 +141,9 @@ from backend.utils import routines as routines_utils
 from backend.utils import followups as followups_utils
 from backend.services import routine_scheduler
 from backend.services import user_task_scheduler
+from backend.services import meeting_sweep
 from backend.utils import user_tasks as user_tasks_utils
+from backend.utils import meetings as meetings_utils
 from backend.utils.shared_history import CALLBACK_MARK, build_callback_block, callback_allowed
 from backend.utils.user_settings_utils import (
     get_user_rag_mode, set_user_rag_mode, VALID_RAG_MODES,
@@ -233,6 +235,15 @@ async def _run_user_task_schedule():
     await user_task_scheduler.run_user_task_schedule(get_db, task_llm.ainvoke, allowed)
 
 
+async def _run_meeting_sweep():
+    from backend.models.models import lite_llm as note_llm
+
+    def allowed(owner):
+        return budget_guard.allows("meeting_notes", budget_guard.current_state(None, None, owner))
+
+    await meeting_sweep.run_meeting_sweep(get_db, note_llm.invoke, load_session_messages, allowed)
+
+
 # 2. Define the startup/shutdown logic
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -248,6 +259,8 @@ async def lifespan(app: FastAPI):
     routine_task = spawn_background_task(routine_scheduler.run_routine_schedule(get_db))
     # The research tasks people have set up for Sonic, run when due and within limits (backend/services/user_task_scheduler.py).
     user_task_task = spawn_background_task(_run_user_task_schedule())
+    # A meeting the person forgot to end closes itself after a quiet spell, with its notes (backend/services/meeting_sweep.py).
+    meeting_sweep_task = spawn_background_task(_run_meeting_sweep())
     watchdog_task = loop_watchdog.start()  # logs when the event loop is blocked, and what was waiting (backend/utils/loop_watchdog.py)
     if get_db() is not None:
         ensure_calendar_indexes()
@@ -258,6 +271,7 @@ async def lifespan(app: FastAPI):
     shelf_task.cancel()
     routine_task.cancel()
     user_task_task.cancel()
+    meeting_sweep_task.cancel()
     watchdog_task.cancel()
     await asyncio.to_thread(llm_usage.flush)  # whatever the last calls used, before the process goes
     chat_sessions = {}
@@ -1036,10 +1050,17 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 followups_context = await asyncio.to_thread(followups_utils.build_followups_context, username, user_tz)
                 if followups_context:
                     tally(turn_counts, "followups_offered")
+            # A meeting the person started in THIS conversation with the Start office hours button (backend/utils/meetings.py): its agenda, last notes and prep, for as long as it runs.
+            # Never for a guest, and set aside under a safety context (the person comes first); one indexed read when no meeting is running.
+            meeting_context = ""
+            if not is_guest_username(username) and risk_level == RISK_NONE and source_type == "conversational":
+                meeting_context = await asyncio.to_thread(meetings_utils.build_context_for_session, username, session_id, user_tz)
+                if meeting_context:
+                    tally(turn_counts, "meeting_turns")
             # Results of the tasks this person set up (backend/utils/user_tasks.py): mentioned once when they are back, or told when asked. Never for a guest, under a
             # safety context, on a closing message, while the emotional layer is holding things down, or on a turn another proactive item already took.
             task_results_context, task_result_ids = "", []
-            if (risk_level == RISK_NONE and source_type == "conversational" and not is_closing_message(question) and not is_guest_username(username) and not open_loop_entry):
+            if (risk_level == RISK_NONE and source_type == "conversational" and not is_closing_message(question) and not is_guest_username(username) and not open_loop_entry and not meeting_context):
                 _asked_results = user_tasks_utils.asks_about_task_results(final_state.get("original_question", question))
                 _now = datetime.now(timezone.utc)
                 if _asked_results or (user_tasks_utils.is_return(last_message_at, _now) and energy_tier(final_state.get("emotional_state"), _now) == "open"):
@@ -1073,6 +1094,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 routines_context=routines_context,
                 followups_context=followups_context,
                 task_results_context=task_results_context,
+                meeting_context=meeting_context,
                 duration_context=duration_context,
                 self_knowledge_context=build_self_knowledge_block(
                     self_knowledge_lines, asks_about_itself(final_state.get("original_question", question))
@@ -1166,7 +1188,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                         True, chat_sessions[history_key], source_type=source_type, risk_active=risk_level != RISK_NONE,
                         energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
                         closing=is_closing_message(question),
-                        proactive_taken=bool(open_loop_entry or task_results_context or relatable_entry or encouragement_entry or self_history),
+                        proactive_taken=bool(open_loop_entry or task_results_context or meeting_context or relatable_entry or encouragement_entry or self_history),
                     ):
                         prompt = prompt + build_callback_block(lull=callback_lull)
                         callback_offered = True
@@ -1183,7 +1205,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 slot = dict(
                     source_type=source_type, risk_active=False,
                     energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
-                    proactive_taken=bool(open_loop_entry or task_results_context or relatable_entry or encouragement_entry or self_history
+                    proactive_taken=bool(open_loop_entry or task_results_context or meeting_context or relatable_entry or encouragement_entry or self_history
                                          or callback_offered or goal_nudge_context),
                 )
                 asked_listing = shelf_utils.shelf_enabled() and shelf_utils.asks_what_reading(question)
@@ -1967,6 +1989,7 @@ async def clear_memory(current_user = Depends(get_current_user)):
     result = await asyncio.to_thread(memory_erase.erase_user_memory, get_db(), username)
     await asyncio.to_thread(open_loops_utils.forget_all_loops, username)
     await asyncio.to_thread(user_tasks_utils.forget_all, username)
+    await asyncio.to_thread(meetings_utils.forget_all, username)
     if result["failed"]:
         # Never report a partial wipe as success: the page says it permanently deletes everything.
         raise HTTPException(status_code=500, detail="Some of your memory could not be deleted. Please try again.")
@@ -2090,6 +2113,137 @@ async def run_user_task_now(task_id: str, current_user = Depends(get_current_use
 
     spawn_background_task(_run())
     return {"status": "started"}
+
+
+def _meetings_db_or_503():
+    db = get_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="Meetings are not available right now.")
+    return db
+
+
+def _meetings_user(current_user) -> str:
+    username = current_user.get("sub")
+    if is_guest_username(username):
+        raise HTTPException(status_code=403, detail="Meetings are for signed-in accounts, so the notes have someone to belong to.")
+    return username
+
+
+@app.get("/api/meetings")
+async def list_user_meetings(current_user = Depends(get_current_user)):
+    """The meetings this person has with Sonic (backend/utils/meetings.py)."""
+    username = _meetings_user(current_user)
+    docs = await asyncio.to_thread(meetings_utils.list_meetings, _meetings_db_or_503(), username)
+    return {"meetings": [meetings_utils.public_meeting(d) for d in docs], "limits": {"max_meetings": meetings_utils.MAX_MEETINGS}}
+
+
+@app.get("/api/meetings/state")
+async def meetings_state(session_id: str = Query(""), current_user = Depends(get_current_user)):
+    """For the chat header: the person's meetings and the one running in this conversation (if any). Nothing here reads the calendar: a meeting can be started any time."""
+    username = _meetings_user(current_user)
+    db = _meetings_db_or_503()
+    docs = await asyncio.to_thread(meetings_utils.list_meetings, db, username)
+    if not docs:
+        return {"meetings": [], "active": None}
+    run = await asyncio.to_thread(meetings_utils.active_run, db, username, session_id) if session_id else None
+    active = None
+    if run:
+        meeting = next((d for d in docs if d["id"] == run["meeting_id"]), None)
+        active = {"run_id": run["id"], "meeting_id": run["meeting_id"], "name": meeting.get("name", "")} if meeting else None
+    return {"meetings": [{"id": d["id"], "name": d["name"]} for d in docs], "active": active}
+
+
+@app.post("/api/meetings")
+async def create_user_meeting(payload: dict = Body(...), current_user = Depends(get_current_user)):
+    username = _meetings_user(current_user)
+    spec, issue = meetings_utils.validate_meeting(payload)
+    if issue:
+        raise HTTPException(status_code=400, detail=issue)
+    meeting, issue = await asyncio.to_thread(meetings_utils.create_meeting, _meetings_db_or_503(), username, spec)
+    if issue:
+        raise HTTPException(status_code=400, detail=issue)
+    return meetings_utils.public_meeting(meeting)
+
+
+@app.patch("/api/meetings/notes/{note_id}")
+async def update_user_meeting_note(note_id: str, payload: dict = Body(...), current_user = Depends(get_current_user)):
+    username = _meetings_user(current_user)
+    note = await asyncio.to_thread(meetings_utils.update_note, _meetings_db_or_503(), username, note_id, payload)
+    if note is None:
+        raise HTTPException(status_code=404, detail="That note isn't there.")
+    return meetings_utils.public_note(note)
+
+
+@app.delete("/api/meetings/notes/{note_id}")
+async def delete_user_meeting_note(note_id: str, current_user = Depends(get_current_user)):
+    username = _meetings_user(current_user)
+    if not await asyncio.to_thread(meetings_utils.delete_note, _meetings_db_or_503(), username, note_id):
+        raise HTTPException(status_code=404, detail="That note isn't there.")
+    return {"status": "deleted", "id": note_id}
+
+
+@app.patch("/api/meetings/{meeting_id}")
+async def update_user_meeting(meeting_id: str, payload: dict = Body(...), current_user = Depends(get_current_user)):
+    username = _meetings_user(current_user)
+    meeting, issue = await asyncio.to_thread(meetings_utils.update_meeting, _meetings_db_or_503(), username, meeting_id, payload)
+    if issue:
+        raise HTTPException(status_code=404 if "isn't there" in issue else 400, detail=issue)
+    return meetings_utils.public_meeting(meeting)
+
+
+@app.delete("/api/meetings/{meeting_id}")
+async def delete_user_meeting(meeting_id: str, current_user = Depends(get_current_user)):
+    username = _meetings_user(current_user)
+    if not await asyncio.to_thread(meetings_utils.delete_meeting, _meetings_db_or_503(), username, meeting_id):
+        raise HTTPException(status_code=404, detail="That meeting isn't there.")
+    return {"status": "deleted", "id": meeting_id}
+
+
+@app.get("/api/meetings/{meeting_id}/notes")
+async def list_user_meeting_notes(meeting_id: str, current_user = Depends(get_current_user)):
+    username = _meetings_user(current_user)
+    db = _meetings_db_or_503()
+    if await asyncio.to_thread(meetings_utils.get_meeting, db, username, meeting_id) is None:
+        raise HTTPException(status_code=404, detail="That meeting isn't there.")
+    notes = await asyncio.to_thread(meetings_utils.notes_for_meeting, db, username, meeting_id)
+    return {"notes": [meetings_utils.public_note(n) for n in notes]}
+
+
+@app.post("/api/meetings/{meeting_id}/start")
+async def start_user_meeting(meeting_id: str, payload: dict = Body(...), current_user = Depends(get_current_user)):
+    """Starts office hours in a conversation: only ever from the person pressing the button."""
+    username = _meetings_user(current_user)
+    run, issue = await asyncio.to_thread(meetings_utils.start_run, _meetings_db_or_503(), username, meeting_id, str(payload.get("session_id") or ""))
+    if issue:
+        raise HTTPException(status_code=404 if "isn't there" in issue else 400, detail=issue)
+    return {"run_id": run["id"], "meeting_id": meeting_id}
+
+
+@app.post("/api/meetings/runs/{run_id}/end")
+async def end_user_meeting(run_id: str, current_user = Depends(get_current_user)):
+    """Ends the meeting and saves its notes (a small model call, skipped in low-power mode)."""
+    username = _meetings_user(current_user)
+    db = _meetings_db_or_503()
+    run = await asyncio.to_thread(meetings_utils.get_run, db, username, run_id)
+    if run is None or run.get("status") != meetings_utils.ACTIVE:
+        raise HTTPException(status_code=404, detail="That meeting isn't running.")
+    meeting = await asyncio.to_thread(meetings_utils.get_meeting, db, username, run["meeting_id"])
+    await asyncio.to_thread(meetings_utils.end_run, db, username, run_id)
+    note, reason = None, None
+    if meeting is not None:
+        state = await asyncio.to_thread(budget_guard.current_state, None, None, username)
+        if not budget_guard.allows("meeting_notes", state):
+            reason = "low_power"
+        else:
+            session_id = run.get("session_id") or ""
+            messages = chat_sessions.get(f"{username}::{session_id}")
+            if messages is None:
+                messages = await asyncio.to_thread(load_session_messages, username, session_id)
+            from backend.models.models import lite_llm as note_llm
+
+            note = await asyncio.to_thread(meetings_utils.write_note, db, username, run, meeting, list(messages), note_llm.invoke)
+            reason = None if note else "nothing_to_note"
+    return {"status": "ended", "note": meetings_utils.public_note(note) if note else None, "reason": reason}
 
 
 @app.get("/api/local-workspace")

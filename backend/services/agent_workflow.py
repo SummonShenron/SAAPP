@@ -59,6 +59,7 @@ from backend.utils.user_settings_utils import get_user_timezone, get_user_target
 from backend.utils.time_utils import build_agent_time_line, local_today
 from backend.utils.google_calendar_utils import CALENDAR_LOCKED_USERS, get_connection_status as get_calendar_connection_status, has_granted_scope
 from backend.services.google_calendar_oauth import GoogleCalendarOAuth, GoogleCalendarConnectionError, GoogleCalendarTemporaryError
+from backend.utils import meetings as meetings_utils
 from backend.services.google_calendar_service import list_events_for_day, create_event, update_event, find_event_by_summary_on_day
 from backend.services.google_gmail_service import search_messages, get_message_detail, get_attachment_text, send_message
 from backend.services.google_docs_service import append_text as append_doc_text
@@ -2846,7 +2847,9 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 events = await asyncio.to_thread(list_events_for_day, token, date_arg, tz)
                 if not events:
                     return f"No events found on the connected Google Calendar for {date_arg}."
-                return "\n".join(f"- {e['start']}: {e['summary']}" for e in events)
+                # An event that is one of the person's meetings with Sonic says so, so the answer says "our check-in" (backend/utils/meetings.py).
+                with_sonic = await asyncio.to_thread(meetings_utils.calendar_note_for, username, events)
+                return "\n".join(f"- {e['start']}: {e['summary']}" + (f" ({with_sonic[e['id']]})" if e.get("id") in with_sonic else "") for e in events)
             if tool_action in {"search_gmail", "read_gmail_message", "get_gmail_attachment"}:
                 # Same tier as the calendar branch above — needs username for per-user token
                 # resolution, plus a scope check distinct from "no connection at all" (see

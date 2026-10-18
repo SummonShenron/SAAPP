@@ -149,7 +149,7 @@ def test_the_asked_block_lists_the_entries_with_their_month_and_forbids_embellis
     assert "ABOUT YOUR OWN RECENT CHANGES" in block and "(October 2026)" in block
     assert "Don't add abilities, dates or reasons that aren't listed" in block
     assert "never as something you remember going through or felt" in block
-    assert "you don't exist between conversations" in block.lower()
+    assert "you don't exist between conversations the way a person does" in block.lower() and "a few jobs do run on their own" in block
 
 
 def test_the_volunteer_block_is_one_optional_clause_never_a_story():
