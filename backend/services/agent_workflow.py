@@ -48,7 +48,7 @@ from backend.utils.safety_utils import (
     detect_risk_language, normalize_risk, normalize_support, merge_safety_state, effective_risk, log_safety_event,
     remember_support, RISK_NONE, KIND_LADDER_ANSWER, _ORDER as _RISK_ORDER,
 )
-from backend.services.local_workspace import get_workspace_handle, workspace_status
+from backend.services.local_workspace import get_workspace_handle, is_guest_username, workspace_status
 from backend.services.local_edits import validate_edit_proposal
 from backend.services.memory_search import embed_and_store_memory_chunk, recall_explicit
 from backend.services.tool_agent_memory import MemoryTurnGuard, build_user_memory_block
@@ -103,7 +103,7 @@ from backend.utils.agent_utils import (
 )
 from backend.services.react_loop import run_react_loop, _MAX_BATCH_SIZE
 from backend.services import steering
-from backend.services import native_loop, ops_incidents
+from backend.services import image_gen, native_loop, ops_incidents, photo_cards
 from backend.services import native_tools as native_tools_module
 from backend.utils import budget_guard, llm_turns
 from backend.services.repo_checkout import (
@@ -341,6 +341,7 @@ _TRANSIENT_STATE_DEFAULTS: Dict[str, Any] = {
     "memory_facts": None,
     "memory_hits": None,
     "insight_answer": None,
+    "generated_images": [],
 }
 
 
@@ -420,6 +421,8 @@ _AGENT_NODE_MAP = {
     "pr_summary": "pr_summary",
     "propose_write": "propose_write_node",
     "execute_write": "execute_write_node",
+    "image_card": "image_card_node",
+    "image_gen": "image_gen_node",
 }
 
 # An identity map over every node the plan mechanism can ever dispatch to — used as the
@@ -751,6 +754,19 @@ def build_agent_plan(intent: str, state: dict) -> dict:
         )
         state["last_intent"] = "cancel_action"
         return {"agents": ["conversational"], "skip": []}
+
+    # Words on a photo ("put Merry Christmas across the bottom of this"), or a short change to the card just made. Noticed here, in code, so no other turn pays
+    # anything for it (backend/services/photo_cards.py); the node itself can still hand the message back if it turns out not to be about a picture.
+    _messages = state.get("messages") or []
+    if _messages and photo_cards.wants_card(_content_of(_messages[-1]), state.get("image_refs"), _messages[:-1]):
+        logger.info("[Coordinator] Routing to the photo card maker.")
+        state["last_intent"] = "image_card"
+        return {"agents": ["image_card", "formatter"], "skip": []}
+    # A picture made from a description ("make me a snowy stadium at dusk"), or a short change to the one just made (backend/services/image_gen.py).
+    if _messages and image_gen.wants_image(_content_of(_messages[-1]), state.get("image_refs"), _messages[:-1]):
+        logger.info("[Coordinator] Routing to the picture maker.")
+        state["last_intent"] = "image_gen"
+        return {"agents": ["image_gen", "formatter"], "skip": []}
 
     # 3. Prevent Mutating Actions from standard follow-up sticky logic
     # Follow-up messages MUST re-classify intent so approvals work
@@ -1340,6 +1356,56 @@ def conversational_node(state: GraphState) -> dict:
     logger.info("--- CONVERSATIONAL NODE (PASS-THROUGH ENFORCED) ---")
     # Mark state so the gateway knows to format conversation rules
     return {**state, "relevance_grade": "conversational"}
+
+# ============================================================
+# IMAGE CARD NODE (words on a photo)
+# ============================================================
+
+async def image_card_node(state: GraphState) -> dict:
+    """Puts the person's words on their own photo (backend/services/photo_cards.py). The result takes the path every tool's does: the facts go to the voice
+    composer as tool output, and the picture is shown under the reply (app.py reads generated_images). When the message turns out not to be about a picture
+    after all it is handed back and answered like any other."""
+    username = state.get("username") or ""
+    message = _content_of(state["messages"][-1])
+    if is_guest_username(username):
+        # Guests share one identity, so a stored picture could not be kept private to the person who made it.
+        return {**state, "relevance_grade": "tool_agent", "content_to_format": "Making cards from photos is only available once they sign in with their own account, because pictures are kept for a signed-in person only. Say so kindly."}
+    db = get_db()
+    if db is None:
+        return {**state, "relevance_grade": "tool_agent", "content_to_format": "Pictures can't be stored right now, so a card can't be made. Say so, and that it may work later."}
+    await safe_emit_event("trace_detail", {"node": "image_card_node", "title": "Putting words on the photo...", "detail": "Choosing the lettering and drawing it."})
+    tz = await asyncio.to_thread(get_user_timezone, username)
+    outcome = await photo_cards.make_card(
+        store=photo_cards.MongoStore(db), username=username, session_id=state.get("session_id") or "", message=message,
+        attached=photo_cards.attached_image_ref(state.get("image_refs")), invoke=lite_llm.ainvoke, db=db, day=photo_cards.local_day(tz),
+    )
+    if outcome.kind == photo_cards.NOT_FOR_ME:
+        return {**state, "relevance_grade": "conversational"}
+    return {**state, "relevance_grade": "tool_agent", "content_to_format": outcome.facts, "generated_images": outcome.images}
+
+
+async def image_gen_node(state: GraphState) -> dict:
+    """Makes a picture from the person's description (backend/services/image_gen.py), or changes the one just made. Same hand-off as the card maker: the facts go
+    to the voice as tool output and the picture is shown under the reply. Never for a guest, and paused while the usage budget is in low-power mode."""
+    username = state.get("username") or ""
+    message = _content_of(state["messages"][-1])
+    if is_guest_username(username):
+        return {**state, "relevance_grade": "tool_agent", "content_to_format": "Making pictures is only available once they sign in with their own account, because pictures are kept for a signed-in person only. Say so kindly."}
+    if not budget_guard.allows("image_gen", {"level": state.get("budget_level")}):
+        return {**state, "relevance_grade": "tool_agent", "content_to_format": "Making pictures is paused for now because usage is high right now. Say so, and that it comes back on its own."}
+    db = get_db()
+    if db is None:
+        return {**state, "relevance_grade": "tool_agent", "content_to_format": "Pictures can't be stored right now, so one can't be made. Say so, and that it may work later."}
+    await safe_emit_event("trace_detail", {"node": "image_gen_node", "title": "Making a picture...", "detail": "Describing it to the image model."})
+    tz = await asyncio.to_thread(get_user_timezone, username)
+    outcome = await image_gen.make_image(
+        store=photo_cards.MongoStore(db), username=username, session_id=state.get("session_id") or "", message=message,
+        invoke=lite_llm.ainvoke, db=db, day=photo_cards.local_day(tz),
+    )
+    if outcome.kind == image_gen.NOT_FOR_ME:
+        return {**state, "relevance_grade": "conversational"}
+    return {**state, "relevance_grade": "tool_agent", "content_to_format": outcome.facts, "generated_images": outcome.images}
+
 
 # ============================================================
 # GENERATE NODE (sync - pass-through for stream)
@@ -4326,6 +4392,8 @@ def create_workflow(vector_store, user_memory_vector_store=None, checkpointer=No
     workflow.add_node("pr_summary", pr_summarizer_node)
     workflow.add_node("propose_write_node", propose_write_node)
     workflow.add_node("execute_write_node", execute_write_node)
+    workflow.add_node("image_card_node", image_card_node)
+    workflow.add_node("image_gen_node", image_gen_node)
 
     workflow.add_edge(START, "coordinator_node")
     workflow.add_conditional_edges("coordinator_node", coordinator_router, _PLAN_DESTINATIONS)
@@ -4337,7 +4405,7 @@ def create_workflow(vector_store, user_memory_vector_store=None, checkpointer=No
     for plan_driven_node in (
         "memory_save_node", "memory_recall_node", "summarizer_node",
         "tool_agent_node", "pr_summary", "propose_write_node", "execute_write_node",
-        "conversational_node",
+        "conversational_node", "image_card_node", "image_gen_node",
     ):
         workflow.add_conditional_edges(plan_driven_node, plan_continue_router, _PLAN_DESTINATIONS)
 

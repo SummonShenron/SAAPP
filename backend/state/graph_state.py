@@ -41,6 +41,8 @@ class GraphState(TypedDict):
     loop_count: int                 # Rewrite loop counter
     original_question: str          # First question before rewrites
     attachment_summaries: List[str] # Summary of user attached content
+    image_refs: Optional[List[Dict[str, Any]]]    # photos attached to THIS message ({filename, gridfs_id, content_type}); set by app.py every turn
+    generated_images: Optional[List[Dict[str, Any]]]  # pictures Sonic made this turn ({filename, fileId, generated}); app.py shows them under the reply
     coordinator_intent: str         # e.g. "retrieve", "summarize", etc.
     coordinator_plan: List[str]     # ordered list of agents to run
     content_to_format: Optional[str]

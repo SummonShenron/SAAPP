@@ -30,6 +30,19 @@
   width: 100%;
   height: 100%;
   overflow: visible;
+  pointer-events: none;
+}
+
+/* Only his drawing is clickable, not the empty space around it. Clicking startles him: a quick hop, a squashed landing and a smaller bounce, pivoting on the floor. */
+.ps-jump { pointer-events: auto; cursor: pointer; transform-box: fill-box; transform-origin: 50% 100%; }
+.ps-startled { animation: ps-startle 0.75s ease-out; }
+@keyframes ps-startle {
+  0% { transform: translateY(0) scale(1, 1); }
+  14% { transform: translateY(-11px) scale(0.96, 1.06); }
+  36% { transform: translateY(0) scale(1.06, 0.92); }
+  54% { transform: translateY(-4px) scale(0.99, 1.02); }
+  74% { transform: translateY(0) scale(1.02, 0.97); }
+  100% { transform: translateY(0) scale(1, 1); }
 }
 
 /* Hunched over: everything above the hips leans toward the laptop (to his left, our left). */
@@ -41,6 +54,22 @@
 .ps-root .mp-face { transform: translateX(-5px); }
 .ps-root .mp-shell { transform: scaleX(0.9); }
 .ps-root .mp-ear-r, .ps-root .mp-ear-l { opacity: 0; }
+
+/* Startled (PatchyAtLaptop.tsx): once he has landed he turns to face us, down the barrel like the chat Patchy, and waves, easing out of the turn above and back into it after. */
+.ps-upper, .ps-head { transition: transform 0.5s cubic-bezier(0.3, 0.7, 0.3, 1); }
+.ps-root .mp-ear-r, .ps-root .mp-ear-l, .ps-ear-near { transition: opacity 0.35s ease, transform 0.55s cubic-bezier(0.3, 0.7, 0.3, 1); }
+.ps-front .ps-upper { transform: rotate(-3deg); }
+.ps-front .ps-head { transform: rotate(0deg); }
+.ps-front .mp-face { transform: none; }
+.ps-front .mp-shell { transform: none; }
+.ps-front .mp-ear-r, .ps-front .mp-ear-l { opacity: 1; }
+.ps-front .ps-ear-near { opacity: 0; }
+
+/* The waving arm is hidden until then; the arm that reaches across to the keys lets go for the wave. The wave itself is PatchyRightArm's (its path is eased in script), so the arm is rubber, not jointed. */
+.ps-wave-arm { opacity: 0; }
+.ps-near-arm, .ps-near-hand { transition: opacity 0.25s ease; }
+.ps-front .ps-wave-arm { opacity: 1; }
+.ps-front .ps-near-arm, .ps-front .ps-near-hand { opacity: 0; }
 
 /* Too busy to notice anyone: his eyes are flat dashes ("-_-") most of the time; every so often they turn into two little dots that sweep right to left, snap back and
    sweep again, three times, as if he had just read three lines of code, and then go back, with his mouth falling open a little ("oooh") while he reads. (Under "reduce motion" nothing animates and he keeps the dash face.) */

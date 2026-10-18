@@ -135,6 +135,12 @@ export const EVERYDAY: Record<string, Content> = {
         <li>Attach a spreadsheet: "How much did I spend on groceries?" or "Which month cost the most?"</li>
       </ul>
 
+      <h4>Make a card from a photo</h4>
+      <ul>
+        <li>Attach a photo: "Put 'Merry Christmas' across the bottom in gold script." Then "bigger", "try red" or "move it up" until it's right, and press Download.</li>
+        <li>No photo? "Make me a Christmas card with a snowy football stadium." Sonic makes the picture (3 a day), then you add your words.</li>
+      </ul>
+
       <h4>Ask your own documents</h4>
       <ul>
         <li>"What's in my lease about pets?"</li>
@@ -207,6 +213,22 @@ export const EVERYDAY: Record<string, Content> = {
         <li><strong>Spreadsheets:</strong> Sonic sees how big the sheet is, its column names, its first rows, and totals across every row, including how much per category. On a big sheet it tells you when it can't see the rest, rather than guessing.</li>
         <li><strong>Short documents</strong> are read in full. Longer ones are summarized, and Sonic looks back through the whole text when you ask about details.</li>
         <li><strong>Pictures:</strong> it can describe a photo, read the text in a screenshot, and tell you what a chart or diagram shows.</li>
+      </ul>
+      <h4>Put words on a photo</h4>
+      <ul>
+        <li>Attach a photo and say what to write: <strong>"Put 'Merry Christmas from the Harpers' across the bottom in gold script."</strong> Sonic draws the words and shows the result under its reply, with a <strong>Download</strong> button.</li>
+        <li>Ask for changes until it looks right: "bigger", "move it up a bit", "try red", "a more festive font". Each change starts again from your original photo, which is never altered.</li>
+        <li>It picks from a set of fonts (elegant and casual scripts, festive, bold capitals, serif and more) and colours, including Hawkeye gold. If the words would be hard to read on that part of the photo, it adds a soft shade behind them and tells you.</li>
+        <li>The card is saved as a JPEG, up to about 8 inches on its long side, so it prints well. Sonic keeps your 8 most recent cards, for 30 days.</li>
+        <li>Only for signed-in accounts, not the guest demo.</li>
+      </ul>
+      <h4>Make a picture from a description</h4>
+      <ul>
+        <li>No photo? Describe one: <strong>"Make me a picture of a snowy football stadium at dusk, for a Christmas card."</strong> Sonic generates it, shows it with a <strong>Download</strong> button, and you can ask for changes ("snowier", "make it a watercolor").</li>
+        <li>Then add words the same way as on a photo: "Put 'Merry Christmas from the Harpers' across the bottom in gold script."</li>
+        <li>You can make <strong>3 pictures a day</strong> (it starts again the next day, in your own time zone). Adding words to a picture you already have isn't limited that way.</li>
+        <li>Sonic won't make pictures of real people, or sexual, graphic or deceptive pictures, and Google's own safety filters can decline others. A picture that fails or is declined doesn't count against your 3.</li>
+        <li>The picture is made by a Google image model and kept like a card: your 8 most recent for 30 days. Images can contain small mistakes, so look it over before you print it.</li>
       </ul>
       <h4>What doesn't work yet</h4>
       <ul>

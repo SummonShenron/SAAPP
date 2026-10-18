@@ -70,6 +70,38 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "image_generation",
+        "requires": [
+            "backend/services/image_gen.py::async def make_image",
+            "backend/services/image_gen.py::def generate_sync",
+            "backend/services/agent_workflow.py::async def image_gen_node",
+        ],
+        "month": "2026-10",
+        "title": "Making pictures from a description",
+        "line": (
+            "I can make a picture from your description, up to three a day, like a snowy stadium for a Christmas card, and change it when you ask. "
+            "Then I can put your words on it. I won't make pictures of real people."
+        ),
+        "keywords": ["generate an image", "make a picture", "draw me", "create an image", "ai image", "make an illustration", "christmas card picture", "image generation"],
+        "volunteer": [],
+    },
+    {
+        "id": "photo_cards",
+        "requires": [
+            "backend/utils/image_card.py::def render_card",
+            "backend/services/photo_cards.py::async def make_card",
+            "backend/services/agent_workflow.py::async def image_card_node",
+        ],
+        "month": "2026-10",
+        "title": "Words on your photos",
+        "line": (
+            "I can put words on a photo you attach, like a Christmas card: tell me what to write, the font, colour and where, and ask for changes until it looks right. "
+            "I never change your original, and you can download the result."
+        ),
+        "keywords": ["christmas card", "greeting card", "put text on a photo", "text on an image", "caption a photo", "write on a picture", "add words to a photo", "birthday card"],
+        "volunteer": [],
+    },
+    {
         "id": "repo_tasks",
         "requires": [
             "backend/services/repo_tasks.py::async def run_pr_review",

@@ -194,6 +194,8 @@ def _deserialize_messages(raw_messages: list) -> list:
             extra["initiated"] = True
             if msg.get("initiated_kind"):
                 extra["initiated_kind"] = msg["initiated_kind"]
+        if msg.get("kb_images"):
+            extra["kb_images"] = msg["kb_images"]       # so a card made earlier is still known as one after a restart (backend/services/photo_cards.py)
         if m_type == "human": messages.append(HumanMessage(content=content, additional_kwargs=extra))
         elif m_type == "ai": messages.append(AIMessage(content=content, additional_kwargs=extra))
         elif m_type == "system": messages.append(SystemMessage(content=content, additional_kwargs=extra))

@@ -115,6 +115,21 @@ def _usage_ids(username: str, now: datetime) -> Dict[str, str]:
     return {"month": f"tavily:{now:%Y-%m}", "day": f"tavily:{now:%Y-%m-%d}:{person}"}
 
 
+_ttl_ready = False
+
+
+def _ensure_usage_ttl(db: Any) -> None:
+    """The usage rows carry an expires_at; this is the index that makes the database remove them once it has passed."""
+    global _ttl_ready
+    if _ttl_ready:
+        return
+    try:
+        db[USAGE_COLLECTION].create_index("expires_at", expireAfterSeconds=0)
+        _ttl_ready = True
+    except Exception:
+        logger.warning("[web search] could not create the usage expiry index.", exc_info=True)
+
+
 def reserve_tavily(db: Any, username: str, now: Optional[datetime] = None) -> bool:
     """Takes one Tavily search from this month's and this person's day's allowance, or says there is none left. With no database the search is allowed (search
     must keep working; Tavily's own plan limit is the backstop)."""
@@ -122,6 +137,7 @@ def reserve_tavily(db: Any, username: str, now: Optional[datetime] = None) -> bo
         return True
     moment = now or datetime.now(timezone.utc)
     ids = _usage_ids(username, moment)
+    _ensure_usage_ttl(db)
     try:
         month = db[USAGE_COLLECTION].find_one({"_id": ids["month"]}) or {}
         day = db[USAGE_COLLECTION].find_one({"_id": ids["day"]}) or {}
