@@ -407,7 +407,7 @@ def test_the_chat_turn_and_shutdown_flush_the_counts_and_the_health_page_reports
     app_source = (ROOT / "app.py").read_text(encoding="utf-8")
     assert app_source.count("await asyncio.to_thread(llm_usage.flush)") >= 3  # both ends of a turn, and shutdown
     health = (ROOT / "backend" / "utils" / "sonic_health.py").read_text(encoding="utf-8")
-    assert '"usage"' in health and "**summarize_usage(usage_docs, prices)" in health
+    assert '"usage"' in health and "summarize_usage(usage_docs, prices)" in health and "**usage_summary" in health
 
 
 def test_only_counts_a_model_name_and_a_caller_are_ever_recorded():

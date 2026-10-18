@@ -18,6 +18,7 @@ import { HomeTab } from './SonicHealthHome';
 import { ShelfTab } from './SonicHealthShelf';
 import { FeedbackTab, KnowledgeTab } from './SonicHealthFeedback';
 import { RoutinesTab } from './SonicHealthRoutines';
+import { UsersCard } from './SonicHealthUsers';
 import { BarRow, BudgetBars, StatTile } from './sonicHealthParts';
 import { budgetAmount, pct, shortDate, tokens, usd } from './sonicHealthFormat';
 import './__styles__/SelfService.css';
@@ -373,7 +374,12 @@ export const SonicHealthPage: React.FC = () => {
 
       <div id="sh-panel" role="tabpanel" aria-labelledby={`sh-tab-${tab}`} className="sh-panel">
         {tab === 'home' && <HomeTab health={health} awaiting={awaiting.length} suggestionsWaiting={suggestionsWaiting} onOpen={selectTab} />}
-        {tab === 'usage' && (health.usage ? <UsageCard usage={health.usage} turns={health.counters.totals.turns_total ?? 0} /> : noData('model usage'))}
+        {tab === 'usage' && (health.usage ? (
+          <div className="sh-stack">
+            <UsageCard usage={health.usage} turns={health.counters.totals.turns_total ?? 0} />
+            <UsersCard users={health.users} />
+          </div>
+        ) : noData('model usage'))}
         {tab === 'turns' && (health.usage?.turns && health.usage.turns.turns > 0 ? <TurnsCard turns={health.usage.turns} /> : noData('chat turns'))}
         {tab === 'budget' && (health.budget ? <BudgetCard budget={health.budget} /> : noData('budget'))}
         {tab === 'behavior' && <CountersCard counters={health.counters} />}

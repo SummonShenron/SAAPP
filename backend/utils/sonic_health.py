@@ -1,7 +1,8 @@
 """One payload for the admin "Sonic Health" page: how the safety layer is doing, how Sonic itself is behaving, the
 self-observations waiting for approval or live, and what the model calls have used (tokens by model and by caller). Everything
-here is an aggregate count or approved wording; none of it contains a user's words or a person's name (see safety_stats.py,
-self_counters.py, self_observations.py, llm_usage.py).
+here is an aggregate count or approved wording; none of it contains a user's words (see safety_stats.py, self_counters.py,
+self_observations.py, llm_usage.py). The ONE place a person is named is the "users" section: what each account cost, as counts and dollars
+only (backend/utils/user_usage.py), because working out what a person costs needs to know who. The page is admin-only.
 """
 import datetime
 import logging
@@ -9,7 +10,7 @@ from datetime import timezone
 from typing import Any, Dict, List, Optional
 
 from backend.utils.budget_guard import current_state as budget_state, public_view as budget_view
-from backend.utils import billing_time
+from backend.utils import billing_time, user_usage
 from backend.utils.llm_turns import daily_turns, fetch_turn_docs, summarize_turns
 from backend.utils.llm_usage import fetch_route_docs, fetch_usage_docs, load_prices, summarize_daily, summarize_routes, summarize_usage
 from backend.utils.safety_stats import fetch_recent_events, summarize_safety_events
@@ -50,6 +51,7 @@ def build_sonic_health(db: Any, days: int, now: Optional[datetime.datetime] = No
         for row in summarize_daily(usage_docs, prices, billing_days(days, now))
     ]
     counters = summarize_counters(fetch_counter_docs(db, days, now), now, days)
+    usage_summary = summarize_usage(usage_docs, prices)
     return {
         "days": days,
         "generated_at": now.isoformat(),
@@ -64,10 +66,13 @@ def build_sonic_health(db: Any, days: int, now: Optional[datetime.datetime] = No
         "routines": _section("routines", lambda: routines_utils.routines_view(db, now)),
         "observations": list_observations(db, now),
         "usage": {
-            **summarize_usage(usage_docs, prices),
+            **usage_summary,
             "routes": summarize_routes(fetch_route_docs(db, days, now)),
             "turns": summarize_turns(turn_docs),
             "daily": daily,
         },
+        # What each account cost over the period (counts and dollars only; the one place a person is named, on an admin-only page).
+        "users": _section("users", lambda: user_usage.summarize_users(
+            user_usage.fetch_daily(db, days, now), billing_days(days, now), total_cost=usage_summary.get("estimated_cost"), evals=daily)),
         "budget": budget_view(budget_state(db, now), True),
     }

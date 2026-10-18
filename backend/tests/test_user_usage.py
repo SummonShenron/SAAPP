@@ -24,17 +24,23 @@ class _Col:
             row[key] = row.get(key, 0) + by
 
     def find(self, flt, projection=None):
+        if "day" in flt:                                # the daily rollup: every person from a day on
+            return [dict(r) for r in self.rows if r["day"] >= flt["day"]["$gte"]]
         floor = flt["minute"]["$gte"]
         return [dict(r) for r in self.rows if r["user"] == flt["user"] and r["minute"] >= floor]
+
+    def create_index(self, *args, **kwargs):
+        self.indexes = getattr(self, "indexes", []) + [(args, kwargs)]
 
 
 class _DB:
     def __init__(self):
         self.col = _Col()
+        self.daily = _Col()
 
     def __getitem__(self, name):
-        assert name == uu.COLLECTION
-        return self.col
+        assert name in (uu.COLLECTION, uu.DAILY_COLLECTION)
+        return self.col if name == uu.COLLECTION else self.daily
 
 
 @pytest.fixture(autouse=True)

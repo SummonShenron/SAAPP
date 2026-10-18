@@ -16,9 +16,16 @@ logger = logging.getLogger("SASS Logger")
 COLLECTION = "llm_usage_user_minutely"
 FIELDS = ("tokens", "calls", "turns", "cost_micro")   # cost_micro: what the person's priced calls cost, in millionths of a dollar
 MAX_USER_LENGTH = 200
+# The same counts rolled up by billing day (Pacific, as everywhere else on the usage page), kept long enough to see a month and a bit of what each person
+# costs. One row per person per day, counts only. The minute rows above stay at a few days because the guard only needs the last few hours.
+DAILY_COLLECTION = "llm_usage_user_daily"
+DAILY_KEEP_SECONDS = 120 * 24 * 60 * 60
+MAX_PEOPLE_SHOWN = 25
 
 _lock = threading.Lock()
 _pending: Dict[Tuple[str, str], Dict[str, int]] = {}  # (user, minute) -> counts not yet saved
+_pending_daily: Dict[Tuple[str, str], Dict[str, int]] = {}  # (user, billing day) -> counts not yet saved
+_daily_index_ready = False
 
 
 def _count(value: Any) -> int:
@@ -43,12 +50,15 @@ def add(user: Optional[str], tokens: int, calls: int = 0, now: Optional[datetime
         used = _count(tokens)
         if not name or not (used or calls or cost_micro):
             return
+        from backend.utils import billing_time
+
         with _lock:
-            slot = _pending.setdefault((name, minute_key(now)), {field: 0 for field in FIELDS})
-            slot["tokens"] += used
-            slot["calls"] += _count(calls)
-            slot["turns"] += 1
-            slot["cost_micro"] += _count(cost_micro)
+            for pending, key in ((_pending, (name, minute_key(now))), (_pending_daily, (name, billing_time.day(now)))):
+                slot = pending.setdefault(key, {field: 0 for field in FIELDS})
+                slot["tokens"] += used
+                slot["calls"] += _count(calls)
+                slot["turns"] += 1
+                slot["cost_micro"] += _count(cost_micro)
     except Exception:
         pass
 
@@ -61,15 +71,17 @@ def snapshot() -> Dict[Tuple[str, str], Dict[str, int]]:
 def reset() -> None:
     with _lock:
         _pending.clear()
+        _pending_daily.clear()
 
 
 def flush(db: Any = None) -> int:
     """Saves the counts (one `$inc` per person and minute) and returns how many rows. If the write fails the counts go back to be tried again
     with the next flush. Blocking: call it off the event loop. Never raises."""
     with _lock:
-        pending = dict(_pending)
+        pending, pending_daily = dict(_pending), dict(_pending_daily)
         _pending.clear()
-    if not pending:
+        _pending_daily.clear()
+    if not pending and not pending_daily:
         return 0
     try:
         if db is None:
@@ -87,15 +99,132 @@ def flush(db: Any = None) -> int:
                 {"$inc": {f: counts.get(f, 0) for f in FIELDS}, "$setOnInsert": {"at": llm_usage.minute_start(minute)}},
                 upsert=True,
             )
+        if pending_daily:
+            _ensure_daily_expiry(db)
+        for (user, day), counts in pending_daily.items():
+            db[DAILY_COLLECTION].update_one(
+                {"user": user, "day": day},
+                {"$inc": {f: counts.get(f, 0) for f in FIELDS}, "$setOnInsert": {"at": datetime.now(timezone.utc)}},
+                upsert=True,
+            )
         return len(pending)
     except Exception:
         logger.warning("[user_usage] could not save the per-person counts; keeping them for the next flush.")
         with _lock:
-            for key, counts in pending.items():
-                slot = _pending.setdefault(key, {field: 0 for field in FIELDS})
-                for field in FIELDS:
-                    slot[field] += counts.get(field, 0)
+            for store, saved in ((_pending, pending), (_pending_daily, pending_daily)):
+                for key, counts in saved.items():
+                    slot = store.setdefault(key, {field: 0 for field in FIELDS})
+                    for field in FIELDS:
+                        slot[field] += counts.get(field, 0)
         return 0
+
+
+def _ensure_daily_expiry(db: Any) -> None:
+    """The index that makes the database drop daily rows after DAILY_KEEP_SECONDS. Created once per process; a failure is only logged."""
+    global _daily_index_ready
+    if _daily_index_ready:
+        return
+    try:
+        db[DAILY_COLLECTION].create_index("at", expireAfterSeconds=DAILY_KEEP_SECONDS)
+        _daily_index_ready = True
+    except Exception:
+        logger.warning("[user_usage] could not create the daily expiry index.")
+
+
+def fetch_daily(db: Any, days: int, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    """The saved per-person day rows for the last `days` billing days, today included, plus what has not been saved yet. Blocking."""
+    from backend.utils import billing_time
+
+    first = billing_time.days_back(now or datetime.now(timezone.utc), days)
+    rows = list(db[DAILY_COLLECTION].find({"day": {"$gte": first}}, {"_id": 0}))
+    with _lock:
+        rows.extend({"user": user, "day": day, **counts} for (user, day), counts in _pending_daily.items() if day >= first)
+    return rows
+
+
+EVALS_NAME = "Testing and evals"
+
+
+def _evals_row(daily: Optional[Iterable[Dict[str, Any]]], days: List[str], grand_cost: float, grand_tokens: int) -> Optional[Dict[str, Any]]:
+    """The runs of the evals and tests as one more entry beside the people, from the usage page's daily rows (summarize_daily: `eval_calls`, `eval_tokens`,
+    `eval_cost`, the part of each day that came from an eval run). They are not chat turns, so they have no turns and no account; None when there were none."""
+    by_day = {str(row.get("day")): row for row in (daily or []) if str(row.get("day")) in set(days)}
+    per_day = [round(float((by_day.get(day) or {}).get("eval_cost") or 0), 4) for day in days]
+    cost = sum(float((row or {}).get("eval_cost") or 0) for row in by_day.values())
+    tokens = sum(_count((row or {}).get("eval_tokens")) for row in by_day.values())
+    calls = sum(_count((row or {}).get("eval_calls")) for row in by_day.values())
+    if not (calls or tokens or cost):
+        return None
+    active_days = sum(1 for row in by_day.values() if _count(row.get("eval_calls")) or float(row.get("eval_cost") or 0) > 0)
+    return {
+        "user": EVALS_NAME, "kind": "evals", "cost": round(cost, 4), "tokens": tokens, "turns": 0, "calls": calls,
+        "cost_per_turn": None, "cost_per_active_day": round(cost / active_days, 4) if active_days and cost else None, "active_days": active_days,
+        "share": round(cost / grand_cost, 4) if grand_cost else (round(tokens / grand_tokens, 4) if grand_tokens else None),
+        "per_day": per_day,
+    }
+
+
+def summarize_users(
+    rows: Iterable[Dict[str, Any]], days: List[str], total_cost: Optional[float] = None, limit: int = MAX_PEOPLE_SHOWN, evals: Optional[Iterable[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """What each person cost over `days` (billing days, oldest first), biggest first, for the admin's Sonic Health page. Counts and dollars only. Pure.
+    `evals` is the usage page's daily rows: the runs of the evals and tests get their own entry (kind "evals") in the same list, sorted in by cost, so
+    testing spend is visible next to what real people cost and is not counted as one of them. `total_cost` is the usage page's own estimate for the whole
+    period, so what is tied to neither (background jobs, anything run before the person was known) shows as the difference. `priced` is False when no
+    dollars were counted at all (no prices set), and the page then shows tokens instead."""
+    wanted = set(days)
+    people: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        day = str(row.get("day") or "")
+        if day not in wanted:
+            continue
+        person = people.setdefault(str(row.get("user") or "unknown"), {
+            "cost": 0.0, "tokens": 0, "calls": 0, "turns": 0, "per_day": {d: 0.0 for d in days},
+        })
+        cost = _count(row.get("cost_micro")) / 1_000_000
+        person["cost"] += cost
+        person["tokens"] += _count(row.get("tokens"))
+        person["calls"] += _count(row.get("calls"))
+        person["turns"] += _count(row.get("turns"))
+        person["per_day"][day] += cost
+    total = sum(p["cost"] for p in people.values())
+    total_tokens = sum(p["tokens"] for p in people.values())
+    evals_row = _evals_row(evals, days, 0.0, 0)
+    eval_cost, eval_tokens = (evals_row["cost"], evals_row["tokens"]) if evals_row else (0.0, 0)
+    grand_cost, grand_tokens = total + eval_cost, total_tokens + eval_tokens      # shares are of everything counted, people and tests together
+    ranked = sorted(people.items(), key=lambda item: (item[1]["cost"], item[1]["tokens"]), reverse=True)
+    shown = []
+    for user, p in ranked[:max(limit, 1)]:
+        active_days = sum(1 for value in p["per_day"].values() if value > 0) or (1 if p["tokens"] else 0)
+        shown.append({
+            "user": user,
+            "kind": "person",
+            "cost": round(p["cost"], 4),
+            "tokens": p["tokens"],
+            "turns": p["turns"],
+            "calls": p["calls"],
+            "cost_per_turn": round(p["cost"] / p["turns"], 4) if p["turns"] else None,
+            "cost_per_active_day": round(p["cost"] / active_days, 4) if active_days else None,
+            "active_days": active_days,
+            "share": round(p["cost"] / grand_cost, 4) if grand_cost else (round(p["tokens"] / grand_tokens, 4) if grand_tokens else None),
+            "per_day": [round(p["per_day"][d], 4) for d in days],
+        })
+    if evals_row:
+        evals_row = _evals_row(evals, days, grand_cost, grand_tokens)
+        shown.append(evals_row)
+        shown.sort(key=lambda row: (row["cost"], row["tokens"]), reverse=True)
+    rest = ranked[max(limit, 1):]
+    return {
+        "days": list(days),
+        "people": len(people),
+        "priced": grand_cost > 0,
+        "cost": round(total, 4),
+        "tokens": total_tokens,
+        "rows": shown,
+        "others": {"people": len(rest), "cost": round(sum(p["cost"] for _, p in rest), 4), "tokens": sum(p["tokens"] for _, p in rest)} if rest else None,
+        "evals": {"cost": evals_row["cost"], "tokens": evals_row["tokens"], "calls": evals_row["calls"]} if evals_row else None,
+        "unattributed_cost": round(max(total_cost - total - eval_cost, 0.0), 4) if (total_cost is not None and grand_cost > 0) else None,
+    }
 
 
 def fetch(db: Any, user: str, since_minute: str) -> List[Dict[str, Any]]:

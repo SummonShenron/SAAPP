@@ -863,6 +863,39 @@ export interface RoutineRow {
   next_due_at: string | null;
 }
 
+/** One account's cost over the period, for the Sonic Health "Cost by person" table (counts and dollars only): see backend/utils/user_usage.py. */
+export interface UserCostRow {
+  user: string;
+  /** "evals" is the runs of the evals and tests, listed beside the people but not a person; they have no turns. */
+  kind?: 'person' | 'evals';
+  cost: number;
+  tokens: number;
+  turns: number;
+  calls: number;
+  cost_per_turn: number | null;
+  cost_per_active_day: number | null;
+  active_days: number;
+  share: number | null;
+  /** One figure per billing day of the period, oldest first. */
+  per_day: number[];
+}
+
+export interface UsersSummary {
+  days: string[];
+  people: number;
+  /** False when no dollars were counted at all (no prices set): the page shows tokens instead. */
+  priced: boolean;
+  cost: number;
+  tokens: number;
+  rows: UserCostRow[];
+  /** The accounts below the biggest ones shown. */
+  others: { people: number; cost: number; tokens: number } | null;
+  /** What the evals and tests cost in the period (also listed as a row), or null when none ran. */
+  evals?: { cost: number; tokens: number; calls: number } | null;
+  /** What the usage page estimates for the whole period, minus what is tied to accounts and to the evals: background jobs and anything with no account. */
+  unattributed_cost?: number | null;
+}
+
 export interface SonicHealth {
   days: number;
   generated_at: string;
@@ -870,6 +903,8 @@ export interface SonicHealth {
   counters: CountersSummary;
   observations: ObservationView[];
   usage?: UsageSummary;
+  /** What each account cost; null when it could not be read. */
+  users?: UsersSummary | null;
   budget?: BudgetView;
   /** null when that part could not be read. */
   feedback?: FeedbackSummary | null;
