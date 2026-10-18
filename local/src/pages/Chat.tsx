@@ -37,6 +37,7 @@ interface MessageImage {
   filename: string;
   dataUrl?: string; // instant local preview for the message just sent (no round-trip needed)
   fileId?: string;  // durable GridFS reference, used to fetch the image on reload / another device
+  generated?: string; // set when Sonic made this picture (a card with the person's words on their photo): shown large, with a Download button
 }
 
 interface Message {
@@ -77,7 +78,7 @@ function isImageFilename(filename: string): boolean {
   return ext in IMAGE_EXTENSION_MIME;
 }
 
-function AttachmentImage({ fileId, filename }: { fileId: string; filename: string }) {
+function AttachmentImage({ fileId, filename, generated }: { fileId: string; filename: string; generated?: boolean }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -108,6 +109,14 @@ function AttachmentImage({ fileId, filename }: { fileId: string; filename: strin
   // A photo is removed some weeks after it was sent (or when its conversation is deleted); the conversation itself stays.
   if (failed) return <div className="message-attachment-image-loading">This photo is no longer stored.</div>;
   if (!blobUrl) return <div className="message-attachment-image-loading">Loading image…</div>;
+  if (generated) {
+    return (
+      <div className="message-card">
+        <img src={blobUrl} alt={filename} className="message-card-image" />
+        <a className="message-image-download" href={blobUrl} download={filename}>Download</a>
+      </div>
+    );
+  }
   return <img src={blobUrl} alt={filename} className="message-attachment-image" />;
 }
 
@@ -275,7 +284,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
                     img.dataUrl ? (
                       <img key={idx} src={img.dataUrl} alt={img.filename} className="message-attachment-image" />
                     ) : img.fileId ? (
-                      <AttachmentImage key={idx} fileId={img.fileId} filename={img.filename} />
+                      <AttachmentImage key={idx} fileId={img.fileId} filename={img.filename} generated={!!img.generated} />
                     ) : null
                   )}
                 </div>
@@ -425,7 +434,18 @@ const ChatMessageList = React.memo(function ChatMessageList({
                       transition: 'all 0.2s ease',
                     }}
                   >
-                    <span>✨ {followUp}</span>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fb923c" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flex: 'none' }}>
+                      <line x1="12" y1="6" x2="12" y2="3.6" />
+                      <circle cx="12" cy="2.6" r="1.6" fill="#fb923c" stroke="none" />
+                      <rect x="1.2" y="11" width="2" height="4.5" rx="1" fill="#fb923c" stroke="none" />
+                      <rect x="20.8" y="11" width="2" height="4.5" rx="1" fill="#fb923c" stroke="none" />
+                      <rect x="4" y="6" width="16" height="14" rx="4" />
+                      <rect x="6.8" y="8.6" width="10.4" height="8.8" rx="2.2" fill="#fb923c" fillOpacity="0.15" stroke="none" />
+                      <circle cx="9.5" cy="12.2" r="1.3" fill="#fb923c" stroke="none" />
+                      <circle cx="14.5" cy="12.2" r="1.3" fill="#fb923c" stroke="none" />
+                      <path d="M10 15.2 Q12 16.9 14 15.2" strokeWidth="1.4" />
+                    </svg>
+                    <span>{followUp}</span>
                   </button>
                 </div>
               )}
@@ -1279,7 +1299,7 @@ useEffect(() => {
       try {
         const cacheable = messages.slice(-LOCAL_CACHE_MESSAGE_CAP).map(m =>
           m.images
-            ? { ...m, images: m.images.map(img => ({ filename: img.filename, fileId: img.fileId })) }
+            ? { ...m, images: m.images.map(img => ({ filename: img.filename, fileId: img.fileId, generated: img.generated })) }
             : m
         );
         localStorage.setItem(chatStorageKey, JSON.stringify(cacheable));

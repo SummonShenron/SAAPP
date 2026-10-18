@@ -1,4 +1,5 @@
-import { PatchyHead } from './PatchyParts';
+import { useRef, useState } from 'react';
+import { PatchyHead, PatchyRightArm } from './PatchyParts';
 import './__styles__/MiniPatchy.css';
 import './__styles__/PatchyAtLaptop.css';
 
@@ -14,8 +15,24 @@ import './__styles__/PatchyAtLaptop.css';
 // Coordinates: the floor is y=94 and he sits on it, his hips at x=58; he faces left.
 
 export function PatchyAtLaptop() {
+  // Clicking him startles him: he stops typing and hops, still turned to the screen; when he lands he shakes his head, eyes squeezed shut, without changing his pose, then carries on.
+  const [phase, setPhase] = useState<'idle' | 'jump' | 'wave'>('idle');
+  const calmTimer = useRef<number | undefined>(undefined);
+  const startle = () => {
+    window.clearTimeout(calmTimer.current);
+    setPhase('idle');
+    // A frame later, so a second click mid-hop restarts the animation.
+    requestAnimationFrame(() => setPhase('jump'));
+  };
+  const landed = (e: React.AnimationEvent) => {
+    if (e.target !== e.currentTarget) return;
+    setPhase('wave');
+    calmTimer.current = window.setTimeout(() => setPhase('idle'), 2800);
+  };
+  const idle = phase === 'idle';
+
   return (
-    <div className="mp-root mp-working ps-root" role="img" aria-label="Patchy, the Sonic Assistant robot, sitting on the floor and typing on his laptop">
+    <div className={`mp-root ps-root${idle ? ' mp-working' : ''}${phase === 'wave' ? ' ps-front' : ''}`} role="img" aria-label="Patchy, the Sonic Assistant robot, sitting on the floor and typing on his laptop">
       <svg viewBox="-8 0 112 96" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
         <defs>
           <radialGradient id="ps-glow" cx="50%" cy="50%" r="50%">
@@ -39,6 +56,7 @@ export function PatchyAtLaptop() {
           <path d="M94.9 87.4 q3.2 0.4 3.2 3 t-3.2 3" stroke="#B7BECB" strokeWidth="1.2" fill="none" strokeLinecap="round" />
         </g>
 
+        <g className={`ps-jump${phase === 'jump' ? ' ps-startled' : ''}`} onClick={startle} onAnimationEnd={landed}>
         <g className="mp-bob">
           {/* Patchy has no legs, only two little nub feet, like the other Patchys (they float below the torso, with nothing joining them). Here he is sitting
               on the floor with his feet up, toes to the sky, and the laptop rests across them (they are drawn before it). */}
@@ -62,8 +80,13 @@ export function PatchyAtLaptop() {
             {/* The real head, bowed over the screen (PatchyAtLaptop.css slides the face across the shell and hides the far ear) */}
             <g className="ps-head">
               <g transform="translate(8 8)">
-                <PatchyHead mood="active" look="writing" energy="open" budget="ok" focused />
+                <PatchyHead mood={phase === 'wave' ? 'idle' : 'active'} look="writing" energy="open" budget="ok" focused={idle} turned mouthless={phase === 'jump'} />
               </g>
+            </g>
+
+            {/* The arm he waves with once he has turned to us: the same rubber arm the chat Patchy waves with (PatchyRightArm), moved from its shoulder at (76, 62) to his at (71, 70) */}
+            <g className="ps-wave-arm" transform="translate(-5 8)">
+              <PatchyRightArm pose="hang" wave={phase === 'wave'} waveDur={3.6} />
             </g>
           </g>
 
@@ -91,10 +114,12 @@ export function PatchyAtLaptop() {
               <path d="M46 75.6 C 43 75, 40 75.6, 38 77" stroke="#656C79" strokeWidth="3.4" strokeLinecap="round" fill="none" />
               <circle cx="45.4" cy="75.6" r="2.4" fill="#656C79" />
             </g>
-            <path d="M71.2 69.6 C 75 82, 58 88.5, 47.5 82.2" stroke="#7B8290" strokeWidth="3.4" strokeLinecap="round" fill="none" />
-            <circle cx="71.2" cy="69.6" r="2.2" fill="#7B8290" />
+            <g className="ps-near-arm">
+              <path d="M71.2 69.6 C 75 82, 58 88.5, 47.5 82.2" stroke="#7B8290" strokeWidth="3.4" strokeLinecap="round" fill="none" />
+              <circle cx="71.2" cy="69.6" r="2.2" fill="#7B8290" />
+            </g>
             <circle className="mp-accent mp-hand mp-hand-r" cx="37.2" cy="77.4" r="3.2" stroke="#2B2F37" strokeWidth="0.8" />
-            <circle className="mp-hand mp-hand-l" cx="45" cy="81.6" r="3.3" fill="#9DA4B1" stroke="#6F7684" strokeWidth="0.7" />
+            <circle className="mp-hand mp-hand-l ps-near-hand" cx="45" cy="81.6" r="3.3" fill="#9DA4B1" stroke="#6F7684" strokeWidth="0.7" />
 
             {/* the lid, standing on the hinge and leaning back, its back to us, a patch sticker on it */}
             <polygon points="16,80 34,87 31,65 13,58" fill="url(#ps-lid)" stroke="#AEB6C3" strokeWidth="1.4" strokeLinejoin="round" />
@@ -121,6 +146,7 @@ export function PatchyAtLaptop() {
             <rect className="ps-bit ps-bit-3" x="26" y="66" width="2.4" height="2.4" rx="0.5" />
             <rect className="ps-bit ps-bit-4" x="18" y="61" width="1.6" height="1.6" rx="0.5" />
           </g>
+        </g>
         </g>
       </svg>
     </div>

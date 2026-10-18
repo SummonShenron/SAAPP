@@ -65,6 +65,15 @@ def store_image_in_gridfs(db, username: str, session_id: str, attachment: Attach
         return None
 
 
+def attachment_image_visible_to(file_doc: Optional[Dict], username: Optional[str]) -> bool:
+    """Whether this person may be served this stored picture. A photo someone attached in a chat (and a card made from it) belongs to them alone; a library
+    image (no chat-attachment kind) is shared as before."""
+    meta = (file_doc or {}).get("metadata") or {}
+    if meta.get("kind") != "chat_attachment":
+        return True
+    return bool(username) and meta.get("username") == username
+
+
 def describe_image_attachment(attachment: Attachment) -> str:
     """Derives a text description of an image attachment via the vision-capable chat LLM, so
     downstream handling (chat summarization, session storage, future KB embedding) can treat

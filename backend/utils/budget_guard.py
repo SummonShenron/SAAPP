@@ -72,6 +72,7 @@ CACHE_SECONDS = 45
 
 # What low-power mode pauses, as shown to people. Each is something that costs a model call and isn't needed to answer.
 PAUSED_FEATURES = [
+    "making pictures",
     "deep thinking",
     "extra tool-agent steps",
     "summarising conversations into memory",

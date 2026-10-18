@@ -73,7 +73,7 @@ from backend.utils.app_utils import (
     index_conversation_turn,
     collect_kb_images
 )
-from backend.utils.attachment_utils import delete_session_attachments, process_chat_attachments
+from backend.utils.attachment_utils import attachment_image_visible_to, delete_session_attachments, process_chat_attachments
 from backend.utils.docx_writer import DOCX_MIME, render_docx, validate_document
 from backend.utils.docx_edit import DocxEditError, apply_edits as apply_docx_edits
 from backend.utils.memory_utils import (
@@ -763,6 +763,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         chat_sessions[history_key][-1].additional_kwargs["attachments"] = attachment_refs
 
     initial_state["attachment_summaries"] = attachment_summaries
+    initial_state["image_refs"] = attachment_refs      # the photos attached to THIS message, for putting words on one (backend/services/photo_cards.py)
     if attachment_summaries:
         initial_state["documents"] = [Document(
             page_content=s, metadata={"source": "user_attachment_summary", "priority": True, "page": "N/A"}
@@ -966,6 +967,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             documents_sorted = sorted(documents, key=lambda d: d.metadata.get("priority", False), reverse=True)
             data = "" if drops_results else (payload.get("data") or format_docs(documents_sorted))
             kb_images = collect_kb_images(documents_sorted) if source_type in ("kb_strict", "kb_open") else []
+            # Pictures Sonic made this turn (a card with the person's words on their photo) are shown the same way a library picture is.
+            kb_images = [*kb_images, *(final_state.get("generated_images") or [])]
 
             emotional_context = safety_plan.context + build_emotional_context(
                 final_state.get("emotional_state"), datetime.now(timezone.utc)
@@ -1126,11 +1129,12 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     defer_to_emotion=bool(emotional_context),
                 ),
             )
-            if kb_images:
+            library_images = [img for img in kb_images if not img.get("generated")]       # a card Sonic made says what it is in its own facts, and must not be "described"
+            if library_images:
                 # The composer has no innate way to know an image will actually be rendered
                 # alongside this response — without this, the model falls back on its default
                 # "I'm text-only" assumption and apologizes for a limitation that no longer applies.
-                image_names = ", ".join(img["filename"] for img in kb_images)
+                image_names = ", ".join(img["filename"] for img in library_images)
                 prompt = prompt + IMAGE_RENDERING_NOTE_TEMPLATE.format(image_names=image_names)
 
             if kb_images:
@@ -1733,6 +1737,9 @@ def get_attachment_image(
 
     file_doc = db["fs.files"].find_one({"_id": object_id})
     if not file_doc:
+        raise HTTPException(status_code=404, detail="Attachment image not found.")
+    # A photo someone attached, or a card made from one, is theirs alone: another signed-in person who somehow had its id gets the same answer as for a missing file.
+    if not attachment_image_visible_to(file_doc, current_user.get("sub")):
         raise HTTPException(status_code=404, detail="Attachment image not found.")
 
     content_type = file_doc.get("metadata", {}).get("content_type", "application/octet-stream")

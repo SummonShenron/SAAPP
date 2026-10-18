@@ -115,13 +115,19 @@ interface HeadProps {
   budget: PatchyBudget;
   /** Locked in on what he is doing and too busy to look up: no round eyes: flat dashes ("-_-") that now and then turn into two little dots that sweep right to left three times, like reading three lines of code (the landing page's Patchy; the timing is in PatchyAtLaptop.css). */
   focused?: boolean;
+  /** Drawn turned toward the screen (near ear on the side of the head). Defaults to `focused`; the landing page keeps it on while he looks up so the turn can ease out. */
+  turned?: boolean;
+  /** Eyes squeezed into ">  <" and a wobbly mouth, for a head shake. */
+  scrunched?: boolean;
+  /** No mouth at all. */
+  mouthless?: boolean;
 }
 
-export function PatchyHead({ mood, look, energy, budget, focused = false }: HeadProps) {
+export function PatchyHead({ mood, look, energy, budget, focused = false, turned = focused, scrunched = false, mouthless = false }: HeadProps) {
   const doing: PatchyLook = mood === 'active' ? look : 'idle';
   const laughing = mood === 'laugh';
   const closedEyes = mood === 'soft' || mood === 'asleep';
-  const eyesOpen = !closedEyes && !laughing;
+  const eyesOpen = !closedEyes && !laughing && !scrunched;
   const calm = mood === 'idle' || mood === 'watching' || mood === 'drowsy';
   // Heavy lids: a long quiet, or a chat that has been slowed down.
   const lids = mood === 'drowsy' || (budget === 'throttled' && (mood === 'idle' || mood === 'watching'));
@@ -142,7 +148,7 @@ export function PatchyHead({ mood, look, energy, budget, focused = false }: Head
     : focused ? flat(46.5, 43.6, 53.5)
     : doing === 'writing' ? flat(43, 43, 57)
     : quad(43, 41, 50, 46, 57, 41);
-  const mouthShown = !laughing && mood !== 'soft';
+  const mouthShown = !laughing && mood !== 'soft' && !scrunched && !mouthless;
 
   const mouthRef = useRef<SVGPathElement>(null);
   const [firstMouth] = useState(() => mouthPath(mouth));
@@ -208,6 +214,12 @@ export function PatchyHead({ mood, look, energy, budget, focused = false }: Head
             </g>
           )}
 
+          {/* Scrunched: eyes squeezed shut, no mouth */}
+          <g className={`mp-stroke-accent ${fade(scrunched)}`} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" fill="none">
+            <path d="M38 32.5 L45 36 L38 39.5" />
+            <path d="M62 32.5 L55 36 L62 39.5" />
+          </g>
+
           {/* Eyes closed: asleep, or a soft nod */}
           <g className={`mp-stroke-accent ${fade(closedEyes)}`} strokeWidth="2.2" strokeLinecap="round" fill="none">
             <path d="M 38 36 Q 42 39 46 36" />
@@ -229,7 +241,7 @@ export function PatchyHead({ mood, look, energy, budget, focused = false }: Head
         </g>
 
         {/* Focused (turned toward the screen): the near ear is seen on the side of the head, in front of the shell, and the far one is hidden */}
-        {focused && (
+        {turned && (
           <g className="ps-ear-near" transform="translate(67.6 39.5) scale(0.7 1) translate(-67.4 -39.5)">
             {/* the ear-cup, a disc with a recessed ring, a bright rim on its upper edge and a small light in the middle; seen at about 45 degrees, so it is squeezed
                 sideways into an oval */}
