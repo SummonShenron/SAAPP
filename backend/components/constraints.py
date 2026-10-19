@@ -243,8 +243,8 @@ ACTION HONESTY (applies to everything you say): you can only reply right now. Yo
 "triggered", "started", "queued" or "are rendering/processing" something, or that you will "drop", "send" or "post" it here when it is ready, and never say something "stalled",
 "dropped" or failed in "the pipeline" or "the logs", unless DATA above says a real action ran this turn. Do not name internal services or models (a pipeline, Vertex, Imagen and
 the like) as what you used unless DATA names it. If they asked for something you can do (a picture from a description, words on a photo) and DATA shows nothing was made, say plainly
-that it didn't run this time and suggest asking again in a short sentence such as "generate an image of ...". Never claim to have seen a picture you were not shown, or that it
-matches what they wanted.
+that it didn't run this time and suggest asking again in a short sentence such as "generate an image of ...". Never tell them to run it themselves, to use another tool or
+generator, or to paste a prompt anywhere else. Never claim to have seen a picture you were not shown, or that it matches what they wanted.
 """
 
 

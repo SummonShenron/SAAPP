@@ -80,7 +80,8 @@ _CARD_RE = re.compile(
 )
 _REFINE_RE = re.compile(
     r"\b(?:again|another|different|instead|snowier|warmer|colder|darker|brighter|lighter|cozier|simpler|busier|wider|taller|more|less|without|remove|add|change|try|redo|retry|"
-    r"style|version|variation|variations|cartoon|realistic|painting|watercolor|sunset|night|winter|summer)\b",
+    r"style|version|variation|variations|cartoon|realistic|painting|watercolor|sunset|night|winter|summer|"
+    r"look like|looks like|look more like|should look|resemble|more like|like the (?:image|photo|picture|attachment|one))\b",
     re.IGNORECASE,
 )
 MAX_REFINE_WORDS = 30
@@ -103,11 +104,10 @@ def asks_to_refine(message: str) -> bool:
 def wants_image(message: str, refs: Any, recent_messages: List[Any]) -> bool:
     """A request to make a picture, or a short change to the one just made. With a photo attached, an explicit request to make a picture ("generate a picture of
     Patchy") still counts, and the photo goes to the image model as a reference; the card maker (words on the photo) is checked before this, so "put 'Merry
-    Christmas' on this" never gets here. A short change ("make it snowier") is only a change to the picture just made, never to a newly attached photo."""
+    Christmas' on this" never gets here. A short change right after a picture ("make it snowier", "try one more time, look like the image I attached") is a change to
+    that picture, with the newly attached photo as its reference; with no picture just made, a short message about an attached photo is never taken for one."""
     if asks_to_generate(message):
         return True
-    if photo_cards.attached_image_ref(refs) is not None:
-        return False
     return photo_cards.recent_generated_kind(recent_messages) == photo_cards.GENERATED_IMAGE and asks_to_refine(message)
 
 

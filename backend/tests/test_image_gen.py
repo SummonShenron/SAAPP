@@ -100,10 +100,20 @@ def test_a_photo_on_the_message_does_not_stop_an_explicit_request_for_a_picture(
     assert ig.wants_image("draw a picture of a dog", ref, []) is True
 
 
-def test_but_a_short_change_never_applies_to_a_newly_attached_photo():
+def test_a_short_change_right_after_a_picture_still_works_with_a_photo_attached_as_the_reference():
+    """Regression from a real chat: after a picture was made, "try one more time you should look like a little robot like the image" with the reference attached
+    went to document search, and Sonic said it could not run an image generator."""
     ref = [{"filename": "a.jpg", "gridfs_id": "p1", "content_type": "image/jpeg"}]
-    assert ig.wants_image("make it snowier", ref, [HumanMessage(content="hi"), _picture_reply("image")]) is False
+    after = [HumanMessage(content="hi"), _picture_reply("image")]
+    assert ig.wants_image("try one more time you should look like a little robot like the image", ref, after) is True
+    assert ig.wants_image("make it snowier", ref, after) is True
+
+
+def test_a_message_about_an_attached_photo_is_not_a_picture_request_unless_it_says_so():
+    ref = [{"filename": "a.jpg", "gridfs_id": "p1", "content_type": "image/jpeg"}]
     assert ig.wants_image("what is in this photo", ref, []) is False
+    assert ig.wants_image("make it snowier", ref, [HumanMessage(content="hi"), AIMessage(content="hello")]) is False
+    assert ig.wants_image("what is in this photo", ref, [HumanMessage(content="hi"), _picture_reply("image")]) is False
 
 
 def test_words_on_a_just_made_picture_go_to_the_card_maker_not_back_to_the_picture_maker():
