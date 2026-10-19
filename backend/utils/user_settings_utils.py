@@ -24,6 +24,14 @@ DEFAULT_RAG_MODE = RAG_MODE_OPEN
 
 DEFAULT_DEEP_THINKING = False
 
+# Which model does the tool agent's reasoning steps (reading code, searching, writing the code in its answer): "gemini" or "claude". The reply the person reads is
+# still written by Gemini either way, so "claude" is the hybrid. A person who never chose has no stored value and gets the server's default (TOOL_AGENT_PROVIDER,
+# which is Gemini unless the operator set it): see backend/models/models.py tool_agent_llm.
+TOOL_MODEL_GEMINI = "gemini"
+TOOL_MODEL_CLAUDE = "claude"
+VALID_TOOL_MODELS = {TOOL_MODEL_GEMINI, TOOL_MODEL_CLAUDE}
+
+
 # PAAPP's legacy calendar tool hardcoded every event to 'America/Chicago' for a single operator —
 # now that calendar actions are per-user (see backend/services/google_calendar_oauth.py), this is
 # only ever used as the fallback before a user has explicitly set their own.
@@ -42,6 +50,8 @@ _TARGET_DOC_URL_RE = re.compile(r"/document/d/([A-Za-z0-9_-]+)")
 # override for it would leak across every visitor of that widget, and for deep thinking would
 # also hand every anonymous visitor a much more expensive request by default.
 TOGGLE_LOCKED_USERS = {"guest_bty"}
+# Guests share one identity (and one settings document), so one visitor's choice of tool model would change it for every other; they are always on Gemini, like the embed.
+TOOL_MODEL_LOCKED_USERS = TOGGLE_LOCKED_USERS | {"guest", "guest-recruiter@example.com"}
 
 
 def _get_user_file(username: str) -> str:
@@ -88,6 +98,12 @@ def _resolve_rag_mode(doc: dict) -> str:
     if mode is None:
         return DEFAULT_RAG_MODE
     return mode if mode in VALID_RAG_MODES else RAG_MODE_STRICT  # a stored value that is not a mode is unexplained, so take the safe side
+
+
+def _resolve_tool_model(doc: dict) -> Optional[str]:
+    """The stored choice, or None for "never chose" (so the server's default applies)."""
+    mode = doc.get("tool_model")
+    return mode if mode in VALID_TOOL_MODELS else None
 
 
 def _resolve_deep_thinking(doc: dict) -> bool:
@@ -179,6 +195,52 @@ def set_user_deep_thinking_mode(username: str, enabled: bool) -> bool:
     return enabled
 
 
+def get_user_tool_model(username: str) -> Optional[str]:
+    """The person's stored choice of tool-agent model, or None when they never chose. A guest or the embed is always Gemini."""
+    if username in TOOL_MODEL_LOCKED_USERS:
+        return TOOL_MODEL_GEMINI
+    return _resolve_tool_model(_fetch_settings_doc(username))
+
+
+def set_user_tool_model(username: str, mode: str) -> Optional[str]:
+    """Validates and saves the choice. Anything that is not a known model is refused (None, nothing saved); a locked identity can only ever be Gemini."""
+    if mode not in VALID_TOOL_MODELS:
+        return None
+    if username in TOOL_MODEL_LOCKED_USERS:
+        mode = TOOL_MODEL_GEMINI
+
+    db = get_db()
+    if db is not None:
+        db["user_settings"].update_one({"username": username}, {"$set": {"tool_model": mode}}, upsert=True)
+    _write_local_setting(username, "tool_model", mode)
+    return mode
+
+
+def server_default_tool_model() -> str:
+    """What a person who never chose gets: Gemini, unless the operator set TOOL_AGENT_PROVIDER=anthropic."""
+    return TOOL_MODEL_CLAUDE if os.getenv("TOOL_AGENT_PROVIDER", "").strip().lower() == "anthropic" else TOOL_MODEL_GEMINI
+
+
+def tool_model_view(username: str, claude_ready: bool) -> dict:
+    """What the settings menu shows: the model in effect, whether the person chose it, the server's default, and whether Claude can be offered to them at all
+    (a key is configured and they are not a guest). With no key, the effective model is Gemini whatever was stored."""
+    stored = get_user_tool_model(username)
+    offered = bool(claude_ready) and username not in TOOL_MODEL_LOCKED_USERS
+    effective = (stored or server_default_tool_model()) if offered else TOOL_MODEL_GEMINI
+    return {"tool_model": effective, "choice": stored, "default": server_default_tool_model(), "available": offered}
+
+
+def save_tool_model_choice(username: str, mode: str, claude_ready: bool):
+    """What the settings endpoint does with a request: (the view to return, None) when saved, or (None, (status code, message)) when it is refused. An unknown
+    model is a 400; Claude when no key is configured is a 409 (it cannot be offered, so it cannot be chosen)."""
+    if mode not in VALID_TOOL_MODELS:
+        return None, (400, "tool_model must be 'gemini' or 'claude'")
+    if mode == TOOL_MODEL_CLAUDE and not claude_ready:
+        return None, (409, "Claude isn't set up on this server.")
+    set_user_tool_model(username, mode)
+    return tool_model_view(username, claude_ready), None
+
+
 def get_user_target_repo(username: str) -> Optional[str]:
     """Returns the user's pinned "owner/repo", or None to keep the existing per-message
     auto-detection (resolve_recent_mention) as the fallback. Locked identities never get a
@@ -193,12 +255,13 @@ def get_user_settings_bundle(username: str) -> dict:
     chat-request path, which used to call the three getters above separately (3 network round
     trips per message for 3 fields on the exact same document) instead of once."""
     if username in TOGGLE_LOCKED_USERS:
-        return {"rag_mode": RAG_MODE_STRICT, "deep_thinking": DEFAULT_DEEP_THINKING, "target_repo": None, "profile": profile_utils.stored_profile({})}
+        return {"rag_mode": RAG_MODE_STRICT, "deep_thinking": DEFAULT_DEEP_THINKING, "target_repo": None, "tool_model": TOOL_MODEL_GEMINI, "profile": profile_utils.stored_profile({})}
     doc = _fetch_settings_doc(username)
     return {
         "rag_mode": _resolve_rag_mode(doc),
         "deep_thinking": _resolve_deep_thinking(doc),
         "target_repo": _resolve_target_repo(doc),
+        "tool_model": TOOL_MODEL_GEMINI if username in TOOL_MODEL_LOCKED_USERS else _resolve_tool_model(doc),
         "profile": _resolve_profile(doc),  # the profile page's fields (backend/utils/profile_utils.py), read from the same document
     }
 

@@ -8,6 +8,8 @@ langchain
 langchain-core
 langchain-community
 langchain-google-genai
+langchain-anthropic
+anthropic
 langchain-mongodb
 langgraph-checkpoint-mongodb
 pymongo

@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
-from backend.models.models import llm, get_stream_llm
+from backend.models.models import llm, get_stream_llm, claude_available
 from backend.models.attachment import Attachment
 from backend.services.github_service import (
     process_pr_summary, verify_and_store_github_token, GitHubTokenRejected, GitHubUnreachable,
@@ -150,6 +150,7 @@ from backend.utils.shared_history import CALLBACK_MARK, build_callback_block, ca
 from backend.utils.user_settings_utils import (
     get_user_rag_mode, set_user_rag_mode, VALID_RAG_MODES,
     get_user_deep_thinking_mode, set_user_deep_thinking_mode,
+    tool_model_view, save_tool_model_choice,
     get_user_target_repo, set_user_target_repo,
     get_user_settings_bundle,
     get_user_profile,
@@ -362,6 +363,9 @@ class RagModeUpdate(BaseModel):
 
 class DeepThinkingUpdate(BaseModel):
     deep_thinking: bool
+
+class ToolModelUpdate(BaseModel):
+    tool_model: str
 
 class TargetRepoUpdate(BaseModel):
     target_repo: Optional[str] = None
@@ -686,6 +690,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     _settings = get_user_settings_bundle(username)
     effective_rag_mode = _settings["rag_mode"]
     effective_deep_thinking = _settings["deep_thinking"]
+    effective_tool_model = _settings.get("tool_model")      # "claude" | "gemini" | None (never chose: the server's default)
     effective_target_repo = _settings["target_repo"]
     user_profile = _settings.get("profile") or profile_utils.stored_profile({})  # what they set on the Account page (backend/utils/profile_utils.py)
     # The usage budget guard (backend/utils/budget_guard.py). Off, and free, unless a budget is configured. In low-power mode deep
@@ -738,6 +743,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         "target_scope": target_scope,
         "rag_mode": effective_rag_mode,
         "deep_thinking": effective_deep_thinking,
+        "tool_model": effective_tool_model,
         "budget_level": budget_state.get("level"),
         "repo": effective_target_repo,
         "documents": [],
@@ -2433,6 +2439,23 @@ async def update_deep_thinking_setting(payload: DeepThinkingUpdate, current_user
     username = current_user.get("sub")
     saved = set_user_deep_thinking_mode(username, payload.deep_thinking)
     return {"deep_thinking": saved}
+
+
+@app.get("/api/settings/tool-model")
+async def get_tool_model_setting(current_user = Depends(get_current_user)):
+    """Which model does the tool agent's reasoning steps for this person: their own choice, else the server's default. `available` is whether Claude can be
+    offered at all (a key is configured); guests and the embed are always Gemini."""
+    username = current_user.get("sub")
+    return tool_model_view(username, claude_available())
+
+
+@app.put("/api/settings/tool-model")
+async def update_tool_model_setting(payload: ToolModelUpdate, current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    view, problem = save_tool_model_choice(username, payload.tool_model, claude_available())
+    if problem:
+        raise HTTPException(status_code=problem[0], detail=problem[1])
+    return view
 
 
 @app.get("/api/budget")

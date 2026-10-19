@@ -125,3 +125,61 @@ def test_it_cuts_the_tokens_a_long_run_sends():
             nl.KEEP_RECENT_STEPS = original
 
     assert sent_chars(2) < 0.6 * sent_chars(99)  # 99 = never shorten: the old behaviour
+
+
+# ---- a model that caches the conversation ---------------------------------------------------------------------------------
+
+def test_with_shortening_off_every_old_result_is_sent_whole_so_a_cached_prefix_is_never_edited():
+    llm = Recorder(reads("a.py"), reads("b.py"), reads("c.py"), reads("d.py"), reads("e.py"))
+    run(llm, Acts(BIG), shorten_old=False)
+    last_full_conversation = llm.sent[-1]            # the final call: it carries all five results
+    assert len(last_full_conversation) == 5 and all(result == BIG for result in last_full_conversation)
+    assert not any("shortened" in result for sent in llm.sent for result in sent)
+
+
+def test_shortening_stays_the_default_for_every_other_model():
+    llm = Recorder(reads("a.py"), reads("b.py"), reads("c.py"), reads("d.py"), reads("e.py"))
+    run(llm, Acts(BIG))
+    assert any("shortened" in result for result in llm.sent[-1])
+
+
+# ---- telling the model how many steps it has left -------------------------------------------------------------------------
+
+from langchain_core.messages import HumanMessage  # noqa: E402
+
+
+class Watcher:
+    """A scripted model that records every plain message (not tool result) it was shown on each call."""
+
+    def __init__(self, *responses):
+        self.responses, self.notes = list(responses), []
+
+    async def ainvoke_tools(self, messages, tools):
+        self.notes.append([m.content for m in messages if isinstance(m, HumanMessage)])
+        if not tools:
+            return AIMessage(content="final answer")
+        return self.responses.pop(0) if self.responses else AIMessage(content="final answer")
+
+
+def test_the_notice_is_silent_while_there_is_plenty_of_budget():
+    assert nl.steps_left_notice(8) is None and nl.steps_left_notice(3) is None and nl.steps_left_notice(0) is None
+
+
+def test_the_last_two_steps_are_announced_once_each_and_the_answer_is_not_left_to_the_limit():
+    llm = Watcher(reads("a.py"), reads("b.py"), reads("c.py"), reads("d.py"))
+    run(llm, Acts(SMALL), max_steps=4)
+    shown = [[n for n in notes if str(n).startswith("STEPS:")] for notes in llm.notes]
+    assert shown[0] == [] and shown[1] == []
+    assert len(shown[2]) == 1 and "2 tool steps left" in shown[2][0]
+    assert len(shown[3]) == 2 and "LAST tool step" in shown[3][1], "the earlier notice stays in view and the last one is added"
+    assert nl.STEP_LIMIT_NOTICE in llm.notes[-1], "after the budget, the forced answer call"
+
+
+def test_a_tiny_budget_is_told_straight_away():
+    llm = Watcher(reads("a.py"))
+    run(llm, Acts(SMALL), max_steps=1)
+    assert any("LAST tool step" in str(n) for n in llm.notes[0])
+
+
+def test_the_step_limit_message_asks_for_the_code_itself_when_code_was_requested():
+    assert "write it now, in full" in nl.STEP_LIMIT_NOTICE and "fenced code block" in nl.STEP_LIMIT_NOTICE

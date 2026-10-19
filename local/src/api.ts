@@ -432,6 +432,37 @@ export async function updateDeepThinking(deepThinking: boolean): Promise<{ deep_
 }
 
 /**
+ * Which model does the tool agent's reasoning steps (reading code, searching, writing the code in its answer). The reply itself is written by Gemini either way,
+ * so "claude" is the hybrid. `available` is false when Claude isn't set up on the server or for guests, and then the setting isn't offered.
+ */
+export type ToolModel = 'gemini' | 'claude';
+export interface ToolModelSetting {
+  tool_model: ToolModel;
+  /** The person's own choice, or null when they never chose (the server's default applies). */
+  choice: ToolModel | null;
+  default: ToolModel;
+  available: boolean;
+}
+
+export async function getToolModel(): Promise<ToolModelSetting> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/tool-model`, { headers: { ...authHeaders } });
+  if (!res.ok) throw new Error("Failed to fetch the code model setting.");
+  return res.json();
+}
+
+export async function updateToolModel(toolModel: ToolModel): Promise<ToolModelSetting> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/tool-model`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ tool_model: toolModel })
+  });
+  if (!res.ok) throw new Error("Failed to update the code model setting.");
+  return res.json();
+}
+
+/**
  * Get / set the current user's pinned target repo ("owner/repo") — when set, tool_agent_node
  * uses it directly instead of guessing the repo from conversation text. null/"" clears the pin.
  */
@@ -1802,6 +1833,8 @@ export const api = {
   updateRagMode,
   getDeepThinking,
   updateDeepThinking,
+  getToolModel,
+  updateToolModel,
   getProactiveOpening,
   updateProactiveOpening,
   getOpsDigest,

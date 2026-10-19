@@ -22,7 +22,8 @@ from backend.services.web_search import search_async as run_web_search, SearchUn
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langchain_core.documents import Document
 from backend.services.search import get_secure_retriever
-from backend.models.models import get_chat_llm, lite_llm, lite_llm_deep
+from backend.models.claude_llm import ClaudeLLM
+from backend.models.models import get_chat_llm, lite_llm, lite_llm_deep, tool_agent_llm
 from backend.state import graph_db
 from backend.utils.attachment_utils import retrieve_from_session
 from backend.utils.isolation_kb_utils import load_directory, load_user_directory_groups
@@ -3101,6 +3102,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 time_line=build_agent_time_line(get_user_timezone(username)), coding_preferences=coding_preferences,
                 architecture_map=architecture_map, user_memory=user_memory, max_steps=kwargs["max_iterations"], emit=_announce,
                 steering_source=kwargs.get("steering_source"), on_steering_applied=kwargs.get("on_steering_applied"),
+                shorten_old=not (isinstance(kwargs["llm"], ClaudeLLM) and kwargs["llm"].caches_prompt),   # a model that caches the conversation keeps old results whole (native_loop.py)
             )
 
         try:
@@ -3117,7 +3119,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                     node_name="tool_agent_node",
                     initial_attempts=resumed_attempts,
                     max_retry_nudges=TOOL_AGENT_MAX_RETRY_NUDGES_DEEP if wide_budget else TOOL_AGENT_MAX_RETRY_NUDGES,
-                    llm=lite_llm_deep if deep_thinking else lite_llm,
+                    llm=tool_agent_llm(bool(deep_thinking), state.get("tool_model")),
                     stuck_action_redirects=TOOL_AGENT_STUCK_ACTION_REDIRECTS,
                     capability_denial_watchlist=TOOL_AGENT_CAPABILITY_DENIAL_WATCHLIST,
                     architecture_map=architecture_map,

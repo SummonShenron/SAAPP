@@ -270,6 +270,33 @@ embedded_llm = LazyLLM(
 )
 
 
+_claude_tool_llms: dict = {}
+
+
+def claude_available() -> bool:
+    """Whether a Claude key is configured, so the choice of Claude can be offered at all."""
+    from backend.models import claude_llm
+
+    return claude_llm.api_key() is not None
+
+
+def tool_agent_llm(deep: bool, choice=None):
+    """The model behind the tool agent's reasoning steps (the reply the person reads is written by Gemini either way). `choice` is the person's own setting,
+    "claude" or "gemini"; with none, the server's default applies: Gemini unless TOOL_AGENT_PROVIDER=anthropic. Claude is only ever used with a key present, and
+    carries the Gemini model it replaces as its fallback, so a Claude failure degrades to what the turn was before, never to an error. See backend/models/claude_llm.py."""
+    gemini = lite_llm_deep if deep else lite_llm
+    wanted = choice if choice in ("claude", "gemini") else ("claude" if os.getenv("TOOL_AGENT_PROVIDER", "").strip().lower() == "anthropic" else "gemini")
+    if wanted != "claude":
+        return gemini
+    from backend.models import claude_llm
+
+    if not claude_llm.api_key():
+        return gemini
+    if deep not in _claude_tool_llms:
+        _claude_tool_llms[deep] = claude_llm.ClaudeLLM(fallback=gemini)
+    return _claude_tool_llms[deep]
+
+
 def get_chat_llm(username: str):
     return embedded_llm if username == "guest_bty" else llm
 
