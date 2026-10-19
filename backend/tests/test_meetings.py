@@ -289,7 +289,7 @@ def test_the_agenda_is_offered_only_in_the_conversation_it_was_started_in_and_ne
 def test_every_meetings_endpoint_refuses_a_guest_and_only_the_start_button_starts_a_meeting():
     app = (ROOT / "app.py").read_text(encoding="utf-8")
     block = app[app.index("def _meetings_db_or_503"):app.index('@app.get("/api/local-workspace")')]
-    assert block.count("username = _meetings_user(current_user)") == 10 and "is_guest_username(username)" in block
+    assert block.count("username = _meetings_user(current_user)") == 14 and "is_guest_username(username)" in block
     assert app.count("meetings_utils.start_run") == 1                        # nothing else in the app can start one
 
 

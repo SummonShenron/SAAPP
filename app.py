@@ -73,7 +73,9 @@ from backend.utils.app_utils import (
     index_conversation_turn,
     collect_kb_images
 )
-from backend.utils.attachment_utils import attachment_image_visible_to, delete_session_attachments, process_chat_attachments
+from backend.utils.attachment_utils import delete_session_attachments, process_chat_attachments
+from backend.utils import progress_notes as progress_notes_utils
+from backend.utils.stored_file_access import can_read_stored_file, first_readable
 from backend.utils.docx_writer import DOCX_MIME, render_docx, validate_document
 from backend.utils.docx_edit import DocxEditError, apply_edits as apply_docx_edits
 from backend.utils.memory_utils import (
@@ -1094,6 +1096,15 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     task_results_context, task_result_ids = await asyncio.to_thread(user_tasks_utils.build_results_context, username, asked=_asked_results)
                     if task_results_context:
                         tally(turn_counts, "task_results_offered")
+            # "What did I log this week?": their own progress notes (backend/utils/progress_notes.py), only when asked. Never for a guest or under a safety context.
+            progress_notes_context = ""
+            if (risk_level == RISK_NONE and source_type == "conversational" and not is_closing_message(question) and not is_guest_username(username)
+                    and progress_notes_utils.asks_about_notes(final_state.get("original_question", question))):
+                def _read_progress_notes():
+                    _db = get_db()
+                    return "" if _db is None else progress_notes_utils.build_asked_context(
+                        progress_notes_utils.list_notes(_db, username, 20)[::-1], progress_notes_utils.count_this_week(_db, username, user_tz))
+                progress_notes_context = await asyncio.to_thread(_read_progress_notes)
             # Only when asked "how long have we been talking?": the earliest saved conversation, as a plain fact with no
             # feeling or milestone attached (backend/utils/duration_utils.py). Never for guests, whose "we" is many people.
             duration_context = ""
@@ -1122,6 +1133,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 routines_context=routines_context,
                 followups_context=followups_context,
                 task_results_context=task_results_context,
+                progress_notes_context=progress_notes_context,
                 meeting_context=meeting_context,
                 duration_context=duration_context,
                 self_knowledge_context=build_self_knowledge_block(
@@ -1231,6 +1243,12 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             curiosity_invited = False
             shelf_offer = None
             clarify_entry = None
+            if (source_type != "conversational" and not is_guest_username(username) and risk_level == RISK_NONE and shelf_utils.shelf_enabled()
+                    and shelf_utils.asks_what_reading(question) and get_db() is not None):
+                # Asked about its reading on a turn the router sent to a tool or search path: the shelf still answers, otherwise the model improvises from the
+                # tools it does have ("check the admin endpoint", "the logs show nothing") and denies the reading it really did.
+                shelf_offer = await asyncio.to_thread(shelf_utils.offer_for_turn, get_db(), username, question, listing=True, topic_ok=False, lull_ok=False)
+                prompt = prompt + shelf_utils.build_listing_block(shelf_offer)
             if source_type == "conversational" and not is_guest_username(username) and risk_level == RISK_NONE:
                 slot = dict(
                     source_type=source_type, risk_active=False,
@@ -1249,7 +1267,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                             lambda: clarify_utils.parent_text_for(load_user_facts(username), clarify_entry.get("parent_fact_id")))
                         prompt = prompt + clarify_utils.build_question_block(clarify_entry, parent_text)
                         slot["proactive_taken"] = True
-                asked_listing = shelf_utils.shelf_enabled() and shelf_utils.asks_what_reading(question)
+                asked_listing = shelf_utils.shelf_enabled() and (shelf_utils.asks_what_reading(question) or shelf_utils.asks_about_day(question))
                 offers = profile_utils.offers_allowed(user_profile)  # the person's own switch for Sonic bringing something up by itself
                 topic_ok = offers and shelf_utils.shelf_enabled() and shelf_utils.topic_for(question) is not None and curiosity_utils.slot_open(
                     question, chat_sessions[history_key], min_turns=2, **slot)
@@ -1261,7 +1279,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                                and not curiosity_utils.last_reply_asked(chat_sessions[history_key]))
                 db_for_shelf = get_db()
                 if asked_listing and db_for_shelf is not None:
-                    shelf_offer = await asyncio.to_thread(shelf_utils.offer_for_turn, db_for_shelf, username, question, listing=True, topic_ok=False, lull_ok=False)
+                    shelf_offer = await asyncio.to_thread(
+                        shelf_utils.offer_for_turn, db_for_shelf, username, question, listing=True, topic_ok=False, lull_ok=False,
+                        framing="" if shelf_utils.asks_what_reading(question) else "day")
                 elif (topic_ok or lull_ok or soft_ok) and curiosity_utils.gap_clear(
                         await asyncio.to_thread(curiosity_utils.last_offer_at, username), datetime.now(timezone.utc)):
                     if soft_ok and not (topic_ok or lull_ok) and db_for_shelf is not None:
@@ -1693,15 +1713,17 @@ def download_document(
     # 2. Extract bare filename in case full path was supplied
     clean_basename = decoded_filename.split("/")[-1].split("\\")[-1]
 
-    # 3. Flexible lookup against GridFS
-    file_doc = db["fs.files"].find_one({
+    # 3. Flexible lookup against GridFS: every file that matches the name, newest first, and the first of them THIS person may read. The same name can exist in several
+    # libraries, and a name alone must never be enough (backend/utils/stored_file_access.py); what they may not read is reported exactly like a file that is not there.
+    candidates = list(db["fs.files"].find({
         "$or": [
             {"filename": decoded_filename},
             {"filename": clean_basename},
             {"filename": {"$regex": f"^{re.escape(clean_basename)}$", "$options": "i"}},
             {"metadata.filename": clean_basename}
         ]
-    })
+    }).sort("uploadDate", -1).limit(25))
+    file_doc = first_readable(candidates, current_user.get("sub"), load_directory())
 
     if not file_doc:
         raise HTTPException(
@@ -1747,7 +1769,7 @@ def get_attachment_image(
     if not file_doc:
         raise HTTPException(status_code=404, detail="Attachment image not found.")
     # A photo someone attached, or a card made from one, is theirs alone: another signed-in person who somehow had its id gets the same answer as for a missing file.
-    if not attachment_image_visible_to(file_doc, current_user.get("sub")):
+    if not can_read_stored_file(file_doc, current_user.get("sub"), load_directory()):
         raise HTTPException(status_code=404, detail="Attachment image not found.")
 
     content_type = file_doc.get("metadata", {}).get("content_type", "application/octet-stream")
@@ -2068,6 +2090,7 @@ async def clear_memory(current_user = Depends(get_current_user)):
     await asyncio.to_thread(open_loops_utils.forget_all_loops, username)
     await asyncio.to_thread(user_tasks_utils.forget_all, username)
     await asyncio.to_thread(meetings_utils.forget_all, username)
+    await asyncio.to_thread(progress_notes_utils.forget_all, username)
     await asyncio.to_thread(headsups_utils.forget_all, username)
     await asyncio.to_thread(clarify_utils.forget_all, username)
     if result["failed"]:
@@ -2296,6 +2319,44 @@ async def list_user_meeting_notes(meeting_id: str, current_user = Depends(get_cu
         raise HTTPException(status_code=404, detail="That meeting isn't there.")
     notes = await asyncio.to_thread(meetings_utils.notes_for_meeting, db, username, meeting_id)
     return {"notes": [meetings_utils.public_note(n) for n in notes]}
+
+
+@app.get("/api/progress-notes")
+async def list_progress_notes(current_user = Depends(get_current_user)):
+    """What this person logged between office hours (backend/utils/progress_notes.py), newest first."""
+    username = _meetings_user(current_user)
+    db = _meetings_db_or_503()
+    docs = await asyncio.to_thread(progress_notes_utils.list_notes, db, username)
+    return {"notes": [progress_notes_utils.public_note(d) for d in docs],
+            "limits": {"max_text": progress_notes_utils.MAX_TEXT_CHARS, "max_per_day": progress_notes_utils.MAX_PER_DAY}}
+
+
+@app.post("/api/progress-notes")
+async def add_progress_note(payload: dict = Body(...), current_user = Depends(get_current_user)):
+    username = _meetings_user(current_user)
+    db = _meetings_db_or_503()
+    tz = await asyncio.to_thread(get_user_timezone, username)
+    note, issue = await asyncio.to_thread(progress_notes_utils.add_note, db, username, payload.get("text"), str(payload.get("label") or "note"), "page", tz)
+    if issue:
+        raise HTTPException(status_code=400, detail=issue)
+    return progress_notes_utils.public_note(note)
+
+
+@app.patch("/api/progress-notes/{note_id}")
+async def update_progress_note(note_id: str, payload: dict = Body(...), current_user = Depends(get_current_user)):
+    username = _meetings_user(current_user)
+    note = await asyncio.to_thread(progress_notes_utils.update_note, _meetings_db_or_503(), username, note_id, payload)
+    if note is None:
+        raise HTTPException(status_code=404, detail="That note was not found, or the change was not valid.")
+    return progress_notes_utils.public_note(note)
+
+
+@app.delete("/api/progress-notes/{note_id}")
+async def delete_progress_note(note_id: str, current_user = Depends(get_current_user)):
+    username = _meetings_user(current_user)
+    if not await asyncio.to_thread(progress_notes_utils.delete_note, _meetings_db_or_503(), username, note_id):
+        raise HTTPException(status_code=404, detail="That note was not found.")
+    return {"status": "deleted"}
 
 
 @app.post("/api/meetings/{meeting_id}/start")

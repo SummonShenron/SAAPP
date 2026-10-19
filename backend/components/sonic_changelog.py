@@ -70,6 +70,22 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "progress_notes",
+        "requires": [
+            "backend/utils/progress_notes.py::def add_note",
+            "backend/services/agent_workflow.py::async def progress_note_node",
+            "backend/utils/meetings.py::progress_notes.mark_covered",
+        ],
+        "month": "2026-10",
+        "title": "Progress notes for office hours",
+        "line": (
+            "Between office hours you can tell me to log progress, like \"log: applied to three jobs\" or \"log a win: ...\". I keep your words exactly, "
+            "and when you start office hours I can open with what you logged and ask what's missing."
+        ),
+        "keywords": ["progress note", "log a win", "log a blocker", "log progress", "office hours notes", "what did i log", "weekly check-in notes"],
+        "volunteer": [],
+    },
+    {
         "id": "image_generation",
         "requires": [
             "backend/services/image_gen.py::async def make_image",
@@ -111,7 +127,7 @@ CHANGELOG = [
         "month": "2026-10",
         "title": "Weekly pull request reviews and code audits",
         "line": (
-            "On the Tasks page you can have me review your repository's open pull requests, or audit its code for security problems, every week. "
+            "On the Activities page you can have me review your repository's open pull requests, or audit its code for security problems, every week. "
             "I only read, using your own GitHub token, and the notes are written by an AI model, so check before you act on one."
         ),
         "keywords": ["pull request review", "review my prs", "review my pull requests", "code audit", "audit my code", "security scan", "scan my code", "vulnerabilities in my code"],
@@ -171,7 +187,7 @@ CHANGELOG = [
         "month": "2026-10",
         "title": "Tasks you set up for me",
         "line": (
-            "You can set up a few research tasks on the Tasks page, like new jobs of a kind every Monday, and I'll search the web on that schedule and keep what's new. "
+            "You can set up a few research tasks on the Activities page, like new jobs of a kind every Monday, and I'll search the web on that schedule and keep what's new. "
             "The results wait on the page, and I'll mention them once when you come back."
         ),
         "keywords": ["task", "tasks", "scheduled", "schedule", "job search", "research for me", "keep an eye on", "watch for", "digest", "on a schedule"],

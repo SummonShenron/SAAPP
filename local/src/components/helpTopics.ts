@@ -27,6 +27,7 @@ export const TOPICS: HelpTopicMeta[] = [
 
   { id: 'memory', title: 'What Sonic remembers', group: 'You and Sonic', audience: 'signedIn' },
   { id: 'profile', title: 'Telling Sonic about yourself', group: 'You and Sonic', audience: 'signedIn' },
+  { id: 'office-hours', title: 'Office hours and progress notes', group: 'You and Sonic', audience: 'signedIn' },
   { id: 'about-sonic', title: 'About Sonic', group: 'You and Sonic', audience: 'everyone' },
 
   { id: 'privacy', title: 'Your privacy and your data', group: 'Privacy and control', audience: 'everyone' },

@@ -143,7 +143,7 @@ def test_the_image_endpoint_uses_the_ownership_check():
     source = open(os.path.join(REPO, "app.py"), encoding="utf-8").read()
     start = source.index('@app.get("/api/attachments/image/{file_id}")')
     handler = source[start:source.index("@app.", start + 10)]
-    assert "attachment_image_visible_to(file_doc, current_user.get(\"sub\"))" in handler
+    assert "can_read_stored_file(file_doc, current_user.get(\"sub\"), load_directory())" in handler
 
 
 def test_the_chat_turn_passes_the_attached_photos_in_and_shows_what_was_made():

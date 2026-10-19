@@ -284,7 +284,7 @@ export const EVERYDAY: Record<string, Content> = {
 
   library: ctx => (
     <>
-      <p>Your document library is your own private, searchable collection of PDFs and JSON files. Add a document once, and Sonic can answer from it in any conversation, from now on. It's like giving Sonic a bookshelf of your own.</p>
+      <p>Your document library is your own private, searchable collection of PDFs and data files. Add a document once, and Sonic can answer from it in any conversation, from now on. It's like giving Sonic a bookshelf of your own.</p>
       <h4>How it works</h4>
       <ul>
         <li>Open Self Service, pick your library, and add one or more PDFs. They take a little while to become searchable.</li>
@@ -292,11 +292,11 @@ export const EVERYDAY: Record<string, Content> = {
         <li>Sonic answers from your documents and points to the page it used, so you can check it. Pictures inside a PDF are described too, so they can be found.</li>
         <li>If your documents don't have the answer, Sonic says so and answers from what it knows. <strong>Open Answers</strong> is on by default. Turn it off in the "…" menu if you want it to stick strictly to your documents.</li>
       </ul>
-      <h4>JSON files</h4>
+      <h4>Data files from other apps</h4>
       <ul>
         <li>You can add <strong>.json</strong> files (and .jsonl, one record per line) the same way, such as an export from another app, a weekly log or a settings file. Sonic reads the file's own structure: each record in a list becomes its own searchable entry, labelled with the file name and the section it came from.</li>
-        <li>Ids and timestamps are left out, and anything that looks like a password, token or key is masked before it's stored. Files up to 10 MB are accepted, and a file that isn't valid JSON is rejected.</li>
-        <li>Uploading a file with the same name again <strong>replaces</strong> the earlier one. Search finds things in a JSON file, but it can't count or add things up across a whole file.</li>
+        <li>Ids and timestamps are left out, and anything that looks like a password, token or key is masked before it's stored. Files up to 10 MB are accepted, and a file that can't be read as data is rejected.</li>
+        <li>Uploading a file with the same name again <strong>replaces</strong> the earlier one. Search finds things in a data file, but it can't count or add things up across a whole file.</li>
       </ul>
       <h4>What it's good for</h4>
       <ul>
@@ -347,6 +347,21 @@ export const EVERYDAY: Record<string, Content> = {
         <li><strong>Two switches:</strong> whether Sonic may bring something up by itself at a quiet moment, and whether it may start a conversation with one question about something you told it. Both can be turned off.</li>
       </ul>
       <p><HelpLink go={ctx.go} path="/account">Open Account settings</HelpLink></p>
+    </>
+  ),
+
+  'office-hours': ctx => (
+    <>
+      <p>Office hours is a check-in you hold with Sonic when you choose to, such as a weekly review. You press <strong>Start office hours</strong>, Sonic runs your agenda in a chat, and you press <strong>End and save notes</strong> when you are done. Sonic never starts one by itself.</p>
+      <h4>Progress notes</h4>
+      <ul>
+        <li>Between check-ins, log what happens in your own words. In any chat, start a message with <strong>log:</strong>, <strong>log a win:</strong> or <strong>log a blocker:</strong>, for example "log: applied to three jobs". To append to or replace an existing note, quote part of its text: "add a win to my note 'applied to three jobs': got a second interview" or "update my note 'applied to three jobs': applied to four jobs". Or add and edit notes on the Office Hours page.</li>
+        <li>Sonic saves exactly what you wrote. It doesn't decide for you what counts as progress, and it doesn't grade or comment on your notes.</li>
+        <li>When you start office hours, Sonic has the notes no check-in has covered yet in front of it. It may open with two or three of them, in your words, and ask whether anything is missing. It won't rank them, praise you beyond what you wrote, or claim to see patterns.</li>
+        <li>Once a check-in's notes are saved, the notes logged up to then are marked as covered, so next time only the new ones come up. They stay on the page.</li>
+        <li>Ask "what did I log this week?" any time and Sonic reads them back. Edit or delete any note on the Office Hours page. You can log up to 25 a day, and "Forget everything" on the Memory page removes them too.</li>
+      </ul>
+      <p><HelpLink go={ctx.go} path="/meetings">Open Office Hours</HelpLink></p>
     </>
   ),
 

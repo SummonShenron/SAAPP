@@ -3,6 +3,7 @@ import asyncio
 import copy
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -250,9 +251,33 @@ def test_items_expire_from_use_but_stay_visible_to_the_admin_and_the_shelf_stays
 @pytest.mark.parametrize("text,yes", [
     ("what have you been reading?", True), ("what are you reading lately", True), ("anything interesting you've read recently?", True),
     ("read anything good lately", True), ("what's on your reading list", True), ("did you read my message", False), ("I have been reading a lot of sci-fi", False),
+    ("tell me about what you read? enough about me for now.", True), ("but you read the articles no?", True), ("what did you learn?", True),
+    ("did you read the file i sent", False), ("did you read it yet", False),
+    ("so tell me about the articles ?", True), ("tell me about the articles in this folder", False), ("what about your reading", True),
 ])
 def test_asking_what_it_has_been_reading_is_recognised_and_ordinary_talk_about_reading_is_not(text, yes):
     assert shelf.asks_what_reading(text) is yes
+
+
+def test_asking_about_their_day_brings_the_reading_in_as_something_to_say_what_it_was_about_not_just_to_mention():
+    assert shelf.asks_about_day("tell me about your day") and shelf.asks_about_day("how was your day?") and not shelf.asks_about_day("my day was rough")
+    db = Db()
+    stock(db, url="https://a.example.com/game", topic="game_design", days_ago=1)
+    offer = shelf.offer_for_turn(db, "sam", "tell me about your day", listing=True, topic_ok=False, lull_ok=False, now=NOW, framing="day")
+    block = shelf.build_listing_block(offer)
+    assert offer["framing"] == "day" and "say what a piece was about" in block and "offer to tell them about the others" in block
+    assert shelf.offer_for_turn(Db(), "sam", "tell me about your day", listing=True, topic_ok=False, lull_ok=False, now=NOW, framing="day") is None
+
+
+def test_the_app_answers_a_reading_question_from_the_shelf_even_when_the_router_sent_the_turn_to_a_tool_path():
+    source = (Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
+    gate = source[source.index('if (source_type != "conversational" and not is_guest_username(username)'):source.index('if source_type == "conversational" and not is_guest_username(username) and risk_level == RISK_NONE:')]
+    assert "asks_what_reading(question)" in gate and "build_listing_block(shelf_offer)" in gate and "listing=True" in gate
+
+
+def test_an_empty_shelf_never_makes_it_deny_that_it_reads():
+    block = shelf.build_listing_block({"kind": "listing", "items": []})
+    assert "Never say you did not read, or do not read, anything" in block
 
 
 def test_every_topic_has_separate_well_formed_queries_and_its_own_trigger_words():

@@ -1441,6 +1441,28 @@ export const startMeeting = (id: string, sessionId: string): Promise<{ run_id: s
 export const endMeeting = (runId: string): Promise<{ status: string; note: MeetingNote | null; reason: string | null }> =>
   taskRequest(`/api/meetings/runs/${encodeURIComponent(runId)}/end`, { method: 'POST' }, 'Failed to end the meeting.');
 
+/** What the person logs between office hours (backend/utils/progress_notes.py): Sonic lists the ones no meeting has covered yet when office hours starts. */
+export type ProgressLabel = 'note' | 'win' | 'blocker';
+export interface ProgressNote {
+  id: string;
+  text: string;
+  label: ProgressLabel;
+  day: string;
+  at: string;
+  source: 'chat' | 'page';
+  /** True once a meeting's notes covered it. */
+  covered: boolean;
+}
+
+export const listProgressNotes = (): Promise<{ notes: ProgressNote[]; limits: { max_text: number; max_per_day: number } }> =>
+  taskRequest('/api/progress-notes', {}, 'Failed to load your progress notes.');
+export const addProgressNote = (text: string, label: ProgressLabel): Promise<ProgressNote> =>
+  taskRequest('/api/progress-notes', { method: 'POST', body: JSON.stringify({ text, label }) }, 'Failed to save that note.');
+export const updateProgressNote = (id: string, changes: Partial<Pick<ProgressNote, 'text' | 'label'>>): Promise<ProgressNote> =>
+  taskRequest(`/api/progress-notes/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(changes) }, 'Failed to update that note.');
+export const deleteProgressNote = (id: string): Promise<{ status: string }> =>
+  taskRequest(`/api/progress-notes/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'Failed to delete that note.');
+
 /** The person's three switches for calendar heads-ups (backend/utils/calendar_headsups.py), and what Sonic would mention. */
 export interface HeadsUpSettings {
   enabled: boolean;
@@ -1826,6 +1848,10 @@ export const api = {
   deleteMeetingNote,
   startMeeting,
   endMeeting,
+  listProgressNotes,
+  addProgressNote,
+  updateProgressNote,
+  deleteProgressNote,
   getCalendarHeadsUps,
   putCalendarHeadsUps,
   previewCalendarHeadsUps,

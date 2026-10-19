@@ -1,0 +1,139 @@
+import React, { useEffect, useState } from 'react';
+import { api, type ProgressLabel, type ProgressNote } from '../api';
+import './__styles__/ProgressNotes.css';
+
+const LABELS: { value: ProgressLabel; text: string }[] = [
+  { value: 'note', text: 'Note' },
+  { value: 'win', text: 'Win' },
+  { value: 'blocker', text: 'Blocker' },
+];
+
+function when(note: ProgressNote): string {
+  const date = new Date(note.at);
+  return Number.isNaN(date.getTime()) ? note.day : date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+/** Progress notes: what you log between office hours. Sonic lists the ones no meeting has covered when office hours starts, in your own words. */
+export const ProgressNotes: React.FC = () => {
+  const [notes, setNotes] = useState<ProgressNote[]>([]);
+  const [maxText, setMaxText] = useState(400);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [text, setText] = useState('');
+  const [label, setLabel] = useState<ProgressLabel>('note');
+  const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editText, setEditText] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    api.listProgressNotes()
+      .then(data => { if (!cancelled) { setNotes(data.notes); setMaxText(data.limits.max_text); } })
+      .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load your progress notes.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const add = async () => {
+    if (!text.trim()) return;
+    setSaving(true);
+    setError('');
+    try {
+      const created = await api.addProgressNote(text.trim(), label);
+      setNotes(prev => [created, ...prev]);
+      setText('');
+      setLabel('note');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save that note.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const save = async (note: ProgressNote) => {
+    try {
+      const updated = await api.updateProgressNote(note.id, { text: editText });
+      setNotes(prev => prev.map(n => (n.id === note.id ? updated : n)));
+      setEditing(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update that note.');
+    }
+  };
+
+  const remove = async (note: ProgressNote) => {
+    if (!window.confirm('Delete this note?')) return;
+    try {
+      await api.deleteProgressNote(note.id);
+      setNotes(prev => prev.filter(n => n.id !== note.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete that note.');
+    }
+  };
+
+  const waiting = notes.filter(n => !n.covered).length;
+
+  return (
+    <section className="service-card memory-card">
+      <div className="card-badge">{waiting} WAITING</div>
+      <h2>Progress notes</h2>
+      <p className="card-description">
+        Log what happens between office hours, in your own words. When you start office hours, Sonic has the notes no meeting has covered yet in front of it, and can start from them instead of
+        from memory. You can also log from any chat: start a message with <strong>log:</strong>, <strong>log a win:</strong> or <strong>log a blocker:</strong>. To update one, quote part of its text, for example <strong>add a win to my note "applied to three jobs": got a second interview</strong>.
+      </p>
+      {error && <div className="memory-edit-error" role="alert">{error}</div>}
+
+      <div className="progress-note-add">
+        <textarea
+          className="memory-edit-text"
+          rows={2}
+          maxLength={maxText}
+          value={text}
+          placeholder="Applied to three jobs"
+          aria-label="New progress note"
+          onChange={e => setText(e.target.value)}
+        />
+        <div className="memory-edit-row">
+          <select className="progress-note-label" value={label} aria-label="Kind of note" onChange={e => setLabel(e.target.value as ProgressLabel)}>
+            {LABELS.map(l => <option key={l.value} value={l.value}>{l.text}</option>)}
+          </select>
+          <button type="button" className="memory-edit-save" disabled={saving || !text.trim()} onClick={add}>{saving ? 'Saving...' : 'Add note'}</button>
+        </div>
+      </div>
+
+      {loading && <div className="task-meta">Loading...</div>}
+      {!loading && notes.length === 0 && <div className="empty-manifest-notice">Nothing logged yet. Anything you log shows up here, and in your next office hours.</div>}
+      <div className="memory-list tasks-list">
+        {notes.map(note => (
+          <div key={note.id} className="memory-row task-row">
+            <div className="memory-row-main">
+              <div className="memory-row-badges">
+                <span className="memory-badge memory-source-badge">{when(note)}</span>
+                {note.label !== 'note' && <span className={`memory-badge progress-note-${note.label}`}>{note.label}</span>}
+                {note.covered
+                  ? <span className="memory-badge memory-source-badge">covered in office hours</span>
+                  : <span className="memory-badge task-new-badge">for next office hours</span>}
+              </div>
+              {editing === note.id ? (
+                <div className="meeting-note-edit">
+                  <textarea className="memory-edit-text" rows={2} maxLength={maxText} value={editText} aria-label="Edit note" onChange={e => setEditText(e.target.value)} />
+                  <div className="memory-edit-row">
+                    <button type="button" className="memory-edit-cancel" onClick={() => setEditing(null)}>Cancel</button>
+                    <button type="button" className="memory-edit-save" disabled={!editText.trim()} onClick={() => save(note)}>Save</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="memory-row-text">{note.text}</div>
+              )}
+            </div>
+            {editing !== note.id && (
+              <div className="task-actions">
+                <button type="button" className="memory-edit-cancel" onClick={() => { setEditing(note.id); setEditText(note.text); }}>Edit</button>
+                <button type="button" className="delete-row-btn" onClick={() => remove(note)}>Delete</button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+};
