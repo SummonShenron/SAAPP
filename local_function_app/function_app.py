@@ -7,6 +7,7 @@ import logging
 import re
 import json
 import time
+import uuid
 import base64
 from pymongo import MongoClient
 from gridfs import GridFS
@@ -20,6 +21,11 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGener
 from langchain_mongodb import MongoDBAtlasVectorSearch
 
 from dotenv import load_dotenv
+
+try:
+    from . import json_chunks
+except ImportError:  # run as a script (the upload starts it that way), where this folder is on the path instead of being a package
+    import json_chunks
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 # --- Standalone Self-Contained Configuration ---
@@ -229,6 +235,21 @@ def _is_image_filename(filename: str) -> bool:
     return ext in IMAGE_EXTENSIONS
 
 
+def _is_json_filename(filename: str) -> bool:
+    return filename.lower().endswith((".json", ".jsonl", ".ndjson"))
+
+
+def _replace_earlier_version(db, fs, new_file_id, affiliate: str, filename: str, ingest_id: str) -> None:
+    """Called only once the new JSON file's chunks are safely stored: removes what an earlier upload of the same file name left in this knowledge base (its chunks, which
+    carry another ingest_id, and its stored copy), so re-exporting a file replaces it instead of piling up duplicates. A failed re-upload never gets here, so the earlier
+    version survives it."""
+    db["documents"].delete_many({"source": filename, "affiliate": affiliate, "ingest_id": {"$ne": ingest_id}})
+    for earlier in list(fs.find({"filename": filename, "metadata.affiliate": affiliate, "metadata.status": "pages"})):
+        if earlier._id != new_file_id:
+            fs.delete(earlier._id)
+            logger.info(f"       -> Replaced an earlier upload of {filename}.")
+
+
 def _guess_image_mime_type(filename: str) -> str:
     ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
     return IMAGE_MIME_TYPES.get(ext, "application/octet-stream")
@@ -405,6 +426,43 @@ def run_ingestion_pipeline():
                     raise e
 
                 continue  # skip the PDF-loading branch entirely for this file
+
+            if _is_json_filename(filename):
+                # --- JSON BRANCH: any JSON file, read by its shape (see json_chunks.py), then the same embed / graph / mark-as-done steps as every other file. ---
+                ingest_id = uuid.uuid4().hex
+                try:
+                    documents = json_chunks.build_documents(file_obj.read(), filename, affiliate, Document, ingest_id)
+                    chunks = text_splitter.split_documents(documents)
+
+                    vector_store = MongoDBAtlasVectorSearch.from_documents(
+                        chunks,
+                        embeddings,
+                        collection=db["documents"],
+                        index_name="vector_index"
+                    )
+                    _replace_earlier_version(db, fs, file_obj._id, affiliate, filename, ingest_id)
+                    index_graph_for_source(db, affiliate, filename, [c.page_content for c in chunks])
+
+                    db["fs.files"].update_one(
+                        {"_id": file_obj._id},
+                        {"$set": {"metadata.status": "pages", "metadata.content_type": "application/json"}}
+                    )
+                    logger.info(f"   [✓] Success: Indexed JSON file {filename} as {len(chunks)} chunks.")
+
+                except Exception as e:
+                    # Roll back only what THIS upload made: its own chunks (by ingest_id) and its stored copy. An earlier version of the same file is left as it was,
+                    # and so are its graph edges (the graph step replaces them itself on success).
+                    logger.error(f"   [X] Error processing JSON {filename}: {e}. Initiating rollback...")
+                    try:
+                        db["documents"].delete_many({"source": filename, "affiliate": affiliate, "ingest_id": ingest_id})
+                    except Exception as clean_err:
+                        logger.error(f"       -> Could not remove partial chunks for {filename}: {clean_err}")
+                    fs.delete(file_obj._id)
+                    logger.info(f"       -> Deleted {filename} from GridFS storage.")
+                    if not isinstance(e, json_chunks.JsonIngestError):
+                        raise e      # a real fault keeps the original error reporting; a file that simply is not usable JSON must not stop the other uploads
+
+                continue
 
             # Create file with delete=False to avoid Windows file-locking permission errors
             tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)

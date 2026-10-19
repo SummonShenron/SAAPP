@@ -284,13 +284,19 @@ export const EVERYDAY: Record<string, Content> = {
 
   library: ctx => (
     <>
-      <p>Your document library is your own private, searchable collection of PDFs. Add a document once, and Sonic can answer from it in any conversation, from now on. It's like giving Sonic a bookshelf of your own.</p>
+      <p>Your document library is your own private, searchable collection of PDFs and JSON files. Add a document once, and Sonic can answer from it in any conversation, from now on. It's like giving Sonic a bookshelf of your own.</p>
       <h4>How it works</h4>
       <ul>
         <li>Open Self Service, pick your library, and add one or more PDFs. They take a little while to become searchable.</li>
         <li>Then just ask in the chat: "What's in my lease about pets?", "Which of my documents mention the roof?", "What does my insurance cover for water damage?"</li>
         <li>Sonic answers from your documents and points to the page it used, so you can check it. Pictures inside a PDF are described too, so they can be found.</li>
         <li>If your documents don't have the answer, Sonic says so and answers from what it knows. <strong>Open Answers</strong> is on by default. Turn it off in the "…" menu if you want it to stick strictly to your documents.</li>
+      </ul>
+      <h4>JSON files</h4>
+      <ul>
+        <li>You can add <strong>.json</strong> files (and .jsonl, one record per line) the same way, such as an export from another app, a weekly log or a settings file. Sonic reads the file's own structure: each record in a list becomes its own searchable entry, labelled with the file name and the section it came from.</li>
+        <li>Ids and timestamps are left out, and anything that looks like a password, token or key is masked before it's stored. Files up to 10 MB are accepted, and a file that isn't valid JSON is rejected.</li>
+        <li>Uploading a file with the same name again <strong>replaces</strong> the earlier one. Search finds things in a JSON file, but it can't count or add things up across a whole file.</li>
       </ul>
       <h4>What it's good for</h4>
       <ul>

@@ -1707,9 +1707,11 @@ def download_document(
     grid_out = gridfs_bucket.open_download_stream(file_doc["_id"])
 
     safe_filename = urllib.parse.quote(clean_basename)
+    # A citation link opens the file itself: JSON is served as JSON, everything else keeps the PDF type it has always had.
+    media_type = "application/json" if clean_basename.lower().endswith((".json", ".jsonl", ".ndjson")) else "application/pdf"
     return StreamingResponse(
         grid_out,
-        media_type="application/pdf",
+        media_type=media_type,
         headers={
             "Content-Disposition": f"inline; filename*=utf-8''{safe_filename}"
         }

@@ -207,13 +207,13 @@ export const SelfServicePage: React.FC = () => {
                   type="file" 
                   id="file-selector"
                   multiple 
-                  accept=".pdf"
+                  accept=".pdf,.json,.jsonl,.ndjson"
                   onChange={handleFileChange}
                   ref={fileInputRef}
                   disabled={uploading}
                 />
                 <label htmlFor="file-selector" className="custom-file-button">
-                  {selectedFiles ? `Selected (${selectedFiles.length} files tracked)` : "Choose PDF Files"}
+                  {selectedFiles ? `Selected (${selectedFiles.length} files tracked)` : "Choose PDF or JSON Files"}
                 </label>
                 {selectedFiles && (
                   <ul className="staged-files-preview">

@@ -1206,6 +1206,30 @@ useEffect(() => {
     }
   };
 
+  // The "…" button and every popover it opens (the options menu, the scope picker) sit inside this one wrapper, so a press anywhere else closes them. The button counts
+  // as inside on purpose: its own click toggles the menu, and closing it here first would have that same click open it again.
+  const optionsMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showOverflowWheel && !showScopePicker) return;   // nothing is open, so nothing listens
+    const close = () => {
+      setShowOverflowWheel(false);
+      setShowScopePicker(false);
+    };
+    const onPointerDown = (e: PointerEvent) => {
+      if (!optionsMenuRef.current?.contains(e.target as Node)) close();
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [showOverflowWheel, showScopePicker]);
+
   const addAttachmentFile = async (original: File) => {
     // Shrunk first (a phone photo is megabytes). The photo then travels once, inside the chat request: a second copy used to go to
     // /api/upload-attachment on its own, with no auth header and in a shape that endpoint rejects, so it only cost the connection.
@@ -2340,7 +2364,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
 
               <div className="icon-row-overlay">
                 {!isEmbedded && <UsageRing budget={budget} />}
-                <div style={{ position: "relative" }}>
+                <div style={{ position: "relative" }} ref={optionsMenuRef}>
                   <button
                     type="button"
                     className={`circle-icon-button ${showOverflowWheel || showScopePicker ? 'trace-active' : ''}`}
