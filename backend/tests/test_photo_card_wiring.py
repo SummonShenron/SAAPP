@@ -178,10 +178,33 @@ def test_a_change_to_the_last_picture_goes_to_the_picture_maker_and_words_on_it_
     assert _plan('put "Merry Christmas" on it across the bottom in gold', history=history)[0] == ["image_card", "formatter"]
 
 
-def test_requests_about_an_attached_photo_or_a_library_picture_never_reach_the_picture_maker():
-    assert "image_gen" not in _plan("draw a picture of a dog", [REF])[0]
+def test_questions_about_a_photo_or_a_library_picture_never_reach_the_picture_maker():
+    assert "image_gen" not in _plan("what is in this photo", [REF])[0]
     assert "image_gen" not in _plan("show me a picture of the lease")[0]
     assert "image_gen" not in _plan("build a docker image for the api")[0]
+
+
+def test_an_explicit_request_for_a_picture_with_a_photo_attached_goes_to_the_picture_maker_with_the_photo_as_reference():
+    assert _plan("generate a picture of patchy", [REF])[0] == ["image_gen", "formatter"]
+
+
+def test_words_on_an_attached_photo_still_go_to_the_card_maker_not_the_picture_maker():
+    assert _plan('put "Merry Christmas" on this photo in gold', [REF])[0] == ["image_card", "formatter"]
+    assert _plan("make this a christmas card that says Merry Christmas", [REF])[0] == ["image_card", "formatter"]
+
+
+def test_the_picture_maker_node_hands_the_attached_photo_on(monkeypatch, node_env):
+    from backend.services import image_gen
+
+    seen = {}
+
+    async def made(**kwargs):
+        seen.update(kwargs)
+        return pc.CardOutcome(image_gen.NOT_FOR_ME)
+
+    monkeypatch.setattr(image_gen, "make_image", made)
+    asyncio.run(aw.image_gen_node({"messages": [HumanMessage(content="generate a picture of patchy")], "username": "jack", "session_id": "s1", "budget_level": "ok", "image_refs": [REF]}))
+    assert seen["attached"] == REF
 
 
 def test_a_pending_approval_still_wins_over_a_picture_request():

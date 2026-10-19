@@ -1400,7 +1400,7 @@ async def image_gen_node(state: GraphState) -> dict:
     tz = await asyncio.to_thread(get_user_timezone, username)
     outcome = await image_gen.make_image(
         store=photo_cards.MongoStore(db), username=username, session_id=state.get("session_id") or "", message=message,
-        invoke=lite_llm.ainvoke, db=db, day=photo_cards.local_day(tz),
+        invoke=lite_llm.ainvoke, db=db, day=photo_cards.local_day(tz), attached=photo_cards.attached_image_ref(state.get("image_refs")),
     )
     if outcome.kind == image_gen.NOT_FOR_ME:
         return {**state, "relevance_grade": "conversational"}

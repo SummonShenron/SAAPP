@@ -101,11 +101,13 @@ def asks_to_refine(message: str) -> bool:
 
 
 def wants_image(message: str, refs: Any, recent_messages: List[Any]) -> bool:
-    """A request to make a picture, or a short change to the one just made. Never when a photo is attached: that is a request about the photo."""
-    if photo_cards.attached_image_ref(refs) is not None:
-        return False
+    """A request to make a picture, or a short change to the one just made. With a photo attached, an explicit request to make a picture ("generate a picture of
+    Patchy") still counts, and the photo goes to the image model as a reference; the card maker (words on the photo) is checked before this, so "put 'Merry
+    Christmas' on this" never gets here. A short change ("make it snowier") is only a change to the picture just made, never to a newly attached photo."""
     if asks_to_generate(message):
         return True
+    if photo_cards.attached_image_ref(refs) is not None:
+        return False
     return photo_cards.recent_generated_kind(recent_messages) == photo_cards.GENERATED_IMAGE and asks_to_refine(message)
 
 
@@ -158,15 +160,35 @@ def to_jpeg(data: bytes) -> bytes:
     return out.getvalue()
 
 
-def generate_sync(prompt: str, aspect: str) -> Tuple[bytes, Dict[str, int]]:
-    """Blocking: one call to the image model. Returns (JPEG bytes, token usage). Raises Blocked or Failed."""
+REFERENCE_EDGE = 1024     # the reference photo is shrunk to this before it is sent: a bigger one costs more input and makes no better picture
+
+
+def reference_part(data: Optional[bytes]) -> Optional[Tuple[bytes, str]]:
+    """A photo the person attached, as (JPEG bytes, mime type) small enough to send along as a reference, or None when it cannot be read as a picture. Never raises."""
+    if not data:
+        return None
+    try:
+        from PIL import Image, ImageOps
+
+        image = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("RGB")
+        image.thumbnail((REFERENCE_EDGE, REFERENCE_EDGE))
+        out = io.BytesIO()
+        image.save(out, format="JPEG", quality=85)
+        return out.getvalue(), "image/jpeg"
+    except Exception:
+        return None
+
+
+def generate_sync(prompt: str, aspect: str, reference: Optional[Tuple[bytes, str]] = None) -> Tuple[bytes, Dict[str, int]]:
+    """Blocking: one call to the image model, with the person's attached photo as a reference when there is one. Returns (JPEG bytes, token usage). Raises Blocked or Failed."""
     from backend.utils import llm_usage
 
     try:
         from google.genai import types
 
+        contents: Any = prompt if reference is None else [prompt, types.Part.from_bytes(data=reference[0], mime_type=reference[1])]
         response = _get_client().models.generate_content(
-            model=MODEL, contents=prompt,
+            model=MODEL, contents=contents,
             config=types.GenerateContentConfig(response_modalities=["IMAGE"], image_config=types.ImageConfig(aspect_ratio=aspect)),
         )
     except Exception as error:
@@ -215,19 +237,32 @@ def _facts_made(prompt_idea: str, left: int, words: str) -> str:
     )
 
 
+REFERENCE_NOTE = (
+    "A reference picture the person attached will be sent to the image model together with your prompt. Write the prompt as a NEW picture of what they asked for, "
+    "based on that reference (keep the look of its subject and its colours), and do not describe the reference in detail: the model can see it."
+)
+
+
 async def make_image(
     *, store: Any, username: str, session_id: str, message: str,
     invoke: Callable[[str], Awaitable[Any]], db: Any = None, day: Optional[str] = None,
-    generate: Callable[[str, str], Tuple[bytes, Dict[str, int]]] = generate_sync,
+    generate: Callable[..., Tuple[bytes, Dict[str, int]]] = generate_sync, attached: Optional[Dict[str, Any]] = None,
 ) -> CardOutcome:
-    """Plans, generates and stores one picture. Never raises: every problem is an outcome the reply can explain."""
+    """Plans, generates and stores one picture, using the photo attached to the message (`attached`: {gridfs_id, ...}) as a reference when there is one. Never
+    raises: every problem is an outcome the reply can explain."""
     from backend.components.constraints import IMAGE_PROMPT_PROMPT
 
     day = day or photo_cards.local_day(None)
     prior = await asyncio.to_thread(store.last_image, username, session_id)
     prior_prompt = ((prior or {}).get("spec") or {}).get("prompt")
+    reference = None
+    if attached and attached.get("gridfs_id"):
+        reference = reference_part(await asyncio.to_thread(store.read, username, attached["gridfs_id"]))
     try:
-        prompt = IMAGE_PROMPT_PROMPT.format(request=" ".join((message or "").split())[:MAX_REQUEST_CHARS], prior=json.dumps(prior_prompt) if prior_prompt else "none")
+        prompt = IMAGE_PROMPT_PROMPT.format(
+            request=" ".join((message or "").split())[:MAX_REQUEST_CHARS], prior=json.dumps(prior_prompt) if prior_prompt else "none",
+            reference=REFERENCE_NOTE if reference else "No reference picture is attached.",
+        )
         planned = photo_cards._parse_json(await invoke(prompt))
     except Exception:
         logger.warning("[image gen] the planning call failed.", exc_info=True)
@@ -253,7 +288,7 @@ async def make_image(
         return CardOutcome(kind, facts)
 
     try:
-        data, _usage = await asyncio.wait_for(asyncio.to_thread(generate, image_prompt, aspect), timeout=TIMEOUT_SECONDS + 10)
+        data, _usage = await asyncio.wait_for(asyncio.to_thread(generate, image_prompt, aspect, reference), timeout=TIMEOUT_SECONDS + 10)
     except Blocked:
         return give_up(BLOCKED, "The picture could not be made: the image service's safety filters declined it. Say so kindly in a sentence and offer to try a different idea. Do not guess why.")
     except asyncio.TimeoutError:

@@ -92,9 +92,18 @@ def test_a_card_from_a_photo_that_is_already_here_goes_to_the_card_maker_and_a_c
     assert ig.asks_to_generate("make me a christmas card with a snowy stadium") is True
 
 
-def test_a_photo_on_the_message_means_the_request_is_about_the_photo_not_a_new_picture():
+def test_a_photo_on_the_message_does_not_stop_an_explicit_request_for_a_picture():
+    """Regression from a real chat: a screenshot of Patchy was attached with "generate a picture of patchy", it went to document search, and Sonic said it could not
+    make images. The photo is a reference for the new picture."""
     ref = [{"filename": "a.jpg", "gridfs_id": "p1", "content_type": "image/jpeg"}]
-    assert ig.wants_image("draw a picture of a dog", ref, []) is False
+    assert ig.wants_image("generate a picture of patchy", ref, []) is True
+    assert ig.wants_image("draw a picture of a dog", ref, []) is True
+
+
+def test_but_a_short_change_never_applies_to_a_newly_attached_photo():
+    ref = [{"filename": "a.jpg", "gridfs_id": "p1", "content_type": "image/jpeg"}]
+    assert ig.wants_image("make it snowier", ref, [HumanMessage(content="hi"), _picture_reply("image")]) is False
+    assert ig.wants_image("what is in this photo", ref, []) is False
 
 
 def test_words_on_a_just_made_picture_go_to_the_card_maker_not_back_to_the_picture_maker():
@@ -124,7 +133,7 @@ def fake_client(monkeypatch):
     holder = SimpleNamespace(response=None, error=None, calls=[])
 
     def generate_content(model, contents, config):
-        holder.calls.append({"model": model, "contents": contents, "aspect": config.image_config.aspect_ratio, "modalities": config.response_modalities})
+        holder.calls.append({"model": model, "contents": contents, "contents_is_list": isinstance(contents, list), "aspect": config.image_config.aspect_ratio, "modalities": config.response_modalities})
         if holder.error:
             raise holder.error
         return holder.response
@@ -189,11 +198,14 @@ def test_a_huge_picture_is_scaled_down():
 # ---------------------------------------------------------------------------------------------------------------
 
 class Store:
-    def __init__(self, prior=None, save_ok=True):
-        self.prior, self.save_ok, self.saved, self.pruned = prior, save_ok, [], 0
+    def __init__(self, prior=None, save_ok=True, files=None):
+        self.prior, self.save_ok, self.saved, self.pruned, self.files = prior, save_ok, [], 0, files or {}
 
     def last_image(self, username, session_id):
         return self.prior
+
+    def read(self, username, file_id):
+        return self.files.get(file_id)
 
     def save(self, username, session_id, data, content_type, filename, generated, extra=None):
         self.saved.append({"data": data, "content_type": content_type, "filename": filename, "generated": generated, "extra": extra, "user": username, "session": session_id})
@@ -231,15 +243,21 @@ def allowance(monkeypatch):
     return calls
 
 
-def _make(store, planner, generate=None, message="make me a snowy stadium"):
-    calls = []
+references = []
 
-    def default_generate(prompt, aspect):
+
+def _make(store, planner, generate=None, message="make me a snowy stadium", attached=None):
+    calls = []
+    references.clear()
+
+    def default_generate(prompt, aspect, reference=None):
         calls.append((prompt, aspect))
+        references.append(reference)
         return b"\xff\xd8jpegbytes", {"output": 1300}
 
     outcome = asyncio.run(ig.make_image(
         store=store, username="jack", session_id="s1", message=message, invoke=planner, db=object(), day="2026-10-18", generate=generate or default_generate,
+        attached=attached,
     ))
     return outcome, calls
 
@@ -300,7 +318,7 @@ def test_the_limit_is_three_a_day_by_default():
 
 
 def test_a_filtered_picture_costs_nothing_and_is_not_blamed_on_a_reason(allowance):
-    def blocked(prompt, aspect):
+    def blocked(prompt, aspect, reference=None):
         raise ig.Blocked("x")
 
     outcome, _ = _make(Store(), Planner(GOOD), generate=blocked)
@@ -308,10 +326,10 @@ def test_a_filtered_picture_costs_nothing_and_is_not_blamed_on_a_reason(allowanc
 
 
 def test_any_failure_gives_the_use_back(allowance):
-    def failed(prompt, aspect):
+    def failed(prompt, aspect, reference=None):
         raise ig.Failed("x")
 
-    def broken(prompt, aspect):
+    def broken(prompt, aspect, reference=None):
         raise ValueError("boom")
 
     for generate in (failed, broken):
@@ -351,6 +369,37 @@ def test_nothing_the_person_asked_for_is_logged(allowance, caplog):
 
 def test_the_price_of_the_model_is_something_an_operator_can_set():
     assert ig.MODEL.startswith("gemini-") and "image" in ig.MODEL
+
+
+def test_an_attached_photo_is_sent_to_the_image_model_as_a_small_reference(allowance):
+    big = io.BytesIO()
+    Image.new("RGB", (3000, 2000), (200, 30, 30)).save(big, format="JPEG")
+    store, planner = Store(files={"ref1": big.getvalue()}), Planner(GOOD)
+    outcome, _ = _make(store, planner, message="generate a picture of patchy", attached={"filename": "p.png", "gridfs_id": "ref1", "content_type": "image/png"})
+    assert outcome.kind == ig.MADE
+    data, mime = references[0]
+    assert mime == "image/jpeg" and max(Image.open(io.BytesIO(data)).size) == ig.REFERENCE_EDGE
+    assert ig.REFERENCE_NOTE in planner.prompts[0]
+
+
+def test_without_an_attachment_no_reference_is_sent_and_the_planner_is_told_so(allowance):
+    planner = Planner(GOOD)
+    _make(Store(), planner)
+    assert references == [None] and "No reference picture is attached." in planner.prompts[0]
+
+
+def test_an_attachment_that_cannot_be_read_does_not_stop_the_picture(allowance):
+    outcome, _ = _make(Store(files={}), Planner(GOOD), attached={"filename": "p.png", "gridfs_id": "gone", "content_type": "image/png"})
+    assert outcome.kind == ig.MADE and references == [None]
+    outcome, _ = _make(Store(files={"x": b"not an image"}), Planner(GOOD), attached={"filename": "p.png", "gridfs_id": "x", "content_type": "image/png"})
+    assert outcome.kind == ig.MADE and references == [None]
+
+
+def test_the_reference_goes_to_the_model_with_the_prompt(fake_client):
+    fake_client.response = _response([_image_part()])
+    ig.generate_sync("a robot. No text.", "1:1", reference=(b"ref-bytes", "image/jpeg"))
+    ig.generate_sync("a robot. No text.", "1:1")
+    assert [call["contents_is_list"] for call in fake_client.calls] == [True, False], "a reference makes the contents a list of prompt and picture; none leaves the prompt alone"
 
 
 def test_a_detailed_description_reaches_the_planner_whole(allowance):
