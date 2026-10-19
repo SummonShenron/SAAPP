@@ -58,8 +58,19 @@ NOW = datetime(2026, 10, 9, 15, 0, tzinfo=timezone.utc)
 ENGINES = ("react", "native")
 ACTIVE_MEMORY = True  # False (--no-memory): the memory scenarios run with nothing remembered, to show what the memory block is worth
 ACTIVE_ENGINE = "react"  # which tool engine the tool scenarios use (set by --engine); "react" is the app's default
+ACTIVE_TOOL_MODEL = ""   # which model the NATIVE tool engine reasons with (set by --tool-model): "" (what the app uses), "deep" (gemini-3.6-flash) or "claude"
+ACTIVE_STEPS = 0         # a step cap for the tool agent (set by --steps); 0 leaves the app's own caps. 4 is what low-power mode allows (budget_guard.THROTTLED_TOOL_STEPS)
 OPS_ACTIONS = {"list_app_incidents", "read_app_incident", "read_app_logs", "check_deploy_status"}
-CATEGORIES = ("tool_use", "injection", "opener", "repo", "memory")
+CATEGORIES = ("tool_use", "injection", "opener", "repo", "memory", "codegen")
+TOOL_MODELS = ("", "deep", "claude")
+
+# USD per million tokens as of 2026-10-18 (Google's and Anthropic's price pages), used to put a dollar figure on a run when LLM_PRICES does not list a model.
+# The real prices are the ones in LLM_PRICES; these only keep a comparison honest when it is not set.
+EVAL_PRICES = {
+    "gemini-3.1-flash-lite": {"input": 0.25, "output": 1.50, "cached_input": 0.025},
+    "gemini-3.6-flash": {"input": 0.75, "output": 3.75, "cached_input": 0.075},
+    "claude-haiku-5-5": {"input": 0.10, "output": 0.50, "cached_input": 0.01},
+}
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -78,6 +89,17 @@ class Observation:
     rejections: List[str] = field(default_factory=list)    # which after-answer checks sent the agent back to rewrite (see REJECTION_NOTICES)
     picked: Optional[str] = None                           # the interest the picker chose
     usage: Dict[str, int] = field(default_factory=lambda: {"calls": 0, "input": 0, "output": 0, "cached": 0})  # what the model calls used
+    by_model: Dict[str, Dict[str, int]] = field(default_factory=dict)  # the same, by the model that answered, so a run can be priced
+
+
+def cost_of(by_model: Dict[str, Dict[str, int]]) -> Optional[float]:
+    """Dollars for usage split by model: the prices in LLM_PRICES, else EVAL_PRICES. None when no call was priced."""
+    from backend.utils import llm_usage
+
+    prices = {**EVAL_PRICES, **llm_usage.load_prices()}
+    costs = [llm_usage.estimate_cost(model, counts, prices) for model, counts in by_model.items()]
+    known = [c for c in costs if c is not None]
+    return sum(known) if known else None
 
 
 @dataclass
@@ -97,6 +119,12 @@ class ScenarioResult:
     runs: int = 0
     failures: List[Tuple[str, str]] = field(default_factory=list)  # (why, what happened)
     usage: Dict[str, int] = field(default_factory=lambda: {"calls": 0, "input": 0, "output": 0, "cached": 0})  # summed over the runs
+    by_model: Dict[str, Dict[str, int]] = field(default_factory=dict)  # summed over the runs, by the model that answered
+
+    @property
+    def cost_per_run(self) -> Optional[float]:
+        total = cost_of(self.by_model)
+        return total / self.runs if total is not None and self.runs else None
 
     @property
     def rate(self) -> float:
@@ -216,6 +244,8 @@ async def run_tool_agent(
     from langchain_core.messages import HumanMessage
 
     engine = engine or ACTIVE_ENGINE
+    if engine == "native" and tool_llm is None and ACTIVE_TOOL_MODEL == "deep":
+        tool_llm = aw.lite_llm_deep       # the bigger Gemini model the app uses for deep thinking and audits
 
     observation = Observation()
     db = RecordingDB()
@@ -251,8 +281,11 @@ async def run_tool_agent(
 
     def usage_spy(model, label, counts, day=None):
         observation.usage["calls"] += 1
+        per_model = observation.by_model.setdefault(str(model), {"calls": 0, "input": 0, "output": 0, "cached": 0})
+        per_model["calls"] += 1
         for key in ("input", "output", "cached"):
             observation.usage[key] += int((counts or {}).get(key, 0) or 0)
+            per_model[key] += int((counts or {}).get(key, 0) or 0)
         real_record(model, label, counts, day)
 
     real_native_run = aw.native_loop.run
@@ -268,6 +301,8 @@ async def run_tool_agent(
         "ERRAGENT_URL": "https://erragent.invalid", "ERRAGENT_APP_ID": "eval", "ERRAGENT_READ_SECRET": "ear_not-a-real-secret",
         "GITHUB_TOKEN": "not-a-real-token", "TOOL_AGENT_ENGINE": engine,
     }
+    if ACTIVE_TOOL_MODEL == "claude":
+        env["TOOL_AGENT_PROVIDER"] = "anthropic"      # the app's own switch (models.tool_agent_llm): the real wiring, fallback included, for either engine
     groups = ["Global_Admins"] if admin else ["Guest"]
     remembered = (memory or "") if ACTIVE_MEMORY else ""
 
@@ -295,6 +330,9 @@ async def run_tool_agent(
         stack.enter_context(patch.object(aw, "run_web_search", no_search))
         stack.enter_context(patch.object(aw.lite_llm, "ainvoke", spy))
         stack.enter_context(patch.object(llm_usage, "record", usage_spy))
+        if ACTIVE_STEPS > 0:
+            for target, name in ((aw, "TOOL_AGENT_MAX_ITERATIONS"), (aw, "TOOL_AGENT_MAX_ITERATIONS_DEEP"), (aw.native_loop, "MAX_STEPS")):
+                stack.enter_context(patch.object(target, name, ACTIVE_STEPS))
         if engine == "native":
             stack.enter_context(patch.object(aw.native_loop, "run", native_spy))
             if tool_llm is not None:
@@ -487,6 +525,71 @@ def score_missing_thing_is_reported_missing(observation: Observation) -> Score:
 def score_recent_history(observation: Observation) -> Score:
     """The last commits and the one open pull request, read from the history tools rather than guessed from the files."""
     return _repo_score(observation, "grace", "reminder", "#42")
+
+
+_CODE_BLOCK_RE = re.compile(r"```[a-zA-Z0-9_+-]*\n(.*?)```", re.DOTALL)
+_TALLYBOX_IMPORT_RE = re.compile(r"^\s*(?:from|import)\s+(tallybox(?:\.\w+)*)", re.MULTILINE)
+
+
+def _code_in(answer: str) -> str:
+    return "\n".join(_CODE_BLOCK_RE.findall(_answer_only(answer)))
+
+
+def _invented_imports(code: str) -> List[str]:
+    """`from tallybox.x.y import ...` lines in written code that name a module the fixture repo does not have."""
+    real = fixture_repo.paths()
+    invented = []
+    for module in _TALLYBOX_IMPORT_RE.findall(code):
+        path = module.replace(".", "/")
+        if path + ".py" not in real and path + "/__init__.py" not in real:
+            invented.append(module)
+    return sorted(set(invented))
+
+
+def _codegen_score(observation: Observation, *needles: str) -> Score:
+    """A code request is answered when the answer CONTAINS code (not a plan or an apology for running out of steps), the code follows the repo's own
+    conventions (each needle is something the real files use), and it imports nothing that does not exist."""
+    code = _code_in(observation.answer)
+    if not code.strip():
+        return False, f"no code in the answer (it made {observation.usage.get('calls', 0)} model calls and never wrote any)"
+    missing = [needle for needle in needles if needle not in code]
+    if missing:
+        return False, f"the code never uses {missing}"
+    invented = _invented_imports(code)
+    if invented:
+        return False, f"the code imports modules that do not exist: {invented}"
+    return True, ""
+
+
+def score_codegen_delete_customer(observation: Observation) -> Score:
+    """The existing customer routes: `@bp.route("/customers/<int:customer_id>", ...)`, plain `@require_auth`, JSON replies through jsonify."""
+    return _codegen_score(observation, "DELETE", "/customers/<int:customer_id>", "@require_auth", "jsonify")
+
+
+def score_codegen_is_overdue(observation: Observation) -> Score:
+    """The repo's rule (jobs/overdue.py): a SENT invoice is overdue once its due date plus settings.grace_days is before today."""
+    return _codegen_score(observation, "def is_overdue", "grace_days", "timedelta", "sent")
+
+
+def score_codegen_void_route(observation: Observation) -> Score:
+    """The invoice routes: `/invoices/<int:invoice_id>/...`, `@require_auth`, find_invoice, the "void" status, jsonify, POST."""
+    return _codegen_score(observation, "/invoices/<int:invoice_id>/void", "@require_auth", "find_invoice", "void", "jsonify", "POST")
+
+
+def score_codegen_admin_report(observation: Observation) -> Score:
+    """Needs four files: routes_admin.py (the admin decorator and the route style), auth.py, models/invoice.py (list_invoices, amount_cents) and
+    jobs/overdue.py (what "overdue" is). The code has to use the admin form of the decorator, the model helper and the real field name."""
+    return _codegen_score(observation, "/admin/overdue-report", '@require_auth(role="admin")', "list_invoices", "amount_cents", "jsonify", "overdue")
+
+
+def score_codegen_final_notices(observation: Observation) -> Score:
+    """Needs jobs/reminders.py (the job's shape), services/email.py (send_email), models/invoice.py and jobs/overdue.py (the date arithmetic with timedelta)."""
+    return _codegen_score(observation, "def send_final_notices", "send_email", "list_invoices", "overdue", "timedelta", "customer_email")
+
+
+def score_codegen_ratelimit_test(observation: Observation) -> Score:
+    """A test for the rate limiter has to be about the real thing: limit_requests, the RATE_LIMIT_PER_MIN variable, and the 429 it aborts with."""
+    return _codegen_score(observation, "def test_", "limit_requests", "RATE_LIMIT_PER_MIN", "429")
 
 
 def _resists(observation: Observation) -> Score:
@@ -699,6 +802,26 @@ SCENARIOS: List[Scenario] = [
                    "Where in this repo is the Redis cache configured?", score_missing_thing_is_reported_missing, repo=True),
     _tool_scenario("repo_recent_history", "repo", "reads the commit and pull-request history rather than guessing",
                    "What changed in the last few commits, and is there an open pull request?", score_recent_history, repo=True),
+    _tool_scenario("codegen_delete_customer", "codegen", "writes a new route in the style of the existing customer routes, within the step cap",
+                   "Add a DELETE /customers/<id> endpoint to this service. Follow the style of the existing customer routes and write the code.",
+                   score_codegen_delete_customer, repo=True),
+    _tool_scenario("codegen_is_overdue", "codegen", "writes a helper that applies the repo's own overdue rule",
+                   "Write a helper `is_overdue(invoice, today)` that returns True when an invoice should be marked overdue, using the same rule this repo already uses. Show the code.",
+                   score_codegen_is_overdue, repo=True),
+    _tool_scenario("codegen_void_route", "codegen", "writes a route that matches the other invoice routes",
+                   "Add a POST /invoices/<id>/void route that marks an invoice void. Match the conventions of the other invoice routes and write the code.",
+                   score_codegen_void_route, repo=True),
+    _tool_scenario("codegen_ratelimit_test", "codegen", "writes a pytest test about the real rate limiter after reading it",
+                   "Write a pytest test for the rate limiter in this repo. Read it first, then show me the test code.",
+                   score_codegen_ratelimit_test, repo=True),
+    _tool_scenario("codegen_admin_report", "codegen", "needs four files read before the code can be right (the case a small step cap starves)",
+                   "Add an admin-only GET /admin/overdue-report route that returns how many invoices are currently overdue and their total amount. Follow the conventions of "
+                   "the existing admin routes, use the repo's own invoice helpers, and write the code.",
+                   score_codegen_admin_report, repo=True),
+    _tool_scenario("codegen_final_notices", "codegen", "a new job modelled on two existing ones plus the email helper (four files)",
+                   "Write a job `send_final_notices(today)` like the existing reminder job, but only for invoices that have been overdue for more than 30 days. "
+                   "Use the same way the repo sends email and the same date arithmetic it uses elsewhere. Show the code.",
+                   score_codegen_final_notices, repo=True),
     _tool_scenario("memory_other_project_hosting", "memory", "uses what it remembers about a project that is not in the connected repository",
                    "How is Patchy deployed again? I forget where the frontend runs.", score_remembered("vercel", "render"),
                    memory=_memory_block(facts=["Patchy's frontend is deployed on Vercel and its backend on Render."])),
@@ -772,6 +895,10 @@ async def run_scenario(scenario: Scenario, llm: LLM, runs: int = 3) -> ScenarioR
         try:
             observation = await scenario.run(llm)
             observation_usage = observation.usage
+            for model, counts in observation.by_model.items():
+                slot = result.by_model.setdefault(model, {"calls": 0, "input": 0, "output": 0, "cached": 0})
+                for key in slot:
+                    slot[key] += counts.get(key, 0)
             passed, why = scenario.score(observation)
             excerpt = _summary(observation)
         except Exception as exc:  # a crash is a failed run, not a crashed eval
@@ -786,12 +913,21 @@ async def run_scenario(scenario: Scenario, llm: LLM, runs: int = 3) -> ScenarioR
 
 
 def format_report(results: List[ScenarioResult]) -> str:
-    lines = [f"{'scenario':<34}{'category':<11}{'pass':>7}{'calls':>7}{'in tok':>9}   what it checks"]
+    lines = [f"{'scenario':<34}{'category':<11}{'pass':>7}{'calls':>7}{'in tok':>9}{'$/run':>9}   what it checks"]
     for r in results:
         cost = f"{r.usage['calls'] / r.runs:>7.1f}{r.usage['input'] / r.runs:>9.0f}" if r.runs and r.usage["calls"] else f"{'':>16}"
-        lines.append(f"{r.scenario.id:<34}{r.scenario.category:<11}{f'{r.passes}/{r.runs}':>7}{cost}   {r.scenario.notes}")
+        dollars = f"{r.cost_per_run:>9.4f}" if r.cost_per_run is not None else f"{'':>9}"
+        lines.append(f"{r.scenario.id:<34}{r.scenario.category:<11}{f'{r.passes}/{r.runs}':>7}{cost}{dollars}   {r.scenario.notes}")
     total_pass, total_runs = sum(r.passes for r in results), sum(r.runs for r in results)
     lines.append(f"\noverall: {total_pass}/{total_runs} ({(100 * total_pass / total_runs) if total_runs else 0:.0f}%)")
+    answered: Dict[str, int] = {}
+    for r in results:
+        for model, counts in r.by_model.items():
+            answered[model] = answered.get(model, 0) + counts.get("calls", 0)
+    if answered:
+        lines.append("model calls answered by: " + ", ".join(f"{model} x{calls}" for model, calls in sorted(answered.items())))
+        if len(answered) > 1:
+            lines.append("  (more than one model answered: a fallback was used, so these results are not purely one model's)")
     by_cat: Dict[str, List[int]] = {}
     for r in results:
         acc = by_cat.setdefault(r.scenario.category, [0, 0])
@@ -861,6 +997,44 @@ def format_engine_comparison(by_engine: Dict[str, List[ScenarioResult]]) -> str:
     return "\n".join(lines)
 
 
+def format_model_comparison(by_tool_model: Dict[str, List[ScenarioResult]]) -> str:
+    """The tool models side by side on the same scenarios: pass count, model calls per run and dollars per run, then totals. `""` is what the app uses today."""
+    names = list(by_tool_model)
+    label = lambda name: name or "default"  # noqa: E731
+    ids = [r.scenario.id for r in by_tool_model[names[0]]]
+    indexed = {name: {r.scenario.id: r for r in results} for name, results in by_tool_model.items()}
+    header = f"{'scenario':<28}" + "".join(f"{label(n) + ' pass':>14}{label(n) + ' calls':>13}{label(n) + ' $':>11}" for n in names)
+    lines = [header]
+    for scenario_id in ids:
+        row = f"{scenario_id:<28}"
+        for name in names:
+            r = indexed[name].get(scenario_id)
+            if r is None or not r.runs:
+                row += f"{'':>38}"
+                continue
+            cost = f"{r.cost_per_run:.4f}" if r.cost_per_run is not None else "n/a"
+            row += f"{f'{r.passes}/{r.runs}':>14}{r.usage['calls'] / r.runs:>13.1f}{cost:>11}"
+        lines.append(row)
+    lines.append("")
+    for name in names:
+        results = by_tool_model[name]
+        runs, passes = sum(r.runs for r in results), sum(r.passes for r in results)
+        merged: Dict[str, Dict[str, int]] = {}
+        for r in results:
+            for model, counts in r.by_model.items():
+                slot = merged.setdefault(model, {"calls": 0, "input": 0, "output": 0, "cached": 0})
+                for key in slot:
+                    slot[key] += counts.get(key, 0)
+        cost = cost_of(merged)
+        calls = sum(r.usage["calls"] for r in results)
+        answered = ", ".join(f"{model} x{counts['calls']}" for model, counts in sorted(merged.items()))
+        lines.append(
+            f"{label(name):<9} {passes}/{runs} passed ({100 * passes / runs if runs else 0:.0f}%), {calls / runs if runs else 0:.1f} calls/run, "
+            + (f"${cost / runs:.4f}/run" if cost is not None and runs else "cost n/a") + f"   models that answered: {answered}"
+        )
+    return "\n".join(lines)
+
+
 def compare(previous: Dict[str, Any], results: List[ScenarioResult], tolerance: float = 0.2) -> Dict[str, List[str]]:
     """`{"worse": [...], "better": [...]}`, one line per scenario whose pass rate moved by more than `tolerance` against a saved
     run. A scenario missing from either side, or with no runs, is skipped: there is nothing to compare."""
@@ -907,6 +1081,9 @@ def main(argv: Optional[List[str]] = None, llm: Optional[LLM] = None) -> int:
     parser.add_argument("--no-memory", action="store_true", help="run the memory scenarios with nothing remembered, to show what the memory block is worth")
     parser.add_argument("--engine", type=str, default="react", choices=("react", "native", "both"),
                         help="which tool engine the tool scenarios use; 'both' runs the tool and injection scenarios through each and compares")
+    parser.add_argument("--tool-model", type=str, default="", help="which model the NATIVE engine reasons with: default (what the app uses), deep (gemini-3.6-flash), "
+                        "claude (claude-haiku-5-5 through the app's own TOOL_AGENT_PROVIDER switch), or a comma-separated list (e.g. default,deep,claude) to compare them")
+    parser.add_argument("--steps", type=int, default=0, help="cap the tool agent's steps (0 = the app's own caps; 4 is what low-power mode allows)")
     args = parser.parse_args(argv)
 
     if args.list:
@@ -929,9 +1106,38 @@ def main(argv: Optional[List[str]] = None, llm: Optional[LLM] = None) -> int:
 
         models = {"tool": aw.lite_llm.ainvoke, "reply": get_stream_llm("jack").ainvoke}  # bound before the stubs go in
 
-    global ACTIVE_ENGINE, ACTIVE_MEMORY
+    global ACTIVE_ENGINE, ACTIVE_MEMORY, ACTIVE_TOOL_MODEL, ACTIVE_STEPS
     ACTIVE_MEMORY = not args.no_memory
+    ACTIVE_STEPS = max(args.steps, 0)
     log = lambda line: print(line, file=sys.stderr)  # noqa: E731
+    wanted_models = [("" if m.strip() == "default" else m.strip()) for m in args.tool_model.split(",")] if args.tool_model else [""]
+    if any(m not in TOOL_MODELS for m in wanted_models):
+        print(f"--tool-model takes default, deep or claude; got {args.tool_model!r}")
+        return 2
+    if wanted_models != [""]:
+        # Compared in the engine named by --engine ("native", else the app's default "react").
+        chosen = [s for s in chosen if s.model == "tool"]
+        by_tool_model: Dict[str, List[ScenarioResult]] = {}
+        ACTIVE_ENGINE = "native" if args.engine == "native" else "react"
+        try:
+            for tool_model in wanted_models:
+                ACTIVE_TOOL_MODEL = tool_model
+                log(f"=== tool model: {tool_model or 'default'} ({ACTIVE_ENGINE} engine)" + (f", steps capped at {ACTIVE_STEPS}" if ACTIVE_STEPS else ""))
+                run_models = models
+                if tool_model == "deep" and ACTIVE_ENGINE == "react" and llm is None:
+                    from backend.services import agent_workflow as aw_deep
+
+                    run_models = {**models, "tool": aw_deep.lite_llm_deep.ainvoke}      # the ReAct loop reasons through the model's plain call
+                by_tool_model[tool_model] = asyncio.run(run_all(chosen, run_models, args.runs, log=log))
+        finally:
+            ACTIVE_ENGINE, ACTIVE_TOOL_MODEL = "react", ""
+        for tool_model, tool_results in by_tool_model.items():
+            print(f"=== tool model: {tool_model or 'default'} ({'native' if args.engine == 'native' else 'react'} engine)" + (f", steps capped at {ACTIVE_STEPS}" if ACTIVE_STEPS else ""))
+            print(format_report(tool_results))
+            print()
+        if len(by_tool_model) > 1:
+            print(format_model_comparison(by_tool_model))
+        return 0
     if args.engine == "both":
         chosen = [s for s in chosen if s.category in ("tool_use", "injection", "repo", "memory")]
         by_engine: Dict[str, List[ScenarioResult]] = {}

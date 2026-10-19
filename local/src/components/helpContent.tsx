@@ -357,6 +357,7 @@ export const EVERYDAY: Record<string, Content> = {
       <p>The short version:</p>
       <ul>
         <li>What you type, and anything you attach, is sent to Google's Gemini so Sonic can answer.</li>
+        <li>If you set <strong>Code model</strong> to Claude, the code and tool steps of a request (the question, and the code and results Sonic reads while working on it) go to Anthropic instead of Google for those steps. Sonic's reply is still written by Gemini. Set it back to Gemini any time.</li>
         <li>Your conversations are kept until you delete them. Photos and files you attach are removed after 30 days, or sooner if you delete the conversation.</li>
         <li>{ctx.guest
           ? 'Guests share one temporary identity, so nothing here is tied to you.'
@@ -393,6 +394,7 @@ export const EVERYDAY: Record<string, Content> = {
         <li><strong>Scope:</strong> which library Sonic looks in: everything you can use, or just one.</li>
         <li><strong>Open Answers:</strong> on (the default), Sonic can also use its general knowledge when your documents don't have the answer. Off, it sticks to your documents.</li>
         <li><strong>Deep Thinking:</strong> slower but more thorough, for tricky questions with several parts.</li>
+        <li><strong>Code model:</strong> which AI does the reasoning steps when Sonic reads code, searches or writes code for you: Gemini or Claude. Sonic's reply is still written by Gemini either way. It only appears when Claude is set up, and it isn't offered in the guest demo.</li>
         <li><strong>Message First:</strong> lets Sonic open a conversation with one question about something you told it. Off until you turn it on.</li>
         <li><strong>SAAPP:</strong> shows or hides the little robot.</li>
       </ul>

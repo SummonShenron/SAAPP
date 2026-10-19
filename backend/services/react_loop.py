@@ -48,6 +48,15 @@ _DEFAULT_STUCK_ACTION_MESSAGE = (
 )
 _MAX_BATCH_SIZE = 5
 
+# What the model is told on its last step (and in the synthesis that follows a loop that ran out). It used to say only "honestly summarize what you tried and found",
+# and a model told to summarize writes a summary of its research even when it was asked for code (measured: with a 4-step cap, code requests came back as
+# "I investigated the codebase and found..." with no code in them). Now a code request is answered with the code, and the doubt goes in one short line after it.
+FORCED_FINAL_NOTICE = (
+    "\n\n(You have used all your steps. You MUST return action=\"final\" now. If you were asked to write code, write it now, in full, in a fenced code block, following "
+    "the conventions of the files you read, and put anything you could not verify in one short line after it; do not answer with a description of your research instead. "
+    "Otherwise honestly summarize what you tried and found. Never invent beyond what the attempts above actually show.)"
+)
+
 
 async def run_react_loop(
     *,
@@ -390,9 +399,15 @@ async def run_react_loop(
 
         question_for_step = question + format_steering_notes(steering_notes)
         if forced_final:
+            question_for_step += FORCED_FINAL_NOTICE
+        elif budget - 1 - step <= 2:
+            # The tool steps left, this one included (the last step of the budget is the forced answer): told early, a model asks for everything it still needs in
+            # one batched step and keeps the last for the answer, instead of reading one small thing at a time and meeting the limit with nothing written.
+            tool_steps_left = budget - 1 - step
             question_for_step += (
-                "\n\n(You have used all your steps. You MUST return "
-                "action=\"final\" now, honestly summarizing what you tried and found.)"
+                f"\n\n(Steps: you have {tool_steps_left} tool step{'s' if tool_steps_left != 1 else ''} left, this one included, and after that you must return "
+                "action=\"final\". Ask for every file or search you still need together in one step if the schema allows a batch. If you were asked to write code, "
+                "your final answer must be the code itself, in full.)"
             )
         if needs_retry_nudge:
             failed_tools = ", ".join(sorted(unretried_inconclusive_tools))
@@ -897,11 +912,7 @@ async def run_react_loop(
         await _absorb_steering(len(attempts))
         try:
             prompt = prompt_template.format(
-                question=(
-                    f"{question}{format_steering_notes(steering_notes)}\n\n(You are out of steps. You MUST return action=\"final\" now, "
-                    "honestly summarizing what you tried and found — never invent an answer "
-                    "beyond what the attempts above actually show.)"
-                ),
+                question=f"{question}{format_steering_notes(steering_notes)}{FORCED_FINAL_NOTICE}",
                 schema=schema,
                 attempts=_format_react_attempts(attempts),
                 architecture_map=architecture_map,

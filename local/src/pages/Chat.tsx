@@ -579,6 +579,8 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [selectedAffiliate, setSelectedAffiliate] = useState<string>('All');
   const [ragMode, setRagMode] = useState<string>('open');
   const [deepThinking, setDeepThinking] = useState<boolean>(false);
+  const [toolModel, setToolModel] = useState<'gemini' | 'claude'>('gemini');
+  const [toolModelAvailable, setToolModelAvailable] = useState<boolean>(false);
   const [proactiveOpening, setProactiveOpening] = useState<boolean>(false);
   const [opsDigest, setOpsDigest] = useState<{ enabled: boolean; available: boolean }>({ enabled: false, available: false });
   const [budget, setBudget] = useState<BudgetView | null>(null);
@@ -954,6 +956,13 @@ useEffect(() => {
 
   useEffect(() => {
     if (!principal) return;
+    api.getToolModel()
+      .then(data => { setToolModel(data.tool_model); setToolModelAvailable(data.available); })
+      .catch(() => { /* guests and embeds have no such setting */ });
+  }, [principal]);
+
+  useEffect(() => {
+    if (!principal) return;
     api.getProactiveOpening()
       .then(data => setProactiveOpening(data.enabled))
       .catch(() => { /* guests and embeds have no such setting */ });
@@ -999,6 +1008,18 @@ useEffect(() => {
     } catch (err) {
       console.error("Failed to update the message-first setting:", err);
       setProactiveOpening(!enabled);
+    }
+  };
+
+  const handleToolModelChange = async (next: 'gemini' | 'claude') => {
+    const before = toolModel;
+    setToolModel(next);
+    try {
+      const result = await api.updateToolModel(next);
+      setToolModel(result.tool_model);
+    } catch (err) {
+      console.error("Failed to update the code model setting:", err);
+      setToolModel(before);
     }
   };
 
@@ -2069,6 +2090,17 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
       run: () => handleDeepThinkingChange(!deepThinking),
       keepOpen: true,
     },
+    // Which model does the tool agent's reasoning and code-writing steps. The reply you read is still written by Gemini, so Claude here is the hybrid.
+    // Not offered when Claude isn't set up on the server, or to guests.
+    ...(!toolModelAvailable ? [] : [{
+      item: {
+        label: `Code model: ${toolModel === 'claude' ? 'Claude' : 'Gemini'}`,
+        disabled: settingsLocked,
+        icon: settingsGlyph(<><polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" /></>),
+      },
+      run: () => handleToolModelChange(toolModel === 'claude' ? 'gemini' : 'claude'),
+      keepOpen: true,
+    }]),
     {
       item: {
         label: `Message First: ${proactiveOpening ? 'On' : 'Off'}`,
