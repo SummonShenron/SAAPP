@@ -118,8 +118,8 @@ export function PatchyAtLaptop() {
               <path d="M71.2 69.6 C 75 82, 58 88.5, 47.5 82.2" stroke="#7B8290" strokeWidth="3.4" strokeLinecap="round" fill="none" />
               <circle cx="71.2" cy="69.6" r="2.2" fill="#7B8290" />
             </g>
-            <circle className="mp-accent mp-hand mp-hand-r" cx="37.2" cy="77.4" r="3.2" stroke="#2B2F37" strokeWidth="0.8" />
-            <circle className="mp-hand mp-hand-l ps-near-hand" cx="45" cy="81.6" r="3.3" fill="#9DA4B1" stroke="#6F7684" strokeWidth="0.7" />
+            <circle className="mp-hand mp-hand-r" cx="37.2" cy="77.4" r="3.2" fill="#9DA4B1" stroke="#2B2F37" strokeWidth="0.8" />
+            <circle className="mp-accent mp-hand mp-hand-l ps-near-hand" cx="45" cy="81.6" r="3.3" stroke="#6F7684" strokeWidth="0.7" />
 
             {/* the lid, standing on the hinge and leaning back, its back to us, a patch sticker on it */}
             <polygon points="16,80 34,87 31,65 13,58" fill="url(#ps-lid)" stroke="#AEB6C3" strokeWidth="1.4" strokeLinejoin="round" />

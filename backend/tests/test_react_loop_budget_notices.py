@@ -69,6 +69,39 @@ def test_the_announcement_says_the_answer_must_be_the_code_when_code_was_asked()
     assert "your final answer must be the code itself, in full" in prompts[2]
 
 
+def test_a_change_to_a_connected_folder_is_told_to_propose_the_edit_not_to_paste_code_as_steps_run_out():
+    async def go():
+        prompts = []
+
+        async def fake(prompt):
+            prompts.append(prompt)
+            return _read("a.py") if len(prompts) < 4 else _final("done")
+
+        async def act(decision):
+            return "def existing():\n    return 1\n"
+
+        original = aw.lite_llm.ainvoke
+        aw.lite_llm.ainvoke = fake
+        try:
+            await aw.run_react_loop(question="swap the orange hand", schema="repo=x", prompt_template="{question} | {schema} | {attempts}", act=act,
+                                    max_iterations=4, node_name="t", required_action=aw._LOCAL_EDIT_REQUIRED_ACTION)
+        finally:
+            aw.lite_llm.ainvoke = original
+        return prompts
+
+    prompts = asyncio.run(go())
+    assert "Your next tool step must be propose_local_edits" in prompts[1] and "must be the code itself" not in prompts[1]
+
+
+def test_an_edit_turn_never_gets_fewer_steps_than_the_floor_but_low_power_mode_still_caps_it():
+    from backend.utils import budget_guard as bg
+
+    floor = aw.TOOL_AGENT_LOCAL_EDIT_MIN_STEPS
+    assert floor >= 6
+    assert bg.tool_steps(max(4, floor), {"level": "ok"}) == floor        # a server tuned to 4 steps still lets an edit find, read, propose and answer
+    assert bg.tool_steps(max(4, floor), {"level": next(iter(bg.LOW_POWER_LEVELS))}) == bg.THROTTLED_TOOL_STEPS
+
+
 def test_the_synthesis_after_a_loop_that_ran_out_uses_the_same_notice():
     # A loop that never says "final" ends in one more synthesis call; it must ask for code the same way.
     result, prompts = run([_read("a.py")] * 3 + [_read("d.py")] * 2 + [_final("here is the code")], max_iterations=4)

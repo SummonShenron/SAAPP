@@ -12,7 +12,7 @@ Rules that keep it small, safe and honest:
   task that fails three times in a row is paused and says so. Runs are skipped, not queued, when the cost guard is in low-power mode.
 - NOT EVERYTHING. Topics about health, legal or money trouble, loss or therapy, about following a private person, or that carry a link are refused when the task
   is made, and the runner returns nothing for a private individual even so.
-- THEIR DATA. Listed on the Tasks page, pausable and deletable one by one, wiped by "forget everything". No topic or result text is ever logged.
+- THEIR DATA. Listed on the Activities page, pausable and deletable one by one, wiped by "forget everything". No topic or result text is ever logged.
 - NO LONGING. Sonic did the task when it was due; it does not say it was thinking about them or waiting to tell them (the prompt block forbids it).
 - REPOSITORY TASKS ARE READ-ONLY AND ON THEIR OWN KEY. A weekly review of a repository's open pull requests, or a weekly audit of its code, runs only with the person's OWN
   GitHub token (never the server's shared one), so GitHub itself decides what it may read, and it only ever reads: no comment, no issue, no push. See
@@ -412,7 +412,7 @@ def waiting_counts(db, username: str) -> Dict[str, int]:
 
 
 def mark_announced(username: str, run_ids: Iterable[str]) -> int:
-    """Sonic has mentioned these results, so it won't do so again (they stay on the Tasks page until opened). Never raises."""
+    """Sonic has mentioned these results, so it won't do so again (they stay on the Activities page until opened). Never raises."""
     ids = [i for i in run_ids if i]
     if not ids:
         return 0
@@ -466,9 +466,9 @@ def build_results_text(runs: List[Dict[str, Any]], titles: Dict[str, str], *, as
         for item in list(run.get("items") or [])[:MAX_ITEMS_PER_RUN]:
             lines.append(f"    * {_flat(item.get('title'), 100)} ({_flat(item.get('domain'), 60)}): {_flat(item.get('note'), MAX_NOTE_CHARS)}")
     how = (
-        "They asked about their results, so tell them what these found, plainly and briefly, and that the links are on the Tasks page."
+        "They asked about their results, so tell them what these found, plainly and briefly, and that the links are on the Activities page."
         if asked else
-        "Mention it ONCE, in one short sentence after you have answered what they actually said, as something that is ready for them on the Tasks page; do not list the items unless they ask. If the moment isn't right, skip it."
+        "Mention it ONCE, in one short sentence after you have answered what they actually said, as something that is ready for them on the Activities page; do not list the items unless they ask. If the moment isn't right, skip it."
     )
     return (
         "\nTASK RESULTS WAITING (true; from tasks THIS person set up for you to run on a schedule):\n" + "\n".join(lines) + "\n"

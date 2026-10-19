@@ -404,11 +404,17 @@ async def run_react_loop(
             # The tool steps left, this one included (the last step of the budget is the forced answer): told early, a model asks for everything it still needs in
             # one batched step and keeps the last for the answer, instead of reading one small thing at a time and meeting the limit with nothing written.
             tool_steps_left = budget - 1 - step
-            question_for_step += (
-                f"\n\n(Steps: you have {tool_steps_left} tool step{'s' if tool_steps_left != 1 else ''} left, this one included, and after that you must return "
-                "action=\"final\". Ask for every file or search you still need together in one step if the schema allows a batch. If you were asked to write code, "
-                "your final answer must be the code itself, in full.)"
-            )
+            if required_action and required_action.get("steps_notice") and not _required_action_done():
+                # A change to a connected folder is made by the required action, never by pasted code.
+                question_for_step += (
+                    f"\n\n(Steps: you have {tool_steps_left} tool step{'s' if tool_steps_left != 1 else ''} left, this one included. {required_action['steps_notice']})"
+                )
+            else:
+                question_for_step += (
+                    f"\n\n(Steps: you have {tool_steps_left} tool step{'s' if tool_steps_left != 1 else ''} left, this one included, and after that you must return "
+                    "action=\"final\". Ask for every file or search you still need together in one step if the schema allows a batch. If you were asked to write code, "
+                    "your final answer must be the code itself, in full.)"
+                )
         if needs_retry_nudge:
             failed_tools = ", ".join(sorted(unretried_inconclusive_tools))
             question_for_step += (

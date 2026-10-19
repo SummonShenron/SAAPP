@@ -266,6 +266,7 @@ def build_voice_prompt(
     routines_context: str = "",
     followups_context: str = "",
     task_results_context: str = "",
+    progress_notes_context: str = "",
     meeting_context: str = "",
     headsup_context: str = "",
 ) -> str:
@@ -295,6 +296,8 @@ def build_voice_prompt(
         sections.append(followups_context)
     if task_results_context:
         sections.append(task_results_context)
+    if progress_notes_context:
+        sections.append(progress_notes_context)
     if meeting_context:
         sections.append(meeting_context)
     if headsup_context:

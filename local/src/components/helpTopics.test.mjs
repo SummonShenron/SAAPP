@@ -41,7 +41,7 @@ test('the groups come in order, the developer group is last, and an empty group 
 });
 
 test('the first thing a signed-in person reads is about them, with no technical terms anywhere in the everyday topics', () => {
-  const banned = /x-user-id|directory\.json|\bprincipal\b|LangGraph|\bRAG\b|\baffiliate|\bembedding|\bvector\b|\bJSON\b|\bAPI\b/i;
+  const banned = /x-user-id|directory\.json|\bprincipal\b|LangGraph|\bRAG\b|\baffiliate|\bembedding|\bvector\b|(?<![.\w])JSON\b|\bAPI\b/i;   // JSON is jargon in prose, but a file ending (.json) is something people need to know
   const found = everyday.match(banned);
   assert.equal(found, null, `jargon in the everyday help: ${found && found[0]}`);
 });

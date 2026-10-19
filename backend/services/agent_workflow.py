@@ -106,7 +106,7 @@ from backend.services.react_loop import run_react_loop, _MAX_BATCH_SIZE
 from backend.services import steering
 from backend.services import image_gen, native_loop, ops_incidents, photo_cards
 from backend.services import native_tools as native_tools_module
-from backend.utils import budget_guard, llm_turns
+from backend.utils import budget_guard, llm_turns, progress_notes
 from backend.services.repo_checkout import (
     RepoCheckoutError, fetch_and_extract_checkout, cleanup_checkout, find_declarations_in_checkout,
 )
@@ -127,6 +127,10 @@ TOOL_AGENT_MAX_ITERATIONS = int(os.getenv("TOOL_AGENT_MAX_ITERATIONS", "7"))
 # higher step cap alone wouldn't help if the loop still only gets one nudge to actually use
 # the extra room to double-check itself.
 TOOL_AGENT_MAX_ITERATIONS_DEEP = int(os.getenv("TOOL_AGENT_MAX_ITERATIONS_DEEP", "14"))
+# A change to a file in the person's connected folder needs find, read, propose_local_edits, and the last step is reserved for the answer: four, with no room for a
+# second read. A cost-tuned TOOL_AGENT_MAX_ITERATIONS (4 on the server) left it saying it "ran out of tool steps" on a one-line edit. Edit turns never get fewer than
+# this (low-power mode still caps them: that is the point of it).
+TOOL_AGENT_LOCAL_EDIT_MIN_STEPS = int(os.getenv("TOOL_AGENT_LOCAL_EDIT_MIN_STEPS", "6"))
 TOOL_AGENT_MAX_RETRY_NUDGES = int(os.getenv("TOOL_AGENT_MAX_RETRY_NUDGES", "1"))
 TOOL_AGENT_MAX_RETRY_NUDGES_DEEP = int(os.getenv("TOOL_AGENT_MAX_RETRY_NUDGES_DEEP", "3"))
 # TOOL_AGENT_PROMPT's {question} used to be filled from ONLY state["messages"][-1] — a real
@@ -288,6 +292,11 @@ _LOCAL_EDIT_REQUIRED_ACTION = {
         "propose_local_edits (the user sees a diff with an Apply button, which is the confirmation). "
         "If you haven't found the exact lines yet, read them first, then propose."
     ),
+    # Replaces the loop's "write the code in a fenced block" step notice, which is the opposite of what this turn needs.
+    "steps_notice": (
+        "Your next tool step must be propose_local_edits, with old_string copied exactly from what you have read (ask for one more read in the same step only if you "
+        "truly have not seen the lines yet). Do not paste the change as code for them to apply; the diff card is how they apply it."
+    ),
 }
 _SEARCH_LITERAL_MAX_MATCHES = 50
 _SEARCH_LITERAL_FETCH_CONCURRENCY = 8
@@ -424,6 +433,7 @@ _AGENT_NODE_MAP = {
     "execute_write": "execute_write_node",
     "image_card": "image_card_node",
     "image_gen": "image_gen_node",
+    "progress_note": "progress_note_node",
 }
 
 # An identity map over every node the plan mechanism can ever dispatch to — used as the
@@ -759,6 +769,14 @@ def build_agent_plan(intent: str, state: dict) -> dict:
     # Words on a photo ("put Merry Christmas across the bottom of this"), or a short change to the card just made. Noticed here, in code, so no other turn pays
     # anything for it (backend/services/photo_cards.py); the node itself can still hand the message back if it turns out not to be about a picture.
     _messages = state.get("messages") or []
+    # Explicit progress-note adds and edits are handled in code, without asking the model to interpret note text.
+    if _messages and (
+        progress_notes.parse_log_request(_content_of(_messages[-1])) is not None
+        or progress_notes.parse_update_request(_content_of(_messages[-1])) is not None
+    ):
+        logger.info("[Coordinator] Routing to the progress note handler.")
+        state["last_intent"] = "progress_note"
+        return {"agents": ["progress_note", "formatter"], "skip": []}
     if _messages and photo_cards.wants_card(_content_of(_messages[-1]), state.get("image_refs"), _messages[:-1]):
         logger.info("[Coordinator] Routing to the photo card maker.")
         state["last_intent"] = "image_card"
@@ -1383,6 +1401,81 @@ async def image_card_node(state: GraphState) -> dict:
     if outcome.kind == photo_cards.NOT_FOR_ME:
         return {**state, "relevance_grade": "conversational"}
     return {**state, "relevance_grade": "tool_agent", "content_to_format": outcome.facts, "generated_images": outcome.images}
+
+
+async def progress_note_node(state: GraphState) -> dict:
+    """Handles explicit progress-note adds and edits without a model call."""
+    username = state.get("username") or ""
+    message = _content_of(state["messages"][-1])
+    update = progress_notes.parse_update_request(message)
+    parsed = progress_notes.parse_log_request(message) if update is None else None
+    if update is None and parsed is None:
+        return {**state, "relevance_grade": "conversational"}
+    if is_guest_username(username):
+        return {**state, "relevance_grade": "tool_agent", "content_to_format": "Progress notes are for signed-in accounts, so they have someone to belong to. Say so kindly."}
+    db = get_db()
+    if db is None:
+        return {**state, "relevance_grade": "tool_agent", "content_to_format": "Progress notes can't be saved right now. Say so, and that they can try again in a moment."}
+    tz = await asyncio.to_thread(get_user_timezone, username)
+    if update is not None:
+        operation, reference, text, label = update
+        matches = await asyncio.to_thread(progress_notes.find_notes_by_reference, db, username, reference)
+        if not matches:
+            return {**state, "relevance_grade": "tool_agent", "content_to_format": (
+                f"No progress note belonging to this account contains \"{reference}\". Nothing was changed. "
+                "Ask them to quote a distinctive part of the note and try again."
+            )}
+        if len(matches) > 1:
+            choices = "\n".join(f"- {note['day']}: {note['text']}" for note in matches[:5])
+            return {**state, "relevance_grade": "tool_agent", "content_to_format": (
+                f"More than one of their notes matches \"{reference}\", so nothing was changed:\n{choices}\n"
+                "Ask them to quote a more distinctive part of the note."
+            )}
+
+        existing = matches[0]
+        if operation == "append":
+            addition = progress_notes.clean_text(text)
+            if len(addition) < progress_notes.MIN_TEXT_CHARS:
+                return {**state, "relevance_grade": "tool_agent", "content_to_format": "The added text is too short to save. Nothing was changed."}
+            text_to_save = f"{existing['text']} — {addition}"
+            changes = {"text": text_to_save}
+            if label:
+                changes["label"] = label
+        else:
+            text_to_save = progress_notes.clean_text(text)
+            if len(" ".join(text.split())) > progress_notes.MAX_TEXT_CHARS:
+                return {**state, "relevance_grade": "tool_agent", "content_to_format": (
+                    f"The replacement is longer than the {progress_notes.MAX_TEXT_CHARS}-character note limit. Nothing was changed."
+                )}
+            if len(text_to_save) < progress_notes.MIN_TEXT_CHARS:
+                return {**state, "relevance_grade": "tool_agent", "content_to_format": "The replacement is too short to save. Nothing was changed."}
+            changes = {"text": text_to_save}
+
+        if len(text_to_save) > progress_notes.MAX_TEXT_CHARS:
+            return {**state, "relevance_grade": "tool_agent", "content_to_format": (
+                f"That change would exceed the {progress_notes.MAX_TEXT_CHARS}-character note limit. Nothing was changed."
+            )}
+        note = await asyncio.to_thread(progress_notes.update_note, db, username, existing["id"], changes)
+        if note is None:
+            return {**state, "relevance_grade": "tool_agent", "content_to_format": "That note could not be updated. Nothing was changed."}
+        action = "Added the new text to" if operation == "append" else "Updated"
+        label_text = f" It is now labeled {note['label']}." if label else ""
+        return {**state, "relevance_grade": "tool_agent", "content_to_format": (
+            f"{action} their progress note: \"{note['text']}\".{label_text} "
+            "Confirm the change briefly without adding interpretation or praise."
+        )}
+
+    label, text = parsed
+    note, issue = await asyncio.to_thread(progress_notes.add_note, db, username, text, label, "chat", tz)
+    if note is None:
+        return {**state, "relevance_grade": "tool_agent", "content_to_format": f"The note was not saved: {issue} Tell them that plainly."}
+    this_week = await asyncio.to_thread(progress_notes.count_this_week, db, username, tz)
+    kind = {"win": "a win", "blocker": "a blocker"}.get(note["label"], "a progress note")
+    return {**state, "relevance_grade": "tool_agent", "content_to_format": (
+        f"They asked you to log {kind}, and it is saved exactly as they wrote it: \"{note['text']}\". That makes {this_week} logged in the last seven days. "
+        "Confirm in one short, warm line. Do not add praise beyond what they wrote, comment on what it means, or add any detail. If it fits, say it will be in front of you when they next start "
+        "office hours, and that they can see, edit or delete their notes on the Office Hours page."
+    )}
 
 
 async def image_gen_node(state: GraphState) -> dict:
@@ -3114,7 +3207,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                     act=_counted_act,
                     is_unsafe=_is_unsafe,
                     max_iterations=budget_guard.tool_steps(
-                        TOOL_AGENT_MAX_ITERATIONS_DEEP if wide_budget else TOOL_AGENT_MAX_ITERATIONS, budget_state
+                        max(TOOL_AGENT_MAX_ITERATIONS_DEEP if wide_budget else TOOL_AGENT_MAX_ITERATIONS, TOOL_AGENT_LOCAL_EDIT_MIN_STEPS if edit_turn else 0),
+                        budget_state,
                     ),
                     node_name="tool_agent_node",
                     initial_attempts=resumed_attempts,
@@ -4396,6 +4490,7 @@ def create_workflow(vector_store, user_memory_vector_store=None, checkpointer=No
     workflow.add_node("execute_write_node", execute_write_node)
     workflow.add_node("image_card_node", image_card_node)
     workflow.add_node("image_gen_node", image_gen_node)
+    workflow.add_node("progress_note_node", progress_note_node)
 
     workflow.add_edge(START, "coordinator_node")
     workflow.add_conditional_edges("coordinator_node", coordinator_router, _PLAN_DESTINATIONS)
@@ -4407,7 +4502,7 @@ def create_workflow(vector_store, user_memory_vector_store=None, checkpointer=No
     for plan_driven_node in (
         "memory_save_node", "memory_recall_node", "summarizer_node",
         "tool_agent_node", "pr_summary", "propose_write_node", "execute_write_node",
-        "conversational_node", "image_card_node", "image_gen_node",
+        "conversational_node", "image_card_node", "image_gen_node", "progress_note_node",
     ):
         workflow.add_conditional_edges(plan_driven_node, plan_continue_router, _PLAN_DESTINATIONS)
 

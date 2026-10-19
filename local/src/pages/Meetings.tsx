@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { ProgressNotes } from '../components/ProgressNotes';
 import { useNavigate } from 'react-router-dom';
 import { api, getEffectivePrincipal, type Meeting, type MeetingNote, type MeetingSpec } from '../api';
 import './__styles__/SelfService.css';
@@ -187,6 +188,7 @@ export const MeetingsPage: React.FC = () => {
       </header>
 
       <div className="vertical-card-stack">
+        <ProgressNotes />
         <section className="service-card memory-card">
           <div className="card-badge">{meetings.length} OF {maxMeetings}</div>
           <h2>Your Meetings</h2>
