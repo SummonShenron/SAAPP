@@ -177,6 +177,8 @@ from backend.utils.google_calendar_utils import (
 )
 from backend.services.google_calendar_oauth import GoogleCalendarOAuth
 from backend.utils.fallback_utils import rewrite_fallback
+from backend.utils import microsoft_utils
+from backend.services.microsoft_oauth import MicrosoftOAuth
 from backend.services.reward_evaluator import evaluate_response, build_correction_prompt, REWARD_EVAL_SOURCE_TYPES
 from backend.logging.sass_logger import setup_logging
 from backend.services.orchestrator import startup_services
@@ -269,6 +271,7 @@ async def lifespan(app: FastAPI):
     watchdog_task = loop_watchdog.start()  # logs when the event loop is blocked, and what was waiting (backend/utils/loop_watchdog.py)
     if get_db() is not None:
         ensure_calendar_indexes()
+        microsoft_utils.ensure_indexes()
     yield
     # Cleanup tasks would go here
     retention_task.cancel()
@@ -2760,6 +2763,63 @@ async def disconnect_calendar(current_user = Depends(get_current_user)):
     username = current_user.get("sub")
     GoogleCalendarOAuth().revoke(username)
     delete_calendar_connection(username)
+    return {"connected": False}
+
+
+@app.post("/api/microsoft/connect/start")
+async def start_microsoft_connection(return_to: str = Query(...), current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    if username in microsoft_utils.MICROSOFT_LOCKED_USERS:
+        raise HTTPException(status_code=403, detail="Microsoft is not available for this account")
+    if not _is_allowed_calendar_return_to(return_to):
+        raise HTTPException(status_code=400, detail="return_to must be a trusted application URL")
+    try:
+        url, state, code_verifier = MicrosoftOAuth().authorization_url()
+    except ValueError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    await asyncio.to_thread(microsoft_utils.create_pending, state, username, code_verifier, return_to)
+    return {"authorization_url": url}
+
+
+@app.get("/api/microsoft/callback")
+async def microsoft_oauth_callback(request: Request, state: str = Query(...)):
+    # Like the Google callback this is a bare browser redirect with no auth token: the pending record, looked up by state alone, says who started the flow.
+    default_target = "https://www.sonicassistant.com/#/integrations"
+    pending = await asyncio.to_thread(microsoft_utils.get_pending, state)
+    if not pending:
+        return RedirectResponse(f"{default_target}?microsoft_error=expired")
+
+    return_to = pending.get("return_to") or default_target
+    username = pending.get("username")
+    if request.query_params.get("error"):
+        await asyncio.to_thread(microsoft_utils.consume_pending, state)
+        return RedirectResponse(f"{return_to}?microsoft_error=access_denied")
+
+    code = request.query_params.get("code")
+    if not code:
+        await asyncio.to_thread(microsoft_utils.consume_pending, state)
+        return RedirectResponse(f"{return_to}?microsoft_error=connection_failed")
+    try:
+        connection = await asyncio.to_thread(MicrosoftOAuth().build_connection, code, pending.get("code_verifier"))
+        await asyncio.to_thread(lambda: microsoft_utils.save_connection(username, **connection))
+        await asyncio.to_thread(microsoft_utils.consume_pending, state)
+    except Exception:
+        logger.exception("[microsoft_oauth_callback] Failed to complete the Microsoft connection for %s", username)
+        return RedirectResponse(f"{return_to}?microsoft_error=connection_failed")
+
+    return RedirectResponse(f"{return_to}?connected=microsoft")
+
+
+@app.get("/api/microsoft/status")
+async def get_microsoft_status(current_user = Depends(get_current_user)):
+    return await asyncio.to_thread(microsoft_utils.get_connection_status, current_user.get("sub"))
+
+
+@app.post("/api/microsoft/disconnect")
+async def disconnect_microsoft(current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    await asyncio.to_thread(MicrosoftOAuth().revoke, username)
+    await asyncio.to_thread(microsoft_utils.delete_connection, username)
     return {"connected": False}
 
 

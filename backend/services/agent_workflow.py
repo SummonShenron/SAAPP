@@ -65,6 +65,8 @@ from backend.services.google_calendar_service import list_events_for_day, create
 from backend.services.google_gmail_service import search_messages, get_message_detail, get_attachment_text, send_message
 from backend.services.google_docs_service import append_text as append_doc_text
 from backend.services.google_drive_service import search_files as search_drive_files_fn, read_file as read_drive_file_fn
+from backend.services import microsoft_tools
+from backend.utils import microsoft_utils
 from backend.services.python_sandbox import run_python_sandboxed, SAFE_IMPORT_ALLOWLIST
 from backend.services.browser_tool import (
     BrowserSession, browser_navigate, browser_read_text, browser_click, browser_type, browser_screenshot,
@@ -651,7 +653,7 @@ def classify_intent(message: str, state: dict = None) -> str:
     # almost always a read/lookup question ("what's on my google calendar today", "am I free
     # tomorrow on google calendar") — route to the general tool_agent loop, which has
     # list_google_calendar_events as one of its actions.
-    if "google calendar" in msg:
+    if "google calendar" in msg or "outlook calendar" in msg:
         return "tool_agent"
     # Checked before the bare "gmail"/"inbox" read-fallback below, same reasoning as
     # create_pr/create_calendar_event sitting above their own generic catches — an explicit send
@@ -660,7 +662,7 @@ def classify_intent(message: str, state: dict = None) -> str:
         return "send_email"
     # A bare mention of Gmail/inbox that isn't an explicit send request is a read/lookup —
     # route to tool_agent, which has search_gmail/read_gmail_message/get_gmail_attachment.
-    if re.search(r'\b(?:gmail|my inbox|my email)\b', msg):
+    if re.search(r'\b(?:gmail|my inbox|my email|outlook|hotmail|onedrive)\b', msg):
         return "tool_agent"
     # Use word boundary so 'process' or 'provide' won't match 'pr'
     if re.search(r'\b(review pr|pull request|pr summary)\b', msg):
@@ -2841,6 +2843,27 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             "file's content as text — works for Google Docs, Google Sheets (as CSV), and plain "
             "text files; returns an error for file types with no text representation (e.g. "
             "Slides, images).",
+            "- list_outlook_calendar_events — args: date (YYYY-MM-DD); lists events on the CURRENT "
+            "USER's own connected Outlook (Microsoft) calendar for that day. Use this, not the "
+            "Google calendar tool, when the person says Outlook or Microsoft. Returns an error "
+            "telling them to connect Microsoft under Integrations if they haven't yet.",
+            "- search_outlook_mail — args: query (plain words, or Microsoft search syntax like "
+            "'from:sam subject:report'), max_results (optional, default 10); returns matching "
+            "emails ({id, subject, from, date, snippet}) from the CURRENT USER's own Outlook "
+            "(Microsoft) mailbox — use read_outlook_message next on whichever looks relevant.",
+            "- read_outlook_message — args: message_id (from a search_outlook_mail result); returns "
+            "the email's subject/from/date/body and its attachments ({filename, mime_type, "
+            "attachment_id, size}). If the content you need is in an attachment, call "
+            "get_outlook_attachment next.",
+            "- get_outlook_attachment — args: message_id, attachment_id (both from a "
+            "read_outlook_message result); returns the attachment's text (PDF, Word, spreadsheets "
+            "and plain text are readable).",
+            "- search_onedrive_files — args: query (plain words matched against file names and "
+            "contents), max_results (optional, default 10); returns matching files ({id, name, "
+            "mimeType, modifiedTime}) from the CURRENT USER's own OneDrive.",
+            "- read_onedrive_file — args: file_id (from a search_onedrive_files result); returns "
+            "the file's text (PDF, Word, spreadsheets and plain text are readable); an error for "
+            "folders, pictures and very large files.",
             "- propose_append_target_doc — args: content (the text you want appended — you must "
             "have already gathered/composed this yourself via other actions first, e.g. after "
             "reading and summarizing a Gmail attachment or Drive file); use the standard "
@@ -3128,6 +3151,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                         return "No matching files found."
                     return "\n".join(f"- [{f['id']}] {f['name']} ({f['mimeType']}, modified {f.get('modifiedTime', '?')})" for f in results)
                 return await asyncio.to_thread(read_drive_file_fn, token, args.get("file_id"))
+            if tool_action in microsoft_tools.TOOLS:
+                return await microsoft_tools.run_tool(tool_action, username, args)
             if tool_action in {"search_library", "list_library_files", "read_library_file"}:
                 if not library_scope:
                     return "ERROR: this person has no document library to search."
@@ -3359,10 +3384,14 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                             "content_to_format": incomplete_message,
                             "messages": new_messages,
                         }
-                    if not has_granted_scope(username, "https://www.googleapis.com/auth/gmail.send"):
+                    _last_user = state.get("messages", [])[-1].content if state.get("messages") else ""
+                    _google_ok = has_granted_scope(username, "https://www.googleapis.com/auth/gmail.send")
+                    _send_provider = microsoft_tools.pick_provider(
+                        str(_last_user), _google_ok, microsoft_tools.microsoft_usable(username, microsoft_utils.SCOPE_MAIL_SEND, _google_ok, str(_last_user)))
+                    if _send_provider is None:
                         no_scope_message = (
                             "You haven't connected Gmail send access yet — head to **Integrations** "
-                            "to connect or reconnect your Google account, then ask me to send this again."
+                            "to connect or reconnect your Google account (or Outlook), then ask me to send this again."
                         )
                         new_messages = list(state.get("messages", [])) + [AIMessage(content=no_scope_message)]
                         return {
@@ -3376,8 +3405,10 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                     # Same card format _draft_send_email produces, so _recover_send_email's
                     # regex-based reconstruction (used if the checkpoint is reloaded mid-approval)
                     # matches this path too, without needing a parallel recovery routine.
+                    _account_line = f"{microsoft_tools.ACCOUNT_LINE}\n" if _send_provider == "microsoft" else ""
                     summary_line = (
                         "Ready to send this email:\n"
+                        f"{_account_line}"
                         f"- **To:** {to}\n"
                         f"- **Subject:** {subject}\n\n"
                         f"**Body:**\n{body}"
@@ -3388,9 +3419,12 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                         "*Please Approve, Modify parameters, or Reject this action.*"
                     )
                     new_messages = list(state.get("messages", [])) + [AIMessage(content=approval_message)]
+                    _send_details = {"to": to, "subject": subject, "body": body}
+                    if _send_provider == "microsoft":
+                        _send_details["provider"] = "microsoft"
                     return {
                         **state,
-                        "pending_action": {"action_type": "send_email", "details": {"to": to, "subject": subject, "body": body}},
+                        "pending_action": {"action_type": "send_email", "details": _send_details},
                         "relevance_grade": "hitl_approval_required",
                         "generation": approval_message,
                         "content_to_format": approval_message,
@@ -4028,14 +4062,17 @@ def _draft_create_calendar_event(state: GraphState) -> tuple[dict, str] | tuple[
     see propose_write_node's (None, message) short-circuit — when the user has no Google Calendar
     connection yet, since there is nothing an approval card could meaningfully offer to execute."""
     username = state.get("username")
-    if not get_calendar_connection_status(username).get("connected"):
-        return None, (
-            "You haven't connected Google Calendar yet — head to **Integrations** to connect "
-            "your account, then ask me to schedule this again."
-        )
-
     messages = state.get("messages", [])
     last_msg = messages[-1].content.strip() if messages else ""
+    google_ok = bool(get_calendar_connection_status(username).get("connected"))
+    provider = microsoft_tools.pick_provider(
+        last_msg, google_ok, microsoft_tools.microsoft_usable(username, microsoft_utils.SCOPE_CALENDAR, google_ok, last_msg))
+    if provider is None:
+        return None, (
+            "You haven't connected a calendar yet — head to **Integrations** to connect "
+            "Google Calendar or Outlook, then ask me to schedule this again."
+        )
+
     tz = get_user_timezone(username)
     now = datetime.now(ZoneInfo(tz)).strftime("%Y-%m-%d %H:%M (%A)")
 
@@ -4059,10 +4096,15 @@ def _draft_create_calendar_event(state: GraphState) -> tuple[dict, str] | tuple[
         f"- **Title:** {summary}\n"
         f"- **When:** {start_iso} ({tz}), {duration_minutes} minutes"
     )
+    if provider == "microsoft":
+        details["provider"] = "microsoft"
+        summary_line += f"\n{microsoft_tools.ACCOUNT_LINE}"
     return details, summary_line
 
 
 def _execute_create_calendar_event(username: str, details: dict) -> str:
+    if details.get("provider") == "microsoft":
+        return microsoft_tools.execute_create_event(username, details)
     try:
         token = GoogleCalendarOAuth().get_valid_access_token(username)
     except GoogleCalendarConnectionError as error:
@@ -4093,25 +4135,31 @@ def _recover_create_calendar_event(messages: list, repo_hint: str) -> dict | Non
         title_match = re.search(r"-\s*\*\*Title:\*\*\s*(.+)", content)
         when_match = re.search(r"-\s*\*\*When:\*\*\s*(\S+)\s*\(([^)]+)\),\s*(\d+)\s*minutes", content)
         if title_match and when_match:
-            return {
+            recovered = {
                 "summary": title_match.group(1).strip(),
                 "start_iso": when_match.group(1).strip(),
                 "timezone": when_match.group(2).strip(),
                 "duration_minutes": int(when_match.group(3)),
             }
+            if microsoft_tools.provider_from_card(content):
+                recovered["provider"] = "microsoft"
+            return recovered
     return None
 
 
 def _draft_update_calendar_event(state: GraphState) -> tuple[dict, str] | tuple[None, str]:
     username = state.get("username")
-    if not get_calendar_connection_status(username).get("connected"):
-        return None, (
-            "You haven't connected Google Calendar yet — head to **Integrations** to connect "
-            "your account, then ask me to update this again."
-        )
-
     messages = state.get("messages", [])
     last_msg = messages[-1].content.strip() if messages else ""
+    google_ok = bool(get_calendar_connection_status(username).get("connected"))
+    provider = microsoft_tools.pick_provider(
+        last_msg, google_ok, microsoft_tools.microsoft_usable(username, microsoft_utils.SCOPE_CALENDAR, google_ok, last_msg))
+    if provider is None:
+        return None, (
+            "You haven't connected a calendar yet — head to **Integrations** to connect "
+            "Google Calendar or Outlook, then ask me to update this again."
+        )
+
     tz = get_user_timezone(username)
     now = datetime.now(ZoneInfo(tz)).strftime("%Y-%m-%d %H:%M (%A)")
 
@@ -4142,11 +4190,16 @@ def _draft_update_calendar_event(state: GraphState) -> tuple[dict, str] | tuple[
         lines.append(f"- **Move to:** {details['start_iso']} ({tz})")
     if not details.get("new_summary") and not details.get("start_iso"):
         lines.append("- **Change:** (no changes specified — nothing will happen)")
+    if provider == "microsoft":
+        details["provider"] = "microsoft"
+        lines.append(microsoft_tools.ACCOUNT_LINE)
     summary_line = "\n".join(lines)
     return details, summary_line
 
 
 def _execute_update_calendar_event(username: str, details: dict) -> str:
+    if details.get("provider") == "microsoft":
+        return microsoft_tools.execute_update_event(username, details)
     try:
         token = GoogleCalendarOAuth().get_valid_access_token(username)
     except GoogleCalendarConnectionError as error:
@@ -4201,6 +4254,8 @@ def _recover_update_calendar_event(messages: list, repo_hint: str) -> dict | Non
         if move_match:
             details["start_iso"] = move_match.group(1).strip()
             details["timezone"] = move_match.group(2).strip()
+        if microsoft_tools.provider_from_card(content):
+            details["provider"] = "microsoft"
         return details
     return None
 
@@ -4243,14 +4298,16 @@ def _recover_append_target_doc(messages: list, repo_hint: str) -> dict | None:
 
 def _draft_send_email(state: GraphState) -> tuple[dict, str] | tuple[None, str]:
     username = state.get("username")
-    if not has_granted_scope(username, "https://www.googleapis.com/auth/gmail.send"):
-        return None, (
-            "You haven't connected Gmail send access yet — head to **Integrations** to connect "
-            "or reconnect your Google account, then ask me to send this again."
-        )
-
     messages = state.get("messages", [])
     last_msg = messages[-1].content.strip() if messages else ""
+    google_ok = has_granted_scope(username, "https://www.googleapis.com/auth/gmail.send")
+    provider = microsoft_tools.pick_provider(
+        last_msg, google_ok, microsoft_tools.microsoft_usable(username, microsoft_utils.SCOPE_MAIL_SEND, google_ok, last_msg))
+    if provider is None:
+        return None, (
+            "You haven't connected Gmail send access yet — head to **Integrations** to connect "
+            "or reconnect your Google account (or Outlook), then ask me to send this again."
+        )
 
     try:
         formatted_prompt = DRAFT_SEND_EMAIL_PROMPT.format(user_message=last_msg)
@@ -4267,8 +4324,13 @@ def _draft_send_email(state: GraphState) -> tuple[dict, str] | tuple[None, str]:
         return None, "I couldn't figure out the email details from that — could you give me a recipient, subject, and what to say?"
 
     details = {"to": to, "subject": subject, "body": body}
+    account_line = ""
+    if provider == "microsoft":
+        details["provider"] = "microsoft"
+        account_line = f"{microsoft_tools.ACCOUNT_LINE}\n"
     summary_line = (
         "Ready to send this email:\n"
+        f"{account_line}"
         f"- **To:** {to}\n"
         f"- **Subject:** {subject}\n\n"
         f"**Body:**\n{body}"
@@ -4277,6 +4339,8 @@ def _draft_send_email(state: GraphState) -> tuple[dict, str] | tuple[None, str]:
 
 
 def _execute_send_email(username: str, details: dict) -> str:
+    if details.get("provider") == "microsoft":
+        return microsoft_tools.execute_send_email(username, details)
     try:
         token = GoogleCalendarOAuth().get_valid_access_token(username)
     except GoogleCalendarConnectionError as error:
@@ -4307,11 +4371,14 @@ def _recover_send_email(messages: list, repo_hint: str) -> dict | None:
         subject_match = re.search(r"-\s*\*\*Subject:\*\*\s*(.+)", content)
         body_match = re.search(r"\*\*Body:\*\*\n([\s\S]*?)(?=\n\n\*Please|\Z)", content)
         if to_match and subject_match and body_match:
-            return {
+            recovered = {
                 "to": to_match.group(1).strip(),
                 "subject": subject_match.group(1).strip(),
                 "body": body_match.group(1).strip(),
             }
+            if microsoft_tools.provider_from_card(content):
+                recovered["provider"] = "microsoft"
+            return recovered
     return None
 
 

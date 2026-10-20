@@ -536,20 +536,20 @@ AVAILABLE PATHWAYS & FLAGS:
    - Set to TRUE whenever the user requests to open, create, or file a GitHub issue or bug report (e.g., "open an issue for this", "file a bug about the login flow", "create a GitHub issue").
    - Do NOT set this for a Pull Request request (that's needs_create_pr) or a general question about the repo (that's needs_github_search).
 8c. "needs_create_calendar_event":
-   - Set to TRUE whenever the user asks to schedule, add, create, or book a meeting/event/call/appointment on their Google Calendar (e.g., "schedule a call with Sam tomorrow at 2pm", "add lunch with Sarah to my calendar", "book a 30 minute meeting Friday morning").
+   - Set to TRUE whenever the user asks to schedule, add, create, or book a meeting/event/call/appointment on their Google Calendar or Outlook calendar (e.g., "schedule a call with Sam tomorrow at 2pm", "add lunch with Sarah to my calendar", "book a 30 minute meeting Friday morning").
    - This is a real Google Calendar write, distinct from needs_retrieval's booking/help-center disambiguation below.
 8d. "needs_update_calendar_event":
-   - Set to TRUE whenever the user asks to move, reschedule, rename, or otherwise change an existing Google Calendar event (e.g., "move my 2pm meeting to 3pm", "reschedule the call with Sam to Friday", "rename my 10am event").
+   - Set to TRUE whenever the user asks to move, reschedule, rename, or otherwise change an existing Google Calendar or Outlook calendar event (e.g., "move my 2pm meeting to 3pm", "reschedule the call with Sam to Friday", "rename my 10am event").
 8e. "needs_calendar_lookup":
-   - Set to TRUE whenever the user asks to check, view, or list what's on their real Google Calendar, or asks about their availability (e.g., "what's on my calendar tomorrow", "am I free Friday afternoon", "do I have any meetings today").
+   - Set to TRUE whenever the user asks to check, view, or list what's on their real Google Calendar or Outlook calendar, or asks about their availability (e.g., "what's on my calendar tomorrow", "am I free Friday afternoon", "do I have any meetings today", "what's on my Outlook calendar").
    - Do NOT set this for needs_create_calendar_event/needs_update_calendar_event (those are writes, this is read-only).
 8f. "needs_gmail_lookup":
-   - Set to TRUE whenever the user asks to check, search, read, or summarize their real Gmail inbox (e.g., "what are the job-related emails in my inbox", "check for an email from X", "summarize my unread emails").
+   - Set to TRUE whenever the user asks to check, search, read, or summarize their real Gmail or Outlook (Microsoft) inbox (e.g., "what are the job-related emails in my inbox", "check for an email from X", "summarize my unread emails", "any new mail in Outlook").
    - Also set this TRUE for a request that ultimately ends in a write elsewhere (e.g. "check for my report email and update my document") — the task starts as a Gmail read here, the same way a database write starts from needs_code_interpreter before anything is actually written.
    - Also set this TRUE whenever the user asks to append, add, put, save or paste text into their Google Doc or "target document" ("append it to my weekly reports doc", "put that summary in the doc", "add this to my notes document"), even when the text to add is already in the conversation and no email or file needs reading. Writing to their document is a proposal only the tool agent can make (the user then approves it), so it is never answered from chat, and never answered with "I can't edit documents".
    - Do NOT set this for needs_send_email below (composing/sending is a write, this is read-only).
 8g. "needs_drive_lookup":
-   - Set to TRUE whenever the user asks to find, search, read, or summarize the contents of a file in their real Google Drive (e.g., "find my budget spreadsheet", "what's in the Q3 planning doc").
+   - Set to TRUE whenever the user asks to find, search, read, or summarize the contents of a file in their real Google Drive or OneDrive (e.g., "find my budget spreadsheet", "what's in the Q3 planning doc", "search my OneDrive for the resume").
 8h. "needs_send_email":
    - Set to TRUE whenever the user explicitly asks to send, compose, or reply to an email (e.g., "send an email to sam@example.com about the meeting", "email the team that I'll be late").
    - Do NOT set this for reading/searching email — that's needs_gmail_lookup above.
