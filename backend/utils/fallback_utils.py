@@ -7,7 +7,7 @@ import asyncio
 import logging
 from backend.components.constraints import get_system_prompt, format_docs
 from backend.utils.app_utils import format_history_as_text
-from backend.utils.normalize_utils import ensure_str
+from backend.utils.normalize_utils import chunk_text, ensure_str
 logger = logging.getLogger("SASS Logger")
 
 async def rewrite_fallback(
@@ -96,7 +96,7 @@ async def rewrite_fallback(
     full_response = ""
     try:
         async for chunk in get_stream_llm(username).astream(prompt):
-            token = ensure_str(chunk if isinstance(chunk, str) else getattr(chunk, "content", None) or chunk)
+            token = chunk_text(chunk)
             if not token:
                 continue
 

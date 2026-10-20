@@ -101,40 +101,48 @@ async def _refresh_shelf(
             return {"status": "skipped"}
         chosen = await asyncio.to_thread(shelf.next_topic, db)
         topic, query = chosen["topic"], chosen["query"]
-        await asyncio.to_thread(shelf.record_search, db, topic["id"], now)
         known, blocked = await asyncio.gather(asyncio.to_thread(shelf.known_keys, db), asyncio.to_thread(shelf.blocked_domains, db))
-        results = await asyncio.to_thread(search, query)
-        tried, reasons = 0, {}
-        for result in results:
-            url = shelf.normalize_url(str(result.get("link") or ""))
-            reason = shelf.acceptable_source(url, known, blocked)
-            if reason:
-                reasons[reason] = reasons.get(reason, 0) + 1
-                continue
-            if tried >= MAX_PAGES_TRIED:
-                break
-            tried += 1
-            page = await asyncio.to_thread(fetch, url)
-            text = (getattr(page, "text", None) or "").strip()
-            final_url = shelf.normalize_url(getattr(page, "final_url", None) or url)
-            if len(text) < shelf.MIN_PAGE_CHARS:
-                reasons["too little text"] = reasons.get("too little text", 0) + 1
-                continue
-            reason = shelf.acceptable_source(final_url, known, blocked)  # a redirect may have landed somewhere that is not allowed
-            if reason:
-                reasons[reason] = reasons.get(reason, 0) + 1
-                continue
-            title = shelf.clean_title(result.get("title"))
-            summary = await _summarize(invoke, title, text, topic.get("about", ""))
-            if not summary:
-                reasons["summary refused"] = reasons.get("summary refused", 0) + 1
-                continue
-            doc = await asyncio.to_thread(
-                lambda: shelf.add_item(db, url=final_url, title=title or shelf.domain_of(final_url), summary=summary, topic=topic["id"], now=now)
-            )
-            await asyncio.to_thread(shelf.trim_to_limit, db)
-            logger.info("[shelf] added an item from %s for the %s topic.", doc["domain"], topic["id"])
-            return {"status": "added", "topic": topic["id"], "domain": doc["domain"], "key": doc["_id"]}
+        reasons: Dict[str, int] = {}
+        attempted: set = set()
+        for attempt in range(shelf.QUERY_ATTEMPTS):
+            if attempt:  # the first search added nothing: try another query on the same topic
+                query = await asyncio.to_thread(shelf.next_query, db, topic)
+            await asyncio.to_thread(shelf.record_search, db, topic["id"], now, query)
+            results = await asyncio.to_thread(search, query)
+            tried = 0
+            for result in results:
+                url = shelf.normalize_url(str(result.get("link") or ""))
+                reason = shelf.acceptable_source(url, known, blocked)
+                if reason:
+                    reasons[reason] = reasons.get(reason, 0) + 1
+                    continue
+                if tried >= MAX_PAGES_TRIED:
+                    break
+                if url in attempted:  # a retry's search returned a page this refresh already read and refused
+                    continue
+                attempted.add(url)
+                tried += 1
+                page = await asyncio.to_thread(fetch, url)
+                text = (getattr(page, "text", None) or "").strip()
+                final_url = shelf.normalize_url(getattr(page, "final_url", None) or url)
+                if len(text) < shelf.MIN_PAGE_CHARS:
+                    reasons["too little text"] = reasons.get("too little text", 0) + 1
+                    continue
+                reason = shelf.acceptable_source(final_url, known, blocked)  # a redirect may have landed somewhere that is not allowed
+                if reason:
+                    reasons[reason] = reasons.get(reason, 0) + 1
+                    continue
+                title = shelf.clean_title(result.get("title"))
+                summary = await _summarize(invoke, title, text, topic.get("about", ""))
+                if not summary:
+                    reasons["summary refused"] = reasons.get("summary refused", 0) + 1
+                    continue
+                doc = await asyncio.to_thread(
+                    lambda: shelf.add_item(db, url=final_url, title=title or shelf.domain_of(final_url), summary=summary, topic=topic["id"], now=now)
+                )
+                await asyncio.to_thread(shelf.trim_to_limit, db)
+                logger.info("[shelf] added an item from %s for the %s topic.", doc["domain"], topic["id"])
+                return {"status": "added", "topic": topic["id"], "domain": doc["domain"], "key": doc["_id"]}
         logger.info("[shelf] nothing added for the %s topic (%s).", topic["id"], reasons or "no results")
         return {"status": "nothing", "topic": topic["id"], "reasons": reasons}
     except Exception:

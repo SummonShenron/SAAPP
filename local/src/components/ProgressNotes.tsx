@@ -13,8 +13,8 @@ function when(note: ProgressNote): string {
   return Number.isNaN(date.getTime()) ? note.day : date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
-/** Progress notes: what you log between office hours. Sonic lists the ones no meeting has covered when office hours starts, in your own words. */
-export const ProgressNotes: React.FC = () => {
+/** One meeting's progress notes: what you log to it between sessions. Sonic lists the ones that meeting has not covered when you start it, in your own words. */
+export const ProgressNotes: React.FC<{ meetingId: string; meetingName: string }> = ({ meetingId, meetingName }) => {
   const [notes, setNotes] = useState<ProgressNote[]>([]);
   const [maxText, setMaxText] = useState(400);
   const [loading, setLoading] = useState(true);
@@ -27,19 +27,19 @@ export const ProgressNotes: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    api.listProgressNotes()
+    api.listProgressNotes(meetingId)
       .then(data => { if (!cancelled) { setNotes(data.notes); setMaxText(data.limits.max_text); } })
       .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load your progress notes.'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, []);
+  }, [meetingId]);
 
   const add = async () => {
     if (!text.trim()) return;
     setSaving(true);
     setError('');
     try {
-      const created = await api.addProgressNote(text.trim(), label);
+      const created = await api.addProgressNote(meetingId, text.trim(), label);
       setNotes(prev => [created, ...prev]);
       setText('');
       setLabel('note');
@@ -73,12 +73,11 @@ export const ProgressNotes: React.FC = () => {
   const waiting = notes.filter(n => !n.covered).length;
 
   return (
-    <section className="service-card memory-card">
-      <div className="card-badge">{waiting} WAITING</div>
-      <h2>Progress notes</h2>
-      <p className="card-description">
-        Log what happens between office hours, in your own words. When you start office hours, Sonic has the notes no meeting has covered yet in front of it, and can start from them instead of
-        from memory. You can also log from any chat: start a message with <strong>log:</strong>, <strong>log a win:</strong> or <strong>log a blocker:</strong>. To update one, quote part of its text, for example <strong>add a win to my note "applied to three jobs": got a second interview</strong>.
+    <div className="task-results progress-notes-panel">
+      <p className="task-meta">
+        {waiting} waiting for the next "{meetingName}". Log what happens between meetings, in your own words; when you start it, Sonic has the notes it has not covered yet in front of it. In any chat,
+        write <strong>log to {meetingName}: ...</strong> (or <strong>log a win to {meetingName}: ...</strong>); inside a running meeting, <strong>log: ...</strong> goes to it. To update one, quote part of its text,
+        for example <strong>add a win to my note "applied to three jobs": got a second interview</strong>.
       </p>
       {error && <div className="memory-edit-error" role="alert">{error}</div>}
 
@@ -101,7 +100,7 @@ export const ProgressNotes: React.FC = () => {
       </div>
 
       {loading && <div className="task-meta">Loading...</div>}
-      {!loading && notes.length === 0 && <div className="empty-manifest-notice">Nothing logged yet. Anything you log shows up here, and in your next office hours.</div>}
+      {!loading && notes.length === 0 && <div className="task-meta">Nothing logged to this meeting yet. Anything you log shows up here, and in its next session.</div>}
       <div className="memory-list tasks-list">
         {notes.map(note => (
           <div key={note.id} className="memory-row task-row">
@@ -110,8 +109,8 @@ export const ProgressNotes: React.FC = () => {
                 <span className="memory-badge memory-source-badge">{when(note)}</span>
                 {note.label !== 'note' && <span className={`memory-badge progress-note-${note.label}`}>{note.label}</span>}
                 {note.covered
-                  ? <span className="memory-badge memory-source-badge">covered in office hours</span>
-                  : <span className="memory-badge task-new-badge">for next office hours</span>}
+                  ? <span className="memory-badge memory-source-badge">covered in this meeting</span>
+                  : <span className="memory-badge task-new-badge">for the next one</span>}
               </div>
               {editing === note.id ? (
                 <div className="meeting-note-edit">
@@ -134,6 +133,6 @@ export const ProgressNotes: React.FC = () => {
           </div>
         ))}
       </div>
-    </section>
+    </div>
   );
 };

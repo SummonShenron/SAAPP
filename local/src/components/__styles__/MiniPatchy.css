@@ -206,6 +206,9 @@
 .mp-thinking { --mp-lo: -2deg; --mp-hi: 2deg; }
 .mp-thinking .mp-turn { transform: rotate(-5deg); }
 .mp-thinking .mp-eyes { translate: 1.5px -2px; }
+/* He turns toward the side his eyes look to (the viewer's right): that ear foreshortens behind the face, the other swings into view and grows. */
+.mp-thinking .mp-ear-r { transform: translateX(-0.6px) scaleX(0.72); }
+.mp-thinking .mp-ear-l { transform: translateX(1.8px) scaleX(1.4); }
 .mp-dot { opacity: 0.9; animation: mp-dot 1.4s ease-in-out infinite; }
 .mp-dot-2 { animation-delay: 0.25s; }
 .mp-dot-3 { animation-delay: 0.5s; }

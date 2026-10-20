@@ -455,7 +455,7 @@ def test_the_chat_endpoint_asks_only_on_the_gated_path_marks_it_only_when_asked_
     source = open("app.py", encoding="utf-8").read()
     gate = source[source.index("# A getting-to-know-you question"):source.index("asked_listing = shelf_utils")]
     for needle in ('clarify_level != clarify_utils.LESS', 'not slot["proactive_taken"]', 'slot["energy_tier"] == "open"', "not is_closing_message(question)",
-                   "not curiosity_utils.last_reply_asked(", "not shelf_utils.asks_what_reading(question)"):
+                   "not curiosity_utils.last_reply_asked(", "not reading_asked"):
         assert needle in gate, needle
     assert gate.index("select_question") < gate.index('slot["proactive_taken"] = True')                      # it takes the slot, so the shelf and the open question step aside
     assert 'source_type == "conversational" and not is_guest_username(username) and risk_level == RISK_NONE' in source[source.index("shelf_offer = None"):source.index("# A getting-to-know-you")]

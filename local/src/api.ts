@@ -1445,19 +1445,21 @@ export const endMeeting = (runId: string): Promise<{ status: string; note: Meeti
 export type ProgressLabel = 'note' | 'win' | 'blocker';
 export interface ProgressNote {
   id: string;
+  meeting_id: string | null;
   text: string;
   label: ProgressLabel;
   day: string;
   at: string;
   source: 'chat' | 'page';
-  /** True once a meeting's notes covered it. */
+  /** True once that meeting's notes covered it. */
   covered: boolean;
 }
 
-export const listProgressNotes = (): Promise<{ notes: ProgressNote[]; limits: { max_text: number; max_per_day: number } }> =>
-  taskRequest('/api/progress-notes', {}, 'Failed to load your progress notes.');
-export const addProgressNote = (text: string, label: ProgressLabel): Promise<ProgressNote> =>
-  taskRequest('/api/progress-notes', { method: 'POST', body: JSON.stringify({ text, label }) }, 'Failed to save that note.');
+/** Progress notes belong to one meeting each: these list and add to a single meeting's. */
+export const listProgressNotes = (meetingId: string): Promise<{ notes: ProgressNote[]; limits: { max_text: number; max_per_day: number } }> =>
+  taskRequest(`/api/meetings/${encodeURIComponent(meetingId)}/progress-notes`, {}, 'Failed to load your progress notes.');
+export const addProgressNote = (meetingId: string, text: string, label: ProgressLabel): Promise<ProgressNote> =>
+  taskRequest(`/api/meetings/${encodeURIComponent(meetingId)}/progress-notes`, { method: 'POST', body: JSON.stringify({ text, label }) }, 'Failed to save that note.');
 export const updateProgressNote = (id: string, changes: Partial<Pick<ProgressNote, 'text' | 'label'>>): Promise<ProgressNote> =>
   taskRequest(`/api/progress-notes/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(changes) }, 'Failed to update that note.');
 export const deleteProgressNote = (id: string): Promise<{ status: string }> =>

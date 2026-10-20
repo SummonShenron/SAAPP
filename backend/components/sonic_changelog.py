@@ -70,6 +70,21 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "library_search_tool",
+        "requires": [
+            "backend/services/library_search.py::def search_for_agent",
+            "backend/services/agent_workflow.py::search_library",
+        ],
+        "month": "2026-10",
+        "title": "Searching your own documents several times",
+        "line": (
+            "I can now search through your own uploaded documents more than once for a single question, like reviewing a few weeks of weekly reports, "
+            "instead of looking at only the closest few passages."
+        ),
+        "keywords": ["review my progress", "weekly reports", "my documents", "my notes", "search my files", "uploaded documents", "several weeks"],
+        "volunteer": [],
+    },
+    {
         "id": "progress_notes",
         "requires": [
             "backend/utils/progress_notes.py::def add_note",
@@ -79,8 +94,8 @@ CHANGELOG = [
         "month": "2026-10",
         "title": "Progress notes for office hours",
         "line": (
-            "Between office hours you can tell me to log progress, like \"log: applied to three jobs\" or \"log a win: ...\". I keep your words exactly, "
-            "and when you start office hours I can open with what you logged and ask what's missing."
+            "You can log progress to a meeting, like \"log to Weekly check-in: applied to three jobs\" or \"log a win to Weekly check-in: ...\". "
+            "I keep your words exactly, and when you start that meeting I can open with what you logged and ask what's missing."
         ),
         "keywords": ["progress note", "log a win", "log a blocker", "log progress", "office hours notes", "what did i log", "weekly check-in notes"],
         "volunteer": [],
