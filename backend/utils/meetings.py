@@ -303,6 +303,12 @@ def delete_meeting(db, username: str, meeting_id: str) -> bool:
     if deleted:
         db[NOTES_COLLECTION].delete_many({"username": username, "meeting_id": meeting_id})
         db[RUNS_COLLECTION].delete_many({"username": username, "meeting_id": meeting_id})
+        try:
+            from backend.utils import progress_notes
+
+            progress_notes.delete_for_meeting(db, username, meeting_id)
+        except Exception:
+            logger.warning("[meetings] could not delete a meeting's progress notes.", exc_info=True)
     return deleted
 
 
@@ -415,7 +421,7 @@ def save_note(db, username: str, run: Dict[str, Any], note: Dict[str, Any], now:
     try:
         from backend.utils import progress_notes
 
-        progress_notes.mark_covered(db, username, doc["id"], doc["held_at"])      # the progress notes logged up to now were part of this meeting; next time only new ones are listed
+        progress_notes.mark_covered(db, username, run["meeting_id"], doc["id"], doc["held_at"])      # this meeting's progress notes logged up to now were part of it; next time only new ones are listed
     except Exception:
         logger.warning("[meetings] could not mark the progress notes as covered.", exc_info=True)
     return doc
@@ -544,7 +550,7 @@ def gather_prep(db, username: str, meeting_id: str, since: Optional[datetime]) -
     try:
         from backend.utils import progress_notes
 
-        prep["progress_notes"] = progress_notes.prompt_items(progress_notes.uncovered(db, username))     # what they logged since a meeting last covered it (backend/utils/progress_notes.py)
+        prep["progress_notes"] = progress_notes.prompt_items(progress_notes.uncovered(db, username, meeting_id))     # what they logged to THIS meeting since it was last covered (backend/utils/progress_notes.py)
     except Exception:
         logger.warning("[meetings] could not read the progress notes for a meeting.", exc_info=True)
     return prep
@@ -572,7 +578,7 @@ def build_meeting_text(meeting: Dict[str, Any], notes: List[Dict[str, Any]], pre
     else:
         lines.append("There are no notes from earlier meetings, so there is nothing to recall from last time.")
     if prep.get("progress_notes"):
-        lines.append("Progress notes they logged since the last meeting, oldest first, in their own words:")
+        lines.append("Progress notes they logged to this meeting since it was last held, oldest first, in their own words:")
         lines += [f"  - {n['when']} [{n['label']}]: {n['text']}" for n in prep["progress_notes"]]
     if prep.get("goals"):
         lines.append("Goals and projects they have told you about: " + "; ".join(prep["goals"]))

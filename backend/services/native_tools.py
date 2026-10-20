@@ -42,6 +42,16 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
         "state": {"type": "string", "enum": ["open", "closed", "all"]},
         "limit": _INTEGER,
     }),
+    # the person's own document libraries (backend/services/library_search.py)
+    "search_library": _object({
+        "query": {"type": "string", "description": "words to look for in the person's own documents: a name, topic, date or kind of document"},
+        "max_results": {"type": "integer", "description": "default 6, max 12"},
+    }, ["query"]),
+    "list_library_files": _object({}),
+    "read_library_file": _object({
+        "name": {"type": "string", "description": "a file name exactly as list_library_files wrote it"},
+        "part": {"type": "integer", "description": "which part of a long file; default 1"},
+    }, ["name"]),
     # the web and a sandbox
     "web_search": _object({"query": {"type": "string", "description": "the exact search query"}}, ["query"]),
     "read_url": _object({"url": {"type": "string", "description": "an http(s) URL"}}, ["url"]),

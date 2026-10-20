@@ -55,6 +55,7 @@ export const MeetingsPage: React.FC = () => {
   const [formError, setFormError] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [openNotesId, setOpenNotesId] = useState<string | null>(null);
+  const [openProgressId, setOpenProgressId] = useState<string | null>(null);
   const [notes, setNotes] = useState<MeetingNote[]>([]);
   const [notesLoading, setNotesLoading] = useState(false);
   const [editingNote, setEditingNote] = useState<string | null>(null);
@@ -112,6 +113,7 @@ export const MeetingsPage: React.FC = () => {
       await api.deleteMeeting(meeting.id);
       setMeetings(prev => prev.filter(m => m.id !== meeting.id));
       if (openNotesId === meeting.id) setOpenNotesId(null);
+      if (openProgressId === meeting.id) setOpenProgressId(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete that meeting.');
     } finally {
@@ -188,7 +190,6 @@ export const MeetingsPage: React.FC = () => {
       </header>
 
       <div className="vertical-card-stack">
-        <ProgressNotes />
         <section className="service-card memory-card">
           <div className="card-badge">{meetings.length} OF {maxMeetings}</div>
           <h2>Your Meetings</h2>
@@ -228,10 +229,15 @@ export const MeetingsPage: React.FC = () => {
                     <button type="button" className="memory-edit-cancel" onClick={() => toggleNotes(meeting)}>
                       {openNotesId === meeting.id ? 'Hide notes' : `Notes (${meeting.notes})`}
                     </button>
+                    <button type="button" className="memory-edit-cancel" onClick={() => setOpenProgressId(openProgressId === meeting.id ? null : meeting.id)}>
+                      {openProgressId === meeting.id ? 'Hide progress notes' : 'Progress notes'}
+                    </button>
                     <button type="button" className="memory-edit-cancel" disabled={busyId === meeting.id} onClick={() => beginEdit(meeting)}>Edit</button>
                     <button type="button" className="delete-row-btn" disabled={busyId === meeting.id} onClick={() => handleDelete(meeting)}>Delete</button>
                   </div>
                 </div>
+
+                {openProgressId === meeting.id && <ProgressNotes meetingId={meeting.id} meetingName={meeting.name} />}
 
                 {openNotesId === meeting.id && (
                   <div className="task-results">

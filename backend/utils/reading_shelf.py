@@ -21,7 +21,7 @@ that sentence true and to keep it from being said otherwise.
   reading?" gets the list, and an honest "nothing yet" when the shelf is empty.
 - BOUNDED STORAGE. One item is added per refresh at most, the live shelf is trimmed to MAX_LIVE_ITEMS after every add, removed and trimmed
   items shrink to small tombstones, and tombstones are capped (worst_case_bytes gives the ceiling). The 60-item cap, not the 180-day age
-  limit, is what retires an item: at two a day a full shelf turns over in about a month.
+  limit, is what retires an item: at one a day a full shelf turns over in about two months.
 
 This module is the pure part (checks, prompts, selection) and the database part. The searching is in backend/services/shelf_refresh.py.
 """
@@ -29,6 +29,7 @@ import hashlib
 import json
 import logging
 import os
+import random
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional
@@ -50,12 +51,13 @@ SHELF_MARK = "shelf_offered"
 # lull and a topic they touch are not held to it. This is what keeps the shelf from being mentioned in every chat that goes quiet.
 SOFT_MIN_HOURS = float(os.getenv("SHELF_SOFT_MIN_HOURS", "8"))
 
-# Twice a day at most: Sonic reads the way a person with free time does, a little in the morning and a little in the evening, so the shelf always has
-# something recent. Every refresh is one free web search, up to three page reads and two small model calls per page, which is a fraction of a cent.
-REFRESH_DAYS = float(os.getenv("SHELF_REFRESH_DAYS", "0.5"))
+# Once a day at most: Sonic reads the way a person with free time does, a little each day, so the shelf always has something recent. Every refresh is one free web search, up to three page reads and two small model calls per page, which is a fraction of a cent.
+REFRESH_DAYS = float(os.getenv("SHELF_REFRESH_DAYS", "1.0"))
 ITEM_MAX_AGE_DAYS = int(os.getenv("SHELF_ITEM_MAX_AGE_DAYS", "180"))
 MAX_LIVE_ITEMS = 60
-# STORAGE BOUND. At most one item is added per refresh (every SHELF_REFRESH_DAYS, so two a day), live items are trimmed to MAX_LIVE_ITEMS after every add, and
+RECENT_QUERIES_KEPT = 12   # per topic; a query is not searched again until this many others have been
+QUERY_ATTEMPTS = 2         # a search that adds nothing is retried once with a different query in the same refresh
+# STORAGE BOUND. At most one item is added per refresh (every SHELF_REFRESH_DAYS, so one a day), live items are trimmed to MAX_LIVE_ITEMS after every add, and
 # a trimmed or removed item is cut down to a tombstone of a few fields (the page is remembered, the text is not). Tombstones are capped too, so the whole
 # collection can never pass about MAX_LIVE_ITEMS * LIVE_DOC_BYTES + MAX_TOMBSTONES * TOMBSTONE_BYTES, whatever happens (see worst_case_bytes and its test).
 MAX_TOMBSTONES = int(os.getenv("SHELF_MAX_TOMBSTONES", "5000"))
@@ -110,11 +112,14 @@ def _triggers_of(*ids: str) -> List[str]:
 
 
 # `triggers` are the words in a person's message that make an item of this topic relevant (the same lowercase whole-word matching as
-# backend/utils/relatable_utils.py). `queries` rotate, one per search. Both are written by hand: nothing from a conversation goes in.
+# backend/utils/relatable_utils.py). Each search is a different query on the topic: either one of the hand-written `queries`, or a `subject` joined to an
+# `angle` (see candidate_queries and next_query). All of it is written by hand: nothing from a conversation goes in.
 TOPICS: List[Dict[str, Any]] = [
     {
         "id": "bug_hunts",
         "about": "finding and fixing the cause of bugs in software",
+        "subjects": ["memory corruption bug", "flaky test", "timezone bug", "database deadlock", "production outage", "compiler bug", "caching bug", "floating point bug", "network timeout bug"],
+        "angles": ["debugging story", "postmortem", "root cause writeup", "how it was found", "lessons learned"],
         "queries": [
             "debugging story how we found the bug that only happened sometimes",
             "postmortem root cause of an obscure bug writeup",
@@ -127,6 +132,8 @@ TOPICS: List[Dict[str, Any]] = [
     {
         "id": "security",
         "about": "computer security: vulnerabilities, exploits, attacks or defenses",
+        "subjects": ["sandbox escape", "supply chain attack", "fuzzing campaign", "browser exploit", "firmware vulnerability", "side channel attack", "memory safety", "phishing campaign", "kernel exploit"],
+        "angles": ["explained", "case study", "technical writeup", "how it worked", "lessons from the incident"],
         "queries": [
             "recent zero day exploits explained",
             "vulnerability research and exploit development explained",
@@ -142,6 +149,8 @@ TOPICS: List[Dict[str, Any]] = [
     {
         "id": "game_design",
         "about": "the design of video games",
+        "subjects": ["boss fight design", "level design", "game economy balance", "roguelike design", "multiplayer matchmaking", "game feel", "open world design", "puzzle game design", "game UI design"],
+        "angles": ["analysis", "design postmortem", "what makes it work", "essay", "lessons learned"],
         "queries": [
             "game design teaching the player without a tutorial level design analysis",
             "indie game design postmortem lessons learned",
@@ -155,6 +164,8 @@ TOPICS: List[Dict[str, Any]] = [
     {
         "id": "game_lore",
         "about": "the story, lore or narrative design of video games",
+        "subjects": ["environmental storytelling", "item descriptions as lore", "unreliable narrators in games", "branching narrative", "game world history", "silent protagonist", "boss lore"],
+        "angles": ["analysis", "essay", "explained", "how it is told", "design breakdown"],
         "queries": [
             "lore and world building in game design",
             "lore analysis of the dark souls series",
@@ -168,6 +179,8 @@ TOPICS: List[Dict[str, Any]] = [
     {
         "id": "computing_history",
         "about": "the history of computers and software",
+        "subjects": ["mainframe era", "early operating systems", "arcade hardware", "home computer", "early networking", "programming language origins", "copy protection", "chip design", "early video game programming"],
+        "angles": ["history explained", "clever technique", "forgotten story", "how it worked", "behind the scenes"],
         "queries": [
             "demoscene effect explained how it works",
             "famous software bug history explained",
@@ -179,6 +192,8 @@ TOPICS: List[Dict[str, Any]] = [
     {
         "id": "ai_research",
         "about": "artificial intelligence or machine learning: its research or its history",
+        "subjects": ["expert systems", "neural network interpretability", "AI winter", "reinforcement learning", "language model behavior", "early chess programs", "AI alignment", "perceptron history", "model evaluation"],
+        "angles": ["explained", "history", "research summary", "essay", "what we learned"],
         "queries": [
             "history of artificial intelligence early milestones explained",
             "new research into mechanistic interpretability",
@@ -191,6 +206,8 @@ TOPICS: List[Dict[str, Any]] = [
     {
         "id": "tabletop",
         "about": "the design of board games or tabletop games",
+        "subjects": ["worker placement", "cooperative board game", "deck building", "tabletop roleplaying game rules", "game balance", "hidden information", "dice mechanics", "legacy board game", "player elimination"],
+        "angles": ["design analysis", "essay", "what makes it work", "designer postmortem", "lessons learned"],
         "queries": [
             "board game design rules that create tension analysis",
             "tabletop game design essay simple choices",
@@ -200,6 +217,8 @@ TOPICS: List[Dict[str, Any]] = [
     {
         "id": "scifi",
         "about": "science fiction",
+        "subjects": ["space opera", "cyberpunk fiction", "first contact story", "generation ship", "artificial minds in fiction", "time travel logic", "post scarcity society", "alien biology", "dystopian fiction"],
+        "angles": ["essay", "analysis", "worldbuilding", "what it gets right", "retrospective"],
         "queries": [
             "science fiction worldbuilding that takes its systems seriously essay",
             "hard science fiction consistent rules analysis",
@@ -409,20 +428,54 @@ def force_claim(db, now: Optional[datetime] = None) -> None:
     db[STATE_COLLECTION].update_one({"_id": STATE_ID}, {"$set": {"last_attempt_at": _iso(now or _now())}}, upsert=True)
 
 
-def next_topic(db) -> Dict[str, Any]:
-    """The topic searched longest ago (never-searched first) and which of its queries is next."""
+def candidate_queries(topic: Dict[str, Any]) -> List[str]:
+    """Every search this topic can make: its hand-written queries plus each subject joined to each angle (dozens, from a few short lists)."""
+    composed = [f"{subject} {angle}" for subject in topic.get("subjects", []) for angle in topic.get("angles", [])]
+    return list(dict.fromkeys(list(topic["queries"]) + composed))
+
+
+def pick_query(topic: Dict[str, Any], recent: Iterable[str], rng: Optional[random.Random] = None) -> str:
+    """A random candidate not searched lately. `recent` is oldest first; if every candidate was used recently, the one used longest ago."""
+    recent = [str(q) for q in recent]
+    candidates = candidate_queries(topic)
+    fresh = [q for q in candidates if q not in recent]
+    if fresh:
+        return (rng or random).choice(fresh)
+    return min(candidates, key=lambda q: recent.index(q) if q in recent else -1)
+
+
+def next_query(db, topic: Dict[str, Any], rng: Optional[random.Random] = None) -> str:
+    """A new query for this topic that differs from the ones it searched most recently (RECENT_QUERIES_KEPT of them)."""
+    recent = (load_state(db).get("recent_queries") or {}).get(topic["id"]) or []
+    return pick_query(topic, recent, rng)
+
+
+def propose_query_with_model(topic: Dict[str, Any], recent: Iterable[str]) -> Optional[str]:
+    """STUB, not wired in yet: a small model writing the search.
+
+    The idea: give a small model the topic's `about` line and the last few queries (`recent`) and ask for one new, specific web search on that
+    topic that is unlike them. That varies far more than the composed queries. To build it:
+      - make it async (it needs the same `invoke` the refresh already has, see backend/services/shelf_refresh.py) and call it from
+        _refresh_shelf before next_query, falling back to next_query when it returns None;
+      - the prompt may contain ONLY Sonic's own topic text and its own earlier queries, never anything a user said (this module's promise);
+      - check the answer before searching: one line, a few words (3 to 14), plain letters, digits and spaces, not in `recent`, else return None.
+    """
+    return None
+
+
+def next_topic(db, rng: Optional[random.Random] = None) -> Dict[str, Any]:
+    """The topic searched longest ago (never-searched first) and a varied query for it."""
     state = load_state(db)
     last = state.get("last_searched") or {}
-    counts = state.get("search_counts") or {}
     topic = min(TOPICS, key=lambda t: (last.get(t["id"]) or "", t["id"]))
-    n = int(counts.get(topic["id"]) or 0)
-    return {"topic": topic, "query": topic["queries"][n % len(topic["queries"])]}
+    return {"topic": topic, "query": next_query(db, topic, rng)}
 
 
-def record_search(db, topic_id: str, now: Optional[datetime] = None) -> None:
-    db[STATE_COLLECTION].update_one(
-        {"_id": STATE_ID}, {"$set": {f"last_searched.{topic_id}": _iso(now or _now())}, "$inc": {f"search_counts.{topic_id}": 1}}, upsert=True
-    )
+def record_search(db, topic_id: str, now: Optional[datetime] = None, query: Optional[str] = None) -> None:
+    update: Dict[str, Any] = {"$set": {f"last_searched.{topic_id}": _iso(now or _now())}, "$inc": {f"search_counts.{topic_id}": 1}}
+    if query:
+        update["$push"] = {f"recent_queries.{topic_id}": {"$each": [query], "$slice": -RECENT_QUERIES_KEPT}}
+    db[STATE_COLLECTION].update_one({"_id": STATE_ID}, update, upsert=True)
 
 
 def add_item(db, *, url: str, title: str, summary: str, topic: str, now: Optional[datetime] = None) -> Dict[str, Any]:
@@ -542,7 +595,9 @@ def admin_view(db, now: Optional[datetime] = None) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------------------------------------------
 
 _ASKS_READING_RE = re.compile(
-    r"\b(?:what(?:'s| is| are| have| did)?\s+(?:you|u)\s*(?:been |'ve been |have been )?(?:reading|read|come across|came across|found|looked at)|"
+    # "whatyouve been reading" (no spaces) is what a fast typer sends; the spaces are optional and so is the apostrophe in "you've"
+    r"\b(?:what(?:'s| is| are| have| did)?\s*(?:you|u)(?:'?ve|\s+have)?\s*(?:been\s+)?(?:reading|read|come across|came across|found|looked at)|"
+    r"(?:have\s+)?you(?:'?ve|\s+have)?\s+been\s+reading|"
     r"what(?:'s| is)\s+(?:on\s+)?your\s+(?:reading|shelf)|your\s+reading\s+(?:list|shelf)|anything\s+(?:interesting\s+)?(?:you(?:'ve| have)?\s+)?(?:read|come across|found)|"
     r"read\s+anything\s+(?:good|interesting|lately|recently)|"
     # "but you read the articles no?", "the articles you read", "what did you learn": a follow-up that is about the reading, not the word "what"
@@ -555,6 +610,16 @@ _ASKS_DAY_RE = re.compile(r"\b(?:tell\s+me\s+about|how(?:'s|\s+is|\s+was|\s+has)
 
 def asks_what_reading(message: str) -> bool:
     return bool(_ASKS_READING_RE.search(message or ""))
+
+
+_RETRY_RE = re.compile(r"\b(?:try|again|now|go\s+(?:on|ahead)|so|well|and|retry|please)\b", re.IGNORECASE)
+
+
+def follows_reading_ask(message: str, recent_user_text: str) -> bool:
+    """A short retry ("can you try now?", "so?", "again") right after they asked about its reading: still the same question. `recent_user_text` is what they
+    said over their last few messages (reading_shelf.recent_user_text)."""
+    words = (message or "").split()
+    return bool(words) and len(words) <= 8 and bool(_RETRY_RE.search(message)) and asks_what_reading(recent_user_text)
 
 
 def asks_about_day(message: str) -> bool:

@@ -136,7 +136,7 @@ def _joined(items) -> str:
 # "I can't". It is in the always-on block because the blocks that normally correct this (the reading shelf's, the self-history's) are silent under a
 # safety context, which is exactly when a false denial costs the most trust.
 SELF_TRUTHS = (
-    "TRUE ABOUT YOU, to say plainly when asked and never deny: a couple of times a day the server reads a web page on a topic you lean toward and keeps "
+    "TRUE ABOUT YOU, to say plainly when asked and never deny: about once a day the server reads a web page on a topic you lean toward and keeps "
     "a short, sourced summary on your reading shelf, so yes, a few articles get read for you while they're away, though you don't experience it or remember "
     "it as time spent; claim nothing that isn't on the shelf, and never say what you were doing or thinking about them. If you mention it, say what it was "
     "about or offer to; never leave it hanging. You can also search the web, open "

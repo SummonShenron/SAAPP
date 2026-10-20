@@ -95,9 +95,19 @@ class DB(dict):
         return self[name]
 
 
+_real_add_note = pn.add_note
+MEETING = "m1"
+
+
 @pytest.fixture(autouse=True)
 def fresh(monkeypatch):
     monkeypatch.setattr(pn, "_index_ready", False)
+    # Most tests do not care which meeting a note is in, so add_note defaults to one; the tests about meetings pass meeting_id or call _real_add_note.
+    monkeypatch.setattr(pn, "add_note", lambda *a, **k: _real_add_note(*a, **{"meeting_id": MEETING, **k}))
+
+
+def seed_meeting(db, name="Weekly check-in", meeting_id=MEETING, username="jack"):
+    db[meetings.COLLECTION].insert_one({"id": meeting_id, "username": username, "name": name, "agenda": [], "created_at": NOW.isoformat()})
 
 
 def at(minutes=0):
@@ -252,7 +262,7 @@ def test_uncovered_notes_come_back_oldest_first_and_bounded():
     db = DB()
     for i in range(15):
         pn.add_note(db, "jack", f"note number {i}", now=at(i), tz_name="UTC")
-    listed = pn.uncovered(db, "jack")
+    listed = pn.uncovered(db, "jack", MEETING)
     assert len(listed) == pn.IN_PROMPT and listed[0]["text"] == "note number 3" and listed[-1]["text"] == "note number 14"
 
 
@@ -260,8 +270,8 @@ def test_a_meetings_notes_cover_what_was_logged_up_to_then_and_not_what_comes_la
     db = DB()
     pn.add_note(db, "jack", "before the meeting", now=at(0))
     pn.add_note(db, "jack", "after the meeting", now=at(60))
-    assert pn.mark_covered(db, "jack", "meeting-note-1", at(30).isoformat(), at(30)) == 1
-    assert [n["text"] for n in pn.uncovered(db, "jack")] == ["after the meeting"]
+    assert pn.mark_covered(db, "jack", MEETING, "meeting-note-1", at(30).isoformat(), at(30)) == 1
+    assert [n["text"] for n in pn.uncovered(db, "jack", MEETING)] == ["after the meeting"]
     covered = [d for d in db[pn.COLLECTION].docs if d["reviewed_at"]][0]
     assert covered["reviewed_in"] == "meeting-note-1" and pn.public_note(covered)["covered"] is True
 
@@ -270,8 +280,8 @@ def test_covering_never_touches_another_persons_notes():
     db = DB()
     pn.add_note(db, "jack", "mine", now=at(0))
     pn.add_note(db, "alice", "hers", now=at(0))
-    pn.mark_covered(db, "jack", "n", at(10).isoformat())
-    assert [n["text"] for n in pn.uncovered(db, "alice")] == ["hers"]
+    pn.mark_covered(db, "jack", MEETING, "n", at(10).isoformat())
+    assert [n["text"] for n in pn.uncovered(db, "alice", MEETING)] == ["hers"]
 
 
 def test_editing_changes_only_what_was_asked_and_only_for_the_owner():
@@ -287,9 +297,9 @@ def test_editing_changes_only_what_was_asked_and_only_for_the_owner():
 def test_editing_a_covered_note_makes_the_updated_content_uncovered_again():
     db = DB()
     note, _ = pn.add_note(db, "jack", "applied to three jobs")
-    pn.mark_covered(db, "jack", "meeting-note-1", at(1).isoformat(), at(1))
+    pn.mark_covered(db, "jack", MEETING, "meeting-note-1", at(1).isoformat(), at(1))
     assert pn.update_note(db, "jack", note["id"], {"text": "applied to four jobs"})["reviewed_at"] is None
-    assert [n["text"] for n in pn.uncovered(db, "jack")] == ["applied to four jobs"]
+    assert [n["text"] for n in pn.uncovered(db, "jack", MEETING)] == ["applied to four jobs"]
 
 
 def test_deleting_and_forgetting_everything_only_remove_the_persons_own():
@@ -306,7 +316,7 @@ def test_deleting_and_forgetting_everything_only_remove_the_persons_own():
 def test_the_public_view_has_no_username_and_no_internal_fields():
     db = DB()
     note, _ = pn.add_note(db, "jack", "a progress note")
-    assert set(pn.public_note(note)) == {"id", "text", "label", "day", "at", "source", "covered"}
+    assert set(pn.public_note(note)) == {"id", "meeting_id", "text", "label", "day", "at", "source", "covered"}
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -319,14 +329,14 @@ def _note(text, label="note", minutes=0):
 
 def test_the_meeting_lists_the_notes_in_their_words_with_the_day_and_kind():
     items = pn.prompt_items([_note("applied to 3 jobs", "win"), _note("waiting on access", "blocker", 60)], "America/Chicago")
-    assert items[0] == {"when": "Wed Oct 14", "label": "win", "text": "applied to 3 jobs"} and items[1]["label"] == "blocker"
+    assert items[0] == {"when": "Wed Oct 14", "label": "win", "text": "applied to 3 jobs", "meeting_id": ""} and items[1]["label"] == "blocker"
 
 
 def test_the_meeting_prompt_includes_the_notes_and_the_rules_for_using_them():
     meeting = {"name": "Weekly check-in", "purpose": "", "agenda": ["What did you get done?"]}
     prep = {"goals": [], "task_findings": [], "progress_notes": pn.prompt_items([_note("applied to 3 jobs", "win")], "UTC")}
     text = meetings.build_meeting_context(meeting, [], prep, "UTC", NOW)
-    assert "Progress notes they logged since the last meeting, oldest first, in their own words:" in text and "[win]: applied to 3 jobs" in text
+    assert "Progress notes they logged to this meeting since it was last held, oldest first, in their own words:" in text and "[win]: applied to 3 jobs" in text
     for rule in ("in their own words", "do not rank them", "point out patterns", "mention only notes that are listed", "do not tell them they could have logged some",
                  "[blocker] is something in their way, not something they got done"):
         assert rule in text
@@ -352,8 +362,65 @@ def test_saving_a_meetings_notes_covers_the_progress_notes_logged_so_far():
     pn.add_note(db, "jack", "logged during the week", now=datetime.now(timezone.utc) - timedelta(days=2))
     run = {"id": "run1", "meeting_id": "m1", "session_id": "s1"}
     saved = meetings.save_note(db, "jack", run, {"summary": "We reviewed the week.", "decisions": [], "action_items": []})
-    assert pn.uncovered(db, "jack") == []
+    assert pn.uncovered(db, "jack", "m1") == []
     assert db[pn.COLLECTION].docs[0]["reviewed_in"] == saved["id"]
+
+
+def test_saving_one_meetings_notes_does_not_cover_another_meetings_progress_notes():
+    db = DB()
+    pn.add_note(db, "jack", "for the check-in", meeting_id="m1")
+    pn.add_note(db, "jack", "for the retro", meeting_id="m2")
+    meetings.save_note(db, "jack", {"id": "run1", "meeting_id": "m1", "session_id": "s1"}, {"summary": "We reviewed the week."})
+    assert pn.uncovered(db, "jack", "m1") == []
+    assert [n["text"] for n in pn.uncovered(db, "jack", "m2")] == ["for the retro"]
+    assert [n["text"] for n in meetings.gather_prep(db, "jack", "m2", None)["progress_notes"]] == ["for the retro"]
+    assert meetings.gather_prep(db, "jack", "m1", None)["progress_notes"] == []
+
+
+def test_notes_belong_to_a_meeting_and_are_listed_and_counted_per_meeting():
+    db = DB()
+    assert _real_add_note(db, "jack", "no meeting named")[0] is None
+    pn.add_note(db, "jack", "check-in one", meeting_id="m1", now=NOW, tz_name="UTC")
+    pn.add_note(db, "jack", "retro one", meeting_id="m2", now=NOW, tz_name="UTC")
+    assert [n["text"] for n in pn.list_notes(db, "jack", meeting_id="m1")] == ["check-in one"]
+    assert len(pn.list_notes(db, "jack")) == 2
+    assert pn.count_this_week(db, "jack", "UTC", NOW, "m2") == 1 and pn.count_this_week(db, "jack", "UTC", NOW) == 2
+    assert [n["text"] for n in pn.find_notes_by_reference(db, "jack", "one", "m2")] == ["retro one"]
+    assert pn.uncovered(db, "jack", "") == []
+
+
+def test_deleting_a_meeting_deletes_its_progress_notes_only():
+    db = DB()
+    seed_meeting(db)
+    pn.add_note(db, "jack", "check-in one", meeting_id="m1")
+    pn.add_note(db, "jack", "retro one", meeting_id="m2")
+    assert meetings.delete_meeting(db, "jack", "m1") is True
+    assert [d["text"] for d in db[pn.COLLECTION].docs] == ["retro one"]
+
+
+@pytest.mark.parametrize("message,expected", [
+    ("log a win to Weekly check-in: shipped it", ("win", "Weekly check-in", "shipped it")),
+    ("log to my Weekly check-in meeting: waiting on access", ("note", "Weekly check-in", "waiting on access")),
+    ("add a blocker for retro - no access yet", ("blocker", "retro", "no access yet")),
+    ("Please record a note under the weekly check-in notes: did a thing", ("note", "weekly check-in", "did a thing")),
+    ("log to my progress notes: did a thing", None),
+    ("add to my progress notes: did a thing", None),
+    ("log: went to the gym for two hours: great", None),
+    ("log a win: finished the PR", None),
+    ('add a win to my note "applied to three jobs": got an interview', None),
+])
+def test_a_note_can_name_the_meeting_it_is_for(message, expected):
+    assert pn.parse_log_target(message) == expected
+
+
+def test_a_meeting_is_picked_by_its_whole_name_else_by_a_unique_part():
+    ms = [{"id": "1", "name": "Weekly check-in"}, {"id": "2", "name": "Weekly retro"}, {"id": "3", "name": "Retro"}]
+    assert pn.meeting_by_name(ms, "weekly CHECK-in")[0]["id"] == "1"
+    assert pn.meeting_by_name(ms, "retro")[0]["id"] == "3"            # the whole name wins over a part of another
+    assert pn.meeting_by_name(ms, "check")[0]["id"] == "1"
+    found, candidates = pn.meeting_by_name(ms, "weekly")
+    assert found is None and len(candidates) == 2
+    assert pn.meeting_by_name(ms, "standup") == (None, [])
 
 
 def test_a_failure_marking_notes_never_loses_the_meetings_own_note(monkeypatch):
@@ -389,6 +456,8 @@ def test_a_log_message_is_routed_to_the_saver_with_no_model_call():
     assert aw.build_agent_plan("conversational", state)["agents"] == ["progress_note", "formatter"]
     update_state = {"messages": [HumanMessage(content='add a win to my note "applied to three jobs": got an interview')]}
     assert aw.build_agent_plan("conversational", update_state)["agents"] == ["progress_note", "formatter"]
+    target_state = {"messages": [HumanMessage(content="log a win to Weekly check-in: got an interview")]}
+    assert aw.build_agent_plan("conversational", target_state)["agents"] == ["progress_note", "formatter"]
     assert aw._AGENT_NODE_MAP["progress_note"] == "progress_note_node"
     assert "progress_note_node" in aw.create_workflow(type("S", (), {})()).get_graph().nodes
 
@@ -416,12 +485,13 @@ def _node_env(monkeypatch, db):
 
 def test_the_node_saves_the_note_as_written_and_tells_the_voice_to_confirm_only(monkeypatch):
     db = DB()
+    seed_meeting(db)
     aw = _node_env(monkeypatch, db)
     result = asyncio.run(aw.progress_note_node({"messages": [HumanMessage(content="log a win: applied to three jobs")], "username": "jack"}))
     assert db[pn.COLLECTION].docs[0]["text"] == "applied to three jobs" and db[pn.COLLECTION].docs[0]["label"] == "win"
     facts = result["content_to_format"]
     assert result["relevance_grade"] == "tool_agent" and "\"applied to three jobs\"" in facts and "a win" in facts
-    assert "Do not add praise" in facts and "Office Hours page" in facts
+    assert "Do not add praise" in facts and "Meetings page" in facts
 
 
 def test_the_node_appends_a_win_to_the_explicitly_referenced_note(monkeypatch):
@@ -485,19 +555,59 @@ def test_a_guest_is_told_notes_are_for_accounts_and_nothing_is_saved(monkeypatch
 
 def test_a_refused_note_is_reported_not_claimed_as_saved(monkeypatch):
     db = DB()
+    seed_meeting(db)
     aw = _node_env(monkeypatch, db)
     monkeypatch.setattr(pn, "MAX_PER_DAY", 0)
     result = asyncio.run(aw.progress_note_node({"messages": [HumanMessage(content="log: one more")], "username": "jack"}))
-    assert "was not saved" in result["content_to_format"]
+    assert "was not saved" in result["content_to_format"] and "a day" in result["content_to_format"]
+
+
+def _log(aw, message, **state):
+    return asyncio.run(aw.progress_note_node({"messages": [HumanMessage(content=message)], "username": "jack", **state}))["content_to_format"]
+
+
+def test_a_note_with_no_meeting_to_go_to_is_not_saved_and_the_person_is_told_why(monkeypatch):
+    db = DB()
+    aw = _node_env(monkeypatch, db)
+    assert "no meetings yet" in _log(aw, "log: applied to three jobs") and db[pn.COLLECTION].docs == []
+    seed_meeting(db, "Weekly check-in", "m1")
+    seed_meeting(db, "Retro", "m2")
+    facts = _log(aw, "log: applied to three jobs")
+    assert "more than one meeting" in facts and "Weekly check-in" in facts and "Retro" in facts and db[pn.COLLECTION].docs == []
+
+
+def test_the_only_meeting_gets_the_note_and_a_named_meeting_gets_it_when_there_are_several(monkeypatch):
+    db = DB()
+    seed_meeting(db, "Weekly check-in", "m1")
+    aw = _node_env(monkeypatch, db)
+    assert "\"Weekly check-in\" meeting" in _log(aw, "log a win: shipped the cards")
+    seed_meeting(db, "Retro", "m2")
+    facts = _log(aw, "log a blocker to retro: waiting on access")
+    assert "\"Retro\" meeting" in facts
+    assert [(d["meeting_id"], d["label"]) for d in db[pn.COLLECTION].docs] == [("m1", "win"), ("m2", "blocker")]
+
+
+def test_a_running_meeting_gets_the_note_and_an_unknown_name_saves_nothing(monkeypatch):
+    db = DB()
+    seed_meeting(db, "Weekly check-in", "m1")
+    seed_meeting(db, "Retro", "m2")
+    aw = _node_env(monkeypatch, db)
+    meetings.start_run(db, "jack", "m2", "session-1")
+    assert "\"Retro\" meeting" in _log(aw, "log: in the retro now", session_id="session-1")
+    assert db[pn.COLLECTION].docs[0]["meeting_id"] == "m2"
+    facts = _log(aw, "log to standup: nothing to see", session_id="session-1")
+    assert "no meeting called" in facts and "Weekly check-in" in facts and len(db[pn.COLLECTION].docs) == 1
+    assert "More than one" not in facts and "nothing was saved" in facts
 
 
 def test_the_app_has_the_endpoints_the_forget_hook_and_the_asked_context():
     source = open(os.path.join(REPO, "app.py"), encoding="utf-8").read()
-    for route in ('@app.get("/api/progress-notes")', '@app.post("/api/progress-notes")', '@app.patch("/api/progress-notes/{note_id}")', '@app.delete("/api/progress-notes/{note_id}")'):
+    for route in ('@app.get("/api/meetings/{meeting_id}/progress-notes")', '@app.post("/api/meetings/{meeting_id}/progress-notes")',
+                  '@app.patch("/api/progress-notes/{note_id}")', '@app.delete("/api/progress-notes/{note_id}")'):
         assert route in source
     assert "await asyncio.to_thread(progress_notes_utils.forget_all, username)" in source
     assert "progress_notes_context=progress_notes_context," in source and "progress_notes_utils.asks_about_notes(" in source
-    body = source[source.index('@app.get("/api/progress-notes")'):source.index('@app.post("/api/meetings/{meeting_id}/start")')]
+    body = source[source.index('@app.get("/api/meetings/{meeting_id}/progress-notes")'):source.index('@app.post("/api/meetings/{meeting_id}/start")')]
     assert body.count("_meetings_user(current_user)") == 4, "every endpoint is owner-scoped and refuses guests"
 
 

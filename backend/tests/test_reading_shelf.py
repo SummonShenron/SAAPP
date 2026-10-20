@@ -207,16 +207,42 @@ def test_only_one_refresh_is_claimed_per_interval_and_a_failed_one_is_not_retrie
     assert shelf.claim_refresh(db, NOW + timedelta(days=shelf.REFRESH_DAYS, minutes=1))
 
 
-def test_topics_rotate_least_recently_searched_first_and_queries_advance():
+def test_topics_rotate_least_recently_searched_first_and_each_query_is_new():
     db = Db()
     seen = []
     for step in range(len(shelf.TOPICS) + 1):
         chosen = shelf.next_topic(db)
         seen.append(chosen["topic"]["id"])
-        shelf.record_search(db, chosen["topic"]["id"], NOW + timedelta(minutes=step))
+        assert chosen["query"] in shelf.candidate_queries(chosen["topic"])
+        shelf.record_search(db, chosen["topic"]["id"], NOW + timedelta(minutes=step), chosen["query"])
     assert set(seen[:-1]) == set(shelf.TOPIC_IDS) and seen[-1] == seen[0]
-    again = shelf.next_topic(db)
-    assert again["query"] == again["topic"]["queries"][1 % len(again["topic"]["queries"])]
+
+
+def test_a_topic_never_repeats_a_query_until_the_recent_ones_are_used_up():
+    db = Db()
+    topic = shelf.TOPICS[0]
+    assert len(shelf.candidate_queries(topic)) > shelf.RECENT_QUERIES_KEPT
+    queries = []
+    for step in range(shelf.RECENT_QUERIES_KEPT):
+        query = shelf.next_query(db, topic)
+        queries.append(query)
+        shelf.record_search(db, topic["id"], NOW + timedelta(minutes=step), query)
+    assert len(set(queries)) == len(queries)
+    assert shelf.load_state(db)["recent_queries"][topic["id"]] == queries
+
+
+def test_pick_query_is_random_among_fresh_candidates_and_falls_back_to_the_oldest_used():
+    import random
+    topic = {"id": "t", "queries": ["a b c", "d e f"], "subjects": [], "angles": []}
+    assert shelf.pick_query(topic, ["a b c"], random.Random(1)) == "d e f"
+    assert shelf.pick_query(topic, ["d e f", "a b c"], random.Random(1)) == "d e f"
+    big = shelf.TOPICS[0]
+    picks = {shelf.pick_query(big, [], random.Random(seed)) for seed in range(30)}
+    assert len(picks) > 5
+
+
+def test_the_model_query_stub_does_nothing_yet():
+    assert shelf.propose_query_with_model(shelf.TOPICS[0], []) is None
 
 
 def test_a_removed_item_is_gone_from_the_shelf_but_remembered_so_it_is_never_added_again():
@@ -272,7 +298,29 @@ def test_asking_about_their_day_brings_the_reading_in_as_something_to_say_what_i
 def test_the_app_answers_a_reading_question_from_the_shelf_even_when_the_router_sent_the_turn_to_a_tool_path():
     source = (Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
     gate = source[source.index('if (source_type != "conversational" and not is_guest_username(username)'):source.index('if source_type == "conversational" and not is_guest_username(username) and risk_level == RISK_NONE:')]
-    assert "asks_what_reading(question)" in gate and "build_listing_block(shelf_offer)" in gate and "listing=True" in gate
+    assert "and reading_asked" in gate and "build_listing_block(shelf_offer)" in gate and "listing=True" in gate
+    assert "asks_what_reading(question) or shelf_utils.follows_reading_ask(question" in source      # a bare retry ("can you try now?") counts too
+
+
+def test_a_typo_ed_question_and_a_bare_retry_are_still_the_same_question_about_its_reading():
+    assert shelf.asks_what_reading("can you try now? tell me whatyouve been reading about")
+    assert shelf.asks_what_reading("have you been reading anything") and not shelf.asks_what_reading("I've been reading a lot of sci-fi")
+    ask = "tell me about the articles"
+    assert shelf.follows_reading_ask("can you try now?", ask) and shelf.follows_reading_ask("so?", ask)
+    assert not shelf.follows_reading_ask("can you try now?", "fix the login bug")          # a retry of something else
+    assert not shelf.follows_reading_ask("now please explain how the retry logic in the checkout works in detail", ask)   # long: a new request
+
+
+def test_a_question_about_its_reading_skips_the_tool_agent_even_with_a_code_folder_connected():
+    from langchain_core.messages import AIMessage, HumanMessage
+    from backend.services import agent_workflow as aw
+
+    asked = {"messages": [HumanMessage(content="tell me whatyouve been reading about")], "local_workspace": {"name": "local-rag"}}
+    assert aw.build_agent_plan("conversational", asked)["agents"] == ["conversational"]
+    retry = {"messages": [HumanMessage(content="what have you been reading?"), AIMessage(content="I can't see it"), HumanMessage(content="can you try now?")]}
+    assert aw.build_agent_plan("conversational", retry)["agents"] == ["conversational"]
+    for code_question in ("where is the reading_shelf endpoint defined?", "add a field to the reading shelf items", "why does refresh_shelf read the same page twice"):
+        assert not shelf.asks_what_reading(code_question), code_question      # a question about the code is not a question about its reading
 
 
 def test_an_empty_shelf_never_makes_it_deny_that_it_reads():
@@ -288,6 +336,8 @@ def test_every_topic_has_separate_well_formed_queries_and_its_own_trigger_words(
             assert 3 <= len(query.split()) <= 14, query          # a missing comma would have glued two queries into one long one
             assert query not in seen
             seen.add(query)
+        for query in shelf.candidate_queries(topic):
+            assert 3 <= len(query.split()) <= 14, query
         assert all(t == t.lower() for t in topic["triggers"])
 
 
@@ -580,6 +630,25 @@ def test_the_second_look_names_the_topic_and_every_topic_has_a_description_for_i
     assert "on_topic" not in shelf.build_support_prompt(PAGE, GOOD)
 
 
+def test_a_search_that_adds_nothing_is_retried_once_with_a_different_query_in_the_same_refresh():
+    db = Db()
+    queries = []
+
+    def search(query):
+        queries.append(query)
+        return [{"title": "Post", "link": "https://blog.example.com/post"}] if len(queries) == 2 else []
+
+    result = refresh(db, Scripted(summary_reply(), SUPPORTED), search)
+    assert result["status"] == "added" and len(queries) == 2 and queries[0] != queries[1]
+    recent = shelf.load_state(db)["recent_queries"][result["topic"]]
+    assert recent == queries
+
+
+def test_a_page_refused_on_the_first_search_is_not_read_again_on_the_retry():
+    model = Scripted(summary_reply("A walkthrough of how Nintendo teaches a platformer jump across three rooms without any written tutorial."))
+    assert refresh(Db(), model, search_for("https://blog.example.com/post"))["status"] == "nothing" and model.calls == 1
+
+
 def test_a_summary_that_invents_a_name_never_reaches_the_second_call():
     db = Db()
     model = Scripted(summary_reply("A walkthrough of how Nintendo teaches a platformer jump across three rooms without any written tutorial."))
@@ -672,12 +741,12 @@ def test_the_shelf_counters_are_in_the_closed_key_list():
 
 # ---- reading on a schedule, not only when someone is around -------------------------------------------------------------------------------
 
-def test_the_shelf_is_due_about_twice_a_day_and_never_more_often():
-    assert shelf.REFRESH_DAYS == 0.5
+def test_the_shelf_is_due_about_once_a_day_and_never_more_often():
+    assert shelf.REFRESH_DAYS == 1.0
     db = Db()
     assert shelf.claim_refresh(db, NOW)
-    assert not shelf.claim_refresh(db, NOW + timedelta(hours=11)) and not shelf.refresh_due(db, NOW + timedelta(hours=11))
-    assert shelf.refresh_due(db, NOW + timedelta(hours=12, minutes=1)) and shelf.claim_refresh(db, NOW + timedelta(hours=12, minutes=1))
+    assert not shelf.claim_refresh(db, NOW + timedelta(hours=23)) and not shelf.refresh_due(db, NOW + timedelta(hours=23))
+    assert shelf.refresh_due(db, NOW + timedelta(hours=24, minutes=1)) and shelf.claim_refresh(db, NOW + timedelta(hours=24, minutes=1))
 
 
 def _run_loop_for(monkeypatch, db, allowed=None, passes=2, schedule="true"):
