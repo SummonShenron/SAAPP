@@ -1439,6 +1439,10 @@ div:has(.portal-body) {
   outline: none;
   transition: all 0.2s;
 }
+/* iOS Safari zooms the page when a focused field's text is under 16px. */
+@media (pointer: coarse) {
+  .chat-textarea { font-size: 16px; }
+}
 .chat-tooltip-popover { box-shadow: var(--float-shadow); }
 
 .theme-shadow .chat-tooltip-popover {
