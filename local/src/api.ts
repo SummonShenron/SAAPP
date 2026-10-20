@@ -1111,6 +1111,34 @@ export async function disconnectCalendar(): Promise<{ connected: boolean }> {
   return res.json();
 }
 
+export async function getMicrosoftStatus(): Promise<CalendarConnectionStatus> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/microsoft/status`, { headers: { ...authHeaders } });
+  if (!res.ok) throw new Error("Failed to fetch Microsoft connection status.");
+  return res.json();
+}
+
+export async function startMicrosoftConnection(returnTo: string): Promise<{ authorization_url: string }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/microsoft/connect/start?return_to=${encodeURIComponent(returnTo)}`, {
+    method: "POST",
+    headers: { ...authHeaders }
+  });
+  if (res.status === 503) throw new Error("Microsoft isn't set up on this server yet.");
+  if (!res.ok) throw new Error("Failed to start Microsoft connection.");
+  return res.json();
+}
+
+export async function disconnectMicrosoft(): Promise<{ connected: boolean }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/microsoft/disconnect`, {
+    method: "POST",
+    headers: { ...authHeaders }
+  });
+  if (!res.ok) throw new Error("Failed to disconnect Microsoft.");
+  return res.json();
+}
+
 /**
  * List the current user's conversation threads
  */
@@ -1884,6 +1912,9 @@ export const api = {
   getCalendarStatus,
   startCalendarConnection,
   disconnectCalendar,
+  getMicrosoftStatus,
+  startMicrosoftConnection,
+  disconnectMicrosoft,
   getSonicHealth,
   approveObservation,
   retireObservation,

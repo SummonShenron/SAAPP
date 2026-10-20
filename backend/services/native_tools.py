@@ -87,6 +87,22 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
     }, ["query"]),
     "read_drive_file": _object({"file_id": {"type": "string", "description": "an id from a search_drive_files result"}}, ["file_id"]),
     "list_google_calendar_events": _object({"date": {"type": "string", "description": "YYYY-MM-DD; today in the user's timezone if left out"}}),
+    # the current user's own Microsoft account (read-only; backend/services/microsoft_tools.py resolves their token and checks their granted scopes)
+    "search_outlook_mail": _object({
+        "query": {"type": "string", "description": "plain words, or Microsoft search syntax like 'from:sam subject:report'"},
+        "max_results": {"type": "integer", "description": "default 10"},
+    }, ["query"]),
+    "read_outlook_message": _object({"message_id": {"type": "string", "description": "an id from a search_outlook_mail result"}}, ["message_id"]),
+    "get_outlook_attachment": _object({
+        "message_id": {"type": "string", "description": "an id from a search_outlook_mail result"},
+        "attachment_id": {"type": "string", "description": "an attachment_id from a read_outlook_message result"},
+    }, ["message_id", "attachment_id"]),
+    "list_outlook_calendar_events": _object({"date": {"type": "string", "description": "YYYY-MM-DD; today in the user's timezone if left out"}}),
+    "search_onedrive_files": _object({
+        "query": {"type": "string", "description": "plain words matched against file names and contents"},
+        "max_results": {"type": "integer", "description": "default 10"},
+    }, ["query"]),
+    "read_onedrive_file": _object({"file_id": {"type": "string", "description": "an id from a search_onedrive_files result"}}, ["file_id"]),
 }
 
 _MENU_LINE_RE = re.compile(r"^-\s+([a-z_]+)\s+—\s+(.*)$", re.DOTALL)

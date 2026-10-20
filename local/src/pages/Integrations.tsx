@@ -27,6 +27,9 @@ export const IntegrationsPage: React.FC = () => {
   const isGuest = isGuestPrincipal(principal);
 
   const [status, setStatus] = useState<CalendarConnectionStatus | null>(null);
+  const [msStatus, setMsStatus] = useState<CalendarConnectionStatus | null>(null);
+  const [msBusy, setMsBusy] = useState(false);
+  const [msBanner, setMsBanner] = useState<{ success: boolean; message: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
@@ -91,6 +94,40 @@ export const IntegrationsPage: React.FC = () => {
     }
   };
 
+  const refreshMicrosoft = async () => {
+    try {
+      setMsStatus(await api.getMicrosoftStatus());
+    } catch (err) {
+      console.error('Failed to fetch Microsoft connection status:', err);
+    }
+  };
+
+  const handleMicrosoftConnect = async () => {
+    setMsBusy(true);
+    setMsBanner(null);
+    try {
+      const { authorization_url } = await api.startMicrosoftConnection(window.location.href);
+      window.location.href = authorization_url;
+    } catch (err: any) {
+      setMsBanner({ success: false, message: err.message || 'Failed to start the Microsoft connection.' });
+      setMsBusy(false);
+    }
+  };
+
+  const handleMicrosoftDisconnect = async () => {
+    if (!window.confirm('Disconnect Microsoft? The assistant will no longer be able to access your Outlook mail, Outlook calendar, or OneDrive.')) return;
+    setMsBusy(true);
+    try {
+      await api.disconnectMicrosoft();
+      await refreshMicrosoft();
+    } catch (err) {
+      console.error('Failed to disconnect Microsoft:', err);
+      setMsBanner({ success: false, message: 'Failed to disconnect Microsoft.' });
+    } finally {
+      setMsBusy(false);
+    }
+  };
+
   const refreshTargetDoc = async () => {
     try {
       const result = await api.getTargetDoc();
@@ -115,7 +152,22 @@ export const IntegrationsPage: React.FC = () => {
       setRedirectBanner({ success: false, message });
     }
 
-    Promise.all([refreshStatus(), refreshTargetDoc(), refreshGitHubToken()]).finally(() => setLoading(false));
+    if (params.get('connected') === 'microsoft') {
+      setMsBanner({ success: true, message: 'Microsoft account connected successfully.' });
+    } else if (params.get('microsoft_error')) {
+      const reason = params.get('microsoft_error');
+      setMsBanner({
+        success: false,
+        message:
+          reason === 'access_denied'
+            ? 'Microsoft authorization was cancelled.'
+            : reason === 'expired'
+            ? 'That connection attempt expired — please try again.'
+            : 'Could not complete the Microsoft connection — please try again.',
+      });
+    }
+
+    Promise.all([refreshStatus(), refreshMicrosoft(), refreshTargetDoc(), refreshGitHubToken()]).finally(() => setLoading(false));
   }, []);
 
   
@@ -241,6 +293,37 @@ export const IntegrationsPage: React.FC = () => {
           )}
         </section>
         {!isGuest && status?.connected && <CalendarHeadsUps />}
+
+        <section className="service-card">
+          <div className="card-badge">MICROSOFT</div>
+          <h2>Microsoft (Outlook, Calendar, OneDrive)</h2>
+          <p className="card-description">
+            Connect a personal Microsoft account (Outlook.com, Hotmail, Live) and Sonic can search
+            and read your mail, check your calendar, and find files in OneDrive. It only sends an
+            email or changes your calendar after you approve that exact action. Disconnect any time.
+          </p>
+          {isGuest ? (
+            <div className="security-warning-lockout">
+              Microsoft isn't available for guest sessions — sign in with a real account to connect one.
+            </div>
+          ) : msStatus?.connected ? (
+            <>
+              <p className="card-description">
+                Connected as <strong>{msStatus.account_email || 'your Microsoft account'}</strong>.
+              </p>
+              <button className="action-button" onClick={handleMicrosoftDisconnect} disabled={msBusy}>
+                {msBusy ? 'Disconnecting...' : 'Disconnect'}
+              </button>
+            </>
+          ) : (
+            <button className="action-button" onClick={handleMicrosoftConnect} disabled={msBusy}>
+              {msBusy ? 'Redirecting to Microsoft...' : 'Connect Microsoft'}
+            </button>
+          )}
+          {msBanner && (
+            <div className={`status-banner ${msBanner.success ? 'success' : 'error'}`}>{msBanner.message}</div>
+          )}
+        </section>
 
         {!isGuest && <h2 className="integrations-group" style={{ margin: '1.5rem 0 0' }}>Advanced</h2>}
         {!isGuest && (

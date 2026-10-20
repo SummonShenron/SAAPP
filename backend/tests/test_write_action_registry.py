@@ -4,10 +4,16 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import pytest
 from langchain_core.messages import HumanMessage, AIMessage
 
 from backend.services import agent_workflow as aw
 
+
+@pytest.fixture(autouse=True)
+def _microsoft_not_connected(monkeypatch):
+    """These tests are about Google; Microsoft is consulted only when Google isn't usable, and must read as not connected rather than touch Mongo."""
+    monkeypatch.setattr(aw.microsoft_utils, "has_granted_scope", lambda username, scope: False)
 
 def run_async(fn):
     """Runs an async test function synchronously, avoiding a pytest-asyncio dependency."""

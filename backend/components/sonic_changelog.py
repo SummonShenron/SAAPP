@@ -101,6 +101,21 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "microsoft_365",
+        "requires": [
+            "backend/services/microsoft_tools.py::def pick_provider",
+            "backend/services/microsoft_graph_service.py::def send_message",
+        ],
+        "month": "2026-10",
+        "title": "Outlook, Outlook calendar and OneDrive",
+        "line": (
+            "You can connect a personal Microsoft account under Integrations. "
+            "Then I can search and read your Outlook mail, check your calendar, find OneDrive files, and send email or add events once you approve."
+        ),
+        "keywords": ["outlook", "hotmail", "onedrive", "microsoft", "outlook calendar", "microsoft 365"],
+        "volunteer": [],
+    },
+    {
         "id": "image_generation",
         "requires": [
             "backend/services/image_gen.py::async def make_image",
