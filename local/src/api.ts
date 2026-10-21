@@ -972,6 +972,40 @@ export interface UsersDays {
   by_day: DayBreakdown[];
 }
 
+/** One of Sonic's goals, how it is going, and whether its lever is approved and acting (backend/utils/goals.py). Counts only. */
+export interface GoalView {
+  id: string;
+  title: string;
+  statement: string;
+  signal: string;
+  /** null for a goal that is only measured: it has no lever, so nothing to approve. */
+  lever: string | null;
+  guardrail: string | null;
+  measure_only: boolean;
+  rate_label: string;
+  sample_label: string;
+  state: 'on_track' | 'drifting' | 'not_enough_data';
+  numbers: {
+    taken: number;
+    passed: number;
+    sample: number;
+    rate: number | null;
+    previous_sample: number;
+    previous_rate: number | null;
+    made: number;
+    held_back: number;
+    people: { measured: number; stretched: number; any: number };
+    /** Exact, admin-only sentences about the week's counts. */
+    details: string[];
+  };
+  target_rate: number;
+  min_sample: number;
+  approval: { approved: boolean; by: string | null; at: string | null; stale: boolean };
+  guardrail_tripped: boolean;
+  lever_applies: boolean;
+  revision: number;
+}
+
 export interface SonicHealth {
   days: number;
   generated_at: string;
@@ -986,6 +1020,8 @@ export interface SonicHealth {
   feedback?: FeedbackSummary | null;
   graph?: GraphSummary | null;
   routines?: RoutineRow[] | null;
+  /** Sonic's goals; null when they could not be read. */
+  goals?: GoalView[] | null;
 }
 
 export interface ReflectionResult {
@@ -994,7 +1030,7 @@ export interface ReflectionResult {
   unsupported: string[];
 }
 
-async function adminRequest<T>(path: string, method: 'GET' | 'POST' | 'DELETE', body?: unknown): Promise<T> {
+async function adminRequest<T>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body?: unknown): Promise<T> {
   const authHeaders = await getAuthHeaders();
   const res = await fetch(`${BASE_URL}${path}`, {
     method,
@@ -1012,6 +1048,11 @@ async function adminRequest<T>(path: string, method: 'GET' | 'POST' | 'DELETE', 
 
 export function getSonicHealth(days: number): Promise<SonicHealth> {
   return adminRequest<SonicHealth>(`/api/admin/sonic-health?days=${encodeURIComponent(days)}`, 'GET');
+}
+
+/** Approves (or withdraws approval of) the current revision of one of Sonic's goals. Until approved, a goal is only measured. */
+export function setGoalApproval(goalId: string, approved: boolean): Promise<{ goal: string; approval: GoalView['approval'] }> {
+  return adminRequest(`/api/admin/goals/${encodeURIComponent(goalId)}/approval`, 'PUT', { approved });
 }
 
 export function approveObservation(key: string): Promise<{ observations: ObservationView[] }> {
@@ -2055,6 +2096,7 @@ export const api = {
   startMicrosoftConnection,
   disconnectMicrosoft,
   getSonicHealth,
+  setGoalApproval,
   approveObservation,
   retireObservation,
   runObservationReflection,

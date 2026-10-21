@@ -57,8 +57,17 @@ all-day event) and a PLACE (never a street address: the part before the first co
 calendar has..."), SETTLES an unclear "7" or an assumed PM when it agrees, and on a real disagreement the person's value stays and the reply is told both and to mention the difference once (Jack's
 decision). Real-model check: 10/10, replies read right ("Your calendar has it down for 7 PM tonight", and for a clash "...7 PM tonight, though your calendar has it down for 6 PM"). The heads-ups settings
 card now says the switch also covers this. Microsoft calendars are not read (the heads-ups are Google only).
-Not built: aliases (5) ("Ashlyn" / "ashlyn" are the same name by case only, so a calendar title "Ashlynn" matches only through the plan's key word), calendar-only events on the Memory page, a link from the
-chat "Noted" line to the card; the "Noted" line is not kept after a reload.
+**Step 5 BUILT (aliases) and the REPLAY EVALS BUILT (2026-10-21).** `backend/utils/name_aliases.py`: two names are variants only when near-identical (same first letter, at least 5 letters each, one edit
+apart: added, dropped, changed or swapped letter; a several-word name may differ in one word). Used for: an event's person (so "Ashlynn" is the same event as "Ashlyn", the latest spelling wins and the chat
+line says "Updated"), the calendar match ("Dinner with Ashlynn" matches a plan with Ashlyn), and facts, only INSIDE clusters of facts already linked to each other and only for capitalised words in the middle of
+a sentence: the reply prompt gets one line saying they are almost certainly one person and which spelling to use (the latest), and the Memory page shows the same under the note with a "They're different
+people" button (POST /api/memory/name-aliases; stored as a sorted pair on the person's settings, honoured everywhere, wiped by "forget everything"). Narrow on purpose: Mark/Marc and Sam/Sean never match.
+Also fixed while writing the evals: a bare "yes" to Sonic's own question ("So the date is at 7 at Tidos, right?") never reached the extractor, so a confirmed detail could not be saved; the capture gate now lets
+a short yes through when something is coming up (a "yes" to a statement still confirms nothing).
+Replay evals: `python -m backend.evals.memory_eval --part events --runs 3` (`backend/evals/event_replay.py`): 10 scripted conversations through the real extractor into an in-memory store (no database, the real
+counters are not touched), then the real reply model; stored 30/30 and reply 15/15 on 2026-10-21 (time unknown, "no the date is at 7 silly", a bare yep, a confirmed question, "friday" to a real date and not
+offered once past, every field reaching the reply, Ashlyn/Ashlynn, a cancelled plan, an address, a sensitive plan). Note: an ordinary dinner is deliberately NOT captured (the extraction prompt skips everyday plans).
+Not built: calendar-only events on the Memory page, a link from the chat "Noted" line to the card; the "Noted" line is not kept after a reload.
 
 ## Step 3 DRAFT: the event shape (2026-10-21; kept for the reasoning)
 

@@ -199,7 +199,7 @@ def test_the_chat_endpoint_invites_it_only_on_conversational_non_guest_turns_and
     gate = source[source.index("curiosity_invited = False"):source.index("# A clearly closing message")]
     assert 'source_type == "conversational"' in gate and "not is_guest_username(username)" in gate
     assert "callback_offered" in gate and "goal_nudge_context" in gate          # shares the turn's one proactive slot
-    assert gate.index("curiosity_allowed(") < gate.index("gap_clear(")           # the free checks run before the database read
+    assert gate.index("curiosity_allowed(") < gate.index("offer_response.pacing")           # the free checks run before the database read (pacing is the per-person gap, plus the welcome goal's stretch)
     marking = source[source.index("if curiosity_invited and"):]
     assert marking.index("asked_a_question(full_response)") < marking.index("CURIOSITY_MARK] = True") < marking.index("record_offer")
 
@@ -291,7 +291,7 @@ def test_the_callback_has_a_lull_framing_that_picks_something_back_up_and_the_de
 def test_the_chat_endpoint_spends_the_one_extender_on_a_callback_or_a_leaning_in_the_stated_order():
     source = open("app.py", encoding="utf-8").read()
     callback = source[source.index("callback_lull = curiosity_utils.is_lull(question)"):source.index("callback_at_lull = callback_lull")]
-    assert "slot_open(" in callback and "gap_clear(" in callback and "last_reply_asked(" in callback        # a lull callback obeys the same limits
+    assert "slot_open(" in callback and "offer_response.pacing" in callback and "last_reply_asked(" in callback        # a lull callback obeys the same limits
     lull = source[source.index("if shelf_offer is None and lull_ok:"):source.index("if shelf_offer:\n")]
     assert lull.index("pick_lean(") < lull.index("build_curiosity_block()")                                   # the plain question is the last resort
     marking = source[source.index("if callback_at_lull and not is_guest_username(username):"):source.index('tally(turn_counts, "shelf_listed")')]

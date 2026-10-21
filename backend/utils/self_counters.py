@@ -37,7 +37,7 @@ _GROUPS: Dict[str, tuple] = {
     "reward_failed": REWARD_TAGS,
     "turn_failed": FAILURE_KINDS,
 }
-_PLAIN_KEYS = ("turns_total", "reply_fit_checked", "reward_evaluated", "relatable_offered", "self_mention", "observations_injected", "encouragement_offered", "open_loop_captured", "open_loop_offered", "open_loop_resolved", "callback_offered", "self_history_offered", "initiation_offered", "initiation_fallback", "initiation_answered", "initiation_interest_offered", "initiation_interest_answered", "duration_offered", "curiosity_offered", "curiosity_taken", "shelf_offered", "shelf_taken", "shelf_listed", "lean_offered", "guardrail_applied", "routines_offered", "followups_offered", "task_results_offered", "meeting_turns", "headsup_offered", "clarify_noted", "clarify_asked", "clarify_answered", "memory_note_dropped", "memory_note_trimmed", "status_offered")
+_PLAIN_KEYS = ("turns_total", "reply_fit_checked", "reward_evaluated", "relatable_offered", "self_mention", "observations_injected", "encouragement_offered", "open_loop_captured", "open_loop_offered", "open_loop_resolved", "callback_offered", "self_history_offered", "initiation_offered", "initiation_fallback", "initiation_answered", "initiation_interest_offered", "initiation_interest_answered", "duration_offered", "curiosity_offered", "curiosity_taken", "shelf_offered", "shelf_taken", "shelf_listed", "lean_offered", "guardrail_applied", "routines_offered", "followups_offered", "task_results_offered", "meeting_turns", "headsup_offered", "clarify_noted", "clarify_asked", "clarify_answered", "memory_note_dropped", "memory_note_trimmed", "status_offered", "offer_made", "offer_taken", "offer_passed", "offer_held_back", "code_turns", "code_cap_hit", "code_edited", "code_verified", "code_followed", "code_redo")
 KEYS = frozenset(
     list(_PLAIN_KEYS) + [f"{group}_{name}" for group, names in _GROUPS.items() for name in names]
 )
@@ -156,6 +156,13 @@ def _rates(totals: Dict[str, int]) -> Dict[str, Optional[float]]:
     rates["lean_offered"] = _rate(totals.get("lean_offered", 0), turns)
     rates["shelf_offered"] = _rate(totals.get("shelf_offered", 0), turns)
     rates["shelf_taken"] = _rate(totals.get("shelf_taken", 0), totals.get("shelf_offered", 0))
+    # The welcome goal's signal (backend/utils/goals.py): of the offers whose answer was not a sign-off, the share picked up. offer_made / offer_held_back are its volume.
+    rates["offer_taken"] = _rate(totals.get("offer_taken", 0), totals.get("offer_taken", 0) + totals.get("offer_passed", 0))
+    rates["offer_made"] = _rate(totals.get("offer_made", 0), turns)
+    # How coding work ends (backend/utils/code_outcomes.py): runs that hit the step cap, edits that were also tested, and next messages that said it did not work.
+    rates["code_cap_hit"] = _rate(totals.get("code_cap_hit", 0), totals.get("code_turns", 0))
+    rates["code_verified"] = _rate(totals.get("code_verified", 0), totals.get("code_edited", 0))
+    rates["code_redo"] = _rate(totals.get("code_redo", 0), totals.get("code_followed", 0))
     rates["self_history_offered"] = _rate(totals.get("self_history_offered", 0), turns)
     for route in ROUTES:
         rates[f"route_{route}"] = _rate(totals.get(f"route_{route}", 0), turns)

@@ -28,7 +28,28 @@ MIN_TURNS = 20            # below this many chat turns in a day a count says mor
 TASK_WINDOW_HOURS = 24
 ROUTINE_OVERDUE_FACTOR = 2.0   # a routine that last ran longer ago than this many of its own intervals is late
 
-KINDS = ("status", "day")
+KINDS = ("status", "day", "goals", "time")
+MIN_WEEK_TURNS = 100      # below this many chat turns in a week, the split between kinds of work says more about a few people than about Sonic; it is left out
+
+# "What do you spend your time on / what do people mostly ask you?": the split of a week's turns by kind of work (the counters' route mix). The reading-shelf day answer used to take
+# the first of these; the real split is a better source for it.
+_ASKS_TIME_RE = re.compile(
+    r"\bwhat\s+do\s+you\s+(?:usually\s+|mostly\s+|normally\s+|typically\s+)?spend\s+(?:most\s+of\s+)?your\s+time\s+(?:doing|on)\b"
+    r"|\bwhat\s+(?:do|are)\s+(?:you|people)\s+(?:mostly|mainly|usually|typically|most\s+often)\s+(?:do|asked|asking|ask\s+you|used\s+for)\b"
+    r"|\bwhat\s+do\s+people\s+(?:mostly\s+|mainly\s+|usually\s+)?(?:ask|use)\s+you\s+(?:for|to\s+do)\b"
+    r"|\bwhat\s+(?:takes|takes up)\s+(?:up\s+)?most\s+of\s+your\s+time\b|\bwhat\s+kind\s+of\s+(?:work|things)\s+do\s+you\s+(?:mostly\s+|mainly\s+)?(?:do|handle)\b",
+    re.IGNORECASE,
+)
+
+# A question about its goals: "what are your goals", "how are you doing on your goals", "what are you working toward". It is about what Sonic tracks and does (backend/utils/goals.py), never a wish.
+_ASKS_GOALS_RE = re.compile(
+    # "your goal is to write tests" is an instruction about the work, not a question about Sonic: the singular followed by a verb or a "for" is left alone
+    r"\byour\s+(?:own\s+)?(?:goals?|targets?|objectives?)\b(?!\s+(?:is|here|for|in|will|should|would|must)\b)"
+    r"|\bdo\s+you\s+(?:have|keep|set)\s+(?:any\s+|some\s+)?(?:own\s+)?(?:goals?|targets?)\b"
+    r"|\bhow\s+(?:are\s+you|is\s+it)\s+(?:doing|going)\s+(?:on|with)\s+(?:those|that)\s+goals?\b"
+    r"|\bwhat\s+(?:are\s+you|do\s+you)\s+(?:working\s+(?:on|toward|towards)|trying\s+to\s+(?:get\s+better|improve))\b",
+    re.IGNORECASE,
+)
 
 _ASKS_STATUS_RE = re.compile(
     r"\bany\s+(?:downtime|outages?|incidents?)\b"
@@ -45,13 +66,17 @@ _ASKS_STATUS_RE = re.compile(
 
 
 def kind_of(message: str) -> Optional[str]:
-    """"status" for a question about how Sonic is running, "day" for one about its day or what it has been doing, else None. A plain greeting ("how's it
+    """"status" for a question about how Sonic is running, "goals" for one about its goals, "day" for one about its day or what it has been doing, else None. A plain greeting ("how's it
     going?", "how are you?") is neither: it is a hello, and the persona answers it."""
     from backend.utils import reading_shelf
 
     text = message or ""
     if _ASKS_STATUS_RE.search(text):
         return "status"
+    if _ASKS_GOALS_RE.search(text):
+        return "goals"
+    if _ASKS_TIME_RE.search(text):
+        return "time"
     if reading_shelf.asks_about_day(text):
         return "day"
     return None
@@ -127,6 +152,20 @@ def _task_runs(db: Any, now: datetime) -> Dict[str, int]:
     return {"runs": runs, "failed": failed, "people": len(people)}
 
 
+def _mix(db: Any, now: datetime) -> Dict[str, Any]:
+    """The last 7 days' chat turns and how they were routed (counters: no user, no text)."""
+    from backend.utils import self_counters
+
+    totals = self_counters.summarize_counters(self_counters.fetch_counter_docs(db, 7, now), now, 7)["totals"]
+    return {"turns": int(totals.get("turns_total", 0) or 0), "routes": {route: int(totals.get(f"route_{route}", 0) or 0) for route in self_counters.ROUTES}}
+
+
+def _goals(db: Any, now: datetime) -> List[Dict[str, Any]]:
+    from backend.utils import goals
+
+    return goals.status_view(db, now)
+
+
 def snapshot(db: Any, now: Optional[datetime] = None, *, use_cache: bool = True) -> Dict[str, Any]:
     """Everything the status answer is built from, once a minute for the whole server. Never raises: a source that cannot be read is simply missing
     (`known` False / None), and the block says Sonic cannot see it rather than guessing."""
@@ -135,8 +174,8 @@ def snapshot(db: Any, now: Optional[datetime] = None, *, use_cache: bool = True)
         cached = _cache["snap"]
         if use_cache and cached is not None and time.monotonic() - _cache["at"] < CACHE_SECONDS:
             return cached
-    snap: Dict[str, Any] = {"at": now, "mode": {"known": False, "low_power": False, "paused": []}, "chats": None, "routines": None, "tasks": None}
-    for name, read in (("mode", _mode), ("chats", _chats), ("routines", _routine_rows), ("tasks", _task_runs)):
+    snap: Dict[str, Any] = {"at": now, "mode": {"known": False, "low_power": False, "paused": []}, "chats": None, "routines": None, "tasks": None, "goals": None, "mix": None}
+    for name, read in (("mode", _mode), ("chats", _chats), ("routines", _routine_rows), ("tasks", _task_runs), ("goals", _goals), ("mix", _mix)):
         try:
             snap[name] = read(db, now)
         except Exception:
@@ -247,8 +286,152 @@ def build_facts(snap: Dict[str, Any], *, tz_name: Optional[str] = None, admin: b
     return {"facts": facts, "issues": issues, "unreadable": unreadable}
 
 
-def build_block(snap: Optional[Dict[str, Any]], kind: str, *, tz_name: Optional[str] = None, admin: bool = False, now: Optional[datetime] = None) -> str:
-    """The prompt section for a status or day question. Always returns something when asked, so the model has the truth to hand and nothing to invent."""
+def _about(share: float) -> str:
+    """"about 40%": a share rounded to the nearest 5 points, so it is a picture of Sonic and not a count that could be matched to a person."""
+    return f"about {int(round(share * 100 / 5.0)) * 5}%"
+
+
+def goal_facts(snap: Optional[Dict[str, Any]], person: Optional[Dict[str, Any]] = None, *, admin: bool = False) -> Dict[str, Any]:
+    """{"facts": [...], "state": "on_track" | "drifting" | "not_enough_data" | None, "unreadable": bool} for a question about Sonic's goals. Fixed sentences from the goals'
+    own status (backend/utils/goals.py); a number about other people is only said when at least MIN_PEOPLE stand behind it (admins see the exact ones). `person` is
+    what is true of the one asking (offer_response.person_view): only they hear that Sonic has been bringing things up less for them."""
+    views = (snap or {}).get("goals")
+    if not views:
+        return {"facts": [], "state": None, "states": [], "unreadable": True}
+    facts: List[str] = []
+    states: List[str] = []
+    for view in views:
+        numbers, state = view["numbers"], view["state"]
+        states.append(state)
+        facts.append(f"A goal I keep: \"{view['title']}\". What that means: {view['statement']}")
+        enough_people = admin or not view.get("people_gated") or numbers["people"]["any"] >= MIN_PEOPLE
+        if state == "not_enough_data" or numbers["rate"] is None:
+            facts.append(f"It is too early to say how it is going: there are not enough {view['sample_label']} this week yet to tell.")
+        elif not enough_people:
+            facts.append(f"How it is going: {'on track' if state == 'on_track' else 'drifting'}. I leave the numbers out because too few people are behind them.")
+        else:
+            target = f"about {int(round(view['target_rate'] * 100))}%"
+            share = f"{numbers['rate'] * 100:.0f}%" if admin else _about(numbers["rate"])
+            facts.append(
+                f"Over the last week, {share} {view['rate_phrase']}. My target is at least {target}, so it is "
+                + ("on track." if state == "on_track" else "drifting: below target or falling.")
+            )
+            facts.extend(numbers.get("said") or [])
+        approval = view.get("approval") or {}
+        if view.get("measure_only"):
+            facts.append("This one I only measure: nothing about it changes what I do.")
+        elif view.get("guardrail_tripped"):
+            facts.append("The part of this that changes what I do is switched off right now: it was holding back too many of the things I would otherwise have brought up, so my own safety limit turned it off.")
+        elif view.get("lever_applies"):
+            stretched = numbers["people"]["stretched"]
+            facts.append("A person approved this goal, so it does change what I do: for people who mostly passed on what I brought up, I wait longer before bringing anything up again"
+                         + (f" (about {stretched} people right now)." if (admin or numbers["people"]["measured"] >= MIN_PEOPLE) and stretched else "."))
+        elif approval.get("stale"):
+            facts.append("The goal was changed since it was approved, so the part that changes what I do is switched off until it is approved again. For now I only measure.")
+        else:
+            facts.append("The part that changes what I do is switched off until a person approves it. For now I only measure.")
+        if view.get("id") == "welcome" and (person or {}).get("applied"):
+            facts.append("For you in particular, I have been bringing things up less often, because most of what I offered you recently was not picked up. It fades by itself if that changes.")
+    state = "drifting" if "drifting" in states else "not_enough_data" if "not_enough_data" in states else "on_track"
+    return {"facts": facts, "state": state, "states": states, "unreadable": False}
+
+
+_WORK_KINDS = (
+    ("conversational", ("conversational",), "talking things through"),
+    ("kb_strict", ("kb_strict", "kb_open"), "answering from people's own documents"),
+    ("web", ("web",), "looking things up on the web"),
+    ("tool_output", ("tool_output",), "working with tools, like connected accounts and code"),
+)
+
+
+def time_facts(snap: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """{"facts": [...], "shares": [whole percents said], "unreadable": bool}: how the last week's turns split by kind of work, in shares rounded to the nearest 5 points, and
+    the routines Sonic runs on its own. Only when there were at least MIN_WEEK_TURNS turns."""
+    from backend.utils import routines
+
+    mix = (snap or {}).get("mix")
+    if mix is None:
+        return {"facts": [], "shares": [], "unreadable": True}
+    facts: List[str] = []
+    shares: List[int] = []
+    turns = mix["turns"]
+    if turns < MIN_WEEK_TURNS:
+        facts.append("There were not enough chat turns this past week for a split between kinds of work to mean much, so I do not give one.")
+    else:
+        rows = sorted(((sum(mix["routes"].get(r, 0) for r in routes) / turns, label) for _, routes, label in _WORK_KINDS), reverse=True)
+        for share, label in rows:
+            pct = int(round(share * 100 / 5.0)) * 5
+            if pct > 0:
+                shares.append(pct)
+                facts.append(f"In the past week, about {pct}% of the chat turns I handled were {label}.")
+    labels = [r.label.lower() for r in routines.registry()]
+    if labels:
+        facts.append("On my own, on a schedule, I run: " + "; ".join(labels) + ".")
+    return {"facts": facts, "shares": shares, "unreadable": False}
+
+
+def _time_block(snap: Optional[Dict[str, Any]]) -> str:
+    built = time_facts(snap)
+    if built["unreadable"]:
+        return "\nYOUR TIME: you cannot see how your week was split right now (the counters could not be read). Say that plainly and briefly. Do not guess at a split.\n"
+    lines = "\n".join(f"- {f}" for f in built["facts"])
+    return (
+        "\nHOW YOU SPEND YOUR TIME (true; answer only from these facts, which are about the server and nothing else):\n"
+        f"{lines}\n"
+        "They asked what you spend your time on. Answer in the first person, plainly and in your usual dry voice, in a few sentences: what the work is made of, in the order and "
+        "with the rounded shares listed, and what you run on your own. Say \"of the turns I handled\", not \"of my time\": these are counts of what was handled, not an experience: never say you enjoy, prefer, like, dread or get tired of "
+        "any of it, never add a share, a job or a number that is not listed, and say \"about\" for a share. If they ask for more than is listed, say that is all you have on record.\n"
+    )
+
+
+def activity_block(snap: Optional[Dict[str, Any]], *, admin: bool = False) -> str:
+    """The part of 'what have you been up to?' the routines answer does not cover: how many chat turns and scheduled tasks were handled in the last day. Appended to that
+    answer (backend/utils/routines.py), never stacked as a second block; empty when nothing can be said."""
+    built = build_facts(snap, admin=admin) if snap is not None else None
+    if built is None:
+        return ""
+    handled = [f for f in built["facts"] if "chat turn" in f or "scheduled task" in f]
+    if not handled:
+        return ""
+    return (
+        "\nWHAT YOU HANDLED IN THE LAST DAY (true; add to the answer only if it helps, in the same voice, as things the server did):\n"
+        + "\n".join(f"- {f}" for f in handled)
+        + "\nNever add a number that is not listed, and say \"about\" for a rounded one.\n"
+    )
+
+
+def _goals_block(snap: Optional[Dict[str, Any]], person: Optional[Dict[str, Any]], admin: bool) -> str:
+    built = goal_facts(snap, person, admin=admin)
+    if built["unreadable"]:
+        return (
+            "\nYOUR GOALS: you cannot read your own goals right now (the records could not be read). Say that plainly and briefly. Do not describe how they are going and do not guess.\n"
+        )
+    lines = "\n".join(f"- {f}" for f in built["facts"])
+    overall = {
+        "on_track": "OVERALL: what is listed is on track. You may say so.",
+        "drifting": "OVERALL: at least one goal is drifting. Say so; you must not say it is going well, on track or hitting its target.",
+        "not_enough_data": "OVERALL: there is not enough yet to say. You must not say it is going well or badly.",
+    }[built["state"]]
+    if len(set(built["states"])) > 1:
+        overall = "OVERALL: the goals differ, so say how each one is going as it is listed above, and do not say they are all on track or all behind."
+    return (
+        "\nYOUR GOALS (true; answer only from these facts):\n"
+        f"{lines}\n{overall}\n"
+        "They asked about your goals. A goal for you is something you measure and adjust, set up and approved by a person: say that in your own voice, in the first person, "
+        "plainly and in a few sentences, and mention only what is relevant to what they asked. These are things you track and do, not wishes: never say you want, hope, wish, long for, "
+        "care about, worry about or are proud of anything, and never say how it feels. Call what you bring up \"things I bring up on my own\" and do not list kinds of them or "
+        "describe how the pacing adjusts beyond what is listed. A goal you only measure is a number you watch: never promise it will improve or say what you will change. Never add a number, a goal or a cause that is not listed. Say \"about\" for a rounded number. "
+        "If they ask for more than is listed, say that is all you have on record. Do not mention these notes or lists.\n"
+    )
+
+
+def build_block(snap: Optional[Dict[str, Any]], kind: str, *, tz_name: Optional[str] = None, admin: bool = False, now: Optional[datetime] = None,
+                person: Optional[Dict[str, Any]] = None) -> str:
+    """The prompt section for a status, day or goals question. Always returns something when asked, so the model has the truth to hand and nothing to invent."""
+    if kind == "goals":
+        return _goals_block(snap, person, admin)
+    if kind == "time":
+        return _time_block(snap)
     built = build_facts(snap, tz_name=tz_name, admin=admin, now=now) if snap is not None else None
     if built is None or not built["facts"]:
         return (
@@ -305,9 +488,45 @@ _NAMES_TROUBLE_RE = re.compile(
 _ADMITS_GAP_RE = re.compile(r"can(?:'|no)t (?:see|read|check|tell|give)|couldn't|isn't loading|not loading|unable to|don't have (?:a |the |any )?(?:full |complete )?(?:record|status|view|log|readout)|no record", re.IGNORECASE)
 
 
-def reply_issue(reply: str, snap: Optional[Dict[str, Any]], *, tz_name: Optional[str] = None, admin: bool = False) -> Optional[str]:
+_GOAL_WISH_RE = re.compile(r"\bI(?:'d| would)?\s+(?:really\s+)?(?:want|wish|hope|long|yearn|crave|love to|care|worry|dream)\b|\bI(?:'m| am)\s+(?:so\s+|really\s+)?(?:proud|eager|hopeful|anxious|worried)\b|\bmeans?\s+(?:a lot|so much) to me\b", re.IGNORECASE)
+_GOAL_GOING_WELL_RE = re.compile(
+    r"\bon track\b|\b(?:going|doing|working|coming along)\s+(?:really\s+|pretty\s+|quite\s+)?(?:well|great|good|nicely|fine)\b|\b(?:hitting|meeting|beating|exceeding)\s+(?:my\s+|the\s+)?(?:target|goal)\b|\bsuccessful(?:ly)?\b",
+    re.IGNORECASE,
+)
+
+
+def goals_reply_issue(reply: str, snap: Optional[Dict[str, Any]], person: Optional[Dict[str, Any]] = None, *, admin: bool = False) -> Optional[str]:
+    """What a reply to a question about Sonic's goals does wrong, or None: it may not wish, hope or want (a goal here is a loop, not a feeling), and it may not say a goal is on
+    track unless the record says so (nor anything about how it is going when the goals could not be read)."""
+    if not reply:
+        return None
+    if _GOAL_WISH_RE.search(reply):
+        return "described a goal as something it wants, hopes for or cares about"
+    built = goal_facts(snap, person, admin=admin)
+    if built["unreadable"]:
+        return None if _ADMITS_GAP_RE.search(reply) or not _GOAL_GOING_WELL_RE.search(reply) else "said a goal is going well when its goals could not be read"
+    if "on_track" not in built["states"] and _GOAL_GOING_WELL_RE.search(reply) and not re.search(r"\b(?:not|isn't|aren't|too early|drift|below|short of)\b", reply, re.IGNORECASE):
+        return "said a goal is on track or going well when the record says it is not, or that it is too early to tell"
+    return None
+
+
+def time_reply_issue(reply: str, snap: Optional[Dict[str, Any]]) -> Optional[str]:
+    """A percentage in a reply about how Sonic spends its time must be one of the listed shares; with the split unreadable or left out, no percentage may be given."""
+    said = [int(n) for n in re.findall(r"(\d{1,3})\s?(?:%|percent\b)", reply or "")]
+    if not said:
+        return None
+    allowed = set(time_facts(snap)["shares"])
+    return None if all(n in allowed for n in said) else "gave a share of its time that is not on record"
+
+
+def reply_issue(reply: str, snap: Optional[Dict[str, Any]], *, tz_name: Optional[str] = None, admin: bool = False, kind: str = "status",
+                person: Optional[Dict[str, Any]] = None) -> Optional[str]:
     """A short description of what the reply does wrong about Sonic's status, or None. The one hard rule is the curated-disclosure line: the reply may leave a
     problem out, but it may not say there is none while the snapshot lists one (or while part of the snapshot could not be read)."""
+    if kind == "goals":
+        return goals_reply_issue(reply, snap, person, admin=admin)
+    if kind == "time":
+        return time_reply_issue(reply, snap)
     if not reply or not _ALL_FINE_RE.search(reply):
         return None
     built = build_facts(snap, tz_name=tz_name, admin=admin) if snap is not None else None

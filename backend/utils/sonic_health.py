@@ -17,7 +17,7 @@ from backend.utils.safety_stats import fetch_recent_events, summarize_safety_eve
 from backend.utils.self_counters import fetch_counter_docs, summarize_counters
 from backend.utils.self_observations import list_observations
 from backend.utils.feedback_stats import fetch_corrections, summarize_feedback, summarize_graph
-from backend.utils import routines as routines_utils
+from backend.utils import goals as goals_utils, routines as routines_utils
 
 logger = logging.getLogger("SASS Logger")
 
@@ -74,6 +74,8 @@ def build_sonic_health(db: Any, days: int, now: Optional[datetime.datetime] = No
         "graph": _section("graph", lambda: summarize_graph(db)),
         # The jobs the server runs on a schedule, and the last result of each: what Sonic can truthfully say it does on its own (backend/utils/routines.py).
         "routines": _section("routines", lambda: routines_utils.routines_view(db, now)),
+        # Sonic's goals: what each is, how it is going, whether its lever is approved and what the lever did (backend/utils/goals.py). Counts only.
+        "goals": _section("goals", lambda: goals_utils.status_view(db, now, use_cache=False)),
         "observations": list_observations(db, now),
         "usage": {
             **usage_summary,
