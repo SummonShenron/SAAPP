@@ -396,11 +396,11 @@ def schedule(db, allowed=lambda owner: True, now=NOW, answer='{"headline": "h", 
 def test_a_due_task_runs_and_is_moved_on_and_what_it_found_waits():
     db = Db()
     task = due(db)
-    assert schedule(db) == {"ran": 1, "found": 1, "skipped": 0}
+    assert schedule(db) == {"ran": 1, "found": 1, "skipped": 0, "waited": 0}
     after = ut.get_task(db, "u1", task["id"])
     assert after["next_run_at"] > NOW and after["lease_until"] is None and after["last_status"] == "ok"
     assert len(ut.waiting_runs(db, "u1")) == 1 and ut.waiting_runs(db, "u1")[0]["trigger"] == "scheduled"
-    assert schedule(db) == {"ran": 0, "found": 0, "skipped": 0}                               # nothing is due now
+    assert schedule(db) == {"ran": 0, "found": 0, "skipped": 0, "waited": 0}                   # nothing is due now
 
 
 def test_a_person_over_their_daily_runs_is_skipped_not_run():

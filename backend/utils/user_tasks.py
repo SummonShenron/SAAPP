@@ -20,6 +20,7 @@ Rules that keep it small, safe and honest:
 
 Storage: one document per task in `sonic_user_tasks`; one per run in `sonic_user_task_runs` (kept ten per task, and expired after sixty days).
 """
+import hashlib
 import logging
 import re
 import uuid
@@ -49,6 +50,14 @@ MAX_ITEMS_PER_RUN = 6
 MAX_NOTE_CHARS = 220
 MAX_HEADLINE_CHARS = 200
 ANNOUNCE_MIN_GAP_SECONDS = open_loops.FOLLOW_UP_MIN_GAP_SECONDS   # same moment as the other "welcome back" things: a new conversation, or a real pause
+
+# Windows (docs/schedule-windows-plan.md). A task may be given a window of a few hours starting at its hour: it then runs at a quiet moment inside it (the person has been
+# away QUIET_MINUTES and the shared budget has headroom) and at the window's end runs anyway. No model decides this: the checks are code, so the reason a run landed
+# when it did is a fact and is stored with the run. Never wider than the person chose, and never wider than a day.
+WINDOW_CHOICES = (0, 2, 3)            # hours; 0 is the exact time, as every task was before
+QUIET_MINUTES = 30                    # a person who has used Sonic in the last this many minutes is "here": a windowed task waits
+WINDOW_JITTER_SHARE = 0.4             # the first run of the day may be pushed this share into the window, so people who all pick 8 AM do not all land at 8:00
+DEFER_MINUTES = 10                    # a task that has to wait is looked at again this much later (not every pass, so the queue behind it gets its turn)
 
 # Where a task may look. Each is a fixed adapter in user_task_runner.py with its own limits; more (a jobs board, news) are added here, by us, with our own keys.
 SOURCES = ("web", "jooble", "adzuna")
@@ -131,7 +140,13 @@ def validate_spec(raw: Any, default_tz: str = "America/Chicago") -> Tuple[Option
     if not 0 <= hour <= 23 or not 0 <= weekday <= 6:
         return None, "Choose a time of day and a weekday that exist."
     tz = str(raw.get("tz") or default_tz)
-    schedule = {"cadence": cadence, "hour": hour, "weekday": weekday if cadence == WEEKLY else None, "tz": tz}
+    try:
+        window_hours = int(raw.get("window_hours") or 0)
+    except (TypeError, ValueError):
+        return None, "Choose the exact time, or a window of 2 or 3 hours."
+    if window_hours not in WINDOW_CHOICES:
+        return None, "Choose the exact time, or a window of 2 or 3 hours."
+    schedule = {"cadence": cadence, "hour": hour, "weekday": weekday if cadence == WEEKLY else None, "tz": tz, "window_hours": window_hours}
 
     if kind in REPO_KINDS:
         repo = _clean(raw.get("repo"), 141)
@@ -189,12 +204,67 @@ def next_run_at(spec: Dict[str, Any], after: datetime) -> datetime:
     return after + timedelta(days=1)
 
 
+def window_jitter_minutes(task_id: Optional[str], day: str, window_hours: int) -> int:
+    """How far into the window this task's run for this day is first allowed to start: the same answer every time it is asked (a restart or a recomputation does not
+    move it) and different between tasks, so a crowd that all chose the same hour is spread across the first WINDOW_JITTER_SHARE of the window."""
+    span = int(window_hours * 60 * WINDOW_JITTER_SHARE)
+    if span <= 0:
+        return 0
+    return int(hashlib.sha256(f"{task_id or ''}:{day}".encode()).hexdigest(), 16) % span
+
+
+def schedule_fields(spec: Dict[str, Any], after: datetime) -> Dict[str, Any]:
+    """The schedule columns for a task after `after`: when it is next due, and for a windowed one when its window opens and closes (None for an exact task). The due
+    time is the start of the window plus the task's own jitter; the sweep may run it any time from then until the window closes."""
+    start = next_run_at(spec, after)
+    hours = int(spec.get("window_hours") or 0)
+    if hours <= 0:
+        return {"next_run_at": start, "window_starts_at": None, "window_ends_at": None}
+    jitter = timedelta(minutes=window_jitter_minutes(spec.get("id"), start.date().isoformat(), hours))
+    return {"next_run_at": start + jitter, "window_starts_at": start, "window_ends_at": start + timedelta(hours=hours)}
+
+
+def is_windowed(task: Dict[str, Any]) -> bool:
+    return int(task.get("window_hours") or 0) > 0 and _utc(task.get("window_ends_at")) is not None
+
+
+def window_deadline(task: Dict[str, Any]) -> Optional[datetime]:
+    return _utc(task.get("window_ends_at")) if is_windowed(task) else None
+
+
+def _clock(hour: int) -> Tuple[int, str]:
+    return hour % 12 or 12, "AM" if hour % 24 < 12 else "PM"
+
+
 def describe_schedule(spec: Dict[str, Any]) -> str:
     hour = int(spec.get("hour", 8))
-    clock = f"{hour % 12 or 12} {'AM' if hour < 12 else 'PM'}"
+    window = int(spec.get("window_hours") or 0)
+    if window:
+        (h1, m1), (h2, m2) = _clock(hour), _clock(hour + window)
+        span = f"between {h1} and {h2} {m2}" if m1 == m2 else f"between {h1} {m1} and {h2} {m2}"
+    else:
+        clock = f"{hour % 12 or 12} {'AM' if hour < 12 else 'PM'}"
+        span = f"around {clock}"
     if spec.get("cadence") == WEEKLY:
-        return f"every {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][int(spec.get('weekday') or 0)]} around {clock}"
-    return f"every day around {clock}"
+        return f"every {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][int(spec.get('weekday') or 0)]} {span}"
+    return f"every day {span}"
+
+
+def run_reason(task: Dict[str, Any], trigger: str, idle_minutes: Optional[float], at_deadline: bool) -> str:
+    """Why a run landed when it did, in a fixed sentence written here from what the sweep actually checked (never by a model). For the person's own task history."""
+    if trigger == "manual":
+        return "You ran it yourself."
+    if not is_windowed(task):
+        return "Ran at its scheduled time."
+    waited = set(task.get("waited_for") or [])
+    if at_deadline:
+        return "The window closed, so it ran anyway."
+    parts = [text for key, text in (("headroom", "room in the usage budget"), ("quiet", "you to be away for a while")) if key in waited]
+    if parts:
+        return f"Waited for {' and '.join(parts)}, then ran inside the window."
+    if idle_minutes is not None:
+        return f"Ran inside the window, after at least {QUIET_MINUTES} minutes with no activity from you."
+    return "Ran inside the window."
 
 
 def _utc(value: Any) -> Optional[datetime]:
@@ -231,8 +301,10 @@ def public_task(doc: Dict[str, Any], now: Optional[datetime] = None) -> Dict[str
     return {
         "id": doc.get("id"), "kind": doc.get("kind") or RESEARCH, "repo": doc.get("repo") or "", "title": doc.get("title"), "topic": doc.get("topic"), "details": doc.get("details") or "",
         "cadence": doc.get("cadence"), "hour": doc.get("hour"), "weekday": doc.get("weekday"), "tz": doc.get("tz"), "sources": doc.get("sources") or [DEFAULT_SOURCE], "location": doc.get("location") or "",
+        "window_hours": int(doc.get("window_hours") or 0),
         "schedule": describe_schedule(doc), "status": doc.get("status"), "paused_because": doc.get("paused_because"),
-        "next_run_at": (_utc(doc.get("next_run_at")) or datetime.now(timezone.utc)).isoformat() if doc.get("status") == ACTIVE and doc.get("next_run_at") else None,
+        # A windowed task is shown at the time its window opens: the retry times inside the window are not something to watch.
+        "next_run_at": (_utc(doc.get("window_starts_at") if is_windowed(doc) else doc.get("next_run_at")) or datetime.now(timezone.utc)).isoformat() if doc.get("status") == ACTIVE and doc.get("next_run_at") else None,
         "last_run_at": _utc(doc.get("last_run_at")).isoformat() if _utc(doc.get("last_run_at")) else None,
         "last_status": doc.get("last_status"), "waiting": int(doc.get("waiting") or 0),
     }
@@ -243,6 +315,9 @@ def public_run(doc: Dict[str, Any]) -> Dict[str, Any]:
         "id": doc.get("id"), "task_id": doc.get("task_id"), "status": doc.get("status"), "trigger": doc.get("trigger"),
         "started_at": _utc(doc.get("started_at")).isoformat() if _utc(doc.get("started_at")) else None,
         "headline": doc.get("headline") or "", "items": list(doc.get("items") or []), "seen": bool(doc.get("seen")),
+        "reason": doc.get("reason") or "",
+        "window": {"starts_at": _utc((doc.get("window") or {}).get("starts_at")).isoformat(), "ends_at": _utc((doc.get("window") or {}).get("ends_at")).isoformat()}
+                  if _utc((doc.get("window") or {}).get("starts_at")) and _utc((doc.get("window") or {}).get("ends_at")) else None,
     }
 
 
@@ -265,9 +340,11 @@ def create_task(db, username: str, spec: Dict[str, Any], now: Optional[datetime]
     now = now or datetime.now(timezone.utc)
     if len(list(db[COLLECTION].find({"username": username}, {"_id": 0, "id": 1}))) >= MAX_TASKS_PER_USER:
         return None, f"You can have {MAX_TASKS_PER_USER} tasks at a time. Delete one to make room."
+    task_id = uuid.uuid4().hex
     doc = {
-        "id": uuid.uuid4().hex, "username": username, **spec, "status": ACTIVE, "created_at": now.isoformat(),
-        "next_run_at": next_run_at(spec, now), "last_run_at": None, "last_status": None, "lease_until": None, "fail_streak": 0, "seen_urls": [], "last_sha": None,
+        "id": task_id, "username": username, **spec, "status": ACTIVE, "created_at": now.isoformat(),
+        **schedule_fields({**spec, "id": task_id}, now), "last_run_at": None, "last_status": None, "lease_until": None, "fail_streak": 0, "seen_urls": [], "last_sha": None,
+        "waited_for": [],
     }
     db[COLLECTION].insert_one(dict(doc))
     return doc, None
@@ -286,10 +363,10 @@ def update_task(db, username: str, task_id: str, changes: Dict[str, Any], now: O
         fields["status"] = changes["status"]
         if changes["status"] == ACTIVE:
             fields.update({"fail_streak": 0, "paused_because": None})
-    editable = {k: changes[k] for k in ("title", "topic", "details", "cadence", "hour", "weekday", "tz", "sources", "location", "repo") if k in changes}
+    editable = {k: changes[k] for k in ("title", "topic", "details", "cadence", "hour", "weekday", "tz", "sources", "location", "repo", "window_hours") if k in changes}
     if editable:
         # The kind is never changed by an edit: a research task does not become a repository one (which would change whose key it runs on).
-        merged = {**{k: task.get(k) for k in ("kind", "title", "topic", "details", "cadence", "hour", "weekday", "tz", "sources", "location", "repo")}, **editable, "kind": task.get("kind") or RESEARCH}
+        merged = {**{k: task.get(k) for k in ("kind", "title", "topic", "details", "cadence", "hour", "weekday", "tz", "sources", "location", "repo", "window_hours")}, **editable, "kind": task.get("kind") or RESEARCH}
         spec, issue = validate_spec(merged, task.get("tz") or "America/Chicago")
         if issue:
             return None, issue
@@ -298,7 +375,8 @@ def update_task(db, username: str, task_id: str, changes: Dict[str, Any], now: O
             fields["seen_urls"] = []              # a different question: what was shown before no longer counts as old news
             fields["last_sha"] = None
     if fields.get("status", task.get("status")) == ACTIVE and (editable or fields.get("status") == ACTIVE):
-        fields["next_run_at"] = next_run_at({**task, **fields}, now)
+        fields.update(schedule_fields({**task, **fields}, now))
+        fields["waited_for"] = []
     if fields:
         db[COLLECTION].update_one({"username": username, "id": task_id}, {"$set": fields})
     return get_task(db, username, task_id), None
@@ -353,12 +431,25 @@ def claim_task(db, username: str, task_id: str, now: datetime) -> Optional[Dict[
 
 
 def reschedule(db, task: Dict[str, Any], now: datetime) -> None:
-    """Gives a claimed task back without a run (skipped for the day's cap or the cost guard)."""
-    db[COLLECTION].update_one({"id": task["id"]}, {"$set": {"lease_until": None, "next_run_at": next_run_at(task, now)}})
+    """Gives a claimed task back without a run (skipped for the day's cap or the cost guard): it is next due at its next time."""
+    db[COLLECTION].update_one({"id": task["id"]}, {"$set": {"lease_until": None, "waited_for": [], **schedule_fields(task, now)}})
 
 
-def finish_run(db, task: Dict[str, Any], result: Dict[str, Any], trigger: str, started: datetime, now: datetime) -> Dict[str, Any]:
-    """Writes the run down and moves the task on: its next time, a failure count (three in a row pause it), and the links it has now shown."""
+def defer(db, task: Dict[str, Any], now: datetime, why: Optional[str] = None) -> None:
+    """Gives a claimed task back to be looked at again a little later in the same window (not run, and not skipped for the day). `why` ("quiet" or "headroom") is
+    remembered, to be written into the run's reason. It is looked at again in DEFER_MINUTES, or when its window closes if that is sooner, so the tasks behind it in the
+    queue get their turn and it can never wait past its window."""
+    waited = sorted(set(task.get("waited_for") or []) | ({why} if why else set()))
+    retry = now + timedelta(minutes=DEFER_MINUTES)
+    deadline = window_deadline(task)
+    if deadline is not None and deadline > now:
+        retry = min(retry, deadline)
+    db[COLLECTION].update_one({"id": task["id"]}, {"$set": {"lease_until": None, "next_run_at": retry, "waited_for": waited}})
+
+
+def finish_run(db, task: Dict[str, Any], result: Dict[str, Any], trigger: str, started: datetime, now: datetime, *, reason: str = "") -> Dict[str, Any]:
+    """Writes the run down and moves the task on: its next time, a failure count (three in a row pause it), and the links it has now shown. `reason` is why it ran
+    when it did (run_reason); the window it ran in and how long after the window opened are recorded with it, so lateness can be read from the runs."""
     status = result.get("status", FAILED)
     streak = 0 if status != FAILED else int(task.get("fail_streak") or 0) + 1
     seen = list(task.get("seen_urls") or []) + list(result.get("new_keys") or [])
@@ -366,8 +457,10 @@ def finish_run(db, task: Dict[str, Any], result: Dict[str, Any], trigger: str, s
         "lease_until": None, "last_run_at": now.isoformat(), "last_status": status, "fail_streak": streak, "seen_urls": seen[-MAX_SEEN_URLS:],
     }
     fields.update({k: v for k, v in (result.get("task_fields") or {}).items() if k in RUN_MAY_SET})   # what a run may remember about the task (the commit an audit last read)
+    window_start, window_end = _utc(task.get("window_starts_at")), window_deadline(task)
     if trigger == "scheduled" or task.get("status") == ACTIVE:
-        fields["next_run_at"] = next_run_at(task, now)
+        fields.update(schedule_fields(task, now))
+        fields["waited_for"] = []
     if streak >= MAX_FAILURES_IN_A_ROW:
         fields.update({"status": PAUSED, "paused_because": PAUSE_FAILING})
     db[COLLECTION].update_one({"id": task["id"]}, {"$set": fields})
@@ -377,6 +470,9 @@ def finish_run(db, task: Dict[str, Any], result: Dict[str, Any], trigger: str, s
         "items": list(result.get("items") or [])[:MAX_ITEMS_PER_RUN],
         # Nothing new (or a failure) has nothing to announce; only a run with items waits for the person.
         "seen": status != OK, "announced": status != OK, "expires_at": now + timedelta(days=RUN_RETENTION_DAYS),
+        "reason": _clean(reason, 160),
+        "window": {"starts_at": window_start, "ends_at": window_end} if window_start and window_end and trigger == "scheduled" else None,
+        "late_minutes": max(int((started - window_start).total_seconds() // 60), 0) if window_start and trigger == "scheduled" else None,
     }
     db[RUNS_COLLECTION].insert_one(dict(run))
     kept = sorted(db[RUNS_COLLECTION].find({"task_id": task["id"]}, {"_id": 0, "id": 1, "started_at": 1}), key=lambda d: str(d.get("started_at")), reverse=True)
@@ -519,10 +615,14 @@ def build_tasks_context(db, username: str, tz_name: Optional[str], now: Optional
         if task.get("status") != ACTIVE:
             lines.append(f"- \"{title}\": paused, so nothing is scheduled for it.")
             continue
-        due = _utc(task.get("next_run_at"))
+        windowed = is_windowed(task)
+        due = _utc(task.get("window_starts_at")) if windowed else _utc(task.get("next_run_at"))
         last = _utc(task.get("last_run_at"))
         done = f" It last ran {when_phrase(last, tz_name, now)} and {'found something new' if task.get('last_status') == OK else 'found nothing new' if task.get('last_status') == NOTHING_NEW else 'did not finish'}." if last else " It has not run yet."
-        lines.append(f"- \"{title}\" ({describe_schedule(task)}): next run {when_phrase(due, tz_name, now) if due else 'not scheduled'}.{done}")
+        # A windowed task has no exact time: it runs at a quiet moment inside its window (when they have been away a while and there is room in the budget), and at the end of it anyway.
+        when = (f"its window opens {when_phrase(due, tz_name, now)}; it runs at a quiet moment inside it, and at the end of it anyway" if windowed and due
+                else f"next run {when_phrase(due, tz_name, now)}" if due else "next run not scheduled")
+        lines.append(f"- \"{title}\" ({describe_schedule(task)}): {when}.{done}")
     if not lines and not others:
         return ""
     head = "Tasks this person set up for you:" if lines else "This person has not set up any tasks for you."

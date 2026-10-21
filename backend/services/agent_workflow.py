@@ -108,7 +108,7 @@ from backend.services.react_loop import run_react_loop, _MAX_BATCH_SIZE
 from backend.services import steering
 from backend.services import image_gen, library_search, native_loop, ops_incidents, photo_cards
 from backend.services import native_tools as native_tools_module
-from backend.utils import budget_guard, llm_turns, memory_grounding, progress_notes, reading_shelf
+from backend.utils import budget_guard, date_resolve, llm_turns, memory_grounding, progress_notes, reading_shelf, self_report
 from backend.services.repo_checkout import (
     RepoCheckoutError, fetch_and_extract_checkout, cleanup_checkout, find_declarations_in_checkout,
 )
@@ -799,6 +799,12 @@ def build_agent_plan(intent: str, state: dict) -> dict:
         logger.info("[Coordinator] Routing a question about its reading to conversation.")
         state["last_intent"] = "conversational"
         return {"agents": ["conversational"], "skip": []}
+    # "How are things going on your end?", "how was your day?", "any downtime?" are about Sonic itself, answered from its own records in app.py
+    # (backend/utils/self_report.py); the tool agent has no way to answer them and used to go looking in the logs.
+    if _messages and self_report.kind_of(_content_of(_messages[-1])):
+        logger.info("[Coordinator] Routing a question about its own status to conversation.")
+        state["last_intent"] = "conversational"
+        return {"agents": ["conversational"], "skip": []}
     if _messages and photo_cards.wants_card(_content_of(_messages[-1]), state.get("image_refs"), _messages[:-1]):
         logger.info("[Coordinator] Routing to the photo card maker.")
         state["last_intent"] = "image_card"
@@ -1088,6 +1094,8 @@ async def memory_save_node(state: GraphState, memory_vector_store=None) -> dict:
         if grounded.dropped:
             logger.info("[MemorySave] Grounding check replaced a fact that added a detail (%s).", ", ".join(grounded.kinds))
             fact_text = grounded.text or user_msg
+        # "tonight" and "Friday" get the date they meant, in the person's own timezone (backend/utils/date_resolve.py), so the fact is still right the day after.
+        fact_text = date_resolve.annotate_dates(fact_text, await asyncio.to_thread(get_user_timezone, username))
 
         saved = save_user_fact(
             username, fact_text, category=category, source="explicit",

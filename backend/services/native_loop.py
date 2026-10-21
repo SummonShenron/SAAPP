@@ -342,6 +342,10 @@ async def run(
         final_text = _text(getattr(await llm.ainvoke_tools(messages, []), "content", ""))
 
     had_error = any(str(a["observation"]).startswith("ERROR") for a in attempts)
+    # Counted per turn (backend/utils/llm_turns.py): how many steps the loop used, and whether it ended without deciding to answer (the limit, or repeating itself).
+    from backend.utils import llm_turns
+
+    llm_turns.note_tool_loop(step, forced)
     return {
         "final_answer": final_text or "I couldn't complete that request.",
         "attempts": attempts,

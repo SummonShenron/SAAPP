@@ -15,7 +15,7 @@ from backend.services.memory_search import embed_and_store_memory_chunk
 from backend.services.memory_compaction import maybe_trigger_compaction
 from backend.utils.db_utils import get_db, resolve_service_registry_repo
 from backend.utils.embedding_utils import embed_text, cosine_similarity
-from backend.utils import correction_kinds, memory_grounding
+from backend.utils import correction_kinds, date_resolve, memory_grounding
 from backend.utils.time_utils import SENT_AT_KEY, history_gap_marker
 from fastapi import HTTPException
 import subprocess
@@ -554,6 +554,16 @@ def _known_vocabulary(username: str) -> str:
         return ""
 
 
+def _user_timezone(username: str) -> Optional[str]:
+    """The person's stored timezone, or None (the default is then used) when it cannot be read: dating a note must never stop it being saved."""
+    try:
+        from backend.utils.user_settings_utils import get_user_timezone
+
+        return get_user_timezone(username)
+    except Exception:
+        return None
+
+
 async def index_conversation_turn(vector_store, username: str, question: str, answer: str, session_id: Optional[str] = None, previous_reply: str = ""):
     """Fire-and-forget: summarizes a completed turn and embeds it into the user's semantic memory.
     Meant to be called via asyncio.create_task off the response-streaming critical path;
@@ -578,6 +588,8 @@ async def index_conversation_turn(vector_store, username: str, question: str, an
         if summary_text is None:
             logger.info("[MemoryIndex] Turn for %s judged not worth remembering; no chunk stored.", username)
             return
+        # "tonight" and "Friday" get the date they meant, in the person's own timezone, so the note is still right on the day after (backend/utils/date_resolve.py).
+        summary_text = date_resolve.annotate_dates(summary_text, await asyncio.to_thread(_user_timezone, username))
         await asyncio.to_thread(embed_and_store_memory_chunk, vector_store, username, summary_text, source_type="conversation_turn", source_ref=session_id)
         logger.info("[MemoryIndex] Embedded memory chunk for %s (%d chars).", username, len(summary_text))
         await maybe_trigger_compaction(get_db(), vector_store, username)

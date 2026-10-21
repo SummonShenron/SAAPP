@@ -812,6 +812,17 @@ export interface TurnsSummary {
   /** Why turns went to the tool agent, biggest first: turns that had the reason, and turns that had it as their only reason. */
   routing: { reason: string; turns: number; alone: number }[];
   native_turns: number;
+  /** How the tool agent's step loop went: turns that ran it, steps used on average, how they spread, and how many ran into the last step they were allowed (so the step budget may be too tight). */
+  loop?: {
+    turns: number;
+    avg_steps: number | null;
+    histogram: { bucket: string; turns: number }[];
+    cap_hits: number;
+    cap_hit_share: number | null;
+    deep_turns: number;
+    deep_cap_hits: number;
+    deep_cap_hit_share: number | null;
+  };
   blocked_turns: number;
   error_turns: number;
   /** Which tools the tool agent called, most-called first: calls, the turns that used it, and calls that came back as an error. */
@@ -1257,7 +1268,15 @@ export interface UserFact {
   last_nudged_at: string | null;
   /** The notes this one is bound to (about the same thing, like an employer and a project there). They are recalled together. */
   related_facts?: { id: string; fact: string }[];
+  /** Which part of their life the note is about; null for one Sonic has not sorted yet. */
+  domain?: MemoryDomain | null;
+  /** The person set the domain themselves, so Sonic never changes it. */
+  domain_locked?: boolean;
+  /** Names this note shares with linked notes that are written two ways ("Ashlyn" / "Ashlynn"): Sonic treats them as one person and writes `shown_as`, unless the person says otherwise. */
+  name_variants?: { names: string[]; shown_as: string }[];
 }
+
+export type MemoryDomain = "work" | "own" | "personal" | "general";
 
 export async function listMemoryFacts(): Promise<UserFact[]> {
   const authHeaders = await getAuthHeaders();
@@ -1307,6 +1326,43 @@ export async function editMemoryFact(factId: string, fact: string, category?: st
   return res.json();
 }
 
+/** Files a note under another part of the person's life (work, their own projects, personal, general). Only the label changes: the wording stays as it is. */
+export async function setMemoryDomain(factId: string, domain: MemoryDomain): Promise<UserFact> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/memory/${encodeURIComponent(factId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ domain })
+  });
+  if (!res.ok) {
+    let reason = "Failed to change that.";
+    try {
+      const body = await res.json();
+      if (res.status === 400 && typeof body?.detail === "string") reason = body.detail;
+    } catch { /* keep the generic message */ }
+    throw new Error(reason);
+  }
+  return res.json();
+}
+
+/** Says two spellings of a name are different people (or, with `different` false, takes that back): Sonic then never treats them as one. */
+export async function setNameAlias(a: string, b: string, different = true): Promise<void> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/memory/name-aliases`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ a, b, different })
+  });
+  if (!res.ok) {
+    let reason = "Failed to save that.";
+    try {
+      const body = await res.json();
+      if (res.status === 400 && typeof body?.detail === "string") reason = body.detail;
+    } catch { /* keep the generic message */ }
+    throw new Error(reason);
+  }
+}
+
 /** Says two notes do not belong together: the link between them is removed (both ways). */
 export async function deleteMemoryLink(factId: string, otherId: string): Promise<void> {
   const authHeaders = await getAuthHeaders();
@@ -1322,12 +1378,23 @@ export async function deleteMemoryLink(factId: string, otherId: string): Promise
 /**
  * Things the user said are coming up, which Sonic may ask about once afterwards
  */
+/** One detail of something coming up, with where Sonic got it. A detail that was never said is absent, which the page shows as "not known". */
+export interface OpenLoopField {
+  value: string | null;
+  source: 'user' | 'assistant_confirmed' | 'calendar' | 'user_edit';
+  /** How the detail is said ("7 PM (they said 7; PM assumed for a social plan)"). */
+  display: string;
+}
+
 export interface OpenLoop {
   id: string;
   text: string;
   due_date: string; // YYYY-MM-DD, the user's own calendar day
   kind: string;
   status: string;
+  fields?: { time?: OpenLoopField; with?: OpenLoopField; where?: OpenLoopField };
+  corrected_at?: string | null;
+  confirmed_at?: string | null;
 }
 
 export async function listOpenLoops(): Promise<OpenLoop[]> {
@@ -1351,6 +1418,35 @@ export async function deleteOpenLoop(loopId: string): Promise<any> {
   return res.json();
 }
 
+/** What the person may change about something coming up. An empty string for `time`, `with` or `where` clears it back to "not known"; `status` is "cancelled" or "open" (restore). */
+export interface OpenLoopChanges {
+  time?: string;
+  with?: string;
+  where?: string;
+  due_date?: string;
+  status?: 'cancelled' | 'open';
+  confirm?: boolean;
+}
+
+/** Corrects something coming up. The server says why when it cannot keep a value (a street address, a link, "7" with no AM or PM, a day out of range). */
+export async function updateOpenLoop(loopId: string, changes: OpenLoopChanges): Promise<OpenLoop> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/open-loops/${encodeURIComponent(loopId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify(changes)
+  });
+  if (!res.ok) {
+    let reason = "Failed to save that change.";
+    try {
+      const body = await res.json();
+      if (res.status === 400 && typeof body?.detail === "string") reason = body.detail;
+    } catch { /* keep the generic message */ }
+    throw new Error(reason);
+  }
+  return res.json();
+}
+
 export type TaskKind = 'research' | 'pr_review' | 'code_audit';
 
 /** A task the person set up for Sonic to run on a schedule (a web search, or a read-only look at their own repository), and what it has found. */
@@ -1364,6 +1460,8 @@ export interface UserTask {
   cadence: 'daily' | 'weekly';
   hour: number;
   weekday: number | null;
+  /** 0 = at the time chosen; 2 or 3 = sometime in that many hours from it, at a quiet moment. */
+  window_hours: number;
   sources: string[];
   location: string;
   schedule: string;
@@ -1384,6 +1482,7 @@ export interface TaskSpec {
   cadence: 'daily' | 'weekly';
   hour: number;
   weekday: number;
+  window_hours?: number;
   sources: string[];
   location: string;
 }
@@ -1404,6 +1503,9 @@ export interface TaskRun {
   headline: string;
   items: TaskResultItem[];
   seen: boolean;
+  /** Why the run landed when it did, written by the server from what it checked ("Ran at its scheduled time.", "Waited for you to be away for a while, ..."). */
+  reason?: string;
+  window?: { starts_at: string; ends_at: string } | null;
 }
 
 export interface TasksResponse {
@@ -1890,11 +1992,14 @@ export const api = {
   listMemoryFacts,
   deleteMemoryFact,
   editMemoryFact,
+  setMemoryDomain,
+  setNameAlias,
   deleteMemoryLink,
   clearMemoryFacts,
   getMemoryStored,
   listOpenLoops,
   deleteOpenLoop,
+  updateOpenLoop,
   listTasks,
   createTask,
   updateTask,

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { api, type UserFact, type OpenLoop, type MemoryStored } from '../api';
+import { api, type UserFact, type OpenLoop, type OpenLoopChanges, type MemoryStored, type MemoryDomain } from '../api';
 import './__styles__/SelfService.css';
 import './__styles__/Memory.css';
 
@@ -27,6 +27,14 @@ const SOURCE_LABELS: Record<string, string> = {
 const EDITABLE_CATEGORIES = ['preference', 'identity', 'setting', 'trait', 'career', 'project', 'goal', 'relationship'];
 const MAX_FACT_CHARS = 500;
 
+// Which part of their life a note is about. Sonic uses it to keep a job and the person's own projects apart ("work" can mean either), so a wrong one is worth fixing here.
+const DOMAIN_CHOICES: { value: MemoryDomain; label: string }[] = [
+  { value: 'work', label: 'Work' },
+  { value: 'own', label: 'My own projects' },
+  { value: 'personal', label: 'Personal life' },
+  { value: 'general', label: 'General' },
+];
+
 function confidenceTone(value: number): string {
   if (value >= 0.7) return 'confidence-high';
   if (value >= 0.4) return 'confidence-medium';
@@ -37,6 +45,31 @@ function formatDate(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '';
   return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+// Where a detail of something coming up came from, as the person would say it.
+const FIELD_SOURCE_LABELS: Record<string, string> = {
+  user: 'you said',
+  assistant_confirmed: 'you confirmed',
+  calendar: 'your calendar',
+  user_edit: 'you wrote this',
+};
+const EVENT_FIELDS: { key: 'with' | 'where' | 'time'; label: string }[] = [
+  { key: 'with', label: 'With' },
+  { key: 'where', label: 'Where' },
+  { key: 'time', label: 'Time' },
+];
+
+interface LoopDraft { due_date: string; time: string; with: string; where: string }
+
+function loopToDraft(loop: OpenLoop): LoopDraft {
+  return { due_date: loop.due_date, time: loop.fields?.time?.value ?? '', with: loop.fields?.with?.value ?? '', where: loop.fields?.where?.value ?? '' };
+}
+
+function todayKey(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
 // A due date is a calendar day on the user's own clock, so it is shown as that day, never shifted by timezone.
@@ -56,6 +89,12 @@ export const MemoryPage: React.FC = () => {
   const [clearing, setClearing] = useState<boolean>(false);
   const [search, setSearch] = useState<string>('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [domainFilter, setDomainFilter] = useState<string>('all');
+  const [domainSavingId, setDomainSavingId] = useState<string | null>(null);
+  const [editingLoopId, setEditingLoopId] = useState<string | null>(null);
+  const [loopDraft, setLoopDraft] = useState<LoopDraft>({ due_date: '', time: '', with: '', where: '' });
+  const [loopBusyId, setLoopBusyId] = useState<string | null>(null);
+  const [loopError, setLoopError] = useState<string>('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<string>('');
   const [draftCategory, setDraftCategory] = useState<string>('preference');
@@ -96,6 +135,36 @@ export const MemoryPage: React.FC = () => {
     } catch (err) {
       console.error('Failed to delete upcoming item:', err);
       alert('Failed to remove that. Please try again.');
+    }
+  };
+
+  const startEditingLoop = (loop: OpenLoop) => {
+    setEditingLoopId(loop.id);
+    setLoopDraft(loopToDraft(loop));
+    setLoopError('');
+  };
+
+  // Sends only what the person changed. A cleared box goes back to "not known".
+  const saveLoopChanges = async (loop: OpenLoop, extra: OpenLoopChanges = {}) => {
+    const before = loopToDraft(loop);
+    const changes: OpenLoopChanges = { ...extra };
+    if (editingLoopId === loop.id) {
+      (['due_date', 'time', 'with', 'where'] as const).forEach(key => {
+        if (loopDraft[key].trim() !== before[key]) changes[key] = loopDraft[key].trim();
+      });
+    }
+    if (Object.keys(changes).length === 0) { setEditingLoopId(null); return; }
+    setLoopBusyId(loop.id);
+    setLoopError('');
+    try {
+      const saved = await api.updateOpenLoop(loop.id, changes);
+      setLoops(prev => prev.map(l => (l.id === saved.id ? saved : l)));
+      setEditingLoopId(null);
+    } catch (err) {
+      console.error('Failed to change an upcoming item:', err);
+      setLoopError(err instanceof Error ? err.message : 'Failed to save that change.');
+    } finally {
+      setLoopBusyId(null);
     }
   };
 
@@ -145,6 +214,33 @@ export const MemoryPage: React.FC = () => {
     }
   };
 
+  const handleSetDomain = async (fact: UserFact, domain: MemoryDomain) => {
+    if (domain === fact.domain) return;
+    setDomainSavingId(fact.id);
+    setEditError('');
+    try {
+      const saved = await api.setMemoryDomain(fact.id, domain);
+      // Only the label changed, so only this row is replaced (its links and the rest of the list are untouched).
+      setFacts(prev => prev.map(f => (f.id === saved.id ? { ...f, ...saved } : f)));
+    } catch (err) {
+      console.error('Failed to change the memory domain:', err);
+      alert(err instanceof Error ? err.message : 'Failed to change that. Please try again.');
+    } finally {
+      setDomainSavingId(null);
+    }
+  };
+
+  // Two spellings of one name inside linked notes are treated as one person. If they are not, saying so is final until it is taken back.
+  const handleDifferentPeople = async (names: string[]) => {
+    try {
+      await api.setNameAlias(names[0], names[1], true);
+      api.listMemoryFacts().then(setFacts).catch((err: unknown) => console.error('Failed to refresh memory after naming two people:', err));
+    } catch (err) {
+      console.error('Failed to save the names as different people:', err);
+      alert(err instanceof Error ? err.message : 'Failed to save that. Please try again.');
+    }
+  };
+
   const handleUnlink = async (factId: string, otherId: string) => {
     try {
       await api.deleteMemoryLink(factId, otherId);
@@ -180,6 +276,7 @@ export const MemoryPage: React.FC = () => {
 
   const filteredFacts = facts
     .filter(f => categoryFilter === 'all' || f.category === categoryFilter)
+    .filter(f => domainFilter === 'all' || (domainFilter === 'unsorted' ? !f.domain : f.domain === domainFilter))
     .filter(f => f.fact.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
 
@@ -197,36 +294,93 @@ export const MemoryPage: React.FC = () => {
       <div className="vertical-card-stack">
         {loops.length > 0 && (
           <section className="service-card memory-card">
-            <div className="card-badge">{loops.length} COMING UP</div>
+            <div className="card-badge">{loops.filter(l => l.status !== 'cancelled').length} COMING UP</div>
             <h2>Coming Up</h2>
             <p className="card-description">
-              Things you mentioned are on the way. Once the day has passed, Sonic may ask how it went, once. Remove
-              anything you'd rather it didn't bring up.
+              Things you mentioned are on the way, with what Sonic knows about each and where it came from. A detail you never gave shows as not known, and Sonic says so
+              instead of guessing. Fix anything that's wrong, cancel something that fell through, or remove it. Once the day has passed, Sonic may ask how it went, once.
             </p>
             <div className="memory-list">
-              {loops.map(loop => (
-                <div key={loop.id} className="memory-row">
-                  <div className="memory-row-main">
-                    <div className="memory-row-badges">
-                      <span className="memory-badge memory-source-badge">{formatDueDay(loop.due_date)}</span>
+              {loops.map(loop => {
+                const cancelled = loop.status === 'cancelled';
+                const past = loop.due_date < todayKey();
+                const busy = loopBusyId === loop.id;
+                const editing = editingLoopId === loop.id;
+                return (
+                  <div key={loop.id} className={`memory-row${past || cancelled ? ' memory-row-past' : ''}${cancelled ? ' memory-row-cancelled' : ''}`}>
+                    <div className="memory-row-main">
+                      <div className="memory-row-badges">
+                        <span className="memory-badge memory-source-badge">{formatDueDay(loop.due_date)}</span>
+                        {cancelled && <span className="memory-badge memory-status-badge">cancelled</span>}
+                        {!cancelled && past && <span className="memory-badge memory-status-badge">past</span>}
+                        {!cancelled && loop.confirmed_at && <span className="memory-badge memory-source-badge">checked by you</span>}
+                      </div>
+                      <div className="memory-row-text">{loop.text}</div>
+                      {editing ? (
+                        <div className="memory-event-form">
+                          <label>Day <input type="date" value={loopDraft.due_date} min={todayKey()} onChange={e => setLoopDraft(d => ({ ...d, due_date: e.target.value }))} /></label>
+                          <label>Time <input type="time" value={loopDraft.time} onChange={e => setLoopDraft(d => ({ ...d, time: e.target.value }))} /></label>
+                          <label>With <input type="text" value={loopDraft.with} maxLength={40} placeholder="not known" onChange={e => setLoopDraft(d => ({ ...d, with: e.target.value }))} /></label>
+                          <label>Where <input type="text" value={loopDraft.where} maxLength={60} placeholder="not known" onChange={e => setLoopDraft(d => ({ ...d, where: e.target.value }))} /></label>
+                          <div className="memory-edit-row">
+                            <span className="memory-edit-count" />
+                            <button type="button" className="memory-edit-cancel" onClick={() => { setEditingLoopId(null); setLoopError(''); }} disabled={busy}>Cancel</button>
+                            <button type="button" className="memory-edit-save" onClick={() => saveLoopChanges(loop)} disabled={busy}>{busy ? 'Saving...' : 'Save'}</button>
+                          </div>
+                          {loopError && <div className="memory-edit-error" role="alert">{loopError}</div>}
+                          <div className="memory-edit-hint">What you write here is marked "you wrote this". Clear a box to go back to not known; Sonic never fills it in with a guess.</div>
+                        </div>
+                      ) : (
+                        <div className="memory-event-fields">
+                          {EVENT_FIELDS.map(({ key, label }) => {
+                            const field = loop.fields?.[key];
+                            return field
+                              ? <span key={key} className="memory-event-field">{label}: {field.display} <span className="memory-event-source">({FIELD_SOURCE_LABELS[field.source] ?? field.source})</span></span>
+                              : <span key={key} className="memory-event-field memory-event-unknown">{label}: not known</span>;
+                          })}
+                        </div>
+                      )}
                     </div>
-                    <div className="memory-row-text">{loop.text}</div>
+                    <div className="memory-row-actions">
+                      {!cancelled && !loop.confirmed_at && Object.keys(loop.fields ?? {}).length > 0 && (
+                        <button type="button" className="memory-event-action" title="Mark this as checked: it's right" onClick={() => saveLoopChanges(loop, { confirm: true })} disabled={busy || editing}>
+                          Looks right
+                        </button>
+                      )}
+                      {!cancelled && (
+                        <button type="button" className="memory-edit-btn" title="Edit this" aria-label="Edit this upcoming item" onClick={() => startEditingLoop(loop)} disabled={busy || editing}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M12 20h9" />
+                            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                          </svg>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="memory-event-action"
+                        title={cancelled ? 'Bring this back' : "It fell through: Sonic won't ask about it"}
+                        onClick={() => saveLoopChanges(loop, { status: cancelled ? 'open' : 'cancelled' })}
+                        disabled={busy || editing}
+                      >
+                        {cancelled ? 'Restore' : 'Cancel it'}
+                      </button>
+                      <button
+                        type="button"
+                        className="memory-delete-btn"
+                        title="Forget this"
+                        onClick={() => handleDeleteLoop(loop.id, loop.text)}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 6 5 6 21 6" />
+                          <path d="M19 6l-2 14H7L5 6" />
+                          <line x1="10" y1="11" x2="10" y2="17" />
+                          <line x1="14" y1="11" x2="14" y2="17" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    className="memory-delete-btn"
-                    title="Forget this"
-                    onClick={() => handleDeleteLoop(loop.id, loop.text)}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="3 6 5 6 21 6" />
-                      <path d="M19 6l-2 14H7L5 6" />
-                      <line x1="10" y1="11" x2="10" y2="17" />
-                      <line x1="14" y1="11" x2="14" y2="17" />
-                    </svg>
-                  </button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         )}
@@ -235,6 +389,7 @@ export const MemoryPage: React.FC = () => {
           <h2>Saved Memories</h2>
           <p className="card-description">
             Search, review, or forget individual memories. Clearing everything is permanent.
+            Each one is filed under a part of your life (work, your own projects, personal, or general) so Sonic doesn't mix your job with what you build for yourself. If one is filed wrong, change it on its row and Sonic won't move it again.
           </p>
           {(stored.notes > 0 || stored.archived > 0) && (
             <p className="card-description">
@@ -261,6 +416,16 @@ export const MemoryPage: React.FC = () => {
               {categories.map(cat => (
                 <option key={cat} value={cat}>{cat}</option>
               ))}
+            </select>
+            <select
+              value={domainFilter}
+              onChange={(e) => setDomainFilter(e.target.value)}
+              className="memory-category-select"
+              aria-label="Filter by part of your life"
+            >
+              <option value="all">All parts of your life</option>
+              {DOMAIN_CHOICES.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+              {facts.some(f => !f.domain) && <option value="unsorted">Not sorted yet</option>}
             </select>
             <button
               type="button"
@@ -290,6 +455,17 @@ export const MemoryPage: React.FC = () => {
                       <span className="memory-badge memory-source-badge">
                         {SOURCE_LABELS[fact.source] || fact.source}
                       </span>
+                      <select
+                        className="memory-domain-select"
+                        value={fact.domain ?? ''}
+                        aria-label="Which part of your life this memory is about"
+                        title={fact.domain_locked ? 'You chose this, so Sonic keeps it' : 'Change which part of your life this is about'}
+                        disabled={domainSavingId === fact.id}
+                        onChange={(e) => handleSetDomain(fact, e.target.value as MemoryDomain)}
+                      >
+                        {!fact.domain && <option value="" disabled>Not sorted yet</option>}
+                        {DOMAIN_CHOICES.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+                      </select>
                       {fact.goal_status && fact.goal_status !== 'active' && (
                         <span className="memory-badge memory-status-badge">{fact.goal_status}</span>
                       )}
@@ -332,6 +508,12 @@ export const MemoryPage: React.FC = () => {
                     ) : (
                       <div className="memory-row-text">{fact.fact}</div>
                     )}
+                    {editingId !== fact.id && (fact.name_variants ?? []).map(variant => (
+                      <div key={variant.names.join('|')} className="memory-name-variant">
+                        “{variant.names.join('” and “')}” look like one person written two ways. Sonic writes “{variant.shown_as}”, the spelling you used most recently.
+                        <button type="button" className="memory-event-action" onClick={() => handleDifferentPeople(variant.names)}>They're different people</button>
+                      </div>
+                    ))}
                     {editingId !== fact.id && fact.related_facts && fact.related_facts.length > 0 && (
                       <div className="memory-links">
                         <span className="memory-links-label">Goes with:</span>

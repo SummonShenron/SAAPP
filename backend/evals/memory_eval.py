@@ -7,7 +7,7 @@
     python -m backend.evals.memory_eval --list
     python -m backend.evals.memory_eval --save eval_results/memory_before.json
 
-FIVE PARTS, each one a place memory can quietly go wrong
+SIX PARTS, each one a place memory can quietly go wrong (the sixth, events, is described in backend/evals/event_replay.py: replays of conversations about plans)
 - recall      A made-up person's memories (plus unrelated and near-topic filler, so the right one has to win) and questions about
               them: asked directly, asked in different words, asked as a short follow-up that only makes sense with the turn
               before it, asked when nothing relevant is stored, and asked when ANOTHER user stored the answer. Run through the
@@ -54,7 +54,7 @@ Embed = Callable[[str], Optional[List[float]]]
 NOW = datetime(2026, 10, 12, 12, 0, tzinfo=timezone.utc)
 PERSONA = "eval_persona"
 STRANGER = "eval_stranger"
-PARTS = ("recall", "explicit", "write", "compaction", "dedup")
+PARTS = ("recall", "explicit", "write", "compaction", "dedup", "events")
 POLICIES = ("latest", "context", "union", "look")
 SWEEP_THRESHOLDS = (0.60, 0.65, 0.70, 0.75, 0.80, 0.85)
 MAX_NOTE_CHARS = 320  # a saved note longer than this is scored a failure: a rambling note embeds as a blur
@@ -856,6 +856,10 @@ def to_record(parts: Dict[str, Any]) -> Dict[str, Any]:
         record["compaction"] = [{"cluster": r.cluster.id, "runs": r.runs, "ok": r.ok, "ratio": r.ratio, "failures": r.failures} for r in parts["compaction"]]
     if "dedup" in parts:
         record["dedup"] = [{"label": p.label, "same": p.same, **j} for p, j in parts["dedup"]]
+    if "events" in parts:
+        from backend.evals import event_replay
+
+        record["events"] = event_replay.to_record(parts["events"])
     return record
 
 
@@ -891,6 +895,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         for cluster in CLUSTERS:
             print(f"compaction  {cluster.id:<22}{len(cluster.notes)} notes")
         print(f"dedup       {len(PAIRS)} pairs")
+        from backend.evals import event_replay
+
+        for case in event_replay.CASES:
+            print(f"events      {case.id:<22}{'+reply' if case.question else 'stored':<11}{case.what[:70]}")
         return 0
 
     from dotenv import load_dotenv
@@ -900,7 +908,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     chosen = PARTS if args.part == "all" else (args.part,)
     embed = cached(embed_text)
-    warm(embed, every_text())
+    if chosen != ("events",):          # the events part needs no embeddings, so it does not pay to warm the others'
+        warm(embed, every_text())
     out: Dict[str, Any] = {}
     sections = []
 
@@ -933,6 +942,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     if "dedup" in chosen:
         out["dedup"] = run_dedup(embed)
         sections.append(format_dedup(out["dedup"]))
+    if "events" in chosen:
+        from backend.evals import event_replay
+        from backend.models.models import lite_llm
+
+        out["events"] = asyncio.run(event_replay.run_events(args.runs, lite_llm.ainvoke, event_replay.real_reply()))
+        sections.append(event_replay.format_events(out["events"]))
 
     print("\n\n".join(sections))
     if args.save:

@@ -125,6 +125,81 @@ def test_what_the_person_wrote_is_pruned_after_what_they_stated_and_what_a_model
     assert memory_utils.USER_EDIT_SOURCE not in memory_utils.PROTECTED_SOURCES        # many edits must never push the store past its cap
 
 
+# ------------------------------------------------------------------------ which part of their life a note is about ----------
+
+def test_changing_only_the_domain_changes_only_the_label_and_locks_it(store, monkeypatch):
+    project = _saved("Is working on the PAG UI redesign at work.", category="project")
+    embeds = []
+    monkeypatch.setattr(memory_utils, "embed_text", lambda text: embeds.append(text) or [1.0, 0.0, 0.0])
+    calls = memory_utils.lite_llm.invoke.call_count
+    before = project.model_copy()
+    edited = memory_utils.edit_user_fact("jack", project.id, None, domain="own")
+    assert (edited.domain, edited.domain_locked) == ("own", True)
+    assert (edited.fact, edited.source, edited.confidence, edited.embedding, edited.related, edited.updated_at) == (
+        before.fact, before.source, before.confidence, before.embedding, before.related, before.updated_at)    # a label, not a restatement
+    assert embeds == [] and memory_utils.lite_llm.invoke.call_count == calls
+    memory_utils.clear_facts_cache()
+    assert memory_utils.load_user_facts("jack")[0].domain == "own" and memory_utils.load_user_facts("jack")[0].domain_locked is True
+
+
+def test_setting_the_same_locked_domain_again_writes_nothing(store, monkeypatch):
+    note = _saved("Has a dog named Max.", category="relationship")
+    memory_utils.edit_user_fact("jack", note.id, None, domain="personal")
+    saves = []
+    monkeypatch.setattr(memory_utils, "save_user_facts", lambda *a, **k: saves.append(a))
+    memory_utils.edit_user_fact("jack", note.id, None, domain="personal")
+    assert saves == []
+
+
+def test_a_domain_that_is_not_one_of_the_four_is_refused_and_changes_nothing(store):
+    note = _saved("Has a dog named Max.", category="relationship")
+    with pytest.raises(memory_utils.FactEditError, match="part of your life"):
+        memory_utils.edit_user_fact("jack", note.id, None, domain="hobby")
+    assert memory_utils.edit_user_fact("jack", "no-such-id", None, domain="work") is None
+    assert memory_utils.load_user_facts("jack")[0].domain_locked is False
+    assert memory_utils.edit_user_fact("jack", note.id, None, domain="WORK").domain == "work"          # any case is accepted
+
+
+def test_a_domain_can_be_changed_together_with_new_wording(store):
+    dog = _saved("Has a dog named Max.", category="relationship")
+    edited = memory_utils.edit_user_fact("jack", dog.id, "Has a dog named Rex.", domain="personal")
+    assert edited.fact == "Has a dog named Rex." and (edited.domain, edited.domain_locked) == ("personal", True)
+    assert edited.source == memory_utils.USER_EDIT_SOURCE and edited.embedding == list(VECTORS["Has a dog named Rex."])
+
+
+def test_a_domain_the_person_chose_survives_a_model_restating_the_note(store, monkeypatch):
+    note = _saved("Has a dog named Max.", category="relationship")
+    memory_utils.edit_user_fact("jack", note.id, None, domain="personal")
+    monkeypatch.setattr(memory_utils.lite_llm, "invoke", Mock(return_value=SimpleNamespace(content=json.dumps({"action": "duplicate"}))))
+    memory_utils.save_user_fact("jack", "Has a dog named Max.", category="relationship", source="inferred", domain="work")
+    kept = memory_utils.load_user_facts("jack")[0]
+    assert (kept.domain, kept.domain_locked) == ("personal", True)
+
+
+def test_an_unlocked_domain_is_still_updated_by_a_restatement(store, monkeypatch):
+    note = _saved("Has a dog named Max.", category="relationship")
+    monkeypatch.setattr(memory_utils.lite_llm, "invoke", Mock(return_value=SimpleNamespace(content=json.dumps({"action": "duplicate"}))))
+    memory_utils.save_user_fact("jack", "Has a dog named Max.", category="relationship", source="inferred", domain="personal")
+    assert memory_utils.load_user_facts("jack")[0].domain == "personal" and not note.domain_locked
+
+
+def test_the_cleanup_never_touches_a_domain_the_person_set_even_when_asked_to_redo_everything():
+    from backend.utils import memory_domains as md
+
+    chosen = memory_utils.UserFact(id="a", username="u", category="project", fact="Builds a thing.", created_at="t", updated_at="t", domain="own", domain_locked=True)
+    other = memory_utils.UserFact(id="b", username="u", category="project", fact="Builds another.", created_at="t", updated_at="t", domain="general")
+    plan = md.plan_changes([chosen, other], {"a": {"domain": "work"}, "b": {"domain": "work"}}, redo=True)
+    assert plan["tags"] == [{"id": "b", "domain": "work"}] and plan["skipped"]["protected"] == 1
+
+
+def test_the_edit_request_may_leave_the_wording_out_and_must_change_something():
+    source = open("app.py", encoding="utf-8").read()
+    start = source.index("class MemoryEdit(BaseModel):")
+    block = source[start:source.index('@app.delete("/api/memory/{fact_id}/links/{other_id}")')]
+    assert "fact: Optional[str] = None" in block and "domain: Optional[str] = None" in block
+    assert "Nothing to change." in block and "domain=payload.domain" in block
+
+
 def test_the_edit_endpoint_needs_a_signed_in_user_returns_no_embedding_and_maps_the_errors():
     source = open("app.py", encoding="utf-8").read()
     start = source.index('@app.put("/api/memory/{fact_id}")')

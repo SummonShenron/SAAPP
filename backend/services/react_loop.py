@@ -932,6 +932,7 @@ async def run_react_loop(
             observation = await _execute_one_action(tool_action_name, args, purpose)
         _record_action_result(tool_action_name, args, purpose, observation)
 
+    ended_without_final = final_answer is None
     if final_answer is None:
         # Loop ran out of steps without an explicit final action — force one last honest
         # synthesis instead of silently returning the last raw observation.
@@ -952,4 +953,8 @@ async def run_react_loop(
             logger.exception("[%s] final synthesis step failed.", node_name)
             final_answer = "I wasn't able to find a conclusive answer after several attempts."
 
+    # Counted per turn (backend/utils/llm_turns.py): how many steps the loop used, and whether it ran into the last step it was allowed.
+    from backend.utils import llm_turns
+
+    llm_turns.note_tool_loop(step + 1, ended_without_final or step + 1 >= budget)
     return {"final_answer": final_answer, "attempts": attempts, "show_work": show_work}

@@ -25,9 +25,10 @@ import os
 import re
 import uuid
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional
+from time import monotonic
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Tuple
 
-from backend.utils import memory_grounding
+from backend.utils import event_fields, memory_grounding, name_aliases
 from backend.utils.time_utils import gap_seconds, local_now
 
 logger = logging.getLogger("SASS Logger")
@@ -41,7 +42,8 @@ EXPIRE_DAYS_AFTER_DUE = 7
 FOLLOW_UP_MIN_GAP_SECONDS = 2 * 3600
 MAX_MESSAGE_CHARS = 2000
 
-OPEN, ASKED, RESOLVED = "open", "asked", "resolved"
+OPEN, ASKED, RESOLVED, CANCELLED = "open", "asked", "resolved", "cancelled"      # cancelled: they said it fell through; never asked about, gone with the rest on expiry
+EVENTS_CACHE_SECONDS = 60       # the reply is told what is coming up on every conversational turn, so the read is kept this long (and dropped on any change we make)
 # "sensitive" is something the model may answer with but is never stored.
 ALLOWED_KINDS = ("social", "work", "travel", "errand", "event")
 
@@ -87,11 +89,24 @@ _PAST_REPORT_RE = re.compile(
 )
 
 
-def should_extract(message: str, has_due_loop: bool = False) -> bool:
+# A message that gives a detail of something already coming up ("the date is at 7 silly", "it's at Tidos"), or says it fell through. It carries no future-time word of its own, so
+# the gate above misses it; with an event already noted for the next day or two it is worth a look.
+_DETAIL_CUE_RE = re.compile(
+    r"\b(?:at|around|by|@)\s*\d{1,2}(?::\d{2})?\b|\b\d{1,2}:\d{2}\b|\b\d{1,2}\s?[ap]\.?m\b|\b(?:noon|midnight)\b"
+    r"|\b(?:cancel+ed|called off|fell through|not going|won't be going|isn't happening|no longer happening)\b"
+    r"|\b(?:with|at)\s+(?-i:[A-Z][a-z]{2,})",      # "at Tidos", "with Ashlyn": a capitalised word, so "with the" and "at home" do not count
+    re.IGNORECASE,
+)
+
+
+def should_extract(message: str, has_due_loop: bool = False, has_upcoming: bool = False, confirming: bool = False) -> bool:
     text = (message or "").strip()
     if not text or len(text) > MAX_MESSAGE_CHARS:
         return False
     if _FUTURE_CUE_RE.search(text):
+        return True
+    # A "yes" to Sonic's own question about a detail ("So the date is at 7 at Tidos, right?") carries no time word of its own, but confirms what the question named.
+    if has_upcoming and (confirming or _DETAIL_CUE_RE.search(text)):
         return True
     return has_due_loop and bool(_PAST_REPORT_RE.search(text))
 
@@ -170,6 +185,13 @@ def list_loops(db, username: str, statuses: Iterable[str] = (OPEN,)) -> List[Dic
     return sorted((d for d in docs if d.get("status") in wanted), key=lambda d: d.get("due_date", ""))
 
 
+_events_cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
+
+
+def _invalidate(username: str) -> None:
+    _events_cache.pop(username, None)
+
+
 def load_open_loops(username: str) -> List[Dict[str, Any]]:
     """The user's open loops, or [] with no database (blocking, so call off the event loop)."""
     from backend.utils.db_utils import get_db
@@ -178,9 +200,33 @@ def load_open_loops(username: str) -> List[Dict[str, Any]]:
     return list_loops(db, username) if db is not None else []
 
 
+def load_open_loops_cached(username: str) -> List[Dict[str, Any]]:
+    """The same list, kept for EVENTS_CACHE_SECONDS: the reply is told what is coming up on every conversational turn, and most turns should not read the store. Any save, status
+    change or delete made here drops the person's entry. Blocking on a miss."""
+    held = _events_cache.get(username)
+    if held is not None and monotonic() - held[0] < EVENTS_CACHE_SECONDS:
+        return held[1]
+    loops = load_open_loops(username)
+    if len(_events_cache) >= 2000:
+        _events_cache.clear()                  # bounded: a few thousand people's lists at most, then it starts again
+    _events_cache[username] = (monotonic(), loops)
+    return loops
+
+
 def upcoming_for_page(username: str) -> List[Dict[str, Any]]:
-    """The Memory page's list: open loops only, soonest first."""
-    return [public_view(doc) for doc in load_open_loops(username)]
+    """The Memory page's list, soonest first: what is coming up (open, still shown for the week after its day, greyed) and what was cancelled (so it can be restored)."""
+    from backend.utils.db_utils import get_db
+
+    db = get_db()
+    return [public_view(doc) for doc in list_loops(db, username, (OPEN, CANCELLED))] if db is not None else []
+
+
+def edit_for_page(username: str, loop_id: str, changes: Dict[str, Any], today: date) -> Optional[Dict[str, Any]]:
+    """edit_event for the endpoint (a database of its own). None for no such event or no database; raises EventEditError."""
+    from backend.utils.db_utils import get_db
+
+    db = get_db()
+    return edit_event(db, username, loop_id, changes, datetime.now(timezone.utc), today) if db is not None else None
 
 
 def forget_loop(username: str, loop_id: str) -> bool:
@@ -212,14 +258,52 @@ def mark_asked(username: str, loop_id: str, now: Optional[datetime] = None) -> b
         return False
 
 
-def save_loops(db, username: str, loops: List[Dict[str, str]], now: datetime) -> int:
-    """Stores new loops, skipping duplicates and anything past the per-user cap. Returns how many were saved."""
+def _denied_names(db, username: str) -> List[str]:
+    """The name pairs this person said are different people; [] when they cannot be read (two near-identical spellings may then be merged, which they can fix). Blocking."""
+    try:
+        return name_aliases.get_denied(db, username)
+    except Exception:
+        logger.warning("[open loops] could not read the names marked as different.", exc_info=True)
+        return []
+
+
+def _same_event(loop: Dict[str, Any], fields: Dict[str, Any], other: Dict[str, Any], denied: Iterable[str] = ()) -> bool:
+    """Whether a newly mentioned thing is one already noted: the same day and kind, and either worded alike (the old rule) or sharing the same person or place. Two things on the
+    same day with different people ("the date with Ashlyn", "dinner with Sam") are two events; "Ashlynn" and "Ashlyn" are one person unless they said otherwise."""
+    if other.get("due_date") != loop.get("due_date") or other.get("kind") != loop.get("kind"):
+        return False
+    theirs = other.get("fields") or {}
+    if not event_fields.compatible(theirs, fields, denied):
+        return False
+    return is_duplicate(loop, [other]) or event_fields.shares_a_value(theirs, fields, denied)
+
+
+def save_events(db, username: str, items: List[Dict[str, Any]], now: datetime, denied: Iterable[str] = ()) -> Dict[str, Any]:
+    """Stores what was noted: `items` is [{"loop": {text, due_date, kind}, "fields": {...}}]. A thing already noted is not added twice: a detail it was missing FILLS it, a different
+    one CORRECTS it (the person's latest words win), and the rest is left alone. New ones are capped per person. Returns {"saved", "filled", "corrected", "events"}, where `events` are
+    the changed or created events (for the one line shown under the reply). Blocking."""
     _ensure_indexes(db)
     existing = list_loops(db, username, (OPEN, ASKED))
     open_count = sum(1 for d in existing if d.get("status") == OPEN)
-    saved = 0
-    for loop in loops:
-        if open_count + saved >= MAX_OPEN_LOOPS or is_duplicate(loop, existing):
+    result: Dict[str, Any] = {"saved": 0, "filled": 0, "corrected": 0, "events": []}
+    for item in items:
+        loop, fields = item["loop"], item.get("fields") or {}
+        match = next((d for d in existing if _same_event(loop, fields, d, denied)), None)
+        if match is not None:
+            merged, changes = event_fields.merge_fields(match.get("fields"), fields)
+            if changes:
+                update: Dict[str, Any] = {"fields": merged}
+                if any(kind == "corrected" for kind, _ in changes):
+                    update["corrected_at"] = now.isoformat()
+                if any(merged[key].get("source") == event_fields.SOURCE_CONFIRMED for _, key in changes):
+                    update["confirmed_at"] = now.isoformat()
+                db[COLLECTION].update_one({"username": username, "id": match["id"]}, {"$set": update})
+                match.update(update)
+                result["filled"] += sum(1 for kind, _ in changes if kind == "filled")
+                result["corrected"] += sum(1 for kind, _ in changes if kind == "corrected")
+                result["events"].append({"event": dict(match), "updated": True})
+            continue
+        if open_count + result["saved"] >= MAX_OPEN_LOOPS:
             continue
         due = date.fromisoformat(loop["due_date"])
         doc = {
@@ -228,16 +312,27 @@ def save_loops(db, username: str, loops: List[Dict[str, str]], now: datetime) ->
             "text": loop["text"],
             "due_date": loop["due_date"],
             "kind": loop["kind"],
+            "fields": fields,
             "status": OPEN,
             "created_at": now.isoformat(),
             "asked_at": None,
+            "corrected_at": None,
+            "confirmed_at": now.isoformat() if any(f.get("source") == event_fields.SOURCE_CONFIRMED for f in fields.values()) else None,
             # Gone from the database a day after the week-long window closes.
             "expires_at": datetime.combine(due + timedelta(days=EXPIRE_DAYS_AFTER_DUE + 1), time.min, tzinfo=timezone.utc),
         }
         db[COLLECTION].insert_one(doc)
         existing.append(doc)
-        saved += 1
-    return saved
+        result["saved"] += 1
+        result["events"].append({"event": dict(doc), "updated": False})
+    if result["saved"] or result["filled"] or result["corrected"]:
+        _invalidate(username)
+    return result
+
+
+def save_loops(db, username: str, loops: List[Dict[str, str]], now: datetime) -> int:
+    """Stores new loops with no fields, skipping duplicates and anything past the per-user cap. Returns how many were saved."""
+    return save_events(db, username, [{"loop": loop, "fields": {}} for loop in loops], now)["saved"]
 
 
 def set_status(db, username: str, loop_id: str, status: str, now: datetime) -> bool:
@@ -245,20 +340,105 @@ def set_status(db, username: str, loop_id: str, status: str, now: datetime) -> b
     if status == ASKED:
         fields["asked_at"] = now.isoformat()
     result = db[COLLECTION].update_one({"username": username, "id": loop_id}, {"$set": fields})
+    _invalidate(username)
     return getattr(result, "matched_count", 0) > 0
 
 
 def delete_loop(db, username: str, loop_id: str) -> bool:
+    _invalidate(username)
     return getattr(db[COLLECTION].delete_one({"username": username, "id": loop_id}), "deleted_count", 0) > 0
 
 
 def delete_all_loops(db, username: str) -> int:
+    _invalidate(username)
     return int(getattr(db[COLLECTION].delete_many({"username": username}), "deleted_count", 0) or 0)
 
 
+class EventEditError(ValueError):
+    """The edit cannot be made; the message is safe to show the person."""
+
+
+def _expiry(due: date) -> datetime:
+    return datetime.combine(due + timedelta(days=EXPIRE_DAYS_AFTER_DUE + 1), time.min, tzinfo=timezone.utc)
+
+
+def edit_event(db, username: str, loop_id: str, changes: Dict[str, Any], now: datetime, today: date) -> Optional[Dict[str, Any]]:
+    """The person corrects something coming up on the Memory page. `changes` may hold: "with" and "where" (text; empty clears it back to NOT KNOWN), "time" (24-hour "19:00" from
+    the page, or "7 PM" typed; empty clears it; a bare "7" is refused because the page is the one place nothing is assumed), "due_date" (a day from today to MAX_HORIZON_DAYS ahead),
+    "status" ("cancelled", or "open" to restore a cancelled one) and "confirm" (true: they checked it and it is right). What they write is marked "you wrote this". Returns the
+    event as the page shows it, None when there is no such event, and raises EventEditError (with a message for the person) when a value cannot be kept. Blocking."""
+    docs = list(db[COLLECTION].find({"username": username, "id": loop_id}, {"_id": 0}))
+    if not docs:
+        return None
+    doc = docs[0]
+    fields = {key: dict(value) for key, value in (doc.get("fields") or {}).items() if isinstance(value, dict)}
+    update: Dict[str, Any] = {}
+    replaced = False
+    for key, limit in (("with", event_fields.MAX_WITH_CHARS), ("where", event_fields.MAX_WHERE_CHARS)):
+        if key not in changes:
+            continue
+        raw = changes[key]
+        if raw is None or not str(raw).strip():
+            fields.pop(key, None)
+            continue
+        problem = event_fields.value_problem(raw, limit)
+        if problem:
+            raise EventEditError(problem)
+        value = event_fields.clean_value(raw, limit)
+        replaced = replaced or (key in fields and str(fields[key].get("value", "")).casefold() != value.casefold())
+        fields[key] = {"value": value, "source": event_fields.SOURCE_EDIT}
+    if "time" in changes:
+        raw = changes["time"]
+        if raw is None or not str(raw).strip():
+            fields.pop("time", None)
+        else:
+            parsed = event_fields.parse_time(str(raw).strip(), doc.get("kind", ""), "")
+            if parsed is None:
+                raise EventEditError("That isn't a time. Use something like 7 PM or 19:00.")
+            if parsed["ambiguous"] or parsed["assumed"]:
+                raise EventEditError("Say AM or PM (for example 7 PM), or use a 24-hour time like 19:00.")
+            replaced = replaced or ("time" in fields and fields["time"].get("value") != parsed["value"])
+            fields["time"] = {"value": parsed["value"], "said": event_fields.format_clock(parsed["value"]), "ambiguous": False, "assumed": None, "source": event_fields.SOURCE_EDIT}
+    if "due_date" in changes:
+        try:
+            due = date.fromisoformat(str(changes["due_date"]).strip())
+        except ValueError:
+            raise EventEditError("That isn't a date.")
+        if due < today or due > today + timedelta(days=MAX_HORIZON_DAYS):
+            raise EventEditError(f"Pick a day from today to {MAX_HORIZON_DAYS} days ahead.")
+        if due.isoformat() != doc.get("due_date"):
+            update["due_date"] = due.isoformat()
+            update["expires_at"] = _expiry(due)
+    if "status" in changes:
+        wanted = changes["status"]
+        if wanted not in (OPEN, CANCELLED):
+            raise EventEditError("An event is either coming up or cancelled.")
+        if doc.get("status") not in (OPEN, CANCELLED) and wanted != doc.get("status"):
+            raise EventEditError("Sonic has already asked how that went, so it can't be changed now.")
+        if wanted != doc.get("status"):
+            update["status"] = wanted
+    if changes.get("confirm") is True:
+        update["confirmed_at"] = now.isoformat()
+    if fields != (doc.get("fields") or {}):
+        update["fields"] = fields
+        if replaced:
+            update["corrected_at"] = now.isoformat()
+    if update:
+        db[COLLECTION].update_one({"username": username, "id": loop_id}, {"$set": update})
+        _invalidate(username)
+    return public_view({**doc, **update})
+
+
 def public_view(doc: Dict[str, Any]) -> Dict[str, Any]:
-    """What the Memory page is shown for a loop: its own words and its day, nothing internal."""
-    return {key: doc.get(key) for key in ("id", "text", "due_date", "kind", "status")}
+    """What the Memory page is shown for a loop: its own words, its day, and what is known about it (each field with where it came from; a field that was never said is simply
+    absent, which the page shows as not known). Nothing internal."""
+    view = {key: doc.get(key) for key in ("id", "text", "due_date", "kind", "status", "corrected_at", "confirmed_at")}
+    fields = doc.get("fields") or {}
+    view["fields"] = {
+        key: {**fields[key], "display": event_fields.describe_time(fields[key]) if key == "time" else fields[key].get("value", "")}
+        for key in event_fields.FIELD_KEYS if isinstance(fields.get(key), dict)
+    }
+    return view
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -321,10 +501,13 @@ def build_open_loop_block(loop: Optional[Dict[str, Any]], today: str) -> str:
     """The prompt section for an offered loop ("" when none). The model may use it or skip it."""
     if not loop:
         return ""
+    fields = loop.get("fields") or {}
+    known = [f"with {fields['with']['value']}" if fields.get("with") else "", f"at {fields['where']['value']}" if fields.get("where") else ""]
+    detail = f" ({', '.join(k for k in known if k)}; you may use these names, they told you them)" if any(known) else ""
     return (
         "\nOPEN LOOP (optional, once): "
         f"{describe_when(loop.get('due_date', ''), today)} the user mentioned something coming up: "
-        f"\"{loop.get('text', '')}\". If, and only if, it fits naturally, ask once how it went, as one short, casual "
+        f"\"{loop.get('text', '')}\"{detail}. If, and only if, it fits naturally, ask once how it went, as one short, casual "
         "clause. Answer what they actually asked first, and don't make it the point of the reply. If they've already "
         "told you how it went, don't ask: respond to what they said. Never say you were thinking about them, waiting, "
         "wondering, or looking forward to hearing; never mention that you keep track of things or remembered it on "
@@ -369,9 +552,22 @@ def previous_reply(history: List[Any]) -> str:
 
 
 def _existing_lines(loops: List[Dict[str, Any]]) -> str:
+    """What is already noted, for the model to tell a new thing from a detail or a correction of one it has: each line carries the fields that are known."""
     if not loops:
         return "(none)"
-    return "\n".join(f"{d.get('id')}: {d.get('text')} (due {d.get('due_date')})" for d in loops)
+    lines = []
+    for d in loops:
+        fields = d.get("fields") or {}
+        known = []
+        if fields.get("time"):
+            known.append(f"time {event_fields.describe_time(fields['time'])}")
+        if fields.get("with"):
+            known.append(f"with {fields['with']['value']}")
+        if fields.get("where"):
+            known.append(f"at {fields['where']['value']}")
+        extra = f"; {'; '.join(known)}" if known else ""
+        lines.append(f"{d.get('id')}: {d.get('text')} ({d.get('kind')}, due {d.get('due_date')}{extra})")
+    return "\n".join(lines)
 
 
 async def capture_open_loops(
@@ -392,7 +588,8 @@ async def capture_open_loops(
         if not open_loops_enabled() or risk_active or is_sensitive(message):
             return result
         # Most messages mention nothing about time at all, so the store isn't even read for them.
-        if not (_FUTURE_CUE_RE.search(message or "") or _PAST_REPORT_RE.search(message or "")):
+        confirming = bool(memory_grounding.confirmed_text(message or "", previous_reply))      # a short yes to a question Sonic just asked
+        if not (_FUTURE_CUE_RE.search(message or "") or _PAST_REPORT_RE.search(message or "") or _DETAIL_CUE_RE.search(message or "") or confirming):
             return result
         if get_db_fn is None:
             from backend.utils.db_utils import get_db as get_db_fn
@@ -405,7 +602,9 @@ async def capture_open_loops(
         existing = await asyncio.to_thread(list_loops, db, username, (OPEN,))
         # A loop whose day has arrived or passed might be what a past-tense message is reporting on.
         has_due = any(d.get("due_date", "") <= today.isoformat() for d in existing)
-        if not should_extract(message, has_due):
+        # Something already noted for today or tomorrow: a message that gives it a time, a person or a place, or says it fell through, is about it.
+        has_upcoming = any(today.isoformat() <= d.get("due_date", "") <= (today + timedelta(days=1)).isoformat() for d in existing)
+        if not should_extract(message, has_due, has_upcoming, confirming):
             return result
 
         from backend.components.constraints import OPEN_LOOP_EXTRACTION_PROMPT
@@ -421,17 +620,35 @@ async def capture_open_loops(
             invoke = lite_llm.ainvoke
         parsed = parse_extraction(_response_text(await invoke(prompt)))
 
-        loops = [v for v in (validate_loop(raw, today) for raw in (parsed.get("loops") or [])[:3]) if v]
-        # Honest writes (backend/utils/memory_grounding.py): a loop whose wording carries a time, number, weekday or month the person did not give is not saved.
-        loops = [v for v in loops if memory_grounding.ground_note(v["text"], user_text=message, previous_reply=previous_reply).dropped == 0]
+        items: List[Dict[str, Any]] = []
+        for raw in (parsed.get("loops") or [])[:3]:
+            loop = validate_loop(raw, today)
+            # Honest writes (backend/utils/memory_grounding.py): a loop whose wording carries a time, number, weekday or month the person did not give is not saved.
+            if not loop or memory_grounding.ground_note(loop["text"], user_text=message, previous_reply=previous_reply).dropped:
+                continue
+            # Its time, person and place are kept only if they are the person's own words (or the question they just said yes to); each one that is not is left NOT KNOWN.
+            fields = event_fields.grounded_fields(raw, kind=loop["kind"], user_text=message, previous_reply=previous_reply)
+            items.append({"loop": loop, "fields": fields})
         known_ids = {d.get("id") for d in existing}
         resolved_ids = [i for i in (parsed.get("resolved_ids") or []) if isinstance(i, str) and i in known_ids]
+        cancelled_ids = [i for i in (parsed.get("cancelled_ids") or []) if isinstance(i, str) and i in known_ids and i not in resolved_ids]
+        noted: List[str] = []
 
-        if loops:
-            result["captured"] = await asyncio.to_thread(save_loops, db, username, loops, moment)
+        if items:
+            # The names this person said are different people are never merged, however alike (backend/utils/name_aliases.py).
+            denied = await asyncio.to_thread(_denied_names, db, username) if any(i["fields"].get("with") for i in items) else []
+            saved = await asyncio.to_thread(save_events, db, username, items, moment, denied)
+            result["captured"] = saved["saved"]
+            noted += [event_fields.noted_line(entry["event"], today, updated=entry["updated"]) for entry in saved["events"]]
         for loop_id in resolved_ids:
             if await asyncio.to_thread(set_status, db, username, loop_id, RESOLVED, moment):
                 result["resolved"] += 1
+        for loop_id in cancelled_ids:
+            if await asyncio.to_thread(set_status, db, username, loop_id, CANCELLED, moment):
+                gone = next((d for d in existing if d.get("id") == loop_id), {})
+                noted.append(f"Noted: cancelled, {event_fields.second_person(gone.get('text', ''))}.")
+        if noted:
+            result["noted"] = noted[:2]                    # one or two short lines under the reply, never a list
 
         counts = {"open_loop_captured": result["captured"], "open_loop_resolved": result["resolved"]}
         if any(counts.values()):

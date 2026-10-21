@@ -272,7 +272,7 @@ def _classify_domains_command(db: Any, username: str, employer: str, own: str, s
     from backend.utils.embedding_utils import embed_text
 
     facts = [f for f in mu.load_user_facts(username) if f.active]
-    wanted = [f for f in facts if redo or f.domain is None]
+    wanted = [f for f in facts if (redo or f.domain is None) and not f.domain_locked]
     print(f"{len(facts)} stored fact(s); {len(wanted)} to sort.")
     if not wanted:
         return 0

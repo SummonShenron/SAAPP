@@ -84,6 +84,91 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "memory_domain_edit",
+        "requires": [
+            "backend/utils/memory_utils.py::def edit_user_fact",
+            "backend/utils/memory_utils.py::domain_locked",
+        ],
+        "month": "2026-10",
+        "title": "Choosing which part of your life a memory belongs to",
+        "line": (
+            "I can now file a memory under the part of your life you choose, work, your own projects, personal or general, and I won't move it again once you have."
+        ),
+        "keywords": ["change memory category", "wrong domain", "work versus own project", "refile a memory", "memory page", "mixed up my work", "which part of my life"],
+        "volunteer": [],
+    },
+    {
+        "id": "events_known_unknown",
+        "requires": [
+            "backend/utils/event_fields.py::def build_events_block",
+            "backend/utils/open_loops.py::def save_events",
+        ],
+        "month": "2026-10",
+        "title": "Knowing what I don't know about your plans",
+        "line": (
+            "I can now keep who a plan is with, where it is and what time it is, and when you haven't told me the time I say so and ask instead of guessing one."
+        ),
+        "keywords": ["what time", "my date tonight", "coming up", "my plans", "wrong time", "made up a time", "noted", "upcoming", "what do i have tonight"],
+        "volunteer": [],
+    },
+    {
+        "id": "calendar_checks_plans",
+        "requires": [
+            "backend/utils/event_calendar.py::def overlay",
+            "app.py::event_calendar.with_calendar",
+        ],
+        "month": "2026-10",
+        "title": "Checking your calendar for a plan you told me",
+        "line": (
+            "I can now check your calendar for a plan you told me about, fill in a time you hadn't given, and tell you when your calendar says something different."
+        ),
+        "keywords": ["what time is my date", "calendar says", "wrong time", "plans on my calendar", "calendar disagrees", "time from my calendar"],     # not the bare "my calendar": that is the integrations entry's
+        "volunteer": [],
+    },
+    {
+        "id": "dates_beside_days",
+        "requires": [
+            "backend/utils/date_resolve.py::def annotate_dates",
+            "backend/utils/app_utils.py::annotate_dates(summary_text",
+        ],
+        "month": "2026-10",
+        "title": "Real dates beside 'tonight' and 'Friday'",
+        "line": (
+            "I can now write the real date beside words like tonight or Friday when I save something, so a saved note is still right the day after."
+        ),
+        "keywords": ["tonight", "tomorrow", "which day", "wrong day", "saved date", "it's tuesday", "dates in memory"],
+        "volunteer": [],
+    },
+    {
+        "id": "task_windows",
+        "requires": [
+            "backend/utils/user_tasks.py::def schedule_fields",
+            "backend/utils/user_tasks.py::QUIET_MINUTES",
+        ],
+        "month": "2026-10",
+        "title": "Running your tasks at a quiet moment",
+        "line": (
+            "I can now run a task you set up sometime inside a window you choose, at a quiet moment when you've been away a while, and each run says why it ran when it did."
+        ),
+        "keywords": ["task window", "quiet moment", "when do my tasks run", "scheduled task time", "why did it run", "run my task later", "tasks while i'm away"],
+        "volunteer": [],
+    },
+    {
+        "id": "status_from_records",
+        "requires": [
+            "backend/utils/self_report.py::def build_block",
+            "app.py::self_report_utils.build_block",
+        ],
+        "month": "2026-10",
+        "title": "Telling you how things are going from real records",
+        "line": (
+            "I can now tell you how things are going on my end, and what my day has held, from what the server really did: whether I'm in low-power mode, "
+            "how my scheduled jobs went, and whether any chats failed."
+        ),
+        "keywords": ["how are things going", "any downtime", "how was your day", "your status", "are you down", "anything break", "low-power mode", "what did the server do"],
+        "volunteer": [],
+    },
+    {
         "id": "library_search_tool",
         "requires": [
             "backend/services/library_search.py::def search_for_agent",

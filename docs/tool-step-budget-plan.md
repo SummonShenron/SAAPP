@@ -8,7 +8,10 @@ Status: outline, discussed 2026-10-20, nothing built. Slot: Wednesday 2026-10-21
 - A 7-file library review used the whole normal budget (list, reads 5 + 2, final). 8 or more files would hit the forced final with weeks unread.
 - Concern: a higher cap lets a confused turn burn more steps (the retry nudge encourages using the steps that remain). Typical turns end on their own (~4-5 calls uncapped in the repo evals).
 
-## 1. Measure first (cheap, Wednesday)
+## 1. Measure first (BUILT 2026-10-21)
+Built: per tool turn the loop's steps used and whether it ran into its last step (`llm_turns.note_tool_loop`, from `react_loop` and `native_loop`), saved in the daily turn totals and shown on Sonic Health, Turns tab, "Does the step limit matter?" (share of tool turns that used every step, average steps, spread, deep turns on their own). Read it after a week or two of real use before changing any cap.
+
+(Original plan:)
 Add counters (closed key list in `backend/utils/self_counters.py`, no user id or text): tool turns, steps used (bucketed), turns that reached the forced final step without a final, and which tier ran. Show them on Sonic Health. Decide on any cap change from these, not from a guess.
 
 ## 2. Allowance that follows the work (if the counter shows forced finals)

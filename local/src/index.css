@@ -832,6 +832,8 @@ div:has(.portal-body) {
 }
 .message-failure-retry:hover:not(:disabled) { border-color: var(--accent-primary); }
 .message-failure-retry:disabled { opacity: 0.5; cursor: default; }
+/* What Sonic just saved about something coming up: small, quiet, under the reply, so it is seen without being a second message. */
+.message-noted { margin-top: 0.5rem; font-size: 0.78rem; color: var(--text-muted); border-left: 2px solid color-mix(in srgb, var(--accent-primary) 55%, transparent); padding-left: 0.6rem; }
 .message-failure-details { color: var(--text-muted); }
 .message-failure-details summary { cursor: pointer; user-select: none; }
 .message-failure-details code { display: block; margin-top: 0.3rem; font-size: 0.75rem; overflow-wrap: anywhere; }

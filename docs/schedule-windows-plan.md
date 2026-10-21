@@ -1,6 +1,22 @@
 # Schedule windows: Sonic runs a job "sometime in a window", at a quiet moment
 
-Status: DRAFT outline, discussed 2026-10-20, nothing built. Needs the decisions at the bottom.
+Status: BUILT for user tasks 2026-10-21 (not deployed). The four decisions at the bottom were taken at the recommended defaults (no model; the window sizes below; quiet = 30 minutes idle, run
+anyway at the window's end; the reason is shown in the task's run history); say if any should change. Sonic's own routines (reading refresh, tidy-ups) are NOT windowed yet.
+
+## What was built (2026-10-21)
+- `backend/utils/user_activity.py`: one timestamp per person (`sonic_user_activity`, unique on username, 90-day expiry, wiped by "forget everything"), written by a chat turn at most every 5 minutes
+  per person (in-process throttle), no text. `idle_minutes()` reads it by index; no record counts as idle.
+- `backend/utils/user_tasks.py`: `window_hours` (0, 2 or 3; 0 = exact, as every existing task is) starting at the chosen hour. `schedule_fields()` gives `next_run_at` (= window start + a
+  deterministic per-task jitter inside the first 40% of the window), `window_starts_at`, `window_ends_at`. `defer()` (looked at again in 10 minutes, never later than the window's end, remembers
+  `waited_for`: "quiet" / "headroom"), `run_reason()` (fixed sentences written from what the sweep checked), run records now carry `reason`, `window`, `late_minutes`.
+- `backend/services/user_task_scheduler.py`: order of checks per claimed task: daily cap (skip) > cost guard / low-power (a windowed task waits until its window closes, then is given back; an exact
+  one is skipped) > one task per person per pass (waits) > shared-budget headroom (windowed waits, exact skips, a closed window runs anyway) > quiet moment (windowed only) > run.
+  `backend/utils/budget_guard.py::scheduled_headroom` (default 0.65 of any SHARED budget, `LLM_SCHEDULED_HEADROOM` overrides; a person's own limits stay with `allows`).
+- Frontend: a "Run it" choice on the Tasks wizard, the window in the review line, and each run's reason in its history. Sonic's "what do you have planned" answer says a windowed task has a window and runs
+  at a quiet moment inside it, never a clock time. Changelog entry `task_windows`.
+- Behaviour change worth knowing: an EXACT task now also gives way (skipped to its next time) when the shared budget is past 65%, not only at low-power mode.
+- Not built: a queue-depth figure per pass on Sonic Health (only `late_minutes` per run is recorded), a per-run cost figure, windows for Sonic's own routines, windows on the Memory/Tasks "edit" screen (a
+  task's window is set when it is made; the PATCH endpoint accepts `window_hours`).
 
 ## Goal
 Instead of "run at 8 AM", a job gets a window ("between 1 and 3 PM") and runs at a real, varying moment inside it. When someone asks "what are you up to?", the
