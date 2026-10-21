@@ -1,6 +1,7 @@
 import React from 'react';
 import type { SonicHealth } from '../api';
 import { BarRow, BudgetBars, StatTile } from './sonicHealthParts';
+import { WhoSpentTile } from './SonicHealthWhoSpent';
 import { DailyChart } from './SonicHealthChart';
 import { KB_LABELS, pct, tokens, usd } from './sonicHealthFormat';
 
@@ -145,28 +146,6 @@ export const HomeTab: React.FC<HomeProps> = ({ health, awaiting, suggestionsWait
               </div>
             </Tile>
           )}
-        </div>
-
-        <div className="sh-home-center">
-          {usage?.daily && usage.daily.length > 0 && (
-            <section className="sh-home-tile sh-chart-tile">
-              <div className="sh-home-tile-head"><h3>Day by day</h3><span className="sh-pill">{usage.daily.length} DAYS</span></div>
-              <DailyChart daily={usage.daily} dailyLimitUsd={dailyLimit} onOpen={() => onOpen('usage')} />
-            </section>
-          )}
-
-          {topCallers.length > 0 && (
-            <Tile title="Where the tokens went" tab="usage" onOpen={onOpen} badge="TOP CALLERS">
-              {topCallers.map(row => (
-                <BarRow
-                  key={`${row.label}|${row.model}`}
-                  label={<span title={`${row.label} (${row.model})`}>{row.label}</span>}
-                  value={`${tokens(row.tokens)}${usage?.priced && row.cost !== null && row.cost !== undefined ? ` · ${usd(row.cost) || '$0.00'}` : ''}`}
-                  fraction={biggest > 0 ? row.tokens / biggest : 0}
-                />
-              ))}
-            </Tile>
-          )}
 
           {health.graph && (
             <Tile title="Knowledge graph" tab="knowledge" onOpen={onOpen} badge={`${health.graph.edges_total} RELATIONSHIPS`}>
@@ -181,6 +160,32 @@ export const HomeTab: React.FC<HomeProps> = ({ health, awaiting, suggestionsWait
               ))}
             </Tile>
           )}
+        </div>
+
+        <div className="sh-home-center">
+          {usage?.daily && usage.daily.length > 0 && (
+            <section className="sh-home-tile sh-chart-tile">
+              <div className="sh-home-tile-head"><h3>Day by day</h3><span className="sh-pill">{usage.daily.length} DAYS</span></div>
+              <DailyChart daily={usage.daily} dailyLimitUsd={dailyLimit} onOpen={() => onOpen('usage')} />
+            </section>
+          )}
+
+          {/* Who used the day and what each cost against the day's total. */}
+          <WhoSpentTile users={health.users} onOpen={onOpen} />
+
+          {topCallers.length > 0 && (
+            <Tile title="Where the tokens went" tab="usage" onOpen={onOpen} badge="TOP CALLERS">
+              {topCallers.map(row => (
+                <BarRow
+                  key={`${row.label}|${row.model}`}
+                  label={<span title={`${row.label} (${row.model})`}>{row.label}</span>}
+                  value={`${tokens(row.tokens)}${usage?.priced && row.cost !== null && row.cost !== undefined ? ` · ${usd(row.cost) || '$0.00'}` : ''}`}
+                  fraction={biggest > 0 ? row.tokens / biggest : 0}
+                />
+              ))}
+            </Tile>
+          )}
+
         </div>
 
         <div className="sh-home-col">

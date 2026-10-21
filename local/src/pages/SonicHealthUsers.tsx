@@ -1,7 +1,6 @@
 import React from 'react';
 import type { UsersSummary } from '../api';
 import { pct, tokens, usd } from './sonicHealthFormat';
-
 /** A long account id, shortened in the middle so a table stays readable; the full id is the tooltip. */
 function who(user: string): string {
   return user.length > 34 ? `${user.slice(0, 18)}…${user.slice(-12)}` : user;

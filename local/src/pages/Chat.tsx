@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useEffect, useState, useRef } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useState, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAffiliateScope } from '../hooks/useAffiliateScope';
 import { useLocalWorkspace } from '../hooks/useLocalWorkspace';
@@ -20,6 +20,7 @@ import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal,
 import BudgetBanner from '../components/BudgetBanner';
 import UsageRing from '../components/UsageRing';
 import TracePanel, { type TraceStep } from '../components/TracePanel';
+import { mergeFacts, recordFacts, toolStepLabel, type TraceFactsById } from '../components/traceFacts';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import LogoMark from '../components/LogoMark';
 import InputGlow from '../components/InputGlow';
@@ -532,7 +533,7 @@ const getNodeLabel = (nodeName: string): string => {
     case 'grade_documents_node': return 'Evaluating document relevance...';
     case 'rewrite_query_node': return 'Refining search parameters...';
     case 'summarizer_node': return 'Summarizing retrieved documents...';
-    case 'formatter_node': return 'Formatting output structure...';
+    case 'formatter_node': return 'Writing the answer...';
     case 'conversational_node': return 'Generating response...';
     case 'generate_node': return 'Collecting rings and generating tokens...';
     case 'web_search_node': return 'Searching the web for real-time info...';
@@ -574,6 +575,10 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     });
   };
   const [traceSteps, setTraceSteps] = useState<TraceStep[]>([]);
+  // A step's facts can arrive before the step is drawn (steps are replayed with a delay by processNodeQueue), so they are kept by step id
+  // and merged in when rendering rather than attached to a step that may not exist yet.
+  const [traceFacts, setTraceFacts] = useState<TraceFactsById>({});
+  const tracePanelSteps = useMemo(() => mergeFacts(traceSteps, traceFacts), [traceSteps, traceFacts]);
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const principal = getEffectivePrincipal();
   const [selectedAffiliate, setSelectedAffiliate] = useState<string>('All');
@@ -661,7 +666,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [conversationsRefreshKey, setConversationsRefreshKey] = useState(0);
   const [isMobileTraceOpen, setIsMobileTraceOpen] = useState(false);
   const [latestStepTitle, setLatestStepTitle] = useState("");
-  const nodeQueueRef = useRef<{ node: string; detail?: string; batchIndex?: number; batchSize?: number }[]>([]);
+  const nodeQueueRef = useRef<{ node: string; detail?: string; batchIndex?: number; batchSize?: number; stepId?: string; tool?: string; subject?: string }[]>([]);
   const isProcessingQueue = useRef<boolean>(false);
   // Cheap alternative to full mid-thought steering (see docs/coding-agent-roadmap.md): lets the
   // user cut a turn short the moment it's clearly going down the wrong path, rather than waiting
@@ -1415,6 +1420,7 @@ useEffect(() => {
       ...prev,
       {
         id, title, detail, status: payload?.status === "complete" ? "complete" : "active",
+        stepId: payload?.stepId,
         batchIndex: payload?.batchIndex, batchSize: payload?.batchSize,
       }
     ]);
@@ -1436,7 +1442,7 @@ useEffect(() => {
     }
     isProcessingQueue.current = true;
     const item = nodeQueueRef.current.shift()!;
-    const friendlyLabel = getNodeLabel(item.node);
+    const friendlyLabel = toolStepLabel(item.tool, item.subject) ?? getNodeLabel(item.node);
     // The main (non-embedded) loading spinner's label — latestStepTitle below — should show the
     // backend's own per-step detail (e.g. "Synthesizing final answer for...") rather than the
     // generic friendlyLabel, since that's the actual useful, per-step text for a multi-step node
@@ -1454,6 +1460,7 @@ useEffect(() => {
       status: 'active',
       batchIndex: item.batchIndex,
       batchSize: item.batchSize,
+      stepId: item.stepId,
     });
 
     setTimeout(() => {
@@ -1468,6 +1475,7 @@ useEffect(() => {
     replaceIds: string[] = []
   ) => {
     setTraceSteps([]);
+    setTraceFacts({});
     if (!textToSend.trim() || loading) return;
 
     // Instant local preview from the base64 content already in hand — no round-trip needed.
@@ -1531,11 +1539,14 @@ useEffect(() => {
               if (payload.event === 'node_progress') {
                 nodeQueueRef.current.push({
                   node: payload.node, detail: payload.detail,
-                  batchIndex: payload.batch_index, batchSize: payload.batch_size,
+                  batchIndex: payload.batch_index, batchSize: payload.batch_size, stepId: payload.step_id, tool: payload.tool, subject: payload.subject,
                 });
                 if (!isProcessingQueue.current) {
                   processNodeQueue();
                 }
+              }
+              if (payload.event === 'trace_facts') {
+                setTraceFacts(prev => recordFacts(prev, payload.step_id, payload.facts));
               }
               if (payload.event === 'budget') {
                 setBudget(payload as BudgetView);
@@ -2997,7 +3008,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
       {/* The execution trace: a blade down the right side on a wide screen (it pushes the conversation over), a bottom sheet on a phone. */}
       {!isEmbedded && !isMobileView && showTracePanel && (
         <aside className="trace-blade" aria-label="Execution trace">
-          <TracePanel steps={traceSteps} running={loading} onClose={toggleTracePanel} />
+          <TracePanel steps={tracePanelSteps} running={loading} onClose={toggleTracePanel} />
         </aside>
       )}
       {!isEmbedded && isMobileView && isMobileTraceOpen && (
@@ -3005,7 +3016,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           <div className="trace-sheet-backdrop" onClick={() => setIsMobileTraceOpen(false)} />
           <div className="trace-sheet" role="dialog" aria-label="Execution trace">
             <div className="trace-sheet-grip" />
-            <TracePanel steps={traceSteps} running={loading} onClose={() => setIsMobileTraceOpen(false)} />
+            <TracePanel steps={tracePanelSteps} running={loading} onClose={() => setIsMobileTraceOpen(false)} />
           </div>
         </>
       )}

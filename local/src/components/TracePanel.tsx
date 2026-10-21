@@ -1,25 +1,35 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Icon from './icons';
+import { toggleExpanded } from './traceFacts';
 import './__styles__/TracePanel.css';
 
 export interface TraceStep {
   id: string;
+  /** The server's id for this step; the facts event that follows it carries the same one. */
+  stepId?: string;
   title: string;
   detail: string;
   status: 'active' | 'complete';
   batchIndex?: number;
   batchSize?: number;
+  /** Measured values about what the step did (never content), shown when the step is expanded. */
+  facts?: string[];
 }
 
 /**
  * The execution trace, as the panel the chat page shows: a blade down the right side on a wide screen, a bottom sheet on a phone (the page decides which;
  * the content is the same). It says what Sonic is doing, step by step, while a request runs, and keeps the last request's steps after it. It follows
- * the newest step as they arrive.
+ * the newest step as they arrive. Each step is a button: press it (or Enter / Space) to see what the step measured.
  */
 const TracePanel: React.FC<{ steps: TraceStep[]; running: boolean; onClose: () => void }> = ({ steps, running, onClose }) => {
   const body = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   useEffect(() => {
     if (body.current) body.current.scrollTop = body.current.scrollHeight;
+  }, [steps.length]);
+  // A new request starts a fresh list of steps; the old expansions mean nothing then.
+  useEffect(() => {
+    if (steps.length === 0) setOpen(new Set());
   }, [steps.length]);
 
   const status = steps.length === 0 ? 'Waiting for the first execution step…' : running ? 'Tracing request…' : 'Last request';
@@ -45,22 +55,55 @@ const TracePanel: React.FC<{ steps: TraceStep[]; running: boolean; onClose: () =
             {steps.map((step, i) => {
               const done = step.status === 'complete';
               const last = i === steps.length - 1;
+              const hasFacts = !!step.facts && step.facts.length > 0;
+              const expanded = hasFacts && open.has(step.id);
+              const panelId = `trace-facts-${step.id}`;
+              // A step with no friendly title ("Processing step: ...") shows what it is doing as the title instead, with no separate detail line.
+              const untitled = step.title.startsWith('Processing step:') && !!step.detail;
+              const title = untitled ? step.detail : step.title;
+              const main = (
+                <span className="trace-node-main">
+                  <span className="trace-node-title">
+                    {title}
+                    {step.batchSize && step.batchSize > 1 && (
+                      <span className="trace-batch">batched {step.batchIndex}/{step.batchSize}</span>
+                    )}
+                  </span>
+                  {step.detail && !untitled && <span className="trace-node-detail">{step.detail}</span>}
+                </span>
+              );
               return (
                 <li
                   key={step.id}
-                  className={`trace-node ${done ? 'trace-node-done' : 'trace-node-active'}${last ? ' trace-node-last' : ''}${last && running ? ' trace-node-running' : ''}`}
+                  className={`trace-node ${done ? 'trace-node-done' : 'trace-node-active'}${last ? ' trace-node-last' : ''}${last && running ? ' trace-node-running' : ''}${expanded ? ' trace-node-open' : ''}`}
                 >
                   <span className="trace-node-dot" aria-hidden="true">
                     {done ? <Icon name="check" size={11} /> : <span className="trace-node-core" />}
                   </span>
                   <div className="trace-node-text">
-                    <div className="trace-node-title">
-                      {step.title}
-                      {step.batchSize && step.batchSize > 1 && (
-                        <span className="trace-batch">batched {step.batchIndex}/{step.batchSize}</span>
-                      )}
-                    </div>
-                    {step.detail && <div className="trace-node-detail">{step.detail}</div>}
+                    {hasFacts ? (
+                      <button
+                        type="button"
+                        className="trace-node-toggle"
+                        aria-expanded={expanded}
+                        aria-controls={panelId}
+                        onClick={() => setOpen(prev => toggleExpanded(prev, step.id))}
+                      >
+                        {main}
+                        <span className="trace-node-chevron" aria-hidden="true">▸</span>
+                      </button>
+                    ) : (
+                      <div className="trace-node-plain">{main}</div>
+                    )}
+                    {hasFacts && expanded && (
+                      <div className="trace-node-facts" id={panelId}>
+                        <ul className="trace-facts-list">
+                          {step.facts!.map((fact, index) => (
+                            <li key={index}>{fact}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
                 </li>
               );

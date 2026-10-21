@@ -102,7 +102,7 @@ from backend.utils.agent_utils import (
     _ARCH_MAP_PY_EXTENSION, _ARCH_MAP_JS_EXTENSIONS, _JS_IMPORT_RE,
     _extract_python_imports, _extract_js_imports, _is_internal_python_import,
     _import_scope_key, _repo_top_level_segments, _build_architecture_map,
-    resolve_recent_mention, safe_emit_event, format_history,
+    resolve_recent_mention, safe_emit_event, emit_trace_facts, format_history,
 )
 from backend.services.react_loop import run_react_loop, _MAX_BATCH_SIZE
 from backend.services import steering
@@ -192,6 +192,12 @@ TOOL_AGENT_STUCK_ACTION_REDIRECTS = {
 # Menu entries that query GitHub's hosted index of the committed branch — withheld whenever the user
 # has a local folder connected, since that index can't see the folder's (often uncommitted) code.
 _GITHUB_INDEX_ACTIONS_PREFIXES = ("- search_code", "- trace_symbol")
+
+# The tools that read the repo or the connected folder: the trace's "Reading from" step is announced the first time one of them runs.
+_REPO_SOURCE_TOOLS = frozenset({
+    "list_repo_tree", "read_repo_file", "search_code", "find_file", "trace_symbol", "search_literal",
+    "diff_branches", "list_commits", "list_pull_requests", "propose_local_edits", "run_repo_tests", "run_snippet",
+})
 
 TOOL_AGENT_BATCHABLE_ACTIONS = frozenset({
     "list_repo_tree", "read_repo_file", "search_code", "find_file", "trace_symbol",
@@ -2046,7 +2052,9 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             )
         else:
             source_note = f"GitHub {repo}@{default_branch} (no local folder connected on the server) — read-only"
-        await safe_emit_event("trace_detail", {"node": "tool_agent_node", "title": "Reading from", "detail": source_note})
+        # Announced when a repo or folder tool is first used (see _counted_act), not up front: a turn that never touches code (a web search,
+        # an email lookup) has nothing to do with the repo, and a "Reading from GitHub" step there is just noise.
+        source_announced = {"done": False}
         if local_workspace_handle is not None:
             workspace_name = workspace_status(username).get("name", "local folder")
             schema_parts.append(
@@ -3272,6 +3280,11 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         async def _counted_act(decision: dict):
             """The dispatcher, counting which tool was called and whether it came back as an error (names only: backend/utils/llm_turns.py)."""
             name = decision.get("tool_action")
+            if name in _REPO_SOURCE_TOOLS and not source_announced["done"]:
+                source_announced["done"] = True  # set before awaiting: a batch runs its actions concurrently and must announce once
+                await safe_emit_event("trace_detail", {"node": "tool_agent_node", "title": "Reading from", "detail": source_note})
+            if memory_guard is not None:
+                refusal = memory_guard.refusal(name, decision.get("args"))
             if memory_guard is not None:
                 refusal = memory_guard.refusal(name, decision.get("args"))
                 if refusal:
@@ -3291,10 +3304,17 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             async def _announce(title, detail):
                 await safe_emit_event("trace_detail", {"node": "tool_agent_node", "title": title, "detail": detail})
 
+            async def _announce_step(title, detail, step_id, tool=None, subject=None):
+                payload = {"node": "tool_agent_node", "title": title, "detail": detail, "step_id": step_id, "tool": tool}
+                if subject:
+                    payload["subject"] = subject
+                await safe_emit_event("trace_detail", payload)
+
             return await native_loop.run(
                 llm=kwargs["llm"], tools=native_tools, act=kwargs["act"], question=kwargs["question"], history=formatted_history,
                 time_line=build_agent_time_line(get_user_timezone(username)), coding_preferences=coding_preferences,
                 architecture_map=architecture_map, user_memory=user_memory, max_steps=kwargs["max_iterations"], emit=_announce,
+                emit_step=_announce_step, emit_facts=emit_trace_facts,
                 steering_source=kwargs.get("steering_source"), on_steering_applied=kwargs.get("on_steering_applied"),
                 shorten_old=not (isinstance(kwargs["llm"], ClaudeLLM) and kwargs["llm"].caches_prompt),   # a model that caches the conversation keeps old results whole (native_loop.py)
             )

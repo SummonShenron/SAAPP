@@ -104,9 +104,35 @@
 .trace-node-running { padding-bottom: 46px; }
 
 .trace-node-text { min-width: 0; }
+/* Each step is a button: the whole title row opens and closes its facts, and it works from the keyboard. */
+.trace-node-toggle {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.trace-node-toggle:hover .trace-node-title { text-decoration: underline; text-decoration-color: var(--border-color); text-underline-offset: 3px; }
+.trace-node-toggle:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
+.trace-node-main { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.trace-node-chevron { flex: 0 0 auto; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; color: var(--text-muted); transition: transform 0.15s ease; }
+.trace-node-toggle[aria-expanded="true"] .trace-node-chevron { transform: rotate(90deg); }
+.trace-node-facts { margin-top: 6px; padding: 6px 10px; border-left: 2px solid var(--border-color); }
+.trace-facts-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.trace-facts-list li { font-family: monospace; font-size: 0.74rem; line-height: 1.4; color: var(--text-muted); overflow-wrap: anywhere; }
+.trace-node-plain { width: 100%; }
 .trace-node-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 20px; font-size: 0.86rem; font-weight: 600; line-height: 1.3; }
 .trace-node-active .trace-node-title { color: var(--accent-primary); }
-.trace-node-detail { margin-top: 2px; font-size: 0.78rem; color: var(--text-muted); overflow-wrap: anywhere; }
+.trace-node-detail { display: block; margin-top: 3px; font-size: 0.75rem; font-weight: 400; line-height: 1.5; color: var(--text-muted); opacity: 0.85; overflow-wrap: anywhere; }
 .trace-batch { font-size: 0.66rem; font-weight: 600; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border-color); color: var(--accent-primary); }
 
 /* The dark theme keeps the path to greys and black: a finished step is a grey dot on a grey line, and the one thing in the accent is the step that is
@@ -137,5 +163,5 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .trace-node-core, .trace-node-active .trace-node-dot::after, .trace-node-running::after { animation: none; }
+  .trace-node-core, .trace-node-active .trace-node-dot::after, .trace-node-running::after, .trace-node-chevron { animation: none; transition: none; }
 }

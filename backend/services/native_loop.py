@@ -33,9 +33,12 @@ import json
 import logging
 import os
 import re
+import time
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+
+from backend.utils.agent_utils import build_tool_facts, build_trace_subject, new_trace_step_id
 
 logger = logging.getLogger("SASS Logger")
 
@@ -193,6 +196,8 @@ async def run(
     architecture_map: str = "",
     max_steps: Optional[int] = None,
     emit: Optional[Callable[[str, str], Awaitable[None]]] = None,
+    emit_step: Optional[Callable[[str, str, str], Awaitable[None]]] = None,
+    emit_facts: Optional[Callable[[str, List[str]], Awaitable[None]]] = None,
     steering_source: Optional[Callable[[], List[str]]] = None,
     on_steering_applied: Optional[Callable[[List[str], int], Awaitable[None]]] = None,
     steering_extra_steps: int = 2,
@@ -214,6 +219,7 @@ async def run(
     rereads = 0
     steering_notes: List[str] = []
     steering_used = 0
+    failed_runs_by_tool: Dict[str, int] = {}
     repeats = 0
     final_text: Optional[str] = None
     forced = False
@@ -269,16 +275,32 @@ async def run(
             repeats += 1
             return f"NOTE: you already made this exact call in step {seen[key]}; its result is in the conversation above. Use it, or try something different."
         seen[key] = step
-        if emit is not None:
+        step_id = new_trace_step_id()
+        if emit_step is not None or emit is not None:
             try:
-                await emit(f"Running {name}...", _describe(name, args))
+                if emit_step is not None:
+                    await emit_step(f"Running {name}...", _describe(name, args), step_id, name, build_trace_subject(name, args))
+                else:
+                    await emit(f"Running {name}...", _describe(name, args))
             except Exception:
                 logger.debug("[native_loop] could not emit a trace step.", exc_info=True)
+        started = time.monotonic()
         try:
-            return _observation_text(await act({"tool_action": name, "args": args, "purpose": f"Run {name}"}))
+            result = _observation_text(await act({"tool_action": name, "args": args, "purpose": f"Run {name}"}))
         except Exception as exc:
             logger.warning("[native_loop] tool %s failed: %s", name, type(exc).__name__)
-            return f"ERROR: {name} failed ({type(exc).__name__})."
+            result = f"ERROR: {name} failed ({type(exc).__name__})."
+        if emit_facts is not None:
+            retries = failed_runs_by_tool.get(name, 0)
+            if result.startswith("ERROR"):
+                failed_runs_by_tool[name] = retries + 1
+            try:
+                await emit_facts(step_id, build_tool_facts(
+                    name, args, time.monotonic() - started, result, retries=retries, truncated=len(result) > MAX_OBSERVATION_CHARS,
+                ))
+            except Exception:
+                logger.debug("[native_loop] could not emit trace facts.", exc_info=True)
+        return result
 
     step = 0
     told_at: set = set()

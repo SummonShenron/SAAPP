@@ -4,7 +4,9 @@ import json
 import logging
 import os
 import re
+import uuid
 from datetime import datetime
+from urllib.parse import urlsplit
 
 from langchain_core.callbacks.manager import adispatch_custom_event
 from langchain_core.messages import AIMessage
@@ -21,6 +23,139 @@ async def safe_emit_event(name: str, data: dict):
     except RuntimeError:
         # Safely ignored when called from fallback utilities or standalone scripts
         pass
+
+
+# --- Trace panel facts (docs/trace-panel-verbose-plan.md, slice 1) ---
+# Facts are MEASURED values only (tool name, shortened argument values, duration, outcome, size, retries, batch place), never
+# prompts, result bodies or user text, and they go only to the requester's browser: nothing here is logged or stored.
+TRACE_FACT_MAX_CHARS = 200
+TRACE_FACT_MAX_LINES = 10
+_TRACE_ARG_MAX_CHARS = 60
+_MASKED = "•••"
+# Argument names whose values are typed text, message bodies or credentials.
+_MASKED_ARG_KEYS = {
+    "value", "text", "body", "content", "message", "html", "subject", "code", "token", "password", "secret", "authorization",
+    "api_key", "apikey", "key", "credentials", "cookie", "new_text", "old_text", "edits", "summary", "description",
+    "to", "cc", "bcc", "email", "recipient", "recipients",
+}
+_MASKED_ARG_KEY_HINTS = ("token", "secret", "password", "passwd", "auth", "apikey", "api_key", "credential", "cookie")
+_SECRET_LOOKING_RE = re.compile(
+    r"(?:\b(?:ghp|gho|ghu|ghs|github_pat|sk|pk|xox[abpr]|AIza|ya29)[-_A-Za-z0-9.]{12,}|\bBearer\s+\S+|\beyJ[\w-]{10,}\.[\w-]{10,}|[A-Fa-f0-9]{32,}|[A-Za-z0-9+/_-]{40,}={0,2})"
+)
+
+
+def new_trace_step_id() -> str:
+    """A short id that ties a trace step to the facts event that follows it."""
+    return uuid.uuid4().hex[:12]
+
+
+def _trace_line(text) -> str:
+    one_line = " ".join(str(text).split())
+    return one_line if len(one_line) <= TRACE_FACT_MAX_CHARS else one_line[: TRACE_FACT_MAX_CHARS - 1] + "…"
+
+
+def clean_trace_facts(facts) -> list:
+    """Whatever the caller built: only non-empty strings, one line each, 200 characters at most, ten lines at most."""
+    if not isinstance(facts, (list, tuple)):
+        return []
+    lines = [_trace_line(fact) for fact in facts if isinstance(fact, str) and fact.strip()]
+    return lines[:TRACE_FACT_MAX_LINES]
+
+
+def mask_trace_arg(key, value) -> str:
+    """The display form of one tool argument: typed text and credentials are masked, everything else is shortened."""
+    name = str(key).lower()
+    if name in _MASKED_ARG_KEYS or any(hint in name for hint in _MASKED_ARG_KEY_HINTS):
+        return _MASKED
+    if isinstance(value, bool) or value is None or isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, (list, tuple, set)):
+        return f"{len(value)} item(s)"
+    if isinstance(value, dict):
+        return f"{len(value)} field(s)"
+    text = " ".join(str(value).split())
+    if _SECRET_LOOKING_RE.search(text):
+        return _MASKED
+    return text if len(text) <= _TRACE_ARG_MAX_CHARS else text[: _TRACE_ARG_MAX_CHARS - 1] + "…"
+
+
+TRACE_SUBJECT_MAX_CHARS = 40
+# Which argument names the thing a tool step is about. A tool not listed here (browser_type, the propose_* writes, run_python,
+# run_mongo_query, ...) has no subject, so its step keeps the plain label.
+_TRACE_SUBJECT_ARGS = {
+    "search_code": ("query",),
+    "search_library": ("query",),
+    "web_search": ("query",),
+    "read_repo_file": ("path", "query"),
+    "find_file": ("path", "query"),
+    "read_url": ("url",),
+    "search_literal": ("term",),
+    "trace_symbol": ("symbol",),
+    "read_library_file": ("name",),
+}
+
+
+def _url_host_and_path(value) -> str:
+    """Only where the page is, never the query string, fragment or any credentials in the address."""
+    parts = urlsplit(str(value).strip() if "://" in str(value) else f"//{str(value).strip()}")
+    host = (parts.hostname or "").removeprefix("www.")
+    path = parts.path.rstrip("/")
+    return f"{host}{path}" if host else ""
+
+
+def build_trace_subject(tool_name: str, args: dict | None) -> str | None:
+    """A short measured label for what a tool step is about (a search query, a file name, a page), or None.
+    It goes through the same masking as the facts, and is never logged."""
+    keys = _TRACE_SUBJECT_ARGS.get(str(tool_name or ""))
+    if not keys or not isinstance(args, dict):
+        return None
+    for key in keys:
+        value = args.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        if key == "url":
+            value = _url_host_and_path(value)
+        elif key == "path" and tool_name == "read_repo_file":
+            value = value.strip().replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+        shown = mask_trace_arg(key, value)
+        if not shown or shown == _MASKED:
+            return None
+        return shown if len(shown) <= TRACE_SUBJECT_MAX_CHARS else shown[: TRACE_SUBJECT_MAX_CHARS - 1] + "…"
+    return None
+
+
+def build_tool_facts(
+    tool_name: str, args: dict | None, duration_seconds: float, observation, *,
+    retries: int = 0, truncated: bool = False,
+) -> list:
+    """The measured facts for one finished tool step. The result itself is never included, only its outcome and size."""
+    text = observation if isinstance(observation, str) else json.dumps(observation, default=str, indent=2) if observation is not None else ""
+    # Same order of precedence the loop uses: an error is an error, and an empty result (no matches, an empty list) is not a success.
+    if text.startswith("ERROR"):
+        outcome = "error"
+    elif _is_empty_observation(text):
+        outcome = "empty (no results)"
+    elif truncated:
+        outcome = "truncated"
+    else:
+        outcome = "ok"
+    facts = [f"Tool: {tool_name or '(none)'}"]
+    shown = [f"{key}={mask_trace_arg(key, value)}" for key, value in (args or {}).items()]
+    if shown:
+        facts.append("Args: " + ", ".join(shown))
+    facts.append(f"Took: {duration_seconds:.2f} s" if duration_seconds < 10 else f"Took: {duration_seconds:.1f} s")
+    facts.append(f"Result: {outcome}, {len(text)} characters")
+    if retries > 0:
+        facts.append(f"Retries so far this turn: {retries}")
+    return clean_trace_facts(facts)
+
+
+async def emit_trace_facts(step_id: str | None, facts) -> None:
+    """Sends the finished step's facts to the requester's browser, next to safe_emit_event. Never raises and never logs the facts."""
+    cleaned = clean_trace_facts(facts)
+    if not step_id or not cleaned:
+        return
+    await safe_emit_event("trace_facts", {"step_id": str(step_id), "facts": cleaned})
 
 
 def format_error_payload(error_message: str) -> str:

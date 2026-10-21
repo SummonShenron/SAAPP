@@ -261,7 +261,7 @@ async def test_github_index_tools_are_still_offered_without_a_connected_folder(m
 async def test_trace_says_the_turn_is_reading_from_the_connected_folder_and_that_edits_are_possible(monkeypatch):
     _connect_folder()
 
-    _, _, emit = await _drive_turn(monkeypatch, [])
+    _, _, emit = await _drive_turn(monkeypatch, [{"tool_action": "search_literal", "args": {"query": "greet"}}])
 
     details = [c.args[1]["detail"] for c in emit.call_args_list if c.args[0] == "trace_detail" and c.args[1].get("title") == "Reading from"]
     assert len(details) == 1
@@ -270,11 +270,33 @@ async def test_trace_says_the_turn_is_reading_from_the_connected_folder_and_that
 
 @run_async
 async def test_trace_says_github_read_only_when_no_folder_is_connected_on_the_server(monkeypatch):
-    _, _, emit = await _drive_turn(monkeypatch, [])
+    _, _, emit = await _drive_turn(monkeypatch, [{"tool_action": "diff_branches", "args": {}}])
 
     details = [c.args[1]["detail"] for c in emit.call_args_list if c.args[0] == "trace_detail" and c.args[1].get("title") == "Reading from"]
     assert len(details) == 1
     assert "GitHub" in details[0] and "no local folder connected" in details[0]
+
+
+@run_async
+async def test_the_reading_from_step_is_announced_once_however_many_repo_tools_run(monkeypatch):
+    _connect_folder()
+
+    _, _, emit = await _drive_turn(monkeypatch, [
+        {"tool_action": "search_literal", "args": {"query": "a"}},
+        {"tool_action": "search_literal", "args": {"query": "b"}},
+    ])
+
+    assert len([c for c in emit.call_args_list if c.args[1].get("title") == "Reading from"]) == 1
+
+
+@run_async
+async def test_a_turn_that_never_touches_code_has_no_reading_from_step(monkeypatch):
+    """A web search or an email lookup has nothing to do with the repo or folder, so the trace must not claim to be reading from it."""
+    _connect_folder()
+
+    _, _, emit = await _drive_turn(monkeypatch, [])
+
+    assert not [c for c in emit.call_args_list if c.args[0] == "trace_detail" and c.args[1].get("title") == "Reading from"]
 
 
 # ---------------------------------------------------------------------------

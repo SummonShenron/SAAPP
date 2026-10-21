@@ -227,6 +227,47 @@ def summarize_users(
     }
 
 
+MAX_PEOPLE_PER_DAY = 60
+
+
+def day_breakdowns(rows: Iterable[Dict[str, Any]], daily: Optional[Iterable[Dict[str, Any]]], days: List[str], viewer: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """For every billing day: who used it and what each cost, against the day's whole estimated cost (the usage page's own figure, `daily` = summarize_daily's rows),
+    so a person's share is a share of the DAY. Each day lists up to MAX_PEOPLE_PER_DAY accounts, biggest first (`you` marks the viewing admin), the evals and tests as
+    their own entry, and what no account owns (background jobs) as the remainder. Counts and dollars only. None when no dollars were counted (no prices set). Pure."""
+    day_rows = {str(row.get("day")): row for row in (daily or [])}
+    if not any(float((row or {}).get("cost") or 0) > 0 for row in day_rows.values()):
+        return None
+    people: Dict[str, Dict[str, Dict[str, float]]] = {day: {} for day in days}
+    for row in rows:
+        day = str(row.get("day") or "")
+        if day not in people:
+            continue
+        entry = people[day].setdefault(str(row.get("user") or "unknown"), {"cost": 0.0, "tokens": 0, "calls": 0, "turns": 0})
+        entry["cost"] += _count(row.get("cost_micro")) / 1_000_000
+        entry["tokens"] += _count(row.get("tokens"))
+        entry["calls"] += _count(row.get("calls"))
+        entry["turns"] += _count(row.get("turns"))
+    by_day = []
+    for day in days:
+        source = day_rows.get(day) or {}
+        total = round(float(source.get("cost") or 0), 4)
+        ranked = sorted(people[day].items(), key=lambda item: (item[1]["cost"], item[1]["tokens"]), reverse=True)
+        listed = [{
+            "user": user, "you": bool(viewer) and user == viewer, "cost": round(v["cost"], 4), "tokens": int(v["tokens"]), "calls": int(v["calls"]), "turns": int(v["turns"]),
+            "share": round(v["cost"] / total, 4) if total > 0 else None,
+        } for user, v in ranked[:MAX_PEOPLE_PER_DAY]]
+        evals_cost = round(float(source.get("eval_cost") or 0), 4)
+        evals = {"cost": evals_cost, "tokens": _count(source.get("eval_tokens")), "calls": _count(source.get("eval_calls")),
+                 "share": round(evals_cost / total, 4) if total > 0 else None} if (evals_cost or source.get("eval_calls")) else None
+        accounted = sum(v["cost"] for v in people[day].values()) + evals_cost
+        background = round(max(total - accounted, 0.0), 4)
+        by_day.append({
+            "day": day, "total": total, "people": listed, "more_people": max(len(ranked) - MAX_PEOPLE_PER_DAY, 0), "evals": evals,
+            "background": {"cost": background, "share": round(background / total, 4) if total > 0 else None} if background > 0 else None,
+        })
+    return {"days": list(days), "viewer": viewer or None, "by_day": by_day}
+
+
 def fetch(db: Any, user: str, since_minute: str) -> List[Dict[str, Any]]:
     """One person's saved minute rows from `since_minute` on. Blocking. Raises on a database error (the guard decides what that means)."""
     return list(db[COLLECTION].find({"user": user, "minute": {"$gte": since_minute}}, {"_id": 0}))

@@ -886,8 +886,23 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                         if data.get("batch_size"):
                             node_progress_payload["batch_index"] = data.get("batch_index")
                             node_progress_payload["batch_size"] = data.get("batch_size")
+                        # Lets the browser attach the facts event below to this step (docs/trace-panel-verbose-plan.md).
+                        if data.get("step_id"):
+                            node_progress_payload["step_id"] = data.get("step_id")
+                        # The tool's name only, so the browser can title the step in plain words.
+                        if isinstance(data.get("tool"), str) and data.get("tool"):
+                            node_progress_payload["tool"] = data["tool"]
+                        if isinstance(data.get("subject"), str) and data.get("subject"):
+                            node_progress_payload["subject"] = data["subject"]
                         yield f"data: {json.dumps(node_progress_payload)}\n\n"
                         await asyncio.sleep(0.01)
+
+                    # The measured facts for a finished trace step (already capped and masked by emit_trace_facts).
+                    if kind == "on_custom_event" and event.get("name") == "trace_facts":
+                        data = event.get("data", {})
+                        if data.get("step_id") and isinstance(data.get("facts"), list):
+                            yield f"data: {json.dumps({'event': 'trace_facts', 'step_id': data['step_id'], 'facts': data['facts']})}\n\n"
+                            await asyncio.sleep(0.01)
 
                     # The tool agent folded one or more mid-run steering messages into its work
                     # (backend/services/steering.py) — lets the browser mark them as taken into account.
@@ -1165,7 +1180,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 yield f"data: {json.dumps({'event': 'kb_images', 'images': kb_images})}\n\n"
 
             # Announce LLM generation start
-            yield f"data: {json.dumps({'event': 'node_progress', 'node': 'formatter_node', 'title': 'Formatting output structure...', 'detail': f'Synthesizing final answer for {question[:30]}...'})}\n\n"
+            yield f"data: {json.dumps({'event': 'node_progress', 'node': 'formatter_node', 'title': 'Writing the answer...', 'detail': f'Synthesizing final answer for {question[:30]}...'})}\n\n"
             # Everything below that reads the database or the embeddings API is synchronous; run directly on the event loop, one slow read
             # froze the whole server (a 4 MB fact list took 41 s), so each goes to a worker thread. The fact list is read once here, which
             # also fills the in-memory copy the calls after it use (backend/utils/memory_utils.py).
@@ -3014,7 +3029,7 @@ async def get_safety_stats(days: int = Query(7, ge=1, le=180), admin = Depends(r
 async def get_sonic_health(days: int = Query(7, ge=1, le=180), admin = Depends(require_global_admin)):
     """Everything the admin Sonic Health page shows: safety layer stats, Sonic's own behavior counters, and its
     self-observations (backend/utils/sonic_health.py). Aggregates only. Global_Admins only."""
-    return await asyncio.to_thread(build_sonic_health, _admin_db(), days)
+    return await asyncio.to_thread(build_sonic_health, _admin_db(), days, None, admin.get("sub"))
 
 
 @app.post("/api/admin/observations/reflect")

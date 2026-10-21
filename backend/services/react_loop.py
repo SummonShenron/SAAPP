@@ -9,6 +9,7 @@ own service module rather than a "utils" file.
 import asyncio
 import json
 import logging
+import time
 
 from backend.models.models import lite_llm
 from backend.utils.log_hygiene import describe_observation
@@ -31,8 +32,12 @@ from backend.utils.agent_utils import (
     _mentions_unresolved_truncation,
     _parse_agent_json,
     _truncate_observation,
+    build_tool_facts,
+    build_trace_subject,
+    emit_trace_facts,
     find_mismatched_start_line_note,
     format_steering_notes,
+    new_trace_step_id,
     parse_definition_index_from_observation,
     safe_emit_event,
 )
@@ -302,6 +307,7 @@ async def run_react_loop(
     # is told to act; and a "final" that never used the action is rejected (bounded, so a genuinely
     # unanswerable request still gets an honest final eventually).
     required_action_final_rejects = 0
+    failed_runs_by_tool: dict[str, int] = {}  # tool name -> how many of its runs this turn came back as errors (the retry count shown in the trace panel)
     pending_required_action_notice: str | None = None
 
     def _required_action_done() -> bool:
@@ -758,20 +764,34 @@ async def run_react_loop(
             # batching happened, instead of the only way to confirm it being to read the backend
             # log and notice several attempts sharing one step number.
             sub_decision = {"tool_action": tool_action_name, "args": args, "purpose": purpose}
-            trace_payload = {"node": node_name, "title": "Working...", "detail": purpose}
+            step_id = new_trace_step_id()
+            trace_payload = {"node": node_name, "title": "Working...", "detail": purpose, "step_id": step_id, "tool": tool_action_name}
+            subject = build_trace_subject(tool_action_name, args)
+            if subject:
+                trace_payload["subject"] = subject
             if batch_size and batch_size > 1:
                 trace_payload["batch_index"] = batch_index
                 trace_payload["batch_size"] = batch_size
             await safe_emit_event("trace_detail", trace_payload)
             if is_unsafe(sub_decision):
                 raise _UnsafeActionRequested(sub_decision, attempts)
+            started = time.monotonic()
             try:
                 observation = act(sub_decision)
                 if asyncio.iscoroutine(observation):
                     observation = await observation
             except Exception as e:
                 observation = f"ERROR: {e}"
-            return _truncate_observation(observation)
+            elapsed = time.monotonic() - started
+            truncated_observation = _truncate_observation(observation)
+            retries = failed_runs_by_tool.get(tool_action_name, 0)
+            if truncated_observation.startswith("ERROR"):
+                failed_runs_by_tool[tool_action_name] = retries + 1
+            await emit_trace_facts(step_id, build_tool_facts(
+                tool_action_name, args, elapsed, observation, retries=retries,
+                truncated="\n... [truncated — " in truncated_observation or _mentions_unresolved_truncation(truncated_observation),
+            ))
+            return truncated_observation
 
         def _record_action_result(tool_action_name: str, args: dict, purpose: str, observation: str) -> None:
             # Exactly the bookkeeping a real sequential step already did — extracted so it can be

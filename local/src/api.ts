@@ -925,6 +925,40 @@ export interface UsersSummary {
   evals?: { cost: number; tokens: number; calls: number } | null;
   /** What the usage page estimates for the whole period, minus what is tied to accounts and to the evals: background jobs and anything with no account. */
   unattributed_cost?: number | null;
+  /** For every day: who used it and what each cost against the day's whole total (the dashboard graph and the Usage table); null when no dollars were counted. */
+  daily_people?: UsersDays | null;
+}
+
+export interface DayPerson {
+  user: string;
+  /** True for the admin looking at the page. */
+  you: boolean;
+  cost: number;
+  tokens: number;
+  calls: number;
+  turns: number;
+  /** Their share of the whole day's cost, or null when the day cost nothing. */
+  share: number | null;
+}
+
+export interface DayBreakdown {
+  day: string;
+  /** The whole day's estimated cost (the usage page's own figure). */
+  total: number;
+  /** Everyone who used the day, biggest first (at most 60). */
+  people: DayPerson[];
+  more_people: number;
+  /** The runs of the evals and tests that day; null when there were none. */
+  evals: { cost: number; tokens: number; calls: number; share: number | null } | null;
+  /** What no account owns (background jobs): the rest of the day's total; null when there is none. */
+  background: { cost: number; share: number | null } | null;
+}
+
+export interface UsersDays {
+  days: string[];
+  /** The viewing admin's account id, or null. */
+  viewer: string | null;
+  by_day: DayBreakdown[];
 }
 
 export interface SonicHealth {

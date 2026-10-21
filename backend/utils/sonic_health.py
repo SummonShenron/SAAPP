@@ -38,8 +38,18 @@ def _section(name: str, build) -> Optional[Dict[str, Any]]:
         return None
 
 
-def build_sonic_health(db: Any, days: int, now: Optional[datetime.datetime] = None) -> Dict[str, Any]:
-    """The whole page's data for a period of `days`. Blocking (database reads): call it off the event loop."""
+def _users_section(db: Any, days: int, now: datetime.datetime, usage_summary: Dict[str, Any], daily: List[Dict[str, Any]], viewer: Optional[str]) -> Dict[str, Any]:
+    """What each account cost over the period, plus, for every day, who used it and what each cost against the day's total, with the viewing admin marked
+    (`viewer` is their account id)."""
+    period = billing_days(days, now)
+    rows = user_usage.fetch_daily(db, days, now)
+    summary = user_usage.summarize_users(rows, period, total_cost=usage_summary.get("estimated_cost"), evals=daily)
+    summary["daily_people"] = user_usage.day_breakdowns(rows, daily, period, viewer)
+    return summary
+
+
+def build_sonic_health(db: Any, days: int, now: Optional[datetime.datetime] = None, viewer: Optional[str] = None) -> Dict[str, Any]:
+    """The whole page's data for a period of `days`. Blocking (database reads): call it off the event loop. `viewer` is the signed-in admin's account id."""
     now = now or datetime.datetime.now(timezone.utc)
     usage_docs = fetch_usage_docs(db, days, now)
     turn_docs = fetch_turn_docs(db, days, now)
@@ -72,7 +82,6 @@ def build_sonic_health(db: Any, days: int, now: Optional[datetime.datetime] = No
             "daily": daily,
         },
         # What each account cost over the period (counts and dollars only; the one place a person is named, on an admin-only page).
-        "users": _section("users", lambda: user_usage.summarize_users(
-            user_usage.fetch_daily(db, days, now), billing_days(days, now), total_cost=usage_summary.get("estimated_cost"), evals=daily)),
+        "users": _section("users", lambda: _users_section(db, days, now, usage_summary, daily, viewer)),
         "budget": budget_view(budget_state(db, now), True),
     }
