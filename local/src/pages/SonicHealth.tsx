@@ -18,6 +18,7 @@ import { HomeTab } from './SonicHealthHome';
 import { ShelfTab } from './SonicHealthShelf';
 import { FeedbackTab, KnowledgeTab } from './SonicHealthFeedback';
 import { RoutinesTab } from './SonicHealthRoutines';
+import { GoalsTab } from './SonicHealthGoals';
 import { UsersCard } from './SonicHealthUsers';
 import { WhoSpentTable } from './SonicHealthWhoSpent';
 import { BarRow, BudgetBars, StatTile } from './sonicHealthParts';
@@ -33,6 +34,7 @@ const TABS = [
   { id: 'turns', label: 'Turns' },
   { id: 'budget', label: 'Budget' },
   { id: 'behavior', label: 'Behavior' },
+  { id: 'goals', label: 'Goals' },
   { id: 'feedback', label: 'Feedback' },
   { id: 'knowledge', label: 'Knowledge graph' },
   { id: 'routines', label: 'Routines' },
@@ -248,6 +250,20 @@ export const SonicHealthPage: React.FC = () => {
     }
   };
 
+  const handleGoalApproval = async (goalId: string, approved: boolean) => {
+    setBusyKey(goalId);
+    setNotice(null);
+    try {
+      await api.setGoalApproval(goalId, approved);
+      setReloadKey(k => k + 1);
+      setNotice(approved ? 'Approved. The goal can change what Sonic does now, within its limits, and each time it does is counted here.' : 'Approval withdrawn. The goal is only measured again.');
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Could not save that approval.');
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
   const handleRetire = async (key: string) => {
     if (!window.confirm(`Retire "${OBSERVATION_LABELS[key] ?? key}"? Sonic will stop using it until a new reflection proposes it again.`)) return;
     setBusyKey(key);
@@ -385,6 +401,7 @@ export const SonicHealthPage: React.FC = () => {
         {tab === 'turns' && (health.usage?.turns && health.usage.turns.turns > 0 ? <TurnsCard turns={health.usage.turns} /> : noData('chat turns'))}
         {tab === 'budget' && (health.budget ? <BudgetCard budget={health.budget} /> : noData('budget'))}
         {tab === 'behavior' && <CountersCard counters={health.counters} />}
+        {tab === 'goals' && <GoalsTab goals={health.goals} busyId={busyKey} onApprove={handleGoalApproval} />}
         {tab === 'feedback' && <FeedbackTab feedback={health.feedback} />}
         {tab === 'knowledge' && <KnowledgeTab graph={health.graph} />}
         {tab === 'routines' && <RoutinesTab routines={health.routines} />}
@@ -797,6 +814,9 @@ const CountersCard: React.FC<{ counters: CountersSummary }> = ({ counters }) => 
           <tr><td>Messages Sonic started that fell back to the plain template</td><td>{pct(rates.initiation_fallback)}</td><td>{pct(previous.initiation_fallback)}</td><td>{change(changes.initiation_fallback)}</td></tr>
           <tr><td>Turns that asked how something went</td><td>{pct(rates.open_loop_offered)}</td><td>{pct(previous.open_loop_offered)}</td><td>{change(changes.open_loop_offered)}</td></tr>
           <tr><td>Turns where the reply mentioned a leaning of its own</td><td>{pct(rates.self_mention)}</td><td>{pct(previous.self_mention)}</td><td>{change(changes.self_mention)}</td></tr>
+          <tr><td>Coding turns that ran out of steps ({totals.code_turns ?? 0} coding turns)</td><td>{pct(rates.code_cap_hit)}</td><td>{pct(previous.code_cap_hit)}</td><td>{change(changes.code_cap_hit)}</td></tr>
+          <tr><td>Proposed edits that were also tested ({totals.code_edited ?? 0} edits)</td><td>{pct(rates.code_verified)}</td><td>{pct(previous.code_verified)}</td><td>{change(changes.code_verified)}</td></tr>
+          <tr><td>Messages after coding work that said it did not work ({totals.code_followed ?? 0} messages)</td><td>{pct(rates.code_redo)}</td><td>{pct(previous.code_redo)}</td><td>{change(changes.code_redo)}</td></tr>
         </tbody>
       </table>
       <div className="sh-routes">

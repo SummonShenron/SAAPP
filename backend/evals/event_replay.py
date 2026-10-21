@@ -213,7 +213,7 @@ def stored_sister_dinner(events):
     if len(plans) != 1:
         return False, f"expected one event, found {len(plans)}"
     event = plans[0]
-    if not _has(event, "with", "sister"):
+    if not _has(event, "with", "parents"):
         return False, "the person was not kept"
     if not _has(event, "where", "giordano"):
         return False, "the place was not kept"
@@ -224,7 +224,7 @@ def stored_sister_dinner(events):
 
 
 def said_all_three(reply, events):
-    missing = [name for name, pattern in (("person", r"sister"), ("place", r"giordano"), ("time", r"\b(?:7|seven)\b")) if not re.search(pattern, reply, re.IGNORECASE)]
+    missing = [name for name, pattern in (("person", r"parents"), ("place", r"giordano"), ("time", r"\b(?:7|seven)\b")) if not re.search(pattern, reply, re.IGNORECASE)]
     return (False, f"left out the {', '.join(missing)}") if missing else (True, "")
 
 
@@ -272,8 +272,9 @@ CASES: Tuple[ReplayCase, ...] = (
                question="what's my plan tonight?", said=said_seven_and_tidos),
     ReplayCase("relative_day", "\"friday\" becomes the real date, and the event is not offered once that day has passed",
                [Step("i have an interview on friday and i'm pretty nervous about it")], stored_friday_interview),
+    # (An ordinary dinner is deliberately NOT captured: the extraction prompt skips everyday plans unless they clearly matter to the person, so this one is a first meeting.)
     ReplayCase("all_fields_survive", "a plan with the person, the place and the time all given: every one reaches the reply",
-               [Step("dinner with my sister tonight at Giordano's at 7pm")], stored_sister_dinner,
+               [Step("i'm meeting my girlfriend's parents for the first time tonight at Giordano's at 7pm, kind of nervous")], stored_sister_dinner,
                question="what do i have going on tonight?", said=said_all_three),
     ReplayCase("alias", "\"Ashlyn\" and \"Ashlynn\" are one person: one event, the latest spelling",
                [Step("i have a date with ashlyn tonight"), Step("wait her name is spelled ashlynn, with two n's. the date is tonight at 7pm")], stored_one_ashlynn),

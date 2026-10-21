@@ -71,9 +71,9 @@ def test_a_day_word_must_become_the_real_date_and_a_past_event_must_not_be_offer
 
 
 def test_every_detail_of_a_full_plan_must_be_kept():
-    full = ev("has dinner", with_=None, **{"with": {"value": "my sister", "source": "user"}, "where": {"value": "Giordano's", "source": "user"}, "time": {**SEVEN, "assumed": None, "said": "7pm"}})
+    full = ev("is meeting someone", **{"with": {"value": "my girlfriend's parents", "source": "user"}, "where": {"value": "Giordano's", "source": "user"}, "time": {**SEVEN, "assumed": None, "said": "7pm"}})
     assert er.stored_sister_dinner([full]) == (True, "")
-    assert er.stored_sister_dinner([ev("has dinner", **{"with": {"value": "my sister", "source": "user"}})])[0] is False
+    assert er.stored_sister_dinner([ev("is meeting someone", **{"with": {"value": "my girlfriend's parents", "source": "user"}})])[0] is False
 
 
 def test_two_spellings_must_be_one_event_with_the_latest_spelling():
@@ -109,8 +109,8 @@ def test_a_reply_about_an_unknown_time_must_name_no_time_and_say_it_does_not_kno
 def test_a_reply_must_give_the_known_time_place_and_person():
     assert er.said_seven("It's at 7 tonight.", []) == (True, "") and er.said_seven("Tonight, no idea when.", [])[0] is False
     assert er.said_seven_and_tidos("7 at Tidos.", []) == (True, "") and er.said_seven_and_tidos("At 7.", [])[0] is False
-    assert er.said_all_three("Dinner with your sister at Giordano's at 7.", []) == (True, "")
-    assert er.said_all_three("Dinner with your sister at 7.", [])[0] is False and "place" in er.said_all_three("Dinner with your sister at 7.", [])[1]
+    assert er.said_all_three("You're meeting your girlfriend's parents at Giordano's at 7.", []) == (True, "")
+    assert er.said_all_three("You're meeting her parents at 7.", [])[0] is False and "place" in er.said_all_three("You're meeting her parents at 7.", [])[1]
 
 
 # ------------------------------------------------------------------------ the plumbing ----------------------------------
@@ -133,7 +133,7 @@ DATE = {"what": "has a date", "due_date": "2026-10-21", "kind": "social", "time_
 def test_a_case_is_replayed_through_the_real_capture_into_a_store_and_scored():
     script = Script([DATE])
     store = asyncio.run(er.replay_steps(case("time_unknown"), script.invoke))
-    assert len(store.events) == 1 and store.events[0]["fields"]["with"]["value"] == "Ashlyn" and store.events[0]["fields"]["where"]["value"] == "Tidos Bar"
+    assert len(store.events) == 1 and store.events[0]["fields"]["with"]["value"] == "Ashlyn" and store.events[0]["fields"]["where"]["value"] == "Tidos bar"      # kept as the model wrote it (only an all-lower-case name is title-cased)
     assert er.stored_ashlyn_no_time(store.events) == (True, "")
 
 

@@ -144,6 +144,7 @@ from backend.utils import routines as routines_utils
 from backend.utils import event_calendar, event_fields, name_aliases
 from backend.utils import self_report as self_report_utils
 from backend.utils import user_activity
+from backend.utils import code_outcomes, goals as goals_utils, offer_response
 from backend.utils import followups as followups_utils
 from backend.services import routine_scheduler
 from backend.services import user_task_scheduler
@@ -376,6 +377,9 @@ class LocalWorkspaceSync(BaseModel):
 
 class RagModeUpdate(BaseModel):
     rag_mode: str
+
+class GoalApproval(BaseModel):
+    approved: bool
 
 class DeepThinkingUpdate(BaseModel):
     deep_thinking: bool
@@ -743,6 +747,11 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     previous_marks = (getattr(chat_sessions[history_key][-1], "additional_kwargs", None) or {}) if chat_sessions[history_key] else {}
     answers_curiosity = bool(previous_marks.get(curiosity_utils.CURIOSITY_MARK)) and curiosity_utils.taken(question)
     answers_shelf = bool(previous_marks.get(shelf_utils.SHELF_MARK)) and curiosity_utils.taken(question)
+    # The same message is also the response to anything Sonic brought up on its own (backend/utils/offer_response.py): counted for everyone, and kept per person (counts only).
+    code_followup = code_outcomes.followup(previous_marks, question)  # if the last reply was coding work: did this message say it did not work? (backend/utils/code_outcomes.py)
+    offer_outcome = offer_response.outcome(previous_marks, question)
+    if offer_outcome and not is_guest_username(username):
+        await asyncio.to_thread(offer_response.record, get_db(), username, offer_outcome == "taken")
     clarify_reply_to = previous_marks.get(clarify_utils.CLARIFY_MARK)  # Sonic's last reply asked how a thing fits into their life: this message is the answer (or not)
     previous_reply = open_loops_utils.previous_reply(chat_sessions[history_key])  # so "Friday at 2" can be tied to what Sonic just asked about
     chat_sessions[history_key].append(stamp(HumanMessage(content=question)))
@@ -816,6 +825,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             tally(turn_counts, "curiosity_taken")
         if answers_shelf:
             tally(turn_counts, "shelf_taken")
+        if offer_outcome:
+            tally(turn_counts, "offer_taken" if offer_outcome == "taken" else "offer_passed")
+        code_outcomes.tally_followup(turn_counts, code_followup)
 
         def log_timings(grade: str, outcome: str):
             now = time.perf_counter()
@@ -1124,6 +1136,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     lambda: routines_utils.build_routines_context(get_db(), user_tz, is_admin=is_admin_user)
                     + ("" if is_guest_username(username) else user_tasks_utils.build_tasks_context(get_db(), username, user_tz) + meetings_utils.build_schedule_context(username, user_tz))
                 )
+                # "What have you been up to" also covers what was handled in the last day (chat turns, scheduled tasks), from the shared status snapshot (backend/utils/self_report.py).
+                routines_context += self_report_utils.activity_block(await asyncio.to_thread(self_report_utils.snapshot, get_db()), admin=is_admin_user)
                 tally(turn_counts, "routines_offered")
             # "What are you going to follow up on / do you have anything planned for me?", and the same when asked what it has planned (backend/utils/followups.py):
             # the person's own open loops, quiet goals and Message First setting, said only as what can come up when they next open a conversation. Never for a guest.
@@ -1273,7 +1287,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                         and curiosity_utils.slot_open(question, chat_sessions[history_key], source_type=source_type, risk_active=False,
                                                   energy_tier="open", proactive_taken=False)
                         and not curiosity_utils.last_reply_asked(chat_sessions[history_key])
-                        and curiosity_utils.gap_clear(await asyncio.to_thread(curiosity_utils.last_offer_at, username), datetime.now(timezone.utc))
+                        and await asyncio.to_thread(offer_response.pacing, get_db(), username, None, counts=turn_counts) == offer_response.CLEAR
                     )
                     if callback_slot_ok and callback_allowed(
                         True, chat_sessions[history_key], source_type=source_type, risk_active=risk_level != RISK_NONE,
@@ -1334,8 +1348,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     shelf_offer = await asyncio.to_thread(
                         shelf_utils.offer_for_turn, db_for_shelf, username, question, listing=True, topic_ok=False, lull_ok=False,
                         framing="" if reading_asked else "day")
-                elif (topic_ok or lull_ok or soft_ok) and curiosity_utils.gap_clear(
-                        await asyncio.to_thread(curiosity_utils.last_offer_at, username), datetime.now(timezone.utc)):
+                elif (topic_ok or lull_ok or soft_ok) and await asyncio.to_thread(
+                        offer_response.pacing, get_db(), username, None, counts=turn_counts) == offer_response.CLEAR:
                     if soft_ok and not (topic_ok or lull_ok) and db_for_shelf is not None:
                         soft_ok = shelf_utils.soft_gap_clear(await asyncio.to_thread(shelf_utils.last_shelf_offer_at, db_for_shelf, username))
                     if db_for_shelf is not None and (topic_ok or lull_ok or soft_ok):
@@ -1365,9 +1379,12 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             self_report_kind, self_report_snap = None, None
             if risk_level == RISK_NONE and source_type == "conversational" and not is_closing_message(question) and not routines_context:
                 self_report_kind = self_report_utils.kind_of(final_state.get("original_question", question))
+            self_report_person = None  # for a question about its goals: what is true of this one person (counts of their own responses), so only they hear it
             if self_report_kind:
                 self_report_snap = await asyncio.to_thread(self_report_utils.snapshot, get_db())
-                prompt = prompt + self_report_utils.build_block(self_report_snap, self_report_kind, tz_name=user_tz, admin=is_admin_user)
+                if self_report_kind == "goals" and not is_guest_username(username) and get_db() is not None:
+                    self_report_person = await asyncio.to_thread(offer_response.person_view, get_db(), username)
+                prompt = prompt + self_report_utils.build_block(self_report_snap, self_report_kind, tz_name=user_tz, admin=is_admin_user, person=self_report_person)
                 tally(turn_counts, "status_offered")
             # A clearly closing message ("thanks!", "goodnight") gets a directive to close the conversation
             # instead of fishing for more (backend/utils/wrapup_utils.py); the persona carries the general rule.
@@ -1448,7 +1465,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     identity_issue = event_fields.reply_issue(full_response, events_shown, question)
                 if identity_issue is None and not safety_plan.active and self_report_kind:
                     # Said everything is fine while the status on record shows a problem: the one thing the curated-disclosure rule forbids.
-                    identity_issue = self_report_utils.reply_issue(full_response, self_report_snap, tz_name=user_tz, admin=is_admin_user)
+                    identity_issue = self_report_utils.reply_issue(full_response, self_report_snap, tz_name=user_tz, admin=is_admin_user,
+                                                                   kind=self_report_kind, person=self_report_person)
                 encouragement_issue = (
                     encouragement_reply_issue(full_response, encouragement_entry)
                     if encouragement_entry and not safety_plan.active else None
@@ -1581,6 +1599,12 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 tally(turn_counts, "shelf_offered")
                 await asyncio.to_thread(curiosity_utils.record_offer, username)
                 await asyncio.to_thread(shelf_utils.mark_offered, get_db(), username, shelf_offer["item"]["_id"])
+            code_summary = code_outcomes.summarize_turn(llm_turn)  # None unless the tool agent worked on the repo or the connected folder this turn
+            if code_summary:
+                ai_message.additional_kwargs[code_outcomes.CODE_MARK] = True  # so the next message can be read as what happened to the work
+                code_outcomes.tally_turn(turn_counts, code_summary)
+            if ai_message.additional_kwargs.get(curiosity_utils.CURIOSITY_MARK):
+                tally(turn_counts, "offer_made")  # whatever kind of offer it was, once: the volume the welcome goal's guardrail reads (backend/utils/goals.py)
             if clarify_entry:
                 # A getting-to-know-you question is recorded as asked only if the reply really asked something; otherwise it waits for one more try.
                 if curiosity_utils.asked_a_question(full_response):
@@ -2200,6 +2224,7 @@ async def clear_memory(current_user = Depends(get_current_user)):
     await asyncio.to_thread(user_tasks_utils.forget_all, username)
     await asyncio.to_thread(user_activity.forget_all, username)
     await asyncio.to_thread(name_aliases.forget_all, username)
+    await asyncio.to_thread(offer_response.forget_all, username)
     await asyncio.to_thread(meetings_utils.forget_all, username)
     await asyncio.to_thread(progress_notes_utils.forget_all, username)
     await asyncio.to_thread(headsups_utils.forget_all, username)
@@ -3138,6 +3163,19 @@ async def get_sonic_health(days: int = Query(7, ge=1, le=180), admin = Depends(r
     """Everything the admin Sonic Health page shows: safety layer stats, Sonic's own behavior counters, and its
     self-observations (backend/utils/sonic_health.py). Aggregates only. Global_Admins only."""
     return await asyncio.to_thread(build_sonic_health, _admin_db(), days, None, admin.get("sub"))
+
+
+@app.put("/api/admin/goals/{goal_id}/approval")
+async def set_goal_approval(goal_id: str, payload: GoalApproval, admin = Depends(require_global_admin)):
+    """Approves (or withdraws approval of) the current revision of one of Sonic's goals. Until approved, a goal is only measured; its lever does nothing
+    (backend/utils/goals.py). Global_Admins only."""
+    try:
+        done = await asyncio.to_thread(goals_utils.set_approval, _admin_db(), goal_id, payload.approved, admin.get("sub"))
+    except goals_utils.MeasureOnly as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except ValueError:
+        raise HTTPException(status_code=404, detail="That goal does not exist")
+    return {"goal": goal_id, "approval": done}
 
 
 @app.post("/api/admin/observations/reflect")

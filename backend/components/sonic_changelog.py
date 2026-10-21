@@ -112,6 +112,20 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "names_spelled_two_ways",
+        "requires": [
+            "backend/utils/name_aliases.py::def is_variant",
+            "backend/utils/memory_utils.py::name_aliases.facts_note",
+        ],
+        "month": "2026-10",
+        "title": "One person, two spellings",
+        "line": (
+            "I can now treat a name you've spelled two ways as one person, use the spelling you wrote last, and leave two names apart when you tell me they're different people."
+        ),
+        "keywords": ["spelled my name", "two spellings", "same person", "different people", "wrong spelling", "ashlyn", "name spelled differently"],
+        "volunteer": [],
+    },
+    {
         "id": "calendar_checks_plans",
         "requires": [
             "backend/utils/event_calendar.py::def overlay",
@@ -166,6 +180,22 @@ CHANGELOG = [
             "how my scheduled jobs went, and whether any chats failed."
         ),
         "keywords": ["how are things going", "any downtime", "how was your day", "your status", "are you down", "anything break", "low-power mode", "what did the server do"],
+        "volunteer": [],
+    },
+    {
+        "id": "goals_and_time_from_records",
+        "requires": [
+            "backend/utils/goals.py::def status_view",
+            "backend/utils/self_report.py::def goal_facts",
+            "backend/utils/self_report.py::def time_facts",
+        ],
+        "month": "2026-10",
+        "title": "Goals I track, and where my time goes",
+        "line": (
+            "I can now tell you what goals I track and how they're going, and what my week is made of, from real counts. One is bringing things up only when people pick them up "
+            "(a person approves it); the other, whether my coding work holds up, I only measure."
+        ),
+        "keywords": ["your goals", "do you have goals", "what are you working toward", "what do you spend your time on", "what do people ask you for", "how are your goals going"],
         "volunteer": [],
     },
     {

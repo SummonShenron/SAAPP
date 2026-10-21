@@ -765,7 +765,7 @@ def test_the_chat_endpoint_offers_the_shelf_only_on_the_gated_path_and_records_i
     assert 'source_type == "conversational"' in gate and "not is_guest_username(username)" in gate and "risk_level == RISK_NONE" in gate
     assert "callback_offered" in gate and "goal_nudge_context" in gate                   # shares the turn's one proactive slot
     assert gate.index("topic_for(question)") < gate.index("slot_open(")                  # the free topic check comes before the gate that reads more
-    assert gate.index("gap_clear(") < gate.rindex("offer_for_turn,")                      # the per-person gap is checked before the shelf is read for an offer
+    assert gate.index("offer_response.pacing") < gate.rindex("offer_for_turn,")                    # the per-person gap is checked before the shelf is read for an offer
     marking = source[source.index("elif shelf_offer and shelf_utils.reply_used_item"):]
     assert marking.index("CURIOSITY_MARK] = True") < marking.index("SHELF_MARK] = True") < marking.index("record_offer") < marking.index("mark_offered")
     assert "shelf_utils.shelf_reply_issue(full_response, shelf_utils.offer_has_items(shelf_offer))" in source          # an invented read is sent back, even when the shelf block was an empty one

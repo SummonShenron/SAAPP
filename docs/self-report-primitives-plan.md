@@ -59,6 +59,12 @@ Build only for those. (Single-turn character eval already scores ~49/50, so many
   The first run had the unreadable case at 0/3 (it said "quiet", "up and running smoothly" while admitting it could not read the log); fixed by a blind-block text and a stricter check.
 - Not done: min-people rule for chat turns (the counters have no per-person dimension, so only the 20-turn floor), `status` for long-lived trends (week over week), curated weaknesses list, dashboard view of what Sonic said.
 
+### Primitives 2, 3 and the goals answer BUILT 2026-10-21 (undeployed; see docs/goals-plan.md)
+- `kind_of` now also returns "goals" ("what are your goals / how are you doing on your goals"; "your goal is to..." instructions are left alone) and "time" ("what do you spend your time on / what do people ask you for").
+- **Time** (#3): the last 7 days' route mix from the counters, shares rounded to 5 points, only with at least 100 turns that week; `time_reply_issue` rejects any percentage that is not on the list.
+- **Activity** (#2): "what have you been up to" keeps the routines answer and `activity_block` appends the last day's chat turns and scheduled tasks (5-people rule) from the shared snapshot.
+- **Goals** (#5): `goal_facts` / `_goals_block` / `goals_reply_issue`: first person, no wishing, "on track" only when the record says so; only the asker hears that Sonic has been bringing things up less for them.
+
 ## Phase 1: the framework (small)
 One module (suggested `backend/utils/self_report.py`) holding a registry. Each primitive declares: trigger patterns, a source function that returns facts or None,
 privacy class (`aggregate` | `per_person`), freshness (cache seconds), the template, and its no-record line. A single hook in `app.py`'s prompt building (helpers stay out
