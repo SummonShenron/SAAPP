@@ -23,6 +23,23 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 DATA_DIR = os.path.join(PROJECT_ROOT, "saapp_data", "memory")
 os.makedirs(DATA_DIR, exist_ok=True)
 
+# WHICH PART OF THEIR LIFE a fact belongs to, separate from what kind of fact it is: "work" (anything done for or at their employer or a client: the job, its tasks, tools
+# and colleagues), "own" (their own projects, done for themselves), "personal" (life outside both) or "general" (true everywhere: a name, pronouns, tastes, how they like
+# answers written). Every NEW fact gets one of the four ("general" when nothing else is clearly right: a wrong label is worse than a broad one). None means "never
+# classified" (a fact from before this existed), so the one-time cleanup can tell what it still has to sort. It exists because "work" is ambiguous for a person who also builds
+# things at home: a flat list of facts let Sonic merge the job's parser with its own development ("the parser nightmares we deal with").
+VALID_DOMAINS = ("work", "own", "personal", "general")
+DOMAIN_LABELS = {"work": "At their job", "own": "Their own projects", "personal": "Their personal life", "general": "About them in general"}
+SPLIT_DOMAINS = ("work", "own", "personal")     # the ones that make the headings worth showing
+MAX_ALWAYS_IDENTITY = 8                         # how many foundational identity facts every reply gets, whatever the question
+
+
+def normalize_domain(value) -> Optional[str]:
+    """"work", "own", "personal" or "general" when `value` is one of them (any case), else None."""
+    word = str(value or "").strip().lower()
+    return word if word in VALID_DOMAINS else None
+
+
 VALID_CATEGORIES = {
     "preference", "identity", "setting", "trait",
     "career", "project", "goal", "relationship",
@@ -82,6 +99,7 @@ class UserFact(BaseModel):
     goal_status: Optional[str] = None  # "active"|"achieved"|"abandoned"; only meaningful when
                                         # category is "goal"/"project", else always None
     last_nudged_at: Optional[str] = None  # None until find_stale_goal_to_nudge first surfaces it
+    domain: Optional[str] = None  # "work" | "own" | "personal" | None (not known): which part of their life this is about (see VALID_DOMAINS)
     related: List[str] = Field(default_factory=list)  # ids of facts about the same real thing (backend/utils/fact_links.py); recalling one brings these along
 
 
@@ -412,12 +430,15 @@ def save_user_fact(
     source: str = "explicit",
     confidence: float = 1.0,
     memory_vector_store=None,
+    domain: Optional[str] = None,
 ) -> UserFact:
     """Saves a durable fact for a user, using embedding similarity + an LLM judgment call to
     detect near-duplicates and contradictions (superseding the old fact) instead of a naive
-    text-overlap check. Falls back to that naive check if embedding generation fails."""
+    text-overlap check. Falls back to that naive check if embedding generation fails.
+    `domain` ("work", "own", "personal") says which part of their life it is about; a restatement that gives none keeps the one already stored."""
     if category not in VALID_CATEGORIES:
         category = "preference"
+    domain = normalize_domain(domain)           # None here means the caller gave none: a restatement keeps the stored one, a new fact is "general"
 
     now = datetime.now(timezone.utc).isoformat()
     all_facts = load_user_facts(username)
@@ -483,6 +504,8 @@ def save_user_fact(
         elif existing.source not in PROTECTED_SOURCES:
             existing.source = source  # changed content has its own provenance; a remembered support contact stays one
         existing.updated_at = now
+        if domain and not keeps_wording:
+            existing.domain = domain
         result = existing
         if relationship_action == "supersede":
             fact_links.link_new_fact(all_facts, result, cosine_similarity, lite_llm.invoke)
@@ -499,6 +522,7 @@ def save_user_fact(
             active=True,
             embedding=new_embedding,
             goal_status="active" if category in ("goal", "project") else None,
+            domain=domain or "general",
         )
         all_facts.append(result)
         # Bind it to the facts that are about the same thing (it may say "at work" without ever naming the employer).
@@ -697,9 +721,9 @@ def fetch_relevant_user_facts(
 ) -> str:
     """
     Builds a short "known about this user" context block for passive injection into every
-    generation prompt, mirroring app_utils.fetch_relevant_corrections. Identity facts are
-    always included (foundational context shouldn't disappear just because the current
-    question isn't about it); remaining slots go to whichever facts are most relevant to the
+    generation prompt, mirroring app_utils.fetch_relevant_corrections. Foundational identity
+    facts are always included (up to MAX_ALWAYS_IDENTITY; foundational context shouldn't disappear
+    just because the current question isn't about it); `limit` slots then go to whichever facts are most relevant to the
     current question by embedding similarity weighted by confidence (reinforced/fresh facts
     outrank decayed ones at equal similarity), falling back to recency if that's unavailable.
 
@@ -715,9 +739,16 @@ def fetch_relevant_user_facts(
             return ""
 
         now = datetime.now(timezone.utc)
-        identity_facts = [f for f in facts if f.category == "identity"]
-        other_facts = [f for f in facts if f.category != "identity"]
-        remaining_slots = max(limit - len(identity_facts), 0)
+        # Foundational facts (a name, pronouns, how they address the AI) are always shown, up to MAX_ALWAYS_IDENTITY of them. An identity fact that is about the person's
+        # JOB, their own projects or their personal life (domain work / own / personal) is not foundational: it competes by relevance like any other. Before this, every
+        # "identity" fact was always shown and took a slot from `limit`, so with twenty of them no fact about the question ever got in ("how is work going" showed no work).
+        identity_all = [f for f in facts if f.category == "identity"]
+        identity_facts = sorted(
+            (f for f in identity_all if f.domain not in SPLIT_DOMAINS), key=lambda f: effective_confidence(f, now), reverse=True,
+        )[:MAX_ALWAYS_IDENTITY]
+        always_ids = {f.id for f in identity_facts}
+        other_facts = [f for f in facts if f.id not in always_ids]
+        remaining_slots = max(limit, 0)
 
         question_embedding = precomputed_embedding
         if question_embedding is None:
@@ -747,15 +778,56 @@ def fetch_relevant_user_facts(
         matched = ranked_other[:remaining_slots]
         # A fact chosen because it matches the question brings along the facts bound to it (the project, and where it is done), so the context the
         # person already gave about the same thing is not lost. Identity facts are always shown anyway and do not bring anything extra.
-        top_facts = identity_facts + matched + fact_links.linked_extras(matched, facts)
+        top_facts = identity_facts + domain_anchors(other_facts) + matched + fact_links.linked_extras(matched, facts)
+        seen_ids: set = set()
+        top_facts = [f for f in top_facts if not (f.id in seen_ids or seen_ids.add(f.id))]
         if not top_facts:
             return ""
 
-        lines = "\n".join(f"- {f.fact}" for f in top_facts)
-        return f"\n\nKNOWN USER CONTEXT (use naturally, do not restate unless relevant):\n{lines}\n"
+        return format_facts_block(top_facts)
     except Exception:
         logger.exception("[MEMORY WARNING] Could not fetch user facts for %s", username)
         return ""
+
+
+def domain_anchors(facts: List["UserFact"]) -> List["UserFact"]:
+    """One fact that anchors each of the two parts of life that get confused: the best-evidenced identity or career fact about their JOB (the employer) and about their OWN
+    projects, so a vague question ("how is work going?") still shows the model that both exist and which is which. Best means stated by the person over inferred, then an
+    identity fact over a career one, then newest. Nothing for a domain with no such fact (including a person whose facts were never sorted)."""
+    anchors: List["UserFact"] = []
+    for domain in ("work", "own"):
+        candidates = [f for f in facts if f.domain == domain and f.category in ("identity", "career") and f.active]
+        if candidates:
+            anchors.append(max(candidates, key=lambda f: (source_strength(f.source), f.category == "identity", f.updated_at)))
+    return anchors
+
+
+# Said once, with the headings, whenever facts are grouped by domain: it is what stops "work" meaning both the job and the person's own projects, and "we" covering
+# work Sonic has no part in.
+SEPARATE_LIFE_NOTE = (
+    "Their job and their own projects are separate things. When they say \"work\" without saying which, go by what they were just talking about, or ask which they "
+    "mean. Never describe what they do at their job as something you and they do together (no \"we\"), and never fold a job task into a project of their own or the reverse."
+)
+
+
+def format_facts_block(facts: List["UserFact"]) -> str:
+    """The "known about this person" block for a reply prompt. When any fact is about their job, their own projects or their personal life, the facts are grouped under a
+    heading for each (At their job / Their own projects / Their personal life, then "About them in general") with the SEPARATE_LIFE_NOTE; a fact never classified sits
+    under "Other". When none is, it is the plain list it has always been. Empty for no facts."""
+    if not facts:
+        return ""
+    header = "\n\nKNOWN USER CONTEXT (use naturally, do not restate unless relevant):\n"
+    if not any(f.domain in SPLIT_DOMAINS for f in facts):
+        return header + "\n".join(f"- {f.fact}" for f in facts) + "\n"
+    sections = []
+    for domain in VALID_DOMAINS:
+        group = [f for f in facts if f.domain == domain]
+        if group:
+            sections.append(f"{DOMAIN_LABELS[domain]}:\n" + "\n".join(f"- {f.fact}" for f in group))
+    rest = [f for f in facts if f.domain not in VALID_DOMAINS]
+    if rest:
+        sections.append("Other:\n" + "\n".join(f"- {f.fact}" for f in rest))
+    return header + "\n".join(sections) + "\n" + SEPARATE_LIFE_NOTE + "\n"
 
 
 # How close (raw cosine) a fact must be to a request to count as about it. Measured on real facts: unrelated technical questions top out at 0.58,

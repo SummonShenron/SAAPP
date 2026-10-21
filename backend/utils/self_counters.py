@@ -37,7 +37,7 @@ _GROUPS: Dict[str, tuple] = {
     "reward_failed": REWARD_TAGS,
     "turn_failed": FAILURE_KINDS,
 }
-_PLAIN_KEYS = ("turns_total", "reply_fit_checked", "reward_evaluated", "relatable_offered", "self_mention", "observations_injected", "encouragement_offered", "open_loop_captured", "open_loop_offered", "open_loop_resolved", "callback_offered", "self_history_offered", "initiation_offered", "initiation_fallback", "initiation_answered", "initiation_interest_offered", "initiation_interest_answered", "duration_offered", "curiosity_offered", "curiosity_taken", "shelf_offered", "shelf_taken", "shelf_listed", "lean_offered", "guardrail_applied", "routines_offered", "followups_offered", "task_results_offered", "meeting_turns", "headsup_offered", "clarify_noted", "clarify_asked", "clarify_answered")
+_PLAIN_KEYS = ("turns_total", "reply_fit_checked", "reward_evaluated", "relatable_offered", "self_mention", "observations_injected", "encouragement_offered", "open_loop_captured", "open_loop_offered", "open_loop_resolved", "callback_offered", "self_history_offered", "initiation_offered", "initiation_fallback", "initiation_answered", "initiation_interest_offered", "initiation_interest_answered", "duration_offered", "curiosity_offered", "curiosity_taken", "shelf_offered", "shelf_taken", "shelf_listed", "lean_offered", "guardrail_applied", "routines_offered", "followups_offered", "task_results_offered", "meeting_turns", "headsup_offered", "clarify_noted", "clarify_asked", "clarify_answered", "memory_note_dropped", "memory_note_trimmed")
 KEYS = frozenset(
     list(_PLAIN_KEYS) + [f"{group}_{name}" for group, names in _GROUPS.items() for name in names]
 )

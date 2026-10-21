@@ -321,7 +321,7 @@ async def _run_compaction(
                 if fact_text:
                     await asyncio.to_thread(lambda fact_text=fact_text, fact=fact: save_user_fact(
                         username, fact_text, category=fact.get("category") or "preference", source="inferred",
-                        confidence=COMPACTION_FACT_CONFIDENCE, memory_vector_store=vector_store,
+                        confidence=COMPACTION_FACT_CONFIDENCE, memory_vector_store=vector_store, domain=fact.get("domain"),
                     ))
                     facts_promoted += 1
 

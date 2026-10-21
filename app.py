@@ -1556,7 +1556,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # A false "I can't edit files" reply would otherwise be remembered and recalled into
             # later prompts as if it were a fact (a real memory chunk did exactly that).
             if budget_guard.allows("memory_summaries", budget_state) and not (folder_connected and is_stale_capability_denial(full_response)):
-                spawn_background_task(index_conversation_turn(services.get("user_memory_vector_store"), username, question, full_response, session_id))
+                spawn_background_task(index_conversation_turn(services.get("user_memory_vector_store"), username, question, full_response, session_id, previous_reply))
             # The reading shelf is topped up lazily, when a conversation starts: one search, a few page reads and two small model calls, only
             # when it is due (backend/services/shelf_refresh.py). After the reply is on its way, so it never slows one.
             if len(chat_sessions[history_key]) <= 2 and get_db() is not None and budget_guard.allows("shelf_refresh", budget_state):
