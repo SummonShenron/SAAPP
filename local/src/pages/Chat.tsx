@@ -56,6 +56,9 @@ interface Message {
   // Set on a reply that is really a failure notice (see chatErrors.ts): the technical line for the "Details" disclosure, whether sending again is
   // worth offering, and what to resend. `userMessageId` is the message that failed, which a retry replaces instead of repeating.
   failure?: { details: string; retryable: boolean; retryText: string; userMessageId: string };
+  // One or two short lines the server sends after a reply when something coming up was saved or changed ("Noted: you have a date today with Ashlyn at Tidos, time not known."),
+  // so the person can see what was kept and say if it is wrong. Not part of the conversation text and not kept when the page is reloaded.
+  noted?: string[];
 }
 
 const STEER_STATUS_LABEL: Record<NonNullable<Message['steer']>, string> = {
@@ -412,6 +415,12 @@ const ChatMessageList = React.memo(function ChatMessageList({
                   onApply={proposal => localEditActionsRef.current.apply(proposal)}
                   onUndo={proposalId => localEditActionsRef.current.undo(proposalId)}
                 />
+              )}
+
+              {msg.noted && msg.noted.length > 0 && (
+                <div className="message-noted" role="status">
+                  {msg.noted.map((line, index) => <div key={index}>{line}</div>)}
+                </div>
               )}
 
               {/* Clickable Follow-Up Suggestion Button */}
@@ -1613,6 +1622,16 @@ useEffect(() => {
                       ...updated[lastIndex],
                       text: (updated[lastIndex].text || '') + payload.text
                     };
+                  }
+                  return updated;
+                });
+              }
+              if (payload.event === 'noted' && typeof payload.text === 'string') {
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const lastIndex = updated.length - 1;
+                  if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
+                    updated[lastIndex] = { ...updated[lastIndex], noted: [...(updated[lastIndex].noted ?? []), payload.text] };
                   }
                   return updated;
                 });

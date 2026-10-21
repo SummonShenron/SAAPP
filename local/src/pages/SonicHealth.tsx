@@ -560,6 +560,7 @@ const TOOL_REASON_LABELS: Record<string, string> = {
 };
 
 const BUCKET_LABELS: Record<string, string> = { c1: '1 call', c2: '2 calls', c3_4: '3-4 calls', c5_8: '5-8 calls', c9_plus: '9 or more calls' };
+const STEP_BUCKET_LABELS: Record<string, string> = { steps_1_2: '1-2 steps', steps_3_4: '3-4 steps', steps_5_6: '5-6 steps', steps_7_plus: '7 or more steps' };
 
 /** One chat turn is often several model calls. This is how many, by kind of turn, how often deep mode ran, and why turns went to the tool agent. */
 const TurnsCard: React.FC<{ turns: TurnsSummary }> = ({ turns }) => {
@@ -617,6 +618,31 @@ const TurnsCard: React.FC<{ turns: TurnsSummary }> = ({ turns }) => {
           ))}
         </div>
       </div>
+      {turns.loop && turns.loop.turns > 0 && (
+        <>
+          <h3 className="sh-subhead">Does the step limit matter?</h3>
+          <div className="sh-stat-grid">
+            <StatTile value={turns.loop.cap_hit_share === null ? 'n/a' : pct(turns.loop.cap_hit_share)} label={`of tool turns used every step they were allowed (${turns.loop.cap_hits} of ${turns.loop.turns})`} warn={(turns.loop.cap_hit_share ?? 0) > 0.2} />
+            <StatTile value={turns.loop.avg_steps ?? 'n/a'} label="steps per tool turn, on average" />
+            {turns.loop.deep_turns > 0 && (
+              <StatTile value={turns.loop.deep_cap_hit_share === null ? 'n/a' : pct(turns.loop.deep_cap_hit_share)} label={`of deep turns used every step (${turns.loop.deep_cap_hits} of ${turns.loop.deep_turns})`} />
+            )}
+          </div>
+          <div className="sh-bars-grid">
+            {turns.loop.histogram.map(bucket => (
+              <BarRow
+                key={bucket.bucket}
+                label={STEP_BUCKET_LABELS[bucket.bucket] ?? bucket.bucket}
+                value={`${bucket.turns}`}
+                fraction={turns.loop && turns.loop.turns > 0 ? bucket.turns / turns.loop.turns : 0}
+              />
+            ))}
+          </div>
+          <div className="sh-hint">
+            A turn that used every step it was allowed was cut off and had to answer with what it had: if this is a large share, the step budget is too tight; if it is small, raising it would change little.
+          </div>
+        </>
+      )}
       {turns.routing.length > 0 && (
         <>
           <h3 className="sh-subhead">Why turns went to the tool agent (the expensive path)</h3>

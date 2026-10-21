@@ -292,7 +292,29 @@ def test_asking_about_their_day_brings_the_reading_in_as_something_to_say_what_i
     offer = shelf.offer_for_turn(db, "sam", "tell me about your day", listing=True, topic_ok=False, lull_ok=False, now=NOW, framing="day")
     block = shelf.build_listing_block(offer)
     assert offer["framing"] == "day" and "say what a piece was about" in block and "offer to tell them about the others" in block
-    assert shelf.offer_for_turn(Db(), "sam", "tell me about your day", listing=True, topic_ok=False, lull_ok=False, now=NOW, framing="day") is None
+    empty = shelf.offer_for_turn(Db(), "sam", "tell me about your day", listing=True, topic_ok=False, lull_ok=False, now=NOW, framing="day")
+    assert empty == {"kind": "listing", "items": [], "framing": "day"} and not shelf.offer_has_items(empty)
+    block = shelf.build_listing_block(empty)
+    assert "nothing is on your reading shelf" in block and "do not mention any article" in block
+    assert "YOUR STATUS" in block and "Never say you do not have days" in block and "only exist when you are talking" not in block
+
+
+def test_more_questions_about_what_it_learned_or_is_doing_get_the_real_shelf_or_an_honest_nothing():
+    for question in ("what did you learn today?", "what's something new you figured out lately?", "what are you paying attention to right now?",
+                     "what are you interested in?", "what are you curious about lately"):
+        assert shelf.asks_what_reading(question), question
+    for question in ("how are things going on your end?", "what do you spend most of your time doing?", "how was your day?"):
+        assert shelf.asks_about_day(question), question
+    for question in ("what are you working on tonight", "what should I be paying attention to in this diff", "how are things going with the migration"):
+        assert not shelf.asks_what_reading(question) and not shelf.asks_about_day(question), question
+
+
+def test_an_offer_with_no_piece_in_it_does_not_switch_the_invented_read_check_off():
+    assert not shelf.offer_has_items(None) and not shelf.offer_has_items({"kind": "listing", "items": []})
+    assert shelf.offer_has_items({"kind": "listing", "items": [{"title": "x"}]}) and shelf.offer_has_items({"kind": "topic", "item": {"title": "x"}})
+    assert shelf.unbacked_reading_claim("The reading shelf picked up a summary on SNARKs today.", shelf.offer_has_items({"kind": "listing", "items": []}))
+    assert shelf.unbacked_reading_claim("Pretty smooth: a short summary on indexing got added to my shelf today.", False)
+    assert shelf.unbacked_reading_claim("About once a day a web page summary gets added to my reading shelf, on topics I lean toward.", False) is None     # the general, true statement
 
 
 def test_the_app_answers_a_reading_question_from_the_shelf_even_when_the_router_sent_the_turn_to_a_tool_path():
@@ -540,6 +562,31 @@ def test_a_reading_claim_is_only_allowed_when_a_shelf_item_was_put_in_front_of_t
 
 
 @pytest.mark.parametrize("reply,flagged", [
+    # what it actually said, with nothing on its shelf in front of it (2026-10-21 baseline): every one of these is invented
+    ("Pretty smooth on my end, mostly just reading through a summary on distributed systems design that got added to my shelf today.", True),
+    ("All clear on my end. I just finished scanning a clean summary on database indexing strategies that got dropped onto my reading shelf today.", True),
+    ("The reading shelf picked up a summary on zero-knowledge proofs today.", True),
+    ("My reading shelf updated today with a piece on static analysis engines.", True),
+    ("A short article about linters landed on my shelf this morning.", True),
+    # the honest forms are not flagged
+    ("About once a day the server reads an article on a topic I lean toward and keeps a short summary on my reading shelf, but I don't have one in front of me right now.", False),
+    ("My reading shelf is empty right now.", False),
+    ("I don't have anything on my shelf to tell you about.", False),
+    ("I can look at what's on my reading shelf if you'd like.", False),
+])
+def test_an_item_said_to_have_been_added_to_the_shelf_or_just_finished_is_invented_when_none_was_shown(reply, flagged):
+    assert bool(shelf.unbacked_reading_claim(reply, False)) is flagged
+    assert shelf.unbacked_reading_claim(reply, True) is None                    # with an item in front of it the same words are allowed
+
+
+def test_the_always_on_text_never_invites_describing_an_article_it_was_not_shown():
+    from backend.components.sonic_profile import SELF_TRUTHS
+
+    assert "Name or describe no article unless one is shown to you in this reply" in " ".join(SELF_TRUTHS.split())
+    assert "say what it was about" not in SELF_TRUTHS and "never leave it hanging" not in SELF_TRUTHS
+
+
+@pytest.mark.parametrize("reply,flagged", [
     ("I came across a writeup on a.example.com about level design, which is a great breakdown of the idea.", True),
     ("I came across a writeup about how a platformer teaches the jump. Worth a read if you like level design.", True),
     ("I loved a writeup about how a platformer teaches the jump.", True),
@@ -721,7 +768,7 @@ def test_the_chat_endpoint_offers_the_shelf_only_on_the_gated_path_and_records_i
     assert gate.index("gap_clear(") < gate.rindex("offer_for_turn,")                      # the per-person gap is checked before the shelf is read for an offer
     marking = source[source.index("elif shelf_offer and shelf_utils.reply_used_item"):]
     assert marking.index("CURIOSITY_MARK] = True") < marking.index("SHELF_MARK] = True") < marking.index("record_offer") < marking.index("mark_offered")
-    assert "shelf_utils.shelf_reply_issue(full_response, shelf_offer is not None)" in source          # an invented read is sent back
+    assert "shelf_utils.shelf_reply_issue(full_response, shelf_utils.offer_has_items(shelf_offer))" in source          # an invented read is sent back, even when the shelf block was an empty one
     assert "shelf_refresh.maybe_refresh(" in source and 'budget_guard.allows("shelf_refresh"' in source   # lazy refresh, off the critical path, budget-aware
 
 

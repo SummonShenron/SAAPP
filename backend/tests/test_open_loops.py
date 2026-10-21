@@ -243,7 +243,9 @@ def test_delete_all_removes_only_that_users_loops():
 
 
 def test_the_page_view_exposes_no_internal_fields():
-    assert set(ol.public_view({**loop(), "expires_at": 1, "created_at": "x", "username": "u"})) == {"id", "text", "due_date", "kind", "status"}
+    shown = ol.public_view({**loop(), "expires_at": 1, "created_at": "x", "username": "u"})
+    assert set(shown) == {"id", "text", "due_date", "kind", "status", "fields", "corrected_at", "confirmed_at"}
+    assert shown["fields"] == {}                          # an old loop has no fields: every one is not known, and the page shows it that way
 
 
 # ---- choosing a follow-up ------------------------------------------------------------------------------------------
@@ -376,8 +378,8 @@ def test_a_future_message_is_captured_with_its_resolved_date(monkeypatch):
         "i have a big date tomorrow night",
         '{"loops": [{"what": "has a first date", "due_date": "2026-10-10", "kind": "social"}], "resolved_ids": []}',
     )
-    assert result == {"captured": 1, "resolved": 0}
-    assert db.col.docs[0]["due_date"] == "2026-10-10"
+    assert result == {"captured": 1, "resolved": 0, "noted": ["Noted: you have a first date tomorrow, time not known."]}
+    assert db.col.docs[0]["due_date"] == "2026-10-10" and db.col.docs[0]["fields"] == {}
     # The model is told the user's own calendar date and weekday so it never does that arithmetic blind.
     assert "2026-10-09" in calls[0] and "Friday" in calls[0]
 

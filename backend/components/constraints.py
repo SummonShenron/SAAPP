@@ -836,12 +836,22 @@ RULES:
     means today. "later", "after work" and "in a few hours" mean today.
   - "a week from Monday" is the Monday after next; "next Friday" is the Friday of next week, not this week's.
   - A time with no day ("at 3pm") means today if that time is still ahead on the user's clock, otherwise tomorrow.
-- Do not repeat something already noted.
+- Do not repeat something already noted, EXCEPT to give it a detail or correct one (next rule).
+- DETAILS. "time_said", "with" and "where" are what THIS message (or the yes/no question they just answered yes to) says about
+  the thing, and nothing else. Leave each one as "" unless it is there in the user's own words: never infer a time, a person or a
+  place, never take one from what the assistant said (except a question they confirmed), never guess "7" from "tonight".
+  - "time_said": the time exactly as they wrote it ("7", "7:30pm", "noon", "19:00"). Not a time of day word ("evening").
+  - "with": who it is with, as they spelled it (a name, or a role like "my sister"). Not the user themselves.
+  - "where": the place (a venue, a neighbourhood, a city). Never a street address, a home address or a phone number.
+- A message that only adds or changes a detail of something ALREADY NOTED ("the date is at 7 silly", "it's at Tidos", "it's
+  with Sam, not Ashlyn") is not a new thing: return that same thing again, with the same "what", "due_date" and "kind" as the
+  ALREADY NOTED line, and the new detail filled in. Never make a second one for it.
+- "cancelled_ids": ids from ALREADY NOTED that the user says are off ("the date fell through", "we cancelled", "I'm not going").
 - "resolved_ids": ids from ALREADY NOTED that this message clearly reports on as having already happened
   ("the date went great", "I got the job").
 
 Return ONLY a JSON object, no preamble or markdown:
-{{"loops": [{{"what": "", "due_date": "YYYY-MM-DD", "kind": "social" | "work" | "travel" | "errand" | "event" | "sensitive"}}], "resolved_ids": []}}
+{{"loops": [{{"what": "", "due_date": "YYYY-MM-DD", "kind": "social" | "work" | "travel" | "errand" | "event" | "sensitive", "time_said": "", "with": "", "where": ""}}], "resolved_ids": [], "cancelled_ids": []}}
 Use empty arrays when there is nothing to note.
 """
 

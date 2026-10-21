@@ -1,6 +1,7 @@
 # Trace panel: expandable, verbose steps (no model calls)
 
-Status: outline, discussed 2026-10-20, nothing built.
+Status: BUILT (by Jack with Copilot, from this plan) and reviewed 2026-10-21: empty results labelled "empty", facts capped and masked, subjects shown as host and path only, the chevron only on steps with facts, titles and
+detail de-duplicated, nothing logged. Open: slices 2 and 3 were partly covered (tool steps, route, subjects); check against the slice list below before calling it finished.
 
 ## Goal
 Click a step in the "How it works" panel and see what it actually did. Everything shown is measured in code, never generated, so it costs no model calls.

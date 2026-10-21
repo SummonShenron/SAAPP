@@ -85,6 +85,40 @@
   border-color: color-mix(in srgb, var(--text-muted) 30%, transparent);
 }
 
+/* What is known about something coming up: each detail with where it came from, and an unknown one said plainly, not left blank. */
+.memory-event-fields { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; margin-top: 0.3rem; font-size: 0.78rem; color: var(--text-soft); }
+.memory-event-source { color: var(--text-muted); }
+.memory-event-unknown { color: var(--text-muted); font-style: italic; }
+.memory-row-past { opacity: 0.6; }
+/* Two spellings of one name: a quiet line under the note, with the one way out if Sonic has them wrong. */
+.memory-name-variant { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.75rem; margin-top: 0.4rem; font-size: 0.78rem; color: var(--text-muted); }
+.memory-row-cancelled .memory-row-text { text-decoration: line-through; }
+.memory-event-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.5rem 0.75rem; margin-top: 0.4rem; }
+.memory-event-form label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.75rem; color: var(--text-muted); }
+.memory-event-form input { background-color: var(--input-bg); color: var(--text); border: 1px solid var(--line-strong); border-radius: 6px; padding: 0.4rem 0.6rem; font-size: 0.85rem; }
+.memory-event-form .memory-edit-row, .memory-event-form .memory-edit-error, .memory-event-form .memory-edit-hint { grid-column: 1 / -1; }
+.memory-event-action { background: transparent; color: var(--text-soft); border: 1px solid color-mix(in srgb, var(--text-muted) 40%, transparent); border-radius: 6px; padding: 0.25rem 0.6rem; font-size: 0.75rem; cursor: pointer; white-space: nowrap; }
+.memory-event-action:hover:not(:disabled) { border-color: var(--accent-primary); color: var(--text); }
+.memory-event-action:disabled { opacity: 0.5; cursor: default; }
+
+/* The part-of-life label on a note is a small select that looks like the badges beside it, so changing it is one click and does not turn the row into a form. */
+.memory-domain-select {
+  appearance: none;
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: monospace;
+  color: var(--text-soft);
+  background: transparent;
+  border: 1px dashed color-mix(in srgb, var(--text-muted) 45%, transparent);
+  cursor: pointer;
+}
+.memory-domain-select:hover { border-style: solid; }
+.memory-domain-select:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 1px; }
+.memory-domain-select:disabled { opacity: 0.6; cursor: progress; }
+
 .memory-status-badge {
   background: rgba(234, 179, 8, 0.15);
   color: color-mix(in srgb, #ca8a04 72%, var(--text-main));

@@ -504,6 +504,23 @@ def allows(feature: str, state: Optional[Dict[str, Any]]) -> bool:
     return not low_power(state)
 
 
+SCHEDULED_HEADROOM_DEFAULT = 0.65
+
+
+def scheduled_headroom_limit() -> float:
+    """How much of any shared budget scheduled work (the tasks people set up) may find already used and still run; LLM_SCHEDULED_HEADROOM overrides it. Below the
+    notice line on purpose: work nobody is waiting for must stop before live chat is anywhere near the limit."""
+    return min(_positive("LLM_SCHEDULED_HEADROOM") or SCHEDULED_HEADROOM_DEFAULT, 1.0)
+
+
+def scheduled_headroom(state: Optional[Dict[str, Any]]) -> bool:
+    """Whether scheduled work may still run: every SHARED budget (day, month, five-hour window) is below the headroom limit. A person's own limits are judged by
+    allows(); an unreadable or switched-off guard leaves the way open, as it does everywhere else."""
+    limit = scheduled_headroom_limit()
+    shared = [d for d in (state or {}).get("detail", []) if d.get("scope") not in ("my_day", "my_five")]
+    return all(float(d.get("fraction") or 0.0) < limit for d in shared)
+
+
 def tool_steps(default: int, state: Optional[Dict[str, Any]]) -> int:
     return min(default, THROTTLED_TOOL_STEPS) if low_power(state) else default
 

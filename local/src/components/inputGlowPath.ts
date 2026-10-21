@@ -68,6 +68,63 @@ export function glowTimeline(width: number, height: number, radius = 25, speeds:
   };
 }
 
+/** Where the head is along the outline (0 to 100) at this share of the lap's time (any number: 1.25 is a quarter of the way into the next lap). */
+export function headPosition(keyframes: GlowKeyframe[], t: number): number {
+  const x = ((t % 1) + 1) % 1;
+  for (let i = 1; i < keyframes.length; i++) {
+    const a = keyframes[i - 1];
+    const b = keyframes[i];
+    if (x <= b.t) return b.t > a.t ? a.p + ((b.p - a.p) * (x - a.t)) / (b.t - a.t) : b.p;
+  }
+  return keyframes.length ? keyframes[keyframes.length - 1].p % 100 : 0;
+}
+
+/** The share of the lap's time (0 to 1) at which the head is at this point of the outline (0 to 100). The inverse of `headPosition`. */
+function timeAt(keyframes: GlowKeyframe[], p: number): number {
+  for (let i = 1; i < keyframes.length; i++) {
+    const a = keyframes[i - 1];
+    const b = keyframes[i];
+    if (p <= b.p) return b.p > a.p ? a.t + ((b.t - a.t) * (p - a.p)) / (b.p - a.p) : b.t;
+  }
+  return 1;
+}
+
+export interface SweepKeyframe {
+  /** Share of the sweep's own time, 0 to 1. */
+  t: number;
+  /** Where the head is, counted on past 100 when the sweep runs through the point where the outline starts (a dash pattern repeats every 100, so the number can simply keep growing). */
+  p: number;
+  /** How far the head has come since the sweep began, 0 to `travel`: what the tail lengthens with. */
+  progress: number;
+}
+
+/**
+ * The focus sweep, for a head that starts anywhere on the outline: it travels `travel` of the way round at the comet's own pace (quick on the straights, slow through the
+ * ends), so a sweep that starts where the comet already is looks like the comet carrying on. From the top (`startP` 0) it is the sweep the box has always had. The time it
+ * takes is the time the comet itself would take over that stretch.
+ */
+export function sweepTimeline(timeline: GlowTimeline, startP: number, travel: number): { durationMs: number; keyframes: SweepKeyframe[] } {
+  const frames = timeline.keyframes;
+  const start = ((startP % 100) + 100) % 100;
+  const end = start + travel;
+  const clock = (p: number) => Math.floor(p / 100) + timeAt(frames, p - Math.floor(p / 100) * 100);   // the lap time at an unwrapped point
+  const from = clock(start);
+  const to = clock(end);
+  const points: { p: number; time: number }[] = [{ p: start, time: from }];
+  for (let lap = 0; lap < 3; lap++) {
+    for (const frame of frames) {
+      const p = lap * 100 + frame.p;
+      if (p > start && p < end && p > points[points.length - 1].p) points.push({ p, time: lap + frame.t });
+    }
+  }
+  points.push({ p: end, time: to });
+  const span = Math.max(to - from, 1e-9);
+  return {
+    durationMs: Math.max(Math.round(span * timeline.durationMs), 1),
+    keyframes: points.map(({ p, time }, i) => ({ t: i === 0 ? 0 : i === points.length - 1 ? 1 : (time - from) / span, p, progress: p - start })),
+  };
+}
+
 /** The speed, in pixels per second, between two keyframes of a timeline for a box of this size. */
 export function speedBetween(a: GlowKeyframe, b: GlowKeyframe, perimeter: number, durationMs: number): number {
   return ((b.p - a.p) / 100 * perimeter) / (((b.t - a.t) * durationMs) / 1000);

@@ -152,7 +152,10 @@ def test_indexing_a_turn_stores_nothing_for_an_invented_detail_and_counts_it_wit
     assert stored == [] and counted == [{"memory_note_dropped": 1}]
     monkeypatch.setattr(app_utils.lite_llm, "ainvoke", _fake_llm("Has a date with Ashlyn tonight. Needs to leave by 8:15."))
     asyncio.run(app_utils.index_conversation_turn(object(), "jack", "i have a date with ashlyn tonight", "You should leave by 8:15!", "s1", ""))
-    assert stored == ["Has a date with Ashlyn tonight."] and counted[-1] == {"memory_note_trimmed": 1}
+    import re
+
+    # "tonight" is now followed by the real date (backend/utils/date_resolve.py), whichever day the test runs on; the invented "8:15" is still gone
+    assert len(stored) == 1 and re.fullmatch(r"Has a date with Ashlyn tonight \(\w+day \d{4}-\d{2}-\d{2}\)\.", stored[0]) and counted[-1] == {"memory_note_trimmed": 1}
 
 
 def test_the_two_new_counters_exist_and_the_app_passes_the_previous_reply():

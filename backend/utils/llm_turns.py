@@ -41,8 +41,12 @@ ROUTE_REASONS = (
     "approval_continuation",   # answering a pending web-search approval
     "clarification_resume",    # answering the tool agent's own question
 )
+# HOW MANY STEPS the tool agent's loop used, and whether it ran into its limit. A turn that reached the last step it was allowed (the forced final answer) may have wanted more:
+# this is the number that says whether the step budget (TOOL_AGENT_MAX_ITERATIONS and the deep one) is too tight, or whether it never matters. Counts only.
+STEP_BUCKETS = ("steps_1_2", "steps_3_4", "steps_5_6", "steps_7_plus")
+LOOP_FIELDS = ("loop_turns", "loop_steps", "cap_hit_turns", "deep_loop_turns", "deep_cap_hit_turns")
 FIELDS = (
-    *SUMS, *BUCKETS, "blocked_turns", "error_turns", "native_turns", "deep_suppressed_turns", "audit_wording_turns",
+    *SUMS, *BUCKETS, *STEP_BUCKETS, *LOOP_FIELDS, "blocked_turns", "error_turns", "native_turns", "deep_suppressed_turns", "audit_wording_turns",
     *(f"{kind}_{name}" for kind in KINDS for name in SUMS),
     *(f"deep_{source}_turns" for source in DEEP_SOURCES),
     *(f"route_{reason}_turns" for reason in ROUTE_REASONS),
@@ -74,6 +78,9 @@ class Turn:
         self.deep_suppressed = False  # the deep-thinking setting was on but low-power mode held it back
         self.route_reasons: set = set()  # why the turn went to the tool agent (see ROUTE_REASONS)
         self.tools: Dict[str, Dict[str, int]] = {}  # which tools it called: {name: {"calls", "errors"}}
+        self.loop_ran = False  # the tool agent's loop ran this turn (see note_tool_loop)
+        self.loop_steps = 0  # how many steps (model decisions) it used
+        self.cap_hit = False  # it reached the last step it was allowed, or ended without deciding to answer
         self.audit_wording = False  # the message had audit-style wording ("scan the repo", "every file"): wider step budget, normal model
         self.done = False
         self._lock = threading.Lock()
@@ -189,6 +196,30 @@ def clean_tool_name(name: Any) -> str:
     return text if text and len(text) <= MAX_TOOL_NAME and text.replace("_", "").isalnum() and text == text.lower() else "other"
 
 
+def steps_bucket(steps: int) -> str:
+    if steps <= 2:
+        return "steps_1_2"
+    if steps <= 4:
+        return "steps_3_4"
+    if steps <= 6:
+        return "steps_5_6"
+    return "steps_7_plus"
+
+
+def note_tool_loop(steps_used: int, hit_cap: bool) -> None:
+    """The tool agent's loop ended: it used `steps_used` steps, and `hit_cap` says whether it reached the last step it was allowed (the forced final answer) or ended
+    without deciding to answer. A turn that resumes the loop adds to the same totals. Never raises."""
+    try:
+        turn = _current.get()
+        if turn is None or turn.done:
+            return
+        turn.loop_ran = True
+        turn.loop_steps += _count(steps_used)
+        turn.cap_hit = turn.cap_hit or bool(hit_cap)
+    except Exception:
+        pass
+
+
 def note_tool_call(name: Any, ok: bool = True) -> None:
     """Notes that the tool agent called a tool this turn, and whether it came back as an error. Never raises."""
     try:
@@ -254,6 +285,16 @@ def finish(turn: Optional[Turn], outcome: str = "ok", day: Optional[str] = None)
                 slot["deep_suppressed_turns"] += 1
             if turn.audit_wording:
                 slot["audit_wording_turns"] += 1
+            if turn.loop_ran:
+                slot["loop_turns"] += 1
+                slot["loop_steps"] += turn.loop_steps
+                slot[steps_bucket(turn.loop_steps)] += 1
+                if turn.cap_hit:
+                    slot["cap_hit_turns"] += 1
+                if turn.deep_source:
+                    slot["deep_loop_turns"] += 1
+                    if turn.cap_hit:
+                        slot["deep_cap_hit_turns"] += 1
             if turn.tools:
                 day_tools = _pending_tools.setdefault(key, {})
                 for tool, entry in turn.tools.items():
@@ -427,6 +468,18 @@ def summarize_turns(docs: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
             for reason in sorted(ROUTE_REASONS, key=lambda r: -total[f"route_{r}_turns"])
             if total[f"route_{reason}_turns"]
         ],
+        # The tool agent's step loop: how many ran, how many steps they used on average, how they spread, and how many ran into their limit (all of the
+        # steps they were allowed), overall and for deep-thinking turns on their own. A high share means the budget is tight; a low one means it hardly matters.
+        "loop": {
+            "turns": total["loop_turns"],
+            "avg_steps": _average(total["loop_steps"], total["loop_turns"]),
+            "histogram": [{"bucket": bucket, "turns": total[bucket]} for bucket in STEP_BUCKETS],
+            "cap_hits": total["cap_hit_turns"],
+            "cap_hit_share": round(total["cap_hit_turns"] / total["loop_turns"], 4) if total["loop_turns"] else None,
+            "deep_turns": total["deep_loop_turns"],
+            "deep_cap_hits": total["deep_cap_hit_turns"],
+            "deep_cap_hit_share": round(total["deep_cap_hit_turns"] / total["deep_loop_turns"], 4) if total["deep_loop_turns"] else None,
+        },
         "native_turns": total["native_turns"],
         "blocked_turns": total["blocked_turns"],
         "error_turns": total["error_turns"],

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { BudgetView } from '../api';
-import { budgetChipText, ownUsageText } from './budgetText';
+import { ringView } from './budgetText';
 import './__styles__/UsageRing.css';
 
 const SIZE = 20; // smaller than the 28px round icon buttons it sits beside, so it reads as a gauge and not another button
@@ -13,10 +13,10 @@ const TIP_MS = 2500; // how long a tapped tooltip stays (a touch screen has no h
 const LEVEL_COLOR: Record<string, string> = { ok: 'var(--usage-ok, #2f7de1)', notice: '#f59e0b', throttled: '#f97316', blocked: 'var(--accent-danger)' };
 
 /**
- * A small ring that fills as the usage budget is used (backend/utils/budget_guard.py). An admin sees the budget that is furthest along, the same one the old
- * "Budget 54% of month" chip showed. Everyone else sees how far along their OWN limit is (their day, or their 5-hour window), as a percentage and no more: the
- * server sends no amount and nothing about the shared budget to anyone but an admin. Hovering, focusing or tapping it says the same words. With no limit
- * of their own and no admin view there is nothing to show, and nothing is drawn.
+ * A small ring that fills as the usage budget is used (backend/utils/budget_guard.py; which figure it follows is `ringView` in budgetText.ts). Everyone sees how far
+ * along their OWN limit is (their day, or their 5-hour window), as a percentage and no more: the server sends no amount and nothing about the shared budget to anyone
+ * but an admin. An admin's ring follows their own day while the shared budget is quiet and the shared budget once it is not, and says both. Hovering, focusing or
+ * tapping it says the same words. With no limit of their own and no admin view there is nothing to show, and nothing is drawn.
  */
 const UsageRing: React.FC<{ budget: BudgetView | null }> = ({ budget }) => {
   const [tapped, setTapped] = useState(false);
@@ -24,12 +24,11 @@ const UsageRing: React.FC<{ budget: BudgetView | null }> = ({ budget }) => {
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
 
   if (!budget || budget.level === 'off') return null;
-  const isAdminView = typeof budget.fraction === 'number';
-  const shown = isAdminView ? budget.fraction : budget.own_fraction;
-  if (typeof shown !== 'number') return null;
-  const fraction = Math.max(0, Math.min(shown, 1)); // over 100% is a full ring; the colour and the words carry the rest
-  const text = isAdminView ? budgetChipText(budget) : ownUsageText(budget);
-  const color = LEVEL_COLOR[(isAdminView ? budget.level : budget.own_level) ?? 'ok'] ?? LEVEL_COLOR.ok;
+  const view = ringView(budget);
+  if (!view) return null;
+  const fraction = Math.max(0, Math.min(view.fraction, 1)); // over 100% is a full ring; the colour and the words carry the rest
+  const text = view.text;
+  const color = LEVEL_COLOR[view.level] ?? LEVEL_COLOR.ok;
 
   const tap = () => {
     setTapped(true);

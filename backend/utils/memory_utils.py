@@ -14,7 +14,7 @@ from backend.utils.db_utils import get_db
 from backend.utils.embedding_utils import embed_text, cosine_similarity
 from backend.components.constraints import FACT_CONFLICT_PROMPT, GOAL_STATUS_PROMPT
 from backend.models.models import lite_llm
-from backend.utils import fact_links
+from backend.utils import fact_links, name_aliases
 from backend.services.memory_search import flag_stale_chunks_for_superseded_fact
 
 logger = logging.getLogger("SASS Logger")
@@ -100,6 +100,7 @@ class UserFact(BaseModel):
                                         # category is "goal"/"project", else always None
     last_nudged_at: Optional[str] = None  # None until find_stale_goal_to_nudge first surfaces it
     domain: Optional[str] = None  # "work" | "own" | "personal" | None (not known): which part of their life this is about (see VALID_DOMAINS)
+    domain_locked: bool = False   # the person chose the domain themselves (Memory page): a model re-observing the fact, or a cleanup run, never changes it
     related: List[str] = Field(default_factory=list)  # ids of facts about the same real thing (backend/utils/fact_links.py); recalling one brings these along
 
 
@@ -504,7 +505,7 @@ def save_user_fact(
         elif existing.source not in PROTECTED_SOURCES:
             existing.source = source  # changed content has its own provenance; a remembered support contact stays one
         existing.updated_at = now
-        if domain and not keeps_wording:
+        if domain and not keeps_wording and not existing.domain_locked:
             existing.domain = domain
         result = existing
         if relationship_action == "supersede":
@@ -549,24 +550,42 @@ class FactEditError(ValueError):
     """The edit cannot be made; the message is safe to show the person."""
 
 
-def edit_user_fact(username: str, fact_id: str, text: str, category: Optional[str] = None, memory_vector_store=None) -> Optional[UserFact]:
-    """The person rewrites a saved note on the Memory page. Their wording replaces the old one and is trusted over anything a model extracted: the
-    note is re-embedded (recall finds it by its new meaning), marked as theirs, and given full confidence; its links are cleared and judged again,
-    as for any changed fact. Returns None when there is no such note; raises FactEditError for text that cannot be saved."""
-    new_text = " ".join((text or "").split())
-    if not new_text:
-        raise FactEditError("A memory can't be empty. Use the bin icon to forget it instead.")
-    if len(new_text) > MAX_FACT_CHARS:
-        raise FactEditError(f"Keep it under {MAX_FACT_CHARS} characters.")
+def edit_user_fact(
+    username: str, fact_id: str, text: Optional[str], category: Optional[str] = None, memory_vector_store=None, domain: Optional[str] = None,
+) -> Optional[UserFact]:
+    """The person rewrites a saved note on the Memory page, and/or says which part of their life it belongs to. Their wording replaces the old one and is trusted
+    over anything a model extracted: the note is re-embedded (recall finds it by its new meaning), marked as theirs, and given full confidence; its links are cleared
+    and judged again, as for any changed fact. `text` None keeps the wording (a change of domain or category alone). A DOMAIN change alone touches nothing else: no
+    embedding, no model call, the same source and confidence (the person is correcting a label, not restating the fact), and the domain is locked so nothing re-files it.
+    Returns None when there is no such note; raises FactEditError for text that cannot be saved."""
+    if text is None:
+        new_text = None
+    else:
+        new_text = " ".join(text.split())
+        if not new_text:
+            raise FactEditError("A memory can't be empty. Use the bin icon to forget it instead.")
+        if len(new_text) > MAX_FACT_CHARS:
+            raise FactEditError(f"Keep it under {MAX_FACT_CHARS} characters.")
     if category is not None and category not in VALID_CATEGORIES:
         raise FactEditError("That isn't a category Sonic uses.")
+    if domain is not None and normalize_domain(domain) is None:
+        raise FactEditError("That isn't a part of your life Sonic files memories under.")
+    domain = normalize_domain(domain)
 
     all_facts = load_user_facts(username)
     fact = next((f for f in all_facts if f.id == fact_id), None)
     if fact is None:
         return None
+    if new_text is None:
+        new_text = fact.fact
+    domain_changed = domain is not None and (domain != fact.domain or not fact.domain_locked)
     if new_text == fact.fact and (category is None or category == fact.category):
-        return fact                                   # nothing changed: no embedding, no model call, no write
+        if not domain_changed:
+            return fact                               # nothing changed: no embedding, no model call, no write
+        fact.domain, fact.domain_locked = domain, True
+        save_user_facts(username, all_facts)
+        logger.info("User set the domain of a memory fact for %s (id %s).", username, fact.id)
+        return fact
 
     text_changed = new_text != fact.fact
     if text_changed:
@@ -587,6 +606,8 @@ def edit_user_fact(username: str, fact_id: str, text: str, category: Optional[st
             fact.goal_status = "active"
         elif category not in ("goal", "project"):
             fact.goal_status = None
+    if domain is not None:
+        fact.domain, fact.domain_locked = domain, True
     if fact.source not in PROTECTED_SOURCES:
         fact.source = USER_EDIT_SOURCE                # a remembered support contact stays one
     fact.confidence = 1.0                             # they said it themselves
@@ -811,6 +832,15 @@ SEPARATE_LIFE_NOTE = (
 
 
 def format_facts_block(facts: List["UserFact"]) -> str:
+    """The facts block (see `_facts_block`), plus a line when facts bound together spell one name two ways ("Ashlyn" / "Ashlynn": backend/utils/name_aliases.py) saying which spelling to
+    use. The line is the exception: the people's own settings are read only when such a pair is actually found."""
+    body = _facts_block(facts)
+    if not body or not name_aliases.variant_groups(facts):
+        return body
+    return body + name_aliases.facts_note(facts, name_aliases.denied_for(getattr(facts[0], "username", "")))
+
+
+def _facts_block(facts: List["UserFact"]) -> str:
     """The "known about this person" block for a reply prompt. When any fact is about their job, their own projects or their personal life, the facts are grouped under a
     heading for each (At their job / Their own projects / Their personal life, then "About them in general") with the SEPARATE_LIFE_NOTE; a fact never classified sits
     under "Other". When none is, it is the plain list it has always been. Empty for no facts."""

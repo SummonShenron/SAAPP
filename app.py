@@ -141,6 +141,9 @@ from backend.utils import reading_shelf as shelf_utils
 from backend.services import shelf_refresh
 from backend.utils.self_history_utils import SELF_HISTORY_MARK, build_self_history_block, select_self_history
 from backend.utils import routines as routines_utils
+from backend.utils import event_calendar, event_fields, name_aliases
+from backend.utils import self_report as self_report_utils
+from backend.utils import user_activity
 from backend.utils import followups as followups_utils
 from backend.services import routine_scheduler
 from backend.services import user_task_scheduler
@@ -239,7 +242,15 @@ async def _run_user_task_schedule():
         return (budget_guard.allows("user_tasks", budget_guard.current_state())
                 and (owner is None or budget_guard.allows("user_tasks", budget_guard.current_state(username=owner))))
 
-    await user_task_scheduler.run_user_task_schedule(get_db, task_llm.ainvoke, allowed)
+    def headroom():
+        # Scheduled work stops at a share of the shared budget, well before live chat is near its limit.
+        return budget_guard.scheduled_headroom(budget_guard.current_state())
+
+    def idle(owner, now):
+        db = get_db()
+        return user_activity.idle_minutes(db, owner, now) if db is not None else None
+
+    await user_task_scheduler.run_user_task_schedule(get_db, task_llm.ainvoke, allowed, headroom=headroom, idle=idle)
 
 
 async def _run_meeting_sweep():
@@ -705,6 +716,10 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     budget_state = await asyncio.to_thread(budget_guard.current_state, None, None, budget_guard.limit_username(username, is_admin_user))
     if not budget_guard.allows("deep_thinking", budget_state):
         effective_deep_thinking = False
+    # When this person was last here, so a task of theirs with a window waits for a quiet moment (backend/utils/user_activity.py): one timestamp, written at most every
+    # few minutes, with no text in it.
+    if not is_guest_username(username):
+        await asyncio.to_thread(user_activity.touch_safely, username)
 
     # ---------- Conversation Memory State Init ----------
     # The full transcript in chat_sessions[history_key] is kept durable (it's what gets
@@ -1022,6 +1037,20 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
                     closing=is_closing_message(question),
                 )
+            # What they have coming up today or tomorrow (a week when they ask about their plans), with every detail they never gave spelled out as NOT KNOWN, so the reply cannot fill
+            # a gap with a guess (backend/utils/event_fields.py). Factual, so it is not held back by the emotional layer, but silent under a safety context and for a guest.
+            events_context, events_shown = "", []
+            if (open_loops_utils.open_loops_enabled() and not meeting_context and not is_guest_username(username) and risk_level == RISK_NONE
+                    and source_type == "conversational" and not is_closing_message(question)):
+                _upcoming = await asyncio.to_thread(open_loops_utils.load_open_loops_cached, username)
+                _wide = event_fields.asks_about_plans(final_state.get("original_question", question))
+                _today = datetime.fromisoformat(today_local).date()
+                events_shown = event_fields.events_for_reply(_upcoming, _today, wide=_wide)
+                if events_shown:
+                    # For someone who turned calendar heads-ups on: the calendar fills a time or place they never gave, and a disagreement is recorded (their words win). Read-only, nothing stored
+                    # (backend/utils/event_calendar.py).
+                    events_shown = await asyncio.to_thread(event_calendar.with_calendar, username, user_tz, events_shown)
+                events_context = event_fields.build_events_block(events_shown, _today, wide=_wide)
             # Something coming up on their calendar (backend/utils/calendar_headsups.py): off until they turn it on, one short line, only at the start of a conversation or at a lull, and never
             # in a meeting, under a safety context, on a closing message or while the emotional layer is holding things down. An event starting within about two hours outranks an open loop; otherwise it yields to it.
             headsup_entry = None
@@ -1148,7 +1177,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 emotional_context=emotional_context,
                 relatable_context=build_relatable_block(relatable_entry),
                 encouragement_context=build_encouragement_block(encouragement_entry),
-                open_loop_context=open_loops_utils.build_open_loop_block(open_loop_entry, today_local),
+                open_loop_context=open_loops_utils.build_open_loop_block(open_loop_entry, today_local) + events_context,
                 headsup_context=headsups_utils.build_headsup_block(headsup_entry, bool(headsup_entry and headsup_entry.get("discreet"))),
                 self_history_context=build_self_history_block(self_history),
                 routines_context=routines_context,
@@ -1331,6 +1360,15 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                             curiosity_invited = True
                 if shelf_offer:
                     prompt = prompt + (shelf_utils.build_listing_block(shelf_offer) if shelf_offer["kind"] == "listing" else shelf_utils.build_shelf_block(shelf_offer))
+            # "How are things going on your end / how was your day / any downtime?": answered from what the server really did (backend/utils/self_report.py),
+            # for everyone, guests included. The routines answer above already covers "what have you been up to", so it is not stacked with this one.
+            self_report_kind, self_report_snap = None, None
+            if risk_level == RISK_NONE and source_type == "conversational" and not is_closing_message(question) and not routines_context:
+                self_report_kind = self_report_utils.kind_of(final_state.get("original_question", question))
+            if self_report_kind:
+                self_report_snap = await asyncio.to_thread(self_report_utils.snapshot, get_db())
+                prompt = prompt + self_report_utils.build_block(self_report_snap, self_report_kind, tz_name=user_tz, admin=is_admin_user)
+                tally(turn_counts, "status_offered")
             # A clearly closing message ("thanks!", "goodnight") gets a directive to close the conversation
             # instead of fishing for more (backend/utils/wrapup_utils.py); the persona carries the general rule.
             closing_turn = source_type == "conversational" and risk_level == RISK_NONE and is_closing_message(question)
@@ -1404,7 +1442,13 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 identity_issue = None if safety_plan.active else identity_reply_issue(full_response)
                 if identity_issue is None and not safety_plan.active:
                     # An invented read, or a verdict on a piece on the reading shelf: also a matter of what Sonic is (backend/utils/reading_shelf.py).
-                    identity_issue = shelf_utils.shelf_reply_issue(full_response, shelf_offer is not None)
+                    identity_issue = shelf_utils.shelf_reply_issue(full_response, shelf_utils.offer_has_items(shelf_offer))
+                if identity_issue is None and not safety_plan.active and events_shown:
+                    # Named a time for something it was never told the time of: the gap the event block exists to keep honest (backend/utils/event_fields.py).
+                    identity_issue = event_fields.reply_issue(full_response, events_shown, question)
+                if identity_issue is None and not safety_plan.active and self_report_kind:
+                    # Said everything is fine while the status on record shows a problem: the one thing the curated-disclosure rule forbids.
+                    identity_issue = self_report_utils.reply_issue(full_response, self_report_snap, tz_name=user_tz, admin=is_admin_user)
                 encouragement_issue = (
                     encouragement_reply_issue(full_response, encouragement_entry)
                     if encouragement_entry and not safety_plan.active else None
@@ -1570,8 +1614,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 await asyncio.to_thread(headsups_utils.mark_mentioned, username, headsup_entry["event_id"], headsup_entry["phase"])
             if task_result_ids:
                 await asyncio.to_thread(user_tasks_utils.mark_announced, username, task_result_ids)
+            capture_task = None
             if open_loops_utils.open_loops_enabled() and not is_guest_username(username) and budget_guard.allows("open_loops", budget_state):
-                spawn_background_task(open_loops_utils.capture_open_loops(
+                capture_task = spawn_background_task(open_loops_utils.capture_open_loops(
                     username, question, user_tz, risk_active=risk_level != RISK_NONE, previous_reply=previous_reply,
                 ))
             # Getting-to-know-you questions (backend/utils/clarifications.py): what they said after being asked is the answer (saved as a fact and linked to what it
@@ -1594,6 +1639,15 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             llm_turns.finish(llm_turn)
             await asyncio.to_thread(llm_usage.flush)  # what this turn's model calls used (backend/utils/llm_usage.py)
             log_timings(relevance_grade, "ok")
+            # One short line under the reply when something coming up was saved or changed ("Noted: you have a date today with Ashlyn at Tidos, time not known."), so the person can
+            # see what was kept and correct it on the spot. Waited for only briefly, after everything else is done: no line is better than a slow end to the reply.
+            if capture_task is not None:
+                try:
+                    captured = await asyncio.wait_for(asyncio.shield(capture_task), timeout=3.0)
+                except Exception:
+                    captured = {}
+                for line in (captured or {}).get("noted", []):
+                    yield f"data: {json.dumps({'event': 'noted', 'text': line})}\n\n"
             logger.info("--- End of token stream ---")
 
         except Exception as e:
@@ -2015,11 +2069,38 @@ async def list_memory(current_user = Depends(get_current_user)):
     facts = await asyncio.to_thread(load_user_facts, username)
     now = datetime.now(timezone.utc)
     by_id = {f.id: f for f in facts}
+    # Names that are written two ways inside a cluster of linked notes ("Ashlyn" / "Ashlynn"), so the page can show which spelling Sonic uses and let the person say they are different people.
+    groups = name_aliases.variant_groups(facts, await asyncio.to_thread(name_aliases.denied_for, username)) if len(facts) > 1 else []
+    variants = {}
+    for group in groups:
+        for fact_id in group["fact_ids"]:
+            variants.setdefault(fact_id, []).append({"names": group["names"], "shown_as": group["shown_as"]})
     # fact_for_state leaves out the embedding (about 15 KB a fact, never shown on the page); `related_facts` is what each note is linked with.
     return [
-        {**fact_for_state(f), "effective_confidence": effective_confidence(f, now), "related_facts": linked_fact_summaries(f, by_id)}
+        {**fact_for_state(f), "effective_confidence": effective_confidence(f, now), "related_facts": linked_fact_summaries(f, by_id), "name_variants": variants.get(f.id, [])}
         for f in facts
     ]
+
+
+class NameAliasChoice(BaseModel):
+    a: str
+    b: str
+    different: bool = True        # False takes the pair back off the "different people" list
+
+
+@app.post("/api/memory/name-aliases")
+async def set_name_alias_choice(payload: NameAliasChoice, current_user = Depends(get_current_user)):
+    """The person says two spellings are different people ("Mark" and "Marc"), or takes that back: Sonic never treats them as one again (backend/utils/name_aliases.py)."""
+    username = current_user.get("sub")
+    if is_guest_username(username):
+        raise HTTPException(status_code=403, detail="Sign in to change this.")
+    if not name_aliases.is_variant(payload.a, payload.b):
+        raise HTTPException(status_code=400, detail="Those two aren't spelled alike, so Sonic doesn't treat them as one person.")
+    db = get_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="Not available right now.")
+    await asyncio.to_thread(name_aliases.set_different, db, username, payload.a, payload.b, payload.different)
+    return {"status": "saved"}
 
 
 class DocxRender(BaseModel):
@@ -2063,16 +2144,21 @@ async def edit_local_docx(payload: DocxEditRequest, current_user = Depends(get_c
 
 
 class MemoryEdit(BaseModel):
-    fact: str
+    fact: Optional[str] = None          # left out to change only the category or the domain
     category: Optional[str] = None
+    domain: Optional[str] = None        # "work" | "own" | "personal" | "general": which part of their life the note belongs to (locked once they set it)
 
 
 @app.put("/api/memory/{fact_id}")
 async def edit_memory_fact(fact_id: str, payload: MemoryEdit, current_user = Depends(get_current_user)):
-    """The person rewrites a saved note; returns it as the list shows it (with its fresh links)."""
+    """The person rewrites a saved note, or re-files it under another part of their life; returns it as the list shows it (with its fresh links)."""
     username = current_user.get("sub")
+    if payload.fact is None and payload.category is None and payload.domain is None:
+        raise HTTPException(status_code=400, detail="Nothing to change.")
     try:
-        edited = await asyncio.to_thread(edit_user_fact, username, fact_id, payload.fact, payload.category, services.get("user_memory_vector_store"))
+        edited = await asyncio.to_thread(
+            lambda: edit_user_fact(username, fact_id, payload.fact, payload.category, services.get("user_memory_vector_store"), domain=payload.domain)
+        )
     except FactEditError as err:
         raise HTTPException(status_code=400, detail=str(err))
     if edited is None:
@@ -2112,6 +2198,8 @@ async def clear_memory(current_user = Depends(get_current_user)):
     result = await asyncio.to_thread(memory_erase.erase_user_memory, get_db(), username)
     await asyncio.to_thread(open_loops_utils.forget_all_loops, username)
     await asyncio.to_thread(user_tasks_utils.forget_all, username)
+    await asyncio.to_thread(user_activity.forget_all, username)
+    await asyncio.to_thread(name_aliases.forget_all, username)
     await asyncio.to_thread(meetings_utils.forget_all, username)
     await asyncio.to_thread(progress_notes_utils.forget_all, username)
     await asyncio.to_thread(headsups_utils.forget_all, username)
@@ -2126,6 +2214,26 @@ async def clear_memory(current_user = Depends(get_current_user)):
 async def list_open_loops(current_user = Depends(get_current_user)):
     """Things the user said are coming up, which Sonic may ask about once afterwards."""
     return await asyncio.to_thread(open_loops_utils.upcoming_for_page, current_user.get("sub"))
+
+
+@app.patch("/api/open-loops/{loop_id}")
+async def edit_open_loop(loop_id: str, payload: dict = Body(...), current_user = Depends(get_current_user)):
+    """The person corrects something coming up: its day, time, who it is with, where, whether it was cancelled (or restored), or that it is right. What they write is marked "you wrote
+    this", a cleared detail goes back to not known, and Sonic uses the correction from the next message on (backend/utils/open_loops.py edit_event)."""
+    username = current_user.get("sub")
+    if is_guest_username(username):
+        raise HTTPException(status_code=403, detail="Upcoming items are for signed-in accounts.")
+    changes = {key: payload[key] for key in ("time", "with", "where", "due_date", "status", "confirm") if key in payload}
+    if not changes:
+        raise HTTPException(status_code=400, detail="Nothing to change.")
+    today = datetime.fromisoformat(local_today(await asyncio.to_thread(get_user_timezone, username))).date()
+    try:
+        edited = await asyncio.to_thread(open_loops_utils.edit_for_page, username, loop_id, changes, today)
+    except open_loops_utils.EventEditError as err:
+        raise HTTPException(status_code=400, detail=str(err))
+    if edited is None:
+        raise HTTPException(status_code=404, detail="That upcoming item was not found")
+    return edited
 
 
 @app.delete("/api/open-loops/{loop_id}")

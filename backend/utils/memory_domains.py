@@ -101,6 +101,9 @@ def plan_changes(facts: Sequence[UserFact], answers: Dict[str, Dict[str, Any]], 
         if fact.source in PROTECTED_SOURCES:
             skipped["protected"] += 1
             continue
+        if fact.domain_locked:
+            skipped["protected"] += 1                  # the person chose this domain themselves, even a redo leaves it
+            continue
         if fact.domain is not None and not redo:
             skipped["already_sorted"] += 1
             continue

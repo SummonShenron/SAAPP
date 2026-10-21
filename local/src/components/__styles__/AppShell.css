@@ -319,12 +319,34 @@ div.chat-page.chat-page { flex: 1 1 auto; min-height: 0; display: flex; flex-dir
   /* all the dashes end at the same point and move together: the head is where the dash ends */
   stroke-dashoffset: calc(var(--len) * 1px);  /* the start of the lap; the motion is built in InputGlow.tsx, paced by its size */
 }
-/* Without motion: no comet, and the box's own border takes the accent while it is focused. */
+/* Without motion: no comet, and the box's own border brightens slightly while it is focused. */
 @media (prefers-reduced-motion: reduce) {
   .input-glow { display: none; }
-  .chat-page .chat-input-wrapper:focus-within .chat-textarea { border-color: var(--accent-primary); }
+  .chat-page .chat-input-wrapper:focus-within .chat-textarea { border-color: color-mix(in srgb, var(--border-color) 75%, var(--text-main)); }
 }
 .chat-page .chat-textarea { caret-color: var(--accent-primary); }
+
+/* The focus sweep (.glow-sweep in InputGlow.tsx): on focus the comet runs once round, closes up into a ring and dissolves into the box's normal border.
+   It is the comet's dashes, thin like the border. It gives way to the short looping comet while a request is in flight. */
+.input-glow .glow-sweep rect {
+  stroke-width: 1px;
+  stroke-opacity: 0.4;
+  stroke-linecap: butt;
+  /* Quieter than the working comet: the tail leans toward the box's own border and the head only reaches part of the way to full orange. */
+  stroke: color-mix(in srgb, color-mix(in srgb, var(--glow-head) calc(var(--t) * 70%), var(--glow-tail)) 85%, var(--border-color));
+}
+/* What it settles into: a ring in the colour the sweep itself ends on, so closing and then holding is not a change of colour. The sweep is eight translucent dashes
+   (0.4 each, the brightest on top), and once they all cover the whole outline what shows is their blend, not the top dash: weighting each layer by what is left
+   after the ones above it (0.4, 0.24, 0.144, ...) puts that blend at 56% head colour to 44% tail, the same softening toward the border, and 98% opaque.
+   If the dash colours or opacity above change, redo that sum or the ring will jump to a different colour. */
+.input-glow { --glow-ring: color-mix(in srgb, color-mix(in srgb, var(--glow-head) 56%, var(--glow-tail)) 85%, var(--border-color)); }
+.input-glow rect.glow-ring {
+  stroke: var(--glow-ring);
+  stroke-width: 1px;
+  stroke-opacity: 0.98;
+  stroke-dasharray: none;
+  stroke-dashoffset: 0;
+}
 .app-shell ::selection { background: color-mix(in srgb, var(--accent-primary) 35%, transparent); }
 /* Where you are: a short accent bar on the left edge of the selected rail item and conversation. It is a pseudo-element, because it used to be a background
    image that the dark theme's own `background:` on the active item reset, so in the dark theme it never showed. */

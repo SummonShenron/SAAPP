@@ -57,6 +57,8 @@ export const CalendarHeadsUps: React.FC = () => {
       <p className="card-description">
         When you open a chat, Sonic can say one short line about something coming up on your calendar today, like an appointment, or tomorrow's exam the evening before. It reads your calendar
         when you open the chat, mentions each thing once, and never presses you about it. It skips private events, invitations you haven't accepted, and anything you've declined.
+        The same switch lets Sonic check your calendar for a plan you've told it about: it can fill in a time or place you didn't give and say when your calendar shows something different
+        (it goes with what you said). It only reads your calendar, keeps nothing from it, and never uses a place when discreet wording is on.
       </p>
       {error && <div className="status-banner error" role="alert">{error}</div>}
       {settings && (

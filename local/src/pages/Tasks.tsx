@@ -11,7 +11,12 @@ const JOB_SOURCES = ['jooble', 'adzuna'];
 const POLL_EVERY_MS = 4000;
 const POLL_FOR_MS = 120000;
 
-const EMPTY_DRAFT: TaskSpec = { kind: 'research', repo: '', title: '', topic: '', details: '', cadence: 'weekly', hour: 8, weekday: 0, sources: ['web'], location: '' };
+const EMPTY_DRAFT: TaskSpec = { kind: 'research', repo: '', title: '', topic: '', details: '', cadence: 'weekly', hour: 8, weekday: 0, window_hours: 0, sources: ['web'], location: '' };
+const WINDOW_CHOICES: { hours: number; label: string }[] = [
+  { hours: 0, label: 'At that time' },
+  { hours: 2, label: 'Sometime in the 2 hours after, at a quiet moment' },
+  { hours: 3, label: 'Sometime in the 3 hours after, at a quiet moment' },
+];
 const KIND_CHOICES: { kind: TaskKind; label: string; blurb: string }[] = [
   { kind: 'research', label: 'Look something up', blurb: 'Searches the web (and job boards) for what you describe, and keeps what is new.' },
   { kind: 'pr_review', label: 'Review my pull requests', blurb: 'Reads your repository\'s open pull requests and tells you what a careful reviewer would flag.' },
@@ -22,6 +27,14 @@ const REPO_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,38}\/[A-Za-z0-9_.-]{1,100}$/;
 
 function hourLabel(hour: number): string {
   return `${hour % 12 || 12} ${hour < 12 ? 'AM' : 'PM'}`;
+}
+
+/** "around 8 AM", or for a window "between 8 and 10 AM, at a quiet moment" (the server words a saved task the same way, in `schedule`). */
+function windowLabel(hour: number, windowHours: number): string {
+  if (windowHours <= 0) return `around ${hourLabel(hour)}`;
+  const end = (hour + windowHours) % 24;
+  const sameHalf = (hour % 24 < 12) === (end < 12);
+  return `between ${sameHalf ? hour % 12 || 12 : hourLabel(hour)} and ${hourLabel(end)}, at a quiet moment`;
 }
 
 function formatWhen(iso: string | null): string {
@@ -257,6 +270,7 @@ export const TasksPage: React.FC = () => {
                         <div className="task-run-head">
                           <span>{formatWhen(run.started_at)}{run.trigger === 'manual' ? ' · run by you' : ''}</span>
                         </div>
+                        {run.reason && <div className="task-meta">{run.reason}</div>}
                         {run.status === 'failed' && <div className="task-meta">That run didn't finish, so nothing was found.</div>}
                         {run.status === 'nothing_new' && <div className="task-meta">Nothing new this time.</div>}
                         {run.status === 'ok' && (
@@ -376,6 +390,16 @@ export const TasksPage: React.FC = () => {
                 <select id="task-hour" className="memory-category-select" value={draft.hour} onChange={e => patch({ hour: Number(e.target.value) })}>
                   {Array.from({ length: 24 }, (_, hour) => <option key={hour} value={hour}>{hourLabel(hour)}</option>)}
                 </select>
+                <label className="task-label" htmlFor="task-window">Run it <span className="task-optional">optional</span></label>
+                <select id="task-window" className="memory-category-select" value={draft.window_hours ?? 0} onChange={e => patch({ window_hours: Number(e.target.value) })}>
+                  {WINDOW_CHOICES.map(choice => <option key={choice.hours} value={choice.hours}>{choice.label}</option>)}
+                </select>
+                {(draft.window_hours ?? 0) > 0 && (
+                  <div className="memory-edit-hint">
+                    Sonic waits until you've been away from the app for a little while and there's room in the usage budget, and runs it at the end of the window either way.
+                    Each run says why it ran when it did.
+                  </div>
+                )}
                 {!isRepo && <label className="task-label">Where to look</label>}
                 <div className="task-sources">
                   {!isRepo && (limits?.sources ?? ['web']).map(source => (
@@ -411,7 +435,7 @@ export const TasksPage: React.FC = () => {
                       {draft.details && <div><strong>Narrowed by:</strong> {draft.details}</div>}
                     </>
                   )}
-                  <div><strong>Runs:</strong> {(draft.kind === 'code_audit' ? 'weekly' : draft.cadence) === 'weekly' ? `every ${WEEKDAYS[draft.weekday]}` : 'every day'} around {hourLabel(draft.hour)}</div>
+                  <div><strong>Runs:</strong> {(draft.kind === 'code_audit' ? 'weekly' : draft.cadence) === 'weekly' ? `every ${WEEKDAYS[draft.weekday]}` : 'every day'} {windowLabel(draft.hour, draft.window_hours ?? 0)}</div>
                   {!isRepo && <div><strong>Where:</strong> {draft.sources.map(s => labels[s] ?? s).join(', ')}</div>}
                   {wantsJobs && draft.location.trim() && <div><strong>Jobs near:</strong> {draft.location}</div>}
                 </div>
