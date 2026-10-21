@@ -1,6 +1,6 @@
 # Tool-step budget: measure, allow what the work needs, and an optional Max tier
 
-Status: outline, discussed 2026-10-20, nothing built. Slot: Wednesday 2026-10-21 (counter first).
+Status: step 1 (counters) and step 2 (library allowance) BUILT 2026-10-21, undeployed; step 3 (Max tier) not built.
 
 ## Today
 - Normal budget `TOOL_AGENT_MAX_ITERATIONS` = 4 on Render (code default 7); deep thinking `TOOL_AGENT_MAX_ITERATIONS_DEEP` = 6 (default 14). The last step is reserved for the final answer, so 4 means 3 tool steps and 6 means 5.
@@ -14,7 +14,10 @@ Built: per tool turn the loop's steps used and whether it ran into its last step
 (Original plan:)
 Add counters (closed key list in `backend/utils/self_counters.py`, no user id or text): tool turns, steps used (bucketed), turns that reached the forced final step without a final, and which tier ran. Show them on Sonic Health. Decide on any cap change from these, not from a guess.
 
-## 2. Allowance that follows the work (if the counter shows forced finals)
+## 2. Allowance that follows the work (BUILT 2026-10-21, undeployed: `backend/utils/library_allowance.py`)
+Built differently from the sketch below in one way: the grant is the SHORTFALL, not `ceil(N / 5)` outright. Reads needed = `ceil(files / 5)` (the loops batch five per step); the grant is what the budget left does not already cover, once per turn after a successful listing, at most 4 (`LIBRARY_EXTRA_STEPS_MAX`), and none in low-power mode. So the 7-file review that fit gets nothing; on Render's budget of 4, the react loop fits 10 files and the native loop 15, and a bigger library gets the steps it needs. The model is told (a note on the listing result / a message) to read five at a time. If the budget still runs out, the reply gets an authoritative note naming the listed files that were never read. Both loops take an optional `library_allowance`; `agent_workflow` makes one per turn for people with a library. Not run against a real library with more than seven files yet (the tests use a scripted model).
+
+(Original sketch:)
 After `list_library_files` returns N files, grant `ceil(N / 5)` extra steps, once per turn, capped (about 4) and never above the tier's ceiling. Reuse the loop's existing bounded extra-step mechanism (the one steering messages use). On a forced final with unread files, the answer names what it read and what it did not.
 
 ## 3. Max tier (decided 2026-10-20)

@@ -88,6 +88,7 @@ async def run_react_loop(
     steering_max_extra_steps: int = 8,
     conversation_text: str = "",
     saved_notes: str = "",
+    library_allowance=None,
 ) -> dict:
     """Generic Reason -> Act -> Observe -> Decide loop shared by every iterative tool
     (MongoDB, GitHub search, ...). Each step asks the model for the next action given
@@ -797,7 +798,7 @@ async def run_react_loop(
             # Exactly the bookkeeping a real sequential step already did — extracted so it can be
             # applied once per item in a batch, in order, instead of only ever seeing one
             # tool_action per step.
-            nonlocal stuck_action_streak
+            nonlocal stuck_action_streak, budget
             if tool_action_name:
                 args_signature = json.dumps(args or {}, sort_keys=True, default=str)
                 prior_args_signature = unretried_inconclusive_tools.get(tool_action_name)
@@ -856,6 +857,13 @@ async def run_react_loop(
                     stuck_action_streak = {"tool": tool_action_name, "count": 1}
                 else:
                     stuck_action_streak = {"tool": None, "count": 0}
+            if library_allowance is not None and tool_action_name:
+                # A listing of a long library adds the read steps it needs, once (backend/utils/library_allowance.py); the tool steps left AFTER this one, minus the answer's.
+                grant = library_allowance.after_listing(tool_action_name, observation, budget - step - 2)
+                if grant:
+                    budget += grant
+                    observation = f"{observation}\n\n{library_allowance.note(grant)}"
+                    logger.info("[%s] step %s: a library listing added %d step(s), budget now %d.", node_name, step + 1, grant, budget)
             args_summary = ", ".join(f"{k}={v}" for k, v in (args or {}).items())
             action_desc = f"{tool_action_name}({args_summary})" if tool_action_name else (args_summary or "")
             # Tool name, argument NAMES and the result's size, never the arguments or the result: those are the user's own

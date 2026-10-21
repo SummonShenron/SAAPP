@@ -203,6 +203,7 @@ async def run(
     steering_extra_steps: int = 2,
     steering_max_extra_steps: int = 8,
     shorten_old: bool = True,
+    library_allowance: Any = None,
 ) -> Dict[str, Any]:
     """Runs the loop and returns what the old loop returns: `{"final_answer", "attempts", "show_work"}`, where each attempt is
     `{"purpose", "action_desc", "observation"}`. `llm` must offer `ainvoke_tools(messages, tools)`. `act(decision)` is the turn's
@@ -331,6 +332,14 @@ async def run(
             message = ToolMessage(content=clipped, tool_call_id=str(call.get("id") or f"call_{step}_{index}"), name=str(call.get("name")))
             messages.append(message)
             held.append({"message": message, "step": step, "text": clipped, "done": False, "key": f"{call.get('name')}|{json.dumps(args, sort_keys=True, default=str)}"})
+        if library_allowance is not None:
+            # A listing of a long library adds the read steps it needs, once (backend/utils/library_allowance.py): the tool steps left AFTER this one (this loop's answer is an extra call, so none is kept back).
+            for call, result in zip(calls, results):
+                grant = library_allowance.after_listing(str(call.get("name") or ""), result, budget - step)
+                if grant:
+                    budget += grant
+                    messages.append(HumanMessage(content=library_allowance.note(grant)))
+                    logger.info("[native_loop] step %s: a library listing added %d step(s), budget now %d.", step, grant, budget)
         if repeats >= MAX_REPEATS:
             break
 

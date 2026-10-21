@@ -105,6 +105,7 @@ from backend.utils.agent_utils import (
     resolve_recent_mention, safe_emit_event, emit_trace_facts, format_history,
 )
 from backend.services.react_loop import run_react_loop, _MAX_BATCH_SIZE
+from backend.utils.library_allowance import LibraryAllowance
 from backend.services import steering
 from backend.services import image_gen, library_search, native_loop, ops_incidents, photo_cards
 from backend.services import native_tools as native_tools_module
@@ -3333,9 +3334,12 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 architecture_map=architecture_map, user_memory=user_memory, max_steps=kwargs["max_iterations"], emit=_announce,
                 emit_step=_announce_step, emit_facts=emit_trace_facts,
                 steering_source=kwargs.get("steering_source"), on_steering_applied=kwargs.get("on_steering_applied"),
+                library_allowance=kwargs.get("library_allowance"),
                 shorten_old=not (isinstance(kwargs["llm"], ClaudeLLM) and kwargs["llm"].caches_prompt),   # a model that caches the conversation keeps old results whole (native_loop.py)
             )
 
+        # A listing of a long library adds the read steps it needs, once (backend/utils/library_allowance.py); not in low-power mode, where the step cap is the point.
+        library_allowance = LibraryAllowance(enabled=not budget_guard.low_power(budget_state)) if library_scope else None
         try:
             try:
                 loop_result = await (_native_engine if use_native else run_react_loop)(
@@ -3366,6 +3370,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                     on_steering_applied=_on_steering_applied,
                     conversation_text=earlier_conversation_text,
                     saved_notes=user_memory,
+                    library_allowance=library_allowance,
                 )
             except _UnsafeActionRequested as e:
                 if e.decision.get("tool_action") == "propose_append_target_doc":
@@ -3565,6 +3570,11 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
 
         final_answer = loop_result["final_answer"]
         attempts = loop_result["attempts"]
+        if library_allowance is not None and getattr(llm_turns.current(), "cap_hit", False):
+            # The loop ran out of steps with listed library files unread: the reply must say which it read and which it did not (backend/utils/library_allowance.py).
+            unread_note = library_allowance.unread_note(attempts)
+            if unread_note:
+                final_answer = f"{final_answer}\n\n{unread_note}"
         if edit_turn and not any(
             str(a.get("action_desc", "")).startswith("propose_local_edits(")
             and not str(a.get("observation", "")).startswith("ERROR")
