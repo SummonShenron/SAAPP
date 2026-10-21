@@ -15,7 +15,7 @@ from backend.services.memory_search import embed_and_store_memory_chunk
 from backend.services.memory_compaction import maybe_trigger_compaction
 from backend.utils.db_utils import get_db, resolve_service_registry_repo
 from backend.utils.embedding_utils import embed_text, cosine_similarity
-from backend.utils import correction_kinds
+from backend.utils import correction_kinds, memory_grounding
 from backend.utils.time_utils import SENT_AT_KEY, history_gap_marker
 from fastapi import HTTPException
 import subprocess
@@ -519,9 +519,14 @@ def strip_note_label(text: str) -> str:
     return _NOTE_LABEL.sub("", text or "", count=1).strip()
 
 
-async def summarize_turn(question: str, answer: str, llm=None) -> Optional[str]:
+async def summarize_turn(question: str, answer: str, llm=None, *, previous_reply: str = "", known_text: str = "", report: Optional[dict] = None) -> Optional[str]:
     """The one-sentence long-term memory note for a finished turn, or None when it is not worth remembering. Shared by
-    index_conversation_turn and backend/evals/memory_eval.py, so the eval measures exactly what the app writes."""
+    index_conversation_turn and backend/evals/memory_eval.py, so the eval measures exactly what the app writes.
+
+    Every note passes the grounding check (backend/utils/memory_grounding.py): a sentence carrying a time, number, weekday, month or assistant-introduced name that the
+    person did not give is taken out, and a note with nothing left is not saved. `previous_reply` is the assistant's message before this turn (a bare "yes" confirms
+    only an explicit question in it), `known_text` what is already known about the person (so a name Sonic holds is not "new"). `report`, when given, is filled with
+    {"dropped": sentences removed, "kinds": the kinds of detail}: counts only, never text."""
     call = llm or lite_llm.ainvoke
     summary_resp = await call(MEMORY_TURN_SUMMARY_PROMPT.format(question=question[:500], answer=answer[:1000]))
     raw_content = summary_resp.content if hasattr(summary_resp, "content") else str(summary_resp)
@@ -532,10 +537,24 @@ async def summarize_turn(question: str, answer: str, llm=None) -> Optional[str]:
     summary_text = strip_note_label(summary_text)
     if not summary_text or summary_text.upper().rstrip(".") == "NONE":
         return None
-    return summary_text
+    checked = memory_grounding.ground_note(summary_text, user_text=question, assistant_text=answer, previous_reply=previous_reply, known_text=known_text)
+    if report is not None:
+        report["dropped"], report["kinds"] = checked.dropped, list(checked.kinds)
+    return checked.text
 
 
-async def index_conversation_turn(vector_store, username: str, question: str, answer: str, session_id: Optional[str] = None):
+def _known_vocabulary(username: str) -> str:
+    """What is already known about the person, as one string of their saved facts (the facts are cached in memory, so this is cheap after the first read): a name
+    Sonic already holds is not a new detail. Empty on any failure: the check then treats such a name as new, which only costs a note."""
+    try:
+        from backend.utils.memory_utils import load_user_facts
+
+        return " ".join(f.fact for f in load_user_facts(username))
+    except Exception:
+        return ""
+
+
+async def index_conversation_turn(vector_store, username: str, question: str, answer: str, session_id: Optional[str] = None, previous_reply: str = ""):
     """Fire-and-forget: summarizes a completed turn and embeds it into the user's semantic memory.
     Meant to be called via asyncio.create_task off the response-streaming critical path;
     failures are logged, never raised, so they can never break chat streaming."""
@@ -543,7 +562,19 @@ async def index_conversation_turn(vector_store, username: str, question: str, an
         logger.debug("[MemoryIndex] Skipping turn index for %s: no vector store or empty answer.", username)
         return
     try:
-        summary_text = await summarize_turn(question, answer)
+        known_text = await asyncio.to_thread(_known_vocabulary, username)
+        report: dict = {}
+        summary_text = await summarize_turn(question, answer, previous_reply=previous_reply, known_text=known_text, report=report)
+        if report.get("dropped"):
+            # Counts only: how many sentences were kept out because they carried a detail the person never gave, and of what kinds. Never the text.
+            logger.info("[MemoryIndex] Grounding check removed %d sentence(s) from a note (%s).", report["dropped"], ", ".join(report.get("kinds") or []))
+            counts = {"memory_note_dropped" if summary_text is None else "memory_note_trimmed": 1}
+            try:
+                from backend.utils.self_counters import record_turn_counts
+
+                await asyncio.to_thread(record_turn_counts, counts)
+            except Exception:
+                logger.warning("[MemoryIndex] could not count the grounding check.", exc_info=True)
         if summary_text is None:
             logger.info("[MemoryIndex] Turn for %s judged not worth remembering; no chunk stored.", username)
             return

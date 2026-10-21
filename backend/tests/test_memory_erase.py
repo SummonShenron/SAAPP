@@ -52,7 +52,7 @@ def facts(monkeypatch):
 
 
 def test_every_place_memory_is_kept_is_on_the_list_and_the_names_match_the_ones_the_app_writes_to():
-    assert set(me.ERASED_COLLECTIONS) == {"user_memory_chunks", "user_memory_chunk_archive", "user_memory_fact_archive", "memory_compaction_events"}
+    assert set(me.ERASED_COLLECTIONS) == {"user_memory_chunks", "user_memory_chunk_archive", "user_memory_fact_archive", "memory_compaction_events", "user_memory_domain_backups"}
     assert ms.USER_MEMORY_COLLECTION in me.ERASED_COLLECTIONS
     assert mc.ARCHIVE_COLLECTION == ms.CHUNK_ARCHIVE_COLLECTION == mm.ARCHIVE_COLLECTION
     assert memory_utils.FACT_ARCHIVE_COLLECTION in me.ERASED_COLLECTIONS
@@ -99,7 +99,8 @@ def test_with_no_database_only_the_facts_are_cleared_and_nothing_fails(facts):
 
 def test_the_counts_the_page_shows_are_the_notes_and_the_archived_copies_of_notes_and_facts():
     db = seeded_db()
-    assert me.stored_counts(db, "jack") == {"notes": 3, "archived": 6}
+    # three copies kept (notes archived by compaction, facts archived by pruning, facts backed up by the sorting cleanup), three rows each: what the page says is what Clear All removes
+    assert me.stored_counts(db, "jack") == {"notes": 3, "archived": 9}
     assert me.stored_counts(db, "nobody") == {"notes": 0, "archived": 0}
     assert me.stored_counts(None, "jack") == {"notes": 0, "archived": 0}
 

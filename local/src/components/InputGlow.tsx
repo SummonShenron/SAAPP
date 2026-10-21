@@ -9,13 +9,17 @@ import { glowTimeline } from './inputGlowPath';
 //
 // The pace changes along the way (inputGlowPath.ts): quick along the long straight edges, slow through the rounded ends, easing between. That depends
 // on the box's width and height, so the animation is built here from the measured size and rebuilt when it changes (the box grows with what is typed),
-// and it runs only while the box is hovered or focused.
+// and it runs only while Sonic is working (the running prop).
 const SEGMENTS = 8;
 const TAIL = 22; // the longest dash, as a share of the way round
 const RADIUS = 25; // the box's corner radius in CSS (index.css .chat-textarea)
 
-export default function InputGlow() {
+export default function InputGlow({ running }: { running: boolean }) {
   const svg = useRef<SVGSVGElement>(null);
+  // Read by the animation's pause/resume logic, which is set up once on mount.
+  const runningRef = useRef(running);
+  runningRef.current = running;
+  const control = useRef<{ run: () => void; rest: () => void }>();
 
   useEffect(() => {
     const el = svg.current;
@@ -26,7 +30,7 @@ export default function InputGlow() {
     let pauseTimer: ReturnType<typeof setTimeout> | undefined;
     let builtFor = '';
 
-    const active = () => host.matches(':hover, :focus-within');
+    const active = () => runningRef.current;
     const build = () => {
       const width = el.clientWidth - 2; // the outline is inset by half its stroke on each side
       const height = el.clientHeight - 2;
@@ -66,23 +70,22 @@ export default function InputGlow() {
     build();
     const observer = new ResizeObserver(build);
     observer.observe(el);
-    host.addEventListener('mouseenter', run);
-    host.addEventListener('focusin', run);
-    host.addEventListener('mouseleave', rest);
-    host.addEventListener('focusout', rest);
+    control.current = { run, rest };
     return () => {
       clearTimeout(pauseTimer);
       observer.disconnect();
-      host.removeEventListener('mouseenter', run);
-      host.removeEventListener('focusin', run);
-      host.removeEventListener('mouseleave', rest);
-      host.removeEventListener('focusout', rest);
       animations.forEach(a => a.cancel());
     };
   }, []);
 
+  // Play while Sonic is working, fade out and rest after it stops.
+  useEffect(() => {
+    if (running) control.current?.run();
+    else control.current?.rest();
+  }, [running]);
+
   return (
-    <svg ref={svg} className="input-glow" aria-hidden="true" focusable="false">
+    <svg ref={svg} className="input-glow" aria-hidden="true" focusable="false" style={{ opacity: running ? 1 : 0, transition: 'opacity 0.6s ease' }}>
       {Array.from({ length: SEGMENTS }, (_, i) => {
         const len = TAIL * (1 - i / SEGMENTS);
         // i = 0 is the longest and faintest, i = SEGMENTS - 1 the shortest and brightest: the colour runs tail to head with it.

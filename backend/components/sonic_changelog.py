@@ -70,6 +70,20 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "memory_work_vs_own",
+        "requires": [
+            "backend/utils/memory_grounding.py::def ground_note",
+            "backend/utils/memory_utils.py::def format_facts_block",
+        ],
+        "month": "2026-10",
+        "title": "Keeping your job and your own projects apart",
+        "line": (
+            "I can now keep your job and your own projects separate in what I save about you, and I save only details you actually told me, not ones I guessed."
+        ),
+        "keywords": ["work and projects", "job versus project", "mixed up my work", "remember wrong", "made up a detail", "memory accuracy"],
+        "volunteer": [],
+    },
+    {
         "id": "library_search_tool",
         "requires": [
             "backend/services/library_search.py::def search_for_agent",

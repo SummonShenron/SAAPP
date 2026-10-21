@@ -27,6 +27,7 @@ import uuid
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional
 
+from backend.utils import memory_grounding
 from backend.utils.time_utils import gap_seconds, local_now
 
 logger = logging.getLogger("SASS Logger")
@@ -421,6 +422,8 @@ async def capture_open_loops(
         parsed = parse_extraction(_response_text(await invoke(prompt)))
 
         loops = [v for v in (validate_loop(raw, today) for raw in (parsed.get("loops") or [])[:3]) if v]
+        # Honest writes (backend/utils/memory_grounding.py): a loop whose wording carries a time, number, weekday or month the person did not give is not saved.
+        loops = [v for v in loops if memory_grounding.ground_note(v["text"], user_text=message, previous_reply=previous_reply).dropped == 0]
         known_ids = {d.get("id") for d in existing}
         resolved_ids = [i for i in (parsed.get("resolved_ids") or []) if isinstance(i, str) and i in known_ids]
 

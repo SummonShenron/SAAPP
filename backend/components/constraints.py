@@ -653,9 +653,26 @@ When in doubt between "identity" and something else, prefer the other category â
 under-including in every-conversation context is much lower than the cost of a work-specific or
 narrow fact bleeding into an unrelated conversation.
 
+DOMAIN: say which part of their life the fact is about, because "work" means two different things for a
+person who also builds things at home, and the two must never be mixed:
+- "work": anything done for or at their EMPLOYER or a client: the job, its tasks and projects, the
+  tools and systems they use there, colleagues, the work email. A task at the job is work even when
+  it is a "project" or a "goal". Name the employer in the fact when the message does.
+- "own": their OWN projects: things they build, run or work on for themselves and not for an
+  employer (a side project, an app, a hobby build, a thesis). This assistant counts as one only when
+  they say they are building it; how they use it or what they think of it is "general".
+- "personal": their life outside both (family, health, relationships, hobbies, habits).
+- "general": true everywhere and not about one part of their life (their name, pronouns, tastes, how
+  they like answers written). Use "general" whenever you are not sure: a wrong label is worse than
+  a broad one, so never guess a domain.
+Never put a job task and an own project in the same fact. If the message mentions both, record only the
+part they are asking you to remember. A fact about one of their own projects never says it is for their
+job, and a fact about the job never says it is for the assistant, unless they said so in those words.
+
 Return ONLY a JSON object matching this schema, with no preamble or markdown:
 {{
   "category": "preference" | "identity" | "setting" | "trait" | "career" | "project" | "goal" | "relationship" | "coding_style",
+  "domain": "work" | "own" | "personal" | "general",
   "fact": "a short, third-person statement of the durable fact, e.g. 'Prefers dark mode UI.'"
 }}
 """
@@ -882,12 +899,46 @@ USER gave, exactly as they said it: names of people, pets, places, companies and
 dates, times, amounts and other numbers. Spend the words on the user's own details, not on the
 assistant's advice, and never record a detail that appears only in the assistant's reply.
 (e.g. "Is giving the toast at their sister Anika's wedding in Lisbon on June 14th and asked for
-help drafting it.") If there is nothing worth remembering long-term, respond with exactly: NONE
+help drafting it.") Keep their job and their own projects apart: work done for their employer is
+"at work" and building something of their own is "on their own project";
+never join the two in one sentence as if they were the same work. If there is nothing worth
+remembering long-term, respond with exactly: NONE
 
 USER: {question}
 ASSISTANT: {answer}
 
 Reply with the sentence itself and nothing else: no label, no quotes.
+"""
+
+DOMAIN_CLASSIFY_PROMPT = """
+You sort the facts known about ONE person into the part of their life each one is about.
+
+ABOUT THEM:
+- Their JOB (work done for an employer or client): {employer}
+- Their OWN projects (done for themselves, not for an employer): {own}
+
+For every fact give "domain":
+- "work": anything done for or at their employer or a client: the job, its tasks, projects, tools,
+  systems and colleagues. A task at the job is work even if it looks like a "project" or a "goal".
+- "own": their own projects, done for themselves and not for an employer (see the line above for what
+  they are called; this assistant counts only if they say they are building it).
+- "personal": their life outside both (family, health, relationships, hobbies, habits, feelings).
+- "general": true everywhere and not about one part of their life (their name, pronouns, tastes, how
+  they like answers written), or you are not sure. A wrong label is worse than a broad one, so
+  when unsure answer "general".
+
+"rewrite" is for the rare fact that WRONGLY joins a job matter and an own-project matter into one
+statement (for example an own project said to be "for his work", or a job task and an own project in
+one sentence). Then give one to three short replacement facts, each about ONE side, using only words
+and details already in that fact: add nothing, guess nothing. One replacement removes a wrong link; two
+split a fact that holds both. If the fact itself says the two are different or separate, or only
+mentions one side, it is NOT mixed: use "rewrite": null.
+
+FACTS (id: text):
+{facts}
+
+Return ONLY a JSON object, no preamble or markdown, with one item per fact id above:
+{{"items": [{{"id": "the id", "domain": "work" | "own" | "personal" | "general", "rewrite": null | [{{"fact": "...", "domain": "work" | "own" | "personal" | "general"}}]}}]}}
 """
 
 MEMORY_COMPACTION_PROMPT = """
@@ -901,13 +952,20 @@ Return ONLY a JSON object matching this schema, with no preamble or markdown:
 {{
   "summary": "one dense paragraph capturing everything distinct and worth keeping from the notes above",
   "facts": [
-    {{"category": "preference" | "identity" | "setting" | "trait" | "career" | "project" | "goal" | "relationship", "fact": "a short, durable, third-person statement"}}
+    {{"category": "preference" | "identity" | "setting" | "trait" | "career" | "project" | "goal" | "relationship", "domain": "work" | "own" | "personal" | "general", "fact": "a short, durable, third-person statement"}}
   ]
 }}
 Only include an entry in "facts" for something durable and reusable across future conversations
 (a stated preference, identity detail, setting, trait, career detail, project, goal, or
 relationship). Return an empty "facts" array if none of the notes contain anything durable â€” do
 not invent facts that aren't supported by the notes.
+
+DOMAIN says which part of their life a fact is about: "work" is anything done for or at their employer
+or a client (the job and its tasks, tools, colleagues); "own" is their OWN projects, done for
+themselves (this assistant only if they say they are building it); "personal" is life outside both; "general" is true everywhere (a name,
+tastes) and the safe answer when you are not sure. Never
+merge a job task and an own project into one fact, and never say an own project is for their job (or
+the reverse) unless a note says so in those words. A note that mixes the two becomes two facts.
 """
 
 PATTERN_EXTRACTION_PROMPT = """

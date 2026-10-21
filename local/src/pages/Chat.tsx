@@ -2368,7 +2368,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
             />
 
             <div className="chat-input-wrapper">
-              <InputGlow />
+              <InputGlow running={loading} />
               {/* The empty chat has the full-size Patchy; this small one takes over when the conversation starts. */}
               {patchyAllowed && showPatchy && hasChatted && (
                 <MiniPatchy

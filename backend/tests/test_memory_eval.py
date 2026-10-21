@@ -242,13 +242,13 @@ def test_indexing_a_turn_stores_the_summary_and_stores_nothing_when_it_says_none
     monkeypatch.setattr(app_utils, "maybe_trigger_compaction", no_compaction)
     monkeypatch.setattr(app_utils, "get_db", lambda: None)
 
-    async def keep(question, answer, llm=None):
+    async def keep(question, answer, llm=None, **kwargs):
         return "Adopted a dog named Biscuit."
 
     monkeypatch.setattr(app_utils, "summarize_turn", keep)
     run(app_utils.index_conversation_turn(object(), "u", "q", "a", "s1"))
 
-    async def skip(question, answer, llm=None):
+    async def skip(question, answer, llm=None, **kwargs):
         return None
 
     monkeypatch.setattr(app_utils, "summarize_turn", skip)

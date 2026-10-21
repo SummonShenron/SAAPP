@@ -108,7 +108,7 @@ from backend.services.react_loop import run_react_loop, _MAX_BATCH_SIZE
 from backend.services import steering
 from backend.services import image_gen, library_search, native_loop, ops_incidents, photo_cards
 from backend.services import native_tools as native_tools_module
-from backend.utils import budget_guard, llm_turns, progress_notes, reading_shelf
+from backend.utils import budget_guard, llm_turns, memory_grounding, progress_notes, reading_shelf
 from backend.services.repo_checkout import (
     RepoCheckoutError, fetch_and_extract_checkout, cleanup_checkout, find_declarations_in_checkout,
 )
@@ -1065,6 +1065,7 @@ async def memory_save_node(state: GraphState, memory_vector_store=None) -> dict:
         )
 
         category = "preference"
+        domain = None
         fact_text = user_msg
         try:
             response = await lite_llm.ainvoke(MEMORY_EXTRACTION_PROMPT.format(message=user_msg))
@@ -1076,13 +1077,21 @@ async def memory_save_node(state: GraphState, memory_vector_store=None) -> dict:
             clean_json = raw_text.replace("```json", "").replace("```", "").strip()
             parsed = json.loads(clean_json)
             category = parsed.get("category") or "preference"
+            domain = parsed.get("domain")          # which part of their life: work / own / personal / None (memory_utils.normalize_domain checks it)
             fact_text = parsed.get("fact") or user_msg
         except Exception:
             logger.exception("[MemorySave] Fact extraction failed, storing raw message.")
 
+        # Honest writes (backend/utils/memory_grounding.py): a fact the model worded with a time, number, weekday or month the person never gave is the person's own words instead.
+        previous_assistant = next((str(m.content) for m in reversed(state["messages"][:-1]) if getattr(m, "type", "") == "ai"), "")
+        grounded = memory_grounding.ground_fact(fact_text, user_text=user_msg, previous_reply=previous_assistant)
+        if grounded.dropped:
+            logger.info("[MemorySave] Grounding check replaced a fact that added a detail (%s).", ", ".join(grounded.kinds))
+            fact_text = grounded.text or user_msg
+
         saved = save_user_fact(
             username, fact_text, category=category, source="explicit",
-            memory_vector_store=memory_vector_store,
+            memory_vector_store=memory_vector_store, domain=domain,
         )
         embed_and_store_memory_chunk(
             memory_vector_store, username, saved.fact,

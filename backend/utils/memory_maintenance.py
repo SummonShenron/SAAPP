@@ -164,6 +164,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     facts.add_argument("--source", default="explicit", help="which archived facts: explicit (stated by the user), inferred or pattern")
     facts.add_argument("--show", action="store_true", help="also print each fact's text (default: counts, categories and similarity only)")
     facts.add_argument("--apply", action="store_true", help="actually restore (default: only show what would come back)")
+    domains = sub.add_parser("classify-domains", help="sort stored facts into job / own projects / personal / general (and fix facts that wrongly join the job and an own project)")
+    domains.add_argument("--username", required=True)
+    domains.add_argument("--employer", default="", help="one line about their job: the employer's name (and how they write it) and what they work on there")
+    domains.add_argument("--own", default="", help="one line about their own projects: their names, including this assistant")
+    domains.add_argument("--show", action="store_true", help="also print each fact with the domain it would get, and every proposed rewrite (default: counts only)")
+    domains.add_argument("--redo", action="store_true", help="also re-sort facts that already have a domain")
+    domains.add_argument("--rewrites", action="store_true", help="also let the model reword or split facts that join the job and an own project (off: it only tags, and its rewrites were wrong when tried)")
+    domains.add_argument("--save-answers", default="", help="write the model's answers to this file, so a later --answers run applies exactly what was reviewed")
+    domains.add_argument("--answers", default="", help="use the answers saved in this file instead of asking the model again")
+    domains.add_argument("--apply", action="store_true", help="actually write the domains and rewrites, after saving a backup (default: only show the plan)")
+    undo = sub.add_parser("restore-domains", help="undo a classify-domains run: put each fact back as it was")
+    undo.add_argument("--username", required=True)
+    undo.add_argument("--run", default="latest", help="a run id, or 'latest'")
+    undo.add_argument("--apply", action="store_true", help="actually restore (default: only say what would change)")
     args = parser.parse_args(argv)
 
     from dotenv import load_dotenv
@@ -182,6 +196,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _restore_command(db, args.run, args.apply)
     if args.command == "restore-pruned-facts":
         return _restore_facts_command(db, args.username, args.source, args.show, args.apply)
+    if args.command == "classify-domains":
+        return _classify_domains_command(db, args.username, args.employer, args.own, args.show, args.redo, args.apply, args.rewrites, args.save_answers, args.answers)
+    if args.command == "restore-domains":
+        return _restore_domains_command(db, args.username, args.run, args.apply)
     collection = db[USER_MEMORY_COLLECTION]
     query = {"username": args.username} if args.username else {}
     changes = plan_label_cleanup(list(collection.find(query, {"text": 1, "source_type": 1})))
@@ -242,6 +260,82 @@ def _restore_facts_command(db: Any, username: str, source: str, show: bool, appl
     if not plan["restore"]:
         return 0
     print(restore_pruned_facts(db, username, source, datetime.now(timezone.utc).isoformat()))
+    return 0
+
+
+def _classify_domains_command(db: Any, username: str, employer: str, own: str, show: bool, redo: bool, apply: bool, rewrites: bool = False, save_answers: str = "", answers_file: str = "") -> int:
+    import json
+
+    from backend.models.models import lite_llm
+    from backend.utils import memory_domains as md
+    from backend.utils import memory_utils as mu
+    from backend.utils.embedding_utils import embed_text
+
+    facts = [f for f in mu.load_user_facts(username) if f.active]
+    wanted = [f for f in facts if redo or f.domain is None]
+    print(f"{len(facts)} stored fact(s); {len(wanted)} to sort.")
+    if not wanted:
+        return 0
+    if answers_file:
+        with open(answers_file, encoding="utf-8") as handle:
+            answers = json.load(handle)
+        print(f"using the {len(answers)} saved answer(s) in {answers_file}.")
+    else:
+        answers = md.classify(wanted, lite_llm.invoke, employer, own)
+        if save_answers:
+            with open(save_answers, "w", encoding="utf-8") as handle:
+                json.dump(answers, handle)
+            print(f"saved the model's answers to {save_answers}.")
+    plan = md.plan_changes(wanted, answers, redo=redo, allow_rewrites=rewrites)
+    summary = md.summarize(plan, wanted)
+    print(f"would tag: {summary['domains']}; job facts by category {summary['categories']['work']}; own-project facts by category {summary['categories']['own']}")
+    print(f"rewrites: {summary['rewrites']} accepted, {summary['rejected_rewrites']} rejected (they added a detail the fact did not hold); skipped: {summary['skipped']}")
+    if show:
+        by_id = {f.id: f for f in wanted}
+        for rewrite in plan["rewrites"]:
+            original = by_id[rewrite["id"]]
+            print(f"\n  REWRITE [{original.category}] {original.fact}")
+            for part in rewrite["parts"]:
+                print(f"      -> ({part['domain']}) {part['fact']}")
+        for rejected in plan["rejected_rewrites"]:
+            print(f"\n  REJECTED REWRITE (tagged only) [{by_id[rejected].category}] {by_id[rejected].fact}")
+        print()
+        for tag in plan["tags"]:
+            if tag["domain"] != "general":
+                print(f"  ({tag['domain']}) [{by_id[tag['id']].category}] {by_id[tag['id']].fact[:150]}")
+    if not apply:
+        print("Dry run: nothing changed. Add --apply to write it (a backup is saved first, and restore-domains undoes it).")
+        return 0
+
+    def save_backup(doc: Dict[str, Any]) -> None:
+        db[md.BACKUP_COLLECTION].replace_one({"run_id": doc["run_id"]}, doc, upsert=True)
+
+    result = md.apply_plan(username, mu.load_user_facts(username), plan, save_facts=mu.save_user_facts, save_backup=save_backup, embed=embed_text)
+    print(f"done: {result}. Undo with: restore-domains --username {username} --run {result['run_id']} --apply")
+    return 0
+
+
+def _restore_domains_command(db: Any, username: str, run: str, apply: bool) -> int:
+    from datetime import datetime, timezone
+
+    from backend.utils import memory_domains as md
+    from backend.utils import memory_utils as mu
+
+    query: Dict[str, Any] = {"username": username, "restored_at": {"$exists": False}}
+    if run and run != "latest":
+        query["run_id"] = run
+    backups = list(db[md.BACKUP_COLLECTION].find(query).sort("at", -1).limit(1))
+    if not backups:
+        print("No run to restore.")
+        return 0
+    backup = backups[0]
+    print(f"run {backup['run_id']} from {backup.get('at')}: {len(backup.get('changes', []))} fact(s) would go back to how they were.")
+    if not apply:
+        print("Dry run: nothing changed. Add --apply to restore it.")
+        return 0
+    result = md.restore_run(username, backup, mu.load_user_facts(username), save_facts=mu.save_user_facts)
+    db[md.BACKUP_COLLECTION].update_one({"run_id": backup["run_id"]}, {"$set": {"restored_at": datetime.now(timezone.utc).isoformat()}})
+    print(f"restored: {result}")
     return 0
 
 
