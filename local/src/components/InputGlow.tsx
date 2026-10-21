@@ -19,7 +19,7 @@ export default function InputGlow({ running }: { running: boolean }) {
   // Read by the animation's pause/resume logic, which is set up once on mount.
   const runningRef = useRef(running);
   runningRef.current = running;
-  const control = useRef<{ run: () => void; rest: () => void }>();
+  const control = useRef<{ run: () => void; rest: () => void } | undefined>(undefined);
 
   useEffect(() => {
     const el = svg.current;
