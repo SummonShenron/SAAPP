@@ -1,57 +1,63 @@
-/* The usage budget status line above the chat box (components/BudgetBanner.tsx). Light colours by default; .budget-dark follows the
-   app's own dark theme. */
+/* The usage budget status line above the chat box (components/BudgetBanner.tsx). A quiet, neutral surface: the level shows only as a
+   small dot, and a faint tint once Sonic's behaviour actually changes. */
 .budget-banner {
+  --budget-accent: #d97706;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: 0.6rem;
   margin: 0 0 0.5rem 0;
-  padding: 0.4rem 0.75rem;
+  padding: 0.35rem 0.75rem;
   border-radius: 8px;
-  border: 1px solid transparent;
-  font-size: 0.8rem;
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface);
+  color: var(--text-main);
+  font-size: 0.78rem;
   line-height: 1.35;
+  animation: budget-in 0.25s ease-out;
+}
+
+.budget-banner-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--budget-accent);
 }
 
 .budget-banner-text {
   flex: 1 1 auto;
+  color: color-mix(in srgb, var(--text-main) 80%, transparent);
 }
 
-.budget-notice {
-  background: rgba(245, 158, 11, 0.12);
-  border-color: rgba(245, 158, 11, 0.45);
-  color: #b45309;
+.budget-notice { --budget-accent: #d97706; }
+.budget-throttled { --budget-accent: #ea580c; background: color-mix(in srgb, var(--budget-accent) 6%, var(--bg-surface)); }
+.budget-blocked { --budget-accent: #dc2626; background: color-mix(in srgb, var(--budget-accent) 7%, var(--bg-surface)); }
+.budget-dark.budget-notice { --budget-accent: #fbbf24; }
+.budget-dark.budget-throttled { --budget-accent: #fb923c; }
+.budget-dark.budget-blocked { --budget-accent: #f87171; }
+
+@keyframes budget-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .budget-banner { animation: none; }
 }
 
-.budget-throttled {
-  background: rgba(249, 115, 22, 0.13);
-  border-color: rgba(249, 115, 22, 0.5);
-  color: #c2410c;
-}
-
-.budget-blocked {
-  background: rgba(239, 68, 68, 0.13);
-  border-color: rgba(239, 68, 68, 0.5);
-  color: #b91c1c;
-}
-
-/* The app's own dark theme ("shadow"), not the operating system's setting. */
-.budget-dark.budget-notice { color: #fbbf24; }
-.budget-dark.budget-throttled { color: #fb923c; }
-.budget-dark.budget-blocked { color: #f87171; }
-
-/* The admin's "Extend by 25%" button, shown only on a blocked banner (components/BudgetBanner.tsx). */
+/* The "Request 25% more" and admin "Extend by 25%" buttons (components/BudgetBanner.tsx): a ghost button that only takes colour on hover. */
 .budget-extend {
   flex: 0 0 auto;
-  padding: 0.15rem 0.7rem;
+  padding: 0.12rem 0.65rem;
   border-radius: 999px;
-  border: 1px solid currentColor;
+  border: 1px solid var(--border-color);
   background: transparent;
   color: inherit;
   font-size: 0.74rem;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
 }
-.budget-extend:hover:not(:disabled) { background: rgba(239, 68, 68, 0.12); }
+.budget-extend:hover:not(:disabled) { border-color: var(--budget-accent); background: color-mix(in srgb, var(--budget-accent) 10%, transparent); }
 .budget-extend:disabled { opacity: 0.6; cursor: default; }
 .budget-extend-error { flex: 0 0 auto; font-size: 0.72rem; font-weight: 600; }
+.budget-request-status { flex: 0 0 auto; font-size: 0.74rem; font-weight: 600; opacity: 0.85; }

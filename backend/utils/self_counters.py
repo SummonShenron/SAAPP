@@ -30,12 +30,16 @@ ROUTES = ("kb_strict", "kb_open", "web", "tool_output", "conversational")
 REVISION_KINDS = ("safety", "emotional", "identity", "encouragement", "closing")
 REWARD_TAGS = ("hallucination", "incorrect_filter", "formatting", "incomplete", "other")
 FAILURE_KINDS = ("quota", "overloaded", "other")
+from backend.utils.feeling_questions import KINDS as FEELING_KINDS  # noqa: E402  (a plain tuple of names; that module imports nothing from here)
 
 _GROUPS: Dict[str, tuple] = {
     "route": ROUTES,
     "revised": REVISION_KINDS,
     "reward_failed": REWARD_TAGS,
     "turn_failed": FAILURE_KINDS,
+    # Questions about Sonic's own feelings, by kind, and the identity rewrites on turns with and without one (backend/utils/feeling_questions.py).
+    "feeling_asked": FEELING_KINDS,
+    "feeling_revised": FEELING_KINDS + ("other",),
 }
 _PLAIN_KEYS = ("turns_total", "reply_fit_checked", "reward_evaluated", "relatable_offered", "self_mention", "observations_injected", "encouragement_offered", "open_loop_captured", "open_loop_offered", "open_loop_resolved", "callback_offered", "self_history_offered", "initiation_offered", "initiation_fallback", "initiation_answered", "initiation_interest_offered", "initiation_interest_answered", "duration_offered", "curiosity_offered", "curiosity_taken", "shelf_offered", "shelf_taken", "shelf_listed", "lean_offered", "guardrail_applied", "routines_offered", "followups_offered", "task_results_offered", "meeting_turns", "headsup_offered", "clarify_noted", "clarify_asked", "clarify_answered", "memory_note_dropped", "memory_note_trimmed", "status_offered", "offer_made", "offer_taken", "offer_passed", "offer_held_back", "code_turns", "code_cap_hit", "code_edited", "code_verified", "code_followed", "code_redo")
 KEYS = frozenset(
@@ -163,6 +167,11 @@ def _rates(totals: Dict[str, int]) -> Dict[str, Optional[float]]:
     rates["code_cap_hit"] = _rate(totals.get("code_cap_hit", 0), totals.get("code_turns", 0))
     rates["code_verified"] = _rate(totals.get("code_verified", 0), totals.get("code_edited", 0))
     rates["code_redo"] = _rate(totals.get("code_redo", 0), totals.get("code_followed", 0))
+    # Questions about its own feelings: how many turns asked each kind, and the share of them whose reply the identity check sent back.
+    for kind in FEELING_KINDS:
+        rates[f"feeling_asked_{kind}"] = _rate(totals.get(f"feeling_asked_{kind}", 0), turns)
+        rates[f"feeling_revised_{kind}"] = _rate(totals.get(f"feeling_revised_{kind}", 0), totals.get(f"feeling_asked_{kind}", 0))
+    rates["feeling_revised_other"] = _rate(totals.get("feeling_revised_other", 0), turns)
     rates["self_history_offered"] = _rate(totals.get("self_history_offered", 0), turns)
     for route in ROUTES:
         rates[f"route_{route}"] = _rate(totals.get(f"route_{route}", 0), turns)

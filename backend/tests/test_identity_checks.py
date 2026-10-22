@@ -125,7 +125,8 @@ def test_the_app_runs_the_identity_check_on_conversational_replies_and_skips_it_
     import pathlib
 
     source = (pathlib.Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
-    assert "identity_issue = None if safety_plan.active else identity_reply_issue(full_response)" in source
+    assert "identity_issue = None if safety_plan.active else identity_reply_issue(" in source
+    assert 'person_signal=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)) != "open"' in source          # concern for the person needs a real emotional signal
     assert "build_identity_revision_prompt(prompt, full_response, identity_issue)" in source
     assert 'revision_tag = "identity"' in source
 

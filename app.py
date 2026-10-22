@@ -144,7 +144,7 @@ from backend.utils import routines as routines_utils
 from backend.utils import event_calendar, event_fields, name_aliases
 from backend.utils import self_report as self_report_utils
 from backend.utils import user_activity
-from backend.utils import code_outcomes, goals as goals_utils, offer_response
+from backend.utils import code_outcomes, feeling_questions, goals as goals_utils, offer_response
 from backend.utils import followups as followups_utils
 from backend.services import routine_scheduler
 from backend.services import user_task_scheduler
@@ -828,6 +828,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         if offer_outcome:
             tally(turn_counts, "offer_taken" if offer_outcome == "taken" else "offer_passed")
         code_outcomes.tally_followup(turn_counts, code_followup)
+        feeling_kind = feeling_questions.kind_of(question)  # which kind of question about Sonic's own feelings this is, if any (backend/utils/feeling_questions.py)
+        if feeling_kind:
+            tally(turn_counts, "feeling_asked", feeling_kind)
 
         def log_timings(grade: str, outcome: str):
             now = time.perf_counter()
@@ -846,7 +849,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             )
 
         budget_view = budget_guard.public_view(budget_state, is_admin_user)
-        if budget_view["level"] in (budget_guard.NOTICE, budget_guard.THROTTLED, budget_guard.BLOCKED):
+        if budget_view["level"] in (budget_guard.NOTICE, budget_guard.THROTTLED, budget_guard.BLOCKED) or budget_view.get("can_request_increase"):
             yield f"data: {json.dumps({'event': 'budget', **budget_view})}\n\n"
         if budget_guard.blocked(budget_state):
             # No model call at all. A person who has signalled risk still gets the human support line, in code.
@@ -1456,10 +1459,12 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 # Sonic's identity boundary (backend/utils/identity_checks.py): no claimed feelings, no stake in
                 # whether the person stays or comes back. Not applied while a safety context is in force, which has
                 # its own rules for what the reply must do.
-                identity_issue = None if safety_plan.active else identity_reply_issue(full_response)
+                identity_issue = None if safety_plan.active else identity_reply_issue(
+                    full_response, person_signal=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)) != "open")  # concern for the person only with a real emotional signal
                 if identity_issue is None and not safety_plan.active:
                     # An invented read, or a verdict on a piece on the reading shelf: also a matter of what Sonic is (backend/utils/reading_shelf.py).
-                    identity_issue = shelf_utils.shelf_reply_issue(full_response, shelf_utils.offer_has_items(shelf_offer))
+                    identity_issue = shelf_utils.shelf_reply_issue(
+                        full_response, shelf_utils.offer_has_items(shelf_offer), refresh_reported=bool(self_report_kind or routines_context))
                 if identity_issue is None and not safety_plan.active and events_shown:
                     # Named a time for something it was never told the time of: the gap the event block exists to keep honest (backend/utils/event_fields.py).
                     identity_issue = event_fields.reply_issue(full_response, events_shown, question)
@@ -1496,6 +1501,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 if revision_prompt:
                     logger.info("Reply-fit check failed (%s); regenerating once.", revision_tag)
                     tally(turn_counts, "revised", revision_kind(revision_tag))
+                    if revision_tag == "identity":
+                        tally(turn_counts, "feeling_revised", feeling_kind or "other")  # a rewrite with no such question asked is a claim that came up unprompted
                     yield f"data: {json.dumps({'event': 'node_progress', 'node': 'reply_fit_check', 'title': revision_title, 'detail': revision_tag})}\n\n"
                     yield f"data: {json.dumps({'event': 'regenerate_reset'})}\n\n"
                     rejected_draft = full_response
@@ -2687,7 +2694,38 @@ async def get_budget(current_user = Depends(get_current_user)):
     username = current_user.get("sub")
     admin = is_global_admin(load_directory(), username)
     state = await asyncio.to_thread(budget_guard.current_state, None, None, budget_guard.limit_username(username, admin))
-    return budget_guard.public_view(state, admin)
+    return await _budget_view_with_request(username, state, admin)
+
+
+async def _budget_view_with_request(username: str, state: dict, admin: bool) -> dict:
+    """The budget view plus, for a person at their own notice line or past it, whether a request for more is already waiting or was declined."""
+    view = budget_guard.public_view(state, admin)
+    if view.get("can_request_increase") and get_db() is not None:
+        try:
+            view["increase_request"] = await asyncio.to_thread(budget_guard.request_status, get_db(), username, state)
+        except Exception:
+            logger.warning("[budget] could not read the person's increase request.")
+    return view
+
+
+@app.post("/api/budget/request-increase")
+async def request_budget_increase(current_user = Depends(get_current_user)):
+    """The signed-in person asks the admins to raise their own limit by 25% for the one that is furthest along (the 5-hour window or the day),
+    until it resets. Only available from their own notice line (80%) onward; a second ask while one is waiting changes nothing."""
+    username = current_user.get("sub")
+    admin = is_global_admin(load_directory(), username)
+    state = await asyncio.to_thread(budget_guard.current_state, None, None, budget_guard.limit_username(username, admin))
+    if get_db() is None:
+        raise HTTPException(status_code=503, detail="No database is configured.")
+    try:
+        await asyncio.to_thread(budget_guard.request_increase, get_db(), username, state)
+    except ValueError as problem:
+        raise HTTPException(status_code=409, detail=str(problem))
+    except Exception:
+        logger.exception("[budget] could not save the increase request")
+        raise HTTPException(status_code=500, detail="The request could not be sent.")
+    logger.info("[budget] a person asked for a 25%% increase of their own limit.")
+    return await _budget_view_with_request(username, state, admin)
 
 
 @app.post("/api/budget/extend")
@@ -3114,6 +3152,27 @@ def _admin_db():
 
 class ReflectRequest(BaseModel):
     days: int = Field(30, ge=7, le=180)
+
+
+@app.get("/api/admin/budget/requests")
+async def get_budget_requests(admin = Depends(require_global_admin)):
+    """The people's requests for more of their own limit: those waiting, and the last few decided. Global_Admins only."""
+    return await asyncio.to_thread(budget_guard.list_requests, _admin_db())
+
+
+@app.post("/api/admin/budget/requests/{request_id}/{decision}")
+async def decide_budget_request(request_id: str, decision: str, admin = Depends(require_global_admin)):
+    """Approve (raises that person's limit by 25% until their day or window ends) or decline one request. Global_Admins only."""
+    if decision not in ("approve", "decline"):
+        raise HTTPException(status_code=400, detail="Unknown decision.")
+    try:
+        decided = await asyncio.to_thread(budget_guard.decide_request, _admin_db(), admin.get("sub"), request_id, decision == "approve")
+    except LookupError as problem:
+        raise HTTPException(status_code=404, detail=str(problem))
+    except ValueError as problem:
+        raise HTTPException(status_code=409, detail=str(problem))
+    logger.info("[budget] a global admin %sd a request to raise a person's own limit.", decision)
+    return decided
 
 
 @app.get("/api/admin/ops-suggestions")

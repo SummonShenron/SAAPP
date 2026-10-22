@@ -174,7 +174,7 @@ def test_an_admin_meets_the_per_person_limits_so_their_testing_cannot_use_up_eve
 
 def test_both_places_that_judge_a_person_use_the_same_rule():
     source = open("app.py", encoding="utf-8").read()
-    assert source.count("budget_guard.limit_username(") == 2 and "None if admin else username" not in source and "None if is_admin_user else username" not in source
+    assert source.count("budget_guard.limit_username(") == 3 and "None if admin else username" not in source and "None if is_admin_user else username" not in source
 
 
 # ---- turns recorded before dollars were counted ----------------------------------------------------------------------------------------------

@@ -321,8 +321,9 @@ def build_routines_context(db, tz_name: Optional[str], *, is_admin: bool, now: O
     return (
         "\nYOUR SCHEDULED ROUTINES (true; answer only from these):\n"
         f"{body}\n"
-        "You are not around between conversations the way a person is, and you can say so in one plain clause, but the server really does run these jobs on "
-        "a schedule, and the times above are already in this person's own time. Say what is scheduled and what a run found, plainly and in your usual dry "
+        "The server really does run these jobs on "
+        "a schedule, and the times above are already in this person's own time. Just answer: do not add that you are not around, have no experience or spend no time between "
+        "conversations unless they ask. Say what is scheduled and what a run found, plainly and in your usual dry "
         "voice (\"a health check runs around 6 PM\", \"this morning's check found nothing unusual\"). You may say what time of day a job ran or will run. "
         "Keep the day words exactly as written (today, tonight, tomorrow): never move a job to an earlier day. Never say you were awake, tired, up late, busy, or "
         "looking forward to anything, never describe the work as something you experienced, and never add a job, a time or a result that is not listed. If they ask about a time when nothing is listed, say nothing is scheduled then.\n"

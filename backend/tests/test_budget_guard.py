@@ -187,11 +187,12 @@ class _Other:
 
 
 class _DB:
-    def __init__(self, rows=(), fail=False, minutes=(), people=(), extensions=(), windows=()):
+    def __init__(self, rows=(), fail=False, minutes=(), people=(), extensions=(), windows=(), user_extensions=(), requests=()):
         self.col = _Col(list(rows), fail)
         self.others = {
             lu.MINUTE_COLLECTION: _Other(minutes, fail), "llm_usage_user_minutely": _Other(people, fail),
             bg.EXTENSIONS_COLLECTION: _Other(extensions, fail), bg.WINDOWS_COLLECTION: _Other(windows, fail),
+            bg.USER_EXTENSIONS_COLLECTION: _Other(user_extensions, fail), bg.REQUESTS_COLLECTION: _Other(requests, fail),
         }
 
     def __getitem__(self, name):
@@ -372,8 +373,9 @@ def test_the_chat_turn_decides_the_budget_first_and_pauses_the_extras_and_the_mo
 def test_the_budget_endpoint_is_thin_and_everyone_signed_in_may_ask_but_only_admins_get_amounts():
     source = _app_source()
     start = source.index('@app.get("/api/budget")')
-    block = source[start: source.index('@app.post("/api/budget/extend")')]
-    assert "Depends(get_current_user)" in block and "budget_guard.public_view(state, admin)" in block and "is_global_admin(" in block
+    block = source[start: source.index("async def _budget_view_with_request")]
+    assert "Depends(get_current_user)" in block and "_budget_view_with_request(username, state, admin)" in block and "is_global_admin(" in block
+    assert "budget_guard.public_view(state, admin)" in source
     assert len(block.splitlines()) < 12
 
 
@@ -685,6 +687,120 @@ def test_an_admin_is_told_when_plus_25_percent_is_on_offer_and_how_far_it_has_go
     state = bg.current_state(_DB([row("m", "2026-10-10", 1_300, 0)]), NOW)
     assert bg.public_view(state, True)["can_extend"] is True
     assert "can_extend" not in bg.public_view(state, False)  # nobody else is shown the lever, or any amount
+
+
+def test_a_person_is_only_offered_a_request_from_their_own_notice_line_and_sees_no_amount(monkeypatch):
+    monkeypatch.setenv("LLM_USER_BUDGET_5H_TOKENS", "1000")
+    below = bg.public_view(bg.current_state(_DB(people=[person_row("jack", at(14), 700)]), at(15), "jack"), False)
+    assert below["can_request_increase"] is False
+    near = bg.public_view(bg.current_state(_DB(people=[person_row("jack", at(14), 850)]), at(15), "jack"), False)
+    assert near["can_request_increase"] is True and near["own_level"] == bg.NOTICE and near["level"] == bg.OK
+    assert "spent" not in near and "limit" not in near
+
+
+def test_with_no_limit_of_their_own_nothing_can_be_requested(monkeypatch):
+    monkeypatch.setenv("LLM_BUDGET_DAILY_TOKENS", "1000")
+    state = bg.current_state(_DB([row("m", "2026-10-10", 900, 0)]), NOW, "jack")
+    assert "can_request_increase" not in bg.public_view(state, False)
+    with pytest.raises(ValueError):
+        bg.request_increase(_DB(), "jack", state, NOW)
+
+
+def test_a_request_is_made_for_the_limit_furthest_along_and_asking_twice_keeps_one(monkeypatch):
+    monkeypatch.setenv("LLM_USER_BUDGET_5H_TOKENS", "1000")
+    monkeypatch.setenv("LLM_USER_BUDGET_DAILY_TOKENS", "100000")
+    db = _DB(people=[person_row("jack", at(14), 900)])
+    state = bg.current_state(db, at(15), "jack")
+    first = bg.request_increase(db, "jack", state, at(15))
+    assert first["scope"] == "my_five" and first["status"] == "pending" and first["until"].startswith("2026-10-10T19:00")
+    assert first["fraction"] == 0.9 and first["user"] == "jack"
+    assert bg.request_increase(db, "jack", state, at(15, 5))["id"] == first["id"]
+    assert len(db.others[bg.REQUESTS_COLLECTION].rows) == 1
+    assert bg.request_status(db, "jack", state, at(15, 6)) == "pending"
+
+
+def test_a_request_below_the_notice_line_is_refused(monkeypatch):
+    monkeypatch.setenv("LLM_USER_BUDGET_5H_TOKENS", "1000")
+    db = _DB(people=[person_row("jack", at(14), 300)])
+    with pytest.raises(ValueError):
+        bg.request_increase(db, "jack", bg.current_state(db, at(15), "jack"), at(15))
+    assert db.others[bg.REQUESTS_COLLECTION].rows == []
+
+
+def test_approving_raises_that_persons_limit_by_25_percent_until_their_window_ends(monkeypatch):
+    monkeypatch.setenv("LLM_USER_BUDGET_5H_TOKENS", "1000")
+    db = _DB(people=[person_row("jack", at(14), 1_100), person_row("sam", at(14), 1_100)])
+    state = bg.current_state(db, at(15), "jack")
+    assert state["level"] == bg.THROTTLED
+    asked = bg.request_increase(db, "jack", state, at(15))
+    done = bg.decide_request(db, "admin@example.com", asked["id"], True, at(15, 10))
+    assert done["status"] == "approved" and done["decided_by"] == "admin@example.com" and done["extra"] == 0.25
+    raised = bg.current_state(db, at(15, 11), "jack")
+    assert raised["limit"] == 1_250 and raised["level"] == bg.NOTICE and raised["fraction"] == 0.88
+    assert bg.public_view(raised, False)["own_extended_by"] == 0.25
+    assert bg.current_state(db, at(15, 11), "sam")["limit"] == 1_000  # nobody else's limit moves
+    bg._reset_cache()
+    ended = bg.current_state(db, at(19, 1), "jack")  # their window has ended: back to the normal limit, counting from zero
+    assert ended["limit"] == 1_000 and ended["spent"] == 0
+
+
+def test_a_second_approval_while_the_first_still_runs_stacks(monkeypatch):
+    monkeypatch.setenv("LLM_USER_BUDGET_5H_TOKENS", "1000")
+    db = _DB(people=[person_row("jack", at(14), 1_300)])
+    for minute in (0, 30):
+        state = bg.current_state(db, at(15, minute), "jack")
+        asked = bg.request_increase(db, "jack", state, at(15, minute))
+        bg.decide_request(db, "admin@example.com", asked["id"], True, at(15, minute + 1))
+    assert bg.current_state(db, at(16), "jack")["limit"] == 1_500
+    assert len(db.others[bg.USER_EXTENSIONS_COLLECTION].rows[0]["grants"]) == 2
+
+
+def test_declining_changes_no_limit_and_blocks_asking_again_for_that_period(monkeypatch):
+    monkeypatch.setenv("LLM_USER_BUDGET_5H_TOKENS", "1000")
+    db = _DB(people=[person_row("jack", at(14), 1_100)])
+    state = bg.current_state(db, at(15), "jack")
+    asked = bg.request_increase(db, "jack", state, at(15))
+    assert bg.decide_request(db, "admin@example.com", asked["id"], False, at(15, 5))["status"] == "declined"
+    assert db.others[bg.USER_EXTENSIONS_COLLECTION].rows == []
+    assert bg.current_state(db, at(15, 6), "jack")["limit"] == 1_000
+    assert bg.request_status(db, "jack", state, at(15, 6)) == "declined"
+    with pytest.raises(ValueError):
+        bg.request_increase(db, "jack", state, at(15, 7))
+
+
+def test_a_decided_or_ended_or_unknown_request_cannot_be_decided(monkeypatch):
+    monkeypatch.setenv("LLM_USER_BUDGET_5H_TOKENS", "1000")
+    db = _DB(people=[person_row("jack", at(14), 1_100)])
+    asked = bg.request_increase(db, "jack", bg.current_state(db, at(15), "jack"), at(15))
+    with pytest.raises(LookupError):
+        bg.decide_request(db, "admin@example.com", "nope", True, at(15, 1))
+    with pytest.raises(ValueError):
+        bg.decide_request(db, "admin@example.com", asked["id"], True, at(19, 30))  # the window ended before an admin looked
+    bg.decide_request(db, "admin@example.com", asked["id"], False, at(15, 2))
+    with pytest.raises(ValueError):
+        bg.decide_request(db, "admin@example.com", asked["id"], True, at(15, 3))
+
+
+def test_the_admins_list_has_waiting_requests_first_and_decided_ones_below(monkeypatch):
+    monkeypatch.setenv("LLM_USER_BUDGET_5H_TOKENS", "1000")
+    db = _DB(people=[person_row("jack", at(14), 1_100), person_row("sam", at(14), 900)])
+    jack = bg.request_increase(db, "jack", bg.current_state(db, at(15), "jack"), at(15))
+    bg.request_increase(db, "sam", bg.current_state(db, at(15, 1), "sam"), at(15, 1))
+    bg.decide_request(db, "admin@example.com", jack["id"], True, at(15, 2))
+    listed = bg.list_requests(db, at(15, 3))
+    assert [doc["user"] for doc in listed["pending"]] == ["sam"] and [doc["user"] for doc in listed["recent"]] == ["jack"]
+    assert bg.list_requests(db, at(20))["pending"] == []  # the window has ended, so nothing is waiting any more
+
+
+def test_the_request_endpoints_are_where_they_should_be():
+    source = _app_source()
+    ask = source[source.index('@app.post("/api/budget/request-increase")'): source.index('@app.post("/api/budget/extend")')]
+    assert "budget_guard.request_increase" in ask and "status_code=409" in ask and "is_global_admin" in ask
+    assert "budget_guard.limit_username(username, admin)" in ask
+    admin_part = source[source.index('@app.get("/api/admin/budget/requests")'):]
+    assert source.index("async def require_global_admin") < source.index('@app.get("/api/admin/budget/requests")')
+    assert admin_part.count("Depends(require_global_admin)") >= 2
+    assert "budget_guard.decide_request" in admin_part
 
 
 def test_the_extend_endpoint_is_admin_only_refuses_when_nothing_is_blocking_and_saves_off_the_event_loop():
