@@ -53,6 +53,30 @@ def _tokens(text: str) -> set:
 # Cleaning a person or a place
 # ---------------------------------------------------------------------------------------------------------------
 
+# Words that are not who someone is with. "i'm going to have work claude review the changes" once came back as with: "work", which passed because the word was in the message.
+_GENERIC_WITH = frozenset({"work", "job", "office", "school", "home", "someone", "somebody", "everyone", "them", "it", "ai", "assistant", "bot", "chatbot", "tool"})
+
+# Roles the saved wording may carry only if the person said one of them: the model once wrote "reviewed by a colleague" for a message that named no colleague. Words in one group
+# stand for each other ("mom" for "mother"), so a plain rewording is not an invention.
+_ROLE_GROUPS = (
+    {"colleague", "coworker", "co-worker", "workmate"}, {"boss", "manager", "supervisor"}, {"teammate", "team-mate"}, {"client", "customer"}, {"friend", "buddy"},
+    {"sister", "sis"}, {"brother", "bro"}, {"mom", "mother", "mum", "mama"}, {"dad", "father", "papa"}, {"parent", "parents"},
+    {"wife", "husband", "spouse", "partner", "girlfriend", "boyfriend", "fiance", "fiancee"}, {"son", "daughter", "kid", "child"},
+    {"cousin"}, {"aunt", "uncle"}, {"grandma", "grandmother", "grandpa", "grandfather"}, {"neighbor", "neighbour"}, {"landlord"}, {"roommate"},
+    {"mentor"}, {"recruiter", "interviewer"}, {"professor", "teacher", "advisor", "adviser"},
+)
+
+
+def invented_role(text: str, user_text: str) -> Optional[str]:
+    """The first role word in `text` (a saved line about something coming up) that the person never said, or None. Used to refuse a line that casts someone the person did not mention."""
+    said = (user_text or "").lower()
+    for group in _ROLE_GROUPS:
+        for role in group:
+            if re.search(rf"\b{re.escape(role)}s?\b", (text or "").lower()) and not any(re.search(rf"\b{re.escape(other)}s?\b", said) for other in group):
+                return role
+    return None
+
+
 def value_problem(value: Any, limit: int) -> Optional[str]:
     """Why this cannot be kept as a person or a place, in words for the person, or None when it can: too long, a link, a street address, a bare pronoun, or anything about health,
     law, money trouble, loss or therapy (the same rule open loops have always had)."""
@@ -181,7 +205,7 @@ def grounded_fields(raw: Dict[str, Any], *, kind: str, user_text: str, previous_
 
     for key, limit in (("with", MAX_WITH_CHARS), ("where", MAX_WHERE_CHARS)):
         value = clean_value(raw.get(key), limit)
-        if not value:
+        if not value or (key == "with" and value.casefold() in _GENERIC_WITH):
             continue
         source = _source_for(_tokens(value), user_tokens, confirmed_tokens)
         if source:

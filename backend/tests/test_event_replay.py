@@ -182,3 +182,24 @@ def test_the_part_is_registered_in_the_memory_eval_and_listed():
 
     assert "events" in me.PARTS
     assert me.to_record({"events": []})["events"] == []
+
+
+# ---- a real misread: "work claude" became "reviewed by a colleague" with "Claude" (2026-10-21) ---------------------------------------------------------
+
+MISREAD = "i think we made a ton of good progress on you today. none of it was super flashy but very foundational. im going to have work claude review the changes tomorrow"
+
+
+def test_a_line_with_a_role_the_person_never_said_is_not_saved():
+    script = Script([{"what": "has work reviewed by a colleague", "due_date": "2026-10-22", "kind": "work", "time_said": "", "with": "Claude", "where": ""}])
+    store = asyncio.run(er.replay_steps(er.ReplayCase("misread", "x", [er.Step(MISREAD)], er.stored_nothing), script.invoke))
+    assert store.events == []
+
+
+def test_a_generic_word_is_not_kept_as_who_it_is_with_but_the_line_itself_still_follows_the_model():
+    script = Script([{"what": "has a work review of changes", "due_date": "2026-10-22", "kind": "work", "time_said": "", "with": "work", "where": ""}])
+    store = asyncio.run(er.replay_steps(er.ReplayCase("misread", "x", [er.Step(MISREAD)], er.stored_nothing), script.invoke))
+    assert len(store.events) == 1 and "with" not in store.events[0]["fields"]
+
+
+def test_the_misread_is_a_replay_case_that_expects_nothing_to_be_kept():
+    assert case("ai_review").stored is er.stored_nothing and "work claude" in case("ai_review").steps[0].user

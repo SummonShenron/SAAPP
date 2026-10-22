@@ -467,3 +467,35 @@ def test_it_is_wired_into_the_reply_prompt_the_stream_and_the_reply_check():
     source = (pathlib.Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
     assert "event_fields.build_events_block(" in source and "open_loops_utils.load_open_loops_cached" in source
     assert "event_fields.reply_issue(" in source and "'event': 'noted'" in source
+
+
+# ---- roles the person never said, and words that are not who something is with ------------------------------------------------------------------------
+
+def test_a_role_word_must_have_been_said_by_the_person_or_a_plain_equivalent():
+    from backend.utils import event_fields as ef
+
+    assert ef.invented_role("has work reviewed by a colleague", "i'll have work claude review it tomorrow") == "colleague"
+    assert ef.invented_role("is meeting a client", "i'm meeting a client at 3") is None
+    assert ef.invented_role("is meeting a coworker", "lunch with my colleague tomorrow") is None            # a plain equivalent
+    assert ef.invented_role("is calling mom", "i'm calling my mother tonight") is None
+    assert ef.invented_role("is calling mom", "i'm calling dad tonight") == "mom"
+    assert ef.invented_role("has a first date", "i have a first date tomorrow") is None
+    assert ef.invented_role("has a boss meeting", "big meeting tomorrow") == "boss"
+    assert ef.invented_role("", "anything") is None
+
+
+def test_a_generic_word_is_never_kept_as_who_it_is_with():
+    from backend.utils import event_fields as ef
+
+    for value in ("work", "Work", "job", "office", "someone", "the AI"):
+        fields = ef.grounded_fields({"with": value}, kind="work", user_text=f"i have a thing with {value} tomorrow")
+        assert "with" not in fields or value == "the AI", value
+    assert ef.grounded_fields({"with": "Sam"}, kind="work", user_text="i have a thing with Sam tomorrow")["with"]["value"] == "Sam"
+    assert ef.grounded_fields({"where": "work"}, kind="work", user_text="a meeting at work tomorrow")["where"]["value"].lower() == "work"          # "work" is fine as a PLACE
+
+
+def test_the_extraction_prompt_says_a_tool_or_assistant_is_not_an_event_and_a_role_must_be_said():
+    from backend.components.constraints import OPEN_LOOP_EXTRACTION_PROMPT as prompt
+
+    assert "Work done or reviewed by a tool, a script or an AI assistant" in prompt and "work Claude" in prompt
+    assert "never add a role they did not say" in prompt and "never a tool or an AI assistant" in prompt

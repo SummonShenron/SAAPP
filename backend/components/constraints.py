@@ -826,9 +826,15 @@ RULES:
 - Ongoing work is not an event: "I'm working on the landing page", "finishing the update", "fixing the bug today" are
   tasks, not something to ask "how did it go?" about. A dated moment inside that work (a launch, a demo, a deadline,
   a presentation) is.
+- Work done or reviewed by a tool, a script or an AI assistant (Claude, ChatGPT, Copilot, CI, a linter) is a task, not an
+  event: "I'll have Claude review the changes tomorrow" is not something to ask "how did it go?" about. People often
+  say "work Claude" or "my work account" for the assistant they use at their job; that is still a tool.
+- A passing mention of a next step inside a message that is mostly about something else (looking back on the day, a
+  comment on progress) is not an event unless it is a dated moment that clearly matters to them.
 - "what": a short third-person phrase of at most 12 words with no personal names and no extra detail, e.g. "has a
   first date", "has a job interview", "is giving a team presentation". A role word like "sister" or "manager" is
-  fine; a name is not.
+  fine only if the user used that word (or the plain equivalent) themselves: never add a role they did not say
+  ("colleague", "boss", "client", "friend"). A name is not fine.
 - "due_date": the real calendar date as YYYY-MM-DD, worked out from TODAY ("tonight" is today). If you cannot
   tell the date, leave the thing out. How to work it out:
   - "the 25th" / "on the third" with no month is the next time that day of the month comes round (this month if it
@@ -842,7 +848,8 @@ RULES:
   the thing, and nothing else. Leave each one as "" unless it is there in the user's own words: never infer a time, a person or a
   place, never take one from what the assistant said (except a question they confirmed), never guess "7" from "tonight".
   - "time_said": the time exactly as they wrote it ("7", "7:30pm", "noon", "19:00"). Not a time of day word ("evening").
-  - "with": who it is with, as they spelled it (a name, or a role like "my sister"). Not the user themselves.
+  - "with": who it is with, as they spelled it (a name, or a role like "my sister"). Not the user themselves, never a generic
+    word like "work", "job" or "office", and never a tool or an AI assistant.
   - "where": the place (a venue, a neighbourhood, a city). Never a street address, a home address or a phone number.
 - A message that only adds or changes a detail of something ALREADY NOTED ("the date is at 7 silly", "it's at Tidos", "it's
   with Sam, not Ashlyn") is not a new thing: return that same thing again, with the same "what", "due_date" and "kind" as the

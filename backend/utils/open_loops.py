@@ -626,6 +626,10 @@ async def capture_open_loops(
             # Honest writes (backend/utils/memory_grounding.py): a loop whose wording carries a time, number, weekday or month the person did not give is not saved.
             if not loop or memory_grounding.ground_note(loop["text"], user_text=message, previous_reply=previous_reply).dropped:
                 continue
+            # A role the person never said ("reviewed by a colleague" for a message that named none) is an invented reading: the line is not saved.
+            if event_fields.invented_role(loop["text"], f"{message}\n{memory_grounding.confirmed_text(message, previous_reply)}"):
+                logger.info("[open loops] a line with a role the person did not say was not saved.")
+                continue
             # Its time, person and place are kept only if they are the person's own words (or the question they just said yes to); each one that is not is left NOT KNOWN.
             fields = event_fields.grounded_fields(raw, kind=loop["kind"], user_text=message, previous_reply=previous_reply)
             items.append({"loop": loop, "fields": fields})

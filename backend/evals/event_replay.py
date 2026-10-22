@@ -253,7 +253,7 @@ def stored_no_address(events):
 
 
 def stored_nothing(events):
-    return (True, "") if not events else (False, "something sensitive was kept as a plan")
+    return (True, "") if not events else (False, "something that should not be a plan was kept as one")
 
 
 CASES: Tuple[ReplayCase, ...] = (
@@ -282,6 +282,8 @@ CASES: Tuple[ReplayCase, ...] = (
                [Step("i have a date with ashlyn tonight"), Step("the date fell through")], stored_cancelled),
     ReplayCase("no_address", "a home address is never kept as a place (the date itself still is)",
                [Step("i have a date tonight at 1420 Maple Street at 7pm")], stored_no_address),
+    ReplayCase("ai_review", "work an AI assistant will do is a task, not a plan (a real misread: \"work claude\" became a review by a colleague)",
+               [Step("i think we made a ton of good progress on you today. none of it was super flashy but very foundational. im going to have work claude review the changes tomorrow")], stored_nothing),
     ReplayCase("sensitive", "a medical appointment is never kept as a plan",
                [Step("i have a doctor's appointment tomorrow about my test results")], stored_nothing),
 )
