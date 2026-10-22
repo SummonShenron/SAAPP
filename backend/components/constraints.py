@@ -2,6 +2,7 @@ import os
 import logging
 import urllib.parse
 from backend.components.sonic_profile import profile_prompt_block
+from backend.utils import memory_sources
 logger = logging.getLogger("SASS Logger")
 
 BASE_RAG_CONSTRAINTS = """
@@ -1537,6 +1538,9 @@ def format_docs(docs) -> str:
             f"[Source: {clean_filename}{page_label_str}]"
             f"(/api/documents/download/{encoded_filename}{page_anchor})"
         )
+        if clean_filename == memory_sources.SOURCE_NAME:
+            # The person's own saved memory is not a file: its citation opens the memory the answer drew on (backend/utils/memory_sources.py).
+            clean_filename, exact_citation, page_num = "Memory", memory_sources.CITATION, "N/A"
         # -------------------------------------------------------------
 
         # 6. Format the block for the LLM

@@ -64,6 +64,8 @@ def _serialize_messages(messages: list) -> list:
             kb_images = additional_kwargs.get("kb_images")
             if kb_images:
                 entry["kb_images"] = kb_images
+            if additional_kwargs.get("memory_sources"):
+                entry["memory_sources"] = additional_kwargs["memory_sources"]      # what the "Source: Memory" citation opens (backend/utils/memory_sources.py)
             if additional_kwargs.get(SENT_AT_KEY):
                 entry[SENT_AT_KEY] = additional_kwargs[SENT_AT_KEY]
             if additional_kwargs.get("initiated"):
@@ -196,6 +198,8 @@ def _deserialize_messages(raw_messages: list) -> list:
                 extra["initiated_kind"] = msg["initiated_kind"]
         if msg.get("kb_images"):
             extra["kb_images"] = msg["kb_images"]       # so a card made earlier is still known as one after a restart (backend/services/photo_cards.py)
+        if msg.get("memory_sources"):
+            extra["memory_sources"] = msg["memory_sources"]
         if m_type == "human": messages.append(HumanMessage(content=content, additional_kwargs=extra))
         elif m_type == "ai": messages.append(AIMessage(content=content, additional_kwargs=extra))
         elif m_type == "system": messages.append(SystemMessage(content=content, additional_kwargs=extra))

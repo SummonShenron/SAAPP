@@ -106,6 +106,7 @@ from backend.utils.agent_utils import (
 )
 from backend.services.react_loop import run_react_loop, _MAX_BATCH_SIZE
 from backend.utils.library_allowance import LibraryAllowance
+from backend.utils import memory_sources
 from backend.services import steering
 from backend.services import image_gen, library_search, native_loop, ops_incidents, photo_cards
 from backend.services import native_tools as native_tools_module
@@ -1168,7 +1169,8 @@ def memory_recall_node(state: GraphState, memory_vector_store=None) -> dict:
 
         doc = Document(
             page_content=f"SYSTEM MEMORY REPORT:\n{report}",
-            metadata={"source": "user_memory", "priority": True}
+            # What the "Source: Memory" citation shows when clicked: the notes that matched and the saved facts that relate to the question (backend/utils/memory_sources.py).
+            metadata={"source": "user_memory", "priority": True, "memory_sources": memory_sources.build(question, semantic_hits, facts)},
         )
         current_docs = state.get("documents", [])
         current_docs.append(doc)

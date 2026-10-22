@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useEffect, useMemo, useState, useRef } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAffiliateScope } from '../hooks/useAffiliateScope';
 import { useLocalWorkspace } from '../hooks/useLocalWorkspace';
@@ -16,7 +16,8 @@ import { getWelcomeCards } from '../utils/Example_List';
 import type { WelcomeCard } from '../welcomeCards';
 import { HEIC_NOTICE, isUnreadableHeic, shrinkImageFile } from '../utils/imageShrink';
 import MeetingControl from '../components/MeetingControl';
-import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type BudgetView, type KnowledgeBase } from '../api';
+import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type BudgetView, type KnowledgeBase, type MemorySources } from '../api';
+import MemorySourceDialog from '../components/MemorySourceDialog';
 import BudgetBanner from '../components/BudgetBanner';
 import UsageRing from '../components/UsageRing';
 import TracePanel, { type TraceStep } from '../components/TracePanel';
@@ -59,6 +60,8 @@ interface Message {
   // One or two short lines the server sends after a reply when something coming up was saved or changed ("Noted: you have a date today with Ashlyn at Tidos, time not known."),
   // so the person can see what was kept and say if it is wrong. Not part of the conversation text and not kept when the page is reloaded.
   noted?: string[];
+  // The memory a "Source: Memory" citation in this reply opens (kept with the reply, so it still works after a reload).
+  memorySources?: MemorySources;
 }
 
 const STEER_STATUS_LABEL: Record<NonNullable<Message['steer']>, string> = {
@@ -139,6 +142,7 @@ function mapServerMessage(m: any): Message {
     text: m.content,
     images: images.length > 0 ? images : undefined,
     initiated: m.initiated === true ? true : undefined,
+    memorySources: m.memory_sources && (m.memory_sources.notes?.length || m.memory_sources.facts?.length) ? m.memory_sources : undefined,
   };
 }
 
@@ -237,6 +241,9 @@ const ChatMessageList = React.memo(function ChatMessageList({
   chatWindowRef, messagesEndRef, attachmentsRef, handleSendMessageRef, handleFeedbackRef, getTokenRef,
   canEditLocal, localEditActionsRef,
 }: ChatMessageListProps) {
+  // The reply whose "Source: Memory" citation was clicked: its viewer is open while this is set.
+  const [memoryViewer, setMemoryViewer] = useState<Message | null>(null);
+  const closeMemoryViewer = useCallback(() => setMemoryViewer(null), []);
   if (!hasChatted) return null;
 
   return (
@@ -331,7 +338,9 @@ const ChatMessageList = React.memo(function ChatMessageList({
                       const finalHref = href?.startsWith('/')
                         ? `${BASE_URL.replace(/\/$/, '')}${href}`
                         : href;
-                      const isDownloadLink = finalHref?.includes('/api/documents/download/');
+                      // The citation for the person's own memory is not a file: it opens the memory the answer drew on. (Replies saved before this carry the old download link.)
+                      const isMemoryLink = href === '#memory-source' || finalHref?.endsWith('/api/documents/download/user_memory');
+                      const isDownloadLink = !isMemoryLink && finalHref?.includes('/api/documents/download/');
                       const normalizedLabel = React.Children.toArray(children)
                         .map((child) => (typeof child === 'string' ? child : ''))
                         .join(' ')
@@ -368,6 +377,14 @@ const ChatMessageList = React.memo(function ChatMessageList({
                           }
                         }
                       };
+
+                      if (isMemoryLink) {
+                        return (
+                          <button type="button" className="citation-link citation-link-document citation-link-memory" onClick={() => setMemoryViewer(msg)}>
+                            Source: Memory
+                          </button>
+                        );
+                      }
 
                       return (
                         <a
@@ -514,7 +531,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
         )
       )}
       <div ref={messagesEndRef} />
-      
+      {memoryViewer && <MemorySourceDialog sources={memoryViewer.memorySources} onClose={closeMemoryViewer} />}
     </div>
   );
 });
@@ -1645,6 +1662,18 @@ useEffect(() => {
                   const lastIndex = updated.length - 1;
                   if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
                     updated[lastIndex] = { ...updated[lastIndex], text: '' };
+                  }
+                  return updated;
+                });
+              }
+              if (payload.event === 'memory_sources') {
+                // The notes and saved facts behind a "Source: Memory" citation in the reply being written (backend/utils/memory_sources.py).
+                const sources: MemorySources = { notes: payload.notes || [], facts: payload.facts || [] };
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const lastIndex = updated.length - 1;
+                  if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
+                    updated[lastIndex] = { ...updated[lastIndex], memorySources: sources };
                   }
                   return updated;
                 });

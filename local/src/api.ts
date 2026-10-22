@@ -1045,6 +1045,12 @@ export interface GoalView {
   revision: number;
 }
 
+/** What a "Source: Memory" citation opens: the notes that matched and the saved facts that relate (backend/utils/memory_sources.py). */
+export interface MemorySources {
+  notes: Array<{ text: string; when: string | null }>;
+  facts: Array<{ id: string; text: string; category: string }>;
+}
+
 export interface SonicHealth {
   days: number;
   generated_at: string;

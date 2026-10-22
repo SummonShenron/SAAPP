@@ -144,7 +144,7 @@ from backend.utils import routines as routines_utils
 from backend.utils import event_calendar, event_fields, name_aliases
 from backend.utils import self_report as self_report_utils
 from backend.utils import user_activity
-from backend.utils import code_outcomes, feeling_questions, goals as goals_utils, offer_response
+from backend.utils import code_outcomes, feeling_questions, goals as goals_utils, memory_sources, offer_response
 from backend.utils import followups as followups_utils
 from backend.services import routine_scheduler
 from backend.services import user_task_scheduler
@@ -1224,6 +1224,10 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
 
             if kb_images:
                 yield f"data: {json.dumps({'event': 'kb_images', 'images': kb_images})}\n\n"
+            # What a "Source: Memory" citation shows when clicked: the notes that matched and the saved facts that relate to the question (backend/utils/memory_sources.py).
+            memory_source_view = None if is_guest_username(username) else memory_sources.from_documents(documents_sorted)
+            if memory_source_view:
+                yield f"data: {json.dumps({'event': 'memory_sources', **memory_source_view})}\n\n"
 
             # Announce LLM generation start
             yield f"data: {json.dumps({'event': 'node_progress', 'node': 'formatter_node', 'title': 'Writing the answer...', 'detail': f'Synthesizing final answer for {question[:30]}...'})}\n\n"
@@ -1626,6 +1630,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 tally(turn_counts, "self_mention")
             if kb_images:
                 ai_message.additional_kwargs["kb_images"] = kb_images
+            if memory_source_view:
+                ai_message.additional_kwargs["memory_sources"] = memory_source_view  # so the citation still opens after a reload
             chat_sessions[history_key].append(ai_message)
             await asyncio.to_thread(save_conversation_turn, username, session_id, chat_sessions[history_key])
             # A false "I can't edit files" reply would otherwise be remembered and recalled into
