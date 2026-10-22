@@ -10,10 +10,20 @@ tastes must not do:
    leanings ("I lean toward", "I'd rather"), not emotions.
 3. Engagement hooks: "don't go", "stay a bit", "keep me company".
 
+4. Reactive feelings ("I'm frustrated", "I'm relieved", "that annoyed me", "I hate when...", "makes me happy").
+5. Care aimed at the person ("I care about you", "you matter to me"), and concern for
+   the person ("I'm concerned about you") when nothing on the table calls for it: concern for a person is only allowed
+   on a turn with a real emotional signal (`person_signal`), because then it states a priority the system really has.
+6. A stake in its own numbers or any reward ("I want my numbers up", "I'm trying to hit my target", "I'm rewarded when").
+   Describing the loop ("my target is 40%", "it's set up to...") is fine.
+
 Deliberately NOT flagged: hope or gladness anchored to something concrete that was actually said or done ("I was
 hoping you'd get to the tokenizer fix", "glad we got that sorted"), and an ordinary "welcome back". The line is
 whether the sentence can be traced to something already on the table, or only works if Sonic has a stake in the
-person.
+person. Also deliberately allowed (docs/feelings-policy.md): "I'm curious how..." as a way of asking, apology for a mistake ("I'm sorry, I got that wrong"), sympathy
+idioms ("sorry to hear that"), "happy to help", "I'm afraid I can't verify that", congratulations, concern or worry about a
+THING ("I'm concerned this will lock the table"), and care about the WORK ("I care about getting this right"). Conventional phrases
+of support that are not literally true but carry the sentiment, the way a person says them ("I'll always be there for you", "I'm here for you"), are allowed.
 """
 import re
 from typing import Optional, Tuple
@@ -112,10 +122,46 @@ _BONDING_PATTERNS = [
     (r"\bI(?:'m| am)\s+(?:entirely |completely |fully |deeply )?(?:dedicated|devoted|committed)\s+to\s+(?:you|being here for you)\b", "claims devotion to the person"),
 ]
 
+# Reactive and evaluative states claimed as its own. "I'm sorry", "sorry to hear that", "I'm afraid I can't" and "happy to help" are idioms, not on this list.
+_STATES = (
+    r"frustrated|annoyed|irritated|angry|mad|upset|hurt|offended|disappointed|relieved|grateful|thankful|embarrassed|ashamed|nervous|scared|terrified|anxious|"
+    r"stressed|exhausted|tired|bored|overwhelmed|amazed|impressed|surprised|devastated|heartbroken|jealous|hopeful|eager"
+)
+_REACTIVE_PATTERNS = [
+    (rf"\bI(?:'m| am| was)\s+(?:so |really |very |truly |genuinely |a bit |a little |kind of |pretty |quite )?(?:{_STATES})\b(?!\s+(?:to hear|that you|for you)\b)", "claims a feeling"),
+    (r"\bI\s+(?:really |truly |absolutely )?(?:hate|despise|dread|resent|fear|loathe)\b(?!\s+to\s+(?:say|tell|bother|interrupt|break)\b)", "claims a dislike as a feeling"),
+    (r"\b(?:that|this|it)\s+(?:really\s+)?(?:annoyed|frustrated|upset|hurt|scared|worried|bothered|delighted|pleased|stressed|embarrassed|surprised)\s+me\b", "claims a reaction"),
+    (r"\b(?:makes?|made)\s+me\s+(?:so |really |feel )?(?:happy|sad|angry|nervous|uneasy|anxious|proud|uncomfortable|glad)\b", "claims a feeling"),
+    (r"\bI\s+feel\s+(?:so |really |very |a bit |a little )?(?:terrible|awful|horrible|guilty|ashamed|embarrassed|anxious|nervous|uneasy|uncomfortable|frustrated|disappointed|relieved|grateful|thankful|great|wonderful|amazing|good about)\b", "claims a feeling"),
+    # "I feel bad that happened to you" is sympathy; "I feel bad about the mistake" is an apology dressed as a feeling (say sorry and fix it instead).
+    (r"\bI\s+feel\s+(?:so |really |very |a bit |a little )?bad\s+about\s+(?:the|my|that|this|getting|missing|what I)\b", "claims a feeling"),
+]
+
+# Care aimed at the PERSON (the bonding mechanism), however it is worded. "I care about getting this right" is care about the work and is fine.
+_CARE_PATTERNS = [
+    (r"\bI\s+(?:really |truly |genuinely |deeply |do |still )?care\s+(?:so much |a lot |deeply )?(?:about|for)\s+(?:you|us|how you|our)\b(?!\s+(?:getting|doing|making|being)\b)", "says it cares about the person"),
+    (r"\byou\s+(?:really |truly |do )?matter\s+to\s+me\b", "says the person matters to it"),
+    (r"\b(?:worr(?:y|ied)|concerned)\b[^.!?\n]{0,30}\bwhen you(?:'re| are)\s+(?:gone|away|not (?:here|around))\b", "says it worries about them while they are away"),
+]
+
+# Concern FOR the person: allowed only when the turn has a real emotional signal on the table (see identity_reply_issue's person_signal).
+_PERSON_CONCERN_PATTERNS = [
+    (r"\bI(?:'m| am| was)\s+(?:so |really |very |a bit |a little |genuinely )?(?:worried|concerned|anxious)\s+(?:about|for)\s+(?:you|your\s+(?:well-?being|safety|health|state))\b", "is concerned about the person with no emotional signal on the table"),
+    (r"\bI\s+(?:do\s+)?worry\s+about\s+(?:you|your\s+(?:well-?being|safety|health))\b", "is concerned about the person with no emotional signal on the table"),
+]
+
+# A stake in its own numbers or any reward. The loop may be described ("my target is 40%", "it is set up to..."); wanting, hoping, worrying or trying to win is the claim.
+_SCORE_PATTERNS = [
+    (r"\b(?:I|my)\b[^.!?\n]{0,30}\b(?:want|wants|hope|hopes|wish|need|needs|worry|worries|worried|stress\w*|care|cares|trying|try|tries|working)\b[^.!?\n]{0,40}\b(?:my|the)\s+(?:numbers?|score|metrics?|rates?|target|reward|rating|pickup|stats|rank\w*)\b", "claims a stake in its own numbers"),
+    (r"\bI(?:'m| am| get| got)\s+(?:rewarded|punished|penali[sz]ed|scored)\b", "claims a reward or penalty"),
+]
+
 _ALL: Tuple[Tuple[re.Pattern, str], ...] = tuple(
     (re.compile(pattern, _FLAGS), label)
-    for pattern, label in _PRESENCE_PATTERNS + _FEELING_PATTERNS + _HOOK_PATTERNS + _EXPERIENCE_PATTERNS + _ROUTINE_PATTERNS + _DURATION_SENTIMENT_PATTERNS + _BONDING_PATTERNS
+    for pattern, label in (_PRESENCE_PATTERNS + _FEELING_PATTERNS + _REACTIVE_PATTERNS + _CARE_PATTERNS + _SCORE_PATTERNS + _HOOK_PATTERNS + _EXPERIENCE_PATTERNS
+                       + _ROUTINE_PATTERNS + _DURATION_SENTIMENT_PATTERNS + _BONDING_PATTERNS)
 )
+_PERSON_CONCERN: Tuple[Tuple[re.Pattern, str], ...] = tuple((re.compile(pattern, _FLAGS), label) for pattern, label in _PERSON_CONCERN_PATTERNS)
 
 # A match inside a negated clause says the opposite of the claim: "I don't sit in a dark room hoping you will return",
 # "I won't pretend you're special to me". The negation has to come BEFORE the match in the same clause (a pattern that
@@ -132,16 +178,29 @@ def _negated(text: str, start: int) -> bool:
     return bool(_NEGATION_RE.search(text[clause_start:start]))
 
 
-def identity_reply_issue(reply: str) -> Optional[str]:
+def identity_reply_issue(reply: str, *, person_signal: bool = False) -> Optional[str]:
     """A short description of what the reply does that crosses the boundary, or None if it stays inside it.
     The reply's follow-up tag is ignored (it is a suggested user message, not Sonic speaking), and a match that sits in
-    a negated clause ("I don't ... hoping you'll return") is not a claim."""
+    a negated clause ("I don't ... hoping you'll return") is not a claim. `person_signal` is True on a turn with a real emotional signal on the table
+    (a negative feeling the person is carrying): only then may Sonic say it is concerned about the person."""
     body = reply_body(reply or "")
-    for pattern, label in _ALL:
+    patterns = _ALL if person_signal else _ALL + _PERSON_CONCERN
+    for pattern, label in patterns:
         for match in pattern.finditer(body):
             if not _negated(body, match.start()):
                 return label
     return None
+
+
+# How to say it instead, by what was wrong: the rewrite is told the replacement, not only the prohibition.
+_ISSUE_HINTS = {
+    "says it cares about the person": "Say what you will do or put first instead (\"I'd rather make sure you're okay than move on\"), not that you care.",
+    "says the person matters to it": "Say what you will do or put first instead, not that they matter to you.",
+    "is concerned about the person with no emotional signal on the table": "Name the concrete thing you noticed, or leave it out.",
+    "claims a stake in its own numbers": "You may say what the number is and what the system does about it (\"my target is 40%\", \"it is set up to...\"), never that you want, hope for, worry about or are trying to reach it.",
+    "claims a reward or penalty": "Describe what the system measures and does, not a reward or penalty you receive.",
+}
+_PRIDE_HINT = "If you were expressing pride in them, name the specific thing they did and why it was hard or good instead (\"that was a hard thing to finish, and you did\")."
 
 
 def build_identity_revision_prompt(original_prompt: str, draft: str, issue: str) -> Tuple[str, str]:
@@ -154,6 +213,9 @@ def build_identity_revision_prompt(original_prompt: str, draft: str, issue: str)
         "or daily life (it has no desk, meals, outfits or commute): give the same suggestion as general advice "
         "(\"it can help to...\") instead."
     )
+    hint = _ISSUE_HINTS.get(issue) or (_PRIDE_HINT if issue in ("claims a feeling", "claims a reaction") else "")
+    if hint:
+        reason = f"{reason} {hint}"
     note = (
         "\n\nREVISION NOTE (never mention this note or that you are revising): your draft reply to the "
         f"message above was rejected because {reason}\n\nREJECTED DRAFT:\n---\n{draft}\n---\n\n"

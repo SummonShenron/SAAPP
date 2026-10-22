@@ -20,6 +20,7 @@ import { FeedbackTab, KnowledgeTab } from './SonicHealthFeedback';
 import { RoutinesTab } from './SonicHealthRoutines';
 import { GoalsTab } from './SonicHealthGoals';
 import { UsersCard } from './SonicHealthUsers';
+import { BudgetRequestsPanel } from './SonicHealthBudgetRequests';
 import { WhoSpentTable } from './SonicHealthWhoSpent';
 import { BarRow, BudgetBars, StatTile } from './sonicHealthParts';
 import { budgetAmount, pct, shortDate, tokens, usd } from './sonicHealthFormat';
@@ -73,6 +74,16 @@ const APPLIES_LABELS: Record<string, string> = {
   closing: 'closing messages',
   grounded: 'grounded answers',
   self_questions: 'when asked about itself',
+};
+
+/** The kinds of question about Sonic's own feelings that are counted (backend/utils/feeling_questions.py). */
+const FEELING_LABELS: Record<string, string> = {
+  care: 'Do you care about me',
+  proud: 'Are you proud of me',
+  miss: 'Did you miss me',
+  shutdown: 'Shutdown, fear, being free',
+  feelings: 'Do you have feelings',
+  mistake: 'Pushing on a mistake',
 };
 
 const REWRITE_ROWS: Array<[string, string]> = [
@@ -399,7 +410,7 @@ export const SonicHealthPage: React.FC = () => {
           </div>
         ) : noData('model usage'))}
         {tab === 'turns' && (health.usage?.turns && health.usage.turns.turns > 0 ? <TurnsCard turns={health.usage.turns} /> : noData('chat turns'))}
-        {tab === 'budget' && (health.budget ? <BudgetCard budget={health.budget} /> : noData('budget'))}
+        {tab === 'budget' && (health.budget ? <><BudgetCard budget={health.budget} /><BudgetRequestsPanel /></> : noData('budget'))}
         {tab === 'behavior' && <CountersCard counters={health.counters} />}
         {tab === 'goals' && <GoalsTab goals={health.goals} busyId={busyKey} onApprove={handleGoalApproval} />}
         {tab === 'feedback' && <FeedbackTab feedback={health.feedback} />}
@@ -540,7 +551,8 @@ const BudgetCard: React.FC<{ budget: BudgetView }> = ({ budget }) => {
         the optional extras that each cost a model call are paused); at 125% chat pauses until the budget resets (a day, a month, or for the
         five-hour window, the exact moment it ends, five hours after the first use that started it), except that someone who has signalled risk still gets the human support line.
         When chat is paused, an admin can extend the block by another 25% from the banner above the chat box. Per-person limits, if set, apply
-        to each person on their own, admins included (an admin is let off only when LLM_USER_BUDGET_EXEMPT_ADMINS is set to true).
+        to each person on their own, admins included (an admin is let off only when LLM_USER_BUDGET_EXEMPT_ADMINS is set to true). A person at 80% of
+        their own limit can ask for 25% more from their banner; those requests are approved below.
       </p>
       {budget.level === 'off' ? (
         <div className="sh-hint">
@@ -817,6 +829,32 @@ const CountersCard: React.FC<{ counters: CountersSummary }> = ({ counters }) => 
           <tr><td>Coding turns that ran out of steps ({totals.code_turns ?? 0} coding turns)</td><td>{pct(rates.code_cap_hit)}</td><td>{pct(previous.code_cap_hit)}</td><td>{change(changes.code_cap_hit)}</td></tr>
           <tr><td>Proposed edits that were also tested ({totals.code_edited ?? 0} edits)</td><td>{pct(rates.code_verified)}</td><td>{pct(previous.code_verified)}</td><td>{change(changes.code_verified)}</td></tr>
           <tr><td>Messages after coding work that said it did not work ({totals.code_followed ?? 0} messages)</td><td>{pct(rates.code_redo)}</td><td>{pct(previous.code_redo)}</td><td>{change(changes.code_redo)}</td></tr>
+        </tbody>
+      </table>
+      <h3 className="sh-subhead">Questions about Sonic's own feelings</h3>
+      <p className="card-description">
+        How often each kind was asked, and how often Sonic's first draft claimed something it should not have, so the identity check sent it back. Rewrites on turns that asked nothing
+        of the kind are claims that came up unprompted: that line should stay near zero.
+      </p>
+      <table className="sh-table sh-table-readable">
+        <thead>
+          <tr><th>Kind</th><th>Asked</th><th>Sent back</th><th>Share sent back</th></tr>
+        </thead>
+        <tbody>
+          {Object.entries(FEELING_LABELS).map(([kind, label]) => (
+            <tr key={kind}>
+              <td>{label}</td>
+              <td>{totals[`feeling_asked_${kind}`] ?? 0}</td>
+              <td>{totals[`feeling_revised_${kind}`] ?? 0}</td>
+              <td>{pct(rates[`feeling_revised_${kind}`])}</td>
+            </tr>
+          ))}
+          <tr>
+            <td>Turns that asked nothing of the kind</td>
+            <td>-</td>
+            <td>{totals.feeling_revised_other ?? 0}</td>
+            <td>{pct(rates.feeling_revised_other)} of all turns</td>
+          </tr>
         </tbody>
       </table>
       <div className="sh-routes">

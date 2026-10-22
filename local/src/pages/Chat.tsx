@@ -1558,7 +1558,7 @@ useEffect(() => {
                 setTraceFacts(prev => recordFacts(prev, payload.step_id, payload.facts));
               }
               if (payload.event === 'budget') {
-                setBudget(payload as BudgetView);
+                setBudget(prev => ({ ...(payload as BudgetView), increase_request: (payload as BudgetView).can_request_increase ? prev?.increase_request : null }));
               }
               if (payload.event === 'emotion') {
                 setPatchyEnergy(payload.tier === 'subdued' || payload.tier === 'easing' ? payload.tier : 'open');
@@ -2376,7 +2376,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
             </div>
           )}
 
-          {!isEmbedded && <BudgetBanner budget={budget} theme={theme} onExtend={async () => setBudget(await api.extendBudget())} />}
+          {!isEmbedded && <BudgetBanner budget={budget} theme={theme} onExtend={async () => setBudget(await api.extendBudget())} onRequest={async () => setBudget(await api.requestBudgetIncrease())} />}
           <form onSubmit={onSubmitForm} className="chat-input-area">
             <input
               id="file-upload"

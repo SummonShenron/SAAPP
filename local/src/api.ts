@@ -734,6 +734,45 @@ export interface BudgetView {
   can_extend?: boolean;
   /** Admins only: how far the block line has already been raised (0.25 = +25%). */
   extended_by?: number;
+  /** A person with a limit of their own who has reached the notice line may ask an admin for +25% on it. */
+  can_request_increase?: boolean;
+  /** Their own limit is currently raised by this much (0.25 = +25%) until the window or day ends. */
+  own_extended_by?: number;
+  /** Where their request for more stands: waiting for an admin, or declined for this period. */
+  increase_request?: 'pending' | 'declined' | null;
+}
+
+export interface BudgetIncreaseRequest {
+  id: string;
+  user: string;
+  scope: 'my_day' | 'my_five';
+  status: 'pending' | 'approved' | 'declined';
+  requested_at: string;
+  until: string;
+  unit?: 'usd' | 'tokens';
+  spent?: number;
+  limit?: number;
+  fraction?: number;
+  decided_by?: string;
+  decided_at?: string;
+  extra?: number;
+}
+
+export interface BudgetRequests {
+  pending: BudgetIncreaseRequest[];
+  recent: BudgetIncreaseRequest[];
+}
+
+/** Asks the admins to raise this person's own limit by 25% for the window or day that is furthest along. Returns the new budget view. */
+export async function requestBudgetIncrease(): Promise<BudgetView> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/budget/request-increase`, { method: "POST", headers: { ...authHeaders } });
+  if (!res.ok) {
+    let detail = '';
+    try { detail = (await res.json())?.detail ?? ''; } catch { /* no JSON body */ }
+    throw new Error(typeof detail === 'string' && detail ? detail : `Could not send the request (${res.status}).`);
+  }
+  return res.json();
 }
 
 export async function getBudget(): Promise<BudgetView> {
@@ -1044,6 +1083,14 @@ async function adminRequest<T>(path: string, method: 'GET' | 'POST' | 'PUT' | 'D
     throw new Error(typeof detail === 'string' && detail ? detail : `Request failed (${res.status}).`);
   }
   return res.json();
+}
+
+export function getBudgetRequests(): Promise<BudgetRequests> {
+  return adminRequest<BudgetRequests>('/api/admin/budget/requests', 'GET');
+}
+
+export function decideBudgetRequest(id: string, decision: 'approve' | 'decline'): Promise<BudgetIncreaseRequest> {
+  return adminRequest<BudgetIncreaseRequest>(`/api/admin/budget/requests/${encodeURIComponent(id)}/${decision}`, 'POST');
 }
 
 export function getSonicHealth(days: number): Promise<SonicHealth> {
@@ -2077,6 +2124,9 @@ export const api = {
   updateOpsDigest,
   getBudget,
   extendBudget,
+  requestBudgetIncrease,
+  getBudgetRequests,
+  decideBudgetRequest,
   verifySession,
   requestConversationOpening,
   getTargetRepo,

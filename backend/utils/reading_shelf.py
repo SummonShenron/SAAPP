@@ -780,12 +780,20 @@ _SHELF_ITEM_CLAIM_RE = re.compile(
 )
 
 
-def unbacked_reading_claim(reply: str, shelf_in_prompt: bool) -> Optional[str]:
+# The reading refresh routine's own result, said as a fact about what the server did ("the reading refresh ran around 12:30 AM and added a piece to the shelf"). It is true when a status or
+# routines block with that result is in the prompt, so it is not an invented read there.
+_REFRESH_FACT_RE = re.compile(r"\b(?:the |my )?reading (?:refresh|job|routine|check)\b[^.!?\n]{0,120}?\b(?:added|brought in|picked up|put)\b[^.!?\n]{0,60}?\bshelf\b", re.IGNORECASE)
+
+
+def unbacked_reading_claim(reply: str, shelf_in_prompt: bool, refresh_reported: bool = False) -> Optional[str]:
     """A reply that says it read something when no shelf item was put in front of it this turn: an invented read, however plausible.
-    (A narrow pattern: "when I read the diff" or "I read your message" are about the conversation and are fine.)"""
+    (A narrow pattern: "when I read the diff" or "I read your message" are about the conversation and are fine.) `refresh_reported` is True when the prompt carries the real
+    result of the reading refresh (a status or routines answer): saying that the refresh added a piece to the shelf is then a fact, not a claim."""
     if shelf_in_prompt:
         return None
     body_text = reply_body(reply or "")
+    if refresh_reported:
+        body_text = _REFRESH_FACT_RE.sub(" ", body_text)
     if _READING_CLAIM_RE.search(body_text) or _SHELF_ITEM_CLAIM_RE.search(body_text):
         return "claims to have read a piece that is not on its reading shelf"
     return None
@@ -806,11 +814,11 @@ def offer_has_items(offer: Optional[Dict[str, Any]]) -> bool:
     return bool(offer.get("item") or offer.get("items"))
 
 
-def shelf_reply_issue(reply: str, shelf_in_prompt: bool) -> Optional[str]:
+def shelf_reply_issue(reply: str, shelf_in_prompt: bool, refresh_reported: bool = False) -> Optional[str]:
     """What is wrong with a reply as far as the reading shelf goes: an invented read when no item was in front of the model, or, when one was,
     a verdict on it or an order to read it (it reports what it read; it does not review it or tell anyone what to do)."""
     if not shelf_in_prompt:
-        return unbacked_reading_claim(reply, False)
+        return unbacked_reading_claim(reply, False, refresh_reported)
     if _JUDGING_RE.search(reply_body(reply or "")):
         return "judges the piece it read or tells them to read it, when it should only say what it was about"
     return None

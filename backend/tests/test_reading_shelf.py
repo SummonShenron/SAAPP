@@ -768,7 +768,7 @@ def test_the_chat_endpoint_offers_the_shelf_only_on_the_gated_path_and_records_i
     assert gate.index("offer_response.pacing") < gate.rindex("offer_for_turn,")                    # the per-person gap is checked before the shelf is read for an offer
     marking = source[source.index("elif shelf_offer and shelf_utils.reply_used_item"):]
     assert marking.index("CURIOSITY_MARK] = True") < marking.index("SHELF_MARK] = True") < marking.index("record_offer") < marking.index("mark_offered")
-    assert "shelf_utils.shelf_reply_issue(full_response, shelf_utils.offer_has_items(shelf_offer))" in source          # an invented read is sent back, even when the shelf block was an empty one
+    assert "shelf_utils.shelf_reply_issue(" in source and "shelf_utils.offer_has_items(shelf_offer), refresh_reported=" in source          # an invented read is sent back, even when the shelf block was an empty one
     assert "shelf_refresh.maybe_refresh(" in source and 'budget_guard.allows("shelf_refresh"' in source   # lazy refresh, off the critical path, budget-aware
 
 
@@ -853,3 +853,21 @@ def test_the_server_starts_the_schedule_with_the_cost_guard_and_stops_it_on_shut
     assert "shelf_task = spawn_background_task(_run_shelf_schedule())" in source and "shelf_task.cancel()" in source
     schedule = source[source.index("async def _run_shelf_schedule"):source.index("# 2. Define the startup/shutdown logic")]
     assert 'budget_guard.allows("shelf_refresh"' in schedule and "run_scheduled_refresh_loop(get_db" in schedule
+
+
+# ---- the reading refresh's own result is a fact in a status or routines answer ----------------------------------------------------------------------------
+
+def test_saying_the_reading_refresh_added_a_piece_is_a_fact_when_the_prompt_carries_that_result():
+    reply = "The reading refresh ran around 12:30 AM and added a piece to the shelf, and the health check came back clean."
+    assert shelf.shelf_reply_issue(reply, False) == "claims to have read a piece that is not on its reading shelf"          # with nothing in the prompt it is an invented read
+    assert shelf.shelf_reply_issue(reply, False, refresh_reported=True) is None
+
+
+def test_the_refresh_allowance_does_not_cover_an_invented_read_or_a_named_piece():
+    for reply in ("I read an article on zero-knowledge proofs this morning.", "A summary on static analysis got added to my shelf today.", "I finished a clean summary on caching."):
+        assert shelf.shelf_reply_issue(reply, False, refresh_reported=True) is not None, reply
+
+
+def test_the_chat_endpoint_passes_that_a_status_or_routines_answer_is_in_the_prompt():
+    source = open("app.py", encoding="utf-8").read()
+    assert "refresh_reported=bool(self_report_kind or routines_context)" in source

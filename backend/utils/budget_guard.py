@@ -58,6 +58,7 @@ HOW IT BEHAVES
 import logging
 import os
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -116,15 +117,19 @@ WINDOW_LOOKBACK = timedelta(hours=48)  # a saved start older than this is not wo
 WINDOWS_COLLECTION = "budget_windows"
 EXTENSION_STEP = 0.25
 EXTENSIONS_COLLECTION = "budget_extensions"
+USER_EXTENSIONS_COLLECTION = "budget_user_extensions"
+REQUESTS_COLLECTION = "budget_increase_requests"
+OWN_SCOPES = ("my_day", "my_five")
+REQUEST_HISTORY = timedelta(days=14)  # how long a decided request stays listed for the admins
 _SEVERITY = {OK: 0, NOTICE: 1, THROTTLED: 2, BLOCKED: 3}
 # How a scope is said to a person, where it is not already plain English ("day", "month").
 _SCOPE_TEXT = {"five": "5-hour", "my_day": "your daily", "my_five": "your 5-hour"}
 
-_cache: Dict[str, Any] = {"at": None, "rows": [], "five_at": None, "five_rows": [], "five_anchor": None, "ext_at": None, "ext": {}}
+_cache: Dict[str, Any] = {"at": None, "rows": [], "five_at": None, "five_rows": [], "five_anchor": None, "ext_at": None, "ext": {}, "uext": {}}
 
 
 def _reset_cache() -> None:
-    _cache.update({"at": None, "rows": [], "five_at": None, "five_rows": [], "five_anchor": None, "ext_at": None, "ext": {}})
+    _cache.update({"at": None, "rows": [], "five_at": None, "five_rows": [], "five_anchor": None, "ext_at": None, "ext": {}, "uext": {}})
 
 
 def _positive(name: str) -> Optional[float]:
@@ -295,6 +300,21 @@ def _saved_extensions(db: Any, now: datetime) -> Dict[str, float]:
     return found
 
 
+def _saved_user_extensions(db: Any, username: str, now: datetime) -> Dict[str, float]:
+    """{scope: extra fraction} of the increases an admin has approved for this person that have not run out, cached briefly per person.
+    Raises on a database error."""
+    hit = _cache["uext"].get(username)
+    if hit is not None and time.monotonic() - hit[0] < CACHE_SECONDS:
+        return hit[1]
+    found: Dict[str, float] = {}
+    for doc in db[USER_EXTENSIONS_COLLECTION].find({"user": username}, {"_id": 0}):
+        until = _as_aware(doc.get("until"))
+        if until is not None and until > now and doc.get("scope") in OWN_SCOPES:
+            found[str(doc["scope"])] = max(float(doc.get("extra") or 0), 0.0)
+    _cache["uext"][username] = (time.monotonic(), found)
+    return found
+
+
 def spent(
     rows: List[Dict[str, Any]], now: datetime, prices: Dict[str, Dict[str, float]],
     minute_rows: Optional[List[Dict[str, Any]]] = None, anchor: Optional[datetime] = None,
@@ -426,6 +446,7 @@ def current_state(db: Any = None, now: Optional[datetime] = None, username: Opti
             return {"level": OFF, "detail": [], "paused": [], "error": True}
         totals: Dict[str, Any] = {}
         extensions: Dict[str, float] = {}
+        user_extended: Dict[str, float] = {}
         if limits:
             rows = _saved_rows(db, moment) + _buffered_rows()
             minute_rows: List[Dict[str, Any]] = []
@@ -444,6 +465,10 @@ def current_state(db: Any = None, now: Optional[datetime] = None, username: Opti
             from backend.utils import user_usage
 
             who = str(username)
+            # An approved increase raises that person's limit for the scope it was granted for, until that window or day ends.
+            user_extended = _saved_user_extensions(db, who, moment)
+            if user_extended:
+                own = {key: limit * (1 + user_extended.get(_KEYS[key][0], 0.0)) for key, limit in own.items()}
             my_anchor = _read_anchor(db, "my_five", moment, who) if any(key in own for key in MY_FIVE_KEYS) else None
             mine = user_usage.fetch(db, who, person_fetch_since(moment, my_anchor)) + user_usage.unsaved_rows(who)
             # Turns recorded before dollars were counted are priced at today's average price per token (known only when a global budget is set).
@@ -451,7 +476,10 @@ def current_state(db: Any = None, now: Optional[datetime] = None, username: Opti
             totals.update(person_totals(mine, moment, my_anchor, rate))
             if any(key in own for key in MY_FIVE_KEYS) and totals["my_five_start"] is not None and totals["my_five_start"] != my_anchor:
                 _save_anchor(db, "my_five", totals["my_five_start"], who)
-        return evaluate(totals, {**limits, **own}, moment, extensions)
+        state = evaluate(totals, {**limits, **own}, moment, extensions)
+        if user_extended:
+            state["user_extended"] = user_extended
+        return state
     except Exception:
         logger.warning("[budget] could not read the usage; the budget guard is stepping aside for this call.")
         return {"level": OFF, "detail": [], "paused": [], "error": True}
@@ -488,6 +516,111 @@ def grant_extension(db: Any, admin: str, state: Optional[Dict[str, Any]], now: O
         granted.append({"scope": scope, "extra": round(extra, 4), "until": until.isoformat()})
     _reset_cache()
     return {"extended": granted}
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# A person asking for more
+# ---------------------------------------------------------------------------------------------------------------
+
+def leading_own(state: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The person's own limit that is furthest along (the 5-hour window or the day), as a detail row; None if they have none."""
+    mine = [item for item in (state or {}).get("detail", []) if item.get("scope") in OWN_SCOPES]
+    return max(mine, key=lambda item: item["fraction"]) if mine else None
+
+
+def can_request_increase(state: Optional[Dict[str, Any]]) -> bool:
+    """Whether the person is far enough along their own limit (the notice line or past it) to ask for more."""
+    lead = leading_own(state)
+    return lead is not None and fraction_level(lead["fraction"]) != OK
+
+
+def _active_requests(db: Any, username: str, scope: str, now: datetime) -> List[Dict[str, Any]]:
+    """This person's requests for this scope whose day or window has not ended yet."""
+    found = db[REQUESTS_COLLECTION].find({"user": username, "scope": scope}, {"_id": 0})
+    return [doc for doc in found if (_as_aware(doc.get("until")) or now) > now]
+
+
+def request_status(db: Any, username: str, state: Optional[Dict[str, Any]], now: Optional[datetime] = None) -> Optional[str]:
+    """"pending" or "declined" for the person's request on the limit that is furthest along, while that day or window lasts; else None.
+    Blocking (one small read): call it off the event loop. Raises on a database error."""
+    lead = leading_own(state)
+    if lead is None:
+        return None
+    moment = now or datetime.now(timezone.utc)
+    statuses = {doc.get("status") for doc in _active_requests(db, username, lead["scope"], moment)}
+    return "pending" if "pending" in statuses else "declined" if "declined" in statuses else None
+
+
+def request_increase(db: Any, username: str, state: Optional[Dict[str, Any]], now: Optional[datetime] = None) -> Dict[str, Any]:
+    """A person asks the admins to raise their own limit by EXTENSION_STEP, for the limit that is furthest along (the 5-hour window or the day),
+    until that window or day ends. Asking again while a request is waiting returns that one. Raises ValueError (with words for the person) when there is
+    nothing to ask for or a request for this period was already declined. Blocking: call it off the event loop. Raises on a database error."""
+    lead = leading_own(state)
+    if lead is None:
+        raise ValueError("You have no usage limit of your own to raise.")
+    if not can_request_increase(state):
+        raise ValueError("You have not used enough of your limit to ask for more yet.")
+    moment = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    scope = lead["scope"]
+    existing = _active_requests(db, username, scope, moment)
+    waiting = next((doc for doc in existing if doc.get("status") == "pending"), None)
+    if waiting is not None:
+        return waiting
+    if any(doc.get("status") == "declined" for doc in existing):
+        raise ValueError("An admin has declined your request for this period. You can ask again once it resets.")
+    until = _as_aware(((state or {}).get("resets") or {}).get(scope)) or _next_reset(scope, moment)
+    doc = {
+        "id": uuid.uuid4().hex, "user": str(username)[:200], "scope": scope, "status": "pending", "requested_at": moment.isoformat(),
+        "until": until.isoformat(), "unit": lead.get("unit"), "spent": lead.get("spent"), "limit": lead.get("limit"), "fraction": lead.get("fraction"),
+    }
+    db[REQUESTS_COLLECTION].update_one({"id": doc["id"]}, {"$set": doc}, upsert=True)
+    return doc
+
+
+def list_requests(db: Any, now: Optional[datetime] = None) -> Dict[str, List[Dict[str, Any]]]:
+    """For the admins: requests waiting (whose day or window has not ended), and the last few decided or lapsed ones from the past two weeks.
+    Blocking: call it off the event loop. Raises on a database error."""
+    moment = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    docs = list(db[REQUESTS_COLLECTION].find({"requested_at": {"$gte": (moment - REQUEST_HISTORY).isoformat()}}, {"_id": 0}))
+    pending, recent = [], []
+    for doc in docs:
+        waiting = doc.get("status") == "pending" and (_as_aware(doc.get("until")) or moment) > moment
+        (pending if waiting else recent).append(doc)
+    pending.sort(key=lambda doc: str(doc.get("requested_at")))
+    recent.sort(key=lambda doc: str(doc.get("decided_at") or doc.get("requested_at")), reverse=True)
+    return {"pending": pending, "recent": recent[:10]}
+
+
+def decide_request(db: Any, admin: str, request_id: str, approve: bool, now: Optional[datetime] = None) -> Dict[str, Any]:
+    """An admin approves or declines one waiting request. Approving raises that person's limit for that scope by EXTENSION_STEP (on top of any increase
+    still running), until the day or window the request was made in ends; it is saved with who and when. Raises LookupError for a request that does
+    not exist and ValueError for one already decided or whose day or window has ended. Blocking: call it off the event loop."""
+    moment = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    doc = db[REQUESTS_COLLECTION].find_one({"id": request_id}, {"_id": 0})
+    if not doc:
+        raise LookupError("No such request.")
+    if doc.get("status") != "pending":
+        raise ValueError("That request has already been decided.")
+    until = _as_aware(doc.get("until"))
+    if until is None or until <= moment:
+        raise ValueError("That period has already ended, so the request no longer matters.")
+    decided = {"status": "approved" if approve else "declined", "decided_by": str(admin)[:200], "decided_at": moment.isoformat()}
+    if approve:
+        user, scope = str(doc["user"]), str(doc["scope"])
+        existing = db[USER_EXTENSIONS_COLLECTION].find_one({"user": user, "scope": scope}, {"_id": 0}) or {}
+        until_old = _as_aware(existing.get("until"))
+        running = until_old is not None and until_old > moment
+        extra = (float(existing.get("extra") or 0) if running else 0.0) + EXTENSION_STEP
+        grants = (list(existing.get("grants") or []) if running else [])[-49:]
+        grants.append({"by": decided["decided_by"], "at": decided["decided_at"], "extra": round(extra, 4)})
+        db[USER_EXTENSIONS_COLLECTION].update_one(
+            {"user": user, "scope": scope}, {"$set": {"user": user, "scope": scope, "extra": round(extra, 4), "until": until.isoformat(), "grants": grants}},
+            upsert=True,
+        )
+        decided["extra"] = round(extra, 4)
+    db[REQUESTS_COLLECTION].update_one({"id": request_id}, {"$set": decided})
+    _reset_cache()
+    return {**doc, **decided}
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -587,6 +720,11 @@ def public_view(state: Optional[Dict[str, Any]], admin: bool) -> Dict[str, Any]:
     if mine and level != OFF:
         lead = max(mine, key=lambda d: d["fraction"])
         view.update({"own_fraction": lead["fraction"], "own_scope": lead["scope"], "own_level": fraction_level(lead["fraction"])})
+        # Whether to offer "request more": the person is at their own notice line or past it. The raised amount, if an admin has approved one, is theirs to know.
+        view["can_request_increase"] = can_request_increase(state)
+        raised = (state.get("user_extended") or {}).get(lead["scope"])
+        if raised:
+            view["own_extended_by"] = raised
     if shown == THROTTLED:
         view["message"] = (
             "Low-power mode for you: deep thinking and some background extras are paused to stay within your usage limit."
