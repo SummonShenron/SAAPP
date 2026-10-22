@@ -17,10 +17,10 @@ export interface RingView {
 }
 
 /**
- * What the usage ring draws and says. Everyone else sees their own limit. An admin also has the shared budget, and the ring follows their own day while the shared
- * budget is quiet (below its notice line, so "ok"), because that is the number that moves as they use the app; once the shared budget is at notice or worse it
- * takes over, because that is the one an admin has to act on. The words always give both, so neither is hidden. When the figure furthest along IS the admin's own
- * limit (the server names its scope "my_day" or "my_five") there is only one figure and the ring and words are that. null when there is nothing to show.
+ * What the usage ring draws and says. Everyone else sees their own limit. An admin also has the shared budget, and the ring always follows the figure that is furthest
+ * along (the server's `fraction` and `scope`: the month at 61% beats the day at 1%), so it never hides the number that matters most. The words give both, the leading one
+ * first, so neither is hidden. When the figure furthest along IS the admin's own limit (the server names its scope "my_day" or "my_five") there is only one figure and
+ * the ring and words are that. null when there is nothing to show.
  */
 export function ringView(budget: BudgetView): RingView | null {
   const shared = typeof budget.fraction === 'number';
@@ -30,9 +30,7 @@ export function ringView(budget: BudgetView): RingView | null {
   const leadingIsOwn = budget.scope === 'my_day' || budget.scope === 'my_five';
   const sharedLevel = budget.level === 'off' ? 'ok' : budget.level;
   if (!own || leadingIsOwn) return { fraction: budget.fraction!, level: sharedLevel, text: budgetChipText(budget) };
-  const text = `${ownUsageText(budget)} · ${budgetChipText(budget)}`;
-  if (sharedLevel === 'ok') return { fraction: budget.own_fraction!, level: budget.own_level ?? 'ok', text };
-  return { fraction: budget.fraction!, level: sharedLevel, text };
+  return { fraction: budget.fraction!, level: sharedLevel, text: `${budgetChipText(budget)} · ${ownUsageText(budget)}` };
 }
 
 /** "Budget 54% of month": the share of the budget that is furthest along (admins only: the server sends no percentage to anyone else). */

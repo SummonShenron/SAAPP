@@ -19,23 +19,23 @@ test('an admin still gets the budget that is furthest along', () => {
   assert.equal(budgetChipText({ level: 'throttled', fraction: 1.05, scope: 'my_day', extended_by: 0.25 }), 'Budget 105% of your day (+25%)');
 });
 
-test('an admin with a limit of their own sees their own day on the ring while the shared budget is quiet, and both in the words', () => {
-  const view = ringView({ level: 'ok', fraction: 0.6, scope: 'month', own_fraction: 0.64, own_scope: 'my_day', own_level: 'ok' });
-  assert.equal(view.fraction, 0.64);
+test('an admin with a limit of their own sees the figure furthest along on the ring (the month at 60% beats their day at 20%), and both in the words', () => {
+  const view = ringView({ level: 'ok', fraction: 0.6, scope: 'month', own_fraction: 0.2, own_scope: 'my_day', own_level: 'ok' });
+  assert.equal(view.fraction, 0.6);
   assert.equal(view.level, 'ok');
-  assert.equal(view.text, 'Your usage: 64% of your day · Budget 60% of month');
+  assert.equal(view.text, 'Budget 60% of month · Your usage: 20% of your day');
 });
 
-test('the ring follows their own day even when it is the smaller number, because the shared budget is not the one in play', () => {
-  const view = ringView({ level: 'ok', fraction: 0.7, scope: 'month', own_fraction: 0.2, own_scope: 'my_day', own_level: 'ok' });
-  assert.equal(view.fraction, 0.2);
+test('the ring follows the month at 61% even when their own day is almost unused and the shared budget is below its notice line', () => {
+  const view = ringView({ level: 'ok', fraction: 0.6139, scope: 'month', own_fraction: 0.0092, own_scope: 'my_day', own_level: 'ok' });
+  assert.equal(view.fraction, 0.6139);
 });
 
-test('once the shared budget reaches its notice line it takes over the ring, and the words still give both', () => {
+test('when the shared budget is at notice the ring still follows it, and the words still give both', () => {
   const view = ringView({ level: 'notice', fraction: 0.85, scope: 'day', own_fraction: 0.3, own_scope: 'my_day', own_level: 'ok' });
   assert.equal(view.fraction, 0.85);
   assert.equal(view.level, 'notice');
-  assert.equal(view.text, 'Your usage: 30% of your day · Budget 85% of day');
+  assert.equal(view.text, 'Budget 85% of day · Your usage: 30% of your day');
 });
 
 test('when the figure furthest along is the admin\'s own limit there is one figure, not the same one twice', () => {
