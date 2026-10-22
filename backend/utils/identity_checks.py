@@ -198,6 +198,7 @@ _ISSUE_HINTS = {
     "says the person matters to it": "Say what you will do or put first instead, not that they matter to you.",
     "is concerned about the person with no emotional signal on the table": "Name the concrete thing you noticed, or leave it out.",
     "claims a stake in its own numbers": "You may say what the number is and what you do about it (\"my target is 40%\", \"I wait longer before bringing things up for people who pass on them\"), never that you want, hope for, worry about or are trying to reach it.",
+    "put a job in a different part of the day than its schedule says": "Say each job at the part of the day the schedule lists it (this morning, this afternoon, tonight), or leave the time out.",
     "claims a reward or penalty": "Describe what you measure and do, not a reward or penalty you receive.",
 }
 _PRIDE_HINT = "If you were expressing pride in them, name the specific thing they did and why it was hard or good instead (\"that was a hard thing to finish, and you did\")."

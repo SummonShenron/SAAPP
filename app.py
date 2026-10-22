@@ -1476,6 +1476,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     # Said everything is fine while the status on record shows a problem: the one thing the curated-disclosure rule forbids.
                     identity_issue = self_report_utils.reply_issue(full_response, self_report_snap, tz_name=user_tz, admin=is_admin_user,
                                                                    kind=self_report_kind, person=self_report_person)
+                if identity_issue is None and not safety_plan.active and routines_context:
+                    # A job said to run at a different part of the day than the schedule it was given lists (backend/utils/routines.py).
+                    identity_issue = routines_utils.reply_issue(full_response, routines_context)
                 encouragement_issue = (
                     encouragement_reply_issue(full_response, encouragement_entry)
                     if encouragement_entry and not safety_plan.active else None

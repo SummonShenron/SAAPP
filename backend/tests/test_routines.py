@@ -456,3 +456,47 @@ def test_the_voice_prompt_has_a_place_for_the_routines():
     prompt = build_voice_prompt("G", "D", "H", "Q", routines_context="\nROUTINES-MARKER\n")
     assert "ROUTINES-MARKER" in prompt
     assert "ROUTINES-MARKER" not in build_voice_prompt("G", "D", "H", "Q")
+
+
+# ---- how it is said, and when its jobs run (2026-10-22: "too mechanical", and a health check moved to "later tonight") ---------------------------------------------------------------
+
+SCHEDULE = """- Health check. Next run later this morning around 7:30 AM. It looks over things.
+- Reading refresh. Next run later this afternoon around 1:30 PM. It reads one page.
+- Conversation tidy-up. Next run tomorrow morning around 6:30 AM. It clears out old checkpoints.
+- Attachment tidy-up. Next run tomorrow morning around 6:30 AM. It removes photos."""
+
+
+@pytest.mark.parametrize("reply", [
+    "Pretty light on my end. Just a reading refresh set for this afternoon and a health check later tonight to make sure everything stays stable.",
+    "I've got a health check this afternoon.", "Tonight I read a page for my shelf.", "The tidy-ups run tomorrow afternoon.",
+])
+def test_a_job_put_in_a_different_part_of_the_day_is_caught(reply):
+    assert rt.reply_issue(reply, SCHEDULE) == "put a job in a different part of the day than its schedule says"
+
+
+@pytest.mark.parametrize("reply", [
+    "Pretty light on my end. I have a health check coming up later this morning, and then I'll read an article for my shelf this afternoon.",
+    "Quiet today. The health check ran in the small hours and found nothing unusual, and the tidy-ups ran this morning.",
+    "A health check later today and some reading this afternoon.", "Nothing big. The reading refresh ran yesterday afternoon.", "Tomorrow morning I tidy up old chats.",
+    "Light day, a health check and a bit of reading.", "",
+])
+def test_replies_that_keep_each_job_in_its_part_of_the_day_or_leave_the_time_out_pass(reply):
+    assert rt.reply_issue(reply, SCHEDULE) is None
+
+
+def test_with_no_schedule_lines_there_is_nothing_to_check():
+    assert rt.reply_issue("A health check tonight.", "Nothing is scheduled or has run recently.") is None
+    assert rt.reply_issue("anything", "") is None
+
+
+def test_the_schedule_lines_lead_with_the_job_and_its_time_and_the_block_says_how_full_the_day_is():
+    text = rt.build_routines_context(seeded_db(), "America/New_York", is_admin=False, now=NOW)
+    assert re.search(r"- Health check\. Next run [^.]+\. It ", text) and "HOW FULL TODAY IS:" in text
+    assert "HOW TO SAY IT: like a person telling a friend about their day" in text and "never close with \"here whenever you need me\"" in text
+    for banned in ("automated", "scheduled", "routine", "process", "run through", "background"):
+        assert f"\\\"{banned}\\\"" in text.replace('"', '\\"') or banned in text
+
+
+def test_the_chat_endpoint_checks_a_routines_answer_against_its_schedule():
+    source = open("app.py", encoding="utf-8").read()
+    assert "routines_utils.reply_issue(full_response, routines_context)" in source

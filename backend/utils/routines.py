@@ -309,13 +309,13 @@ def build_routines_context(db, tz_name: Optional[str], *, is_admin: bool, now: O
     lines = []
     # By day, with an explicit "nothing" for today, because a model summarising a plain list will move a job to an earlier day.
     lines.append("Later today and tonight (through the small hours after midnight):" + ("" if today else " nothing is scheduled."))
-    lines += [f"- {v['label']}: {v['does']}. Next run {v['next']}." for v in today]
+    lines += [f"- {v['label']}. Next run {v['next']}. It {v['does']}." for v in today]
     if tomorrow:
         lines.append("Tomorrow:")
-        lines += [f"- {v['label']}: {v['does']}. Next run {v['next']}." for v in tomorrow]
+        lines += [f"- {v['label']}. Next run {v['next']}. It {v['does']}." for v in tomorrow]
     if later:
         lines.append("Further out:")
-        lines += [f"- {v['label']}: {v['does']}. Next run {v['next']}." for v in later]
+        lines += [f"- {v['label']}. Next run {v['next']}. It {v['does']}." for v in later]
     never = [v for v in views if not v["next"]]
     if never:
         lines.append("Not run yet since it was added (no time to promise):")
@@ -325,6 +325,11 @@ def build_routines_context(db, tz_name: Optional[str], *, is_admin: bool, now: O
         lines += [f"- {v['label']} ran {v['last_when']} and {v['last_result']}." for v in recent]
     if not upcoming and not never and not recent:
         lines = ["Nothing is scheduled or has run recently."]
+    # How light the day is, worked out here from the jobs left today so the answer to "do you have a busy day?" is a fact and not a mood.
+    load = ("Nothing else is scheduled for the rest of today: a quiet day for you." if not today
+            else f"{len(today)} small job{'s' if len(today) != 1 else ''} left today: a light day for you." if len(today) <= 2
+            else f"{len(today)} small jobs left today: a few things going on, none of them big.")
+    lines.append("HOW FULL TODAY IS: " + load)
     body = "\n".join(lines)
     return (
         "\nYOUR SCHEDULED ROUTINES (true; answer only from these):\n"
@@ -333,11 +338,51 @@ def build_routines_context(db, tz_name: Optional[str], *, is_admin: bool, now: O
         "these jobs are your schedule. You are the program that runs them: say \"I\" (\"I run a health check around 9 AM\", \"I ran the tidy-ups last night\"), never \"the server\" or \"the system\". "
         "You really do run these jobs on "
         "a schedule, and the times above are already in this person's own time. Just answer: do not add that you are not around, have no experience or spend no time between "
-        "conversations unless they ask. Say what is scheduled and what a run found, plainly and in your usual dry "
-        "voice (\"I run a health check around 6 PM\", \"this morning's check found nothing unusual\"). You may say what time of day a job ran or will run. "
+        "conversations unless they ask. HOW TO SAY IT: like a person telling a friend about their day, not like reading out a log, in your usual dry voice. Answer what they asked first, in one "
+        "short plain sentence (\"pretty light today\", \"quiet on my end\", \"a couple of small things\"), then mention at most two jobs, in plain words for what they do (\"checking that everything's "
+        "healthy\", \"reading a page for my shelf\", \"tidying up old chats\") and by the part of the day (\"this morning\", \"tonight\"), not a clock time unless they ask when. Never say "
+        "\"automated\", \"scheduled\", \"routine\", \"process\", \"run through\" or \"background\", never list every job, and never close with \"here whenever you need me\" or \"ready when you are\". "
+        "Two or three sentences. If a run found something, say what it found in a few words (\"nothing unusual\"). You may say what time of day a job ran or will run. "
         "Keep the day words exactly as written (today, tonight, tomorrow): never move a job to an earlier day. Never say you were awake, tired, up late, busy, or "
         "looking forward to anything, never describe the work as something you experienced, and never add a job, a time or a result that is not listed. If they ask about a time when nothing is listed, say nothing is scheduled then.\n"
     )
+
+
+_JOB_WORDS = {
+    "Health check": re.compile(r"health|\bchecks?\b", re.IGNORECASE),
+    "Reading refresh": re.compile(r"\breading\b|\bread\b|\barticle|\bpage\b|\bshelf\b", re.IGNORECASE),
+    "Conversation tidy-up": re.compile(r"tidy|tidying|checkpoint|housekeeping|clean", re.IGNORECASE),
+    "Attachment tidy-up": re.compile(r"tidy|tidying|attachment|housekeeping|clean", re.IGNORECASE),
+}
+_PART_OF_DAY = re.compile(r"\b(morning|afternoon|evening|tonight|night)\b", re.IGNORECASE)
+_NEXT_LINE = re.compile(r"^- (?P<label>[^.\n]+)\. Next run (?P<when>.+?)\. It ", re.MULTILINE)
+_PAST_WORDS = re.compile(r"\b(?:ran|did|had|found|cleared|removed|added|earlier|already|last|yesterday|went|was)\b", re.IGNORECASE)
+
+
+def _day_part(word: str) -> str:
+    return "evening" if word.lower() in ("evening", "tonight", "night") else word.lower()
+
+
+def reply_issue(reply: str, context: str) -> Optional[str]:
+    """What is wrong with a reply about Sonic's day as far as WHEN its jobs run: a job put in a different part of the day than the schedule it was given lists (a real reply put the health check
+    "later tonight" when the schedule said later this morning). Read from the routines block itself ("- Health check. Next run later this morning around 7:30 AM. It ..."), clause by clause,
+    only for a clause that speaks of one job and names one part of the day and is not about something that already ran. None when nothing is off. Never raises."""
+    try:
+        scheduled = {m.group("label").strip(): {_day_part(w) for w in _PART_OF_DAY.findall(m.group("when"))} for m in _NEXT_LINE.finditer(context or "")}
+        if not scheduled:
+            return None
+        for clause in re.split(r"[.!?\n;]|,| and | then | but |—|–", reply or ""):
+            if _PAST_WORDS.search(clause):
+                continue
+            jobs = [label for label, words in _JOB_WORDS.items() if label in scheduled and words.search(clause)]
+            parts = {_day_part(w) for w in _PART_OF_DAY.findall(clause)}
+            if len(parts) != 1 or not jobs:
+                continue
+            if all(scheduled[label] and not (parts & scheduled[label]) for label in jobs):
+                return "put a job in a different part of the day than its schedule says"
+    except Exception:
+        return None
+    return None
 
 
 def routines_view(db, now: Optional[datetime] = None) -> List[Dict[str, Any]]:

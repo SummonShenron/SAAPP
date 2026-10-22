@@ -89,7 +89,8 @@ def test_the_rewrite_names_the_replacement_for_each_kind_of_claim():
 
 def test_every_new_label_with_a_hint_is_a_label_the_check_can_return():
     returned = {label for _, label in ic._ALL + ic._PERSON_CONCERN}
-    assert set(ic._ISSUE_HINTS) <= returned
+    from_other_checks = {"put a job in a different part of the day than its schedule says"}           # returned by backend/utils/routines.py, rewritten through the same path
+    assert set(ic._ISSUE_HINTS) - from_other_checks <= returned
 
 
 # ---- the prompt says the same thing the check enforces ---------------------------------------------------------------------------------------------------
