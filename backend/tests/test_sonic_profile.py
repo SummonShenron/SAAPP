@@ -121,7 +121,7 @@ def test_the_always_on_block_says_the_reading_shelf_and_the_abilities_are_real_a
 
     block = profile_prompt_block()
     assert SELF_TRUTHS in block
-    for needle in ("reading shelf", "yes, a few articles get read for you", "never deny", "search the web", "read what they attach", "calendar and email", "never that you can't"):
+    for needle in ("reading shelf", "you read a few articles while they're away", "never deny", "search the web", "read what they attach", "calendar and email", "never that you can't"):
         assert needle in SELF_TRUTHS, needle
     # the rules it sits beside are all still there: no waiting, no claimed feelings, no claimed reading outside the shelf
     assert "never say you'll wait for them" in block and "you don't exist between conversations" in block

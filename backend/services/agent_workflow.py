@@ -110,7 +110,7 @@ from backend.utils import memory_sources
 from backend.services import steering
 from backend.services import image_gen, library_search, native_loop, ops_incidents, photo_cards
 from backend.services import native_tools as native_tools_module
-from backend.utils import budget_guard, date_resolve, llm_turns, memory_grounding, progress_notes, reading_shelf, self_report
+from backend.utils import budget_guard, date_resolve, llm_turns, memory_grounding, progress_notes, reading_shelf, routines, self_report
 from backend.services.repo_checkout import (
     RepoCheckoutError, fetch_and_extract_checkout, cleanup_checkout, find_declarations_in_checkout,
 )
@@ -803,7 +803,8 @@ def build_agent_plan(intent: str, state: dict) -> dict:
         return {"agents": ["conversational"], "skip": []}
     # "How are things going on your end?", "how was your day?", "any downtime?" are about Sonic itself, answered from its own records in app.py
     # (backend/utils/self_report.py); the tool agent has no way to answer them and used to go looking in the logs.
-    if _messages and self_report.kind_of(_content_of(_messages[-1])):
+    # The same for "what do you have planned", "do you have a busy day today?" and "you do have a schedule": about Sonic's own routines (backend/utils/routines.py), not the person's calendar.
+    if _messages and (self_report.kind_of(_content_of(_messages[-1])) or routines.asks_about_routines(_content_of(_messages[-1]))):
         logger.info("[Coordinator] Routing a question about its own status to conversation.")
         state["last_intent"] = "conversational"
         return {"agents": ["conversational"], "skip": []}

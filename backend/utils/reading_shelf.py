@@ -736,7 +736,7 @@ def build_listing_block(offer: Dict[str, Any]) -> str:
                 "the YOUR STATUS facts in this prompt; if there are none, say plainly that you have nothing on record for today. Never say you do not have days.\n"
             )
         return (
-            "\nREADING SHELF: they asked what you have been reading, and your reading shelf is empty right now (the server still reads a page a couple of times "
+            "\nREADING SHELF: they asked what you have been reading, and your reading shelf is empty right now (you still read a page a couple of times "
             "a day; older pieces expire). Say that plainly and briefly. Never say you did not read, or do not read, anything. Do not name anything you have read, "
             "and do not invent anything. You may say which topics you lean toward instead.\n"
         )

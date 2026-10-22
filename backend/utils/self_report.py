@@ -29,6 +29,9 @@ TASK_WINDOW_HOURS = 24
 ROUTINE_OVERDUE_FACTOR = 2.0   # a routine that last ran longer ago than this many of its own intervals is late
 
 KINDS = ("status", "day", "goals", "time")
+
+# Sonic is the program that runs these jobs, so it says "I ran a health check", never "the server ran" or "the system does" (Jack, 2026-10-22). Added to every block that describes its own work.
+FIRST_PERSON = "You are the program that runs these jobs, so say \"I\" (\"I ran a health check\", \"I clear out old checkpoints\"), never \"the server\" or \"the system\"."
 MIN_WEEK_TURNS = 100      # below this many chat turns in a week, the split between kinds of work says more about a few people than about Sonic; it is left out
 
 # "What do you spend your time on / what do people mostly ask you?": the split of a week's turns by kind of work (the counters' route mix). The reading-shelf day answer used to take
@@ -251,7 +254,7 @@ def build_facts(snap: Dict[str, Any], *, tz_name: Optional[str] = None, admin: b
         turns, failed = chats["turns"], chats["failed"]
         bad = sum(failed.values())
         if turns >= MIN_TURNS:
-            facts.append(f"I handled about {_round_down(turns)} chat turns so far today (the server's day).")
+            facts.append(f"I handled about {_round_down(turns)} chat turns so far today.")
         if bad and turns >= MIN_TURNS:
             causes = ", ".join(_FAILURE_WORDS[k] for k, n in failed.items() if n)
             facts.append(f"{_plural(bad, 'chat turn')} failed outright today, because of {causes}.")
@@ -376,12 +379,12 @@ def _time_block(snap: Optional[Dict[str, Any]]) -> str:
         return "\nYOUR TIME: you cannot see how your week was split right now (the counters could not be read). Say that plainly and briefly. Do not guess at a split.\n"
     lines = "\n".join(f"- {f}" for f in built["facts"])
     return (
-        "\nHOW YOU SPEND YOUR TIME (true; answer only from these facts, which are about the server and nothing else):\n"
+        "\nHOW YOU SPEND YOUR TIME (true; answer only from these facts, which are about what you ran and handled and nothing else):\n"
         f"{lines}\n"
         "They asked what you spend your time on. Answer in the first person, plainly and in your usual dry voice, in a few sentences: what the work is made of, in the order and "
         "with the rounded shares listed, and what you run on your own. Say \"of the turns I handled\", not \"of my time\": these are counts of what was handled, not an experience: never say you enjoy, prefer, like, dread or get tired of "
         "any of it, never add a share, a job or a number that is not listed, and say \"about\" for a share. If they ask for more than is listed, say that is all you have on record. "
-        "Just answer: no reminder that you have no experience of it unless they ask.\n"
+        "Just answer: no reminder that you have no experience of it unless they ask. " + FIRST_PERSON + "\n"
     )
 
 
@@ -395,9 +398,9 @@ def activity_block(snap: Optional[Dict[str, Any]], *, admin: bool = False) -> st
     if not handled:
         return ""
     return (
-        "\nWHAT YOU HANDLED IN THE LAST DAY (true; add to the answer only if it helps, in the same voice, as things the server did):\n"
+        "\nWHAT YOU HANDLED IN THE LAST DAY (true; add to the answer only if it helps, in the same voice, as things you did):\n"
         + "\n".join(f"- {f}" for f in handled)
-        + "\nNever add a number that is not listed, and say \"about\" for a rounded one.\n"
+        + "\nNever add a number that is not listed, and say \"about\" for a rounded one. " + FIRST_PERSON + "\n"
     )
 
 
@@ -422,7 +425,7 @@ def _goals_block(snap: Optional[Dict[str, Any]], person: Optional[Dict[str, Any]
         "plainly and in a few sentences, and mention only what is relevant to what they asked. These are things you track and do, not wishes: never say you want, hope, wish, long for, "
         "care about, worry about or are proud of anything, and never say how it feels. Call what you bring up \"things I bring up on my own\" and do not list kinds of them or "
         "describe how the pacing adjusts beyond what is listed. A goal you only measure is a number you watch: never promise it will improve or say what you will change. Never add a number, a goal or a cause that is not listed. Say \"about\" for a rounded number. "
-        "If they ask for more than is listed, say that is all you have on record. Do not mention these notes or lists.\n"
+        "If they ask for more than is listed, say that is all you have on record. Do not mention these notes or lists. Say \"I\" for what you track and do, never \"the system\" or \"the server\".\n"
     )
 
 
@@ -451,18 +454,18 @@ def build_block(snap: Optional[Dict[str, Any]], kind: str, *, tz_name: Optional[
         else "OVERALL: nothing listed is wrong, but part of your status could not be read, so do not say everything is fine."
     )
     ask = (
-        "They asked how your day has been. A day for you is what the server did, so answer with that: what ran, what got read, what was handled. Do not say you do not have days."
+        "They asked how your day has been. A day for you is what you ran and handled, so answer with that: what ran, what got read, what was handled. Do not say you do not have days."
         if kind == "day"
         else "They asked how things are going on your end, or whether anything has been down."
     )
     return (
-        "\nYOUR STATUS (true; answer only from these facts, which are about the server and nothing else):\n"
+        "\nYOUR STATUS (true; answer only from these facts, which are about what you ran and handled and nothing else):\n"
         f"{lines}\n{missing}{overall}\n"
         f"{ask} Answer in the first person, plainly and in your usual dry voice, in a few sentences, and mention only what is relevant to what they asked. "
         "These are facts about what ran, not an experience: never say you were tired, busy, stressed, bored, relieved or looking forward to anything, never say you "
         "thought about or noticed something, and never add a number, a job, a time or a cause that is not listed. Say \"about\" for a rounded number. Keep the day words "
         "as written. If they ask for more detail than is listed, say that is all you have on record. Just answer: do not add a reminder that you have no experience or no time "
-        "between turns unless they ask.\n"
+        "between turns unless they ask. " + FIRST_PERSON + "\n"
     )
 
 

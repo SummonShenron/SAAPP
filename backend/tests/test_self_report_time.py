@@ -62,3 +62,53 @@ def test_what_it_handled_in_the_last_day_is_added_to_the_routines_answer_without
 def test_the_chat_endpoint_adds_the_activity_to_the_routines_answer():
     source = open("app.py", encoding="utf-8").read()
     assert "self_report_utils.activity_block(" in source
+
+
+# ---- first person: Sonic is the program that runs its jobs, so it says "I", never "the server" or "the system" (Jack, 2026-10-22) ------------------------------------------------
+
+def _without_instruction(block):
+    return block.replace(sr.FIRST_PERSON, "").replace('Say "I" for what you track and do, never "the system" or "the server".', "")
+
+
+def test_every_block_about_its_own_work_tells_it_to_say_i_and_names_no_server_or_system_itself():
+    from datetime import datetime, timezone
+
+    snap = {"at": NOW, "mode": {"known": True, "low_power": False, "paused": []}, "chats": {"turns": 43, "failed": {"quota": 0, "overloaded": 0, "other": 0}}, "routines": [],
+            "tasks": {"runs": 9, "failed": 0, "people": 6}, "goals": None, "mix": {"turns": 400, "routes": {"conversational": 300, "web": 100}}}
+    for kind in ("status", "day", "time"):
+        block = sr.build_block(snap, kind)
+        assert sr.FIRST_PERSON in block, kind
+        assert "the server" not in _without_instruction(block).lower() and "the system" not in _without_instruction(block).lower(), kind
+    activity = sr.activity_block(snap)
+    assert sr.FIRST_PERSON in activity and "the server" not in _without_instruction(activity).lower()
+
+
+def test_the_goals_block_says_i_for_what_it_tracks_and_does():
+    from backend.utils import goals as goals_utils
+
+    view = {"id": "coding", "title": "t", "statement": "s", "signal": "x", "lever": None, "guardrail": None, "measure_only": True, "state": "not_enough_data",
+            "numbers": {"taken": 0, "passed": 0, "sample": 0, "rate": None, "previous_sample": 0, "previous_rate": None, "made": 0, "held_back": 0, "people": {"measured": 0, "stretched": 0, "any": 0}, "details": [], "said": []},
+            "target_rate": 0.8, "min_sample": 20, "rate_label": "r", "sample_label": "s", "rate_phrase": "p", "people_gated": False, "approval": {"approved": False, "by": None, "at": None, "stale": False},
+            "guardrail_tripped": False, "lever_applies": False, "revision": 1}
+    block = sr.build_block({"goals": [view]}, "goals")
+    assert 'Say "I" for what you track and do, never "the system" or "the server"' in block
+
+
+def test_the_routines_answer_the_reading_note_and_the_profile_say_i_too():
+    from backend.components.sonic_profile import SELF_TRUTHS
+    from backend.utils import routines as rt
+
+    class Db:
+        def __getitem__(self, name):
+            class Coll:
+                def find(self, *a, **k):
+                    class Cur:
+                        def sort(self, *a): return self
+                        def limit(self, *a): return self
+                        def __iter__(self): return iter([])
+                    return Cur()
+            return Coll()
+
+    block = rt.build_routines_context(Db(), "America/Chicago", is_admin=False, now=NOW)
+    assert 'say \\"I\\"' in block.replace('say "I"', 'say \\"I\\"') and 'never "the server" or "the system"' in block
+    assert "The server really does" not in block and "you read a web page" in SELF_TRUTHS and "the server reads" not in SELF_TRUTHS

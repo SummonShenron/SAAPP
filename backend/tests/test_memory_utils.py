@@ -998,3 +998,46 @@ def test_compaction_does_its_database_reading_clustering_and_writing_in_worker_t
     for needle in ("asyncio.to_thread(_fetch_chunks", "asyncio.to_thread(lambda: _cluster_chunks", "asyncio.to_thread(lambda: _archive_cluster",
                    "asyncio.to_thread(lambda: embed_and_store_memory_chunk(", "asyncio.to_thread(lambda fact_text=fact_text"):
         assert needle in source, needle
+
+
+# ---- relative days in an old fact are dated when it is shown (found 2026-10-22: "has a job interview at 2pm today", saved Oct 6, was read as today) ----------------------------
+
+def _dated_fact(text, created):
+    return memory_utils.UserFact(id="f", username="u", category="career", fact=text, created_at=created, updated_at=created)
+
+
+def test_a_relative_day_in_an_older_fact_is_followed_by_the_real_date_it_meant(monkeypatch):
+    monkeypatch.setattr("backend.utils.user_settings_utils.get_user_timezone", lambda username: "America/Chicago")
+    now = datetime(2026, 10, 22, 14, 0, tzinfo=timezone.utc)
+    texts = memory_utils.dated_fact_texts([
+        _dated_fact("The user has a job interview at 2pm today.", "2026-10-06T15:29:00+00:00"),
+        _dated_fact("Is flying out tomorrow morning.", "2026-10-20T22:00:00+00:00"),
+    ], now)
+    assert texts == ["The user has a job interview at 2pm today (Tuesday 2026-10-06).", "Is flying out tomorrow (Wednesday 2026-10-21) morning."]
+
+
+def test_a_fact_saved_today_or_with_no_relative_day_is_unchanged_and_needs_no_timezone_lookup(monkeypatch):
+    def boom(username):
+        raise AssertionError("no timezone lookup is needed")
+
+    monkeypatch.setattr("backend.utils.user_settings_utils.get_user_timezone", boom)
+    now = datetime(2026, 10, 22, 14, 0, tzinfo=timezone.utc)
+    facts = [_dated_fact("Works at Principal Financial Group.", "2026-10-06T15:29:00+00:00"), _dated_fact("Has a dinner tonight.", "2026-10-22T11:00:00+00:00")]
+    assert memory_utils.dated_fact_texts(facts, now) == ["Works at Principal Financial Group.", "Has a dinner tonight."]
+
+
+def test_a_bad_date_or_a_failed_lookup_leaves_the_text_as_saved(monkeypatch):
+    def boom(username):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr("backend.utils.user_settings_utils.get_user_timezone", boom)
+    now = datetime(2026, 10, 22, 14, 0, tzinfo=timezone.utc)
+    facts = [_dated_fact("Has an interview today.", "2026-10-06T15:29:00+00:00"), _dated_fact("Has a thing today.", "not a date")]
+    assert memory_utils.dated_fact_texts(facts, now) == ["Has an interview today.", "Has a thing today."]
+
+
+def test_the_prompt_block_shows_the_dated_text_and_the_stored_fact_is_not_changed(monkeypatch):
+    monkeypatch.setattr("backend.utils.user_settings_utils.get_user_timezone", lambda username: "America/Chicago")
+    fact = _dated_fact("The user has a job interview at 2pm today.", "2026-10-06T15:29:00+00:00")
+    block = memory_utils.format_facts_block([fact])
+    assert "2pm today (Tuesday 2026-10-06)" in block and fact.fact == "The user has a job interview at 2pm today."

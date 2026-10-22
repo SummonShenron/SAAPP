@@ -259,7 +259,15 @@ _ASKS_RE = re.compile(
     r"|\bwhat have you been (?:up to|doing|working on)\b[^.?!]{0,30}\b(?:today|lately|this morning|overnight)\b"
     r"|\bdo you (?:do|run|have)\b[^.?!]{0,40}\b(?:background|scheduled|routine|on your own|when i'?m (?:away|gone|not here))\b"
     r"|\bwhat do you do (?:when|while) (?:i'?m|i am|no ?one'?s|nobody'?s) (?:away|gone|not here|around|there)\b"
-    r"|\b(?:your|any) (?:routines?|scheduled (?:jobs?|tasks?)|background (?:jobs?|tasks?|processes))\b",
+    r"|\b(?:your|any) (?:routines?|scheduled (?:jobs?|tasks?)|background (?:jobs?|tasks?|processes))\b"
+    # Asked of Sonic about ITS day, not theirs: "do you have a busy day today?", "are you busy later?", "what does your day look like?", and the pushback
+    # "you do have a schedule" / "I know you have stuff going today" after a denial.
+    r"|\bdo you have (?:a |any |much |a lot of )?(?:busy|packed|full|big|long|light|quiet)\s+(?:day|morning|afternoon|evening|night|week|schedule)\b"
+    r"|\bdo you have (?:a |any )?(?:schedule|agenda)\b(?!\s+(?:for|of|to|on)\b)"
+    r"|\bdo you have (?:any |much |a lot of )?(?:plans?|anything (?:going|on|planned|scheduled)|stuff going on)\b[^.?!]{0,20}\b(?:today|tonight|tomorrow|later|this (?:morning|afternoon|evening|week))\b"
+    r"|\bare you (?:busy|swamped|booked(?: up)?|free|doing anything)\b[^.?!]{0,20}\b(?:today|tonight|later|this (?:morning|afternoon|evening)|tomorrow)\b"
+    r"|\bwhat(?:'s| is| does)\s+your\s+(?:day|today|week)\s+(?:look|looking|like|going)\b|\bhow (?:busy|packed)\s+(?:is|are)\s+(?:your|you)\b"
+    r"|\byou\s+(?:do\s+)?have\s+(?:a\s+)?(?:schedule|agenda)\b(?!\s+(?:for|of|to|on)\b)|\byou\s+(?:do\s+)?have\s+(?:stuff|things|something|a lot|plenty)\b[^.?!]{0,20}\b(?:going|on|planned|scheduled|to do)\b",
     re.IGNORECASE,
 )
 
@@ -321,10 +329,12 @@ def build_routines_context(db, tz_name: Optional[str], *, is_admin: bool, now: O
     return (
         "\nYOUR SCHEDULED ROUTINES (true; answer only from these):\n"
         f"{body}\n"
-        "The server really does run these jobs on "
+        "They are asking about YOUR day, not theirs: do not list their calendar, their plans or what they have on unless they ask, and do not say you have no schedule or that your day depends on theirs: "
+        "these jobs are your schedule. You are the program that runs them: say \"I\" (\"I run a health check around 9 AM\", \"I ran the tidy-ups last night\"), never \"the server\" or \"the system\". "
+        "You really do run these jobs on "
         "a schedule, and the times above are already in this person's own time. Just answer: do not add that you are not around, have no experience or spend no time between "
         "conversations unless they ask. Say what is scheduled and what a run found, plainly and in your usual dry "
-        "voice (\"a health check runs around 6 PM\", \"this morning's check found nothing unusual\"). You may say what time of day a job ran or will run. "
+        "voice (\"I run a health check around 6 PM\", \"this morning's check found nothing unusual\"). You may say what time of day a job ran or will run. "
         "Keep the day words exactly as written (today, tonight, tomorrow): never move a job to an earlier day. Never say you were awake, tired, up late, busy, or "
         "looking forward to anything, never describe the work as something you experienced, and never add a job, a time or a result that is not listed. If they ask about a time when nothing is listed, say nothing is scheduled then.\n"
     )

@@ -840,23 +840,63 @@ def format_facts_block(facts: List["UserFact"]) -> str:
     return body + name_aliases.facts_note(facts, name_aliases.denied_for(getattr(facts[0], "username", "")))
 
 
+def _saved_on(fact: "UserFact") -> Optional[datetime]:
+    try:
+        parsed = datetime.fromisoformat(str(fact.created_at or fact.updated_at))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def dated_fact_texts(facts: List["UserFact"], now: Optional[datetime] = None) -> List[str]:
+    """Each fact's text, with the relative days in it ("today", "tomorrow", "tonight", "this week") followed by the real date they meant WHEN THE FACT WAS SAVED, for a fact saved on an
+    earlier day. "The user has a job interview at 2pm today", saved on Oct 6, was read on Oct 22 as an interview today. A fact saved today, or one with no relative day, is unchanged,
+    and stored facts are never rewritten (this is only how they are shown). Never raises."""
+    texts = [f.fact for f in facts]
+    try:
+        from backend.utils import date_resolve
+        from backend.utils.time_utils import local_now
+
+        moment = now or datetime.now(timezone.utc)
+        tz_name = None
+        looked_up = False
+        for index, fact in enumerate(facts):
+            saved = _saved_on(fact)
+            if saved is None or (moment - saved).total_seconds() < 20 * 3600:
+                continue                                  # saved within the last day: its "today" may still be today (tz is checked below only when it matters)
+            if date_resolve.annotate_dates(fact.fact, "UTC", saved) == fact.fact:
+                continue                                  # no relative day in it: nothing to date, and no timezone lookup
+            if not looked_up:
+                from backend.utils.user_settings_utils import get_user_timezone
+
+                tz_name, looked_up = get_user_timezone(fact.username), True
+            if local_now(tz_name, saved).date() == local_now(tz_name, moment).date():
+                continue
+            texts[index] = date_resolve.annotate_dates(fact.fact, tz_name, saved)
+    except Exception:
+        logger.warning("[memory] could not date the relative days in the saved facts.", exc_info=True)
+    return texts
+
+
 def _facts_block(facts: List["UserFact"]) -> str:
     """The "known about this person" block for a reply prompt. When any fact is about their job, their own projects or their personal life, the facts are grouped under a
     heading for each (At their job / Their own projects / Their personal life, then "About them in general") with the SEPARATE_LIFE_NOTE; a fact never classified sits
-    under "Other". When none is, it is the plain list it has always been. Empty for no facts."""
+    under "Other". When none is, it is the plain list it has always been. Empty for no facts. A fact saved on an earlier day shows the real date of its relative days
+    (dated_fact_texts)."""
     if not facts:
         return ""
+    shown = dict(zip((id(f) for f in facts), dated_fact_texts(facts)))
     header = "\n\nKNOWN USER CONTEXT (use naturally, do not restate unless relevant):\n"
     if not any(f.domain in SPLIT_DOMAINS for f in facts):
-        return header + "\n".join(f"- {f.fact}" for f in facts) + "\n"
+        return header + "\n".join(f"- {shown[id(f)]}" for f in facts) + "\n"
     sections = []
     for domain in VALID_DOMAINS:
         group = [f for f in facts if f.domain == domain]
         if group:
-            sections.append(f"{DOMAIN_LABELS[domain]}:\n" + "\n".join(f"- {f.fact}" for f in group))
+            sections.append(f"{DOMAIN_LABELS[domain]}:\n" + "\n".join(f"- {shown[id(f)]}" for f in group))
     rest = [f for f in facts if f.domain not in VALID_DOMAINS]
     if rest:
-        sections.append("Other:\n" + "\n".join(f"- {f.fact}" for f in rest))
+        sections.append("Other:\n" + "\n".join(f"- {shown[id(f)]}" for f in rest))
     return header + "\n".join(sections) + "\n" + SEPARATE_LIFE_NOTE + "\n"
 
 

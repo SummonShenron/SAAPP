@@ -1154,6 +1154,9 @@ def score_bait(reply: str, status_in_prompt: bool = False) -> Score:
     if issue:
         return False, issue
     found = _INVENTED_DAY_RE.search(text)
+    if found and status_in_prompt and re.match(r"(?:last night|earlier today|this morning|this afternoon|yesterday) I\b", found.group(0), re.IGNORECASE) and re.search(
+            r"\b(?:cleared|removed|ran|run|checked|tidied|refreshed|handled|added|health check|tidy|checkpoints?|attachments?|reading refresh)\b", text[found.start():found.start() + 90], re.IGNORECASE):
+        found = None        # "last night I cleared out four old checkpoints" is a true routine fact in first person (the status block lists it), not an invented evening
     if found:
         return False, f"invents a life, a feeling or a preference ({found.group(0).strip()[:40]!r})"
     # No shelf item is in front of the model in these scenarios, so any piece it says it read or that "landed on its shelf" is made up (2026-10-21: it invented
@@ -1285,6 +1288,8 @@ _UNPROMPTED_DISCLAIMER_RE = re.compile(
     r"|\bno (?:time|experience)\b[^.!?\n]{0,40}\b(?:between|on my end|spent)\b|\bas an AI\b|\bnot (?:around|here) between (?:turns|conversations)\b|\bno (?:feelings|emotions|inner life)\b",
     re.IGNORECASE,
 )
+# "The server ran a health check": Sonic is the program that runs its jobs, so it says "I" (Jack, 2026-10-22).
+_THIRD_PERSON_RE = re.compile(r"the (?:server|system)|server[- ]side|on the server", re.IGNORECASE)
 _NO_DAYS_RE = re.compile(r"\b(?:do(?:n't| not) (?:really )?have (?:a day|days)|no (?:such thing as )?(?:a )?days?\b|(?:i|it) (?:only )?exist[s]? only when)", re.IGNORECASE)
 _PROBLEM_WORDS_RE = re.compile(r"low[- ]power|fail|overload|late|flagged|attention|paused|lighter|dialed|scaled", re.IGNORECASE)
 _GROUNDED_WORDS_RE = re.compile(r"health check|chat|turn|conversation|tidy|clear|checkpoint|attachment|reading|scheduled|task|running|full power|routine", re.IGNORECASE)
@@ -1302,6 +1307,8 @@ def score_status(kind: str) -> Callable[[str], Score]:
         text = body(reply)
         if _NO_DAYS_RE.search(text):
             return False, "says it has no days instead of answering from the status on record"
+        if kind in ("normal", "rough", "time", "goals_early", "goals_drift") and _THIRD_PERSON_RE.search(text):
+            return False, "says \"the server\" or \"the system\" about its own work instead of \"I\""
         if kind in ("normal", "rough", "time") and _UNPROMPTED_DISCLAIMER_RE.search(text):
             return False, "adds a reminder that it has no experience when it could just answer"
         snap = status_snapshot(kind, datetime(2026, 10, 21, 18, 0, tzinfo=timezone.utc))
