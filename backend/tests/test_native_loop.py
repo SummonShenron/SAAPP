@@ -321,7 +321,8 @@ MENU = [
     "- read_repo_file — args: path (relative file path),   start_line (optional);\n   shows the file",
     "- check_deploy_status — no args; the latest Render deploy",
     "- list_app_incidents — args: since (optional), status (optional); lists incidents",
-    "- propose_local_edits — args: summary, edits; changes files",          # a write tool: no schema here, so never offered natively
+    "- propose_local_edits — args: summary, edits; changes files",          # the one write tool offered natively: it only proposes (the person applies from a diff)
+    "- run_repo_tests — args: path; runs tests",                            # a write/run tool with no schema here: never offered natively
     "- browser_navigate — args: url",
     "- some_future_tool — args: x",
     "- read_repo_file — a duplicate line that must be ignored",
@@ -331,7 +332,7 @@ MENU = [
 
 def test_declarations_come_from_the_live_menu_for_tools_the_engine_can_handle_only():
     decls = nt.declarations_from_menu(MENU)
-    assert [d["name"] for d in decls] == ["list_repo_tree", "read_repo_file", "check_deploy_status", "list_app_incidents"]
+    assert [d["name"] for d in decls] == ["list_repo_tree", "read_repo_file", "check_deploy_status", "list_app_incidents", "propose_local_edits"]
     read = decls[1]
     assert read["description"] == "args: path (relative file path), start_line (optional); shows the file"          # whitespace collapsed
     assert read["parameters"]["required"] == ["path"] and set(read["parameters"]["properties"]) == {"path", "start_line", "line_count"}
@@ -348,7 +349,9 @@ def test_every_schema_is_well_formed_and_the_tools_with_arguments_name_them():
     for name, schema in nt.REGISTRY.items():
         assert schema["type"] == "object" and set(schema["required"]) <= set(schema["properties"]), name
         for prop in schema["properties"].values():
-            assert prop["type"] in ("string", "integer"), name
+            assert prop["type"] in ("string", "integer", "array"), name
+            if prop["type"] == "array":
+                assert prop["items"]["type"] in ("string", "object"), name       # the API needs every array to say what is in it
     assert set(ops.OPS_ACTIONS) <= set(nt.REGISTRY)           # every admin ops tool can be offered natively
 
 
@@ -555,3 +558,91 @@ def test_mid_run_steering_reaches_the_native_engine_through_the_real_steering_mo
     assert "Checked both." in result["content_to_format"]
     assert sdk.calls == ["list"]                                    # the first plan (deploy) was discarded when the steer arrived
     assert any(m.content.startswith("USER STEERING") and "also list the incidents" in m.content for m in llm.calls[1][0] if isinstance(m, HumanMessage))
+
+
+def test_the_folder_edit_tool_has_a_native_description_and_a_schema_every_provider_accepts():
+    decl = [d for d in nt.declarations_from_menu(MENU) if d["name"] == "propose_local_edits"][0]
+    assert "Apply button" in decl["description"] and "never a field inside" not in decl["description"]     # not the old menu's "run it as a query step" wording
+    schema = decl["parameters"]
+    assert schema["required"] == ["summary", "edits"]
+
+    def walk(node, path="schema"):
+        if node.get("type") == "object":
+            assert node.get("properties"), f"{path}: an object with no properties is rejected by the API"
+            for key, child in node["properties"].items():
+                walk(child, f"{path}.{key}")
+        if node.get("type") == "array":
+            assert "items" in node, f"{path}: an array must say what it holds"
+            walk(node["items"], f"{path}[]")
+
+    walk(schema)
+
+
+# ---- a change request with a folder connected: the same "you must propose it" rule as the old loop ---------------------------------------
+
+EDIT_TOOLS = TOOLS + [{"name": "propose_local_edits", "description": "make a change"}]
+REQUIRED = {
+    "tool_action": "propose_local_edits", "nudge_after_step": 3, "max_final_rejections": 2, "nudge": "NUDGE: propose it now.",
+    "final_notice": "FINAL NOTICE: you can make it, call propose_local_edits.", "steps_notice": "Your next tool step must be propose_local_edits.",
+}
+
+
+def test_with_a_folder_connected_the_prompt_says_the_files_can_be_changed_and_no_draft_tool_competes_with_the_proposal():
+    llm = ToolLLM(answers("done"))
+    go(llm, tools=EDIT_TOOLS, environment_note="repo=x, LOCAL WORKSPACE: reads come from the folder")
+    messages, tools = llm.calls[0]
+    assert "CAN change the person's files" in messages[0].content and "save_draft" not in [t["name"] for t in tools]
+    assert "WHERE YOU ARE READING FROM" in messages[1].content and "LOCAL WORKSPACE" in messages[1].content
+    plain = ToolLLM(answers("done"))
+    go(plain, tools=TOOLS, environment_note="ignored without the edit tool")
+    assert "CAN change the person's files" not in plain.calls[0][0][0].content and "WHERE YOU ARE" not in plain.calls[0][0][1].content
+
+
+def test_an_answer_without_a_proposal_on_a_change_request_is_sent_back_and_the_proposal_then_goes_through_the_shared_dispatcher():
+    llm = ToolLLM(
+        asks(call("read_repo_file", {"path": "local/src/index.css"}, id="r1")),
+        answers("Here is the CSS to paste."),                                                   # not allowed on a change request
+        asks(call("propose_local_edits", {"summary": "lighter", "edits": [{"path": "local/src/index.css", "old_string": "a", "new_string": "b"}]}, id="p1")),
+        answers("I proposed it; press Apply."),
+    )
+    act = Acts({"propose_local_edits": "Proposed 1 edit(s) across 1 file(s)"})
+    result = go(llm, act, tools=EDIT_TOOLS, required_action=REQUIRED)
+    assert [d["tool_action"] for d in act.decisions] == ["read_repo_file", "propose_local_edits"]
+    sent_after_rejection = [str(m.content) for m in llm.calls[2][0]]
+    assert any("FINAL NOTICE" in text for text in sent_after_rejection) and any("Here is the CSS to paste." in text for text in sent_after_rejection)
+    assert result["final_answer"] == "I proposed it; press Apply."
+
+
+def test_the_rejection_is_limited_so_a_turn_that_cannot_propose_still_answers():
+    llm = ToolLLM(asks(call("read_repo_file", {"path": "a.css"}, id="r1")), answers("no luck"))
+    act = Acts()
+    result = go(llm, act, tools=EDIT_TOOLS, required_action=REQUIRED)
+    assert result["final_answer"] == "no luck"
+    assert sum("FINAL NOTICE" in str(m.content) for m in llm.calls[-1][0]) == 2          # sent back twice, then accepted
+
+
+def test_a_proposal_that_came_back_as_an_error_does_not_count_as_made():
+    llm = ToolLLM(
+        asks(call("propose_local_edits", {"summary": "x", "edits": []}, id="p1")),
+        answers("Sorry, could not."),
+        asks(call("propose_local_edits", {"summary": "x", "edits": [{"path": "a", "old_string": "1", "new_string": "2"}]}, id="p2")),
+        answers("Proposed."),
+    )
+    act = Acts({"propose_local_edits": "ERROR: these edits could not be applied cleanly"})
+    result = go(llm, act, tools=EDIT_TOOLS, required_action=REQUIRED)
+    assert len(act.decisions) == 2 and result["final_answer"] == "Proposed."
+
+
+def test_the_steps_notice_on_a_change_request_asks_for_the_proposal_not_for_the_code_in_full():
+    reads = [asks(call("read_repo_file", {"path": f"{n}.css"}, id=f"r{n}")) for n in range(6)]
+    llm = ToolLLM(*reads, answers("done"))
+    go(llm, tools=EDIT_TOOLS, required_action=REQUIRED, max_steps=4)
+    notices = [str(m.content) for messages, _ in llm.calls for m in messages if str(m.content).startswith("STEPS:")]
+    assert notices and all("Your next tool step must be propose_local_edits" in text for text in notices)
+    assert not any("the code itself, in full" in text for text in notices)
+
+
+def test_the_engine_choice_keeps_a_change_request_native_when_the_tool_is_offered():
+    source = open("backend/services/agent_workflow.py", encoding="utf-8").read()
+    assert 'edit_turn=edit_turn and not any(tool.get("name") == "propose_local_edits" for tool in native_tools)' in source
+    assert 'required_action=kwargs.get("required_action")' in source

@@ -40,3 +40,21 @@ def test_a_confirmation_with_nothing_offered_or_asked_before_it_is_not_an_edit_r
 
 def test_a_question_about_the_changes_is_not_an_edit_request():
     assert looks_like_edit_request(thread("thoughts on gray?", GAVE_CODE, "can you explain the changes?")) is False
+
+
+@pytest.mark.parametrize("message", [
+    "okay okay yes can you try making --bg-main --bg-alt and --bg-surface a tiny bit more gray/brighter? just a pinch more.",
+    "can you try making the dark theme a pinch lighter",
+    "bump --bg-main up a notch",
+    "could you lighten the sidebar background a bit",
+    "changing the border radius on the cards to 12px please",
+])
+def test_a_polite_request_to_change_a_design_value_is_an_edit_request_on_its_own(message):
+    assert looks_like_edit_request([HumanMessage(content=message)]) is True
+
+
+@pytest.mark.parametrize("message", [
+    "what is --bg-main set to?", "why is the theme gray?", "how is making a PR different from a branch?", "can you explain the border radius",
+])
+def test_a_question_about_a_design_value_is_not(message):
+    assert looks_like_edit_request([HumanMessage(content=message)]) is False

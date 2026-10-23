@@ -3293,7 +3293,9 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             + [str(getattr(m, "content", "")) for m in [m for m in state.get("messages", [])[:-1] if getattr(m, "type", "") == "human"][-1:]]
         )
         use_native = native_loop.eligible(
-            edit_turn=edit_turn, resumed=bool(resumed_attempts), tools=native_tools,
+            # The native engine offers propose_local_edits too (backend/services/native_tools.py), so a change request with a folder connected stays on it; only when that tool is
+            # missing from its menu does an edit turn go to the old engine.
+            edit_turn=edit_turn and not any(tool.get("name") == "propose_local_edits" for tool in native_tools), resumed=bool(resumed_attempts), tools=native_tools,
             text=recent_user_text, flags=state.get("reasoner_flags"),
         )
         # Counted per turn (backend/utils/llm_turns.py): which engine ran, and what switched deep mode on: the user's setting, the
@@ -3342,6 +3344,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 emit_step=_announce_step, emit_facts=emit_trace_facts,
                 steering_source=kwargs.get("steering_source"), on_steering_applied=kwargs.get("on_steering_applied"),
                 library_allowance=kwargs.get("library_allowance"),
+                # With a folder connected: where reads come from (the folder, not GitHub) and, on a request for a change, the same "you must propose it" rule the old loop enforces.
+                environment_note=schema if local_workspace_handle is not None else "", required_action=kwargs.get("required_action"),
                 shorten_old=not (isinstance(kwargs["llm"], ClaudeLLM) and kwargs["llm"].caches_prompt),   # a model that caches the conversation keeps old results whole (native_loop.py)
             )
 

@@ -1129,7 +1129,10 @@ def _build_architecture_map(tree_items: list, fetch_content) -> str:
 # message) and still mean it. The short ones keep it so "add" doesn't match "address".
 _EDIT_VERB_RE = re.compile(
     r"\b(?:change|modify|update|replace|rename|remove|delete|insert|refactor|rewrite|implement|"
-    r"create|adjust|apply|tweak)|\b(?:edit|fix|add|move|swap|make|write)\b",
+    r"create|adjust|apply|tweak)|\b(?:edit|fix|add|move|swap|make|write)\b|"
+    # "can you try making --bg-main a bit lighter", "changing", "bumping": the -ing forms are how people ask politely
+    r"\b(?:chang|updat|replac|renam|remov|delet|insert|refactor|rewrit|implement|creat|adjust|tweak|edit|fix|add|mov|swapp|mak|writ|bump|lighten|darken|brighten|dim|shift|nudg)ing\b|"
+    r"\b(?:bump|lighten|darken|brighten|dim|nudge|shift)\b",
     re.IGNORECASE,
 )
 # Something code-shaped to act on. A bare verb ("make your replies shorter", "update my memory")
@@ -1138,7 +1141,10 @@ _CODE_TARGET_RE = re.compile(
     r"\b[\w./-]+\.(?:py|tsx?|jsx?|css|json|md|html|ya?ml|toml|sh|ps1)\b|"
     r"\b(?:file|function|component|class|css|stylesheet|line|lines|code|button|header|sidebar|panel|"
     r"menu|navbar|banner|endpoint|route|test|tests|variable|import|prop|style|color|colour|label|"
-    r"icon|tooltip|modal|loader|spinner|readme|hero)\b",
+    r"icon|tooltip|modal|loader|spinner|readme|hero|"
+    # design values: a css custom property ("--bg-main"), tokens, a theme, and the things a stylesheet sets
+    r"tokens?|theme|font|padding|margin|background|border|radius|shadow|opacity|contrast|spacing|gray|grey)\b|"
+    r"(?<![\w-])--[a-z][\w-]*",
     re.IGNORECASE,
 )
 # "do it", "go ahead", "yes please apply that", "ugh just make the change" — a confirmation or
@@ -1262,3 +1268,14 @@ def format_steering_notes(notes: list) -> str:
         + numbered
     )
 
+
+
+def might_be_edit_request(messages) -> bool:
+    """A wider net than looks_like_edit_request, for choosing which engine runs a turn when a local folder is connected: any edit verb or confirmation in the person's latest message.
+    The native engine has no way to edit a folder, so a turn it might have to handle as an edit goes to the old engine, which does. Matching too much only costs a dearer turn;
+    matching too little leaves the person with an answer that describes a change nothing can apply."""
+    humans = [m for m in (messages or []) if _is_human(m)]
+    if not humans:
+        return False
+    last = _message_text(humans[-1]).strip()
+    return bool(last) and bool(_EDIT_VERB_RE.search(last) or _EDIT_CONFIRMATION_RE.search(last))

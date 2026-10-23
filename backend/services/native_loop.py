@@ -26,7 +26,7 @@ with the steering in view. Each steer grants two extra steps (at most eight), an
 loop the steering was re-rendered into every prompt; here it is one more user message in the conversation, so it costs nothing to keep.
 
 WHAT IT DELIBERATELY LEAVES OUT FOR NOW (each is a measured question, not an assumption): the after-answer grounding and idiom checks, the
-redundant-repeat backstop beyond the simple repeat guard here, clarification pauses, and every write, browser and folder-edit tool. A turn that needs any of those (a connected-folder edit request, a resumed clarification) is handed to the old engine.
+redundant-repeat backstop beyond the simple repeat guard here, clarification pauses, and every write and browser tool EXCEPT propose_local_edits (a connected folder: it only proposes, and the person applies from a diff; a change request is held to the same "you must propose it" rule as in the old loop). A turn that needs any of the others (a resumed clarification, an email to send) is handed to the old engine.
 """
 import asyncio
 import json
@@ -77,6 +77,11 @@ SAVE_DRAFT_TOOL = {
     "parameters": {"type": "object", "properties": {"text": {"type": "string", "description": "the whole draft"}}, "required": ["text"]},
 }
 _REPO_TOOLS = frozenset({"read_repo_file", "search_code", "search_literal", "find_file", "trace_symbol"})
+
+# Added to the system prompt only when propose_local_edits is among the tools (a local folder is connected): the person's own files can be changed, by proposal.
+EDIT_PROMPT = """
+
+- A local folder is connected, so you CAN change the person's files, by proposal: when they ask you to make, apply, add, fix or change something in it, read what you need, then call propose_local_edits. They see a diff with an Apply button, which is their confirmation. Never paste code for them to apply themselves, never ask "would you like me to apply this?" in chat, and never say it has been applied: it has not until they press Apply. This replaces the earlier line saying you cannot change anything, and the one about giving code in your answer."""
 
 STEERING_NOTICE = (
     "USER STEERING: the user sent the following while you were already working on this. It updates the task. Where it conflicts with "
@@ -138,7 +143,7 @@ def needs_old_engine(text: str = "", flags: Optional[Dict[str, Any]] = None) -> 
 
 def eligible(*, edit_turn: bool, resumed: bool, tools: List[Dict[str, Any]], text: str = "", flags: Optional[Dict[str, Any]] = None) -> bool:
     """Whether THIS turn may use the native engine: it is switched on, there is at least one tool it can offer, the turn is not one of
-    the kinds only the old engine handles (an edit request against a connected folder, a resumed clarification), and nothing in `text`
+    the kinds only the old engine handles (an edit request when the edit tool is not offered here, a resumed clarification), and nothing in `text`
     (the request and the recent conversation) or `flags` (the router's reading of it) calls for a tool the native engine lacks."""
     return enabled() and bool(tools) and not edit_turn and not resumed and not needs_old_engine(text, flags)
 
@@ -177,7 +182,7 @@ def _describe(name: str, args: Dict[str, Any]) -> str:
     return f"{name}({shown})"
 
 
-def build_context(question: str, history: str, time_line: str, coding_preferences: str, architecture_map: str = "", user_memory: str = "") -> str:
+def build_context(question: str, history: str, time_line: str, coding_preferences: str, architecture_map: str = "", user_memory: str = "", environment_note: str = "") -> str:
     """The one human message that opens the conversation: what is stable for this person first, then this request."""
     parts = []
     if coding_preferences:
@@ -190,6 +195,8 @@ def build_context(question: str, history: str, time_line: str, coding_preference
         parts.append("RECENT CONVERSATION (oldest first):\n" + history.strip())
     if user_memory:  # right above the request, where it is hardest to overlook
         parts.append(user_memory.strip())
+    if environment_note:  # where this turn's reads come from (the person's folder, not GitHub), so a path it reads is known to be their live file
+        parts.append("WHERE YOU ARE READING FROM:\n" + environment_note.strip())
     parts.append("USER REQUEST:\n" + question.strip())
     return "\n\n".join(parts)
 
@@ -215,6 +222,8 @@ async def run(
     steering_max_extra_steps: int = 8,
     shorten_old: bool = True,
     library_allowance: Any = None,
+    environment_note: str = "",
+    required_action: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Runs the loop and returns what the old loop returns: `{"final_answer", "attempts", "show_work"}`, where each attempt is
     `{"purpose", "action_desc", "observation"}`. `llm` must offer `ainvoke_tools(messages, tools)`. `act(decision)` is the turn's
@@ -223,11 +232,14 @@ async def run(
     messages the user sent mid-run (see the module docstring)."""
     budget = max(1, min(max_steps or MAX_STEPS, MAX_STEPS))
     offered = {tool["name"] for tool in tools}
-    if offered & _REPO_TOOLS and "save_draft" not in offered:
+    can_edit = "propose_local_edits" in offered
+    system_prompt = SYSTEM_PROMPT + (EDIT_PROMPT if can_edit else "")
+    # With a folder connected the change IS the proposal, so a separate draft would only compete with it.
+    if offered & _REPO_TOOLS and "save_draft" not in offered and not can_edit:
         tools = list(tools) + [SAVE_DRAFT_TOOL]
         offered = offered | {"save_draft"}
     latest_draft: Optional[str] = None
-    messages: List[Any] = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=build_context(question, history, time_line, coding_preferences, architecture_map, user_memory))]
+    messages: List[Any] = [SystemMessage(content=system_prompt), HumanMessage(content=build_context(question, history, time_line, coding_preferences, architecture_map, user_memory, environment_note if can_edit else ""))]
     attempts: List[Dict[str, str]] = []
     seen: Dict[str, int] = {}
     held: List[Dict[str, Any]] = []  # each tool result in the conversation: its message, the step it came from, its call and the full text
@@ -325,6 +337,13 @@ async def run(
                 logger.debug("[native_loop] could not emit trace facts.", exc_info=True)
         return result
 
+    required_rejections = 0
+
+    def required_done() -> bool:
+        """The required tool (propose_local_edits on a change request) has been called and did not come back as an error."""
+        tool = (required_action or {}).get("tool_action") or ""
+        return any(str(a.get("action_desc", "")).startswith(f"{tool}(") and not str(a.get("observation", "")).startswith("ERROR") for a in attempts)
+
     step = 0
     told_at: set = set()
     while step < budget:
@@ -332,9 +351,17 @@ async def run(
         await absorb_steering(step)  # before the model decides, so a steer that is already here can widen the budget
         shorten_old_results(step)
         warning = steps_left_notice(budget - step + 1)
+        if warning and required_action and not required_done() and required_action.get("steps_notice"):
+            # the generic notice says "write your answer, with the code in full": the opposite of what a change request needs
+            warning = f"STEPS: you have {budget - step + 1} tool step{'s' if budget - step + 1 != 1 else ''} left, this one included. {required_action['steps_notice']}"
         if warning and (budget - step + 1) not in told_at:      # once per count: a steer that discards a decision must not repeat it
             told_at.add(budget - step + 1)
             messages.append(HumanMessage(content=warning))
+        if required_action and not required_done() and f"nudge{step}" not in told_at and step > required_action.get("nudge_after_step", 3) and any(
+            str(a.get("action_desc", "")).startswith("read_repo_file(") and not str(a.get("observation", "")).startswith("ERROR") for a in attempts
+        ):
+            told_at.add(f"nudge{step}")
+            messages.append(HumanMessage(content=required_action["nudge"]))
         # Half-way through the steps with reading done and no draft: ask for one (once; a steer that discards a decision must not repeat it).
         nudge = draft_checkpoint.halfway_notice(step - 1, budget + 1, len(attempts), bool(latest_draft), False, how="by calling save_draft in this step") if "save_draft" in offered else None
         if nudge and "halfway" not in told_at:
@@ -349,6 +376,12 @@ async def run(
         messages.append(reply)
         calls = [call for call in (getattr(reply, "tool_calls", None) or []) if call.get("name")]
         if not calls:
+            if required_action and not required_done() and required_rejections < required_action.get("max_final_rejections", 2):
+                # A change was asked for and a folder is connected, but the model is answering without proposing it: send it back (what it said stays in view).
+                required_rejections += 1
+                messages.append(HumanMessage(content=required_action["final_notice"]))
+                logger.info("[native_loop] step %s: an answer without %s on a turn that requires it was sent back (%d/%d).", step, required_action["tool_action"], required_rejections, required_action.get("max_final_rejections", 2))
+                continue
             final_text = _text(getattr(reply, "content", ""))
             break
         results = await asyncio.gather(*(run_call(step, call) for call in calls))
