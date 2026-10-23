@@ -1144,9 +1144,11 @@ _CODE_TARGET_RE = re.compile(
 # "do it", "go ahead", "yes please apply that", "ugh just make the change" — a confirmation or
 # command with no target of its own, which only means "edit" given what came just before.
 _EDIT_CONFIRMATION_RE = re.compile(
+    # "can you apply the changes?", "could you please just do it", "go ahead and apply that": a polite or run-on lead-in is still the same confirmation.
     r"^\W*(?:(?:yes|yep|yeah|ok|okay|sure|please|pls|ugh|come on|just|now)\W+)*"
-    r"(?:do it|go ahead|apply(?: it| that| this| the change| the changes)?|"
-    r"make (?:the|that|those|this) (?:change|edit|update|fix)s?|make it so|proceed|ship it|"
+    r"(?:(?:can|could|would|will) you\W+(?:(?:please|pls|just|go ahead and)\W+)*)?(?:go ahead and\W+)?"
+    r"(?:do it|go ahead|apply(?: it| that| this| those| these| the change| the changes| them)?|"
+    r"make (?:the|that|those|these|this) (?:changes?|edits?|updates?|fix(?:es)?)|make it so|proceed|ship it|"
     r"fix it|change it|edit it|update it|why (?:won'?t|wont|don'?t|dont) you (?:just )?(?:do|make|apply|change|edit))",
     re.IGNORECASE,
 )
@@ -1154,7 +1156,7 @@ _EDIT_CONFIRMATION_RE = re.compile(
 _OFFERED_OR_DENIED_EDIT_RE = re.compile(
     r"(?:would you like me to|want me to|shall i|should i|do you want me to)[^.?!]{0,80}"
     r"\b(?:make|apply|update|change|edit|modify|implement|go ahead)\b|"
-    r"\b(?:copy (?:and|&) paste|paste (?:this|the|it)|replace (?:those|these|the) (?:two )?lines)\b|"
+    r"\b(?:copy (?:and|&) paste|paste (?:this|that|the|it|those|these)|replace (?:those|these|the) (?:two )?lines|(?:update|change|edit|replace) lines? \d+)\b|"
     r"\b(?:i (?:can'?t|cannot|don'?t have|do not have|am unable to|'m unable to|lack)|"
     r"i (?:am|'m) only able to)\b[^.]{0,200}\b(?:write|edit|apply|modify|change|read and search)\b",
     re.IGNORECASE,
@@ -1211,6 +1213,8 @@ def looks_like_edit_request(messages) -> bool:
     # refused" — the scrub runs before this check, so the placeholder is all that's left of it.
     ai_offered_or_denied = (
         bool(_OFFERED_OR_DENIED_EDIT_RE.search(previous_ai)) or previous_ai.strip() == _SCRUBBED_DENIAL_PLACEHOLDER
+        # a reply that gave the change as code is an offer to make it: "can you apply the changes?" right after it means exactly that
+        or "```" in previous_ai
     )
     if is_confirmation and words <= 14 and (recent_explicit or ai_offered_or_denied):
         return True

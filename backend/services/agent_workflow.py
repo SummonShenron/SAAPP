@@ -2061,6 +2061,9 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         edit_turn = local_workspace_handle is not None and looks_like_edit_request(state.get("messages", []))
         if edit_turn:
             logger.info("[tool_agent_node] edit request with a connected local folder — propose_local_edits is required this turn.")
+        else:
+            # Which of the two things behind "it said it can't edit" this turn was: no folder copy on the server, or a folder with a message that did not read as an edit request.
+            logger.info("[tool_agent_node] not an edit turn (folder on the server: %s).", "yes" if local_workspace_handle is not None else "no")
         schema_parts = [f"repo={repo}", f"default_branch={default_branch}"]
         if repo_resolution_note:
             schema_parts.append(repo_resolution_note)
