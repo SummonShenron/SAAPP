@@ -61,13 +61,13 @@
    the caret, the active rail item) and a few panel edges (the rail's and the trace blade's, --edge). Your own messages are a grey bubble. Real danger stays
    a clear red (--accent-danger). Anything that wants a dark surface should use the tokens below, not a hex, so the next change to this theme is one block. */
 .theme-shadow {
-  --bg-main: #101112;            /* the page: a soft near-black with a faint cool tint */
-  --bg-alt: #121314;
-  --bg-surface: #121314;
-  --bg-surface-hover: #1d1d20;
-  --border-color: #2c2d31;       /* hairlines: neutral grey */
-  --ai-border-color: #2c2c30;
-  --user-border-color: #3a3a40;
+  --bg-main: #17181a;            /* the page: a soft near-black with a faint cool tint */
+  --bg-alt: #161718;
+  --bg-surface: #161718;
+  --bg-surface-hover: #242528;
+  --border-color: #33343a;       /* hairlines: neutral grey */
+  --ai-border-color: #33343a;
+  --user-border-color: #43444a;
   --text-main: #e8e8ea;
   --text-muted: #8e8e95;
   --text: #f5f5f6;
@@ -78,23 +78,23 @@
   --accent-soft: rgba(207, 138, 90, 0.12);
   --accent-ring: rgba(207, 138, 90, 0.25);
   --edge: color-mix(in srgb, var(--accent-primary) 60%, transparent);  /* an orange panel edge */
-  --card-tint: #16171a;
-  --tint-hover: #1d1d20;
-  --follow-up-bg: #16171a;
+  --card-tint: #1d1e20;
+  --tint-hover: #242528;
+  --follow-up-bg: #1d1e20;
   /* Component tokens */
-  --panel-bg: #121314;           /* rail, trace blade, nav */
-  --popover-bg: #1a1b1e;         /* menus and popovers */
+  --panel-bg: #161718;           /* rail, trace blade, nav */
+  --popover-bg: #212225;         /* menus and popovers */
   --on-accent: #0a0a0b;          /* text on a solid accent button: white on the muted orange is too faint */
-  --card-bg: #16171a;            /* cards and tiles */
-  --input-bg: #121314;
-  --line: #2c2d31;
-  --bubble-user-bg: #1b1b1e;     /* your messages: a faint lift off the page, no outline (the light theme's bubble is about this quiet) */
+  --card-bg: #1d1e20;            /* cards and tiles */
+  --input-bg: #161718;
+  --line: #33343a;
+  --bubble-user-bg: #1d1d20;     /* your messages: a faint lift off the page, no outline (the light theme's bubble is about this quiet) */
   --bubble-user-border: transparent;
   --bubble-user-text: #e8e8ea;
-  --bubble-ai-bg: #101112;
-  --bubble-ai-border: #101112;
+  --bubble-ai-bg: #17181a;
+  --bubble-ai-border: #17181a;
   --bubble-ai-text: #e8e8ea;
-  --filter-bg: #121314;
+  --filter-bg: #161718;
   --code-bg: #070708;
   --code-border: #1a1a1d;
   --hero-overlay: linear-gradient(rgba(8, 8, 9, 0.4), rgba(8, 8, 9, 0.85));
