@@ -45,6 +45,16 @@ MAX_CONFIRMATION_WORDS = 8
 _NOT_A_NAME = frozenset({"the", "this", "that", "they", "their", "user", "sonic", "assistant"}) | frozenset(_WEEKDAYS) | frozenset(_MONTHS)
 
 
+# A relative day word is a claim about WHEN, and only the person's own words can make it: a note that says "today" for an interview the person never put on today was the assistant's
+# guess written down as a fact (2026-10-23: a reply said "good luck with the interview today", the note writer saved "going into an interview today", and the date added after it
+# made it look settled). Each family is a different claim: "tonight" backs "today", but "tomorrow" does not.
+_DAY_FAMILIES = {
+    "today": re.compile(r"\b(?:today|tonight|this (?:morning|afternoon|evening)|later today)\b", re.IGNORECASE),
+    "tomorrow": re.compile(r"\btomorrow\b", re.IGNORECASE),
+    "yesterday": re.compile(r"\b(?:yesterday|last night)\b", re.IGNORECASE),
+}
+
+
 @dataclass
 class Grounded:
     """What came of checking a piece of text: the text to keep (None when nothing is left), how many sentences were dropped, and the KINDS of detail that were not the
@@ -124,7 +134,7 @@ def _name_in(token: str, words: Set[str]) -> bool:
 
 
 def ungrounded_kinds(
-    candidate: str, *, user_text: str, assistant_text: str = "", confirmed: str = "", known_text: str = "", names_anywhere: bool = False,
+    candidate: str, *, user_text: str, assistant_text: str = "", confirmed: str = "", known_text: str = "", names_anywhere: bool = False, check_days: bool = False,
 ) -> List[str]:
     """The kinds of detail in `candidate` that are not in the person's own words (and not in what they just confirmed): "time", "number", "weekday", "month", "name".
     `assistant_text` (the reply the note was written from) lets a NAME be recognised as coming from the assistant; with none given, names are not judged unless `names_anywhere`.
@@ -155,6 +165,8 @@ def ungrounded_kinds(
         kinds.append("weekday")
     if any(month in cand_words and month not in source_words for month in _MONTHS):
         kinds.append("month")
+    if check_days and any(family.search(candidate) and not family.search(source) for family in _DAY_FAMILIES.values()):
+        kinds.append("day")
     known = source_words | _tokens(known_text)
     said = _tokens(assistant_text) if assistant_text else set()
     if any(not _name_in(name, known) and (names_anywhere or name in said) for name in _names(candidate)):
@@ -163,7 +175,7 @@ def ungrounded_kinds(
 
 
 def ground_note(
-    note: str, *, user_text: str, assistant_text: str = "", previous_reply: str = "", known_text: str = "", names_anywhere: bool = False,
+    note: str, *, user_text: str, assistant_text: str = "", previous_reply: str = "", known_text: str = "", names_anywhere: bool = False, check_days: bool = False,
 ) -> Grounded:
     """`note` with every sentence that carries a detail the person did not give taken out. Nothing left means nothing to save (`text` is None). `names_anywhere`: see ungrounded_kinds."""
     confirmed = confirmed_text(user_text, previous_reply)
@@ -173,7 +185,7 @@ def ground_note(
     for sentence in _SENTENCE_SPLIT_RE.split((note or "").strip()):
         if not sentence.strip():
             continue
-        bad = ungrounded_kinds(sentence, user_text=user_text, assistant_text=assistant_text, confirmed=confirmed, known_text=known_text, names_anywhere=names_anywhere)
+        bad = ungrounded_kinds(sentence, user_text=user_text, assistant_text=assistant_text, confirmed=confirmed, known_text=known_text, names_anywhere=names_anywhere, check_days=check_days)
         if bad:
             dropped += 1
             kinds.extend(k for k in bad if k not in kinds)

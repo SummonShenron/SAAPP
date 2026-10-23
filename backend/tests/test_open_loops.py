@@ -466,7 +466,7 @@ def test_no_database_means_nothing_happens():
 def test_at_most_three_proposals_are_considered_from_one_message(monkeypatch):
     monkeypatch.setattr("backend.utils.self_counters.record_turn_counts", lambda counts, now=None: None)
     loops = ",".join(f'{{"what": "has event number{i} thing", "due_date": "2026-10-1{i}", "kind": "event"}}' for i in range(6))
-    result, _, _ = run_capture("a busy week: monday, tuesday, wednesday...", '{"loops": [' + loops + ']}')
+    result, _, _ = run_capture("a busy week starting tomorrow: monday, tuesday, wednesday...", '{"loops": [' + loops + ']}')
     assert result["captured"] == 3
 
 
@@ -538,3 +538,27 @@ def test_the_counters_know_the_new_keys_and_the_voice_prompt_carries_the_block()
     prompt = build_voice_prompt("G", "d", "h", "q", open_loop_context="\nOPEN LOOP (optional, once): x\n")
     assert "OPEN LOOP (optional, once): x" in prompt
     assert "OPEN LOOP" not in build_voice_prompt("G", "d", "h", "q")
+
+
+# ---- the date on a loop must come from the person's words (2026-10-23) --------------------------------------------------------------------------------------------------------
+
+def test_a_date_the_person_never_gave_is_not_theirs():
+    assert ol.due_date_issue("2026-10-23", user_text="I have an interview for a software engineer role") == "no day given"
+    assert ol.due_date_issue("2026-10-23", user_text="I have an interview at 2pm") == "no day given"             # a time of day is not a date
+
+
+def test_a_day_word_the_person_gave_makes_the_date_theirs():
+    for said, due in [("interview tomorrow", "2026-10-24"), ("interview today", "2026-10-23"), ("interview on Tuesday", "2026-10-27"), ("interview Oct 27", "2026-10-27"),
+                      ("interview 10/27", "2026-10-27"), ("interview in 3 days", "2026-10-26"), ("interview next week", "2026-10-28")]:
+        assert ol.due_date_issue(due, user_text=said) is None, said
+
+
+def test_a_weekday_that_does_not_match_the_one_they_said_is_refused():
+    assert ol.due_date_issue("2026-10-28", user_text="interview on Tuesday") == "weekday does not match"      # a Wednesday
+    assert ol.due_date_issue("2026-10-27", user_text="interview on Tuesday") is None
+    assert ol.due_date_issue("2026-10-28", user_text="interview Tuesday, no wait, tomorrow") is None            # another day word is present: not judged by the weekday
+
+
+def test_a_later_detail_of_something_already_noted_keeps_its_date_and_a_yes_to_a_dated_question_counts():
+    assert ol.due_date_issue("2026-10-27", user_text="it's at 2pm silly", known_dates=["2026-10-27"]) is None
+    assert ol.due_date_issue("2026-10-24", user_text="yes", previous_reply="Is the interview tomorrow?") is None

@@ -99,9 +99,21 @@ def test_the_prompt_carries_the_care_rules_the_check_enforces():
     block = profile_prompt_block()
     assert CARE_AND_CONCERN in block
     for phrase in ("concerned about a concrete thing in the work", "never that you care about them", "can't verify a feeling", "lead with the specific thing they did",
-                   "Don't remind them you're an AI or have no feelings or experience when you can just answer", "your own numbers or any reward"):
+                   "When you can just answer, just answer; if they ask what you are or press, say it plainly", "your own numbers or any reward"):
         assert phrase in CARE_AND_CONCERN, phrase
 
 
 def test_the_prompts_own_example_passes_the_check():
     assert identity_reply_issue("I'd rather make sure you're okay than move on.") is None
+
+
+def test_no_prompt_names_the_no_experience_disclaimer_it_wants_left_out():
+    """Naming the line a model should not say makes it likelier to say it (a reply to "what were you up to last night" opened with "I don't actually experience time passing"). The
+    prompts that describe Sonic's jobs say to answer plainly; the claims themselves are caught by identity_checks, not by priming the model with the disclaimer."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    for path in ("backend/components/sonic_profile.py", "backend/utils/routines.py", "backend/utils/self_report.py", "backend/utils/reading_shelf.py"):
+        text = (root / path).read_text(encoding="utf-8")
+        for phrase in ("you don't experience it", "have no experience", "no experience of it", "no time between", "you did not experience it", "Don't remind them you're an AI"):
+            assert phrase not in text, (path, phrase)

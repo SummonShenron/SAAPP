@@ -1139,7 +1139,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # time (backend/utils/routines.py). Not under a safety context, and not on a closing message.
             routines_context = ""
             if (risk_level == RISK_NONE and source_type == "conversational" and not is_closing_message(question)
-                    and routines_utils.asks_about_routines(final_state.get("original_question", question))):
+                    and (routines_utils.asks_about_routines(final_state.get("original_question", question))
+                         # "yes you do" after a denial of its jobs is the same question, and must get the same true record
+                         or routines_utils.follows_routines_ask(question, routines_utils.previous_reply(chat_sessions[history_key])))):
                 routines_context = await asyncio.to_thread(
                     lambda: routines_utils.build_routines_context(get_db(), user_tz, is_admin=is_admin_user)
                     + ("" if is_guest_username(username) else user_tasks_utils.build_tasks_context(get_db(), username, user_tz) + meetings_utils.build_schedule_context(username, user_tz))

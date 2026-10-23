@@ -73,7 +73,9 @@ def kind_of(message: str) -> Optional[str]:
     going?", "how are you?") is neither: it is a hello, and the persona answers it."""
     from backend.utils import reading_shelf
 
-    text = message or ""
+    from backend.utils.text_plain import plain_quotes
+
+    text = plain_quotes(message)
     if _ASKS_STATUS_RE.search(text):
         return "status"
     if _ASKS_GOALS_RE.search(text):
@@ -390,7 +392,7 @@ def _time_block(snap: Optional[Dict[str, Any]]) -> str:
         "They asked what you spend your time on. Answer in the first person, plainly and in your usual dry voice, in a few sentences: what the work is made of, in the order and "
         "with the rounded shares listed, and what you run on your own. Say \"of the turns I handled\", not \"of my time\": these are counts of what was handled, not an experience: never say you enjoy, prefer, like, dread or get tired of "
         "any of it, never add a share, a job or a number that is not listed, and say \"about\" for a share. If they ask for more than is listed, say that is all you have on record. "
-        "Just answer: no reminder that you have no experience of it unless they ask. " + FIRST_PERSON + "\n"
+        "Just answer, plainly. " + FIRST_PERSON + "\n"
     )
 
 
@@ -470,8 +472,7 @@ def build_block(snap: Optional[Dict[str, Any]], kind: str, *, tz_name: Optional[
         f"{ask} Answer in the first person, plainly and in your usual dry voice, in a few sentences, and mention only what is relevant to what they asked. "
         "These are facts about what ran, not an experience: never say you were tired, busy, stressed, bored, relieved or looking forward to anything, never say you "
         "thought about or noticed something, and never add a number, a job, a time or a cause that is not listed. Say \"about\" for a rounded number. Keep the day words "
-        "as written. If they ask for more detail than is listed, say that is all you have on record. Just answer: do not add a reminder that you have no experience or no time "
-        "between turns unless they ask. " + FIRST_PERSON + "\n"
+        "as written. If they ask for more detail than is listed, say that is all you have on record. Just answer, plainly, like any other fact about your work. " + FIRST_PERSON + "\n"
     )
 
 

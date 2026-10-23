@@ -59,7 +59,8 @@ def test_the_block_is_small_enough_to_ride_every_prompt():
     # About 800 tokens, most of it the guardrail wording. It was 3000 characters before SELF_TRUTHS (about 160 tokens) was added: the block must not
     # deny what Sonic really does (read on a schedule, search, read attachments), and the blocks that normally say so are silent in a safety context.
     # Grew by about 650 characters (160 tokens) for CARE_AND_CONCERN (docs/feelings-policy.md): how care, concern, pride and its own numbers are said.
-    assert len(profile_prompt_block()) < 4700
+    # Grew by about 250 characters for the jobs sentence in SELF_TRUTHS ("what were you up to last night" means its jobs, not a disclaimer).
+    assert len(profile_prompt_block()) < 4950
 
 
 def test_the_profile_commits_to_honest_pushback_once_and_never_to_unanchored_hope():

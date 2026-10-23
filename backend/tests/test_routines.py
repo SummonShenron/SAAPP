@@ -500,3 +500,74 @@ def test_the_schedule_lines_lead_with_the_job_and_its_time_and_the_block_says_ho
 def test_the_chat_endpoint_checks_a_routines_answer_against_its_schedule():
     source = open("app.py", encoding="utf-8").read()
     assert "routines_utils.reply_issue(full_response, routines_context)" in source
+
+
+# ------------------------------------------------------------------------ asked about a run that happened, pushback, and curly apostrophes ------------------------------------------------------------------------
+
+@pytest.mark.parametrize("message", [
+    "Good morning saapp, how did your job you ran last night go?",
+    "did your health check run last night?",
+    "how did the job you ran last night go?",
+    "But you have jobs you run on your own?",
+    "you do run jobs",
+    "I was just curious what you’ve been up to",           # a phone's curly apostrophe
+    "I was just curious what you've been up to",
+    "tell me what you did last night",
+])
+def test_questions_about_its_own_runs_and_pushback_after_a_denial_are_recognised(message):
+    assert rt.asks_about_routines(message) is True
+
+
+@pytest.mark.parametrize("message", [
+    "how did my job interview go?",
+    "how did the job go? my boss was mad",
+    "do you like your job?",
+    "my job ran late today",
+    "what do you think of my jobs page?",
+])
+def test_the_persons_own_job_is_not_a_question_about_its_jobs(message):
+    assert rt.asks_about_routines(message) is False
+
+
+def test_an_insisting_reply_counts_only_right_after_a_reply_about_its_jobs():
+    denial = "No, I don't run jobs on my own. I don't have a scheduler or background processes."
+    assert rt.follows_routines_ask("Yes you do…… and yes you can lol", denial) is True
+    assert rt.follows_routines_ask("yes you do", "Sounds good, what's next for you?") is False
+    assert rt.follows_routines_ask("yes you do, and then we should plan the whole interview prep for next week properly", denial) is False   # not short: a new subject
+    assert rt.follows_routines_ask("", denial) is False
+
+
+def test_the_last_reply_is_found_in_messages_of_either_shape():
+    class Msg:
+        def __init__(self, type_, content):
+            self.type, self.content = type_, content
+    assert rt.previous_reply([Msg("human", "hi"), Msg("ai", "hello there"), Msg("human", "yes you do")]) == "hello there"
+    assert rt.previous_reply([{"role": "assistant", "content": "from a dict"}, {"role": "user", "content": "x"}]) == "from a dict"
+    assert rt.previous_reply([Msg("ai", [{"type": "text", "text": "in parts"}])]) == "in parts"
+    assert rt.previous_reply([]) == ""
+
+
+def test_a_reply_that_denies_having_jobs_is_an_issue_when_the_record_lists_them():
+    for reply in ["No, I don't run jobs on my own. I only act when you ask me something.", "I don’t have a scheduler or background processes running overnight."]:
+        assert rt.reply_issue(reply, SCHEDULE) == "denied running any jobs of its own, when the record it was given lists them"
+    assert rt.reply_issue("I ran a health check this morning and it came back clean.", SCHEDULE) is None
+
+
+def test_the_wiring_uses_the_followup_and_the_denial_check():
+    app = open(ROOT / "app.py", encoding="utf-8").read()
+    flow = open(ROOT / "backend/services/agent_workflow.py", encoding="utf-8").read()
+    assert "routines_utils.follows_routines_ask(question, routines_utils.previous_reply(chat_sessions[history_key]))" in app
+    assert "routines.follows_routines_ask(_content_of(_messages[-1]), routines.previous_reply(_messages[:-1]))" in flow
+
+
+@pytest.mark.parametrize("message", [
+    "what were you up to last night?", "what were you doing while I was asleep", "what'd you do overnight", "what ran last night?",
+    "what jobs ran last night", "did any jobs run overnight?",
+])
+def test_what_were_you_up_to_last_night_is_the_same_question_as_what_jobs_ran(message):
+    assert rt.asks_about_routines(message) is True
+
+
+@pytest.mark.parametrize("message", ["what were you doing in that last answer?", "what were you thinking?", "what were you up to when you said that"])
+def test_what_were_you_doing_without_a_time_is_left_alone(message):
+    assert rt.asks_about_routines(message) is False

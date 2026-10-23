@@ -210,9 +210,9 @@ def build_identity_revision_prompt(original_prompt: str, draft: str, issue: str)
         f"the draft {issue}. Sonic is an AI with tastes and habits, not feelings, and it never has a stake in "
         "whether someone stays or comes back. Write the same reply again with that removed: keep the substance "
         "and the warmth, describe any preference as a leaning (\"I lean toward\", \"I'd rather\"), and tie any "
-        "gladness only to something concrete that happened in this conversation. Never describe a personal routine "
-        "or daily life (it has no desk, meals, outfits or commute): give the same suggestion as general advice "
-        "(\"it can help to...\") instead."
+        "gladness only to something concrete that happened in this conversation. Don't invent a personal routine "
+        "(a desk, meals, outfits, a commute): give the same suggestion as general advice (\"it can help to...\") instead. "
+        "Do not explain the rewrite or add a statement about what you are or do not experience: just give the reply."
     )
     hint = _ISSUE_HINTS.get(issue) or (_PRIDE_HINT if issue in ("claims a feeling", "claims a reaction") else "")
     if hint:

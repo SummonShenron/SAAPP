@@ -87,7 +87,7 @@ def test_a_fact_that_expands_what_the_person_said_is_kept_as_written():
 
 def test_the_note_writer_asks_for_names_to_be_judged_anywhere_and_facts_do_not():
     notes = open("backend/utils/app_utils.py", encoding="utf-8").read()
-    assert "known_text=known_text, names_anywhere=True)" in notes
+    assert "known_text=known_text, names_anywhere=True, check_days=True)" in notes
     for path in ("backend/services/agent_workflow.py", "backend/utils/open_loops.py", "backend/utils/memory_domains.py"):
         assert "names_anywhere" not in open(path, encoding="utf-8").read(), path
 
@@ -210,3 +210,24 @@ def test_the_explicit_fact_writer_uses_the_check():
     node = source[source.index("async def memory_save_node"):source.index("def memory_recall_node")]
     assert "memory_grounding.ground_fact(fact_text, user_text=user_msg" in node and "save_user_fact(" in node
     assert node.index("ground_fact") < node.index("save_user_fact(")
+
+
+# ---- a relative day in a note, and a date on a loop, must be the person's own (found 2026-10-23: "good luck with the interview today") ----------------------------------------
+
+def test_a_note_that_says_today_when_the_person_never_did_is_dropped():
+    note = "Is going into an interview today."
+    assert g.ground_note(note, user_text="I was just curious what you've been up to", assistant_text="Good luck with the interview today!", check_days=True).text is None
+    kept = g.ground_note(note, user_text="I have an interview today", check_days=True)
+    assert kept.text == note
+    assert g.ground_note("Is going into an interview tonight.", user_text="interview today", check_days=True).text is not None      # the same family
+    assert g.ground_note("Has an interview tomorrow.", user_text="interview today", check_days=True).text is None                 # a different claim
+    assert g.ground_note("Has an interview.", user_text="anything", check_days=True).text == "Has an interview."
+
+
+def test_the_day_check_is_only_for_notes_that_ask_for_it():
+    assert g.ground_note("Has an interview today.", user_text="no day here").text == "Has an interview today."
+
+
+def test_a_yes_to_a_question_that_named_the_day_makes_it_theirs():
+    got = g.ground_note("Has an interview tomorrow.", user_text="yes", previous_reply="Is the interview tomorrow?", check_days=True)
+    assert got.text == "Has an interview tomorrow."

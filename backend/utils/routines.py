@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from backend.utils.db_utils import get_db
+from backend.utils.text_plain import plain_quotes
 from backend.utils.time_utils import local_now, part_of_day
 
 logger = logging.getLogger("SASS Logger")
@@ -267,14 +268,40 @@ _ASKS_RE = re.compile(
     r"|\bdo you have (?:any |much |a lot of )?(?:plans?|anything (?:going|on|planned|scheduled)|stuff going on)\b[^.?!]{0,20}\b(?:today|tonight|tomorrow|later|this (?:morning|afternoon|evening|week))\b"
     r"|\bare you (?:busy|swamped|booked(?: up)?|free|doing anything)\b[^.?!]{0,20}\b(?:today|tonight|later|this (?:morning|afternoon|evening)|tomorrow)\b"
     r"|\bwhat(?:'s| is| does)\s+your\s+(?:day|today|week)\s+(?:look|looking|like|going)\b|\bhow (?:busy|packed)\s+(?:is|are)\s+(?:your|you)\b"
-    r"|\byou\s+(?:do\s+)?have\s+(?:a\s+)?(?:schedule|agenda)\b(?!\s+(?:for|of|to|on)\b)|\byou\s+(?:do\s+)?have\s+(?:stuff|things|something|a lot|plenty)\b[^.?!]{0,20}\b(?:going|on|planned|scheduled|to do)\b",
+    r"|\byou\s+(?:do\s+)?have\s+(?:a\s+)?(?:schedule|agenda)\b(?!\s+(?:for|of|to|on)\b)|\byou\s+(?:do\s+)?have\s+(?:stuff|things|something|a lot|plenty)\b[^.?!]{0,20}\b(?:going|on|planned|scheduled|to do)\b"
+    # "what you've been up to" / "what you did last night" (the question with "you" before the verb, as people say it out loud)
+    # "what were you up to last night", "what ran overnight", "any jobs run last night", "how was your night": the same question as "what jobs ran last night"
+    r"|\bwhat\s+(?:were|was)\s+(?:you|u)\s+(?:up to|doing|working on)\b[^.?!]{0,30}\b(?:today|last night|overnight|this morning|yesterday|earlier|while i was (?:gone|away|out|asleep|sleeping))\b"
+    r"|\bwhat(?:'d| did)\s+(?:you|u)\s+(?:do|get up to)\b[^.?!]{0,30}\b(?:while i was (?:gone|away|out|asleep|sleeping)|last night|overnight)\b"
+    r"|\bwhat\s+(?:ran|jobs?\s+(?:ran|did you run)|happened)\b[^.?!]{0,25}\b(?:last night|overnight|this morning|yesterday|today|on your end)\b"
+    r"|\b(?:did|do)\s+(?:any|anything)\s+(?:jobs?\s+)?(?:run|ran)\b[^.?!]{0,25}\b(?:last night|overnight|this morning|yesterday|today)\b"
+    r"|\bwhat\s+you(?:'ve|\s+have)\s+been\s+(?:up to|doing|working on)\b|\bwhat\s+you\s+(?:did|got up to)\b[^.?!]{0,30}\b(?:today|last night|overnight|this morning|yesterday|earlier)\b"
+    # Asked about a run that already happened: "how did your job go?", "how did the job you ran last night go?", "did your health check run?", "the job you ran last night".
+    # "your" (or "you ran") keeps it about Sonic's own work, not the person's job or interview.
+    r"|\b(?:your|ur)\s+(?:\w+\s+){0,2}(?:jobs?|routines?|health\s*checks?|scheduled\s+\w+)\b[^.?!]{0,50}\b(?:ran|run|go|went|finish(?:ed)?|complete(?:d)?|work(?:ed)?|turn(?:ed)? out|last night|overnight|this morning|yesterday|today)\b"
+    r"|\b(?:jobs?|routines?|health\s*checks?)\s+(?:that\s+)?you\s+(?:ran|run|did|had|set up)\b"
+    r"|\bdid\s+your\s+(?:\w+\s+){0,2}(?:health\s*check|routine|jobs?)\s+(?:run|go|finish|work|happen)\b"
+    # The pushback after a denial: "but you have jobs you run on your own?", "you do run jobs".
+    r"|\byou\s+(?:do\s+|still\s+)?(?:have|run)\s+(?:some\s+|any\s+|your own\s+)?(?:jobs?|routines?|scheduled\s+\w+|background\s+\w+)\b",
     re.IGNORECASE,
 )
+
+# A short reply that insists, right after the conversation was about its jobs: "yes you do", "yes you can lol", "but you do". On its own it means nothing, so it only counts when the
+# last reply from Sonic was about its jobs (see follows_routines_ask).
+_INSISTS_RE = re.compile(r"^\W*(?:(?:but|and|so|no|yes|yeah|yep|yup|well|come on|lol|haha)\W+){0,3}(?:you\s+(?:do|can|did|have|are|ran|run)|i\s+know\s+you|you\s+really|you\s+definitely)\b", re.IGNORECASE)
+_ABOUT_JOBS_RE = re.compile(r"\b(?:jobs?|routines?|health\s*checks?|schedul\w+|background (?:tasks?|processes|jobs?)|on my own|overnight)\b", re.IGNORECASE)
 
 
 def asks_about_routines(message: str) -> bool:
     """Whether the person is asking what Sonic has planned or what it did on its own."""
-    return bool(_ASKS_RE.search(message or ""))
+    return bool(_ASKS_RE.search(plain_quotes(message)))
+
+
+def follows_routines_ask(message: str, last_reply: str) -> bool:
+    """A short reply that pushes back or insists ("yes you do", "yes you can lol") right after Sonic's own last reply was about its jobs: still the same question, and the true
+    record has to be at hand for it, or the model answers from the denial it just gave. `last_reply` is Sonic's previous message."""
+    words = (message or "").split()
+    return bool(words) and len(words) <= 14 and bool(_INSISTS_RE.search(plain_quotes(message))) and bool(_ABOUT_JOBS_RE.search(last_reply or ""))
 
 
 def _view(routine: Routine, last: Optional[Dict[str, Any]], now: datetime, tz_name: Optional[str], admin: bool) -> Dict[str, Any]:
@@ -337,8 +364,8 @@ def build_routines_context(db, tz_name: Optional[str], *, is_admin: bool, now: O
         "They are asking about YOUR day, not theirs: do not list their calendar, their plans or what they have on unless they ask, and do not say you have no schedule or that your day depends on theirs: "
         "these jobs are your schedule. You are the program that runs them: say \"I\" (\"I run a health check around 9 AM\", \"I ran the tidy-ups last night\"), never \"the server\" or \"the system\". "
         "You really do run these jobs on "
-        "a schedule, and the times above are already in this person's own time. Just answer: do not add that you are not around, have no experience or spend no time between "
-        "conversations unless they ask. HOW TO SAY IT: like a person telling a friend about their day, not like reading out a log, in your usual dry voice. Answer what they asked first, in one "
+        "a schedule, and the times above are already in this person's own time. Just answer, plainly, with what ran: it is a fact about your jobs, "
+        "like any other. HOW TO SAY IT: like a person telling a friend about their day, not like reading out a log, in your usual dry voice. Answer what they asked first, in one "
         "short plain sentence (\"pretty light today\", \"quiet on my end\", \"a couple of small things\"), then mention at most two jobs, in plain words for what they do (\"checking that everything's "
         "healthy\", \"reading a page for my shelf\", \"tidying up old chats\") and by the part of the day (\"this morning\", \"tonight\"), not a clock time unless they ask when. Never say "
         "\"automated\", \"scheduled\", \"routine\", \"process\", \"run through\" or \"background\", never list every job, and never close with \"here whenever you need me\" or \"ready when you are\". "
@@ -363,11 +390,22 @@ def _day_part(word: str) -> str:
     return "evening" if word.lower() in ("evening", "tonight", "night") else word.lower()
 
 
+# "I don't run jobs on my own", "I don't have a scheduler", "I only act when you ask me": false whenever the routines record was handed to the model, because that record is the jobs.
+_DENIES_JOBS = re.compile(
+    r"\bI\s+(?:don't|do not|never|can't|cannot|won't)\s+(?:actually\s+|really\s+)?(?:run|have|do|schedule)\s+(?:any\s+|a\s+|my own\s+)?(?:jobs?|routines?|scheduled|background|scheduler)\b"
+    r"|\b(?:no|don't have (?:a|any)|without (?:a|any))\s+(?:scheduler|background (?:processes|jobs|tasks))\b"
+    r"|\bI\s+only\s+(?:act|respond|run)\s+when\s+you\b",
+    re.IGNORECASE,
+)
+
+
 def reply_issue(reply: str, context: str) -> Optional[str]:
     """What is wrong with a reply about Sonic's day as far as WHEN its jobs run: a job put in a different part of the day than the schedule it was given lists (a real reply put the health check
     "later tonight" when the schedule said later this morning). Read from the routines block itself ("- Health check. Next run later this morning around 7:30 AM. It ..."), clause by clause,
     only for a clause that speaks of one job and names one part of the day and is not about something that already ran. None when nothing is off. Never raises."""
     try:
+        if _DENIES_JOBS.search(plain_quotes(reply)):
+            return "denied running any jobs of its own, when the record it was given lists them"
         scheduled = {m.group("label").strip(): {_day_part(w) for w in _PART_OF_DAY.findall(m.group("when"))} for m in _NEXT_LINE.finditer(context or "")}
         if not scheduled:
             return None
@@ -400,3 +438,13 @@ def routines_view(db, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
             "next_due_at": due.isoformat() if due else None,
         })
     return out
+
+
+def previous_reply(messages: Any) -> str:
+    """Sonic's last message in a conversation (the newest message that is not the person's), as text; "" when there is none."""
+    for message in reversed(list(messages or [])):
+        kind = getattr(message, "type", None) or (message.get("role") if isinstance(message, dict) else None)
+        if kind in ("ai", "assistant"):
+            content = getattr(message, "content", None) if not isinstance(message, dict) else message.get("content")
+            return content if isinstance(content, str) else " ".join(str(part.get("text", "")) if isinstance(part, dict) else str(part) for part in (content or []))
+    return ""

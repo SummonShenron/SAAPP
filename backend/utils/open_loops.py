@@ -129,6 +129,38 @@ def is_sensitive(text: str) -> bool:
 # Validating what the model returned
 # ---------------------------------------------------------------------------------------------------------------
 
+# Words that give a DATE (not just a time of day): the day itself, a weekday, a month and day, a numeric date, "in 3 days", "next week", "the weekend". The person has to have said
+# one for a date to be theirs.
+_DATE_CUE_RE = re.compile(
+    r"\b(?:today|tonight|tomorrow|yesterday|last night|later today|this (?:morning|afternoon|evening|weekend|week)|(?:on|over) the weekend|next (?:week|month|weekend)|(?:the )?(?:rest|end) of (?:the |this |next )?(?:week|month)"
+    r"|" + _WEEKDAY + r"|" + _MONTH + r"\.? \d{1,2}|\d{1,2}/\d{1,2}|on the (?:\d{1,2}(?:st|nd|rd|th)|" + _ORDINAL_WORD + r")"
+    r"|(?:in|within) (?:a|an|\d+|a couple of|a few|two|three|four|five|six|seven) (?:days?|weeks?|months?)|(?:a|one|two|three|\d+) (?:days?|weeks?) from (?:today|now|" + _WEEKDAY + r"))\b",
+    re.IGNORECASE,
+)
+_WEEKDAY_WORD_RE = re.compile(r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", re.IGNORECASE)
+_WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+
+def due_date_issue(due: str, *, user_text: str, previous_reply: str = "", known_dates: Iterable[str] = ()) -> Optional[str]:
+    """Why the date on a loop is not the person's own, or None when it is. The model is asked for a calendar date, and when the person gave no day it filled one in (an interview
+    mentioned in passing was dated "today", and a reply then wished them luck with it). A date counts as the person's when their words (or the question they just said yes to) hold a
+    day word, or when it is the date of something already noted (a later detail of the same event). When the only day they gave is a weekday, the date has to fall on it.
+    Reasons are plain labels, never text. Never raises."""
+    try:
+        if due in set(known_dates):
+            return None
+        source = f"{user_text or ''}\n{memory_grounding.confirmed_text(user_text or '', previous_reply)}"
+        if not _DATE_CUE_RE.search(source):
+            return "no day given"
+        said = {w.lower() for w in _WEEKDAY_WORD_RE.findall(source)}
+        others = _DATE_CUE_RE.sub(lambda m: "" if _WEEKDAY_WORD_RE.fullmatch(m.group(0)) else "x", source)
+        if said and "x" not in others and _WEEKDAYS[date.fromisoformat(due).weekday()] not in said:
+            return "weekday does not match"
+    except Exception:
+        return None
+    return None
+
+
 def validate_loop(raw: Any, today: date) -> Optional[Dict[str, str]]:
     """A cleaned `{text, due_date, kind}` for one model-proposed loop, or None. The date must be real and today or
     later (up to about two months out), the text short and not sensitive, the kind a known one. The model is never
@@ -625,6 +657,11 @@ async def capture_open_loops(
             loop = validate_loop(raw, today)
             # Honest writes (backend/utils/memory_grounding.py): a loop whose wording carries a time, number, weekday or month the person did not give is not saved.
             if not loop or memory_grounding.ground_note(loop["text"], user_text=message, previous_reply=previous_reply).dropped:
+                continue
+            # Its DATE has to be the person's too: with no day in their words the model had to guess one, and a guess saved as an event gets said back as fact.
+            issue = due_date_issue(loop["due_date"], user_text=message, previous_reply=previous_reply, known_dates=[d.get("due_date", "") for d in existing])
+            if issue:
+                logger.info("[open loops] a loop whose date was not the person's own was not saved (%s).", issue)
                 continue
             # A role the person never said ("reviewed by a colleague" for a message that named none) is an invented reading: the line is not saved.
             if event_fields.invented_role(loop["text"], f"{message}\n{memory_grounding.confirmed_text(message, previous_reply)}"):
