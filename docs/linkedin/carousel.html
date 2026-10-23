@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Sonic Assistant carousel</title>
+<style>
+  @page { size: 1080px 1350px; margin: 0; }
+  :root { --bg:#131416; --card:#1c1d20; --line:#34353b; --text:#ececee; --muted:#9a9aa2; --or:#e0955f; --teal:#43c79a; --vio:#a597f5; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { background: var(--bg); color: var(--text); font-family: "Segoe UI", "Inter", Arial, sans-serif; }
+  .slide { width: 1080px; height: 1350px; padding: 64px 64px 44px; display: flex; flex-direction: column; background: var(--bg); position: relative; overflow: hidden; page-break-after: always; break-after: page; }
+  body.single .slide { display: none; }
+  body.single .slide:target { display: flex; }
+  .tag { font-size: 28px; font-weight: 600; letter-spacing: 1px; color: var(--c, var(--muted)); text-transform: uppercase; }
+  h1 { font-size: 84px; line-height: 1.04; font-weight: 700; letter-spacing: -1.5px; margin-top: 14px; }
+  h2 { font-size: 64px; line-height: 1.06; font-weight: 700; letter-spacing: -1px; margin-top: 12px; color: var(--c); }
+  .lede { font-size: 33px; color: var(--muted); margin-top: 18px; line-height: 1.3; }
+  .body { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 22px; }
+  .card { background: var(--card); border: 2px solid var(--line); border-radius: 22px; padding: 24px 28px; }
+  .card b { display: block; font-size: 38px; font-weight: 600; line-height: 1.1; }
+  .card span { display: block; font-size: 28px; color: var(--muted); margin-top: 8px; line-height: 1.25; }
+  .card .num { display: inline-flex; font-size: 38px; color: #121212; margin: 0 18px 0 0; }
+  .card.hot { border-color: var(--c); }
+  .card.hot b { color: var(--c); }
+  .down { text-align: center; font-size: 46px; color: var(--c); line-height: 0.8; height: 24px; }
+  .row { display: flex; gap: 18px; }
+  .row .card { flex: 1; text-align: center; padding: 22px 16px; }
+  .row .card b { font-size: 34px; }
+  .row .card span { font-size: 26px; }
+  .rule { font-size: 32px; border-left: 6px solid var(--c); padding: 6px 0 6px 20px; line-height: 1.25; }
+  .rules { display: flex; flex-direction: column; gap: 16px; margin-bottom: 18px; }
+  .chips { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 26px; }
+  .chip { font-size: 26px; padding: 8px 20px; border: 2px solid var(--line); border-radius: 999px; color: var(--muted); }
+  .num { display: inline-flex; width: 64px; height: 64px; border-radius: 50%; background: var(--c); color: #121212; font-size: 38px; font-weight: 700; align-items: center; justify-content: center; margin-right: 18px; flex: none; }
+  .item { display: flex; align-items: center; }
+  .foot { display: flex; justify-content: space-between; align-items: center; font-size: 26px; color: var(--muted); padding-top: 16px; }
+  .foot b { color: var(--text); font-weight: 600; }
+  .swipe { color: var(--or); font-weight: 600; }
+  .mono { font-family: "Cascadia Mono", Consolas, monospace; }
+  .cols { display: flex; gap: 18px; }
+  .col { flex: 1; background: var(--card); border: 2px solid var(--line); border-radius: 22px; padding: 24px 22px; display: flex; flex-direction: column; gap: 12px; }
+  .col h3 { font-size: 38px; font-weight: 700; color: var(--c); }
+  .col p { font-size: 26px; color: var(--text); line-height: 1.28; }
+  .col p em { font-style: normal; color: var(--muted); display: block; font-size: 23px; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 2px; }
+  .kw { font-size: 24px; color: var(--c); line-height: 1.3; }
+</style></head>
+<body class="single">
+
+<div class="slide" id="s1">
+  <div class="tag">RAG architecture, explained</div>
+  <h1>How Sonic Assistant finds an answer</h1>
+  <p class="lede">A multi-tenant RAG system where every search is scoped, graph-aware and agentic.</p>
+  <div class="body">
+    <div class="card item" style="--c:var(--or)"><span class="num" style="--c:var(--or)">1</span><div><b style="color:var(--or)">Isolation</b><span>who may read what</span></div></div>
+    <div class="card item" style="--c:var(--teal)"><span class="num" style="--c:var(--teal)">2</span><div><b style="color:var(--teal)">GraphRAG retrieval</b><span>vector, keyword and hybrid search plus a knowledge graph</span></div></div>
+    <div class="card item" style="--c:var(--vio)"><span class="num" style="--c:var(--vio)">3</span><div><b style="color:var(--vio)">Agentic RAG</b><span>the model decides what to read next</span></div></div>
+    <div class="chips"><span class="chip">FastAPI</span><span class="chip">LangGraph</span><span class="chip">MongoDB Atlas Vector Search</span><span class="chip">Gemini + Claude</span></div>
+  </div>
+  <div class="foot"><span><b>Sonic Assistant</b></span><span class="swipe">Swipe &rarr;</span></div>
+</div>
+
+<div class="slide" id="s2" style="--c:var(--or)">
+  <div class="tag">1 &middot; Isolation</div>
+  <h2>One scope per request, carried by every read</h2>
+  <div class="body" style="gap:14px">
+    <div class="card"><b>Sign-in</b><span>Clerk identity</span></div>
+    <div class="down">&darr;</div>
+    <div class="card"><b>Groups map to libraries</b><span>a private library each, plus shared ones</span></div>
+    <div class="down">&darr;</div>
+    <div class="card hot"><b class="mono">target_scope</b><span>asked for a library you are not in? 403</span></div>
+    <div class="down">&darr;</div>
+    <div class="row">
+      <div class="card"><b>Vector search</b><span>filtered by library</span></div>
+      <div class="card"><b>Graph edges</b><span>stored per library</span></div>
+      <div class="card"><b>Memory</b><span>filtered by user</span></div>
+    </div>
+  </div>
+  <div class="rules">
+    <div class="rule">An empty scope reads nothing, never everything</div>
+    <div class="rule">Uploading needs a separate write group</div>
+  </div>
+  <div class="foot"><span><b>Sonic Assistant</b> &middot; 2 / 5</span><span class="swipe">Swipe &rarr;</span></div>
+</div>
+
+<div class="slide" id="s3" style="--c:var(--teal)">
+  <div class="tag">2 &middot; GraphRAG retrieval</div>
+  <h2>Three searches in parallel, then the evidence is checked</h2>
+  <div class="body">
+    <div class="card"><b>Router</b><span>a small model decides what the question needs</span></div>
+    <div class="down">&darr;</div>
+    <div class="row">
+      <div class="card"><b>Chunks</b><span>vector, keyword or hybrid</span></div>
+      <div class="card"><b>Entity graph</b><span>relationships, 2 hops</span></div>
+      <div class="card"><b>Session files</b><span>priority context</span></div>
+    </div>
+    <div class="down">&darr;</div>
+    <div class="card hot"><b>Relevance grader</b><span>does this actually answer the question?</span></div>
+    <div class="row" style="margin-top:6px">
+      <div class="card"><b>Yes</b><span>generate, then an evaluator re-checks the answer</span></div>
+      <div class="card"><b>No</b><span>rewrite the query and retry, 2 passes at most, then an honest fallback</span></div>
+    </div>
+  </div>
+  <div class="foot"><span><b>Sonic Assistant</b> &middot; 3 / 5</span><span class="swipe">Swipe &rarr;</span></div>
+</div>
+
+<div class="slide" id="s4" style="--c:var(--teal)">
+  <div class="tag">2 &middot; GraphRAG retrieval</div>
+  <h2>Three ways to search, picked by plain rules</h2>
+  <p class="lede">No extra model call: the question's wording chooses the strategy.</p>
+  <div class="body" style="justify-content:flex-start; margin-top:26px">
+    <div class="cols">
+      <div class="col">
+        <h3>Vector</h3>
+        <p><em>Used for</em>everything else</p>
+        <p><em>How</em>embed the question, take the nearest chunks by meaning</p>
+      </div>
+      <div class="col">
+        <h3>Lexical</h3>
+        <p><em>Triggered by</em><span class="kw">recent, latest, when, date, current, last</span></p>
+        <p><em>How</em>pull a wide candidate pool, then re-rank by keyword scoring (TF&#8209;IDF)</p>
+      </div>
+      <div class="col">
+        <h3>Hybrid</h3>
+        <p><em>Triggered by</em><span class="kw">compare, versus, relationship, how does, why did, or a long question</span></p>
+        <p><em>How</em>run both, then fuse the two rankings (reciprocal rank fusion)</p>
+      </div>
+    </div>
+    <div class="card" style="margin-top:14px"><b>Checked in this order</b><span>keyword words first, then comparison words or a long question, otherwise plain vector search</span></div>
+    <div class="card hot"><b>Always inside the scope filter</b><span>The strategy changes how chunks are ranked, never which libraries are read.</span></div>
+  </div>
+  <div class="foot"><span><b>Sonic Assistant</b> &middot; 4 / 5</span><span class="swipe">Swipe &rarr;</span></div>
+</div>
+
+<div class="slide" id="s5" style="--c:var(--vio)">
+  <div class="tag">3 &middot; Agentic RAG</div>
+  <h2>When one pass is not enough, the model drives</h2>
+  <p class="lede">&ldquo;Review my last 8 weeks&rdquo; needs the whole picture, not 3 chunks.</p>
+  <div class="body" style="justify-content:flex-start; margin-top:22px">
+    <div class="row">
+      <div class="card"><b>List</b><span>what exists in scope</span></div>
+      <div class="card"><b>Search</b><span>any query, any number of times</span></div>
+      <div class="card"><b>Read</b><span>whole files, part by part</span></div>
+    </div>
+    <div class="down">&darr;</div>
+    <div class="card hot"><b>Decide</b><span>answer, or go around again</span></div>
+    <div class="card" style="margin-top:6px"><b>Example: a 7-week review</b><span>list the files, read 5, read the other 2, then answer</span></div>
+    <div class="rules" style="margin-top:10px">
+      <div class="rule">The step budget grows with the size of the library</div>
+      <div class="rule">The answer names the files it read, and says what it did not</div>
+      <div class="rule">The same scope rule applies on every tool call</div>
+    </div>
+  </div>
+  <div class="foot"><span><b>Sonic Assistant</b> &middot; 5 / 5</span><span>Thresholds measured, writes checked in code</span></div>
+</div>
+
+</body></html>

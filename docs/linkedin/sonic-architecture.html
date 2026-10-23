@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Sonic Assistant architecture</title>
+<style>
+  :root { --bg:#131416; --card:#1c1d20; --line:#34353b; --text:#ececee; --muted:#9a9aa2; --or:#e0955f; --teal:#43c79a; --vio:#a597f5; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1080px; height: 1700px; background: var(--bg); color: var(--text); font-family: "Segoe UI", "Inter", Arial, sans-serif; overflow: hidden; }
+  .page { padding: 44px 48px 0; height: 1700px; display: flex; flex-direction: column; gap: 24px; }
+  header h1 { font-size: 54px; font-weight: 700; letter-spacing: -0.5px; }
+  header p { font-size: 26px; color: var(--muted); margin-top: 8px; }
+  .chips { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+  .chip { font-size: 20px; padding: 5px 14px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); }
+  section { border: 2px solid var(--c); border-radius: 22px; padding: 22px 26px 24px; background: #17181b; position: relative; }
+  section h2 { font-size: 36px; font-weight: 700; color: var(--c); display: flex; align-items: center; gap: 14px; margin-bottom: 4px; }
+  section h2 span.n { display: inline-flex; width: 46px; height: 46px; border-radius: 50%; background: var(--c); color: #111; align-items: center; justify-content: center; font-size: 28px; }
+  section .sub { font-size: 23px; color: var(--muted); margin-bottom: 16px; }
+  .row { display: flex; align-items: center; gap: 0; }
+  .box { flex: 1; background: var(--card); border: 1.5px solid var(--line); border-radius: 14px; padding: 12px 14px; text-align: center; display: flex; flex-direction: column; justify-content: center; min-height: 92px; }
+  .box b { font-size: 25px; font-weight: 600; line-height: 1.15; }
+  .box i { font-style: normal; font-size: 19px; color: var(--muted); margin-top: 5px; line-height: 1.2; }
+  .box.hot { border-color: var(--c); background: #1f2024; }
+  .box.hot b { color: var(--c); }
+  .arr { width: 28px; display: flex; align-items: center; justify-content: center; color: var(--c); font-size: 30px; flex: none; }
+  .stack { display: flex; flex-direction: column; gap: 10px; flex: 1.35; }
+  .stack .box { min-height: 0; padding: 8px 10px; }
+  .rules { display: flex; gap: 12px; margin-top: 14px; }
+  .rule { flex: 1; font-size: 21px; border-left: 4px solid var(--c); padding: 4px 0 4px 12px; color: var(--text); line-height: 1.25; }
+  .loop { margin-top: 12px; display: flex; gap: 12px; }
+  .loop .pill { flex: 1; text-align: center; font-size: 21px; padding: 8px 10px; border-radius: 12px; border: 1.5px dashed var(--c); color: var(--text); line-height: 1.2; }
+  footer { margin-top: auto; padding: 10px 0 30px; font-size: 22px; color: var(--muted); display: flex; justify-content: space-between; }
+  footer b { color: var(--text); font-weight: 600; }
+</style></head>
+<body><div class="page">
+<header>
+  <h1>How Sonic Assistant finds an answer</h1>
+  <p>A multi-tenant RAG system: every search is scoped, graph-aware and agentic.</p>
+  <div class="chips"><span class="chip">FastAPI</span><span class="chip">LangGraph</span><span class="chip">MongoDB Atlas Vector Search</span><span class="chip">Knowledge graph</span><span class="chip">Gemini + Claude</span></div>
+</header>
+
+<section style="--c:var(--or)">
+  <h2><span class="n">1</span>Isolation: who may read what</h2>
+  <div class="sub">One scope is computed per request, and every read path must carry it.</div>
+  <div class="row">
+    <div class="box"><b>Sign-in</b><i>Clerk identity</i></div><div class="arr">&rarr;</div>
+    <div class="box"><b>Groups</b><i>to libraries</i></div><div class="arr">&rarr;</div>
+    <div class="box hot"><b>target_scope</b><i>403 if not allowed</i></div><div class="arr">&rarr;</div>
+    <div class="stack">
+      <div class="box"><b>Vector search</b><i>filtered by library</i></div>
+      <div class="box"><b>Graph edges</b><i>stored per library</i></div>
+      <div class="box"><b>Memory</b><i>filtered by user</i></div>
+    </div>
+  </div>
+  <div class="rules">
+    <div class="rule">Empty scope reads nothing, never everything</div>
+    <div class="rule">Each person gets a private library by default</div>
+    <div class="rule">Uploads need a separate write group</div>
+  </div>
+</section>
+
+<section style="--c:var(--teal)">
+  <h2><span class="n">2</span>GraphRAG retrieval: vectors plus relationships</h2>
+  <div class="sub">Three searches run in parallel, then a model checks the evidence before anything is written.</div>
+  <div class="row">
+    <div class="box"><b>Router</b><i>small model</i></div><div class="arr">&rarr;</div>
+    <div class="stack">
+      <div class="box"><b>Vector chunks</b><i>keyword or hybrid</i></div>
+      <div class="box"><b>Entity graph</b><i>2-hop links</i></div>
+      <div class="box"><b>Session files</b><i>priority context</i></div>
+    </div><div class="arr">&rarr;</div>
+    <div class="box hot"><b>Grader</b><i>does it answer?</i></div><div class="arr">&rarr;</div>
+    <div class="box"><b>Generate</b><i>strict or open</i></div>
+  </div>
+  <div class="loop">
+    <div class="pill">Not relevant: rewrite the query and retry (2 passes at most)</div>
+    <div class="pill">Still nothing: an honest fallback, not a guess</div>
+    <div class="pill">After writing: an evaluator re-checks the answer</div>
+  </div>
+</section>
+
+<section style="--c:var(--vio)">
+  <h2><span class="n">3</span>Agentic RAG: the agent decides what to read</h2>
+  <div class="sub">When one pass cannot answer it (&ldquo;review my last 8 weeks&rdquo;), the model drives.</div>
+  <div class="row">
+    <div class="box"><b>List</b><i>what exists</i></div><div class="arr">&rarr;</div>
+    <div class="box"><b>Search</b><i>any query, any time</i></div><div class="arr">&rarr;</div>
+    <div class="box"><b>Read</b><i>whole files</i></div><div class="arr">&rarr;</div>
+    <div class="box hot"><b>Decide</b><i>answer or repeat</i></div>
+  </div>
+  <div class="loop">
+    <div class="pill">Step budget grows with the size of the library</div>
+    <div class="pill">Cites file names, says what it did not read</div>
+    <div class="pill">Same scope rule on every tool call</div>
+  </div>
+</section>
+
+<footer><span><b>Sonic Assistant</b></span><span>Thresholds set by measurement &middot; writes checked in code</span></footer>
+</div></body></html>

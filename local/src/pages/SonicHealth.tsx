@@ -680,7 +680,7 @@ const TurnsCard: React.FC<{ turns: TurnsSummary }> = ({ turns }) => {
               <BarRow
                 key={row.reason}
                 label={TOOL_REASON_LABELS[row.reason] ?? row.reason}
-                value={`${row.turns}${row.alone ? ` (${row.alone} with no other reason)` : ''}`}
+                value={`${row.turns}${row.alone ? ` (${row.alone} with no other reason${row.alone_no_tools ? `, ${row.alone_no_tools} of those used no tool` : ''})` : ''}${row.no_tools && !row.alone_no_tools ? ` · ${row.no_tools} used no tool` : ''}`}
                 fraction={turns.tool.turns > 0 ? row.turns / turns.tool.turns : 0}
               />
             ))}

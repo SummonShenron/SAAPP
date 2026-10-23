@@ -281,3 +281,10 @@ async def test_a_call_to_the_tool_without_a_library_is_refused_even_if_the_model
     result = await aw.tool_agent_node(_scoped_state("what do my notes say", []))
     assert "can't reach a library" in result["content_to_format"]
     assert "ERROR: this person has no document library to search." in asked[1]          # the refusal is what the model was shown
+
+
+def test_the_retrieval_node_never_searches_the_whole_index_and_names_only_sources_from_the_scoped_search():
+    source = open(aw.__file__, encoding="utf-8").read()
+    node = source[source.index("async def retrieve_node("):source.index("# SUMMARIZER NODE")]
+    assert "vector_store.similarity_search(" not in node                       # the unscoped search that fed a trace line is gone
+    assert node.index("library_search.vector_docs(question, target_scope, top_k=3)") < node.index("best match from")

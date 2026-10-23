@@ -49,6 +49,11 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
         "max_results": {"type": "integer", "description": "default 6, max 12"},
     }, ["query"]),
     "list_library_files": _object({}),
+    # what Sonic remembers about the current person (backend/services/tool_agent_memory.py): their facts and notes of earlier conversations, never anyone else's
+    "search_memory": _object({
+        "query": {"type": "string", "description": "what to look for, in plain words: a project, a preference, a decision, a name, something they did or planned"},
+        "max_results": {"type": "integer", "description": "default 5, max 8"},
+    }, ["query"]),
     "read_library_file": _object({
         "name": {"type": "string", "description": "a file name exactly as list_library_files wrote it"},
         "part": {"type": "integer", "description": "which part of a long file; default 1"},
