@@ -82,7 +82,7 @@
   --tint-hover: #242528;
   --follow-up-bg: #1d1e20;
   /* Component tokens */
-  --panel-bg: #161718;           /* rail, trace blade, nav */
+  --panel-bg: #1e1f22;           /* rail, trace blade, nav */
   --popover-bg: #212225;         /* menus and popovers */
   --on-accent: #0a0a0b;          /* text on a solid accent button: white on the muted orange is too faint */
   --card-bg: #1d1e20;            /* cards and tiles */
