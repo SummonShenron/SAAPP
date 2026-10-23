@@ -1809,7 +1809,7 @@ export async function getLocalWorkspaceStatus(): Promise<LocalWorkspaceStatus> {
 export async function syncLocalWorkspaceBatch(batch: {
   name: string;
   reset: boolean;
-  files: { path: string; content?: string; content_base64?: string }[];
+  files: { path: string; content?: string; text_b64?: string; content_base64?: string }[];
   deleted: string[];
   upload_id?: string;
   commit?: boolean;
@@ -1825,7 +1825,7 @@ export async function syncLocalWorkspaceBatch(batch: {
     });
   } catch {
     // fetch rejects when the connection drops, the server is down or restarting, or the request is blocked: no answer at all, so no status.
-    throw new SyncRequestError(`Lost the connection to the server while ${step} the folder upload.`);
+    throw new SyncRequestError(`The browser got no usable answer while ${step} the folder upload (the network dropped, or something in front of the server refused it).`);
   }
   if (!res.ok) {
     const message = res.status === 403 ? "Sign in to connect a local folder."

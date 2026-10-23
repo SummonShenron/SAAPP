@@ -180,3 +180,19 @@ def test_a_code_turn_that_found_no_folder_on_the_server_says_so_but_only_when_th
     source = open("app.py", encoding="utf-8").read()
     assert "if request.folder_expected and not folder_connected and code_summary:" in source
     assert "was not on the server for this answer, so it used GitHub instead" in source
+
+
+# ---- text sent as base64 (so a firewall in front of the server cannot read source code as an attack) ----------------------------------------------------------------
+
+def test_a_text_file_sent_as_base64_is_stored_as_its_text():
+    import base64
+    text = "import os\npath = '/etc/passwd'  # <script>alert(1)</script>\nname = 'héllo'\n"
+    encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
+    result = upload([{"path": "a.py", "text_b64": encoded}, {"path": "bad.py", "text_b64": "!!not base64!!"}], commit=True)
+    assert result["accepted"] == 1 and result["rejected"][0]["path"] == "bad.py"
+    assert read(USER, "a.py") == text
+
+
+def test_the_browser_sends_text_files_as_base64_and_splits_a_refused_batch():
+    source = open("local/src/localWorkspace.ts", encoding="utf-8").read()
+    assert "text_b64: await fileToBase64(file)" in source and "files.slice(0, middle)" in source and "blocked on the way to the server" in source

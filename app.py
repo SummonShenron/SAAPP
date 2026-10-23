@@ -369,6 +369,7 @@ class SteerRequest(BaseModel):
 class LocalWorkspaceFile(BaseModel):
     path: str
     content: Optional[str] = None           # a text file
+    text_b64: Optional[str] = None          # a text file's bytes as base64: what the browser sends, so a firewall in front of the server cannot mistake source code for an attack
     content_base64: Optional[str] = None    # a .docx, of which the server keeps only a numbered text outline (backend/utils/docx_edit.py)
 
 class LocalWorkspaceSync(BaseModel):

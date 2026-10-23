@@ -217,6 +217,12 @@ def _write_batch(resolved_root: Path, index: Dict[str, int], files: List[Dict[st
     for entry in files or []:
         raw_path = entry.get("path") if isinstance(entry, dict) else None
         content = entry.get("content") if isinstance(entry, dict) else None
+        text_b64 = entry.get("text_b64") if isinstance(entry, dict) else None
+        if content is None and isinstance(text_b64, str):
+            try:
+                content = base64.b64decode(text_b64, validate=True).decode("utf-8", errors="replace")
+            except (ValueError, TypeError):
+                content = None
         path = safe_relative_path(raw_path)
         if path is None:
             _reject(raw_path, "unsafe path")

@@ -11,7 +11,7 @@ import {
   syncLocalWorkspaceBatch,
   type LocalWorkspaceSyncResult,
 } from './api';
-import { withRetry, type SavedSyncState } from './localWorkspaceCore';
+import { SyncRequestError, withRetry, type SavedSyncState } from './localWorkspaceCore';
 
 interface FsEntryBase {
   name: string;
@@ -289,7 +289,8 @@ export async function syncFolder(
   };
   if (!reset && scan.changed.length === 0 && scan.deleted.length === 0) return outcome;
 
-  let batch: { path: string; content?: string; content_base64?: string }[] = [];
+  type BatchFile = { path: string; text_b64?: string; content_base64?: string };
+  let batch: BatchFile[] = [];
   let batchBytes = 0;
   let firstRequest = true;
   let deletedSent = false;
@@ -299,15 +300,30 @@ export async function syncFolder(
   // Each request is tried again on a transient failure (a dropped connection, a busy or restarting server) instead of failing the whole upload.
   const send = (body: Parameters<typeof syncLocalWorkspaceBatch>[0]) => withRetry(() => syncLocalWorkspaceBatch(body));
 
+  // A firewall between the browser and the server can refuse a request because of what is in it (source code that merely mentions a system path or a script tag), and that
+  // refusal reaches the browser as a request that "failed" with no reason. So a batch that fails that way is halved until the one file that cannot get through is found:
+  // it is left out and reported, and the rest of the folder still goes up.
+  const sendFiles = async (files: BatchFile[], head: { reset: boolean; deleted: string[] }): Promise<LocalWorkspaceSyncResult> => {
+    const body = { name: root.name, reset: head.reset, files, deleted: head.deleted, ...(uploadId ? { upload_id: uploadId } : {}) };
+    try {
+      return await send(body);
+    } catch (error) {
+      const refused = error instanceof SyncRequestError && (error.status === undefined || error.status === 403);
+      if (!refused || files.length === 0) throw error;
+      if (files.length === 1) {
+        const result = await send({ ...body, files: [] });
+        return { ...result, rejected: [...result.rejected, { path: files[0].path, reason: 'blocked on the way to the server' }] };
+      }
+      const middle = Math.ceil(files.length / 2);
+      const first = await sendFiles(files.slice(0, middle), head);
+      const second = await sendFiles(files.slice(middle), { reset: false, deleted: [] });
+      return { ...second, accepted: first.accepted + second.accepted, rejected: [...first.rejected, ...second.rejected] };
+    }
+  };
+
   const flush = async () => {
     if (batch.length === 0 && !(firstRequest && reset) && (deletedSent || scan.deleted.length === 0)) return;
-    const result: LocalWorkspaceSyncResult = await send({
-      name: root.name,
-      reset: reset && firstRequest,
-      files: batch,
-      deleted: deletedSent ? [] : scan.deleted,
-      ...(uploadId ? { upload_id: uploadId } : {}),
-    });
+    const result: LocalWorkspaceSyncResult = await sendFiles(batch, { reset: reset && firstRequest, deleted: deletedSent ? [] : scan.deleted });
     deletedSent = true;
     firstRequest = false;
     outcome.serverFileCount = result.file_count;
@@ -318,7 +334,8 @@ export async function syncFolder(
   };
 
   for (const { path, file } of scan.changed) {
-    batch.push(path.toLowerCase().endsWith('.docx') ? { path, content_base64: await fileToBase64(file) } : { path, content: await file.text() });
+    // Both go as base64, so what the file says is not visible to anything on the way.
+    batch.push(path.toLowerCase().endsWith('.docx') ? { path, content_base64: await fileToBase64(file) } : { path, text_b64: await fileToBase64(file) });
     batchBytes += file.size;
     if (batchBytes >= BATCH_MAX_BYTES || batch.length >= BATCH_MAX_FILES) await flush();
   }
