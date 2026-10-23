@@ -65,7 +65,10 @@ _BLOCKED_FILE_PATTERNS = (
 )
 _ALLOWED_ENV_TEMPLATE_SUFFIXES = (".example", ".sample", ".template")
 
-_lock = threading.Lock()
+_lock = threading.Lock()                      # guards the registry of per-person locks below
+_user_locks: Dict[str, threading.Lock] = {}
+STAGING_TTL_SECONDS = 30 * 60                 # an upload nobody finishes is dropped after this
+TOUCH_EVERY_SECONDS = 5 * 60
 
 
 def is_guest_username(username: Optional[str]) -> bool:
@@ -149,9 +152,111 @@ def _docx_outline(path: str, encoded: str) -> tuple:
         return None, str(error)[:120]
 
 
-def clear_workspace(username: str) -> None:
+class StaleUpload(Exception):
+    """A batch belongs to an upload that has been replaced (another tab started a newer one) or expired; the browser starts over."""
+
+
+def _user_lock(username: str) -> threading.Lock:
+    """One lock per person, so one person's upload never makes another's wait (a single global lock was held for the whole of each batch)."""
+    key = hashlib.sha256(username.strip().lower().encode("utf-8")).hexdigest()[:32]
     with _lock:
+        lock = _user_locks.get(key)
+        if lock is None:
+            lock = _user_locks[key] = threading.Lock()
+        return lock
+
+
+def clear_workspace(username: str) -> None:
+    with _user_lock(username):
         shutil.rmtree(_workspace_dir(username), ignore_errors=True)
+
+
+def _staging_dir(username: str) -> Path:
+    return _workspace_dir(username) / "staging"
+
+
+def _read_staging(username: str) -> Optional[Dict[str, Any]]:
+    try:
+        meta = json.loads((_staging_dir(username) / "meta.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if time.time() - float(meta.get("started_at", 0)) > STAGING_TTL_SECONDS:
+        shutil.rmtree(_staging_dir(username), ignore_errors=True)       # an upload nobody finished: its half-copy is not kept
+        return None
+    return meta
+
+
+def _write_batch(resolved_root: Path, index: Dict[str, int], files: List[Dict[str, Any]], deleted: List[str]) -> Dict[str, Any]:
+    """Writes one batch into the tree under `resolved_root` and its `index` (path -> size), in place. Per-file problems are reported back and skipped, never raised, so one bad
+    path can't abort the whole batch. Returns {"accepted", "rejected"}."""
+    rejected: List[Dict[str, str]] = []
+    accepted = 0
+
+    def _reject(path: Any, reason: str) -> None:
+        if len(rejected) < _MAX_REJECTIONS_REPORTED:
+            rejected.append({"path": str(path)[:_MAX_PATH_CHARS], "reason": reason})
+
+    for raw_path in deleted or []:
+        path = safe_relative_path(raw_path)
+        if path is None:
+            continue
+        target = (resolved_root / path).resolve()
+        if target.is_relative_to(resolved_root):
+            try:
+                target.unlink()
+            except OSError:
+                pass
+        index.pop(path, None)
+
+    for entry in files or []:
+        raw_path = entry.get("path") if isinstance(entry, dict) else None
+        content = entry.get("content") if isinstance(entry, dict) else None
+        path = safe_relative_path(raw_path)
+        if path is None:
+            _reject(raw_path, "unsafe path")
+            continue
+        encoded = entry.get("content_base64") if isinstance(entry, dict) else None
+        if isinstance(encoded, str) and content is None:
+            # A Word document: only a numbered text outline of it is kept (so Sonic can read it and propose edits), never the file itself.
+            content, problem = _docx_outline(path, encoded)
+            if content is None:
+                _reject(path, problem)
+                continue
+        if not isinstance(content, str):
+            _reject(path, "content is not text")
+            continue
+        reason = _rejection_reason(path)
+        if reason:
+            _reject(path, reason)
+            continue
+        size = len(content.encode("utf-8"))
+        if size > MAX_FILE_BYTES:
+            _reject(path, "file too large")
+            continue
+        if path not in index and len(index) >= MAX_FILE_COUNT:
+            _reject(path, "too many files")
+            continue
+        if sum(index.values()) - index.get(path, 0) + size > MAX_TOTAL_BYTES:
+            _reject(path, "snapshot size limit reached")
+            continue
+        target = (resolved_root / path).resolve()
+        if not target.is_relative_to(resolved_root):
+            _reject(path, "unsafe path")
+            continue
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            # Exact bytes, not write_text: text mode translates newlines per platform.
+            target.write_bytes(content.encode("utf-8"))
+        except OSError:
+            _reject(path, "could not be written")
+            continue
+        index[path] = size
+        accepted += 1
+    return {"accepted": accepted, "rejected": rejected}
+
+
+def _result(accepted: int, rejected: List[Dict[str, str]], index: Dict[str, int], **extra: Any) -> Dict[str, Any]:
+    return {"accepted": accepted, "rejected": rejected, "file_count": len(index), "total_bytes": sum(index.values()), **extra}
 
 
 def apply_sync(
@@ -160,102 +265,85 @@ def apply_sync(
     files: List[Dict[str, Any]],
     deleted: List[str],
     reset: bool = False,
+    upload_id: Optional[str] = None,
+    commit: bool = False,
 ) -> Dict[str, Any]:
-    """Applies one batch of an upload: `reset` wipes the existing snapshot first (the initial
-    connect / a full re-scan), `files` are {"path","content"} text files to write, `deleted` are
-    paths to remove. Per-file problems are reported back and skipped, never raised, so one bad
-    path can't abort the whole batch. Returns {"accepted", "rejected": [...], "file_count",
-    "total_bytes"}."""
+    """Applies one batch of an upload. `files` are {"path","content"} text files to write, `deleted` are paths to remove. Per-file problems are reported back and skipped,
+    never raised. Returns {"accepted", "rejected": [...], "file_count", "total_bytes"}.
+
+    A FULL upload (the initial connect, a re-scan, or a recovery after the server lost its copy) carries an `upload_id`: its batches are written into a STAGING copy and replace
+    the live snapshot only when the final batch says `commit`, in one swap. Until then the live snapshot is untouched and still serves chat, and a failed or abandoned upload
+    leaves nothing half-done (it used to wipe the working copy with the first batch). A batch whose upload was replaced by a newer one raises StaleUpload.
+
+    Without an `upload_id` (a small delta of what changed since the last sync) the batch is applied to the live snapshot directly; a `reset` there wipes it first, as before."""
     if not username or is_guest_username(username):
         raise PermissionError("local workspaces are only available to signed-in users")
+    with _user_lock(username):
+        if upload_id:
+            return _apply_staged(username, name, files, deleted, reset, upload_id, commit)
+        return _apply_direct(username, name, files, deleted, reset)
 
-    with _lock:
-        existing = _current_manifest(username)
-        if reset or existing is None:
-            # Also covers a snapshot left by an older storage format (see SNAPSHOT_FORMAT_VERSION).
-            shutil.rmtree(_workspace_dir(username), ignore_errors=True)
-        root = _files_dir(username)
-        root.mkdir(parents=True, exist_ok=True)
-        resolved_root = root.resolve()
-        manifest = (existing if not reset else None) or {"files": {}}
-        index: Dict[str, int] = manifest.get("files", {})
-        rejected: List[Dict[str, str]] = []
-        accepted = 0
 
-        def _reject(path: Any, reason: str) -> None:
-            if len(rejected) < _MAX_REJECTIONS_REPORTED:
-                rejected.append({"path": str(path)[:_MAX_PATH_CHARS], "reason": reason})
+def _apply_direct(username: str, name: str, files: List[Dict[str, Any]], deleted: List[str], reset: bool) -> Dict[str, Any]:
+    existing = _current_manifest(username)
+    if reset or existing is None:
+        # Also covers a snapshot left by an older storage format (see SNAPSHOT_FORMAT_VERSION).
+        shutil.rmtree(_workspace_dir(username), ignore_errors=True)
+    root = _files_dir(username)
+    root.mkdir(parents=True, exist_ok=True)
+    manifest = (existing if not reset else None) or {"files": {}}
+    index: Dict[str, int] = manifest.get("files", {})
+    outcome = _write_batch(root.resolve(), index, files, deleted)
+    now = time.time()
+    _write_manifest(username, {"version": SNAPSHOT_FORMAT_VERSION, "name": (name or "local folder")[:200], "synced_at": now, "last_used_at": now, "files": index})
+    logger.info("[local_workspace] sync applied: accepted=%d rejected=%d file_count=%d", outcome["accepted"], len(outcome["rejected"]), len(index))
+    return _result(outcome["accepted"], outcome["rejected"], index)
 
-        for raw_path in deleted or []:
-            path = safe_relative_path(raw_path)
-            if path is None:
-                continue
-            target = (resolved_root / path).resolve()
-            if target.is_relative_to(resolved_root):
-                try:
-                    target.unlink()
-                except OSError:
-                    pass
-            index.pop(path, None)
 
-        for entry in files or []:
-            raw_path = entry.get("path") if isinstance(entry, dict) else None
-            content = entry.get("content") if isinstance(entry, dict) else None
-            path = safe_relative_path(raw_path)
-            if path is None:
-                _reject(raw_path, "unsafe path")
-                continue
-            encoded = entry.get("content_base64") if isinstance(entry, dict) else None
-            if isinstance(encoded, str) and content is None:
-                # A Word document: only a numbered text outline of it is kept (so Sonic can read it and propose edits), never the file itself.
-                content, problem = _docx_outline(path, encoded)
-                if content is None:
-                    _reject(path, problem)
-                    continue
-            if not isinstance(content, str):
-                _reject(path, "content is not text")
-                continue
-            reason = _rejection_reason(path)
-            if reason:
-                _reject(path, reason)
-                continue
-            size = len(content.encode("utf-8"))
-            if size > MAX_FILE_BYTES:
-                _reject(path, "file too large")
-                continue
-            if path not in index and len(index) >= MAX_FILE_COUNT:
-                _reject(path, "too many files")
-                continue
-            if sum(index.values()) - index.get(path, 0) + size > MAX_TOTAL_BYTES:
-                _reject(path, "snapshot size limit reached")
-                continue
-            target = (resolved_root / path).resolve()
-            if not target.is_relative_to(resolved_root):
-                _reject(path, "unsafe path")
-                continue
+def _apply_staged(username: str, name: str, files: List[Dict[str, Any]], deleted: List[str], reset: bool, upload_id: str, commit: bool) -> Dict[str, Any]:
+    staging = _staging_dir(username)
+    meta = _read_staging(username)
+    if reset:
+        shutil.rmtree(staging, ignore_errors=True)           # a newer upload replaces any earlier unfinished one
+        meta = {"id": upload_id, "name": (name or "local folder")[:200], "started_at": time.time(), "files": {}}
+    elif not meta or meta.get("id") != upload_id:
+        raise StaleUpload("That upload was replaced by a newer one, or expired.")
+    (staging / "files").mkdir(parents=True, exist_ok=True)
+    index: Dict[str, int] = meta["files"]
+    outcome = _write_batch((staging / "files").resolve(), index, files, deleted)
+    (staging / "meta.json").write_text(json.dumps({**meta, "files": index}), encoding="utf-8")
+    if commit:
+        _swap_in(username, meta, index)
+        logger.info("[local_workspace] upload committed: accepted=%d rejected=%d file_count=%d", outcome["accepted"], len(outcome["rejected"]), len(index))
+    else:
+        logger.info("[local_workspace] upload batch staged: accepted=%d rejected=%d file_count=%d", outcome["accepted"], len(outcome["rejected"]), len(index))
+    return _result(outcome["accepted"], outcome["rejected"], index, committed=bool(commit))
+
+
+def _swap_in(username: str, meta: Dict[str, Any], index: Dict[str, int]) -> None:
+    """Replaces the live snapshot with the staged one: the staged files become `files`, the manifest is written, the old copy and the staging area are removed."""
+    workspace = _workspace_dir(username)
+    live, old = workspace / "files", workspace / "files.old"
+    shutil.rmtree(old, ignore_errors=True)
+    if live.exists():
+        os.replace(live, old)
+    os.replace(_staging_dir(username) / "files", live)
+    now = time.time()
+    _write_manifest(username, {"version": SNAPSHOT_FORMAT_VERSION, "name": meta.get("name", "local folder"), "synced_at": now, "last_used_at": now, "files": index})
+    shutil.rmtree(old, ignore_errors=True)
+    shutil.rmtree(_staging_dir(username), ignore_errors=True)
+
+
+def _touch(username: str) -> None:
+    """Notes that the snapshot was just used, so a copy someone is actively chatting with does not expire 12 hours after its last UPLOAD. Written at most every few minutes."""
+    with _user_lock(username):
+        manifest = _current_manifest(username)
+        if manifest and time.time() - float(manifest.get("last_used_at", 0)) > TOUCH_EVERY_SECONDS:
+            manifest["last_used_at"] = time.time()
             try:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                # Exact bytes, not write_text: text mode translates newlines per platform.
-                target.write_bytes(content.encode("utf-8"))
+                _write_manifest(username, manifest)
             except OSError:
-                _reject(path, "could not be written")
-                continue
-            index[path] = size
-            accepted += 1
-
-        manifest = {
-            "version": SNAPSHOT_FORMAT_VERSION,
-            "name": (name or "local folder")[:200],
-            "synced_at": time.time(),
-            "files": index,
-        }
-        _write_manifest(username, manifest)
-        return {
-            "accepted": accepted,
-            "rejected": rejected,
-            "file_count": len(index),
-            "total_bytes": sum(index.values()),
-        }
+                pass
 
 
 def workspace_status(username: Optional[str]) -> Dict[str, Any]:
@@ -267,7 +355,7 @@ def workspace_status(username: Optional[str]) -> Dict[str, Any]:
     if not manifest or not manifest.get("files"):
         return {"connected": False}
     synced_at = float(manifest.get("synced_at", 0))
-    if time.time() - synced_at > WORKSPACE_TTL_SECONDS:
+    if time.time() - max(synced_at, float(manifest.get("last_used_at", 0))) > WORKSPACE_TTL_SECONDS:
         logger.info("[local_workspace] snapshot expired; removing it.")
         clear_workspace(username)
         return {"connected": False}
@@ -287,4 +375,5 @@ def get_workspace_handle(username: Optional[str]) -> Optional[CheckoutHandle]:
     it outlives any single turn."""
     if not workspace_status(username)["connected"]:
         return None
+    _touch(username)
     return CheckoutHandle(root=str(_files_dir(username)), tempdir=str(_workspace_dir(username)), owned=False)

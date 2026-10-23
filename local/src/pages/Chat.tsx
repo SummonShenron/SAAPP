@@ -1262,6 +1262,21 @@ useEffect(() => {
   // as inside on purpose: its own click toggles the menu, and closing it here first would have that same click open it again.
   const optionsMenuRef = useRef<HTMLDivElement>(null);
 
+  // The folder button's own menu (only while a folder is connected) closes the same way: a press anywhere else, or Escape.
+  const [showFolderMenu, setShowFolderMenu] = useState(false);
+  const toolButtonsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!showFolderMenu) return;
+    const onPointerDown = (e: PointerEvent) => { if (!toolButtonsRef.current?.contains(e.target as Node)) setShowFolderMenu(false); };
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowFolderMenu(false); };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [showFolderMenu]);
+
   useEffect(() => {
     if (!showOverflowWheel && !showScopePicker) return;   // nothing is open, so nothing listens
     const close = () => {
@@ -1730,7 +1745,8 @@ useEffect(() => {
           }
         },
         undefined,
-        controller.signal
+        controller.signal,
+        workspace.folderExpected()
       );
 
       // Attachments are scoped to the turn that sent them (already durably stored server-side
@@ -1976,15 +1992,6 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
       )
     },
     {
-      label: targetRepo ? `Repo: ${targetRepo}` : 'Target Repo',
-      icon: (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="16 18 22 12 16 6" />
-          <polyline points="8 6 2 12 8 18" />
-        </svg>
-      )
-    },
-    {
       label: 'Conversations',
       icon: (
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -2027,25 +2034,23 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
     }
   ];
 
+  // By label, not position: an item that leaves the menu (Target Repo and the folder moved out to their own buttons) must not shift what the others do.
   const runBaseOverflowAction = (index: number) => {
-    switch (index) {
-      case 0:
+    switch (baseOverflowItems[index]?.label) {
+      case 'Help':
         setShowTooltip(v => !v);
         break;
-      case 1:
-        setShowRepoBanner(v => !v);
-        break;
-      case 2:
+      case 'Conversations':
         toggleConversationsBlade();
         break;
-      case 3:
+      case 'Trace':
         if (!isEmbedded && isMobileView) setIsMobileTraceOpen(v => !v);
         else toggleTracePanel();
         break;
-      case 4:
+      case 'Export':
         if (!loading && hasChatted) handleExportChat();
         break;
-      case 5:
+      case 'Delete':
         if (!loading) setShowClearConfirm(true);
         break;
       default:
@@ -2070,34 +2075,17 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
   const scopeLabel = allowedAffiliates.find(a => a.id === selectedAffiliate)?.display_name
     || (selectedAffiliate !== 'All' ? selectedAffiliate : 'None');
   const folderGlyph = settingsGlyph(<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />);
-  const workspaceEntries: { item: OptionWheelItem; run: () => void; keepOpen?: boolean }[] = !workspace.supported ? [] : [
-    workspace.status === 'disconnected'
-      ? {
-          item: { label: 'Connect local folder', disabled: loading, icon: folderGlyph },
-          // First time in this browser: say what gets uploaded before opening the picker.
-          run: () => {
-            if (hasLocalFolderConsent()) void workspace.connect();
-            else setShowFolderConsent(true);
-          },
-        }
-      : workspace.status === 'needs-permission'
-        ? { item: { label: `Reconnect folder: ${workspace.folderName}`, disabled: loading, icon: folderGlyph }, run: () => { void workspace.reconnect(); } }
-        : workspace.status === 'syncing'
-          ? { item: { label: 'Syncing folder…', disabled: true, icon: folderGlyph }, run: () => {}, keepOpen: true }
-          : workspace.status === 'error'
-            ? { item: { label: `Folder sync failed (retry): ${workspace.message ?? 'unknown error'}`.slice(0, 60), disabled: loading, icon: folderGlyph }, run: () => { void workspace.resync(); } }
-            : {
-                item: {
-                  label: `Folder: ${workspace.folderName}${workspace.fileCount !== null ? ` · ${workspace.fileCount} files` : ''}`,
-                  disabled: loading,
-                  icon: folderGlyph,
-                },
-                run: () => { void workspace.resync(); },
-              },
-    ...(workspace.status === 'disconnected' ? [] : [{
-      item: { label: 'Disconnect folder', disabled: loading, icon: folderGlyph },
-      run: () => { void workspace.disconnect(); },
-    }]),
+  // The local folder and the target repo have their own buttons at the left of the message box (they used to sit in the "..." menu). The folder button does the one obvious thing
+  // for its state; once the folder is connected, its menu offers the rest (resync, disconnect, undo the last edit).
+  const folderAvailable = !isEmbedded && workspace.supported;
+  const connectFolder = () => {
+    // First time in this browser: say what gets uploaded before opening the picker.
+    if (hasLocalFolderConsent()) void workspace.connect();
+    else setShowFolderConsent(true);
+  };
+  const folderMenuEntries: { item: OptionWheelItem; run: () => void }[] = [
+    { item: { label: `Resync${workspace.fileCount !== null ? ` (${workspace.fileCount} files)` : ''}`, disabled: loading, icon: folderGlyph }, run: () => { void workspace.resync(); } },
+    { item: { label: 'Disconnect folder', disabled: loading, icon: folderGlyph }, run: () => { void workspace.disconnect(); } },
     // Survives reloads (the saved originals live in IndexedDB), so a change applied earlier can
     // always be reverted even after its diff card is gone from the chat.
     ...(workspace.lastEdit && workspace.canEdit ? [{
@@ -2115,8 +2103,26 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
       },
     }] : []),
   ];
+  const onFolderClick = () => {
+    if (loading) return;
+    switch (workspace.status) {
+      case 'disconnected': connectFolder(); break;
+      case 'needs-permission': void workspace.reconnect(); break;
+      case 'error':
+      case 'not-uploaded': void workspace.resync(); break;
+      case 'syncing': break;
+      default: setShowFolderMenu(v => !v);
+    }
+  };
+  const folderButtonTitle =
+    workspace.status === 'disconnected' ? 'Connect a local folder'
+      : workspace.status === 'needs-permission' ? `Reconnect folder: ${workspace.folderName}`
+        : workspace.status === 'syncing' ? 'Syncing folder…'
+        : workspace.status === 'not-uploaded' ? `Folder: ${workspace.folderName} · not on the server right now, click to upload (it also uploads when you send a message)`
+          : workspace.status === 'error' ? `Folder sync failed, click to retry${workspace.message ? `: ${workspace.message}`.slice(0, 60) : ''}`
+            : `Folder: ${workspace.folderName}${workspace.fileCount !== null ? ` · ${workspace.fileCount} files` : ''}`;
+  const folderDot = workspace.status === 'connected' ? 'on' : workspace.status === 'syncing' ? 'syncing' : workspace.status === 'not-uploaded' ? 'pending' : workspace.status === 'needs-permission' ? 'warn' : workspace.status === 'error' ? 'error' : null;
   const settingsEntries: { item: OptionWheelItem; run: () => void; keepOpen?: boolean }[] = isEmbedded ? [] : [
-    ...workspaceEntries,
     {
       item: {
         label: fetchingScope ? 'Scope: loading…' : `Scope: ${scopeLabel}`,
@@ -2450,8 +2456,60 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                   }
                 }}
                 onPaste={handlePastedImage}
-                rows={2}
+                rows={isEmbedded ? 2 : 1}
               />
+
+              {/* The buttons sit in a row of their own under the text (in the app shell), so typed text can never run under them. In the embedded widget this wrapper has no
+                  styling and its two groups keep floating over the box's bottom edge. */}
+              <div className="chat-input-toolbar">
+              {!isEmbedded && (
+                <div className="icon-row-left" ref={toolButtonsRef}>
+                  <button
+                    type="button"
+                    className={`circle-icon-button tool-button${targetRepo ? ' is-on' : ''}${showRepoBanner ? ' is-open' : ''}`}
+                    onClick={() => setShowRepoBanner(v => !v)}
+                    title={targetRepo ? `Target repo: ${targetRepo}` : 'Set a target GitHub repo'}
+                    aria-label={targetRepo ? `Target repo: ${targetRepo}` : 'Set a target GitHub repo'}
+                    aria-pressed={showRepoBanner}
+                  >
+                    <Icon name="branch" />
+                    {targetRepo && <span className="tool-dot on" aria-hidden="true" />}
+                  </button>
+                  {folderAvailable && (
+                    <div style={{ position: 'relative' }}>
+                      <button
+                        type="button"
+                        className={`circle-icon-button tool-button${workspace.status === 'connected' || workspace.status === 'syncing' ? ' is-on' : ''}${showFolderMenu ? ' is-open' : ''}`}
+                        onClick={onFolderClick}
+                        disabled={loading}
+                        title={folderButtonTitle}
+                        aria-label={folderButtonTitle}
+                        aria-haspopup={workspace.status === 'connected' ? 'menu' : undefined}
+                        aria-expanded={workspace.status === 'connected' ? showFolderMenu : undefined}
+                      >
+                        <Icon name="folder" />
+                        {folderDot && <span className={`tool-dot ${folderDot}`} aria-hidden="true" />}
+                      </button>
+                      {showFolderMenu && workspace.status === 'connected' && (
+                        <div className="chat-folder-popover" role="menu">
+                          <div className="chat-folder-status">
+                            <span className="tool-dot on" aria-hidden="true" />
+                            <span>Connected{workspace.folderName ? ` · ${workspace.folderName}` : ''}</span>
+                          </div>
+                          <OptionWheel
+                            items={folderMenuEntries.map(e => e.item)}
+                            columnLayout
+                            fontSize={0.85}
+                            textColor="#94a3b8"
+                            activeColor="#f8fafc"
+                            onActivate={index => { folderMenuEntries[index]?.run(); setShowFolderMenu(false); }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="icon-row-overlay">
                 {!isEmbedded && <UsageRing budget={budget} />}
@@ -2652,6 +2710,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                     </svg>
                   )}
                 </button>
+              </div>
               </div>
             </div>
           </form>

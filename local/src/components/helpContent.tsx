@@ -252,7 +252,7 @@ export const EVERYDAY: Record<string, Content> = {
         <li>Files it isn't sure about, hidden files, and anything still downloading are left where they are.</li>
       </ul>
       <p>It works in Chrome or Edge on a laptop or desktop, not on a phone. If your browser won't open a folder like Downloads directly, try a folder inside it.</p>
-      <p>Tidy up is different from "Connect local folder" in the "…" menu. Tidy up only sorts files and uploads nothing. Connecting a folder lets Sonic read your text files and Word documents and write new ones, with your approval.</p>
+      <p>Tidy up is different from the folder button at the left of the message box (the one that connects a local folder). Tidy up only sorts files and uploads nothing. Connecting a folder lets Sonic read your text files and Word documents and write new ones, with your approval.</p>
       <p><HelpLink go={ctx.go} path="/tidy">Open Tidy up</HelpLink></p>
     </>
   ),
@@ -470,7 +470,7 @@ export const DEVELOPER: Record<string, Content> = {
 
   'dev-folder': () => (
     <>
-      <p>"Connect local folder" in the "…" menu lets Sonic answer about your real, uncommitted code on a laptop or desktop in Chrome or Edge.</p>
+      <p>The folder button at the left of the message box (it turns orange while a folder is connected) lets Sonic answer about your real, uncommitted code on a laptop or desktop in Chrome or Edge.</p>
       <ul>
         <li>The text files in the folder are copied to Sonic's server and sent to the AI model. Secrets such as .env files and keys, and folders like node_modules and .git, are never uploaded.</li>
         <li>Access starts read-only. Sonic can propose changes, and they are written only when you press Apply. You can undo them.</li>
@@ -485,7 +485,7 @@ export const DEVELOPER: Record<string, Content> = {
     <>
       <ul>
         <li><strong>Deep Thinking</strong> uses a stronger model and more steps for questions that need real investigation. It's slower and costs more, so it's off by default.</li>
-        <li><strong>Target Repo</strong> pins a GitHub "owner/repo" so Sonic always knows which repo you mean. It persists until you change or clear it, and naming another repo in a message overrides it for that message.</li>
+        <li><strong>Target Repo</strong> (the branch button at the left of the message box) pins a GitHub "owner/repo" so Sonic always knows which repo you mean. It persists until you change or clear it, and naming another repo in a message overrides it for that message.</li>
         <li><strong>Open Answers</strong> (on by default) lets it use general knowledge beyond your indexed documents. Turn it off to keep answers strictly to them.</li>
       </ul>
     </>

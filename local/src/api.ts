@@ -1,6 +1,7 @@
 // src/api.ts
 import type { SessionCheck } from './utils/authReady';
 import { ChatSendError, kindForStatus, safeDetail, toChatSendError } from './chatErrors';
+import { SyncRequestError } from './localWorkspaceCore';
 
 declare global {
   interface Window {
@@ -1801,11 +1802,15 @@ export async function getLocalWorkspaceStatus(): Promise<LocalWorkspaceStatus> {
   return res.json();
 }
 
+/** One batch of a folder upload. A FULL upload carries an `upload_id` (the server stages it and swaps it in on `commit`, so a failed upload never damages the working copy);
+ *  a small delta of what changed has neither. A failed request throws a SyncRequestError carrying the HTTP status (none when the network dropped), which decides whether to retry. */
 export async function syncLocalWorkspaceBatch(batch: {
   name: string;
   reset: boolean;
   files: { path: string; content?: string; content_base64?: string }[];
   deleted: string[];
+  upload_id?: string;
+  commit?: boolean;
 }): Promise<LocalWorkspaceSyncResult> {
   const authHeaders = await getAuthHeaders();
   const res = await fetch(`${BASE_URL}/api/local-workspace/sync`, {
@@ -1814,7 +1819,11 @@ export async function syncLocalWorkspaceBatch(batch: {
     body: JSON.stringify(batch)
   });
   if (!res.ok) {
-    throw new Error(res.status === 403 ? "Sign in to connect a local folder." : "Failed to sync the folder.");
+    const message = res.status === 403 ? "Sign in to connect a local folder."
+      : res.status === 409 ? "The upload was replaced by a newer one."
+      : res.status === 413 ? "The folder upload was too large for the server."
+      : "Failed to sync the folder.";
+    throw new SyncRequestError(message, res.status);
   }
   return res.json();
 }
@@ -1947,7 +1956,8 @@ export async function sendChatMessage(
   session_id: string,
   onTokenReceived: (token: string) => void,
   onTraceReceived?: (payload: any) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  folderExpected = false
 ): Promise<void> {
   const authHeaders = await getAuthHeaders();
   // A deliberate Stop surfaces as an AbortError and is the caller's to handle; every other failure is a ChatSendError that says what is
@@ -1967,6 +1977,8 @@ export async function sendChatMessage(
         affiliate: borderScope,
         attachments,
         session_id,
+        // The browser has a local folder connected: a code answer that finds none on the server says so, instead of quietly using GitHub.
+        folder_expected: folderExpected,
       }),
       signal,
     });

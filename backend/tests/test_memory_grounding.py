@@ -65,6 +65,33 @@ def test_a_name_is_only_a_problem_when_the_assistant_introduced_it():
     assert g.ungrounded_kinds("Has a date tonight with Ashlyn.", user_text="date tonight", assistant_text="enjoy tonight!") == []        # a name in neither is not the assistant's
 
 
+def test_a_note_can_also_have_a_name_judged_that_came_from_nowhere():
+    """names_anywhere (notes only): a capitalised name in neither the person's words, what Sonic knows, nor the reply is one the note writer invented."""
+    assert g.ungrounded_kinds("Has a date tonight with Ashlyn.", user_text="date tonight", assistant_text="enjoy tonight!", names_anywhere=True) == ["name"]
+    assert g.ungrounded_kinds("Is meeting Priya for lunch.", user_text="lunch tomorrow", names_anywhere=True) == ["name"]
+    assert g.ungrounded_kinds("Is meeting Priya for lunch.", user_text="lunch with priya", names_anywhere=True) == []
+    assert g.ungrounded_kinds("Is meeting Priya for lunch.", user_text="lunch tomorrow", known_text="Has a friend named Priya.", names_anywhere=True) == []
+    kept = g.ground_note("Asked about caching. Is meeting Priya for lunch.", user_text="how does caching work", names_anywhere=True)
+    assert kept.text == "Asked about caching." and kept.dropped == 1 and kept.kinds == ["name"]
+    assert g.ground_note("Asked about caching. Is meeting Priya for lunch.", user_text="how does caching work").dropped == 0          # off by default
+
+
+def test_a_fact_that_expands_what_the_person_said_is_kept_as_written():
+    """Measured 2026-10-22: judging names for facts replaced a legitimate expansion with the person's raw words (\"i work at pfg\"). ground_fact leaves names to the assistant-name rule."""
+    for fact, said in [("Works at Principal Financial Group.", "i work at pfg"), ("Lives in Des Moines, Iowa.", "i live in des moines"), ("Has a job interview at John Deere.", "interview at deere next week"),
+                       ("Is planning a trip to New York City.", "planning a trip to nyc in march")]:
+        checked = g.ground_fact(fact, user_text=said)
+        assert checked.text == fact and checked.dropped == 0, fact
+    assert g.ground_fact("Is meeting Priya for lunch at 7.", user_text="lunch tomorrow").text == "lunch tomorrow"        # a number that is not theirs still swaps the fact
+
+
+def test_the_note_writer_asks_for_names_to_be_judged_anywhere_and_facts_do_not():
+    notes = open("backend/utils/app_utils.py", encoding="utf-8").read()
+    assert "known_text=known_text, names_anywhere=True)" in notes
+    for path in ("backend/services/agent_workflow.py", "backend/utils/open_loops.py", "backend/utils/memory_domains.py"):
+        assert "names_anywhere" not in open(path, encoding="utf-8").read(), path
+
+
 def test_a_sentence_start_is_not_a_name_and_the_note_without_details_is_untouched():
     checked = g.ground_note("Tomorrow has an interview. Wants help preparing.", user_text="i have an interview tomorrow, can you help me prepare", assistant_text="Sure!")
     assert checked.text == "Tomorrow has an interview. Wants help preparing." and checked.dropped == 0

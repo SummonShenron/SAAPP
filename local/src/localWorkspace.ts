@@ -11,6 +11,7 @@ import {
   syncLocalWorkspaceBatch,
   type LocalWorkspaceSyncResult,
 } from './api';
+import { withRetry, type SavedSyncState } from './localWorkspaceCore';
 
 interface FsEntryBase {
   name: string;
@@ -159,6 +160,34 @@ export async function clearFolderHandle(): Promise<void> {
   await handleStore.remove(HANDLE_KEY);
 }
 
+// What the last upload left on the server, remembered across reloads: without it every reload forgot which files were already up, and the first message after it uploaded the
+// whole folder again even though the server's copy was intact. Whether it can still be trusted is decided by restorableStamps (localWorkspaceCore.ts).
+const SYNC_STATE_KEY = 'sync-state';
+
+export async function saveSyncState(folder: string, serverCount: number, stamps: Map<string, string>): Promise<void> {
+  try {
+    await handleStore.put(SYNC_STATE_KEY, { folder, serverCount, stamps: [...stamps.entries()] } satisfies SavedSyncState);
+  } catch {
+    // not remembered: the next reload checks the server and uploads what it must
+  }
+}
+
+export async function loadSyncState(): Promise<SavedSyncState | null> {
+  try {
+    return await handleStore.get<SavedSyncState>(SYNC_STATE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export async function clearSyncState(): Promise<void> {
+  try {
+    await handleStore.remove(SYNC_STATE_KEY);
+  } catch {
+    // nothing to forget
+  }
+}
+
 // --- scanning and uploading ---
 
 export interface FolderScan {
@@ -264,14 +293,20 @@ export async function syncFolder(
   let batchBytes = 0;
   let firstRequest = true;
   let deletedSent = false;
+  // A FULL upload is staged on the server under this id and replaces the live copy only when the last request commits it, so a failure part-way leaves the working copy as it was.
+  const uploadId = reset ? newUploadId() : undefined;
+
+  // Each request is tried again on a transient failure (a dropped connection, a busy or restarting server) instead of failing the whole upload.
+  const send = (body: Parameters<typeof syncLocalWorkspaceBatch>[0]) => withRetry(() => syncLocalWorkspaceBatch(body));
 
   const flush = async () => {
     if (batch.length === 0 && !(firstRequest && reset) && (deletedSent || scan.deleted.length === 0)) return;
-    const result: LocalWorkspaceSyncResult = await syncLocalWorkspaceBatch({
+    const result: LocalWorkspaceSyncResult = await send({
       name: root.name,
       reset: reset && firstRequest,
       files: batch,
       deleted: deletedSent ? [] : scan.deleted,
+      ...(uploadId ? { upload_id: uploadId } : {}),
     });
     deletedSent = true;
     firstRequest = false;
@@ -288,7 +323,17 @@ export async function syncFolder(
     if (batchBytes >= BATCH_MAX_BYTES || batch.length >= BATCH_MAX_FILES) await flush();
   }
   await flush();
+  if (uploadId) {
+    const done = await send({ name: root.name, reset: false, files: [], deleted: [], upload_id: uploadId, commit: true });
+    outcome.serverFileCount = done.file_count;
+  }
   return outcome;
+}
+
+function newUploadId(): string {
+  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
 /** Whether the server's snapshot still matches what the last sync left there — it won't after a

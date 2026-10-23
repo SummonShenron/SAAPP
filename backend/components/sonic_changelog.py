@@ -753,7 +753,7 @@ CHANGELOG = [
         "title": "Connecting a local folder",
         "line": (
             "You can connect a folder so I can read it, and I show a diff with Apply and undo before changing its files. "
-            "I can write a new Word document or an edited copy of one, once you approve a preview; your original is never changed."
+            "The folder button shows a filled dot only while I really hold your copy, and if I lost it I say so. I can also write a Word document you approve."
         ),
         "keywords": ["local folder", "folder", "local files", "edit files", "apply", "undo", "my computer", "word document", "docx", "resume", "letter"],
         "volunteer": ["my local files", "my folder", "on my machine", "make me a word document", "write a resume"],

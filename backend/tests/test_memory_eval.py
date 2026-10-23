@@ -222,8 +222,11 @@ def test_summarize_turn_returns_the_note_or_none_and_trims_the_inputs_like_the_a
         prompts.append(prompt)
         return SimpleNamespace(content=[{"type": "text", "text": "  Adopted a dog named Biscuit.  "}])
 
-    assert run(app_utils.summarize_turn("q" * 900, "a" * 2000, llm=llm)) == "Adopted a dog named Biscuit."
-    assert "q" * 500 in prompts[0] and "q" * 501 not in prompts[0]
+    # The person said the dog's name (a note naming someone the person never mentioned is dropped), then a long tail to be trimmed.
+    question = "I adopted a dog named Biscuit. " + "q" * 900
+    assert run(app_utils.summarize_turn(question, "a" * 2000, llm=llm)) == "Adopted a dog named Biscuit."
+    assert run(app_utils.summarize_turn("q" * 900, "a" * 2000, llm=llm)) is None                                  # the same note with the name from nowhere: not saved
+    assert question[:500] in prompts[0] and question[:501] not in prompts[0]
     assert "a" * 1000 in prompts[0] and "a" * 1001 not in prompts[0]
 
     async def none_llm(prompt):

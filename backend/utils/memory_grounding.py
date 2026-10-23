@@ -5,7 +5,9 @@ invention), and one second later the note writer saved "Jack needs to take a nap
 already says never to record a detail that appears only in the assistant's reply; a prompt is only prose. This is the mechanical check behind it, with no model call.
 
 THE RULE. A note, fact or open loop may only carry a SPECIFIC (a time, a number or amount, a weekday, a month, or a name the assistant introduced) that is in the
-person's own words. A sentence with a specific that is not is dropped; with nothing left, nothing is saved. When in doubt, the detail is not kept.
+person's own words. A sentence with a specific that is not is dropped; with nothing left, nothing is saved. When in doubt, the detail is not kept. For NOTES only, a name the note
+writer produced from nowhere (in neither the person's words, what Sonic knows, nor the reply) is dropped too (`names_anywhere`); facts and rewrites keep the narrower rule, because
+they legitimately expand what the person said.
 
 CONFIRMATION. "yep" confirms nothing by itself. Only when the assistant's last message was an explicit question ("7 at Tidos, right?") and the person answers
 yes does the detail in THAT question count as theirs (`confirmed_text`).
@@ -121,10 +123,15 @@ def _name_in(token: str, words: Set[str]) -> bool:
     return any(len(w) >= 4 and (w.startswith(token) or token.startswith(w)) and abs(len(w) - len(token)) <= 2 for w in words)
 
 
-def ungrounded_kinds(candidate: str, *, user_text: str, assistant_text: str = "", confirmed: str = "", known_text: str = "") -> List[str]:
+def ungrounded_kinds(
+    candidate: str, *, user_text: str, assistant_text: str = "", confirmed: str = "", known_text: str = "", names_anywhere: bool = False,
+) -> List[str]:
     """The kinds of detail in `candidate` that are not in the person's own words (and not in what they just confirmed): "time", "number", "weekday", "month", "name".
-    `assistant_text` (the reply the note was written from) lets a NAME be recognised as coming from the assistant; with none given, names are not checked.
-    `known_text` is what Sonic already knows about the person (their saved facts), so a name it already holds is not new."""
+    `assistant_text` (the reply the note was written from) lets a NAME be recognised as coming from the assistant; with none given, names are not judged unless `names_anywhere`.
+    `known_text` is what Sonic already knows about the person (their saved facts), so a name it already holds is not new.
+    `names_anywhere` also flags a capitalised name that is in neither the person's words, nor what Sonic knows, nor the reply: one the note writer produced from nowhere. It is for NOTES
+    only (a dropped sentence costs little, and on 37 real notes it dropped nothing the assistant-name rule did not). It is off for facts and rewrites, where a model legitimately expands what
+    the person said ("pfg" to "Principal Financial Group", "des moines" to "Des Moines, Iowa") and a flag would replace the whole fact with the person's raw words."""
     source = f"{user_text or ''}\n{confirmed or ''}"
     source_times, source_rest = _times_and_rest(source)
     source_numbers = _numbers(source_rest, include_words=True)
@@ -148,16 +155,17 @@ def ungrounded_kinds(candidate: str, *, user_text: str, assistant_text: str = ""
         kinds.append("weekday")
     if any(month in cand_words and month not in source_words for month in _MONTHS):
         kinds.append("month")
-    if assistant_text:
-        said = _tokens(assistant_text)
-        known = source_words | _tokens(known_text)
-        if any(name in said and not _name_in(name, known) for name in _names(candidate)):
-            kinds.append("name")
+    known = source_words | _tokens(known_text)
+    said = _tokens(assistant_text) if assistant_text else set()
+    if any(not _name_in(name, known) and (names_anywhere or name in said) for name in _names(candidate)):
+        kinds.append("name")
     return kinds
 
 
-def ground_note(note: str, *, user_text: str, assistant_text: str = "", previous_reply: str = "", known_text: str = "") -> Grounded:
-    """`note` with every sentence that carries a detail the person did not give taken out. Nothing left means nothing to save (`text` is None)."""
+def ground_note(
+    note: str, *, user_text: str, assistant_text: str = "", previous_reply: str = "", known_text: str = "", names_anywhere: bool = False,
+) -> Grounded:
+    """`note` with every sentence that carries a detail the person did not give taken out. Nothing left means nothing to save (`text` is None). `names_anywhere`: see ungrounded_kinds."""
     confirmed = confirmed_text(user_text, previous_reply)
     kept: List[str] = []
     dropped = 0
@@ -165,7 +173,7 @@ def ground_note(note: str, *, user_text: str, assistant_text: str = "", previous
     for sentence in _SENTENCE_SPLIT_RE.split((note or "").strip()):
         if not sentence.strip():
             continue
-        bad = ungrounded_kinds(sentence, user_text=user_text, assistant_text=assistant_text, confirmed=confirmed, known_text=known_text)
+        bad = ungrounded_kinds(sentence, user_text=user_text, assistant_text=assistant_text, confirmed=confirmed, known_text=known_text, names_anywhere=names_anywhere)
         if bad:
             dropped += 1
             kinds.extend(k for k in bad if k not in kinds)

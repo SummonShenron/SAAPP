@@ -94,6 +94,7 @@ from backend.services.memory_compaction import compact_user_memory, compact_meta
 from backend.services.memory_search import context_query_for, recall_with_second_look
 from backend.services.local_workspace import (
     apply_sync as apply_local_workspace_sync,
+    StaleUpload as LocalWorkspaceStaleUpload,
     clear_workspace as clear_local_workspace,
     is_guest_username,
     workspace_status as local_workspace_status,
@@ -359,6 +360,7 @@ class ChatRequest(BaseModel):
     affiliate: str 
     attachments: list[Attachment] | None = None
     session_id: str | None = None
+    folder_expected: bool = False   # the browser has a local folder connected, so a turn that finds none on the server can say so (the answer then used GitHub)
 
 class SteerRequest(BaseModel):
     session_id: str
@@ -374,6 +376,8 @@ class LocalWorkspaceSync(BaseModel):
     reset: bool = False
     files: list[LocalWorkspaceFile] = []
     deleted: list[str] = []
+    upload_id: Optional[str] = None    # a FULL upload's id: its batches are staged and replace the live copy only on `commit` (backend/services/local_workspace.py)
+    commit: bool = False
 
 class RagModeUpdate(BaseModel):
     rag_mode: str
@@ -1688,6 +1692,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     captured = {}
                 for line in (captured or {}).get("noted", []):
                     yield f"data: {json.dumps({'event': 'noted', 'text': line})}\n\n"
+            if request.folder_expected and not folder_connected and code_summary:
+                # The browser has a folder connected but the server had none (it restarted, the copy expired, or the upload failed), so this answer about code came from GitHub.
+                yield f"data: {json.dumps({'event': 'noted', 'text': 'Your connected folder was not on the server for this answer, so it used GitHub instead. Open the folder button to resync.'})}\n\n"
             logger.info("--- End of token stream ---")
 
         except Exception as e:
@@ -2621,14 +2628,23 @@ async def sync_local_workspace(payload: LocalWorkspaceSync, current_user = Depen
     username = current_user.get("sub")
     if is_guest_username(username):
         raise HTTPException(status_code=403, detail="Connecting a local folder requires signing in.")
-    return await asyncio.to_thread(
-        apply_local_workspace_sync,
-        username,
-        payload.name,
-        [f.dict() for f in payload.files],
-        payload.deleted,
-        payload.reset,
-    )
+    try:
+        return await asyncio.to_thread(
+            apply_local_workspace_sync,
+            username,
+            payload.name,
+            [f.dict() for f in payload.files],
+            payload.deleted,
+            payload.reset,
+            payload.upload_id,
+            payload.commit,
+        )
+    except LocalWorkspaceStaleUpload:
+        # Another tab started a newer upload, or this one sat unfinished too long: the browser starts a fresh one.
+        raise HTTPException(status_code=409, detail="That folder upload was replaced by a newer one. Syncing again.")
+    except Exception:
+        logger.exception("[local_workspace] local folder sync failed")
+        raise
 
 
 @app.delete("/api/local-workspace")

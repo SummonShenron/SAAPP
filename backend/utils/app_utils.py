@@ -541,7 +541,7 @@ async def summarize_turn(question: str, answer: str, llm=None, *, previous_reply
     summary_text = strip_note_label(summary_text)
     if not summary_text or summary_text.upper().rstrip(".") == "NONE":
         return None
-    checked = memory_grounding.ground_note(summary_text, user_text=question, assistant_text=answer, previous_reply=previous_reply, known_text=known_text)
+    checked = memory_grounding.ground_note(summary_text, user_text=question, assistant_text=answer, previous_reply=previous_reply, known_text=known_text, names_anywhere=True)
     if report is not None:
         report["dropped"], report["kinds"] = checked.dropped, list(checked.kinds)
     return checked.text

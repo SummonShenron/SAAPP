@@ -226,6 +226,12 @@ def _routine_facts(rows: List[Dict[str, Any]], now: datetime, tz_name: Optional[
             facts.append(f"The {row['label'].lower()} ran {routines.when_phrase(started, tz_name, now)} and {result}.")
         if row.get("status") in (routines.STATUS_FAILED, routines.STATUS_ATTENTION):
             issues.append(row["status"])
+    # A routine with no run on record, when others have run, is named instead of silently left out, so a reply cannot say all of them ran. It is a FACT and not a problem: without a record of
+    # when the routine was added, one that never started and one added an hour ago look the same, and calling it a problem would make every new routine, and every fresh start, "not normal".
+    # When none has run, the "no run on record yet" line in build_facts already says so.
+    never = [r["label"].lower() for r in rows if not r.get("started_at")]
+    if never and ran:
+        facts.append(f"I have no run on record yet for the {' or the '.join(never)}.")
     return facts, issues
 
 
@@ -500,6 +506,12 @@ _GOAL_GOING_WELL_RE = re.compile(
 )
 
 
+# Words that say a goal is NOT on track or that it is early: a reply with one of them is not claiming the goals are all fine. "drift\w*" so "drifting" counts.
+_GOAL_QUALIFIER_RE = re.compile(r"\b(?:not|isn't|aren't|too early|drift\w*|below|behind|short of|off target|under target)\b", re.IGNORECASE)
+# "both are going well", "all of them on track", "everything is on track": a claim about every goal at once (no comma or sentence break between the word and the claim).
+_GOAL_BLANKET_RE = re.compile(r"\b(?:both|all|every(?:thing|one)?)\b[^.!?,;]{0,30}\b(?:on track|going well|doing well|hitting (?:my |their |the )?(?:targets?|goals?))\b", re.IGNORECASE)
+
+
 def goals_reply_issue(reply: str, snap: Optional[Dict[str, Any]], person: Optional[Dict[str, Any]] = None, *, admin: bool = False) -> Optional[str]:
     """What a reply to a question about Sonic's goals does wrong, or None: it may not wish, hope or want (a goal here is a loop, not a feeling), and it may not say a goal is on
     track unless the record says so (nor anything about how it is going when the goals could not be read)."""
@@ -510,8 +522,13 @@ def goals_reply_issue(reply: str, snap: Optional[Dict[str, Any]], person: Option
     built = goal_facts(snap, person, admin=admin)
     if built["unreadable"]:
         return None if _ADMITS_GAP_RE.search(reply) or not _GOAL_GOING_WELL_RE.search(reply) else "said a goal is going well when its goals could not be read"
-    if "on_track" not in built["states"] and _GOAL_GOING_WELL_RE.search(reply) and not re.search(r"\b(?:not|isn't|aren't|too early|drift|below|short of)\b", reply, re.IGNORECASE):
+    qualified = bool(_GOAL_QUALIFIER_RE.search(reply))
+    if "on_track" not in built["states"] and _GOAL_GOING_WELL_RE.search(reply) and not qualified:
         return "said a goal is on track or going well when the record says it is not, or that it is too early to tell"
+    # Mixed: one goal is on track and another is not. Saying the on-track one is on track is true, and leaving the other out is allowed (curated disclosure); a BLANKET claim ("both are going
+    # well", "everything is on track") is the false one.
+    if "on_track" in built["states"] and any(state != "on_track" for state in built["states"]) and _GOAL_BLANKET_RE.search(reply) and not qualified:
+        return "said all of its goals are on track when only some are"
     return None
 
 

@@ -543,3 +543,73 @@ def test_with_mixed_states_the_block_does_not_let_the_reply_say_all_on_track():
 def test_the_endpoint_answers_a_measure_only_approval_with_a_clear_error():
     source = open("app.py", encoding="utf-8").read()
     assert "except goals_utils.MeasureOnly as exc:" in source
+
+
+# ---- mixed states: only a BLANKET claim is false (reviewed 2026-10-22) ---------------------------------------------------------------------------------------------------------
+
+def _mixed_snap():
+    db = Db()
+    counters(db, **week(taken=5, passed=40, made=20), **coding_week(followed=50, redo=5, day="2026_10_19"))
+    snap = snap_for(db)
+    assert sorted(v["state"] for v in snap["goals"]) == [goals.DRIFTING, goals.ON_TRACK]
+    return snap
+
+
+def test_in_a_mixed_week_saying_the_on_track_goal_is_on_track_is_true_and_leaving_the_other_out_is_allowed():
+    snap = _mixed_snap()
+    for reply in ("My coding work is on track.", "My coding work is on track, and the offers goal is drifting.", "Coding is going well; the offers goal is behind its target.",
+                  "Coding is on track but offers are not."):
+        assert sr.goals_reply_issue(reply, snap) is None, reply
+
+
+def test_in_a_mixed_week_a_blanket_claim_is_the_false_one():
+    snap = _mixed_snap()
+    for reply in ("Both goals are going well.", "Everything is on track.", "All of my goals are on track right now.", "They're both doing well."):
+        assert sr.goals_reply_issue(reply, snap) == "said all of its goals are on track when only some are", reply
+
+
+def test_a_blanket_claim_with_a_qualifier_is_not_a_blanket_claim():
+    snap = _mixed_snap()
+    assert sr.goals_reply_issue("Both are measured, and one is drifting.", snap) is None
+    assert sr.goals_reply_issue("Everything is on track except the offers goal, which is drifting.", snap) is None
+
+
+def test_the_qualifier_matches_drifting_and_not_only_drift():
+    assert sr._GOAL_QUALIFIER_RE.search("the offers goal is drifting") and sr._GOAL_QUALIFIER_RE.search("it is behind target")
+
+
+def test_when_none_is_on_track_the_original_rule_still_applies():
+    drifting = Db()
+    counters(drifting, **week(taken=5, passed=40, made=20), **coding_week(followed=50, redo=30, day="2026_10_19"))
+    snap = snap_for(drifting)
+    assert sr.goals_reply_issue("It's going well, I'm on track.", snap) is not None
+    assert sr.goals_reply_issue("Both are drifting.", snap) is None
+
+
+# ---- a routine with no run on record is named, as a fact, never as a problem ----------------------------------------------------------------------------------------------------
+
+def test_a_routine_that_never_ran_is_named_when_others_have_and_is_not_a_problem():
+    from backend.utils import routines as rt
+
+    now = datetime(2026, 10, 22, 14, 0, tzinfo=timezone.utc)
+    rows = [{"id": r.id, "label": r.label, "every_hours": r.every_hours, "status": "ok", "counts": {}, "started_at": None if i == 3 else now - timedelta(hours=3)}
+            for i, r in enumerate(rt.registry())]
+    facts, issues = sr._routine_facts(rows, now, "America/Chicago", False)
+    assert any(f.startswith("I have no run on record yet for the attachment tidy-up") for f in facts) and issues == []
+
+
+def test_nothing_is_named_twice_when_none_has_run():
+    from backend.utils import routines as rt
+
+    now = datetime(2026, 10, 22, 14, 0, tzinfo=timezone.utc)
+    rows = [{"id": r.id, "label": r.label, "every_hours": r.every_hours, "status": "ok", "counts": {}, "started_at": None} for r in rt.registry()]
+    facts, issues = sr._routine_facts(rows, now, "America/Chicago", False)
+    assert facts == [] and issues == []
+    snap = {"at": now, "mode": {"known": True, "low_power": False, "paused": []}, "chats": {"turns": 0, "failed": {"quota": 0, "overloaded": 0, "other": 0}}, "routines": rows, "tasks": None, "goals": None, "mix": None}
+    assert sr.build_facts(snap, now=now)["issues"] == [] and any("None of my routines has a run on record yet" in f for f in sr.build_facts(snap, now=now)["facts"])
+
+
+def test_the_local_folder_sync_logs_counts_only_never_the_folder_name():
+    source = open("backend/services/local_workspace.py", encoding="utf-8").read()
+    line = source[source.index("[local_workspace] sync applied"):][:160]
+    assert "name=" not in line and "accepted=%d rejected=%d file_count=%d" in line
