@@ -10,6 +10,20 @@ export function ownUsageText(budget: BudgetView): string {
   return `Your usage: ${percent}% of ${scope}`;
 }
 
+/** When a limit starts over, in the viewer's own time and said briefly: "3:40 PM" later today, "Oct 23, 12:00 AM" on another day, "Nov 1" for a month. null when there
+ *  is nothing true to say: no time, or a 5-hour window with no use in it (it only begins at the first use, so it has no end yet). */
+export function resetText(iso: string | null | undefined, scope: string | undefined, fraction: number, now: Date = new Date()): string | null {
+  if (!iso) return null;
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return null;
+  if ((scope === 'five' || scope === 'my_five') && fraction <= 0) return null;
+  if (scope === 'month') return at.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  if (at.toDateString() === now.toDateString()) return at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return at.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+const withReset = (text: string, reset: string | null) => (reset ? `${text}, resets ${reset}` : text);
+
 export interface RingView {
   fraction: number;
   level: NonNullable<BudgetView['own_level']>;
@@ -26,11 +40,13 @@ export function ringView(budget: BudgetView): RingView | null {
   const shared = typeof budget.fraction === 'number';
   const own = typeof budget.own_fraction === 'number';
   if (!shared && !own) return null;
-  if (!shared) return { fraction: budget.own_fraction!, level: budget.own_level ?? 'ok', text: ownUsageText(budget) };
+  const ownText = () => withReset(ownUsageText(budget), resetText(budget.own_resets_at, budget.own_scope, budget.own_fraction ?? 0));
+  if (!shared) return { fraction: budget.own_fraction!, level: budget.own_level ?? 'ok', text: ownText() };
   const leadingIsOwn = budget.scope === 'my_day' || budget.scope === 'my_five';
   const sharedLevel = budget.level === 'off' ? 'ok' : budget.level;
-  if (!own || leadingIsOwn) return { fraction: budget.fraction!, level: sharedLevel, text: budgetChipText(budget) };
-  return { fraction: budget.fraction!, level: sharedLevel, text: `${budgetChipText(budget)} · ${ownUsageText(budget)}` };
+  const sharedText = withReset(budgetChipText(budget), resetText(budget.resets_at, budget.scope, budget.fraction ?? 0));
+  if (!own || leadingIsOwn) return { fraction: budget.fraction!, level: sharedLevel, text: sharedText };
+  return { fraction: budget.fraction!, level: sharedLevel, text: `${sharedText} · ${ownText()}` };
 }
 
 /** "Budget 54% of month": the share of the budget that is furthest along (admins only: the server sends no percentage to anyone else). */

@@ -730,6 +730,8 @@ export interface BudgetView {
   /** Everyone with a limit of their own: how far along that limit is (0 to over 1), which one it is, and the level it is at. A percentage only: never an amount, never the shared budget. */
   own_fraction?: number;
   own_scope?: 'my_day' | 'my_five';
+  /** When that own limit starts over (an ISO time). */
+  own_resets_at?: string;
   own_level?: 'ok' | 'notice' | 'throttled' | 'blocked';
   /** Admins only: the shared budget has paused chat and +25% is on offer. */
   can_extend?: boolean;

@@ -98,7 +98,7 @@ const emptyChat = (
 
 // ?chat=1: a conversation as the app lays it out (rail, messages, input with Patchy; &blade=1 adds the trace blade), for checking a theme. Add &dark=1 for the dark theme.
 const chatMock = (
-  <div className={`app-shell${params.get('dark') ? ' theme-shadow' : ''}`} style={{ height: '100vh', display: 'flex', flexDirection: 'row', background: 'var(--bg-main)' }}>
+  <div className={`portal-container app-shell${params.get('dark') ? ' theme-shadow' : ''}`}>
     <aside className="app-rail" style={{ position: 'relative', width: 200, flex: '0 0 auto' }}>
       <div className="rail-brand" style={{ padding: 14, color: 'var(--text-main)', font: '700 14px sans-serif', display: 'flex', alignItems: 'center', gap: 8 }}><LogoMark size={26} /> Sonic Assistant</div>
       <div className="rail-item active" style={{ margin: '0 8px' }}>Chat</div>
@@ -107,7 +107,10 @@ const chatMock = (
       <div className="rail-convo" style={{ margin: '0 8px' }}>Budget guard notes</div>
       <div className="user-chip" style={{ position: 'absolute', left: 8, right: 8, bottom: 8 }}><span className="user-avatar">J</span> jack</div>
     </aside>
-    <div className="chat-page" style={{ flex: '1 1 auto', minWidth: 0 }}>
+    <div className="app-main">
+    <header className="app-topbar"><h1 className="topbar-title">Retry logic question</h1><span className="topbar-sub">Powered by Sonic Graph Technologies</span></header>
+    <div className="app-content">
+    <div className="chat-page">
       <main className="portal-body">
         <div className="chat-window" style={{ flex: '1 1 auto', minHeight: 0 }}>
           <div className="message-bubble user"><div className="message-sender">You</div><div className="message-text">How does the retry logic handle a slow database?</div></div>
@@ -131,6 +134,8 @@ const chatMock = (
           { id: '3', title: 'Generating response...', detail: 'Node: conversational_node', status: params.get('done') ? 'complete' : 'active' },
         ]} />
       </aside>}
+    </div>
+    </div>
     </div>
   </div>
 );

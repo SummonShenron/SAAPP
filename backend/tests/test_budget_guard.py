@@ -16,7 +16,7 @@ from backend.utils.safety_utils import CRISIS_RESOURCE_LINE
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 NOW = datetime(2026, 10, 10, 15, 0, tzinfo=timezone.utc)
 ENV = ("LLM_BUDGET_DAILY_USD", "LLM_BUDGET_MONTHLY_USD", "LLM_BUDGET_DAILY_TOKENS", "LLM_BUDGET_MONTHLY_TOKENS",
-       "LLM_BUDGET_NOTICE_AT", "LLM_BUDGET_BLOCK_AT", "LLM_PRICES", "LLM_BUDGET_5H_USD", "LLM_BUDGET_5H_TOKENS",
+       "LLM_BUDGET_NOTICE_AT", "LLM_BUDGET_BLOCK_AT", "LLM_PRICES", "LLM_BUDGET_5H_USD", "LLM_BUDGET_5H_TOKENS", "LLM_SHARED_BUDGET_5H_USD", "LLM_SHARED_BUDGET_5H_TOKENS",
        "LLM_USER_BUDGET_5H_TOKENS", "LLM_USER_BUDGET_DAILY_TOKENS", "LLM_USER_BUDGET_DAILY_USD", "LLM_USER_BUDGET_5H_USD", "LLM_USER_BUDGET_EXEMPT_ADMINS",
        "LLM_BUDGET_THROTTLE_AT", "LLM_BUDGET_MONTH_ALREADY_USD")
 
@@ -425,13 +425,22 @@ def person_row(user, moment, tokens):
     return {"user": user, "minute": minute_of(moment), "tokens": tokens, "calls": 1, "turns": 1}
 
 
-def test_the_five_hour_and_per_person_limits_are_read_from_their_own_settings(monkeypatch):
-    monkeypatch.setenv("LLM_BUDGET_5H_USD", "0.60")
-    monkeypatch.setenv("LLM_BUDGET_5H_TOKENS", "500000")
+def test_the_shared_five_hour_window_and_the_per_person_limits_are_read_from_their_own_settings(monkeypatch):
+    monkeypatch.setenv("LLM_SHARED_BUDGET_5H_USD", "0.60")
+    monkeypatch.setenv("LLM_SHARED_BUDGET_5H_TOKENS", "500000")
     monkeypatch.setenv("LLM_USER_BUDGET_5H_TOKENS", "300000")
     monkeypatch.setenv("LLM_USER_BUDGET_DAILY_TOKENS", "0")  # not a limit
     assert bg.budgets() == {"five_usd": 0.6, "five_tokens": 500_000.0}
     assert bg.user_budgets() == {"my_five_tokens": 300_000.0}
+
+
+def test_the_original_five_hour_settings_now_limit_each_person_not_everyone(monkeypatch):
+    monkeypatch.setenv("LLM_BUDGET_5H_USD", "0.60")
+    monkeypatch.setenv("LLM_BUDGET_5H_TOKENS", "500000")
+    assert bg.budgets() == {}                                                      # no window shared by everyone
+    assert bg.user_budgets() == {"my_five_usd": 0.6, "my_five_tokens": 500_000.0}
+    monkeypatch.setenv("LLM_USER_BUDGET_5H_USD", "0.40")                            # the per-person name wins when both are set
+    assert bg.user_budgets()["my_five_usd"] == 0.4
 
 
 # -- when a window starts and ends (pure)
@@ -493,7 +502,7 @@ def test_an_empty_or_malformed_row_does_not_start_a_window():
 
 def test_a_burst_trips_the_five_hour_window_long_before_the_daily_budget_notices(monkeypatch):
     monkeypatch.setenv("LLM_BUDGET_DAILY_TOKENS", "1000000")
-    monkeypatch.setenv("LLM_BUDGET_5H_TOKENS", "1000")
+    monkeypatch.setenv("LLM_SHARED_BUDGET_5H_TOKENS", "1000")
     db = _DB([row("m", "2026-10-10", 1_500, 0)], minutes=[minute_row(at(14), 1_500)])
     state = bg.current_state(db, at(15))
     assert state["level"] == bg.BLOCKED and state["scope"] == "five" and state["blocked_scopes"] == ["five"]
@@ -502,7 +511,7 @@ def test_a_burst_trips_the_five_hour_window_long_before_the_daily_budget_notices
 
 
 def test_someone_who_maxes_it_out_three_minutes_before_it_ends_can_use_it_again_in_three_minutes(monkeypatch):
-    monkeypatch.setenv("LLM_BUDGET_5H_TOKENS", "1000")
+    monkeypatch.setenv("LLM_SHARED_BUDGET_5H_TOKENS", "1000")
     db = _DB(minutes=[minute_row(at(14), 100), minute_row(at(18, 55), 5_000)])
     blocked = bg.current_state(db, at(18, 57))
     assert blocked["level"] == bg.BLOCKED and blocked["resets_at"].startswith("2026-10-10T19:00")
@@ -512,7 +521,7 @@ def test_someone_who_maxes_it_out_three_minutes_before_it_ends_can_use_it_again_
 
 
 def test_the_first_use_after_a_window_ends_starts_a_new_one_and_it_is_remembered(monkeypatch):
-    monkeypatch.setenv("LLM_BUDGET_5H_TOKENS", "1000")
+    monkeypatch.setenv("LLM_SHARED_BUDGET_5H_TOKENS", "1000")
     db = _DB(minutes=[minute_row(at(14), 5_000)])
     bg.current_state(db, at(15))
     saved = db.others[bg.WINDOWS_COLLECTION].rows
@@ -526,7 +535,7 @@ def test_the_first_use_after_a_window_ends_starts_a_new_one_and_it_is_remembered
 
 
 def test_a_saved_start_that_is_too_old_is_not_followed(monkeypatch):
-    monkeypatch.setenv("LLM_BUDGET_5H_TOKENS", "1000")
+    monkeypatch.setenv("LLM_SHARED_BUDGET_5H_TOKENS", "1000")
     old = {"scope": "five", "user": "", "start": at(1, day=5).isoformat()}
     db = _DB(minutes=[minute_row(at(14), 5_000)], windows=[old])
     assert bg.current_state(db, at(15))["scope"] == "five"  # worked out afresh from the usage, not from a window days ago
@@ -567,7 +576,7 @@ def test_an_extension_never_lowers_the_throttle_line_so_low_power_stays_on(monke
 
 def test_a_running_extension_saved_by_an_admin_is_honoured_and_an_expired_one_is_not(monkeypatch):
     monkeypatch.setenv("LLM_BUDGET_DAILY_TOKENS", "1000")
-    monkeypatch.setenv("LLM_BUDGET_5H_TOKENS", "1000")
+    monkeypatch.setenv("LLM_SHARED_BUDGET_5H_TOKENS", "1000")
     soon, past = "2026-10-10T20:00:00+00:00", "2026-10-10T10:00:00+00:00"
     extensions = [{"scope": "day", "extra": 0.25, "until": soon}, {"scope": "five", "extra": 0.5, "until": past}]
     db = _DB([row("m", "2026-10-10", 1_300, 0)], minutes=[minute_row(at(14), 1_300)], extensions=extensions)
@@ -596,7 +605,7 @@ def test_granting_an_extension_adds_a_step_records_who_and_when_and_ends_with_th
 
 
 def test_a_five_hour_extension_ends_with_the_window_it_was_granted_in(monkeypatch):
-    monkeypatch.setenv("LLM_BUDGET_5H_TOKENS", "1000")
+    monkeypatch.setenv("LLM_SHARED_BUDGET_5H_TOKENS", "1000")
     db = _DB(minutes=[minute_row(at(14), 1_400)])
     state = bg.current_state(db, NOW)
     assert state["level"] == bg.BLOCKED
@@ -607,7 +616,7 @@ def test_a_five_hour_extension_ends_with_the_window_it_was_granted_in(monkeypatc
 
 
 def test_a_grant_after_the_last_one_ran_out_starts_again_from_one_step(monkeypatch):
-    monkeypatch.setenv("LLM_BUDGET_5H_TOKENS", "1000")
+    monkeypatch.setenv("LLM_SHARED_BUDGET_5H_TOKENS", "1000")
     old = {"scope": "five", "extra": 0.75, "until": "2026-10-10T09:00:00+00:00", "grants": [{"by": "a", "at": "x", "extra": 0.75}]}
     db = _DB(minutes=[minute_row(at(14), 1_400)], extensions=[old])
     state = bg.current_state(db, NOW)
@@ -839,3 +848,32 @@ def test_once_the_window_has_ended_nothing_is_counted_and_no_window_is_in_progre
     assert totals["five_tokens"] == 0 and totals["five_start"] is None
     person = bg.person_totals([person_row("jack", at(14), 5_000)], at(19, 30), at(14))
     assert person["my_five_tokens"] == 0 and person["my_five_start"] is None
+
+
+def test_a_person_with_their_own_limit_is_told_when_it_starts_over_and_nobody_else_is():
+    state = bg.evaluate({"my_five_usd": 0.5, "month_usd": 10}, {"my_five_usd": 1.0, "month_usd": 100.0}, NOW, None)
+    view = bg.public_view(state, False)
+    assert view["own_scope"] == "my_five" and view["own_resets_at"] == state["resets"]["my_five"]
+    assert "own_resets_at" not in bg.public_view(bg.evaluate({"month_usd": 10}, {"month_usd": 100.0}, NOW), False)     # no limit of their own: nothing to say
+
+
+def test_with_both_limits_set_the_request_is_for_whichever_is_furthest_along_and_only_that_one_is_raised(monkeypatch):
+    monkeypatch.setenv("LLM_USER_BUDGET_5H_TOKENS", "1000")
+    monkeypatch.setenv("LLM_USER_BUDGET_DAILY_TOKENS", "2000")
+    # 970 of 1000 in the window (97%), 1,400 of 2,000 today (70%): the window is the one to raise.
+    db = _DB(people=[person_row("jack", at(9), 430), person_row("jack", at(14), 970)])
+    state = bg.current_state(db, at(15), "jack")
+    view = bg.public_view(state, False)
+    assert view["own_scope"] == "my_five" and view["can_request_increase"] is True
+    asked = bg.request_increase(db, "jack", state, at(15))
+    assert asked["scope"] == "my_five" and asked["fraction"] == 0.97
+    bg.decide_request(db, "admin@example.com", asked["id"], True, at(15, 5))
+    raised = bg.current_state(db, at(15, 6), "jack")
+    limits = {d["scope"]: d["limit"] for d in raised["detail"]}
+    assert limits == {"my_five": 1_250, "my_day": 2_000}                         # the window moved, the day did not
+
+    # And when the day is the one furthest along (1,900 of 2,000 today, 300 of 1,000 in the window) the request is for the day.
+    db = _DB(people=[person_row("kim", at(9), 1_600), person_row("kim", at(14), 300)])
+    state = bg.current_state(db, at(15), "kim")
+    assert bg.public_view(state, False)["own_scope"] == "my_day"
+    assert bg.request_increase(db, "kim", state, at(15))["scope"] == "my_day"

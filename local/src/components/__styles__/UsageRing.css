@@ -44,7 +44,9 @@
   font-size: 0.74rem;
   font-weight: 600;
   line-height: 1.3;
-  white-space: nowrap;
+  white-space: normal;
+  width: max-content;
+  max-width: min(320px, 80vw);
   pointer-events: none;
   opacity: 0;
   transform: translateY(4px);

@@ -24,7 +24,9 @@ Tune with LLM_BUDGET_NOTICE_AT (0.8), LLM_BUDGET_THROTTLE_AT (1.0) and LLM_BUDGE
 pass it), set LLM_BUDGET_BLOCK_AT=1 and keep a low-power step before it with LLM_BUDGET_THROTTLE_AT=0.8. For example, $5 a day:
 LLM_BUDGET_DAILY_USD=5, LLM_BUDGET_NOTICE_AT=0.6, LLM_BUDGET_THROTTLE_AT=0.8, LLM_BUDGET_BLOCK_AT=1.
 
-A FIVE-HOUR WINDOW can be set the same way, in the same units (LLM_BUDGET_5H_USD / LLM_BUDGET_5H_TOKENS). It is a session, not a rolling count: the
+A FIVE-HOUR WINDOW is PER PERSON: LLM_BUDGET_5H_USD / LLM_BUDGET_5H_TOKENS (or LLM_USER_BUDGET_5H_*, which wins when both are set) limit what one person may
+use in their own window, so one person's burst never pauses chat for everyone. A window shared by everyone is still possible but is off unless
+LLM_SHARED_BUDGET_5H_USD / LLM_SHARED_BUDGET_5H_TOKENS are set. A window is a session, not a rolling count: the
 first use starts a window that lasts exactly five hours, whatever happens in it, and when it ends usage counts from zero again. The next window
 starts at the next use after that. So someone who maxes it out three minutes before it ends can use Sonic again in three minutes. It catches a burst
 the daily budget would only notice much later. When it blocks, the message gives the exact time the window ends.
@@ -91,8 +93,9 @@ _BUDGET_ENV = {
     "month_usd": "LLM_BUDGET_MONTHLY_USD",
     "day_tokens": "LLM_BUDGET_DAILY_TOKENS",
     "month_tokens": "LLM_BUDGET_MONTHLY_TOKENS",
-    "five_usd": "LLM_BUDGET_5H_USD",
-    "five_tokens": "LLM_BUDGET_5H_TOKENS",
+    # A window shared by everyone. Off unless these are set: LLM_BUDGET_5H_* is the PER-PERSON window (below), because one person's burst should not pause chat for everyone.
+    "five_usd": "LLM_SHARED_BUDGET_5H_USD",
+    "five_tokens": "LLM_SHARED_BUDGET_5H_TOKENS",
 }
 # Per-person limits, in tokens or dollars (see the module docstring). Their scopes start with "my_".
 _USER_BUDGET_ENV = {
@@ -101,6 +104,8 @@ _USER_BUDGET_ENV = {
     "my_day_usd": "LLM_USER_BUDGET_DAILY_USD",
     "my_five_usd": "LLM_USER_BUDGET_5H_USD",
 }
+# The per-person 5-hour window is also read from the original LLM_BUDGET_5H_* names (used when the LLM_USER_ one is not set), so an existing setting keeps working.
+_USER_FIVE_FALLBACK = {"my_five_tokens": "LLM_BUDGET_5H_TOKENS", "my_five_usd": "LLM_BUDGET_5H_USD"}
 # A budget key's (scope, unit). "five" is the five-hour window that starts at the first use; "my_" scopes are one person's own share.
 _KEYS = {
     "day_usd": ("day", "usd"), "month_usd": ("month", "usd"), "day_tokens": ("day", "tokens"), "month_tokens": ("month", "tokens"),
@@ -150,6 +155,9 @@ def budgets() -> Dict[str, float]:
 def user_budgets() -> Dict[str, float]:
     """The per-person limits that are set ("my_day_tokens", "my_five_tokens", "my_day_usd", "my_five_usd"). Empty means there are none."""
     found = {key: _positive(env) for key, env in _USER_BUDGET_ENV.items()}
+    for key, env in _USER_FIVE_FALLBACK.items():
+        if found.get(key) is None:
+            found[key] = _positive(env)
     return {key: value for key, value in found.items() if value is not None}
 
 
@@ -720,6 +728,10 @@ def public_view(state: Optional[Dict[str, Any]], admin: bool) -> Dict[str, Any]:
     if mine and level != OFF:
         lead = max(mine, key=lambda d: d["fraction"])
         view.update({"own_fraction": lead["fraction"], "own_scope": lead["scope"], "own_level": fraction_level(lead["fraction"])})
+        # When that limit starts over (a time, not an amount), so the ring can say so.
+        own_resets_at = (state.get("resets") or {}).get(lead["scope"])
+        if own_resets_at:
+            view["own_resets_at"] = own_resets_at
         # Whether to offer "request more": the person is at their own notice line or past it. The raised amount, if an admin has approved one, is theirs to know.
         view["can_request_increase"] = can_request_increase(state)
         raised = (state.get("user_extended") or {}).get(lead["scope"])

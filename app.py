@@ -2743,13 +2743,15 @@ async def request_budget_increase(current_user = Depends(get_current_user)):
     if get_db() is None:
         raise HTTPException(status_code=503, detail="No database is configured.")
     try:
-        await asyncio.to_thread(budget_guard.request_increase, get_db(), username, state)
+        asked = await asyncio.to_thread(budget_guard.request_increase, get_db(), username, state)
     except ValueError as problem:
         raise HTTPException(status_code=409, detail=str(problem))
     except Exception:
         logger.exception("[budget] could not save the increase request")
         raise HTTPException(status_code=500, detail="The request could not be sent.")
-    logger.info("[budget] a person asked for a 25%% increase of their own limit.")
+    # Which limit it was for, and where each of the person's own limits stood, so a request that went to the wrong one can be traced.
+    standing = ", ".join(f"{item['scope']}={round(item['fraction'] * 100)}%" for item in state.get("detail", []) if item.get("scope") in budget_guard.OWN_SCOPES)
+    logger.info("[budget] a person asked for a 25%% increase of their own %s limit (%s).", asked.get("scope"), standing)
     return await _budget_view_with_request(username, state, admin)
 
 
@@ -3196,7 +3198,7 @@ async def decide_budget_request(request_id: str, decision: str, admin = Depends(
         raise HTTPException(status_code=404, detail=str(problem))
     except ValueError as problem:
         raise HTTPException(status_code=409, detail=str(problem))
-    logger.info("[budget] a global admin %sd a request to raise a person's own limit.", decision)
+    logger.info("[budget] a global admin %sd a request to raise a person's own %s limit.", decision, decided.get("scope"))
     return decided
 
 

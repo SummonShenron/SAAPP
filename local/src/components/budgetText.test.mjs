@@ -1,7 +1,7 @@
 // Run with: node --test src/components/budgetText.test.mjs   (from local/; Node 22.18+ runs the TypeScript module directly)
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { budgetChipText, ownUsageText, ringView } from './budgetText.ts';
+import { budgetChipText, ownUsageText, resetText, ringView } from './budgetText.ts';
 
 test('a person is told how far along their own limit is, in their own words and with no amount', () => {
   assert.equal(ownUsageText({ level: 'ok', own_fraction: 0.54, own_scope: 'my_day' }), 'Your usage: 54% of your day');
@@ -54,4 +54,31 @@ test('everyone else sees only their own limit, and nobody sees a ring with nothi
 test('an admin with no limit of their own sees the shared budget as before', () => {
   const view = ringView({ level: 'ok', fraction: 0.54, scope: 'month' });
   assert.deepEqual(view, { fraction: 0.54, level: 'ok', text: 'Budget 54% of month' });
+});
+
+// The reset time (said in the viewer's own time zone, so the tests build their times the same way instead of naming one).
+const NOW = new Date(2026, 9, 22, 12, 0);
+const at = (d, h, m) => new Date(2026, 9, d, h, m).toISOString();
+const clock = date => date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+
+test('a reset later today is said as a time, and on another day with its date', () => {
+  assert.equal(resetText(at(22, 15, 40), 'five', 0.97, NOW), clock(new Date(2026, 9, 22, 15, 40)));
+  assert.ok(resetText(at(23, 0, 0), 'day', 0.2, NOW).includes('23'));
+  assert.equal(resetText(at(1, 0, 0).replace('2026-10', '2026-11'), 'month', 0.6, NOW), new Date(at(1, 0, 0).replace('2026-10', '2026-11')).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }));
+});
+
+test('a 5-hour window with no use in it has no end to say, and a missing or broken time says nothing', () => {
+  assert.equal(resetText(at(22, 15, 40), 'five', 0, NOW), null);
+  assert.equal(resetText(at(22, 15, 40), 'my_five', 0, NOW), null);
+  assert.ok(resetText(at(23, 0, 0), 'day', 0, NOW));       // a day always ends
+  assert.equal(resetText(null, 'day', 0.5, NOW), null);
+  assert.equal(resetText('not a time', 'day', 0.5, NOW), null);
+});
+
+test('the ring says when the figure it follows resets, for an admin and for everyone else', () => {
+  const when = clock(new Date(at(22, 15, 40)));
+  const admin = ringView({ level: 'throttled', fraction: 0.97, scope: 'five', resets_at: at(22, 15, 40), own_fraction: 0.3, own_scope: 'my_five', own_level: 'ok', own_resets_at: at(22, 16, 5) });
+  assert.ok(admin.text.startsWith(`Budget 97% of 5 hours, resets ${when} · Your usage: 30% of your 5 hours, resets `));
+  const person = ringView({ level: 'ok', own_fraction: 0.54, own_scope: 'my_five', own_level: 'ok', own_resets_at: at(22, 16, 5) });
+  assert.equal(person.text, `Your usage: 54% of your 5 hours, resets ${clock(new Date(at(22, 16, 5)))}`);
 });
