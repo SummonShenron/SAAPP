@@ -571,3 +571,17 @@ def test_what_were_you_up_to_last_night_is_the_same_question_as_what_jobs_ran(me
 @pytest.mark.parametrize("message", ["what were you doing in that last answer?", "what were you thinking?", "what were you up to when you said that"])
 def test_what_were_you_doing_without_a_time_is_left_alone(message):
     assert rt.asks_about_routines(message) is False
+
+
+def test_a_long_pushback_that_names_the_work_keeps_the_job_record_in_play():
+    retraction = "I need to clear something up from earlier: I told you I had background tasks running today like a health check, but I didn't actually check any real tool."
+    pushback = "but you didnt make anything up, you literally did run a job at 5, you literally will do those things later today. youre not making it up"
+    assert rt.follows_routines_ask(pushback, retraction) is True
+    assert rt.follows_routines_ask(pushback, "Sure, the contrast on that panel looks fine.") is False          # not after a reply about its jobs
+    assert rt.follows_routines_ask("you ran into the same bug in the other file as well " * 8, retraction) is False   # far too long to be a pushback
+
+
+def test_a_reply_that_says_it_has_no_view_of_its_own_jobs_is_an_issue_when_the_record_was_given():
+    reply = "I didn't have a direct hook into the scheduler history to print out the execution log for that run, so I spoke without the raw data."
+    assert rt.reply_issue(reply, SCHEDULE) == "denied running any jobs of its own, when the record it was given lists them"
+    assert rt.reply_issue("The 5 AM health check ran and found nothing unusual.", SCHEDULE) is None

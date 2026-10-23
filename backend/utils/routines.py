@@ -289,6 +289,11 @@ _ASKS_RE = re.compile(
 # A short reply that insists, right after the conversation was about its jobs: "yes you do", "yes you can lol", "but you do". On its own it means nothing, so it only counts when the
 # last reply from Sonic was about its jobs (see follows_routines_ask).
 _INSISTS_RE = re.compile(r"^\W*(?:(?:but|and|so|no|yes|yeah|yep|yup|well|come on|lol|haha)\W+){0,3}(?:you\s+(?:do|can|did|have|are|ran|run)|i\s+know\s+you|you\s+really|you\s+definitely)\b", re.IGNORECASE)
+_PUSHES_BACK_ON_JOBS_RE = re.compile(
+    r"\byou\b[^.?!]{0,50}\b(?:jobs?|routines?|health\s*check|ran|run|scheduled?|schedule)\b"
+    r"|\b(?:not|didn'?t|isn'?t|aren'?t)\s+(?:make|making|made)\s+(?:it|anything|that|this)\s+up\b|\byou\s+(?:did|do|will|have)\s+(?:actually\s+|literally\s+|really\s+)?(?:run|do|have)\b",
+    re.IGNORECASE,
+)
 _ABOUT_JOBS_RE = re.compile(r"\b(?:jobs?|routines?|health\s*checks?|schedul\w+|background (?:tasks?|processes|jobs?)|on my own|overnight)\b", re.IGNORECASE)
 
 
@@ -301,7 +306,13 @@ def follows_routines_ask(message: str, last_reply: str) -> bool:
     """A short reply that pushes back or insists ("yes you do", "yes you can lol") right after Sonic's own last reply was about its jobs: still the same question, and the true
     record has to be at hand for it, or the model answers from the denial it just gave. `last_reply` is Sonic's previous message."""
     words = (message or "").split()
-    return bool(words) and len(words) <= 14 and bool(_INSISTS_RE.search(plain_quotes(message))) and bool(_ABOUT_JOBS_RE.search(last_reply or ""))
+    if not words or not _ABOUT_JOBS_RE.search(last_reply or ""):
+        return False
+    text = plain_quotes(message)
+    if len(words) <= 14 and _INSISTS_RE.search(text):
+        return True
+    # A longer pushback that names the work itself: "you literally did run a job at 5", "you're not making it up, you will do those things later today".
+    return len(words) <= 60 and bool(_PUSHES_BACK_ON_JOBS_RE.search(text))
 
 
 def _view(routine: Routine, last: Optional[Dict[str, Any]], now: datetime, tz_name: Optional[str], admin: bool) -> Dict[str, Any]:
@@ -394,7 +405,9 @@ def _day_part(word: str) -> str:
 _DENIES_JOBS = re.compile(
     r"\bI\s+(?:don't|do not|never|can't|cannot|won't)\s+(?:actually\s+|really\s+)?(?:run|have|do|schedule)\s+(?:any\s+|a\s+|my own\s+)?(?:jobs?|routines?|scheduled|background|scheduler)\b"
     r"|\b(?:no|don't have (?:a|any)|without (?:a|any))\s+(?:scheduler|background (?:processes|jobs|tasks))\b"
-    r"|\bI\s+only\s+(?:act|respond|run)\s+when\s+you\b",
+    r"|\bI\s+only\s+(?:act|respond|run)\s+when\s+you\b"
+    # "I didn't have a direct hook into the scheduler history", "I can't see my own job log": the record was handed over, so it can be seen
+    r"|\bI\s+(?:don't|do not|didn't|did not|can't|cannot|couldn't)\s+(?:actually\s+)?(?:have|see|find|check|access)\s+(?:a\s+|any\s+|the\s+|my\s+own\s+)?(?:direct\s+)?(?:hook|access|way|view|record|log|history)\b[^.!?\n]{0,50}\b(?:schedul\w+|jobs?|routines?|runs?)\b",
     re.IGNORECASE,
 )
 

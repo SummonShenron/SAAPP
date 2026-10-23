@@ -78,7 +78,7 @@ def test_a_reply_with_no_tool_calls_is_the_answer_and_the_conversation_starts_wi
     result = go(llm, history="user: hi", time_line="Now: Sunday", coding_preferences="Prefers tests.")
     assert result == {"final_answer": "It lives in app.py.", "attempts": [], "show_work": False}
     messages, tools = llm.calls[0]
-    assert isinstance(messages[0], SystemMessage) and messages[0].content == nl.SYSTEM_PROMPT and tools == TOOLS
+    assert isinstance(messages[0], SystemMessage) and messages[0].content == nl.SYSTEM_PROMPT and tools == TOOLS + [nl.SAVE_DRAFT_TOOL]
     context = messages[1].content
     assert isinstance(messages[1], HumanMessage) and context.index("Prefers tests.") < context.index("Now: Sunday") < context.index("RECENT CONVERSATION") < context.index("USER REQUEST:\nwhere is X?")
 

@@ -12,6 +12,7 @@ import logging
 import time
 
 from backend.models.models import lite_llm
+from backend.utils import draft_checkpoint
 from backend.utils.log_hygiene import describe_observation
 from backend.utils.agent_utils import (
     _CAPABILITY_DENIAL_RE,
@@ -376,6 +377,7 @@ async def run_react_loop(
         return True
 
     step = -1
+    latest_draft = None   # the change the model has drafted so far this turn (backend/utils/draft_checkpoint.py)
     while step + 1 < budget:
         step += 1
         # Before forced_final is computed: a steer arriving now can extend the budget.
@@ -422,6 +424,11 @@ async def run_react_loop(
                     "action=\"final\". Ask for every file or search you still need together in one step if the schema allows a batch. If you were asked to write code, "
                     "your final answer must be the code itself, in full.)"
                 )
+        # A change drafted earlier in the turn is shown back at every step, so it can be checked against what was read and corrected; with none, the halfway nudge asks for one.
+        question_for_step += draft_checkpoint.draft_block(latest_draft)
+        question_for_step += draft_checkpoint.halfway_notice(step, budget, len(attempts), bool(latest_draft), forced_final) or ""
+        if forced_final:
+            question_for_step += draft_checkpoint.forced_final_addition(latest_draft)
         if needs_retry_nudge:
             failed_tools = ", ".join(sorted(unretried_inconclusive_tools))
             question_for_step += (
@@ -514,6 +521,12 @@ async def run_react_loop(
             continue
 
         action = decision.get("action")
+        # A draft rides along with a step's tool call (it costs no step); a "final" carries its answer instead, so a draft on it is not kept.
+        if action != "final":
+            new_draft = draft_checkpoint.take_draft(decision.get("draft"))
+            if new_draft:
+                latest_draft = new_draft
+                logger.info("[%s] step %s: a draft was saved (%d characters).", node_name, step + 1, len(new_draft))
         # A model sometimes labels a step "final" while naming the tool it wants to run — observed
         # with propose_local_edits, sent as {"action": "final", "tool_action": ..., "args": ...} and
         # no answer text. A "final" with no answer is meaningless, and honoring it threw the tool
@@ -706,7 +719,7 @@ async def run_react_loop(
                     )
                 continue
         if action == "final":
-            final_answer = decision.get("answer") or "I wasn't able to find a conclusive answer."
+            final_answer = decision.get("answer") or draft_checkpoint.fallback_answer(latest_draft) or "I wasn't able to find a conclusive answer."
             show_work = decision.get("show_work")
             show_work = show_work if isinstance(show_work, bool) else True
             logger.info(
@@ -947,7 +960,7 @@ async def run_react_loop(
         await _absorb_steering(len(attempts))
         try:
             prompt = prompt_template.format(
-                question=f"{question}{format_steering_notes(steering_notes)}{FORCED_FINAL_NOTICE}",
+                question=f"{question}{format_steering_notes(steering_notes)}{FORCED_FINAL_NOTICE}{draft_checkpoint.draft_block(latest_draft)}{draft_checkpoint.forced_final_addition(latest_draft)}",
                 schema=schema,
                 attempts=_format_react_attempts(attempts),
                 architecture_map=architecture_map,
@@ -956,10 +969,10 @@ async def run_react_loop(
             resp_content = response.content if hasattr(response, "content") else str(response)
             raw_text = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in resp_content]) if isinstance(resp_content, list) else str(resp_content)
             decision = _parse_agent_json(raw_text)
-            final_answer = decision.get("answer") or "I wasn't able to find a conclusive answer after several attempts."
+            final_answer = decision.get("answer") or draft_checkpoint.fallback_answer(latest_draft) or "I wasn't able to find a conclusive answer after several attempts."
         except Exception:
             logger.exception("[%s] final synthesis step failed.", node_name)
-            final_answer = "I wasn't able to find a conclusive answer after several attempts."
+            final_answer = draft_checkpoint.fallback_answer(latest_draft) or "I wasn't able to find a conclusive answer after several attempts."
 
     # Counted per turn (backend/utils/llm_turns.py): how many steps the loop used, and whether it ran into the last step it was allowed.
     from backend.utils import llm_turns
