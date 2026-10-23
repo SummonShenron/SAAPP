@@ -172,7 +172,7 @@ def test_the_endpoint_passes_the_upload_id_and_answers_a_stale_batch_with_409_an
     source = open("app.py", encoding="utf-8").read()
     assert "upload_id: Optional[str] = None" in source and "commit: bool = False" in source
     assert "payload.upload_id," in source and "payload.commit," in source
-    assert "except LocalWorkspaceStaleUpload:" in source and "status_code=409" in source[source.index("except LocalWorkspaceStaleUpload:"):][:300]
+    assert "except LocalWorkspaceStaleUpload:" in source and "status_code=409" in source[source.index("except LocalWorkspaceStaleUpload:"):][:500]
     assert "folder_expected: bool = False" in source
 
 

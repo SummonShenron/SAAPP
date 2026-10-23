@@ -166,6 +166,8 @@ export function useLocalWorkspace({ enabled }: UseLocalWorkspaceOptions) {
         if (outcome.truncated) notes.push('the folder is larger than the sync limit, so part of it was left out');
         if (notes.length) setMessage(notes.join('; '));
       } catch (error) {
+        // Nothing about the folder's contents: only which step failed and how, so a failure that happens on someone's machine can be seen in the browser console.
+        console.warn('[folder] sync failed:', error instanceof SyncRequestError ? `${error.message} (status ${error.status ?? 'none'})` : error);
         serverCountRef.current = null; // forces a full re-sync next time
         setStatus('error');
         setMessage(error instanceof Error ? error.message : 'Could not sync the folder.');

@@ -1815,16 +1815,23 @@ export async function syncLocalWorkspaceBatch(batch: {
   commit?: boolean;
 }): Promise<LocalWorkspaceSyncResult> {
   const authHeaders = await getAuthHeaders();
-  const res = await fetch(`${BASE_URL}/api/local-workspace/sync`, {
-    method: "POST",
-    headers: { ...authHeaders },
-    body: JSON.stringify(batch)
-  });
+  const step = batch.commit ? 'finishing' : `sending ${batch.files.length} file(s)`;
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}/api/local-workspace/sync`, {
+      method: "POST",
+      headers: { ...authHeaders },
+      body: JSON.stringify(batch)
+    });
+  } catch {
+    // fetch rejects when the connection drops, the server is down or restarting, or the request is blocked: no answer at all, so no status.
+    throw new SyncRequestError(`Lost the connection to the server while ${step} the folder upload.`);
+  }
   if (!res.ok) {
     const message = res.status === 403 ? "Sign in to connect a local folder."
       : res.status === 409 ? "The upload was replaced by a newer one."
       : res.status === 413 ? "The folder upload was too large for the server."
-      : "Failed to sync the folder.";
+      : `The server refused the folder upload (HTTP ${res.status}) while ${step}.`;
     throw new SyncRequestError(message, res.status);
   }
   return res.json();

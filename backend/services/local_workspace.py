@@ -171,6 +171,12 @@ def clear_workspace(username: str) -> None:
         shutil.rmtree(_workspace_dir(username), ignore_errors=True)
 
 
+def where() -> str:
+    """Which server process handled a request, for the log: the snapshot lives on ONE machine's disk, so when an upload's batches and its final request are handled by different
+    instances (or workers with separate disks) the last request cannot find what the first left. On Render `RENDER_INSTANCE_ID` names the instance. Not about a person."""
+    return f"instance={(os.getenv('RENDER_INSTANCE_ID') or 'local')[-8:]} pid={os.getpid()}"
+
+
 def _staging_dir(username: str) -> Path:
     return _workspace_dir(username) / "staging"
 
@@ -307,6 +313,7 @@ def _apply_staged(username: str, name: str, files: List[Dict[str, Any]], deleted
         shutil.rmtree(staging, ignore_errors=True)           # a newer upload replaces any earlier unfinished one
         meta = {"id": upload_id, "name": (name or "local folder")[:200], "started_at": time.time(), "files": {}}
     elif not meta or meta.get("id") != upload_id:
+        logger.warning("[local_workspace] a batch arrived for an upload this process has no staging for (%s)", where())
         raise StaleUpload("That upload was replaced by a newer one, or expired.")
     (staging / "files").mkdir(parents=True, exist_ok=True)
     index: Dict[str, int] = meta["files"]
@@ -314,9 +321,9 @@ def _apply_staged(username: str, name: str, files: List[Dict[str, Any]], deleted
     (staging / "meta.json").write_text(json.dumps({**meta, "files": index}), encoding="utf-8")
     if commit:
         _swap_in(username, meta, index)
-        logger.info("[local_workspace] upload committed: accepted=%d rejected=%d file_count=%d", outcome["accepted"], len(outcome["rejected"]), len(index))
+        logger.info("[local_workspace] upload committed: accepted=%d rejected=%d file_count=%d %s", outcome["accepted"], len(outcome["rejected"]), len(index), where())
     else:
-        logger.info("[local_workspace] upload batch staged: accepted=%d rejected=%d file_count=%d", outcome["accepted"], len(outcome["rejected"]), len(index))
+        logger.info("[local_workspace] upload batch staged: accepted=%d rejected=%d file_count=%d %s", outcome["accepted"], len(outcome["rejected"]), len(index), where())
     return _result(outcome["accepted"], outcome["rejected"], index, committed=bool(commit))
 
 
