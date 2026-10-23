@@ -117,3 +117,10 @@ def clear_facts_cache_between_tests():
     memory_utils.clear_facts_cache()
     yield
     memory_utils.clear_facts_cache()
+
+
+@pytest.fixture(autouse=True)
+def default_tool_engine(monkeypatch):
+    """The suite runs the default (ReAct) tool loop unless a test chooses the native one. A developer's .env may set TOOL_AGENT_ENGINE=native (to match production), and the tests
+    that script the ReAct loop's model calls must not change with it; the native tests set the variable themselves, and their setting wins."""
+    monkeypatch.delenv("TOOL_AGENT_ENGINE", raising=False)

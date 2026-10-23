@@ -54,11 +54,12 @@ FACT_CONFIDENCE_HALF_LIFE_DAYS = float(os.getenv("FACT_CONFIDENCE_HALF_LIFE_DAYS
 # see find_stale_goal_to_nudge. Deliberately separate from FACT_CONFIDENCE_HALF_LIFE_DAYS: decay
 # is about fading old facts OUT of context, staleness here is about the opposite (surfacing them).
 GOAL_NUDGE_INTERVAL_DAYS = float(os.getenv("GOAL_NUDGE_INTERVAL_DAYS", "14"))
-# The whole fact list is stored as one array on one MongoDB document (see save_user_facts) —
-# with a full embedding per fact (~12-15KB as JSON), an unbounded array risks approaching
-# Mongo's 16MB single-document limit for a long-lived heavy account. Capping it keeps that
-# structurally impossible rather than just unlikely.
-MAX_STORED_FACTS = int(os.getenv("MAX_STORED_FACTS", "400"))
+# The fact list is stored as one array on one MongoDB document (see save_user_facts), so it needs a cap that keeps it far from Mongo's 16MB single-document limit.
+# The cap was 400 when every fact carried its embedding as 768 doubles (~12-15KB each). Since the embeddings were split out and packed as 16-bit floats, a fact costs
+# about 2 KB in all (measured 2026-10-23 on the busiest account: 400 facts = 0.8 MB), so 1,500 facts is about 3 MB, and the limit would take about 8,000. At 400 the busiest
+# account was full and had already had 597 facts evicted (inferred ones first, as designed), which is why it was raised. Past a few thousand facts the answer is one
+# document per fact with a server-side vector index, not a bigger cap.
+MAX_STORED_FACTS = int(os.getenv("MAX_STORED_FACTS", "1500"))
 # A separate, deliberately uncapped collection (one document per archived fact, not another
 # growing array) — so pruning a fact out of the hot MAX_STORED_FACTS-bounded store never
 # destroys it outright, only moves it out of active recall. Recoverable, not just logged.
@@ -126,6 +127,9 @@ def _get_user_file(username: str) -> str:
 # after at most that interval.
 FACTS_CACHE_FRESH_SECONDS = float(os.getenv("FACTS_CACHE_FRESH_SECONDS", "600"))
 _facts_cache: dict = {}  # username -> (monotonic time stored, [UserFact])
+# The stamp of the stored list the copy in memory matches (`rev` on the facts document, set by every write): a refresh first reads just the stamp (a few bytes) and re-reads the
+# whole list (~2 KB a fact) only when someone else has written since, instead of every FACTS_CACHE_FRESH_SECONDS whether or not anything changed.
+_facts_rev: dict = {}
 _facts_refreshing: set = set()
 _facts_lock = threading.Lock()
 
@@ -134,6 +138,7 @@ def clear_facts_cache() -> None:
     """Forgets every cached fact list (tests, and anything that changed the database behind this module's back)."""
     with _facts_lock:
         _facts_cache.clear()
+        _facts_rev.clear()
         _facts_refreshing.clear()
 
 
@@ -153,6 +158,11 @@ def unpack_embedding(blob: bytes) -> List[float]:
 
 def _fetch_facts_from_db(db, username: str) -> List[UserFact]:
     doc = db[FACTS_COLLECTION].find_one({"username": username})
+    with _facts_lock:
+        if doc and doc.get("rev") is not None:
+            _facts_rev[username] = doc.get("rev")
+        else:
+            _facts_rev.pop(username, None)
     if not doc or "facts" not in doc:
         return []
     facts = [UserFact(**item) for item in doc["facts"]]
@@ -179,10 +189,15 @@ def _write_facts(db, username: str, facts: List[UserFact], only_if_unsplit: bool
     else:
         db[EMBEDDINGS_COLLECTION].delete_one({"username": username})  # forgetting everything leaves no vectors behind either
     query = {"username": username, "embeddings_split": {"$ne": True}} if only_if_unsplit else {"username": username}
+    rev = _next_rev()      # a stamp nobody else can repeat: another instance's write is then seen as a change by the cheap check in the refresh
     result = db[FACTS_COLLECTION].update_one(
-        query, {"$set": {"facts": [f.model_dump(exclude={"embedding"}) for f in facts], "embeddings_split": True}}, upsert=not only_if_unsplit
+        query, {"$set": {"facts": [f.model_dump(exclude={"embedding"}) for f in facts], "embeddings_split": True, "rev": rev}}, upsert=not only_if_unsplit
     )
-    return bool(getattr(result, "modified_count", 1))
+    changed = bool(getattr(result, "modified_count", 1))
+    if changed:
+        with _facts_lock:
+            _facts_rev[username] = rev
+    return changed
 
 
 _facts_migrating: set = set()
@@ -207,6 +222,31 @@ def _migrate_to_split_in_background(db, username: str, facts: List[UserFact]) ->
     threading.Thread(target=work, name="facts-slim", daemon=True).start()
 
 
+_last_rev = 0
+
+
+def _next_rev() -> int:
+    """A revision stamp that is larger than every one this process has made (the clock alone can repeat inside one tick)."""
+    global _last_rev
+    with _facts_lock:
+        _last_rev = max(time.time_ns(), _last_rev + 1)
+        return _last_rev
+
+
+def _stored_rev_matches(db, username: str) -> bool:
+    """Whether the stored list still has the stamp of the copy held in memory (one tiny read). False whenever that cannot be told: no stamp held or stored (a list written before
+    stamps existed), or a database that does not take a projection."""
+    with _facts_lock:
+        held = _facts_rev.get(username)
+    if held is None:
+        return False
+    try:
+        meta = db[FACTS_COLLECTION].find_one({"username": username}, {"rev": 1})
+    except Exception:
+        return False
+    return bool(meta) and meta.get("rev") == held
+
+
 def _refresh_facts_in_background(db, username: str) -> None:
     with _facts_lock:
         if username in _facts_refreshing:
@@ -215,6 +255,12 @@ def _refresh_facts_in_background(db, username: str) -> None:
 
     def work() -> None:
         try:
+            if _stored_rev_matches(db, username):
+                with _facts_lock:            # nothing was written since the copy in memory was taken: it is current, and a few bytes were all it took to know
+                    held = _facts_cache.get(username)
+                    if held is not None:
+                        _facts_cache[username] = (time.monotonic(), held[1])
+                return
             fresh = _fetch_facts_from_db(db, username)
             with _facts_lock:
                 _facts_cache[username] = (time.monotonic(), fresh)

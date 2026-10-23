@@ -852,7 +852,8 @@ export interface TurnsSummary {
   /** Turns whose wording was audit-style: a wider step budget on the normal model. */
   audit_wording_turns: number;
   /** Why turns went to the tool agent, biggest first: turns that had the reason, and turns that had it as their only reason. */
-  routing: { reason: string; turns: number; alone: number }[];
+  /** `no_tools` / `alone_no_tools`: of those turns (and of the ones with this as their only reason), how many called no tool at all. */
+  routing: { reason: string; turns: number; alone: number; no_tools?: number; alone_no_tools?: number }[];
   native_turns: number;
   /** How the tool agent's step loop went: turns that ran it, steps used on average, how they spread, and how many ran into the last step they were allowed (so the step budget may be too tight). */
   loop?: {

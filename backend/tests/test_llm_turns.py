@@ -222,7 +222,7 @@ def test_fetching_reads_the_saved_days_and_a_broken_database_gives_nothing():
 def test_only_numbers_and_bucket_names_are_ever_kept_never_a_word_a_person_said():
     one_turn(3, tool="react", setting=True)
     saved = json.dumps(lt.snapshot()) + json.dumps(lt.summarize_turns([lt.snapshot()[DAY]]))
-    allowed = ["turns", "tool"] + [f"route_{r}" for r in lt.ROUTE_REASONS] + [f"route_alone_{r}" for r in lt.ROUTE_REASONS] + list(lt.ROUTE_REASONS)
+    allowed = ["turns", "tool"] + [f"route_{r}" for r in lt.ROUTE_REASONS] + [f"route_alone_{r}" for r in lt.ROUTE_REASONS] + [f"route_notool_{r}" for r in lt.ROUTE_REASONS] + [f"route_alone_notool_{r}" for r in lt.ROUTE_REASONS] + list(lt.ROUTE_REASONS)
     for word in sorted(allowed, key=len, reverse=True):
         saved = saved.replace(word, "")
     assert not re.search(r"user|message|question|prompt|text", saved, re.IGNORECASE)
@@ -305,11 +305,42 @@ def test_the_summary_lists_the_reasons_biggest_first_with_how_often_each_stood_a
              "route_alone_follow_up_turns": 2, "route_web_search_turns": 1}]
     out = lt.summarize_turns(docs)
     assert out["routing"] == [
-        {"reason": "repo_question", "turns": 4, "alone": 3},
-        {"reason": "follow_up", "turns": 2, "alone": 2},
-        {"reason": "web_search", "turns": 1, "alone": 0},
+        {"reason": "repo_question", "turns": 4, "alone": 3, "no_tools": 0, "alone_no_tools": 0},
+        {"reason": "follow_up", "turns": 2, "alone": 2, "no_tools": 0, "alone_no_tools": 0},
+        {"reason": "web_search", "turns": 1, "alone": 0, "no_tools": 0, "alone_no_tools": 0},
     ]
     assert lt.summarize_turns([])["routing"] == []
+
+
+def test_a_tool_agent_turn_that_called_no_tool_is_counted_for_each_of_its_reasons_and_for_the_one_it_had_alone():
+    def run(reasons, tools):
+        turn = lt.begin()
+        calls(turn, 2)
+        lt.note_tool_agent("native", False, False, False)
+        lt.note_route(reasons)
+        for name in tools:
+            lt.note_tool_call(name)
+        lt.finish(turn, "ok", DAY)
+
+    run(["follow_up"], [])                                  # a short follow-up that answered from what it had
+    run(["follow_up"], [])
+    run(["follow_up"], ["read_repo_file"])                  # one that really read something
+    run(["follow_up", "repo_question"], [])                 # two reasons, no tool
+    slot = lt.snapshot()[DAY]
+    assert slot["route_follow_up_turns"] == 4 and slot["route_notool_follow_up_turns"] == 3
+    assert slot["route_alone_follow_up_turns"] == 3 and slot["route_alone_notool_follow_up_turns"] == 2
+    assert slot["route_repo_question_turns"] == 1 and slot["route_notool_repo_question_turns"] == 1 and slot["route_alone_notool_repo_question_turns"] == 0
+    row = lt.summarize_turns([slot])["routing"][0]
+    assert row == {"reason": "follow_up", "turns": 4, "alone": 3, "no_tools": 3, "alone_no_tools": 2}
+
+
+def test_a_turn_that_never_reached_the_tool_agent_adds_nothing_to_the_no_tool_counts():
+    turn = lt.begin()
+    calls(turn, 1)
+    lt.note_route(["follow_up"])                            # routed, but the tool agent never ran (it was blocked or answered elsewhere)
+    lt.finish(turn, "ok", DAY)
+    slot = lt.snapshot()[DAY]
+    assert slot["route_follow_up_turns"] == 1 and slot["route_notool_follow_up_turns"] == 0
 
 
 def test_the_router_notes_why_it_chose_the_tool_agent_for_every_path_into_it(monkeypatch):

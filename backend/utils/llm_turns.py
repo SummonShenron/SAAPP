@@ -51,6 +51,11 @@ FIELDS = (
     *(f"deep_{source}_turns" for source in DEEP_SOURCES),
     *(f"route_{reason}_turns" for reason in ROUTE_REASONS),
     *(f"route_alone_{reason}_turns" for reason in ROUTE_REASONS),
+    # Of the turns with each reason (and of those with it as their only reason), how many called NO tool at all: the tool agent's prompt was paid for and it answered
+    # from what it already had. A high share for a reason means that reason is sending turns down the expensive path that never needed it (2026-10-23: "a short follow-up
+    # to a coding task" was the only reason on 93 of 106 turns, and nothing said how many of them used a tool).
+    *(f"route_notool_{reason}_turns" for reason in ROUTE_REASONS),
+    *(f"route_alone_notool_{reason}_turns" for reason in ROUTE_REASONS),
 )
 
 _lock = threading.Lock()
@@ -302,10 +307,15 @@ def finish(turn: Optional[Turn], outcome: str = "ok", day: Optional[str] = None)
                     total["calls"] += entry["calls"]
                     total["errors"] += entry["errors"]
                     total["turns"] += 1
+            used_no_tool = turn.tool_agent and not turn.tools
             for reason in turn.route_reasons:
                 slot[f"route_{reason}_turns"] += 1
+                if used_no_tool:
+                    slot[f"route_notool_{reason}_turns"] += 1
                 if len(turn.route_reasons) == 1:
                     slot[f"route_alone_{reason}_turns"] += 1
+                    if used_no_tool:
+                        slot[f"route_alone_notool_{reason}_turns"] += 1
             _pending_max[key] = max(_pending_max.get(key, 0), turn.calls)
     except Exception:
         pass
@@ -464,7 +474,10 @@ def summarize_turns(docs: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
         "audit_wording_turns": total["audit_wording_turns"],
         # Why turns went to the tool agent: per reason, how many turns had it, and how many had it as their only reason.
         "routing": [
-            {"reason": reason, "turns": total[f"route_{reason}_turns"], "alone": total[f"route_alone_{reason}_turns"]}
+            {
+                "reason": reason, "turns": total[f"route_{reason}_turns"], "alone": total[f"route_alone_{reason}_turns"],
+                "no_tools": total[f"route_notool_{reason}_turns"], "alone_no_tools": total[f"route_alone_notool_{reason}_turns"],
+            }
             for reason in sorted(ROUTE_REASONS, key=lambda r: -total[f"route_{r}_turns"])
             if total[f"route_{reason}_turns"]
         ],

@@ -842,6 +842,17 @@ CHANGELOG = [
         "keywords": ["example questions", "suggestions", "starter questions"],
         "volunteer": [],
     },
+    {
+        "id": "memory_while_working",
+        "requires": [
+            "backend/services/tool_agent_memory.py::async def search_for_agent",
+        ],
+        "month": "2026-10",
+        "title": "Remembering while I work",
+        "line": "When you ask me something that depends on what you told me before, I can now look it up in my memory in the middle of working on it, instead of only at the start.",
+        "keywords": ["memory", "remember", "earlier conversations", "tool agent"],
+        "volunteer": [],
+    },
     # Describes the crisis layer, so it is only ever said when asked (select_self_history is silent under any safety
     # context). Remove it if you'd rather Sonic not describe that.
     {
