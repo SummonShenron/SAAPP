@@ -39,7 +39,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 from backend.utils import draft_checkpoint
-from backend.utils.agent_utils import build_tool_facts, build_trace_subject, new_trace_step_id
+from backend.utils.agent_utils import _UnsafeActionRequested, build_tool_facts, build_trace_subject, new_trace_step_id
 
 logger = logging.getLogger("SASS Logger")
 
@@ -120,14 +120,13 @@ def enabled() -> bool:
 # So a turn goes native only when nothing in it points at a tool the native engine lacks. Matching too much is harmless (such a turn
 # just uses the old engine, as it always did); matching too little breaks the request, so this errs wide.
 # Reading Gmail, Drive and the calendar IS native now (they only needed definitions: the dispatcher is shared by both engines). What is
-# left is MongoDB, the browser, test runs, and the draft-and-confirm flows (send an email, append to a doc, a multi-file code plan).
+# left is MongoDB, the browser, test runs, and two draft-and-confirm flows (send an email, a multi-file code plan). Appending to the person's target doc is native
+# (propose_append_target_doc, via is_unsafe): it used to be routed by wording alone, and a request that did not say "doc" ran here with no such tool (prod, 2026-10-23).
 _OLD_ENGINE_ONLY_RE = re.compile(
     r"\b(?:mongo(?:db)?|pymongo|database|db|"
     r"browser|screenshots?|navigate|click|"
     r"pytest|unit\s+tests?|run\s+(?:the\s+)?(?:tests?|ci)|"
     r"(?:send|draft|write|compose|reply(?:\s+to)?|forward)\b[^.\n]{0,40}\be-?mails?|"
-    # writing into a Google Doc, however it is phrased ("append it to my weekly reports google doc", "put the summary in the doc", "add that to my notes document")
-    r"(?:append|add|put|write|save|paste|insert|copy)\b[^.\n]{0,60}\b(?:google\s+docs?|docs?|documents?)|"
     r"(?:implementation|code)\s+plan)\b",
     re.IGNORECASE,
 )
@@ -224,6 +223,7 @@ async def run(
     library_allowance: Any = None,
     environment_note: str = "",
     required_action: Optional[Dict[str, Any]] = None,
+    is_unsafe: Optional[Callable[[Dict[str, Any]], bool]] = None,
 ) -> Dict[str, Any]:
     """Runs the loop and returns what the old loop returns: `{"final_answer", "attempts", "show_work"}`, where each attempt is
     `{"purpose", "action_desc", "observation"}`. `llm` must offer `ainvoke_tools(messages, tools)`. `act(decision)` is the turn's
@@ -319,9 +319,12 @@ async def run(
                     await emit(f"Running {name}...", _describe(name, args))
             except Exception:
                 logger.debug("[native_loop] could not emit a trace step.", exc_info=True)
+        decision = {"tool_action": name, "args": args, "purpose": f"Run {name}"}
+        if is_unsafe is not None and is_unsafe(decision):
+            raise _UnsafeActionRequested(decision, list(attempts))      # a draft-and-confirm tool: the caller builds the approval card, as after the old loop
         started = time.monotonic()
         try:
-            result = _observation_text(await act({"tool_action": name, "args": args, "purpose": f"Run {name}"}))
+            result = _observation_text(await act(decision))
         except Exception as exc:
             logger.warning("[native_loop] tool %s failed: %s", name, type(exc).__name__)
             result = f"ERROR: {name} failed ({type(exc).__name__})."

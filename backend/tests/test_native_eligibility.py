@@ -27,11 +27,6 @@ def ok(text="", flags=None, **kw):
     "open the site in the browser and take a screenshot",
     "run the tests for this branch",
     "write an implementation plan for this",
-    "add this to my doc",
-    "summarize the attached json and append it to my weekly reports google doc please?",
-    "so now please append it to the weekly reports doc",
-    "put the summary in my google doc",
-    "save that to the notes document",
     "send an email to Dana about the invoice",
     "draft a reply email to the landlord",
 ])
@@ -40,6 +35,12 @@ def test_requests_that_need_a_tool_only_the_old_engine_has_do_not_go_native(text
 
 
 @pytest.mark.parametrize("text", [
+    "add this to my doc",
+    "summarize the attached json and append it to my weekly reports google doc please?",
+    "so now please append it to the weekly reports doc",
+    "put the summary in my google doc",
+    "save that to the notes document",
+    "yes, log it to weekly_reports",          # no \"doc\" in it: wording alone used to decide this, and got it wrong in prod
     "what does the doc say about retries?",
     "explain the docstring of this function",
     "find my budget spreadsheet in drive",
@@ -88,7 +89,7 @@ def test_the_pattern_covers_every_tool_the_native_engine_lacks_in_the_old_menu()
     lacking = sorted(set(re.findall(r"^- ([a-z_]+) —", seen.menu, re.M)) - set(nt.REGISTRY))
     assert lacking == [
         "browser_click", "browser_navigate", "browser_read_text", "browser_screenshot", "browser_type",
-        "propose_append_target_doc", "propose_code_plan", "propose_send_email", "run_mongo_query", "run_repo_tests", "run_snippet",
+        "propose_code_plan", "propose_send_email", "run_mongo_query", "run_repo_tests", "run_snippet",
     ], "the old engine's menu changed: decide whether each new tool needs the old engine, and update _OLD_ENGINE_ONLY_RE"
 
 

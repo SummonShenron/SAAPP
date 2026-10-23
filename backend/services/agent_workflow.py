@@ -3364,7 +3364,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 architecture_map=architecture_map, user_memory=user_memory, max_steps=kwargs["max_iterations"], emit=_announce,
                 emit_step=_announce_step, emit_facts=emit_trace_facts,
                 steering_source=kwargs.get("steering_source"), on_steering_applied=kwargs.get("on_steering_applied"),
-                library_allowance=kwargs.get("library_allowance"),
+                library_allowance=kwargs.get("library_allowance"), is_unsafe=kwargs.get("is_unsafe"),
                 # With a folder connected: where reads come from (the folder, not GitHub) and, on a request for a change, the same "you must propose it" rule the old loop enforces.
                 environment_note=schema if local_workspace_handle is not None else "", required_action=kwargs.get("required_action"),
                 shorten_old=not (isinstance(kwargs["llm"], ClaudeLLM) and kwargs["llm"].caches_prompt),   # a model that caches the conversation keeps old results whole (native_loop.py)

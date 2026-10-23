@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>How Sonic reads the room</title>
+<style>
+  :root { --bg:#131416; --card:#1f2024; --line:#383940; --text:#efeff1; --muted:#a0a0a8; --vio:#a597f5; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1920px; height: 1080px; background: var(--bg); color: var(--text); font-family: "Segoe UI", "Inter", Arial, sans-serif; overflow: hidden; }
+  .canvas { position: relative; width: 1920px; height: 1080px; }
+  h1 { position: absolute; left: 50px; top: 18px; font-size: 40px; font-weight: 700; letter-spacing: -0.6px; }
+  .sub { position: absolute; left: 50px; top: 66px; font-size: 21px; color: var(--muted); }
+  .legend { position: absolute; right: 50px; top: 30px; display: flex; gap: 18px; font-size: 17px; color: var(--muted); white-space: nowrap; align-items: center; }
+  svg.layer { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; pointer-events: none; }
+  .box { position: absolute; border-radius: 14px; background: var(--card); border: 1.5px solid var(--line); border-left: 6px solid var(--c); padding: 10px 14px; display: flex; flex-direction: column; justify-content: center; }
+  .box b { font-size: 23px; font-weight: 600; line-height: 1.12; }
+  .box i { font-style: normal; font-size: 17.5px; color: var(--muted); margin-top: 5px; line-height: 1.25; }
+  .box em { font-style: normal; font-size: 17px; color: var(--c); margin-top: 2px; }
+  .box.wide { padding: 14px 20px; }
+  .box.wide b { font-size: 27px; color: var(--c); }
+  .box.wide i { font-size: 19.5px; margin-top: 8px; line-height: 1.32; color: #c9c9cf; }
+  .tag { position: absolute; top: -11px; right: 10px; font-size: 13px; font-weight: 700; letter-spacing: 0.6px; padding: 2px 8px; border-radius: 6px; }
+  .tag.model { background: var(--vio); color: #17132e; }
+  .tag.code { background: var(--bg); border: 1.5px solid var(--muted); color: var(--muted); }
+  .panel { position: absolute; left: 50px; top: 290px; width: 1080px; height: 474px; border: 2px solid var(--line); border-radius: 18px; background: #17181b; padding: 8px 0 0 0; }
+  .panel h2 { position: absolute; left: 22px; top: -17px; background: var(--bg); padding: 0 12px; font-size: 22px; color: #efeff1; }
+  .panel h2 small { font-size: 18px; color: var(--muted); font-weight: 400; margin-left: 8px; }
+  svg text { font-family: "Segoe UI", "Inter", Arial, sans-serif; }
+  .band { font-size: 17px; font-weight: 700; letter-spacing: 1.2px; }
+  .axis { font-size: 16px; fill: #8e8e95; }
+  .key { font-size: 19px; font-weight: 600; }
+  .note { font-size: 16px; }
+  .ev text { font-size: 16.5px; fill: #c9c9cf; }
+  .tier { position: absolute; border: 2px solid var(--c); border-radius: 14px; background: #1c1b17; padding: 12px 18px; }
+  .tier h3 { font-size: 27px; font-weight: 700; color: var(--c); }
+  .tier p { font-size: 18px; line-height: 1.3; color: #d0d0d6; margin-top: 4px; }
+  .gate { position: absolute; left: 1160px; top: 674px; width: 710px; height: 90px; border: 1.5px dashed var(--line); border-radius: 12px; padding: 10px 16px; font-size: 18px; color: #c9c9cf; line-height: 1.28; }
+  .gate b { color: var(--text); }
+  .foot { position: absolute; left: 50px; right: 50px; bottom: 16px; display: flex; justify-content: space-between; font-size: 20px; color: var(--muted); }
+  .foot b { color: var(--text); font-weight: 600; }
+</style></head>
+<body><div class="canvas">
+<h1>How Sonic handles emotional distress</h1>
+<div class="sub">It matches your energy on the way down, stays steady while you are low, and follows you back up, never ahead of you.</div>
+<div class="legend"><span><span class="tag model" style="position:static;margin-right:6px">MODEL</span>a small model decides</span><span><span class="tag code" style="position:static;margin-right:6px">CODE</span>plain code decides</span></div>
+
+<svg class="layer" viewBox="0 0 1920 1080"><defs><marker id="a-9aa0aa" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto"><path d="M1.5 1.5 L8.5 5 L1.5 8.5" fill="none" stroke="#9aa0aa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker><marker id="a-f08a6b" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto"><path d="M1.5 1.5 L8.5 5 L1.5 8.5" fill="none" stroke="#f08a6b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker><marker id="a-e6c25c" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto"><path d="M1.5 1.5 L8.5 5 L1.5 8.5" fill="none" stroke="#e6c25c" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker></defs><path d="M310 188 H360" fill="none" stroke="#9aa0aa" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#a-9aa0aa)"/><path d="M622 188 H672" fill="none" stroke="#f08a6b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#a-f08a6b)"/><path d="M934 188 H984" fill="none" stroke="#f08a6b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#a-f08a6b)"/><path d="M1246 188 H1296" fill="none" stroke="#e6c25c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#a-e6c25c)"/><path d="M1558 188 H1608" fill="none" stroke="#9aa0aa" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#a-9aa0aa)"/><path d="M1116 250 V288" fill="none" stroke="#e6c25c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#a-e6c25c)"/></svg>
+
+<div class="box" style="left:50px;top:128px;width:260px;height:120px;--c:#9aa0aa"><b>Your message</b><i>what you just said, in your own words</i></div><div class="box" style="left:362px;top:128px;width:260px;height:120px;--c:#f08a6b"><span class="tag model">MODEL</span><b>Reads the room</b><i>feeling, strength, what you want from the reply, what it is about</i></div><div class="box" style="left:674px;top:128px;width:260px;height:120px;--c:#f08a6b"><span class="tag code">CODE</span><b>Carries it forward</b><i>fades with time and turns; survives a change of topic</i></div><div class="box" style="left:986px;top:128px;width:260px;height:120px;--c:#e6c25c"><span class="tag code">CODE</span><b>Sets the ceiling</b><i>Sonic&#x27;s own energy is capped at what you have shown</i></div><div class="box" style="left:1298px;top:128px;width:260px;height:120px;--c:#9aa0aa"><span class="tag model">MODEL</span><b>Writes the reply</b><i>pace, register and length follow the ceiling and your need</i></div><div class="box" style="left:1610px;top:128px;width:260px;height:120px;--c:#a597f5"><span class="tag code">CODE</span><b>Checks the draft</b><i>advice for someone venting? no real question about good news? one rewrite</i></div>
+
+<div class="panel"><h2>Sonic's energy follows yours<small>one imagined conversation</small></h2><svg viewBox="0 0 1000 410" width="1080" height="440" style="display:block">
+  <rect x="40" y="40" width="205" height="295" fill="#43c79a" opacity="0.08"/>
+  <rect x="245" y="40" width="350" height="295" fill="#e6c25c" opacity="0.07"/>
+  <rect x="595" y="40" width="210" height="295" fill="#e6c25c" opacity="0.13"/>
+  <rect x="805" y="40" width="135" height="295" fill="#43c79a" opacity="0.08"/>
+  <text x="50" y="62" class="band" fill="#43c79a">NORMAL</text>
+  <text x="255" y="62" class="band" fill="#e6c25c">SUBDUED</text>
+  <text x="605" y="62" class="band" fill="#e6c25c">EASING</text>
+  <text x="815" y="62" class="band" fill="#43c79a">OPEN</text>
+  <line x1="40" y1="335" x2="940" y2="335" stroke="#4a4b53" stroke-width="2"/>
+  <line x1="40" y1="40" x2="40" y2="335" stroke="#4a4b53" stroke-width="2"/>
+  <text x="44" y="34" class="axis">energy</text>
+  <text x="878" y="359" class="axis">time &rarr;</text>
+  <polyline points="280,107 350,116 420,127 490,138 560,150 630,158 700,170 770,181 840,335" fill="none" stroke="#f08a6b" stroke-width="3.5" stroke-dasharray="3 9" stroke-linecap="round"/>
+  <polyline points="70,164 140,158 210,170 280,301 350,306 420,295 490,306 560,301 630,250 700,250 770,227 840,130 910,107" fill="none" stroke="#e8e8ea" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+  <polyline points="70,136 140,136 140,130 210,130 210,141 280,141 280,287 350,287 350,289 420,289 420,281 490,281 490,289 560,289 560,287 630,287 630,232 700,232 700,232 770,232 770,221 840,221 840,96 910,96 910,78" fill="none" stroke="#e6c25c" stroke-width="5.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M434 287 q8 -40 24 -30 q8 8 6 30" fill="none" stroke="#e6c25c" stroke-width="2.5" stroke-dasharray="4 5"/>
+  <text x="364" y="241" class="note" fill="#e6c25c">rare: a small joke it is sure will land</text>
+  <text x="64" y="120" class="key" fill="#e6c25c">Sonic</text>
+  <text x="64" y="194" class="key" fill="#e8e8ea">what you show</text>
+  <text x="294" y="95" class="key" fill="#f08a6b">the feeling being carried</text>
+  <text x="294" y="192" class="note" fill="#e6c25c">Sonic drops with you,</text>
+  <text x="294" y="212" class="note" fill="#e6c25c">in the same reply</text>
+  <text x="554" y="110" class="note" fill="#e6c25c">it follows you up, never ahead of you</text>
+  <g class="ev">
+    <text x="44" y="387">an ordinary chat</text>
+    <text x="239" y="387">you open up about</text><text x="239" y="405">something painful</text>
+    <text x="404" y="387">you move on to</text><text x="404" y="405">another question</text>
+    <text x="590" y="387">a first flicker</text><text x="590" y="405">of humor</text>
+    <text x="940" y="387" text-anchor="end">you clearly recover:</text><text x="940" y="405" text-anchor="end">the cap lifts</text>
+  </g>
+  <g fill="#e8e8ea"><circle cx="70" cy="335" r="5"/><circle cx="280" cy="335" r="5"/><circle cx="434" cy="335" r="5"/><circle cx="630" cy="335" r="5"/><circle cx="840" cy="335" r="5"/></g>
+</svg></div>
+
+<div class="tier" style="left:1160px;top:290px;width:710px;height:134px;--c:#e6c25c"><h3>Subdued</h3><p>No lift shown, or you are frustrated. Sonic writes at your level: warm, plain prose, no exclamation marks or emoji. After a change of topic, one short line shows it has not forgotten.</p></div><div class="tier" style="left:1160px;top:432px;width:710px;height:112px;--c:#e6c25c"><h3>Easing</h3><p>You have shown a small lift, a flicker of humor or relief. Sonic may match it, a touch of warmth, and no further.</p></div><div class="tier" style="left:1160px;top:552px;width:710px;height:112px;--c:#e6c25c"><h3>Open</h3><p>No feeling is being carried, or you clearly recovered. The ceiling lifts and Sonic is back to its usual self. It never lifts the ceiling for you.</p></div>
+<div class="gate"><b>The tier gates more than tone.</b> Follow-ups, offers and callbacks stay quiet unless it is open, concern for you is allowed only while a feeling is on the table, and the mascot's mood follows it.</div>
+
+<div class="box wide" style="left:50px;top:800px;width:580px;height:178px;--c:#ef6b6b"><span class="tag code">CODE</span><b>Risk read</b><em>Branches off the same reading</em><i>Signs of someone in danger go to a separate safety layer. It starts with the people in your life, then professional help; it reaches for a hotline only when the situation is imminent. All in code, not left to the model.</i></div><div class="box wide" style="left:670px;top:800px;width:580px;height:178px;--c:#a597f5"><span class="tag code">CODE</span><b>Feelings check</b><em>On what Sonic says about itself</em><i>No “I missed you”, “glad you&#x27;re back”, “I&#x27;m so excited” or “I care about you”. A draft that does is rewritten once, saying what Sonic will do instead.</i></div><div class="box wide" style="left:1290px;top:800px;width:580px;height:178px;--c:#9aa0aa"><b>What stays allowed</b><em>Honest, not cold</em><i>Caring about getting the work right, an apology for a real mistake, “happy to help”, and the kind things people say that carry the sentiment, like “I&#x27;m here for you”.</i></div>
+
+<div class="foot"><span><b>Sonic Assistant</b></span><span>Warm without claiming feelings. Steady without being cold.</span></div>
+</div></body></html>

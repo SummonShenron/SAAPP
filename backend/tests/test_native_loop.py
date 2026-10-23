@@ -646,3 +646,25 @@ def test_the_engine_choice_keeps_a_change_request_native_when_the_tool_is_offere
     source = open("backend/services/agent_workflow.py", encoding="utf-8").read()
     assert 'edit_turn=edit_turn and not any(tool.get("name") == "propose_local_edits" for tool in native_tools)' in source
     assert 'required_action=kwargs.get("required_action")' in source
+
+
+def test_a_draft_and_confirm_tool_stops_the_loop_for_the_caller_instead_of_running(monkeypatch):
+    """propose_append_target_doc writes nothing: the turn raises the same signal the old loop does, and the dispatcher is never asked to run it."""
+    from backend.utils.agent_utils import _UnsafeActionRequested
+
+    acts = Acts()
+    llm = ToolLLM(asks(call("propose_append_target_doc", {"content": "Week of Oct 19: shipped X."})), answers("unused"))
+    tools = [{"name": "search_code", "description": "find things"}, {"name": "propose_append_target_doc", "description": "append"}]
+    with pytest.raises(_UnsafeActionRequested) as raised:
+        run(nl.run(llm=llm, tools=tools, act=acts, question="add this to my weekly reports", is_unsafe=lambda d: d["tool_action"] == "propose_append_target_doc"))
+    assert raised.value.decision["tool_action"] == "propose_append_target_doc"
+    assert raised.value.decision["args"] == {"content": "Week of Oct 19: shipped X."}
+    assert acts.decisions == []
+
+
+def test_the_target_doc_tool_has_a_native_schema_and_the_engine_hands_over_is_unsafe():
+    declared = nt.declarations_from_menu(["- propose_append_target_doc — args: content (the text)"])
+    assert [d["name"] for d in declared] == ["propose_append_target_doc"]
+    assert declared[0]["parameters"]["required"] == ["content"]
+    source = open(aw.__file__, encoding="utf-8").read()
+    assert 'is_unsafe=kwargs.get("is_unsafe")' in source

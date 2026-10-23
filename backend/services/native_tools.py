@@ -109,6 +109,10 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
         "max_results": {"type": "integer", "description": "default 10"},
     }, ["query"]),
     "read_onedrive_file": _object({"file_id": {"type": "string", "description": "an id from a search_onedrive_files result"}}, ["file_id"]),
+    # the person's target Google Doc (Integrations): a draft the person approves from a card. Nothing is written by the call.
+    "propose_append_target_doc": _object({
+        "content": {"type": "string", "description": "the finished text to append, composed by you from what you gathered this turn"},
+    }, ["content"]),
     # a connected local folder: a proposal the person applies (or not) from a diff card. Nothing is written by the call.
     "propose_local_edits": _object({
         "summary": {"type": "string", "description": "one or two sentences on what the edits do and why"},
@@ -171,6 +175,11 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
 # Descriptions that replace the menu line's text for the native engine. The old menu line describes the OLD engine's way of calling a tool ("as a query step ... never a field
 # inside a final answer"), which would mislead a model that makes real function calls.
 NATIVE_DESCRIPTIONS: Dict[str, str] = {
+    "propose_append_target_doc": (
+        "Append text to the Google Doc the person set as their target document under Integrations. It writes nothing by itself: the person sees your text on an approval card and "
+        "approves, edits or rejects it. Use it when they ask to add, append, save or put something in their doc, after you have gathered and written the finished content. "
+        "Call it once with the complete text, then stop: the card is the answer, so do not say it was added."
+    ),
     "propose_local_edits": (
         "Make a change to the person's connected local folder. It changes nothing by itself: the person sees a diff with an Apply button, which is their confirmation, and can undo it. "
         "Use it INSTEAD of pasting code in your answer whenever they ask you to make, apply or implement a change to files in their folder. Read the file first, then copy old_string "
