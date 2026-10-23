@@ -306,7 +306,7 @@ app.add_middleware(
         "http://localhost:8080",
         "http://localhost:5173",
         "https://sonicassistant.com",
-        "https://www.sonicassistant.com/"
+        "https://www.sonicassistant.com"
     ],
     allow_credentials=True,
     allow_methods=["*"],

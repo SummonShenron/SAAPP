@@ -196,3 +196,11 @@ def test_a_text_file_sent_as_base64_is_stored_as_its_text():
 def test_the_browser_sends_text_files_as_base64_and_splits_a_refused_batch():
     source = open("local/src/localWorkspace.ts", encoding="utf-8").read()
     assert "text_b64: await fileToBase64(file)" in source and "files.slice(0, middle)" in source and "blocked on the way to the server" in source
+
+
+def test_the_cors_origins_have_no_trailing_slash_because_browsers_send_none():
+    import re
+    source = open("app.py", encoding="utf-8").read()
+    block = source[source.index("app.add_middleware("):][:700]
+    origins = re.findall(r'"(https?://[^"]+)"', block)
+    assert "https://www.sonicassistant.com" in origins and not [o for o in origins if o.endswith("/")]
