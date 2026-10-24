@@ -101,6 +101,7 @@ from backend.services.local_workspace import (
 )
 from backend.utils.agent_utils import is_stale_capability_denial, scrub_stale_capability_denials
 from backend.utils.embedding_utils import embed_text
+from backend.utils import relevant_findings
 from backend.utils.emotion_utils import build_emotional_context, effective_intensity, energy_tier
 from backend.utils.encouragement_utils import (
     ENCOURAGEMENT_MARK, build_encouragement_block, build_encouragement_revision_prompt, encouragement_reply_issue,
@@ -138,6 +139,7 @@ from backend.utils import duration_utils
 from backend.utils import curiosity as curiosity_utils
 from backend.utils import paperwork_utils
 from backend.utils import profile_utils
+from backend.services import local_edit_decisions
 from backend.utils import reading_shelf as shelf_utils
 from backend.services import shelf_refresh
 from backend.utils.self_history_utils import SELF_HISTORY_MARK, build_self_history_block, select_self_history
@@ -360,7 +362,12 @@ class ChatRequest(BaseModel):
     affiliate: str 
     attachments: list[Attachment] | None = None
     session_id: str | None = None
+    edit_decisions: bool = False    # the page reports Apply / Decline back (POST /api/local-edits/{id}/decision), so the tool loop may wait for it and carry on
     folder_expected: bool = False   # the browser has a local folder connected, so a turn that finds none on the server can say so (the answer then used GitHub)
+
+class EditDecisionRequest(BaseModel):
+    outcome: str                    # "applied" or "declined"
+    reason: str = ""                # why it was declined, in the person's words (optional)
 
 class SteerRequest(BaseModel):
     session_id: str
@@ -778,6 +785,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         "rag_mode": effective_rag_mode,
         "deep_thinking": effective_deep_thinking,
         "tool_model": effective_tool_model,
+        "edit_decisions": bool(request.edit_decisions),
         "budget_level": budget_state.get("level"),
         "repo": effective_target_repo,
         "documents": [],
@@ -1040,7 +1048,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # Never for a guest, and set aside under a safety context (the person comes first); one indexed read when no meeting is running.
             meeting_context = ""
             if not is_guest_username(username) and risk_level == RISK_NONE and source_type == "conversational":
-                meeting_context = await asyncio.to_thread(meetings_utils.build_context_for_session, username, session_id, user_tz)
+                meeting_context = await asyncio.to_thread(meetings_utils.build_context_for_session, username, session_id, user_tz,
+                                                         coaching_allowed=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)) == "open")
                 if meeting_context:
                     tally(turn_counts, "meeting_turns")
             # Something they said was coming up, whose day has now passed, asked about once at the start of a
@@ -1283,6 +1292,18 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
 
             prompt = prompt + paperwork_utils.build_paperwork_block(question, bool(attachment_docs), [d.page_content for d in attachment_docs])
 
+            # A piece Sonic has really read whose meaning overlaps what they just said (backend/utils/relevant_findings.py): takes the turn's one proactive slot ahead of a memory
+            # callback, so a real overlap is not lost to a routine follow-up. Never for a guest or under a safety context.
+            finding_offer = None
+            if source_type == "conversational" and not is_guest_username(username) and risk_level == RISK_NONE and not meeting_context and not shelf_utils.asks_what_reading(question):
+                finding_offer = await asyncio.to_thread(
+                    relevant_findings.select, get_db(), username, question, chat_sessions[history_key],
+                    source_type=source_type, risk_active=False, energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
+                    proactive_taken=bool(open_loop_entry or headsup_entry or task_results_context or relatable_entry or encouragement_entry or self_history or goal_nudge_context),
+                    user_profile=user_profile, embed=embed_text, vector=question_embedding, counts=turn_counts,
+                )
+                if finding_offer:
+                    prompt = prompt + shelf_utils.build_shelf_block(finding_offer)
             if source_type == "conversational":
                 semantic_memory_context = await recall_with_second_look(
                     services.get("user_memory_vector_store"), username, question,
@@ -1296,13 +1317,13 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     # At a lull a callback is the conversation's one extender (backend/utils/curiosity.py): it follows the same once-per-
                     # conversation and per-person limits, and is framed as something to pick back up, not a link to what they just said.
                     callback_lull = curiosity_utils.is_lull(question)
-                    callback_slot_ok = (not callback_lull) or (
+                    callback_slot_ok = (not finding_offer) and ((not callback_lull) or (
                         profile_utils.offers_allowed(user_profile)
                         and curiosity_utils.slot_open(question, chat_sessions[history_key], source_type=source_type, risk_active=False,
                                                   energy_tier="open", proactive_taken=False)
                         and not curiosity_utils.last_reply_asked(chat_sessions[history_key])
                         and await asyncio.to_thread(offer_response.pacing, get_db(), username, None, counts=turn_counts) == offer_response.CLEAR
-                    )
+                    ))
                     if callback_slot_ok and callback_allowed(
                         True, chat_sessions[history_key], source_type=source_type, risk_active=risk_level != RISK_NONE,
                         energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
@@ -1334,7 +1355,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     source_type=source_type, risk_active=False,
                     energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
                     proactive_taken=bool(open_loop_entry or headsup_entry or task_results_context or meeting_context or relatable_entry or encouragement_entry or self_history
-                                         or callback_offered or goal_nudge_context),
+                                         or callback_offered or goal_nudge_context or finding_offer),
                 )
                 # A getting-to-know-you question (backend/utils/clarifications.py): takes the turn's one slot, so nothing below stacks with it.
                 clarify_level = clarify_utils.level_of(user_profile)
@@ -1388,6 +1409,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                             curiosity_invited = True
                 if shelf_offer:
                     prompt = prompt + (shelf_utils.build_listing_block(shelf_offer) if shelf_offer["kind"] == "listing" else shelf_utils.build_shelf_block(shelf_offer))
+                elif finding_offer:
+                    shelf_offer = finding_offer      # already in the prompt (above); from here it is handled like any shelf offer: checked, counted, and spent only if the reply used it
             # "How are things going on your end / how was your day / any downtime?": answered from what the server really did (backend/utils/self_report.py),
             # for everyone, guests included. The routines answer above already covers "what have you been up to", so it is not stacked with this one.
             self_report_kind, self_report_snap = None, None
@@ -3291,6 +3314,12 @@ async def retire_observation(key: str, admin = Depends(require_global_admin)):
     if not await asyncio.to_thread(retire_observation_doc, db, key, None, admin.get("sub")):
         raise HTTPException(status_code=404, detail="No such observation.")
     return {"observations": await asyncio.to_thread(list_observations, db)}
+
+@app.post("/api/local-edits/{proposal_id}/decision")
+async def report_local_edit_decision(proposal_id: str, payload: EditDecisionRequest, current_user = Depends(get_current_user)):
+    """The diff card's Apply or Decline, reported to the tool loop that is waiting on it (backend/services/local_edit_decisions.py). Applying itself happens in the browser."""
+    return {"status": local_edit_decisions.decide(current_user.get("sub"), proposal_id, payload.outcome, payload.reason)}
+
 
 @app.get("/api/reading-shelf")
 async def get_public_reading_shelf(current_user = Depends(get_current_user)):

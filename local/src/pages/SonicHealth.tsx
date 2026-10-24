@@ -657,6 +657,20 @@ const TurnsCard: React.FC<{ turns: TurnsSummary }> = ({ turns }) => {
               <StatTile value={turns.loop.deep_cap_hit_share === null ? 'n/a' : pct(turns.loop.deep_cap_hit_share)} label={`of deep turns used every step (${turns.loop.deep_cap_hits} of ${turns.loop.deep_turns})`} />
             )}
           </div>
+          {turns.loop.exits && (
+            <div className="sh-stat-grid">
+              <StatTile value={turns.loop.exits.early} label="answered by the halfway step" />
+              <StatTile value={turns.loop.exits.late} label="answered after the halfway step" />
+              <StatTile value={turns.loop.exits.cap_draft} label="ran out of steps with a draft kept" />
+              <StatTile value={turns.loop.exits.cap_no_draft} label="ran out of steps with nothing written" warn={turns.loop.exits.cap_no_draft > 0} />
+              {(turns.loop.checkpoints?.turns ?? 0) > 0 && (
+                <StatTile value={`${(turns.loop.checkpoints?.answered ?? 0) + (turns.loop.checkpoints?.acted ?? 0)} of ${turns.loop.checkpoints?.turns ?? 0}`} label="turns that reached a checkpoint and answered or proposed the change there (the rest kept working)" />
+              )}
+              {(turns.loop.nudged ?? 0) > 0 && (
+                <StatTile value={`${turns.loop.nudged_drafted ?? 0} of ${turns.loop.nudged}`} label="turns shown the halfway nudge that then had a draft" />
+              )}
+            </div>
+          )}
           <div className="sh-bars-grid">
             {turns.loop.histogram.map(bucket => (
               <BarRow

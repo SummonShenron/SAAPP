@@ -378,6 +378,7 @@ async def run_react_loop(
 
     step = -1
     latest_draft = None   # the change the model has drafted so far this turn (backend/utils/draft_checkpoint.py)
+    nudged = False        # the halfway nudge was shown (counted per turn, backend/utils/llm_turns.py)
     while step + 1 < budget:
         step += 1
         # Before forced_final is computed: a steer arriving now can extend the budget.
@@ -426,7 +427,9 @@ async def run_react_loop(
                 )
         # A change drafted earlier in the turn is shown back at every step, so it can be checked against what was read and corrected; with none, the halfway nudge asks for one.
         question_for_step += draft_checkpoint.draft_block(latest_draft)
-        question_for_step += draft_checkpoint.halfway_notice(step, budget, len(attempts), bool(latest_draft), forced_final) or ""
+        halfway = draft_checkpoint.halfway_notice(step, budget, len(attempts), bool(latest_draft), forced_final) or ""
+        nudged = nudged or bool(halfway)
+        question_for_step += halfway
         if forced_final:
             question_for_step += draft_checkpoint.forced_final_addition(latest_draft)
         if needs_retry_nudge:
@@ -977,5 +980,5 @@ async def run_react_loop(
     # Counted per turn (backend/utils/llm_turns.py): how many steps the loop used, and whether it ran into the last step it was allowed.
     from backend.utils import llm_turns
 
-    llm_turns.note_tool_loop(step + 1, ended_without_final or step + 1 >= budget)
+    llm_turns.note_tool_loop(step + 1, ended_without_final or step + 1 >= budget, tool_steps=max(budget - 1, 1), had_draft=bool(latest_draft), nudged=nudged)
     return {"final_answer": final_answer, "attempts": attempts, "show_work": show_work}

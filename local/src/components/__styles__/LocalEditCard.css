@@ -116,3 +116,15 @@
 
 .led-note { color: var(--text-muted); }
 .led-ok { color: color-mix(in srgb, var(--accent-success) 78%, var(--text-main)); }
+
+.led-reason {
+  flex: 1;
+  min-width: 12rem;
+  padding: 0.35rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-main);
+  color: var(--text-main);
+  font: inherit;
+  font-size: 0.85rem;
+}

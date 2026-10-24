@@ -141,6 +141,9 @@ async def _refresh_shelf(
                     lambda: shelf.add_item(db, url=final_url, title=title or shelf.domain_of(final_url), summary=summary, topic=topic["id"], now=now)
                 )
                 await asyncio.to_thread(shelf.trim_to_limit, db)
+                from backend.utils.embedding_utils import embed_text
+
+                await asyncio.to_thread(shelf.ensure_embeddings, db, embed_text)      # so the item can be matched on meaning (backend/utils/relevant_findings.py)
                 logger.info("[shelf] added an item from %s for the %s topic.", doc["domain"], topic["id"])
                 return {"status": "added", "topic": topic["id"], "domain": doc["domain"], "key": doc["_id"]}
         logger.info("[shelf] nothing added for the %s topic (%s).", topic["id"], reasons or "no results")

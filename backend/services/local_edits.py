@@ -247,4 +247,6 @@ def validate_edit_proposal(edits: Any, read_file: Callable[[str], Optional[str]]
         "ok": True,
         "edits": normalized,
         "files": [_diff_for(path, original[path], working[path]) for path in touched] + docx_cards,
+        # What each plain-text file will contain once applied (a Word document's "text" is only a preview, so it is not here): used to refresh the server's copy of the folder.
+        "texts": {path: working[path] for path in touched if path not in word_documents and working[path] is not None},
     }

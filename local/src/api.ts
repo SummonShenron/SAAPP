@@ -862,6 +862,13 @@ export interface TurnsSummary {
     histogram: { bucket: string; turns: number }[];
     cap_hits: number;
     cap_hit_share: number | null;
+    /** How tool turns ended: by the halfway step, later, or at the last step with a draft kept / with nothing written. */
+    exits?: { early: number; late: number; cap_draft: number; cap_no_draft: number };
+    /** Turns that reached a checkpoint (long budgets only), and whether they answered there or chose to keep working. */
+    checkpoints?: { turns: number; answered: number; continued: number; acted?: number };
+    /** Turns where the halfway nudge was shown, and how many of those ended up with a draft. */
+    nudged?: number;
+    nudged_drafted?: number;
     deep_turns: number;
     deep_cap_hits: number;
     deep_cap_hit_share: number | null;
@@ -1664,6 +1671,8 @@ export interface Meeting {
   purpose: string;
   agenda: string[];
   cadence: 'none' | 'daily' | 'weekly';
+  /** How firmly Sonic may push in this meeting; supportive is the original behaviour. */
+  coaching: 'supportive' | 'balanced' | 'challenging';
   weekday: number | null;
   hour: number | null;
   minute: number | null;
@@ -1679,6 +1688,7 @@ export interface MeetingSpec {
   match: string;
   purpose: string;
   agenda: string[];
+  coaching?: 'supportive' | 'balanced' | 'challenging';
   cadence: 'none' | 'daily' | 'weekly';
   weekday: number;
   time: string; // HH:MM, used when there is a schedule
@@ -1974,6 +1984,20 @@ export async function steerChat(sessionId: string, message: string): Promise<{ s
   return res.json();
 }
 
+/** Tells the waiting turn what the person decided on a proposed folder change. Best effort: nothing breaks if no turn is waiting any more. */
+export async function reportEditDecision(proposalId: string, outcome: 'applied' | 'declined', reason = ''): Promise<void> {
+  try {
+    const authHeaders = await getAuthHeaders();
+    await fetch(`${BASE_URL}/api/local-edits/${encodeURIComponent(proposalId)}/decision`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders },
+      body: JSON.stringify({ outcome, reason }),
+    });
+  } catch {
+    // The folder change itself does not depend on this; Sonic's wait simply times out.
+  }
+}
+
 export async function sendChatMessage(
   username: string,
   question: string,
@@ -1983,7 +2007,8 @@ export async function sendChatMessage(
   onTokenReceived: (token: string) => void,
   onTraceReceived?: (payload: any) => void,
   signal?: AbortSignal,
-  folderExpected = false
+  folderExpected = false,
+  editDecisions = false
 ): Promise<void> {
   const authHeaders = await getAuthHeaders();
   // A deliberate Stop surfaces as an AbortError and is the caller's to handle; every other failure is a ChatSendError that says what is
@@ -2005,6 +2030,8 @@ export async function sendChatMessage(
         session_id,
         // The browser has a local folder connected: a code answer that finds none on the server says so, instead of quietly using GitHub.
         folder_expected: folderExpected,
+        // This page reports Apply / Decline on a proposed folder change, so Sonic can wait for it and carry on in the same turn.
+        edit_decisions: editDecisions,
       }),
       signal,
     });
@@ -2195,6 +2222,7 @@ export const api = {
   retireObservation,
   runObservationReflection,
   getPublicReadingShelf,
+  reportEditDecision,
   getReadingShelf,
   removeShelfItem,
   unblockShelfSource,

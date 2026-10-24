@@ -52,4 +52,6 @@ export const SHELF_TOPIC_LABELS: Record<string, string> = {
   ai_research: 'AI research',
   tabletop: 'Tabletop design',
   scifi: 'Science fiction',
+  agent_design: 'AI agents',
+  llm_systems: 'Language model systems',
 };

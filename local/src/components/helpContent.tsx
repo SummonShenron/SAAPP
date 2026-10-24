@@ -353,6 +353,12 @@ export const EVERYDAY: Record<string, Content> = {
   'office-hours': ctx => (
     <>
       <p>Office hours is a check-in you hold with Sonic when you choose to, such as a weekly review. You press <strong>Start office hours</strong>, Sonic runs your agenda in a chat, and you press <strong>End and save notes</strong> when you are done. Sonic never starts one by itself.</p>
+      <h4>How much Sonic challenges you</h4>
+      <ul>
+        <li>Each meeting has a setting: <strong>Supportive</strong> (Sonic asks and listens, as before), <strong>Balanced</strong> (it may raise one thing) or <strong>Challenging</strong> (up to two, each with a small next step to try).</li>
+        <li>It only raises things your own records show: an action item that has carried over from meeting to meeting, a goal you haven't updated in weeks, what your tasks found, and what you logged. It doesn't guess about you, and it doesn't scold.</li>
+        <li>It holds back on a day you seem low, and you can say "not today" at any point and it drops the subject for that meeting.</li>
+      </ul>
       <h4>Progress notes</h4>
       <ul>
         <li>Every progress note belongs to one meeting. Between check-ins, log what happens in your own words: open a meeting's <strong>Progress notes</strong> on the Office Hours page, or in any chat write <strong>log to Weekly check-in: applied to three jobs</strong> (or <strong>log a win to Weekly check-in: ...</strong>, <strong>log a blocker to ...</strong>), using the meeting's name. Inside a running meeting, <strong>log: ...</strong> goes to that meeting, and if you have only one meeting, it goes to that one. To append to or replace an existing note, quote part of its text: "add a win to my note 'applied to three jobs': got a second interview" or "update my note 'applied to three jobs': applied to four jobs".</li>

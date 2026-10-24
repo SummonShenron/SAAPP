@@ -12,13 +12,20 @@ interface Draft {
   match: string;
   purpose: string;
   agenda: string;
+  coaching: 'supportive' | 'balanced' | 'challenging';
   cadence: 'none' | 'daily' | 'weekly';
   weekday: number;
   time: string;
 }
 
+const COACHING_CHOICES: { value: Draft['coaching']; label: string; blurb: string }[] = [
+  { value: 'supportive', label: 'Supportive', blurb: 'Sonic asks and listens. It does not challenge anything.' },
+  { value: 'balanced', label: 'Balanced', blurb: 'Sonic may raise one thing the records show, like an item that keeps carrying over, and ask what is in the way.' },
+  { value: 'challenging', label: 'Challenging', blurb: 'Up to two things per meeting, each with a small next step to try. Never harsh, and only from what is recorded.' },
+];
+
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-const EMPTY_DRAFT: Draft = { name: '', match: '', purpose: '', agenda: '', cadence: 'none', weekday: 6, time: '12:00' };
+const EMPTY_DRAFT: Draft = { name: '', match: '', purpose: '', agenda: '', coaching: 'supportive', cadence: 'none', weekday: 6, time: '12:00' };
 
 function pad(n: number): string {
   return String(n).padStart(2, '0');
@@ -37,6 +44,7 @@ function toSpec(draft: Draft): MeetingSpec {
     match: draft.match.trim(),
     purpose: draft.purpose.trim(),
     agenda: draft.agenda.split('\n').map(line => line.trim()).filter(Boolean),
+    coaching: draft.coaching,
     cadence: draft.cadence,
     weekday: draft.weekday,
     time: draft.time,
@@ -75,7 +83,7 @@ export const MeetingsPage: React.FC = () => {
     if (meeting) {
       setEditing(meeting.id);
       setDraft({
-        name: meeting.name, match: meeting.match, purpose: meeting.purpose, agenda: meeting.agenda.join('\n'),
+        name: meeting.name, match: meeting.match, purpose: meeting.purpose, agenda: meeting.agenda.join('\n'), coaching: meeting.coaching ?? 'supportive',
         cadence: meeting.cadence, weekday: meeting.weekday ?? 6, time: meeting.hour === null ? '12:00' : `${pad(meeting.hour)}:${pad(meeting.minute ?? 0)}`,
       });
     } else {
@@ -211,6 +219,7 @@ export const MeetingsPage: React.FC = () => {
                     <div className="memory-row-badges">
                       {meeting.schedule && <span className="memory-badge memory-source-badge">{meeting.schedule}</span>}
                       {meeting.due_today && <span className="memory-badge task-new-badge">due today</span>}
+                      {meeting.coaching && meeting.coaching !== 'supportive' && <span className="memory-badge memory-source-badge">{meeting.coaching} coaching</span>}
                       {meeting.match && <span className="memory-badge memory-source-badge">on calendar as: {meeting.match}</span>}
                       {meeting.last_held && <span className="memory-badge memory-source-badge">last held {formatHeld(meeting.last_held)}</span>}
                     </div>
@@ -321,6 +330,14 @@ export const MeetingsPage: React.FC = () => {
               <label className="task-label" htmlFor="meeting-agenda">Agenda <span className="task-optional">one item per line, up to 8</span></label>
               <textarea id="meeting-agenda" className="memory-edit-text" rows={5} value={draft.agenda}
                 placeholder={'What did you get done this week?\nWhich jobs did you apply to?\nHow aligned was it?'} onChange={e => patch({ agenda: e.target.value })} />
+              <label className="task-label" htmlFor="meeting-coaching">How much should Sonic challenge you?</label>
+              <select id="meeting-coaching" className="memory-category-select" value={draft.coaching} onChange={e => patch({ coaching: e.target.value as Draft['coaching'] })}>
+                {COACHING_CHOICES.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+              </select>
+              <div className="memory-edit-hint">
+                {COACHING_CHOICES.find(choice => choice.value === draft.coaching)?.blurb}
+                {draft.coaching !== 'supportive' && ' It only comes from what is stored (earlier notes, your goals, what your tasks found, what you logged), it is off on a day you seem low, and you can say "not today" at any point.'}
+              </div>
               <div className="memory-edit-hint">Sonic opens the meeting with the first agenda item, asks one question at a time, and brings your goals, what your tasks found since last time, and the last meeting's notes.</div>
             </div>
             {formError && <div className="memory-edit-error" role="alert">{formError}</div>}
