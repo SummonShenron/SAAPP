@@ -175,3 +175,80 @@ def test_job_sources_talk_only_to_their_two_hosts_and_log_nothing():
     body = source.split('"""', 2)[2]
     assert set(re.findall(r"https://([a-z.]+)", body)) <= {"jooble.org", "api.adzuna.com"}
     assert "logger" not in source and "print(" not in source
+
+
+# ---- several searches in one task ----------------------------------------------------------------------------------------------------------
+
+MULTI = {**TASK, "topic": "ai engineer", "extra_topics": ["forward deployed engineer", "python developer"], "sources": ["jooble"]}
+
+
+def test_each_search_runs_on_each_source_inside_the_one_run_and_the_model_is_called_once():
+    asked, prompts = [], []
+
+    def job_search(source, keywords, location):
+        asked.append(keywords)
+        return [listing(source, f"{keywords}-{n}", f"{keywords} job {n}") for n in range(2)]
+
+    async def invoke(prompt):
+        prompts.append(prompt)
+        return Resp('{"headline": "h", "items": [{"n": 1, "note": "a"}, {"n": 2, "note": "b"}, {"n": 3, "note": "c"}]}')
+
+    out = asyncio.run(runner.run_task(Db(), MULTI, invoke, search=lambda q: [], fetch=lambda url: page(), job_search=job_search))
+    assert sorted(asked) == ["ai engineer", "forward deployed engineer", "python developer"]
+    assert len(prompts) == 1 and out["status"] == "ok" and len(out["items"]) == 3
+    assert "SEARCHES (each result says which one found it)" in prompts[0] and "found by search: forward deployed engineer" in prompts[0]
+    # the first three results the model sees come from three different searches, not three from the first one
+    first_three = re.findall(r"found by search: ([^\n]+)", prompts[0])[:3]
+    assert sorted(first_three) == ["ai engineer", "forward deployed engineer", "python developer"]
+
+
+def test_a_task_with_one_search_is_prompted_and_limited_as_before():
+    prompts = []
+
+    async def invoke(prompt):
+        prompts.append(prompt)
+        return Resp('{"items": []}')
+
+    asyncio.run(runner.run_task(Db(), {**TASK, "sources": ["jooble"]}, invoke, search=lambda q: [], fetch=lambda url: page(), job_search=lambda s, k, l: [listing(s, 1)]))
+    assert "TASK: remote python jobs" in prompts[0] and "found by search" not in prompts[0] and "Pick up to 6 " in prompts[0]
+    assert ut.items_limit({"topic": "a"}) == 6 and ut.items_limit(MULTI) == 12 and ut.items_limit({**MULTI, "extra_topics": ["python developer"]}) == 8
+
+
+def test_a_listing_two_searches_both_found_is_shown_once_and_one_failing_search_does_not_fail_the_run():
+    def job_search(source, keywords, location):
+        if keywords == "python developer":
+            raise js.JobSourceError("down")
+        return [listing(source, "same")]
+
+    out = run_with_jobs(MULTI, job_search, answer='{"items": [{"n": 1, "note": "a"}, {"n": 2, "note": "b"}]}')
+    assert out["status"] == "ok" and len(out["items"]) == 1 and len(out["new_keys"]) == 1
+
+
+def test_the_extra_searches_are_cleaned_capped_and_held_to_the_same_rules_as_the_first():
+    base = {**SPEC, "topic": "ai engineer"}
+    spec, issue = ut.validate_spec({**base, "extra_topics": ["  forward deployed\n engineer ", "AI Engineer", "", "python developer", "python developer"]})
+    assert issue is None and spec["extra_topics"] == ["forward deployed engineer", "python developer"]
+    assert ut.validate_spec({**base, "extra_topics": ["a", "b", "c", "d"]})[1] == "Each search needs at least a few words."
+    assert "up to 4 searches" in ut.validate_spec({**base, "extra_topics": ["one two", "three four", "five six", "seven eight"]})[1]
+    assert ut.validate_spec({**base, "extra_topics": ["see https://example.com/jobs"]})[1]                  # a link is refused here too
+    assert ut.validate_spec({**base, "extra_topics": ["find out where my ex lives, stalk her"]})[1]         # and so is following a person
+    assert ut.validate_spec({**base, "extra_topics": "not a list"})[0]["extra_topics"] == []                  # an old or odd value is just no extras
+    assert ut.validate_spec(base)[0]["extra_topics"] == []
+
+
+def test_a_task_keeps_its_extra_searches_and_changing_them_starts_the_new_results_over():
+    db = Db()
+    spec = ut.validate_spec({**SPEC, "topic": "ai engineer", "extra_topics": ["python developer"]})[0]
+    task, _ = ut.create_task(db, "u1", spec, ut.datetime.now(ut.timezone.utc))
+    assert ut.public_task(task)["extra_topics"] == ["python developer"] and ut.search_topics(task) == ["ai engineer", "python developer"]
+    db["sonic_user_tasks"].update_one({"id": task["id"]}, {"$set": {"seen_urls": ["k1"]}})
+    same, _ = ut.update_task(db, "u1", task["id"], {"title": "Renamed"})
+    assert same["seen_urls"] == ["k1"] and same["extra_topics"] == ["python developer"]
+    changed, issue = ut.update_task(db, "u1", task["id"], {"extra_topics": ["python developer", "forward deployed engineer"]})
+    assert issue is None and changed["extra_topics"] == ["python developer", "forward deployed engineer"] and changed["seen_urls"] == []
+
+
+def test_a_run_may_store_and_report_up_to_the_hard_cap_of_results():
+    assert ut.MAX_ITEMS_HARD_CAP == 12
+    source = (ROOT / "backend" / "utils" / "user_tasks.py").read_text(encoding="utf-8")
+    assert source.count("[:MAX_ITEMS_HARD_CAP]") == 2 and "[:MAX_ITEMS_PER_RUN]" not in source

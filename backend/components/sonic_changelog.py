@@ -43,12 +43,13 @@ CHANGELOG = [
             "backend/utils/reading_shelf.py::def offer_for_turn",
             "backend/services/shelf_refresh.py::async def refresh_shelf",
             "app.py::shelf_utils.offer_for_turn",
+            "backend/utils/reading_shelf.py::def public_view",
         ],
         "month": "2026-10",
         "title": "Keeping a reading shelf",
         "line": (
-            "I now keep a short shelf of pieces I have read about the topics I lean toward, like game design, famous bugs and computing "
-            "history. When a chat goes quiet or the topic comes up, I may mention one, with the link. You can ask what I have been reading."
+            "I now keep a short shelf of pieces I have read on topics I lean toward, like game design, famous bugs and computing "
+            "history. I may mention one, with the link. You can ask what I have been reading, or browse the Reading page."
         ),
         "keywords": ["reading", "reading shelf", "been reading", "read anything", "articles", "bug stories", "come across"],
         "volunteer": [],
@@ -151,6 +152,20 @@ CHANGELOG = [
             "I can now write the real date beside words like tonight or Friday when I save something, so a saved note is still right the day after."
         ),
         "keywords": ["tonight", "tomorrow", "which day", "wrong day", "saved date", "it's tuesday", "dates in memory"],
+        "volunteer": [],
+    },
+    {
+        "id": "task_extra_searches",
+        "requires": [
+            "backend/utils/user_tasks.py::MAX_EXTRA_TOPICS",
+            "backend/services/user_task_runner.py::tasks.search_topics",
+        ],
+        "month": "2026-10",
+        "title": "Several searches in one task",
+        "line": (
+            "I can now run up to four searches in one task, like three job titles for the same weekly job hunt, so it only uses one of your task slots."
+        ),
+        "keywords": ["multiple searches", "several job titles", "more than one search", "task slots", "job search", "three tasks", "extra searches"],
         "volunteer": [],
     },
     {

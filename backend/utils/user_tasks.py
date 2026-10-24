@@ -47,6 +47,9 @@ MAX_TITLE_CHARS = 60
 MAX_TOPIC_CHARS = 160
 MAX_DETAILS_CHARS = 240
 MAX_ITEMS_PER_RUN = 6
+MAX_EXTRA_TOPICS = 3                  # a research task may run up to 1 + this many searches in ONE run ("ai engineer", "forward deployed engineer", "python"), for one task slot and one run
+MAX_ITEMS_PER_SEARCH = 4              # with several searches each is given this many results, up to MAX_ITEMS_HARD_CAP in all
+MAX_ITEMS_HARD_CAP = 12               # the most a run ever stores or reports, however many searches it made
 MAX_NOTE_CHARS = 220
 MAX_HEADLINE_CHARS = 200
 ANNOUNCE_MIN_GAP_SECONDS = open_loops.FOLLOW_UP_MIN_GAP_SECONDS   # same moment as the other "welcome back" things: a new conversation, or a real pause
@@ -72,6 +75,23 @@ KINDS = (RESEARCH, PR_REVIEW, CODE_AUDIT)
 REPO_KINDS = (PR_REVIEW, CODE_AUDIT)
 KIND_LABELS = {RESEARCH: "Research", PR_REVIEW: "Pull request review", CODE_AUDIT: "Code audit"}
 REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,38}/[A-Za-z0-9_.-]{1,100}$")
+
+
+def search_topics(task: Dict[str, Any]) -> List[str]:
+    """Every search a research task runs: its topic, then the extra ones, none repeated. A repository task has just its own fixed one."""
+    seen, out = set(), []
+    for topic in [task.get("topic")] + list(task.get("extra_topics") or []):
+        text = str(topic or "").strip()
+        if text and text.lower() not in seen:
+            seen.add(text.lower())
+            out.append(text)
+    return out
+
+
+def items_limit(task: Dict[str, Any]) -> int:
+    """How many results one run may keep: the usual few for a single search, a few per search when there are several."""
+    searches = len(search_topics(task))
+    return MAX_ITEMS_PER_RUN if searches <= 1 else min(MAX_ITEMS_HARD_CAP, MAX_ITEMS_PER_SEARCH * searches)
 
 
 def available_sources() -> List[str]:
@@ -160,7 +180,7 @@ def validate_spec(raw: Any, default_tz: str = "America/Chicago") -> Tuple[Option
             return None, issue
         return {
             "kind": kind, "title": title, "topic": f"{KIND_LABELS[kind]} for {repo}", "details": details, "repo": repo, **schedule,
-            "sources": [GITHUB_SOURCE], "location": "",
+            "sources": [GITHUB_SOURCE], "location": "", "extra_topics": [],
         }, None
 
     topic = _clean(raw.get("topic"), MAX_TOPIC_CHARS + 1)
@@ -172,6 +192,22 @@ def validate_spec(raw: Any, default_tz: str = "America/Chicago") -> Tuple[Option
     issue = problems_with_text(title, topic, details)
     if issue:
         return None, issue
+    extras_raw = raw.get("extra_topics") if isinstance(raw.get("extra_topics"), list) else []
+    extra_topics: List[str] = []
+    for item in extras_raw:
+        extra = _clean(item, MAX_TOPIC_CHARS + 1)
+        if not extra or extra.lower() == topic.lower() or extra.lower() in (e.lower() for e in extra_topics):
+            continue                                           # a blank or repeated line is not a search
+        if len(extra) < 4:
+            return None, "Each search needs at least a few words."
+        if len(extra) > MAX_TOPIC_CHARS:
+            return None, f"Keep each search short, up to {MAX_TOPIC_CHARS} characters."
+        issue = problems_with_text(extra)
+        if issue:
+            return None, issue
+        extra_topics.append(extra)
+    if len(extra_topics) > MAX_EXTRA_TOPICS:
+        return None, f"A task can run up to {MAX_EXTRA_TOPICS + 1} searches in all."
     # "Where to look" is chosen from sources Sonic owns and maintains, never a tool or a key the person supplies (this is a companion's errand, not a pipeline builder).
     chosen = raw.get("sources") if isinstance(raw.get("sources"), list) else [DEFAULT_SOURCE]
     allowed = available_sources()
@@ -184,7 +220,7 @@ def validate_spec(raw: Any, default_tz: str = "America/Chicago") -> Tuple[Option
     issue = problems_with_text(location)
     if issue:
         return None, issue
-    return {"kind": RESEARCH, "title": title, "topic": topic, "details": details, "repo": "", **schedule, "sources": sources, "location": location}, None
+    return {"kind": RESEARCH, "title": title, "topic": topic, "details": details, "repo": "", **schedule, "sources": sources, "location": location, "extra_topics": extra_topics}, None
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -299,7 +335,7 @@ def _ensure_indexes(db) -> None:
 def public_task(doc: Dict[str, Any], now: Optional[datetime] = None) -> Dict[str, Any]:
     """What the Tasks page is shown: the person's own words and the schedule, nothing internal."""
     return {
-        "id": doc.get("id"), "kind": doc.get("kind") or RESEARCH, "repo": doc.get("repo") or "", "title": doc.get("title"), "topic": doc.get("topic"), "details": doc.get("details") or "",
+        "id": doc.get("id"), "kind": doc.get("kind") or RESEARCH, "repo": doc.get("repo") or "", "title": doc.get("title"), "topic": doc.get("topic"), "details": doc.get("details") or "", "extra_topics": list(doc.get("extra_topics") or []),
         "cadence": doc.get("cadence"), "hour": doc.get("hour"), "weekday": doc.get("weekday"), "tz": doc.get("tz"), "sources": doc.get("sources") or [DEFAULT_SOURCE], "location": doc.get("location") or "",
         "window_hours": int(doc.get("window_hours") or 0),
         "schedule": describe_schedule(doc), "status": doc.get("status"), "paused_because": doc.get("paused_because"),
@@ -363,15 +399,15 @@ def update_task(db, username: str, task_id: str, changes: Dict[str, Any], now: O
         fields["status"] = changes["status"]
         if changes["status"] == ACTIVE:
             fields.update({"fail_streak": 0, "paused_because": None})
-    editable = {k: changes[k] for k in ("title", "topic", "details", "cadence", "hour", "weekday", "tz", "sources", "location", "repo", "window_hours") if k in changes}
+    editable = {k: changes[k] for k in ("title", "topic", "extra_topics", "details", "cadence", "hour", "weekday", "tz", "sources", "location", "repo", "window_hours") if k in changes}
     if editable:
         # The kind is never changed by an edit: a research task does not become a repository one (which would change whose key it runs on).
-        merged = {**{k: task.get(k) for k in ("kind", "title", "topic", "details", "cadence", "hour", "weekday", "tz", "sources", "location", "repo", "window_hours")}, **editable, "kind": task.get("kind") or RESEARCH}
+        merged = {**{k: task.get(k) for k in ("kind", "title", "topic", "extra_topics", "details", "cadence", "hour", "weekday", "tz", "sources", "location", "repo", "window_hours")}, **editable, "kind": task.get("kind") or RESEARCH}
         spec, issue = validate_spec(merged, task.get("tz") or "America/Chicago")
         if issue:
             return None, issue
         fields.update(spec)
-        if (spec["topic"], spec["details"], spec["location"], spec["repo"]) != (task.get("topic"), task.get("details"), task.get("location") or "", task.get("repo") or ""):
+        if (spec["topic"], spec["extra_topics"], spec["details"], spec["location"], spec["repo"]) != (task.get("topic"), list(task.get("extra_topics") or []), task.get("details"), task.get("location") or "", task.get("repo") or ""):
             fields["seen_urls"] = []              # a different question: what was shown before no longer counts as old news
             fields["last_sha"] = None
     if fields.get("status", task.get("status")) == ACTIVE and (editable or fields.get("status") == ACTIVE):
@@ -467,7 +503,7 @@ def finish_run(db, task: Dict[str, Any], result: Dict[str, Any], trigger: str, s
     run = {
         "id": uuid.uuid4().hex, "task_id": task["id"], "username": task["username"], "trigger": trigger, "status": status,
         "started_at": started, "finished_at": now, "headline": _clean(result.get("headline"), MAX_HEADLINE_CHARS),
-        "items": list(result.get("items") or [])[:MAX_ITEMS_PER_RUN],
+        "items": list(result.get("items") or [])[:MAX_ITEMS_HARD_CAP],
         # Nothing new (or a failure) has nothing to announce; only a run with items waits for the person.
         "seen": status != OK, "announced": status != OK, "expires_at": now + timedelta(days=RUN_RETENTION_DAYS),
         "reason": _clean(reason, 160),
@@ -559,7 +595,7 @@ def build_results_text(runs: List[Dict[str, Any]], titles: Dict[str, str], *, as
     lines = []
     for run in runs[:3]:
         lines.append(f"- Task \"{_flat(titles.get(run.get('task_id'), 'a task'), MAX_TITLE_CHARS)}\" found {len(run.get('items') or [])} new thing(s): {_flat(run.get('headline'), MAX_HEADLINE_CHARS)}")
-        for item in list(run.get("items") or [])[:MAX_ITEMS_PER_RUN]:
+        for item in list(run.get("items") or [])[:MAX_ITEMS_HARD_CAP]:
             lines.append(f"    * {_flat(item.get('title'), 100)} ({_flat(item.get('domain'), 60)}): {_flat(item.get('note'), MAX_NOTE_CHARS)}")
     how = (
         "They asked about their results, so tell them what these found, plainly and briefly, and that the links are on the Activities page."

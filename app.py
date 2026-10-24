@@ -3292,6 +3292,12 @@ async def retire_observation(key: str, admin = Depends(require_global_admin)):
         raise HTTPException(status_code=404, detail="No such observation.")
     return {"observations": await asyncio.to_thread(list_observations, db)}
 
+@app.get("/api/reading-shelf")
+async def get_public_reading_shelf(current_user = Depends(get_current_user)):
+    """What Sonic has read (backend/utils/reading_shelf.py public_view): the live items only, read-only, for any signed-in person. The shelf is Sonic's own, shared by everyone."""
+    return await asyncio.to_thread(shelf_utils.public_view, _admin_db())
+
+
 class ShelfRemoveRequest(BaseModel):
     block_source: bool = False
 

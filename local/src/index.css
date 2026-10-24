@@ -1319,10 +1319,25 @@ div:has(.portal-body) {
   border: none;
 }
 
-.feedback-actions .circle-icon-button:hover:not(:disabled) {
-  transform: scale(1.1);
+/* The thumbs: no filled bubble. On hover, and once chosen, only the heart's outline takes its color (the generic .circle-icon-button svg rule forces the stroke with
+   !important, so these have to match it and be more specific). */
+/* .theme-shadow .circle-icon-button:hover:not(:disabled) (below) fills the button with the accent and lifts it; these are one class more specific so they win whatever the order. */
+.feedback-actions .circle-icon-button.feedback-like:hover:not(:disabled),
+.feedback-actions .circle-icon-button.feedback-dislike:hover:not(:disabled) {
+  transform: scale(1.02);
   box-shadow: none;
+  background: none;
 }
+.feedback-actions .circle-icon-button.feedback-like:hover svg,
+.feedback-actions .circle-icon-button.feedback-like:hover svg *,
+.feedback-actions .circle-icon-button.feedback-like.active svg,
+.feedback-actions .circle-icon-button.feedback-like.active svg * { stroke: #22c55e !important; }
+.feedback-actions .circle-icon-button.feedback-dislike:hover svg,
+.feedback-actions .circle-icon-button.feedback-dislike:hover svg *,
+.feedback-actions .circle-icon-button.feedback-dislike.active svg,
+.feedback-actions .circle-icon-button.feedback-dislike.active svg * { stroke: #ef4444 !important; }
+
+
 .circle-icon-button:hover:not(:disabled) {
   transform: translateY(-2px);
   box-shadow: var(--shadow-hover);

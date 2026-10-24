@@ -10,6 +10,7 @@ import { api } from "./api";
 const SelfServicePage = lazy(() => import("./pages/SelfService").then(m => ({ default: m.SelfServicePage })));
 const TidyPage = lazy(() => import("./pages/Tidy").then(m => ({ default: m.TidyPage })));
 const MemoryPage = lazy(() => import("./pages/Memory").then(m => ({ default: m.MemoryPage })));
+const ReadingPage = lazy(() => import("./pages/Reading").then(m => ({ default: m.ReadingPage })));
 const TasksPage = lazy(() => import("./pages/Tasks").then(m => ({ default: m.TasksPage })));
 const MeetingsPage = lazy(() => import("./pages/Meetings").then(m => ({ default: m.MeetingsPage })));
 const IntegrationsPage = lazy(() => import("./pages/Integrations").then(m => ({ default: m.IntegrationsPage })));
@@ -83,6 +84,7 @@ function App() {
         <Route path="/self-service" element={<SelfServicePage />} />
         <Route path="/tidy" element={<TidyPage />} />
         <Route path="/memory" element={<MemoryPage />} />
+        <Route path="/reading" element={<ReadingPage />} />
         <Route path="/tasks" element={<TasksPage />} />
         <Route path="/meetings" element={<MeetingsPage />} />
         <Route path="/integrations" element={<IntegrationsPage />} />

@@ -483,9 +483,8 @@ const ChatMessageList = React.memo(function ChatMessageList({
                   <button
                     type="button"
                     onClick={() => handleFeedbackRef.current(msg.id, 'like')}
-                    className={`circle-icon-button ${msg.feedback === 'like' ? 'active' : ''}`}
+                    className={`circle-icon-button feedback-like ${msg.feedback === 'like' ? 'active' : ''}`}
                     title="Helpful"
-                    style={msg.feedback === 'like' ? { color: '#22c55e', borderColor: '#22c55e', background: '#22c55e' } : {}}
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
@@ -495,13 +494,12 @@ const ChatMessageList = React.memo(function ChatMessageList({
                   <button
                     type="button"
                     onClick={() => handleFeedbackRef.current(msg.id, 'dislike')}
-                    className={`circle-icon-button ${msg.feedback === 'dislike' ? 'active' : ''}`}
+                    className={`circle-icon-button feedback-dislike ${msg.feedback === 'dislike' ? 'active' : ''}`}
                     title="Not helpful"
-                    style={msg.feedback === 'dislike' ? { color: '#ef4444', borderColor: '#ef4444' } : {}}
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M12 21.23l-7.78-7.78a5.5 5.5 0 0 1 0-7.78L12 5.67l1.06-1.06a5.5 5.5 0 0 1 7.78 7.78L12 21.23z" />
-                      <path d="M12 5.67v15.56" />
+                      <path transform="translate(-2 0)" d="M12 5.67L10.94 4.61A5.5 5.5 0 0 0 3.16 12.39L4.22 13.45L12 21.23L10.8 17.5L13.2 15L11.2 12L12.8 9.5Z" />
+                      <path transform="translate(2 0)" d="M12 5.67L13.06 4.61A5.5 5.5 0 0 1 20.84 4.61A5.5 5.5 0 0 1 20.84 12.39L19.78 13.45L12 21.23L10.8 17.5L13.2 15L11.2 12L12.8 9.5Z" />
                     </svg>
                   </button>
                 </div>

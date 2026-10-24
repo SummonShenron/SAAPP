@@ -195,3 +195,14 @@
 .task-kind-label {
   font-weight: 600;
 }
+
+.task-extra-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+
+.task-extra-row .manifest-search-input { flex: 1; min-width: 0; }
+
+.task-add-search { margin-top: 0.5rem; align-self: flex-start; }

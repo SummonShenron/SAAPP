@@ -871,3 +871,35 @@ def test_the_refresh_allowance_does_not_cover_an_invented_read_or_a_named_piece(
 def test_the_chat_endpoint_passes_that_a_status_or_routines_answer_is_in_the_prompt():
     source = open("app.py", encoding="utf-8").read()
     assert "refresh_reported=bool(self_report_kind or routines_context)" in source
+
+
+# ---- the page every signed-in person can read -------------------------------------------------------------------------------------------------
+
+def test_the_public_view_has_only_live_items_and_only_the_fields_a_reader_needs():
+    db = Db()
+    stock(db, url="https://blog.example.com/a", days_ago=3, topic="security")
+    stock(db, url="https://blog.example.com/b", days_ago=1)
+    stock(db, url="https://blog.example.com/gone", days_ago=2)
+    shelf.remove_item(db, shelf.item_key("https://blog.example.com/gone"), by="admin", block_source=True, now=NOW)
+    stock(db, url="https://blog.example.com/old", days_ago=shelf.ITEM_MAX_AGE_DAYS + 5)
+    out = shelf.public_view(db, now=NOW)
+    assert [i["url"] for i in out["items"]] == ["https://blog.example.com/b", "https://blog.example.com/a"]       # newest read first; removed and expired are not shown
+    assert all(set(i) == set(shelf.PUBLIC_FIELDS) for i in out["items"])                                       # no key, offer count or removal history
+    assert out["topics"] == ["game_design", "security"]
+    assert "blocked_domains" not in out and "last_attempt_at" not in out
+
+
+def test_the_public_view_is_empty_when_offers_are_switched_off(monkeypatch):
+    db = Db()
+    stock(db, url="https://blog.example.com/a")
+    monkeypatch.setenv("SHELF_OFFERS", "false")
+    assert shelf.public_view(db, now=NOW) == {"items": [], "topics": []}
+
+
+def test_the_reading_page_is_read_only_signed_in_and_not_an_admin_route():
+    root = Path(__file__).resolve().parents[2]
+    app_source = (root / "app.py").read_text(encoding="utf-8")
+    block = app_source[app_source.index('@app.get("/api/reading-shelf")'):app_source.index("class ShelfRemoveRequest")]
+    assert "Depends(get_current_user)" in block and "require_global_admin" not in block and "public_view" in block
+    page = (root / "local/src/pages/Reading.tsx").read_text(encoding="utf-8")
+    assert "removeShelfItem" not in page and "refreshReadingShelf" not in page

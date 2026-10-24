@@ -41,3 +41,15 @@ export const KB_LABELS: Record<string, string> = {
   Affiliate_D: 'BTY Fitness',
   personal: 'Personal knowledge bases (counts only)',
 };
+
+/** The reading shelf's topics as a person would name them (the admin shelf tab and the Reading page). */
+export const SHELF_TOPIC_LABELS: Record<string, string> = {
+  bug_hunts: 'Bug hunts',
+  security: 'Security',
+  game_design: 'Game design',
+  game_lore: 'Game lore',
+  computing_history: 'Computing history',
+  ai_research: 'AI research',
+  tabletop: 'Tabletop design',
+  scifi: 'Science fiction',
+};

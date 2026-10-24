@@ -1,17 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { api, type ReadingShelf } from '../api';
-import { shortDate } from './sonicHealthFormat';
-
-const TOPIC_LABELS: Record<string, string> = {
-  bug_hunts: 'Bug hunts',
-  security: 'Security',
-  game_design: 'Game design',
-  game_lore: 'Game lore',
-  computing_history: 'Computing history',
-  ai_research: 'AI research',
-  tabletop: 'Tabletop design',
-  scifi: 'Science fiction',
-};
+import { shortDate, SHELF_TOPIC_LABELS as TOPIC_LABELS } from './sonicHealthFormat';
 
 /**
  * Sonic's reading shelf: the real pieces it has read about the topics it leans toward, which it may mention in conversation.

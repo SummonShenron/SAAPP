@@ -590,6 +590,18 @@ def admin_view(db, now: Optional[datetime] = None) -> Dict[str, Any]:
     }
 
 
+PUBLIC_FIELDS = ("url", "domain", "title", "summary", "topic", "read_at")
+
+
+def public_view(db, now: Optional[datetime] = None) -> Dict[str, Any]:
+    """What any signed-in person may see of the shelf: the live items Sonic can still mention (not expired, not removed), newest read first, and nothing else.
+    No offer counts, no removal history, no blocked sources, no refresh state: those are for the admin page. Empty when offers are switched off."""
+    if not shelf_enabled():
+        return {"items": [], "topics": []}
+    items = [{k: doc.get(k) for k in PUBLIC_FIELDS} for doc in live_items(db, now)]
+    return {"items": items, "topics": sorted({i["topic"] for i in items if i.get("topic")})}
+
+
 # ---------------------------------------------------------------------------------------------------------------
 # Choosing what to bring up in a turn
 # ---------------------------------------------------------------------------------------------------------------

@@ -63,6 +63,7 @@ const Rail: React.FC<RailProps> = (props) => {
     { path: '/self-service', label: 'Self Service', icon: 'folder', show: true },
     { path: '/tidy', label: 'Tidy up', icon: 'tidy', show: !isGuest },
     { path: '/memory', label: 'Memory', icon: 'memory', show: !isGuest },
+    { path: '/reading', label: 'Reading', icon: 'book', show: !isGuest },
     { path: '/tasks', label: 'Activities', icon: 'tasks', show: !isGuest },
     { path: '/meetings', label: 'Office Hours', icon: 'meeting', show: !isGuest },
     { path: '/integrations', label: 'Integrations', icon: 'link', show: !isGuest },

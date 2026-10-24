@@ -1148,6 +1148,19 @@ export interface ReadingShelf {
   result?: { status: 'added' | 'nothing' | 'skipped' | 'error'; topic?: string; domain?: string; reasons?: Record<string, number> };
 }
 
+/** What any signed-in person may see of Sonic's reading shelf: live items only, no admin fields. */
+export interface PublicShelfItem {
+  url: string;
+  domain: string;
+  title: string;
+  summary: string;
+  topic: string;
+  read_at: string;
+}
+
+export const getPublicReadingShelf = (): Promise<{ items: PublicShelfItem[]; topics: string[] }> =>
+  taskRequest('/api/reading-shelf', {}, 'Failed to load what Sonic has been reading.');
+
 export function getReadingShelf(): Promise<ReadingShelf> {
   return adminRequest<ReadingShelf>('/api/admin/reading-shelf', 'GET');
 }
@@ -1554,6 +1567,8 @@ export interface UserTask {
   repo: string;
   title: string;
   topic: string;
+  /** More searches this one task runs in the same run (up to 3), e.g. other job titles. */
+  extra_topics: string[];
   details: string;
   cadence: 'daily' | 'weekly';
   hour: number;
@@ -1576,6 +1591,7 @@ export interface TaskSpec {
   repo?: string;
   title: string;
   topic: string;
+  extra_topics?: string[];
   details: string;
   cadence: 'daily' | 'weekly';
   hour: number;
@@ -2178,6 +2194,7 @@ export const api = {
   approveObservation,
   retireObservation,
   runObservationReflection,
+  getPublicReadingShelf,
   getReadingShelf,
   removeShelfItem,
   unblockShelfSource,

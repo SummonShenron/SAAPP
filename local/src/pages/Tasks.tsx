@@ -23,6 +23,7 @@ const KIND_CHOICES: { kind: TaskKind; label: string; blurb: string }[] = [
   { kind: 'code_audit', label: 'Audit my code', blurb: 'Scans your repository for security problems and risky code, and tells you what is worth a look.' },
 ];
 const REPO_KINDS: TaskKind[] = ['pr_review', 'code_audit'];
+const MAX_EXTRA_SEARCHES = 3;
 const REPO_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,38}\/[A-Za-z0-9_.-]{1,100}$/;
 
 function hourLabel(hour: number): string {
@@ -65,7 +66,11 @@ export const TasksPage: React.FC = () => {
   const [error, setError] = useState('');
   const [wizard, setWizard] = useState<number>(0); // 0 closed, 1 kind, 2 what, 3 when, 4 review
   const [draft, setDraft] = useState<TaskSpec>(EMPTY_DRAFT);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const wizardRef = useRef<HTMLElement | null>(null);
   const isRepo = REPO_KINDS.includes(draft.kind ?? 'research');
+  const extras = draft.extra_topics ?? [];
+  const extrasOk = extras.every(t => !t.trim() || t.trim().length >= 4);
   const [creating, setCreating] = useState(false);
   const [wizardError, setWizardError] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
@@ -171,20 +176,51 @@ export const TasksPage: React.FC = () => {
     }
   };
 
-  const openWizard = () => { setDraft(EMPTY_DRAFT); setWizardError(''); setWizard(1); };
-  const closeWizard = () => { setWizard(0); setWizardError(''); };
+  const openWizard = () => { setDraft(EMPTY_DRAFT); setWizardError(''); setEditingId(null); setWizard(1); };
+  const closeWizard = () => { setWizard(0); setWizardError(''); setEditingId(null); };
+
+  // The form opens below the list, so bring it into view when an Edit button far above it opens it.
+  useEffect(() => {
+    if (editingId) wizardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [editingId]);
+
+  const openEdit = (task: UserTask) => {
+    setDraft({
+      ...EMPTY_DRAFT,
+      kind: task.kind,
+      title: task.title ?? '',
+      topic: task.topic ?? '',
+      extra_topics: task.extra_topics ?? [],
+      details: task.details ?? '',
+      cadence: task.cadence,
+      hour: task.hour,
+      weekday: task.weekday ?? 0,
+      window_hours: task.window_hours ?? 0,
+      sources: task.sources ?? ['web'],
+      location: task.location ?? '',
+      repo: task.repo ?? '',
+    });
+    setEditingId(task.id);
+    setWizardError('');
+    setWizard(2);
+  };
 
   const handleCreate = async () => {
     setCreating(true);
     setWizardError('');
     try {
-      await api.createTask(isRepo
+      const spec: TaskSpec = isRepo
         ? { ...draft, repo: (draft.repo ?? '').trim(), title: draft.title.trim(), cadence: draft.kind === 'code_audit' ? 'weekly' : draft.cadence }
-        : { ...draft, title: draft.title.trim() || draft.topic.trim().slice(0, 60) });
+        : { ...draft, title: draft.title.trim() || draft.topic.trim().slice(0, 60), extra_topics: extras.map(t => t.trim()).filter(Boolean) };
+      if (editingId) {
+        await api.updateTask(editingId, spec);
+      } else {
+        await api.createTask(spec);
+      }
       closeWizard();
       await reload();
     } catch (err) {
-      setWizardError(err instanceof Error ? err.message : 'Failed to create that task.');
+      setWizardError(err instanceof Error ? err.message : editingId ? 'Failed to save those changes.' : 'Failed to create that task.');
     } finally {
       setCreating(false);
     }
@@ -241,7 +277,7 @@ export const TasksPage: React.FC = () => {
                       </>
                     ) : (
                       <>
-                        <div className="task-meta">{task.topic}{task.details ? ` · ${task.details}` : ''}{task.location ? ` · near ${task.location}` : ''}</div>
+                        <div className="task-meta">{[task.topic, ...(task.extra_topics ?? [])].join('; ')}{task.details ? ` · ${task.details}` : ''}{task.location ? ` · near ${task.location}` : ''}</div>
                         <div className="task-meta">Looks at: {task.sources.map(source => labels[source] ?? source).join(', ')}</div>
                       </>
                     )}
@@ -257,6 +293,7 @@ export const TasksPage: React.FC = () => {
                     <button type="button" className="memory-edit-cancel" disabled={busyId === task.id} onClick={() => handleToggle(task)}>
                       {task.status === 'active' ? 'Pause' : 'Resume'}
                     </button>
+                    <button type="button" className="memory-edit-cancel" disabled={busyId === task.id} onClick={() => openEdit(task)}>Edit</button>
                     <button type="button" className="delete-row-btn" disabled={busyId === task.id} onClick={() => handleDelete(task)}>Delete</button>
                   </div>
                 </div>
@@ -311,9 +348,9 @@ export const TasksPage: React.FC = () => {
         </section>
 
         {wizard > 0 && (
-          <section className="service-card memory-card">
+          <section className="service-card memory-card" ref={wizardRef}>
             <div className="card-badge">STEP {wizard} OF 4</div>
-            <h2>New Task</h2>
+            <h2>{editingId ? 'Edit Task' : 'New Task'}</h2>
 
             {wizard === 1 && (
               <div className="task-form">
@@ -360,6 +397,18 @@ export const TasksPage: React.FC = () => {
                 <label className="task-label" htmlFor="task-topic">What should Sonic look for?</label>
                 <input id="task-topic" className="manifest-search-input" type="text" maxLength={160} autoFocus value={draft.topic}
                   placeholder="e.g. new remote Python developer jobs" onChange={e => patch({ topic: e.target.value })} />
+                {extras.map((extra, index) => (
+                  <div key={index} className="task-extra-row">
+                    <input className="manifest-search-input" type="text" maxLength={160} value={extra} aria-label={`Another search ${index + 1}`}
+                      placeholder="e.g. forward deployed engineer" onChange={e => patch({ extra_topics: extras.map((t, i) => (i === index ? e.target.value : t)) })} />
+                    <button type="button" className="memory-edit-cancel" aria-label={`Remove search ${index + 1}`}
+                      onClick={() => patch({ extra_topics: extras.filter((_, i) => i !== index) })}>Remove</button>
+                  </div>
+                ))}
+                {extras.length < MAX_EXTRA_SEARCHES && (
+                  <button type="button" className="memory-edit-cancel task-add-search" onClick={() => patch({ extra_topics: [...extras, ''] })}>+ Add another search</button>
+                )}
+                {extras.length > 0 && <div className="memory-edit-hint">Each search runs in the same run and counts as this one task, so a job hunt for several titles needs only one.</div>}
                 <label className="task-label" htmlFor="task-details">Anything to narrow it down? <span className="task-optional">optional</span></label>
                 <input id="task-details" className="manifest-search-input" type="text" maxLength={240} value={draft.details}
                   placeholder="e.g. senior roles only, no contract work" onChange={e => patch({ details: e.target.value })} />
@@ -431,7 +480,7 @@ export const TasksPage: React.FC = () => {
                     </>
                   ) : (
                     <>
-                      <div><strong>Looking for:</strong> {draft.topic}</div>
+                      <div><strong>Looking for:</strong> {[draft.topic, ...extras.map(t => t.trim()).filter(Boolean)].join('; ')}</div>
                       {draft.details && <div><strong>Narrowed by:</strong> {draft.details}</div>}
                     </>
                   )}
@@ -449,15 +498,15 @@ export const TasksPage: React.FC = () => {
 
             {wizardError && <div className="memory-edit-error" role="alert">{wizardError}</div>}
             <div className="memory-edit-row task-wizard-nav">
-              <button type="button" className="memory-edit-cancel" onClick={wizard === 1 ? closeWizard : () => setWizard(wizard - 1)} disabled={creating}>
-                {wizard === 1 ? 'Cancel' : 'Back'}
+              <button type="button" className="memory-edit-cancel" onClick={wizard === 1 || (editingId && wizard === 2) ? closeWizard : () => setWizard(wizard - 1)} disabled={creating}>
+                {wizard === 1 || (editingId && wizard === 2) ? 'Cancel' : 'Back'}
               </button>
               {wizard < 4 ? (
                 <button type="button" className="memory-edit-save"
-                  disabled={wizard === 2 && (isRepo ? !repoOk || !githubConnected : draft.topic.trim().length < 4) || wizard === 3 && !isRepo && draft.sources.length === 0}
+                  disabled={wizard === 2 && (isRepo ? !repoOk || !githubConnected : draft.topic.trim().length < 4 || !extrasOk) || wizard === 3 && !isRepo && draft.sources.length === 0}
                   onClick={() => setWizard(wizard + 1)}>Next</button>
               ) : (
-                <button type="button" className="memory-edit-save" disabled={creating} onClick={handleCreate}>{creating ? 'Creating...' : 'Create task'}</button>
+                <button type="button" className="memory-edit-save" disabled={creating} onClick={handleCreate}>{creating ? (editingId ? 'Saving...' : 'Creating...') : (editingId ? 'Save changes' : 'Create task')}</button>
               )}
             </div>
           </section>
