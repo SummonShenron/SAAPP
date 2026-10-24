@@ -3,7 +3,7 @@ import type { ApplyResult, UndoResult } from '../localEdits';
 import type { EditProposal } from '../localEditsCore';
 import './__styles__/LocalEditCard.css';
 
-type Phase = 'pending' | 'applying' | 'applied' | 'undoing' | 'undone';
+type Phase = 'pending' | 'applying' | 'applied' | 'undoing' | 'undone' | 'declined';
 
 interface LocalEditCardProps {
   proposal: EditProposal;
@@ -11,6 +11,8 @@ interface LocalEditCardProps {
   canApply: boolean;
   onApply: (proposal: EditProposal) => Promise<ApplyResult>;
   onUndo: (proposalId: string) => Promise<UndoResult>;
+  /** Reports Apply (after the files were written) or Decline to the turn that is waiting on this proposal. */
+  onDecision?: (proposalId: string, outcome: 'applied' | 'declined', reason: string) => void;
 }
 
 function diffLineClass(line: string): string {
@@ -25,8 +27,10 @@ function diffLineClass(line: string): string {
  * A change Sonic proposes to the user's connected local folder, shown as a diff. Nothing is
  * written until Apply is pressed, and an applied change can be undone in one click.
  */
-export default function LocalEditCard({ proposal, canApply, onApply, onUndo }: LocalEditCardProps) {
+export default function LocalEditCard({ proposal, canApply, onApply, onUndo, onDecision }: LocalEditCardProps) {
   const [phase, setPhase] = useState<Phase>('pending');
+  const [declining, setDeclining] = useState(false);
+  const [reason, setReason] = useState('');
   const [errors, setErrors] = useState<string[]>([]);
   const [openFiles, setOpenFiles] = useState<Set<string>>(() => new Set(proposal.files.map(f => f.path)));
 
@@ -39,10 +43,17 @@ export default function LocalEditCard({ proposal, canApply, onApply, onUndo }: L
     const result = await onApply(proposal);
     if (result.ok) {
       setPhase('applied');
+      if (proposal.awaiting) onDecision?.(proposal.proposal_id, 'applied', '');
     } else {
       setErrors(result.errors);
       setPhase('pending');
     }
+  };
+
+  const decline = () => {
+    setPhase('declined');
+    setDeclining(false);
+    if (proposal.awaiting) onDecision?.(proposal.proposal_id, 'declined', reason.trim());
   };
 
   const undo = async () => {
@@ -119,9 +130,22 @@ export default function LocalEditCard({ proposal, canApply, onApply, onUndo }: L
             <button type="button" className="led-btn led-btn-primary" onClick={apply} disabled={phase === 'applying' || !canApply}>
               {phase === 'applying' ? 'Applying…' : 'Apply changes'}
             </button>
+            {proposal.awaiting && phase === 'pending' && !declining && (
+              <button type="button" className="led-btn" onClick={() => setDeclining(true)}>Decline</button>
+            )}
             {!canApply && <span className="led-note">Connect your local folder (… menu) to apply these.</span>}
           </>
         )}
+        {phase === 'pending' && declining && (
+          <>
+            <input className="led-reason" type="text" maxLength={300} autoFocus value={reason} aria-label="Why decline? (optional)"
+              placeholder="Why? (optional) Sonic will adjust" onChange={e => setReason(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') decline(); }} />
+            <button type="button" className="led-btn" onClick={decline}>Decline</button>
+            <button type="button" className="led-btn" onClick={() => setDeclining(false)}>Back</button>
+          </>
+        )}
+        {phase === 'declined' && <span className="led-note">Declined. Nothing was changed{proposal.awaiting ? '; Sonic will carry on from that.' : '.'}</span>}
         {(phase === 'applied' || phase === 'undoing') && (
           <>
             <span className="led-note led-ok">Applied to your folder.</span>

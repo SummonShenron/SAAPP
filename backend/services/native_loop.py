@@ -43,7 +43,42 @@ from backend.utils.agent_utils import _UnsafeActionRequested, build_tool_facts, 
 
 logger = logging.getLogger("SASS Logger")
 
-MAX_STEPS = int(os.getenv("TOOL_AGENT_NATIVE_MAX_STEPS", "8"))
+# The most tool steps this engine will ever run. It is a ceiling, not a budget: the budget is what the turn asks for (TOOL_AGENT_MAX_ITERATIONS and the deep one), cut to this. It was 8
+# while the engine was a spike, which silently cut a deep budget of 12 or 14 to 8.
+MAX_STEPS = int(os.getenv("TOOL_AGENT_NATIVE_MAX_STEPS", "12"))
+# CHECKPOINTS. A long budget is split in three: after a third and two thirds of the tool steps the model is stopped and asked to decide, answer now or say what it still has to do
+# (continue_working). Answering is the default and continuing has to be justified, which is what keeps a long budget from being spent reading. The best answer so far is kept
+# like a draft, shown back to be checked against what was read, and returned if the turn runs out. On a change to a connected folder the finish line is the proposal, not an answer,
+# so there the choice is propose_local_edits or continue_working. Off with TOOL_AGENT_CHECKPOINTS=off (to compare); only for budgets of at least CHECKPOINT_MIN_STEPS tool steps.
+CHECKPOINT_MIN_STEPS = int(os.getenv("TOOL_AGENT_CHECKPOINT_MIN_STEPS", "9"))
+CONTINUE_TOOL = {
+    "name": "continue_working",
+    "description": "Keep working instead of answering now. Give one line on what you still have to read, check or do. Use it only for something specific you can name.",
+    "parameters": {"type": "object", "properties": {"reason": {"type": "string", "description": "what you still have to read, check or do, in one line"}}, "required": ["reason"]},
+}
+CHECKPOINT_NOTICE = (
+    "CHECKPOINT: you have used {used} of {total} tool steps. Decide now. If what you have read is enough, write your final answer now, in full (for a request to change code, the "
+    "complete change). If something specific still has to be read or checked, call continue_working with one line on what, and put your best answer so far in the same reply "
+    "(for a request to change code, the complete draft) so it can be checked against the files you read. Prefer answering: more reading is only worth it for something you can name."
+)
+EDIT_CHECKPOINT_NOTICE = (
+    "CHECKPOINT: you have used {used} of {total} tool steps, and this request is a change to the person's folder, so the way to finish is propose_local_edits. Decide now. If you have "
+    "read enough to write the change, call propose_local_edits with every edit (copy each old_string exactly as you read it). If something specific still has to be read first, call "
+    "continue_working with one line on what. Prefer proposing: more reading is only worth it for something you can name."
+)
+MAX_CHECKPOINT_REASON = 200
+
+
+def checkpoints_enabled() -> bool:
+    return os.getenv("TOOL_AGENT_CHECKPOINTS", "on").strip().lower() not in ("0", "false", "no", "off")
+
+
+def checkpoint_after(budget: int) -> tuple:
+    """The number of completed tool steps after which the model is asked to decide: a third and two thirds of the budget (4 and 8 of 12), or none for a short budget. Pure."""
+    if not checkpoints_enabled() or budget < max(CHECKPOINT_MIN_STEPS, 3):
+        return ()
+    interval = budget // 3
+    return (interval, 2 * interval)
 MAX_REPEATS = 3
 MAX_OBSERVATION_CHARS = 6000
 # OLDER RESULTS ARE SHORTENED. Every step re-sends the whole conversation, so a big result (a file read is up to 6,000 characters) is paid
@@ -81,7 +116,7 @@ _REPO_TOOLS = frozenset({"read_repo_file", "search_code", "search_literal", "fin
 # Added to the system prompt only when propose_local_edits is among the tools (a local folder is connected): the person's own files can be changed, by proposal.
 EDIT_PROMPT = """
 
-- A local folder is connected, so you CAN change the person's files, by proposal: when they ask you to make, apply, add, fix or change something in it, read what you need, then call propose_local_edits. They see a diff with an Apply button, which is their confirmation. Never paste code for them to apply themselves, never ask "would you like me to apply this?" in chat, and never say it has been applied: it has not until they press Apply. This replaces the earlier line saying you cannot change anything, and the one about giving code in your answer."""
+- A local folder is connected, so you CAN change the person's files, by proposal: when they ask you to make, apply, add, fix or change something in it, read what you need, then call propose_local_edits. They see a diff with Apply and Decline buttons, which is their confirmation, and the call returns what they decided: APPLIED (the files now contain the change: you can read them to check it, propose a follow-up, or finish), DECLINED (nothing changed: adjust to their reason or ask what they would prefer, and do not propose the same change again), or NO DECISION (nothing changed: say so and stop). On an older page it returns only that the diff was shown. Never paste code for them to apply themselves, never ask "would you like me to apply this?" in chat, and say a change was applied only when a result says APPLIED. This replaces the earlier line saying you cannot change anything, and the one about giving code in your answer."""
 
 STEERING_NOTICE = (
     "USER STEERING: the user sent the following while you were already working on this. It updates the task. Where it conflicts with "
@@ -251,6 +286,9 @@ async def run(
     repeats = 0
     final_text: Optional[str] = None
     forced = False
+    nudged = False        # the halfway nudge was shown (counted per turn, backend/utils/llm_turns.py)
+    checkpoints = checkpoint_after(budget)
+    checkpoints_done: set = set()
 
     async def absorb_steering(step_number: int) -> bool:
         """Folds newly arrived steering into the conversation as a user message and widens the budget. True when there was any."""
@@ -342,6 +380,72 @@ async def run(
 
     required_rejections = 0
 
+    async def execute_calls(step_number: int, calls: List[Dict[str, Any]]) -> List[str]:
+        """Runs one step's tool calls together and puts each result into the conversation, the receipt and the held results. Returns the results in order."""
+        results = await asyncio.gather(*(run_call(step_number, call) for call in calls))
+        for index, (call, result) in enumerate(zip(calls, results)):
+            args = call.get("args") if isinstance(call.get("args"), dict) else {}
+            if call.get("name") != "save_draft":      # keeping a draft is not a step worth listing in the receipt
+                attempts.append({"purpose": f"Run {call.get('name')}", "action_desc": _describe(str(call.get("name")), args), "observation": result})
+            clipped = _clip(result)
+            message = ToolMessage(content=clipped, tool_call_id=str(call.get("id") or f"call_{step_number}_{index}"), name=str(call.get("name")))
+            messages.append(message)
+            held.append({"message": message, "step": step_number, "text": clipped, "done": False, "key": f"{call.get('name')}|{json.dumps(args, sort_keys=True, default=str)}"})
+        return list(results)
+
+    async def run_checkpoint(used: int) -> str:
+        """Stops the loop after `used` tool steps and asks for a decision. Returns "answered" (final_text is set), "acted" (on a change to a folder it made the proposal, which took
+        this step), "continue" or "steered" (the person redirected the work meanwhile; the decision is dropped). On "continue" the checkpoint messages are removed from the
+        conversation and replaced by one short note, with the best answer so far shown back."""
+        nonlocal final_text, latest_draft
+        from backend.utils import llm_turns
+
+        can_propose = bool(required_action)                  # a folder is connected and a change was asked for: the proposal tool is part of the choice, before and after the first one
+        edit_turn = can_propose and not required_done()      # ... and until a proposal succeeds it is the way to finish
+        tool_name = (required_action or {}).get("tool_action") or ""
+        offered_here = [CONTINUE_TOOL] + ([t for t in tools if t.get("name") == tool_name] if can_propose else [])
+        mark = len(messages)
+        messages.append(HumanMessage(content=(EDIT_CHECKPOINT_NOTICE if edit_turn else CHECKPOINT_NOTICE).format(used=used, total=budget)))
+        reply = await llm.ainvoke_tools(messages, offered_here)
+        text = _text(getattr(reply, "content", ""))
+        calls = [call for call in (getattr(reply, "tool_calls", None) or []) if call.get("name")]
+        if await absorb_steering(used + 1):
+            del messages[mark:]
+            return "steered"
+        proposals = [call for call in calls if can_propose and call.get("name") == tool_name]
+        if proposals:
+            # It made the proposal: that is this step. Only the proposal stays in the reply (every call in a kept reply needs a result), then it runs like any step.
+            del messages[mark:]          # the question itself does not stay in the conversation
+            messages.append(reply.model_copy(update={"tool_calls": proposals}) if hasattr(reply, "model_copy") else reply)
+            await execute_calls(used + 1, proposals)
+            llm_turns.note_checkpoint(False, acted=True)
+            logger.info("[native_loop] checkpoint after %d step(s): made the proposal.", used)
+            return "acted"
+        if not calls and text and not edit_turn:
+            messages.append(reply)
+            final_text = text
+            llm_turns.note_checkpoint(True)
+            logger.info("[native_loop] checkpoint after %d step(s): answered.", used)
+            return "answered"
+        del messages[mark:]
+        args = calls[0].get("args") if calls and isinstance(calls[0].get("args"), dict) else {}
+        reason = " ".join(str(args.get("reason") or "").split())[:MAX_CHECKPOINT_REASON]
+        interim = draft_checkpoint.take_draft(text) if len(text) >= 40 else None
+        if interim:
+            latest_draft = interim
+        messages.append(HumanMessage(content=(
+            f"CHECKPOINT: you chose to keep working{' on: ' + reason if reason else ''}. {budget - used} tool step(s) remain. Use them to check your work against what you read and to act on it; "
+            "read only what you can name, and answer as soon as you can." + draft_checkpoint.draft_block(latest_draft, how="fix it in your answer")
+        )))
+        llm_turns.note_checkpoint(False)
+        logger.info("[native_loop] checkpoint after %d step(s): continuing.", used)
+        if emit is not None:
+            try:
+                await emit("Checkpoint: keeping going", reason or "to check the work")
+            except Exception:
+                logger.debug("[native_loop] could not emit a checkpoint step.", exc_info=True)
+        return "continue"
+
     def required_done() -> bool:
         """The required tool (propose_local_edits on a change request) has been called and did not come back as an error."""
         tool = (required_action or {}).get("tool_action") or ""
@@ -365,10 +469,20 @@ async def run(
         ):
             told_at.add(f"nudge{step}")
             messages.append(HumanMessage(content=required_action["nudge"]))
+        # A checkpoint (after a third and two thirds of a long budget): answer, or say what is still to do. Once each; it replaces the halfway nudge below.
+        if checkpoints and (step - 1) in checkpoints and (step - 1) not in checkpoints_done and attempts:
+            checkpoints_done.add(step - 1)
+            outcome = await run_checkpoint(step - 1)
+            if outcome == "answered":
+                step -= 1      # the step it was about to take was never taken
+                break
+            if outcome in ("steered", "acted"):
+                continue       # steered: decide again with the new instructions; acted: the proposal was this step
         # Half-way through the steps with reading done and no draft: ask for one (once; a steer that discards a decision must not repeat it).
-        nudge = draft_checkpoint.halfway_notice(step - 1, budget + 1, len(attempts), bool(latest_draft), False, how="by calling save_draft in this step") if "save_draft" in offered else None
+        nudge = draft_checkpoint.halfway_notice(step - 1, budget + 1, len(attempts), bool(latest_draft), False, how="by calling save_draft in this step") if "save_draft" in offered and not checkpoints else None
         if nudge and "halfway" not in told_at:
             told_at.add("halfway")
+            nudged = True
             messages.append(HumanMessage(content=nudge.strip()))
         reply = await llm.ainvoke_tools(messages, tools)
         if await absorb_steering(step):
@@ -387,15 +501,7 @@ async def run(
                 continue
             final_text = _text(getattr(reply, "content", ""))
             break
-        results = await asyncio.gather(*(run_call(step, call) for call in calls))
-        for index, (call, result) in enumerate(zip(calls, results)):
-            args = call.get("args") if isinstance(call.get("args"), dict) else {}
-            if call.get("name") != "save_draft":      # keeping a draft is not a step worth listing in the receipt
-                attempts.append({"purpose": f"Run {call.get('name')}", "action_desc": _describe(str(call.get("name")), args), "observation": result})
-            clipped = _clip(result)
-            message = ToolMessage(content=clipped, tool_call_id=str(call.get("id") or f"call_{step}_{index}"), name=str(call.get("name")))
-            messages.append(message)
-            held.append({"message": message, "step": step, "text": clipped, "done": False, "key": f"{call.get('name')}|{json.dumps(args, sort_keys=True, default=str)}"})
+        results = await execute_calls(step, calls)
         if library_allowance is not None:
             # A listing of a long library adds the read steps it needs, once (backend/utils/library_allowance.py): the tool steps left AFTER this one (this loop's answer is an extra call, so none is kept back).
             for call, result in zip(calls, results):
@@ -418,7 +524,7 @@ async def run(
     # Counted per turn (backend/utils/llm_turns.py): how many steps the loop used, and whether it ended without deciding to answer (the limit, or repeating itself).
     from backend.utils import llm_turns
 
-    llm_turns.note_tool_loop(step, forced)
+    llm_turns.note_tool_loop(step, forced, tool_steps=budget, had_draft=bool(latest_draft), nudged=nudged)
     return {
         "final_answer": final_text or "I couldn't complete that request.",
         "attempts": attempts,

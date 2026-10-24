@@ -188,7 +188,7 @@ NATIVE_DESCRIPTIONS: Dict[str, str] = {
         "document (headings, paragraphs, bullets, numbered lists, tables; pick a name that does not exist); {path 'Existing.docx', word_edits, save_as} changes an existing Word "
         "document by the paragraph numbers read_repo_file showed, saved as a NEW copy beside the original, which is never changed (paragraphs marked * cannot be edited, ~ cannot be "
         "deleted, ! cannot have one inserted after). Propose every edit for the request in ONE call. If it returns an error, fix the edits it names and call it again with the complete "
-        "corrected list. Afterwards give a short answer on what you proposed and why: do not repeat the code and do not say it was applied, because it is not until they press Apply."
+        "corrected list. The call returns what the person decided: APPLIED (the files now contain it; read them to check, propose a follow-up, or finish), DECLINED (nothing changed; adjust to their reason, do not repeat the same proposal) or NO DECISION (nothing changed; say so and stop). Say a change was applied only when the result says APPLIED. Finish with a short answer on what changed and why: do not repeat the code."
     ),
 }
 

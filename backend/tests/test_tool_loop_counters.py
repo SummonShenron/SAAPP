@@ -112,10 +112,51 @@ def test_the_react_loop_reports_an_early_answer_and_a_run_into_the_limit():
 
 def test_the_native_loop_reports_its_steps_and_whether_it_was_forced():
     source = open(os.path.join(REPO, "backend", "services", "native_loop.py"), encoding="utf-8").read()
-    assert "llm_turns.note_tool_loop(step, forced)" in source and source.index("note_tool_loop") < source.index('"final_answer": final_text or')
+    assert "llm_turns.note_tool_loop(step, forced, tool_steps=budget, had_draft=bool(latest_draft), nudged=nudged)" in source and source.index("note_tool_loop") < source.index('"final_answer": final_text or')
 
 
 def test_nothing_in_the_counters_is_text_and_the_page_has_a_row_for_them():
     assert all(isinstance(name, str) and name.replace("_", "").isalnum() for name in lt.LOOP_FIELDS + lt.STEP_BUCKETS)
     page = open(os.path.join(REPO, "local", "src", "pages", "SonicHealth.tsx"), encoding="utf-8").read()
     assert "Does the step limit matter?" in page and "STEP_BUCKET_LABELS" in page
+
+
+# ---- how a turn ended: early, late, or at the last step with or without a draft --------------------------------------------------------------
+
+def _finish_exit(steps, hit_cap, tool_steps, had_draft=False, nudged=False, day="2026-10-24"):
+    lt.reset()
+    turn = lt.begin("jack")
+    turn.tool_agent = True
+    token = lt._current.set(turn)
+    try:
+        lt.note_tool_loop(steps, hit_cap, tool_steps=tool_steps, had_draft=had_draft, nudged=nudged)
+    finally:
+        lt._current.reset(token)
+    lt.finish(turn, day=day)
+    return lt.snapshot()[day]
+
+
+def test_a_loop_is_classified_by_when_it_ended_and_what_it_had_written():
+    assert lt.exit_kind(3, False, 11, False) == "early" and lt.exit_kind(5, False, 11, False) == "early" and lt.exit_kind(6, False, 11, False) == "late"
+    assert lt.exit_kind(12, True, 11, True) == "cap_draft" and lt.exit_kind(12, True, 11, False) == "cap_no_draft"
+    assert lt.exit_kind(1, False, 1, False) == "early" and lt.exit_kind(2, False, None, False) == "" and lt.exit_kind(2, False, 0, False) == ""
+
+
+def test_each_kind_of_ending_is_counted_once_per_turn_and_the_nudge_is_counted_with_whether_a_draft_followed():
+    assert _finish_exit(2, False, 7)["exit_early_turns"] == 1
+    assert _finish_exit(6, False, 7)["exit_late_turns"] == 1
+    capped = _finish_exit(8, True, 7, had_draft=True, nudged=True)
+    assert capped["cap_draft_turns"] == 1 and capped["cap_hit_turns"] == 1 and capped["nudge_turns"] == 1 and capped["nudge_draft_turns"] == 1
+    bare = _finish_exit(8, True, 7, had_draft=False, nudged=True)
+    assert bare["cap_no_draft_turns"] == 1 and bare["nudge_turns"] == 1 and bare["nudge_draft_turns"] == 0
+    assert _finish_exit(2, False, 7)["nudge_turns"] == 0
+
+
+def test_the_summary_and_the_health_page_show_how_turns_ended():
+    docs = [{"loop_turns": 5, "loop_steps": 30, "exit_early_turns": 2, "exit_late_turns": 1, "cap_draft_turns": 1, "cap_no_draft_turns": 1, "nudge_turns": 3, "nudge_draft_turns": 2}]
+    loop = lt.summarize_turns(docs)["loop"]
+    assert loop["exits"] == {"early": 2, "late": 1, "cap_draft": 1, "cap_no_draft": 1} and loop["nudged"] == 3 and loop["nudged_drafted"] == 2
+    page = open(os.path.join(REPO, "local", "src", "pages", "SonicHealth.tsx"), encoding="utf-8").read()
+    assert "ran out of steps with nothing written" in page and "turns shown the halfway nudge that then had a draft" in page
+    react = open(os.path.join(REPO, "backend", "services", "react_loop.py"), encoding="utf-8").read()
+    assert "tool_steps=max(budget - 1, 1), had_draft=bool(latest_draft), nudged=nudged" in react

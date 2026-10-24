@@ -229,6 +229,48 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "relevant_findings",
+        "requires": [
+            "backend/utils/relevant_findings.py::def select",
+            "app.py::relevant_findings.select",
+        ],
+        "month": "2026-10",
+        "title": "Connecting what you say to what I've read",
+        "line": (
+            "When what you say overlaps with something I've really read, I can now bring it up in the same reply, with the link, instead of waiting for a quiet moment."
+        ),
+        "keywords": ["reminds me", "relate", "reading", "read about", "article", "come across", "brought up", "relevant", "connect"],
+        "volunteer": [],
+    },
+    {
+        "id": "edit_decisions",
+        "requires": [
+            "backend/services/local_edit_decisions.py::async def wait_for",
+            "app.py::local_edit_decisions.decide",
+        ],
+        "month": "2026-10",
+        "title": "Carrying on after you apply or decline an edit",
+        "line": (
+            "When I propose a change to your folder I now wait for you to apply or decline it, then carry on in the same reply: I can check the result, fix it, or adjust to why you said no."
+        ),
+        "keywords": ["apply", "decline", "approve", "reject", "edit", "proposal", "local folder", "carry on", "keep working", "diff"],
+        "volunteer": [],
+    },
+    {
+        "id": "meeting_coaching",
+        "requires": [
+            "backend/utils/meetings.py::def coaching_signals",
+            "backend/utils/meetings.py::def build_coaching_text",
+        ],
+        "month": "2026-10",
+        "title": "Coaching in office hours",
+        "line": (
+            "You can set a meeting to balanced or challenging, and I'll raise things your own notes show, like an item that keeps carrying over, and offer a small next step."
+        ),
+        "keywords": ["coaching", "challenge me", "push me", "feedback", "hold me accountable", "accountability", "office hours", "next step", "carried over"],
+        "volunteer": [],
+    },
+    {
         "id": "progress_notes",
         "requires": [
             "backend/utils/progress_notes.py::def add_note",

@@ -153,6 +153,33 @@ def slot_open(
     return user_turns(messages) >= min_turns and not already_offered(messages)
 
 
+FINDING_MIN_CHARS = 30      # a message shorter than this has too little in it to match on meaning
+FINDING_MAX_CHARS = 600     # only the start of a long message is matched when this module has to embed it itself
+FINDING_SKIP_CHARS = 1500   # a message this long is a paste (a file, a log, a diff), which says little about what the person means
+
+
+def finding_slot_open(
+    user_message: str,
+    messages: List[Any],
+    *,
+    source_type: str,
+    risk_active: bool,
+    energy_tier: str,
+    proactive_taken: bool,
+) -> bool:
+    """The free gates for a relevant finding (a shelf item whose meaning overlaps what the person just said, backend/utils/relevant_findings.py). Like slot_open, but it works on
+    a substantive message and NOT only at a lull, it is not limited to one per conversation (relevance, a daily limit and the per-person gap limit it instead), and it never
+    follows a reply that ended on a question of Sonic's own, because then the message is an answer."""
+    if not curiosity_enabled() or source_type not in _ROUTES:
+        return False
+    if risk_active or energy_tier != "open" or proactive_taken or is_closing_message(user_message) or is_lull(user_message):
+        return False
+    text = (user_message or "").strip()
+    if len(text) < FINDING_MIN_CHARS or len(text) > FINDING_SKIP_CHARS or "```" in text:
+        return False
+    return user_turns(messages) >= 2 and not last_reply_asked(messages)
+
+
 def curiosity_allowed(
     user_message: str,
     messages: List[Any],

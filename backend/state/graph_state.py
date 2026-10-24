@@ -66,6 +66,7 @@ class GraphState(TypedDict):
     memory_hits: Optional[List[Any]]              # Semantic memory documents retrieved this turn
     rag_mode: Optional[str]                       # "strict" (default) or "open"
     deep_thinking: Optional[bool]                 # raises tool_agent_node's step cap + retry-nudge budget
+    edit_decisions: Optional[bool]                # the page reports Apply / Decline on a proposed folder change, so the native tool loop may wait for it and continue
     tool_model: Optional[str]                     # "claude" | "gemini": the person's choice for the tool agent's reasoning steps; None = the server's default
     budget_level: Optional[str]                   # the usage budget guard's level this turn (backend/utils/budget_guard.py)
     insight_answer: Optional[str]                 # Woven into CONVERSATIONAL_PROMPT's {insight} slot

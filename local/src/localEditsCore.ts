@@ -31,6 +31,8 @@ export interface EditProposalFile {
 
 export interface EditProposal {
   proposal_id: string;
+  /** Sonic is waiting for Apply or Decline on this one and will carry on with the answer. */
+  awaiting?: boolean;
   summary: string;
   folder: string;
   files: EditProposalFile[];

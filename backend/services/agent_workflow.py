@@ -49,7 +49,8 @@ from backend.utils.safety_utils import (
     detect_risk_language, normalize_risk, normalize_support, merge_safety_state, effective_risk, log_safety_event,
     remember_support, RISK_NONE, KIND_LADDER_ANSWER, _ORDER as _RISK_ORDER,
 )
-from backend.services.local_workspace import get_workspace_handle, is_guest_username, workspace_status
+from backend.services import local_edit_decisions
+from backend.services.local_workspace import apply_sync as apply_workspace_sync, get_workspace_handle, is_guest_username, workspace_status
 from backend.services.local_edits import validate_edit_proposal
 from backend.services.memory_search import embed_and_store_memory_chunk, recall_explicit
 from backend.services.tool_agent_memory import MemoryTurnGuard, build_user_memory_block
@@ -3045,18 +3046,75 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                     + "\n- ".join(result["errors"])
                     + "\nFix them and call propose_local_edits again with the complete corrected list."
                 )
+            proposal_id = uuid.uuid4().hex
+            # The native loop waits here for the person's decision and carries on with it; the page says it can report one (edit_decisions). Anything else ends the turn with the
+            # card, as it always did.
+            waiting = bool(state.get("edit_decisions")) and use_native and local_edit_decisions.enabled()
+            if waiting:
+                local_edit_decisions.register(username, proposal_id)
             await safe_emit_event("local_edit_proposal", {
-                "proposal_id": uuid.uuid4().hex,
+                "proposal_id": proposal_id,
                 "summary": str(args.get("summary") or "")[:500],
                 "folder": workspace_status(username).get("name", "local folder"),
                 "files": result["files"],
                 "edits": result["edits"],
+                "awaiting_decision": waiting,
             })
-            return (
+            shown = (
                 f"Proposed {len(result['edits'])} edit(s) across {len(result['files'])} file(s): "
                 + ", ".join(f["path"] for f in result["files"])
-                + ". The user now sees a diff with an Apply button; nothing has been changed yet. "
-                "Give a short final answer on what you proposed and why."
+                + "."
+            )
+            if not waiting:
+                return (
+                    shown + " The user now sees a diff with an Apply button; nothing has been changed yet. "
+                    "Give a short final answer on what you proposed and why."
+                )
+
+            async def _still_waiting(seconds: int) -> None:
+                await safe_emit_event("trace_detail", {
+                    "node": "tool_agent_node",
+                    "title": "Waiting for your decision on the proposed changes...",
+                    "detail": f"{seconds // 60}m {seconds % 60:02d}s so far. Nothing is changed until you apply them.",
+                })
+
+            try:
+                decision = await local_edit_decisions.wait_for(proposal_id, on_tick=_still_waiting)
+            finally:
+                local_edit_decisions.forget(proposal_id)
+            return await _decision_result(shown, result, decision)
+
+        async def _decision_result(shown: str, result: dict, decision: dict | None) -> str:
+            """What the loop is told once the person has decided on a proposal (or has not within the wait)."""
+            if decision is None:
+                logger.info("[tool_agent_node] no decision on a proposed change within the wait.")
+                return (
+                    shown + " NO DECISION: there was no answer within "
+                    f"{int(local_edit_decisions.WAIT_SECONDS // 60)} minutes, so nothing was changed. Say that plainly in a short answer and stop; do not propose it again."
+                )
+            if decision["outcome"] == "declined":
+                reason = decision.get("reason") or ""
+                return (
+                    shown + " DECLINED: the person did not apply these edits" + (f", and said: {reason}" if reason else "") + ". Nothing was changed. "
+                    "Do not propose the same change again: adjust to what they said, or ask what they would prefer, or finish with a short answer."
+                )
+            # Applied: the browser has written the files. Bring the server's copy of those files up to date now, so a read after this sees them (the next full sync agrees with it).
+            note = ""
+            texts = result.get("texts") or {}
+            if texts:
+                try:
+                    await asyncio.to_thread(
+                        apply_workspace_sync, username, workspace_status(username).get("name") or "local folder",
+                        [{"path": path, "content": text} for path, text in texts.items()], [],
+                    )
+                except Exception:
+                    logger.warning("[tool_agent_node] could not refresh the server's copy of an applied change.", exc_info=True)
+                    note = " (The server's copy of the folder could not be refreshed, so reading these files again may still show the old text.)"
+            if any(f.get("format") in ("docx", "docx_edit") for f in result.get("files", [])):
+                note += " (Word documents are written to the folder but are not re-read until the next sync.)"
+            return (
+                shown + " APPLIED: the person applied the edits, so those files now contain them." + note + " You can read the changed files to check them, propose a follow-up "
+                "change, or finish with a short answer on what changed."
             )
 
         # Set once incident data (untrusted text from errAgent) has been read this turn. From then on, the actions that could

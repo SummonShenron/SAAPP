@@ -431,6 +431,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
                   canApply={canEditLocal}
                   onApply={proposal => localEditActionsRef.current.apply(proposal)}
                   onUndo={proposalId => localEditActionsRef.current.undo(proposalId)}
+                  onDecision={(proposalId, outcome, reason) => { void api.reportEditDecision(proposalId, outcome, reason); }}
                 />
               )}
 
@@ -1629,6 +1630,7 @@ useEffect(() => {
                   folder: payload.folder ?? '',
                   files: payload.files ?? [],
                   edits: payload.edits,
+                  awaiting: payload.awaiting_decision === true,
                 };
                 setMessages(prev => {
                   const updated = [...prev];
@@ -1744,7 +1746,8 @@ useEffect(() => {
         },
         undefined,
         controller.signal,
-        workspace.folderExpected()
+        workspace.folderExpected(),
+        true
       );
 
       // Attachments are scoped to the turn that sent them (already durably stored server-side

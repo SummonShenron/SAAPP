@@ -316,3 +316,83 @@ def test_no_meeting_text_is_ever_logged_and_the_module_never_starts_a_meeting_by
                 assert len(node.args) <= 1, (name, "a value in a log line")
     source = (ROOT / "backend" / "utils" / "meetings.py").read_text(encoding="utf-8")
     assert source.count("def start_run") == 1
+
+
+# ------------------------------------------------------------------------ coaching (balanced and challenging meetings) ---------------
+
+def note_of(items, days_ago=7):
+    return {"held_at": (NOW - timedelta(days=days_ago)).isoformat(), "summary": "Talked it through.", "action_items": list(items)}
+
+
+def test_a_meeting_is_supportive_unless_the_person_picks_otherwise_and_a_bad_choice_is_refused():
+    assert mt.validate_meeting(SPEC)[0]["coaching"] == "supportive"
+    assert mt.validate_meeting({**SPEC, "coaching": " Challenging "})[0]["coaching"] == "challenging"
+    assert mt.validate_meeting({**SPEC, "coaching": "brutal"})[1] == "Choose supportive, balanced or challenging."
+    assert mt.public_meeting({"id": "m", "name": "n"})["coaching"] == "supportive"                  # a meeting saved before this existed
+    db = Db()
+    meeting = make(db, spec={**SPEC, "coaching": "balanced"})
+    assert mt.update_meeting(db, "u1", meeting["id"], {"purpose": "new"})[0]["coaching"] == "balanced"      # an edit that does not mention it keeps it
+    assert mt.update_meeting(db, "u1", meeting["id"], {"coaching": "challenging"})[0]["coaching"] == "challenging"
+
+
+def test_an_action_item_that_keeps_coming_back_is_a_signal_and_one_that_changed_is_not():
+    again = [note_of(["Update my resume for enterprise roles"]), note_of(["Update resume for the enterprise roles", "Call Dana"], 14), note_of(["Resume update for enterprise"], 21)]
+    signals = mt.coaching_signals(again, {})
+    assert len(signals) == 1 and "has been an action item in the notes for 3 meetings in a row" in signals[0] and "Update my resume" in signals[0]
+    assert mt.coaching_signals([note_of(["Apply to Acme"]), note_of(["Update my resume"], 14)], {}) == []        # nothing repeated
+    assert mt.coaching_signals([note_of(["Update my resume"])], {}) == []                                       # one note cannot show a repeat
+    assert mt.coaching_signals([note_of(["Update my resume"]), note_of(["Call Dana"], 14), note_of(["Update my resume"], 21)], {}) == []    # a gap breaks the run
+
+
+def test_goals_tasks_and_what_they_logged_are_signals_only_as_plain_facts():
+    prep_data = {
+        "goal_ages": [("Get back to enterprise AI", 30), ("Learn Rust", 3)],
+        "task_findings": [{"task": "Python jobs", "headline": "Six listings.", "count": 6}],
+        "progress_notes": [{"label": "blocker", "text": "x"}, {"label": "win", "text": "y"}, {"label": "win", "text": "z"}],
+    }
+    signals = mt.coaching_signals([], prep_data)
+    assert any("Get back to enterprise AI" in s and "30 days ago" in s for s in signals) and not any("Learn Rust" in s for s in signals)
+    assert any('"Python jobs" found 6 new thing(s)' in s and "nothing says whether they looked" in s for s in signals)
+    assert any("1 blocker(s)" in s for s in signals) and any("2 win(s)" in s and "named plainly" in s for s in signals)
+    assert len(mt.coaching_signals([note_of(["a b c"]), note_of(["a b c"], 14)], {**prep_data, "goal_ages": [("g one", 40), ("g two", 40), ("g three", 40)]})) == mt.MAX_SIGNALS
+
+
+def test_the_coaching_block_exists_only_for_balanced_or_challenging_and_only_when_there_is_something_true_to_raise():
+    signals = ["The goal \"x\" was last updated 30 days ago, in what they have told you."]
+    assert mt.build_coaching_text("supportive", signals) == "" and mt.build_coaching_text("balanced", []) == "" and mt.build_coaching_text("nonsense", signals) == ""
+    balanced = mt.build_coaching_text("balanced", signals).replace("\n", " ")
+    challenging = mt.build_coaching_text("challenging", signals).replace("\n", " ")
+    assert "ONE of them" in balanced and "up to TWO of them" in challenging
+    assert "single small concrete next step" in challenging and "single small concrete next step" not in balanced
+    for rule in ("found by the app, not your judgement", "never as your opening line", "never two in the same message", "never about them as a person", "no scolding, no disappointment", "Do not add any claim, pattern or comparison that is not in the list",
+                 "drop it at once", "do not bring it back", "do not press the point", "Never say you saved anything"):
+        assert rule in balanced and rule in challenging, rule
+
+
+def test_the_block_is_appended_to_the_meeting_prompt_and_the_prompt_is_unchanged_without_it():
+    plain = mt.build_meeting_context(SPEC, [], prep())
+    assert "COACHING" not in plain
+    block = mt.build_coaching_text("challenging", ["A true thing."])
+    assert mt.build_meeting_context(SPEC, [], prep(), None, NOW, block).endswith(block) and "COACHING" in mt.build_meeting_context(SPEC, [], prep(), None, NOW, block)
+
+
+def test_a_session_gets_the_block_only_for_a_coaching_meeting_on_a_turn_when_coaching_is_allowed(monkeypatch):
+    monkeypatch.setattr("backend.utils.memory_utils.load_user_facts", lambda username: [])
+    db = Db()
+    meeting = make(db, spec={**SPEC, "coaching": "challenging"})
+    mt.start_run(db, "u1", meeting["id"], "chat-1", NOW)
+    for held, items in ((21, ["Update my resume"]), (14, ["Update my resume"]), (7, ["Update my resume"])):
+        mt.save_note(db, "u1", {"meeting_id": meeting["id"], "id": f"r{held}"}, {"summary": "s", "decisions": [], "action_items": items}, NOW - timedelta(days=held))
+    allowed = mt.build_context_for_session("u1", "chat-1", "America/Chicago", db=db, now=NOW)
+    assert "COACHING" in allowed and "3 meetings in a row" in allowed
+    assert "COACHING" not in mt.build_context_for_session("u1", "chat-1", "America/Chicago", db=db, now=NOW, coaching_allowed=False)       # a low-energy turn: it runs as a supportive meeting
+    supportive = make(db, user="u2", spec=SPEC)
+    mt.start_run(db, "u2", supportive["id"], "chat-2", NOW)
+    assert "COACHING" not in mt.build_context_for_session("u2", "chat-2", db=db, now=NOW)
+
+
+def test_the_app_turns_coaching_off_unless_the_energy_ceiling_is_open_and_the_note_keeps_the_agreed_step():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    assert 'coaching_allowed=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)) == "open"' in source
+    assert "risk_level == RISK_NONE and source_type == \"conversational\"" in source[source.index("meeting_context = \"\""):source.index("meeting_context = \"\"") + 300]
+    assert "put it first, in their words" in mt.NOTE_PROMPT

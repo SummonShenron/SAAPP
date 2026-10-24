@@ -31,3 +31,21 @@ After `list_library_files` returns N files, grant `ceil(N / 5)` extra steps, onc
 
 ## Open questions
 1. Which counters should the Max tier add beyond steps used and forced finals (for example, how often the half-way nudge was followed by a final)?
+
+## 2026-10-24 addendum: the native engine's own ceiling, and how turns end
+- **The native loop has its own cap.** `native_loop.run` uses `min(requested steps, MAX_STEPS)`, and `MAX_STEPS` is `TOOL_AGENT_NATIVE_MAX_STEPS` (default 8). A Max tier of 12 (or the default deep budget of 14) is clamped to 8 on the native engine unless that variable is raised. The Render values for `TOOL_AGENT_MAX_ITERATIONS`, `TOOL_AGENT_MAX_ITERATIONS_DEEP` and `TOOL_AGENT_NATIVE_MAX_STEPS` live in Render's environment, not in the repo (the doc above says normal 4 and deep 6 there): check all three before building Max.
+- **Counters for how a tool turn ends** (built, undeployed): answered by the halfway step, answered later, ran into the last step with a draft kept, ran into it with nothing written, and the halfway nudge shown / followed by a draft. They are on Sonic Health, Turns tab, under "Does the step limit matter?". They are the evidence for the checkpoint idea below.
+- **Checkpoint idea (not built):** in a long budget (10 or more), at about every third of the steps the model gets a choice, answer or `continue_working(reason)`; a text reply is the final answer. Interim answers stay internal and are kept like a draft, so a turn that runs out returns the latest one. Build it if "ran out of steps with nothing written" stays above a few percent after the draft checkpoint is live.
+
+## 2026-10-24: checkpoints BUILT (native engine only, undeployed)
+- `native_loop.checkpoint_after(budget)`: for a budget of at least `TOOL_AGENT_CHECKPOINT_MIN_STEPS` (9), after a third and two thirds of the tool steps (4 and 8 of 12) the model is asked to decide: answer now, or call `continue_working(reason)` (optionally with its best answer so far in the same reply). A text-only reply is the final answer and ends the turn. On continue, the question is removed from the conversation, replaced by one short note, and the best answer so far is kept like a draft (shown back to be checked; returned, labelled unfinished, if the turn runs out). The halfway nudge is replaced by checkpoints on those turns. Not used on a turn that must end in `propose_local_edits`.
+- `MAX_STEPS` (`TOOL_AGENT_NATIVE_MAX_STEPS`) default raised from 8 to 12, because 8 clamped any deep budget above it.
+- Switch off to compare: `TOOL_AGENT_CHECKPOINTS=off`. Counters on Sonic Health (checkpoint turns, answered vs continued) plus the exit counters above, and the coding counters (`code_cap_hit`, `code_edited`, `code_verified`) are the outcome to compare.
+- To have it run you need a budget of 9 or more: locally the deep default is 14 (so 12 after the ceiling); on Render deep was noted as 6, so raise `TOOL_AGENT_MAX_ITERATIONS_DEEP` there (and watch the spend).
+
+## 2026-10-24: propose, wait for apply or decline, carry on (native engine, undeployed)
+- `propose_local_edits` on the native engine now WAITS (no model call) for the diff card's Apply or Decline instead of ending the turn. The card posts to `POST /api/local-edits/{id}/decision`; `backend/services/local_edit_decisions.py` holds the wait (default 10 minutes, `LOCAL_EDIT_WAIT_SECONDS`; `LOCAL_EDIT_WAIT=off` turns it off; the stream is touched every 20 s so a proxy does not close it). The model then gets APPLIED (the server's copy of those files is refreshed from the validated edits, so a read afterwards sees them), DECLINED (with the reason if given) or NO DECISION, and carries on: check, fix, propose a follow-up, or finish.
+- Only when the page says it can report (`edit_decisions` on the chat request), and never on the old engine, so an old cached page or the ReAct loop gets the previous behaviour with no wait.
+- One server process holds the wait. With several workers a decision that lands on another one is not seen and the wait times out.
+- Checkpoints on a change to a folder offer `propose_local_edits` or `continue_working`; a plain answer is not accepted as the finish.
+- Cost: waiting is free, but a Claude conversation cache (about 5 minutes) is cold after a long wait, so the first step after one is billed as a fresh prompt.

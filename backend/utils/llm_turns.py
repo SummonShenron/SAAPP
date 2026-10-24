@@ -44,7 +44,12 @@ ROUTE_REASONS = (
 # HOW MANY STEPS the tool agent's loop used, and whether it ran into its limit. A turn that reached the last step it was allowed (the forced final answer) may have wanted more:
 # this is the number that says whether the step budget (TOOL_AGENT_MAX_ITERATIONS and the deep one) is too tight, or whether it never matters. Counts only.
 STEP_BUCKETS = ("steps_1_2", "steps_3_4", "steps_5_6", "steps_7_plus")
-LOOP_FIELDS = ("loop_turns", "loop_steps", "cap_hit_turns", "deep_loop_turns", "deep_cap_hit_turns")
+# HOW A TOOL TURN ENDED, relative to its budget, so a checkpoint design can be judged by what turns do now (2026-10-24): answered by the halfway step, answered later, or ran into the
+# last step with a draft kept or with nothing written ("read, read, read" and ran out). And whether the halfway nudge was shown, and a draft followed it. Counts only.
+# Checkpoints (backend/services/native_loop.py): turns that reached one, and whether the model answered there or chose to continue.
+EXIT_FIELDS = ("exit_early_turns", "exit_late_turns", "cap_draft_turns", "cap_no_draft_turns", "nudge_turns", "nudge_draft_turns",
+               "checkpoint_turns", "checkpoint_answered_turns", "checkpoint_continued_turns", "checkpoint_acted_turns")
+LOOP_FIELDS = ("loop_turns", "loop_steps", "cap_hit_turns", "deep_loop_turns", "deep_cap_hit_turns", *EXIT_FIELDS)
 FIELDS = (
     *SUMS, *BUCKETS, *STEP_BUCKETS, *LOOP_FIELDS, "blocked_turns", "error_turns", "native_turns", "deep_suppressed_turns", "audit_wording_turns",
     *(f"{kind}_{name}" for kind in KINDS for name in SUMS),
@@ -86,6 +91,12 @@ class Turn:
         self.loop_ran = False  # the tool agent's loop ran this turn (see note_tool_loop)
         self.loop_steps = 0  # how many steps (model decisions) it used
         self.cap_hit = False  # it reached the last step it was allowed, or ended without deciding to answer
+        self.loop_exit = ""  # how the loop's last run ended: "early", "late", "cap_draft" or "cap_no_draft" (see exit_kind)
+        self.nudged = False  # the halfway nudge was shown to the model this turn
+        self.nudge_drafted = False  # ... and a draft existed by the end
+        self.checkpoints_answered = 0  # checkpoints (a decision point at a third and two thirds of a long budget) where it answered
+        self.checkpoints_continued = 0  # ... and where it chose to keep working
+        self.checkpoints_acted = 0  # ... and, on a change to a folder, where it made the proposal there
         self.audit_wording = False  # the message had audit-style wording ("scan the repo", "every file"): wider step budget, normal model
         self.done = False
         self._lock = threading.Lock()
@@ -211,9 +222,36 @@ def steps_bucket(steps: int) -> str:
     return "steps_7_plus"
 
 
-def note_tool_loop(steps_used: int, hit_cap: bool) -> None:
+def exit_kind(steps_used: int, hit_cap: bool, tool_steps: Optional[int], had_draft: bool) -> str:
+    """How a loop ended: "cap_draft" / "cap_no_draft" when it ran into its last step (with a draft kept, or with nothing written), else "early" when it answered by the halfway
+    step and "late" after it. "" when the number of tool steps is not known. Pure."""
+    if hit_cap:
+        return "cap_draft" if had_draft else "cap_no_draft"
+    if not tool_steps or tool_steps < 1:
+        return ""
+    return "early" if _count(steps_used) <= max(1, tool_steps // 2) else "late"
+
+
+def note_checkpoint(answered: bool, acted: bool = False) -> None:
+    """The tool loop reached a checkpoint and the model answered there, made the proposal there (`acted`, on a change to a folder), or chose to keep working. Never raises."""
+    try:
+        turn = _current.get()
+        if turn is None or turn.done:
+            return
+        if answered:
+            turn.checkpoints_answered += 1
+        elif acted:
+            turn.checkpoints_acted += 1
+        else:
+            turn.checkpoints_continued += 1
+    except Exception:
+        pass
+
+
+def note_tool_loop(steps_used: int, hit_cap: bool, *, tool_steps: Optional[int] = None, had_draft: bool = False, nudged: bool = False) -> None:
     """The tool agent's loop ended: it used `steps_used` steps, and `hit_cap` says whether it reached the last step it was allowed (the forced final answer) or ended
-    without deciding to answer. A turn that resumes the loop adds to the same totals. Never raises."""
+    without deciding to answer. `tool_steps` (the budget without the answer step), `had_draft` and `nudged` (the halfway nudge was shown) say how it ended; see EXIT_FIELDS.
+    A turn that resumes the loop adds to the same totals. Never raises."""
     try:
         turn = _current.get()
         if turn is None or turn.done:
@@ -221,6 +259,10 @@ def note_tool_loop(steps_used: int, hit_cap: bool) -> None:
         turn.loop_ran = True
         turn.loop_steps += _count(steps_used)
         turn.cap_hit = turn.cap_hit or bool(hit_cap)
+        turn.loop_exit = exit_kind(steps_used, hit_cap, tool_steps, had_draft)
+        if nudged:
+            turn.nudged = True
+            turn.nudge_drafted = turn.nudge_drafted or bool(had_draft)
     except Exception:
         pass
 
@@ -296,6 +338,17 @@ def finish(turn: Optional[Turn], outcome: str = "ok", day: Optional[str] = None)
                 slot[steps_bucket(turn.loop_steps)] += 1
                 if turn.cap_hit:
                     slot["cap_hit_turns"] += 1
+                if turn.loop_exit:
+                    slot[f"{'exit_' if turn.loop_exit in ('early', 'late') else ''}{turn.loop_exit}_turns"] += 1
+                if turn.checkpoints_answered or turn.checkpoints_continued or turn.checkpoints_acted:
+                    slot["checkpoint_turns"] += 1
+                    slot["checkpoint_answered_turns"] += 1 if turn.checkpoints_answered else 0
+                    slot["checkpoint_continued_turns"] += 1 if turn.checkpoints_continued else 0
+                    slot["checkpoint_acted_turns"] += 1 if turn.checkpoints_acted else 0
+                if turn.nudged:
+                    slot["nudge_turns"] += 1
+                    if turn.nudge_drafted:
+                        slot["nudge_draft_turns"] += 1
                 if turn.deep_source:
                     slot["deep_loop_turns"] += 1
                     if turn.cap_hit:
@@ -489,6 +542,11 @@ def summarize_turns(docs: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
             "histogram": [{"bucket": bucket, "turns": total[bucket]} for bucket in STEP_BUCKETS],
             "cap_hits": total["cap_hit_turns"],
             "cap_hit_share": round(total["cap_hit_turns"] / total["loop_turns"], 4) if total["loop_turns"] else None,
+            # How they ended: by the halfway step, later, or at the last step with a draft kept / with nothing written; and the halfway nudge, shown and followed by a draft.
+            "exits": {"early": total["exit_early_turns"], "late": total["exit_late_turns"], "cap_draft": total["cap_draft_turns"], "cap_no_draft": total["cap_no_draft_turns"]},
+            "checkpoints": {"turns": total["checkpoint_turns"], "answered": total["checkpoint_answered_turns"], "continued": total["checkpoint_continued_turns"], "acted": total["checkpoint_acted_turns"]},
+            "nudged": total["nudge_turns"],
+            "nudged_drafted": total["nudge_draft_turns"],
             "deep_turns": total["deep_loop_turns"],
             "deep_cap_hits": total["deep_cap_hit_turns"],
             "deep_cap_hit_share": round(total["deep_cap_hit_turns"] / total["deep_loop_turns"], 4) if total["deep_loop_turns"] else None,

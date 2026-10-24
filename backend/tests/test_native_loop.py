@@ -140,7 +140,8 @@ def test_at_the_step_cap_the_model_is_asked_for_an_answer_with_no_tools():
     assert result["final_answer"] == "Here is what I found so far." and result["show_work"] is True and len(result["attempts"]) == 3
 
 
-def test_the_cap_cannot_be_raised_past_the_engines_own_maximum():
+def test_the_cap_cannot_be_raised_past_the_engines_own_maximum(monkeypatch):
+    monkeypatch.setenv("TOOL_AGENT_CHECKPOINTS", "off")      # a checkpoint is an extra call of its own: this counts the tool steps
     llm = ToolLLM(*[asks(call("search_code", {"query": f"q{i}"})) for i in range(50)] + [answers("enough")])
     go(llm, max_steps=999)
     assert len([c for c in llm.calls if c[1]]) == nl.MAX_STEPS
@@ -668,3 +669,113 @@ def test_the_target_doc_tool_has_a_native_schema_and_the_engine_hands_over_is_un
     assert declared[0]["parameters"]["required"] == ["content"]
     source = open(aw.__file__, encoding="utf-8").read()
     assert 'is_unsafe=kwargs.get("is_unsafe")' in source
+
+
+# ---- checkpoints: answer or say what is still to do ----------------------------------------------------------------------------------------
+
+def continue_call(reason="check the second file"):
+    return call("continue_working", {"reason": reason})
+
+
+def checkpoint_calls(llm):
+    return [c for c in llm.calls if [t["name"] for t in c[1]] == ["continue_working"]]
+
+
+def test_checkpoints_fall_a_third_and_two_thirds_of_the_way_and_only_for_a_long_budget(monkeypatch):
+    assert nl.checkpoint_after(12) == (4, 8) and nl.checkpoint_after(9) == (3, 6) and nl.checkpoint_after(8) == () and nl.checkpoint_after(4) == ()
+    monkeypatch.setenv("TOOL_AGENT_CHECKPOINTS", "off")
+    assert nl.checkpoint_after(12) == ()
+    assert nl.MAX_STEPS >= 12
+
+
+def test_a_model_that_answers_at_the_first_checkpoint_ends_the_turn_there():
+    llm = ToolLLM(*[asks(call("search_code", {"query": f"q{i}"})) for i in range(3)] + [asks(call("search_code", {"query": "q3"})), answers("Here is the answer, found by step four.")])
+    out = go(llm, max_steps=12)
+    assert out["final_answer"] == "Here is the answer, found by step four." and len(checkpoint_calls(llm)) == 1
+    assert len([c for c in llm.calls if c[1] and [t["name"] for t in c[1]] != ["continue_working"]]) == 4        # four tool steps, then the checkpoint
+    assert out["show_work"] is False
+
+
+def test_a_model_that_continues_keeps_working_with_the_checkpoint_taken_out_of_the_conversation_and_its_best_answer_shown_back():
+    best = "Draft answer so far: the retry lives in client.py, in send(), and it uses a fixed delay."
+    script = [asks(call("search_code", {"query": f"q{i}"})) for i in range(4)] + [asks(continue_call(), text=best)] + [asks(call("search_code", {"query": f"r{i}"})) for i in range(3)] + [answers("Final, checked answer.")]
+    llm = ToolLLM(*script)
+    out = go(llm, max_steps=12)
+    assert out["final_answer"] == "Final, checked answer." and len(checkpoint_calls(llm)) >= 1
+    after = [c for c in llm.calls if c[1] and [t["name"] for t in c[1]] != ["continue_working"]][4]       # the step right after the first checkpoint
+    text = " ".join(str(m.content) for m in after[0])
+    assert "CHECKPOINT: you chose to keep working on: check the second file" in text and "YOUR DRAFT SO FAR" in text and "client.py" in text
+    assert "Decide now" not in text                                                                       # the question itself is not left in the conversation
+
+
+def test_a_turn_that_runs_out_after_continuing_still_returns_the_best_answer_it_wrote_at_a_checkpoint():
+    best = "Draft answer so far: the retry lives in client.py, in send(), and it uses a fixed delay."
+    class OnlyReads(ToolLLM):
+        async def ainvoke_tools(self, messages, tools):
+            self.calls.append((list(messages), list(tools)))
+            if [t["name"] for t in tools] == ["continue_working"]:
+                return asks(continue_call(), text=best)
+            return asks(call("search_code", {"query": f"q{len(self.calls)}"})) if tools else AIMessage(content="")
+    out = go(OnlyReads(answers("unused")), max_steps=12)
+    assert out["final_answer"].startswith("I ran out of steps before I could check this") and "client.py" in out["final_answer"]
+
+
+def test_a_short_budget_has_no_checkpoints():
+    llm = ToolLLM(*[asks(call("search_code", {"query": f"q{i}"})) for i in range(12)] + [answers("done")])
+    go(llm, max_steps=6)
+    assert checkpoint_calls(llm) == []
+
+
+def edit_checkpoint_calls(llm):
+    return [c for c in llm.calls if sorted(t["name"] for t in c[1]) == ["continue_working", "propose_local_edits"]]
+
+
+PROPOSAL = {"summary": "lighter", "edits": [{"path": "local/src/index.css", "old_string": "a", "new_string": "b"}]}
+
+
+def test_on_a_change_to_a_folder_the_checkpoint_offers_the_proposal_or_continuing_and_a_proposal_there_is_made_through_the_shared_dispatcher():
+    reads = [asks(call("read_repo_file", {"path": f"{n}.css"}, id=f"r{n}")) for n in range(4)]
+    llm = ToolLLM(*reads, asks(call("propose_local_edits", PROPOSAL, id="p1")), answers("I proposed it; press Apply."))
+    act = Acts({"propose_local_edits": "Proposed 1 edit(s) across 1 file(s)"})
+    result = go(llm, act, tools=EDIT_TOOLS, required_action=REQUIRED, max_steps=12)
+    assert len(edit_checkpoint_calls(llm)) == 1
+    assert [d["tool_action"] for d in act.decisions] == ["read_repo_file"] * 4 + ["propose_local_edits"]
+    assert result["final_answer"] == "I proposed it; press Apply."
+    last = [m for m in llm.calls[-1][0]]
+    assert not any("Decide now" in str(m.content) for m in last)                                         # the question is not left in the conversation
+    assert any(getattr(m, "tool_call_id", None) == "p1" for m in last)                                  # and the proposal has its result, so the conversation stays valid
+
+
+def test_on_a_change_to_a_folder_a_model_that_continues_is_asked_again_at_the_next_checkpoint_and_one_that_already_proposed_is_not_asked():
+    reads = [asks(call("read_repo_file", {"path": f"{n}.css"}, id=f"r{n}")) for n in range(4)]
+    llm = ToolLLM(*reads, asks(continue_call("read the stylesheet's imports")), *[asks(call("read_repo_file", {"path": f"x{n}.css"}, id=f"x{n}")) for n in range(4)],
+                  asks(continue_call("one more file")), answers("no luck"))
+    go(llm, Acts(), tools=EDIT_TOOLS, required_action=REQUIRED, max_steps=12)
+    assert len(edit_checkpoint_calls(llm)) == 2
+    done = ToolLLM(asks(call("propose_local_edits", PROPOSAL, id="p1")), *[asks(call("read_repo_file", {"path": f"{n}.css"}, id=f"r{n}")) for n in range(8)], answers("fine"))
+    go(done, Acts({"propose_local_edits": "Proposed 1 edit(s) across 1 file(s)"}), tools=EDIT_TOOLS, required_action=REQUIRED, max_steps=12)
+    # once a proposal succeeded the checkpoint no longer says "the way to finish is the proposal" (it may still offer a follow-up one)
+    assert not any("the way to finish is propose_local_edits" in str(m.content) for c in done.calls for m in c[0])
+
+
+def test_a_plain_answer_at_a_checkpoint_on_a_change_to_a_folder_is_not_accepted_as_the_finish():
+    reads = [asks(call("read_repo_file", {"path": f"{n}.css"}, id=f"r{n}")) for n in range(4)]
+    llm = ToolLLM(*reads, answers("Here is the CSS to paste, no tool needed."), asks(call("propose_local_edits", PROPOSAL, id="p1")), answers("Proposed."))
+    act = Acts({"propose_local_edits": "Proposed 1 edit(s) across 1 file(s)"})
+    result = go(llm, act, tools=EDIT_TOOLS, required_action=REQUIRED, max_steps=12)
+    assert result["final_answer"] == "Proposed." and "propose_local_edits" in [d["tool_action"] for d in act.decisions]
+
+
+def test_a_checkpoint_is_counted_as_answered_or_continued_and_reaches_the_daily_totals():
+    from backend.utils import llm_turns as lt
+    for script, answered in (([asks(call("search_code", {"query": f"q{i}"})) for i in range(4)] + [answers("done at the checkpoint")], 1),
+                             ([asks(call("search_code", {"query": f"q{i}"})) for i in range(4)] + [asks(continue_call())] + [answers("done later")], 0)):
+        lt.reset()
+        turn = lt.begin("jack")
+        turn.tool_agent = True
+        go(ToolLLM(*script), max_steps=12)
+        lt.note_tool_loop(4, False, tool_steps=12)
+        assert (turn.checkpoints_answered, turn.checkpoints_continued)[0] == answered
+        lt.finish(turn, day="2026-10-24")
+        day = lt.snapshot()["2026-10-24"]
+        assert day["checkpoint_turns"] == 1 and day["checkpoint_answered_turns"] == answered and day["checkpoint_continued_turns"] == 1 - answered

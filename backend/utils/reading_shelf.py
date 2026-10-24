@@ -45,6 +45,12 @@ STATE_COLLECTION = "sonic_reading_shelf_state"
 STATE_ID = "refresh"
 SETTINGS_COLLECTION = "user_settings"
 SEEN_KEY = "shelf_seen"
+OFFER_LOG_KEY = "shelf_offer_log"          # when this person was last offered shelf items (newest last), for the daily limit on relevant findings
+MAX_OFFER_LOG = 10
+# RELEVANT FINDINGS (backend/utils/relevant_findings.py): a message whose meaning is close to an item the person has not been offered. 0.58 sits between the best match for
+# messages that really overlap an item (0.61 to 0.72 when calibrated on the live shelf, 2026-10-24) and the best match for messages that do not (0.51 and below).
+RELEVANCE_MIN = float(os.getenv("SHELF_RELEVANCE_MIN", "0.58"))
+FINDINGS_PER_DAY = int(os.getenv("SHELF_FINDINGS_PER_DAY", "3"))
 LAST_SHELF_KEY = "last_shelf_offer_at"
 SHELF_MARK = "shelf_offered"
 # A softer lull ("huh, that makes sense now") may bring up a shelf item, but only this long after the last shelf item this person was offered: the plain
@@ -224,6 +230,30 @@ TOPICS: List[Dict[str, Any]] = [
             "hard science fiction consistent rules analysis",
         ],
         "triggers": _triggers_of("scifi"),
+    },
+    # Two topics close to what Sonic is: reading about them is what lets it connect a conversation about building with language models to something it has really read.
+    # Their triggers are narrow on purpose (the keyword path would otherwise fire on ordinary words like "agent"); the meaning match (relevant_item) does the rest.
+    {
+        "id": "agent_design",
+        "about": "how AI agents and tool-using language models are designed, and when a plain workflow is enough",
+        "subjects": ["tool calling", "agent loops", "workflow versus agent", "multi-agent systems", "agent evaluation", "prompt injection in agents", "planning and reflection in agents", "agent memory"],
+        "angles": ["lessons learned", "design essay", "postmortem", "what we learned building", "common mistakes"],
+        "queries": [
+            "building effective agents simple workflows versus agents",
+            "lessons learned building tool using language model agents in production",
+        ],
+        "triggers": ["agentic", "tool calling", "function calling", "multi-agent", "prompt injection"],
+    },
+    {
+        "id": "llm_systems",
+        "about": "building reliable applications on language models: retrieval, memory, evaluation and cost",
+        "subjects": ["retrieval augmented generation", "long-term memory for assistants", "evaluating language model applications", "prompt caching", "reducing hallucination", "embedding search", "context window management", "LLM cost control"],
+        "angles": ["lessons learned", "design essay", "postmortem", "what we learned building", "common mistakes"],
+        "queries": [
+            "lessons learned building retrieval augmented generation in production",
+            "how to evaluate a language model application beyond spot checks",
+        ],
+        "triggers": ["retrieval augmented", "vector search", "hallucination", "llm evals"],
     },
 ]
 TOPIC_IDS = tuple(t["id"] for t in TOPICS)
@@ -488,6 +518,55 @@ def add_item(db, *, url: str, title: str, summary: str, topic: str, now: Optiona
     return doc
 
 
+def embedding_source(item: Dict[str, Any]) -> str:
+    """The text an item is matched on: what it is called and what Sonic wrote about it."""
+    return f"{item.get('title') or ''}. {item.get('summary') or ''}".strip()
+
+
+def cosine(a: List[float], b: List[float]) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    norm = (sum(x * x for x in a) ** 0.5) * (sum(y * y for y in b) ** 0.5)
+    return dot / norm if norm else 0.0
+
+
+def ensure_embeddings(db, embed: Callable[[str], Optional[List[float]]], limit: Optional[int] = None) -> int:
+    """Gives every live item that has no embedding one (a call per item, at most `limit`). Returns how many it added. Blocking; a failed embedding leaves the item as it was."""
+    added = 0
+    for item in live_items(db, include_expired=True):
+        if item.get("embedding"):
+            continue
+        if limit is not None and added >= limit:
+            break
+        try:
+            vector = embed(embedding_source(item))
+        except Exception:
+            logger.warning("[shelf] could not embed an item.", exc_info=True)
+            continue
+        if vector:
+            db[COLLECTION].update_one({"_id": item["_id"]}, {"$set": {"embedding": [round(float(x), 5) for x in vector]}})
+            added += 1
+    return added
+
+
+def best_match(items: Iterable[Dict[str, Any]], vector: List[float], threshold: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    """{"item", "score"} for the item closest in meaning to `vector` if it clears the threshold, else None. Items without an embedding are skipped. Pure."""
+    limit = RELEVANCE_MIN if threshold is None else threshold
+    scored = [(cosine(vector, item.get("embedding") or []), item) for item in items if item.get("embedding")]
+    if not scored:
+        return None
+    score, item = max(scored, key=lambda pair: pair[0])
+    return {"item": item, "score": round(score, 3)} if score >= limit else None
+
+
+def findings_in_last_day(db, username: str, now: Optional[datetime] = None) -> int:
+    """How many shelf items this person was offered in the last 24 hours."""
+    now = now or _now()
+    doc = db[SETTINGS_COLLECTION].find_one({"username": username}, {"_id": 0, OFFER_LOG_KEY: 1}) or {}
+    return sum(1 for raw in (doc.get(OFFER_LOG_KEY) or []) if (_parse(raw) or now - timedelta(days=2)) > now - timedelta(days=1))
+
+
 def live_items(db, now: Optional[datetime] = None, *, include_expired: bool = False) -> List[Dict[str, Any]]:
     """Live items, newest read first. Expired ones (older than ITEM_MAX_AGE_DAYS) are left out unless asked for: a thread from last
     year is still fine to mention, a stale one is not, and the age is a fixed number rather than a judgment."""
@@ -555,7 +634,7 @@ def mark_offered(db, username: str, key: str, now: Optional[datetime] = None) ->
     """This person has now been offered this item (never again), when that was, and the item's own count goes up."""
     db[SETTINGS_COLLECTION].update_one(
         {"username": username},
-        {"$push": {SEEN_KEY: {"$each": [key], "$slice": -MAX_SEEN}}, "$set": {LAST_SHELF_KEY: _iso(now or _now())}},
+        {"$push": {SEEN_KEY: {"$each": [key], "$slice": -MAX_SEEN}, OFFER_LOG_KEY: {"$each": [_iso(now or _now())], "$slice": -MAX_OFFER_LOG}}, "$set": {LAST_SHELF_KEY: _iso(now or _now())}},
         upsert=True,
     )
     db[COLLECTION].update_one({"_id": key}, {"$inc": {"offered": 1}})
@@ -719,7 +798,14 @@ def _site(item: Dict[str, Any]) -> str:
 
 def build_shelf_block(offer: Dict[str, Any]) -> str:
     item = offer["item"]
-    if offer["kind"] == "topic":
+    if offer["kind"] == "finding":
+        opening = (
+            "RELEVANT READING (this turn only): something they just said overlaps with a piece you have really read, so this is a fair moment to say so. Answer what they said "
+            "or asked first, and fully. Then, in one to three sentences, connect the piece to their point: say what the piece covers and why that is close to what they said, using only "
+            "what the summary holds: no lesson, advice or \"good reminder\" of your own on top of it. If on reflection it does not truly bear on what they said, leave it out: a stretched link is worse than none. If it fits, you may end with "
+            "one specific, easy question that ties it to what they are working on. "
+        )
+    elif offer["kind"] == "topic":
         opening = (
             "READING SHELF (this turn only): what they are talking about is something you have really read about, so this is the moment to say "
             "so. Help with what they asked first, then bring up the piece below in a sentence or two, tied to what they said. "
