@@ -3046,6 +3046,12 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                     <option value="incorrect_filter">Incorrect Document/Affiliate Filter</option>
                     <option value="formatting">Formatting / Markdown Issue</option>
                     <option value="incomplete">Incomplete or Truncated Output</option>
+                    <option value="code_wrong">Code Was Wrong or Did Not Work</option>
+                    <option value="tool_failure">Tool or Integration Failed (Gmail, Drive, folder, GitHub…)</option>
+                    <option value="forgot_context">Forgot Earlier Context or Memory</option>
+                    <option value="ignored_request">Did Not Do What I Asked</option>
+                    <option value="tone_off">Tone Felt Off</option>
+                    <option value="too_long">Too Long or Wordy</option>
                     <option value="other">Other</option>
                   </select>
                 </div>

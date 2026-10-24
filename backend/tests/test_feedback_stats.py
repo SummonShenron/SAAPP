@@ -223,3 +223,19 @@ def test_personal_knowledge_bases_are_one_row_of_counts_with_no_ids_and_no_file_
 def test_a_section_that_cannot_be_built_is_left_out_without_taking_the_page_down():
     assert sh._section("boom", lambda: (_ for _ in ()).throw(RuntimeError("down"))) is None
     assert sh._section("fine", lambda: {"ok": 1}) == {"ok": 1}
+
+
+def test_the_reasons_a_person_can_pick_on_a_thumbs_down_are_counted_under_their_own_names():
+    tags = ["code_wrong", "tool_failure", "forgot_context", "ignored_request", "tone_off", "too_long"]
+    assert list(fs.USER_ONLY_TAGS) == tags
+    out = fs.summarize_feedback([row("dislike", tag) for tag in tags], now=NOW, days=7)
+    assert sorted(item["tag"] for item in out["by_tag"]) == sorted(tags)
+
+
+def test_every_reason_on_the_chat_card_has_a_label_on_the_health_page():
+    import pathlib, re
+    root = pathlib.Path(__file__).resolve().parents[2]
+    card = re.findall(r'<option value="([a-z_]+)">', (root / "local/src/pages/Chat.tsx").read_text(encoding="utf-8")[
+        (root / "local/src/pages/Chat.tsx").read_text(encoding="utf-8").index("Category Tag"):])
+    labels = (root / "local/src/pages/SonicHealthFeedback.tsx").read_text(encoding="utf-8")
+    assert set(fs.KNOWN_TAGS) <= set(card) and all(f"{tag}:" in labels for tag in fs.KNOWN_TAGS)

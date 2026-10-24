@@ -8,6 +8,12 @@ const TAG_LABELS: Record<string, string> = {
   incorrect_filter: 'Wrong filter or scope',
   formatting: 'Formatting',
   incomplete: 'Incomplete',
+  code_wrong: 'Code was wrong or did not work',
+  tool_failure: 'Tool or integration failed',
+  forgot_context: 'Forgot earlier context',
+  ignored_request: 'Did not do what I asked',
+  tone_off: 'Tone felt off',
+  too_long: 'Too long or wordy',
   other: 'Other',
 };
 

@@ -26,7 +26,9 @@ from backend.utils import billing_time, correction_kinds
 CORRECTIONS_COLLECTION = "corrections"
 GRAPH_EDGES_COLLECTION = "graph_edges"
 DOCUMENTS_COLLECTION = "documents"
-KNOWN_TAGS = ("hallucination", "incorrect_filter", "formatting", "incomplete", "other")
+# The first five are also what the answer checker writes (self_counters.REWARD_TAGS). The rest can only be chosen by a person on the thumbs-down card (Chat.tsx).
+USER_ONLY_TAGS = ("code_wrong", "tool_failure", "forgot_context", "ignored_request", "tone_off", "too_long")
+KNOWN_TAGS = ("hallucination", "incorrect_filter", "formatting", "incomplete") + USER_ONLY_TAGS + ("other",)
 MAX_MISSING_NAMES = 8
 PERSONAL_KB_PREFIX = "kb_"          # see isolation_kb_utils.make_personal_kb_id
 PERSONAL_ROW = "personal"
