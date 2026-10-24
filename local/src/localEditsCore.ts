@@ -33,6 +33,10 @@ export interface EditProposal {
   proposal_id: string;
   /** Sonic is waiting for Apply or Decline on this one and will carry on with the answer. */
   awaiting?: boolean;
+  /** Set by this page, not the server: the person's edit-approval level says this one is applied without a click (src/editApproval.ts). */
+  auto?: boolean;
+  /** Why it asked instead, when an approval level other than "ask" is on (shown on the card). */
+  autoSkipReason?: string;
   summary: string;
   folder: string;
   files: EditProposalFile[];

@@ -884,7 +884,7 @@ def test_the_public_view_has_only_live_items_and_only_the_fields_a_reader_needs(
     stock(db, url="https://blog.example.com/old", days_ago=shelf.ITEM_MAX_AGE_DAYS + 5)
     out = shelf.public_view(db, now=NOW)
     assert [i["url"] for i in out["items"]] == ["https://blog.example.com/b", "https://blog.example.com/a"]       # newest read first; removed and expired are not shown
-    assert all(set(i) == set(shelf.PUBLIC_FIELDS) for i in out["items"])                                       # no key, offer count or removal history
+    assert all(set(i) == set(shelf.PUBLIC_FIELDS) | {"reflection"} for i in out["items"])                                       # no key, offer count or removal history
     assert out["topics"] == ["game_design", "security"]
     assert "blocked_domains" not in out and "last_attempt_at" not in out
 

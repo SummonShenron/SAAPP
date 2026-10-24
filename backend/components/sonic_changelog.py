@@ -229,6 +229,48 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "sandbox_tests",
+        "requires": [
+            "backend/services/sandbox_tests.py::async def run_tests",
+            "backend/services/agent_workflow.py::async def _run_sandbox_tests",
+        ],
+        "month": "2026-10",
+        "title": "Testing a change before I propose it",
+        "line": (
+            "With your folder connected I can now write a small Python test, run it in a locked-down sandbox against the folder as it would be after my change, and fix the change before I show it to you."
+        ),
+        "keywords": ["test", "tests", "sandbox", "unittest", "check my work", "verify", "before you propose", "run tests", "local folder"],
+        "volunteer": [],
+    },
+    {
+        "id": "sonic_folder",
+        "requires": [
+            "backend/utils/sonic_notes.py::def build_context",
+            "local/src/editApproval.ts::export function decideAutoApply",
+        ],
+        "month": "2026-10",
+        "title": "My notes folder and edit approval",
+        "line": (
+            "I can keep short notes and tests in a .sonic folder in your project, and in the folder menu you can choose to ask every time, apply changes inside .sonic automatically, or apply everything this session."
+        ),
+        "keywords": [".sonic", "notes", "approval", "auto apply", "apply automatically", "edit approval", "scratchpad", "plan", "local folder", "undo"],
+        "volunteer": [],
+    },
+    {
+        "id": "shelf_takeaways",
+        "requires": [
+            "backend/utils/shelf_reflections.py::async def generate",
+            "backend/utils/shelf_reflections.py::def decide",
+        ],
+        "month": "2026-10",
+        "title": "What I take from what I read",
+        "line": (
+            "For pieces about AI and software I can now say what they mean for a system like me, but only after an admin has approved the wording."
+        ),
+        "keywords": ["takeaway", "what did you take from it", "what did you learn", "reflection", "what does it mean for you", "ai winter", "reading shelf", "approved"],
+        "volunteer": [],
+    },
+    {
         "id": "relevant_findings",
         "requires": [
             "backend/utils/relevant_findings.py::def select",

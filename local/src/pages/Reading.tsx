@@ -62,6 +62,7 @@ export const ReadingPage: React.FC = () => {
                 <a href={item.url} target="_blank" rel="noopener noreferrer">{item.title}</a>
               </div>
               <p className="reading-summary">{item.summary}</p>
+              {item.reflection && <p className="reading-takeaway"><strong>What I take from it:</strong> {item.reflection}</p>}
               <div className="reading-meta">
                 <span className="reading-topic">{SHELF_TOPIC_LABELS[item.topic] ?? item.topic}</span>
                 {item.domain} · read {shortDate(item.read_at)}

@@ -102,6 +102,7 @@ from backend.services.local_workspace import (
 from backend.utils.agent_utils import is_stale_capability_denial, scrub_stale_capability_denials
 from backend.utils.embedding_utils import embed_text
 from backend.utils import relevant_findings
+from backend.utils import citation_media
 from backend.utils.emotion_utils import build_emotional_context, effective_intensity, energy_tier
 from backend.utils.encouragement_utils import (
     ENCOURAGEMENT_MARK, build_encouragement_block, build_encouragement_revision_prompt, encouragement_reply_issue,
@@ -230,7 +231,9 @@ if sys.platform == "win32":
     _ProactorBasePipeTransport._call_connection_lost = _call_connection_lost_quietly
 
 async def _run_shelf_schedule():
-    from backend.models.models import lite_llm as shelf_llm
+    from backend.models.models import lite_llm as shelf_llm, lite_llm_deep as shelf_reflection_llm
+
+    shelf_refresh.set_reflection_model(shelf_reflection_llm.ainvoke)
 
     async def allowed() -> bool:
         return budget_guard.allows("shelf_refresh", await asyncio.to_thread(budget_guard.current_state))
@@ -1885,13 +1888,13 @@ def download_document(
     grid_out = gridfs_bucket.open_download_stream(file_doc["_id"])
 
     safe_filename = urllib.parse.quote(clean_basename)
-    # A citation link opens the file itself: JSON is served as JSON, everything else keeps the PDF type it has always had.
-    media_type = "application/json" if clean_basename.lower().endswith((".json", ".jsonl", ".ndjson")) else "application/pdf"
+    # A citation link opens the file itself, sent as what it is (backend/utils/citation_media.py): JSON, text and Markdown shown in the browser, Word saved, anything else the PDF type it has always had.
+    media_type, disposition = citation_media.media_for(clean_basename)
     return StreamingResponse(
         grid_out,
         media_type=media_type,
         headers={
-            "Content-Disposition": f"inline; filename*=utf-8''{safe_filename}"
+            "Content-Disposition": f"{disposition}; filename*=utf-8''{safe_filename}"
         }
     )
 
@@ -3327,6 +3330,11 @@ async def get_public_reading_shelf(current_user = Depends(get_current_user)):
     return await asyncio.to_thread(shelf_utils.public_view, _admin_db())
 
 
+class ShelfReflectionDecision(BaseModel):
+    action: str                         # "approve", "edit" or "remove"
+    text: str | None = None             # the wording to approve or save, when the admin changed it
+
+
 class ShelfRemoveRequest(BaseModel):
     block_source: bool = False
 
@@ -3335,6 +3343,31 @@ class ShelfRemoveRequest(BaseModel):
 async def get_reading_shelf(admin = Depends(require_global_admin)):
     """Everything on Sonic's reading shelf (backend/utils/reading_shelf.py), newest first, with the sources that are blocked. Global_Admins only."""
     return await asyncio.to_thread(shelf_utils.admin_view, _admin_db())
+
+
+@app.post("/api/admin/reading-shelf/reflect")
+async def write_reading_shelf_reflections(admin = Depends(require_global_admin)):
+    """Writes a PENDING reflection (what a piece could mean for a system like Sonic) for shelf items that have none, a few at a time. Nothing is said to anyone until it is approved."""
+    from backend.models.models import lite_llm_deep as shelf_reflection_llm
+    from backend.utils import shelf_reflections
+
+    db = _admin_db()
+    items = await asyncio.to_thread(shelf_utils.live_items, db)
+    result = await shelf_reflections.write_missing(db, shelf_utils.COLLECTION, items, shelf_reflection_llm.ainvoke)
+    return {"result": result, **(await asyncio.to_thread(shelf_utils.admin_view, db))}
+
+
+@app.post("/api/admin/reading-shelf/{key}/reflection")
+async def decide_reading_shelf_reflection(key: str, payload: ShelfReflectionDecision, admin = Depends(require_global_admin)):
+    """An admin's decision on one item's reflection: approve it (optionally with their own wording), edit it, or remove it for good."""
+    from backend.utils import shelf_reflections
+
+    db = _admin_db()
+    outcome = await asyncio.to_thread(shelf_reflections.decide, db, shelf_utils.COLLECTION, key, payload.action, admin.get("sub"), payload.text)
+    if not outcome["ok"]:
+        raise HTTPException(status_code=400, detail=outcome["problem"])
+    logger.info("[shelf] an admin decided on a reflection (%s).", payload.action if payload.action in ("approve", "edit", "remove") else "unknown")
+    return await asyncio.to_thread(shelf_utils.admin_view, db)
 
 
 @app.post("/api/admin/reading-shelf/{key}/remove")
@@ -3358,8 +3391,9 @@ async def unblock_reading_shelf_source(domain: str, admin = Depends(require_glob
 @app.post("/api/admin/reading-shelf/refresh")
 async def refresh_reading_shelf(admin = Depends(require_global_admin)):
     """Runs one search now instead of waiting for the interval: one search, up to a few page reads and two small model calls."""
-    from backend.models.models import lite_llm as shelf_llm
+    from backend.models.models import lite_llm as shelf_llm, lite_llm_deep as shelf_reflection_llm
 
+    shelf_refresh.set_reflection_model(shelf_reflection_llm.ainvoke)
     db = _admin_db()
     result = await shelf_refresh.refresh_shelf(db, shelf_llm.ainvoke, force=True)
     return {"result": result, **(await asyncio.to_thread(shelf_utils.admin_view, db))}

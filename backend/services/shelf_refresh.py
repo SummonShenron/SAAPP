@@ -59,6 +59,16 @@ async def _summarize(invoke: Callable[[str], Awaitable[Any]], title: str, text: 
     return summary
 
 
+_reflection_invoke: Optional[Callable[[str], Awaitable[Any]]] = None
+
+
+def set_reflection_model(invoke: Optional[Callable[[str], Awaitable[Any]]]) -> None:
+    """The model that writes the takeaways (backend/utils/shelf_reflections.py): a stronger one than the summaries use, since there are only a couple a day and a forced or stock
+    reflection is what the approval screen exists to catch. Unset (the default, and in tests), the summary model is used."""
+    global _reflection_invoke
+    _reflection_invoke = invoke
+
+
 async def refresh_shelf(
     db,
     invoke: Callable[[str], Awaitable[Any]],
@@ -144,6 +154,10 @@ async def _refresh_shelf(
                 from backend.utils.embedding_utils import embed_text
 
                 await asyncio.to_thread(shelf.ensure_embeddings, db, embed_text)      # so the item can be matched on meaning (backend/utils/relevant_findings.py)
+                from backend.utils import shelf_reflections
+
+                generated = await shelf_reflections.generate(_reflection_invoke or invoke, doc)             # what it could mean for a system like Sonic: kept PENDING until an admin approves it
+                await asyncio.to_thread(shelf_reflections.store_generated, db, shelf.COLLECTION, doc["_id"], generated)
                 logger.info("[shelf] added an item from %s for the %s topic.", doc["domain"], topic["id"])
                 return {"status": "added", "topic": topic["id"], "domain": doc["domain"], "key": doc["_id"]}
         logger.info("[shelf] nothing added for the %s topic (%s).", topic["id"], reasons or "no results")

@@ -37,6 +37,36 @@ export const ShelfTab: React.FC = () => {
     }
   };
 
+  const [editing, setEditing] = useState<{ key: string; text: string } | null>(null);
+
+  const decide = async (key: string, action: 'approve' | 'edit' | 'remove', text?: string) => {
+    setBusyKey(key);
+    setNotice('');
+    try {
+      setShelf(await api.decideShelfReflection(key, action, text));
+      setEditing(null);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Could not save that.');
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  const writeReflections = async () => {
+    setSearching(true);
+    setNotice('');
+    try {
+      const out = await api.writeShelfReflections();
+      setShelf(out);
+      const counts = (out as unknown as { result?: { pending: number; nothing: number; errors: number } }).result;
+      if (counts) setNotice(`Wrote ${counts.pending} takeaway${counts.pending === 1 ? '' : 's'} for review${counts.nothing ? `; ${counts.nothing} piece${counts.nothing === 1 ? '' : 's'} had nothing for a system like Sonic` : ''}${counts.errors ? `; ${counts.errors} failed, try again` : ''}.`);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Could not write the takeaways.');
+    } finally {
+      setSearching(false);
+    }
+  };
+
   const unblock = async (domain: string) => {
     setBusyKey(domain);
     try {
@@ -81,6 +111,11 @@ export const ShelfTab: React.FC = () => {
         <button type="button" className="sh-btn sh-btn-primary" onClick={searchNow} disabled={searching}>
           {searching ? 'Searching...' : 'Search now'}
         </button>
+        {(shelf.reflections_missing ?? 0) > 0 && (
+          <button type="button" className="sh-btn" onClick={writeReflections} disabled={searching}>
+            Write takeaways ({shelf.reflections_missing})
+          </button>
+        )}
         <span className="sh-hint">
           It searches by itself about every {shelf.refresh_days} days{shelf.last_attempt_at ? `; last tried ${shortDate(shelf.last_attempt_at)}` : ''}.
           Items stop being used after {shelf.expires_after_days} days. Offered {shelf.offered_total} time{shelf.offered_total === 1 ? '' : 's'} so far.
@@ -104,6 +139,34 @@ export const ShelfTab: React.FC = () => {
               <div className="sh-row-meta">
                 {item.domain}. Read {shortDate(item.read_at)}. Offered {item.offered ?? 0} time{item.offered === 1 ? '' : 's'}.
               </div>
+              {item.reflection && (item.reflection.status === 'pending' || item.reflection.status === 'approved') && (
+                <div className="sh-row-current">
+                  <div className="sh-hint">
+                    {item.reflection.status === 'approved' ? 'What it takes from this (approved, Sonic may say it):' : 'What it would take from this (pending: not said to anyone until you approve it):'}
+                  </div>
+                  {editing?.key === item.key ? (
+                    <>
+                      <textarea className="memory-edit-text" rows={4} value={editing.text} onChange={e => setEditing({ key: item.key, text: e.target.value })} />
+                      <div className="sh-row-buttons">
+                        <button type="button" className="sh-btn sh-btn-primary" disabled={busyKey === item.key} onClick={() => decide(item.key, 'approve', editing.text)}>Approve this wording</button>
+                        <button type="button" className="sh-btn" disabled={busyKey === item.key} onClick={() => decide(item.key, 'edit', editing.text)}>Save as pending</button>
+                        <button type="button" className="sh-btn" onClick={() => setEditing(null)}>Cancel</button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="sh-row-text">{item.reflection.text}</div>
+                      <div className="sh-row-buttons">
+                        {item.reflection.status === 'pending' && (
+                          <button type="button" className="sh-btn sh-btn-primary" disabled={busyKey === item.key} onClick={() => decide(item.key, 'approve')}>Approve</button>
+                        )}
+                        <button type="button" className="sh-btn" disabled={busyKey === item.key} onClick={() => setEditing({ key: item.key, text: item.reflection?.text ?? '' })}>Edit</button>
+                        <button type="button" className="delete-row-btn" disabled={busyKey === item.key} onClick={() => decide(item.key, 'remove')}>Remove takeaway</button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
               <div className="sh-row-buttons">
                 <button type="button" className="delete-row-btn" disabled={busyKey === item.key} onClick={() => remove(item.key, false)}>
                   {busyKey === item.key ? 'Working...' : 'Remove'}

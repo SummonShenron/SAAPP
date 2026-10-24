@@ -1141,6 +1141,8 @@ export interface ShelfItem {
   read_at: string;
   status: 'live' | 'removed';
   offered: number;
+  /** What a system like Sonic takes from the piece: pending until an admin approves it, and only an approved one is ever said. */
+  reflection?: { status: '' | 'pending' | 'approved' | 'none' | 'removed'; text: string };
 }
 
 export interface ReadingShelf {
@@ -1151,6 +1153,8 @@ export interface ReadingShelf {
   expires_after_days: number;
   topics: string[];
   offered_total: number;
+  reflections_pending?: number;
+  reflections_missing?: number;
   /** Only on a "search now": what that one search did. */
   result?: { status: 'added' | 'nothing' | 'skipped' | 'error'; topic?: string; domain?: string; reasons?: Record<string, number> };
 }
@@ -1163,6 +1167,8 @@ export interface PublicShelfItem {
   summary: string;
   topic: string;
   read_at: string;
+  /** An admin-approved takeaway, or an empty string. */
+  reflection?: string;
 }
 
 export const getPublicReadingShelf = (): Promise<{ items: PublicShelfItem[]; topics: string[] }> =>
@@ -1178,6 +1184,14 @@ export function removeShelfItem(key: string, blockSource: boolean): Promise<Read
 
 export function unblockShelfSource(domain: string): Promise<ReadingShelf> {
   return adminRequest(`/api/admin/reading-shelf/blocked/${encodeURIComponent(domain)}`, 'DELETE');
+}
+
+export function writeShelfReflections(): Promise<ReadingShelf> {
+  return adminRequest('/api/admin/reading-shelf/reflect', 'POST');
+}
+
+export function decideShelfReflection(key: string, action: 'approve' | 'edit' | 'remove', text?: string): Promise<ReadingShelf> {
+  return adminRequest(`/api/admin/reading-shelf/${encodeURIComponent(key)}/reflection`, 'POST', { action, text });
 }
 
 export function refreshReadingShelf(): Promise<ReadingShelf> {
@@ -2227,6 +2241,8 @@ export const api = {
   removeShelfItem,
   unblockShelfSource,
   refreshReadingShelf,
+  writeShelfReflections,
+  decideShelfReflection,
   getOpsSuggestions,
   decideOpsSuggestion
 };

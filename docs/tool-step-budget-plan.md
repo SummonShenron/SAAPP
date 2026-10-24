@@ -49,3 +49,9 @@ After `list_library_files` returns N files, grant `ceil(N / 5)` extra steps, onc
 - One server process holds the wait. With several workers a decision that lands on another one is not seen and the wait times out.
 - Checkpoints on a change to a folder offer `propose_local_edits` or `continue_working`; a plain answer is not accepted as the finish.
 - Cost: waiting is free, but a Claude conversation cache (about 5 minutes) is cold after a long wait, so the first step after one is billed as a fresh prompt.
+
+## 2026-10-24: sandbox tests, the .sonic folder and edit-approval levels (undeployed)
+- `run_sandbox_tests(tests, edits?)` (native and old engine, only with a folder connected): unittest files run in the WASI Python (backend/services/sandbox_tests.py) against a read-only copy of the folder snapshot with the proposed edits written over it; nothing is shown or changed. Limits: standard library only, 4 billion fuel, 256 MB, 25 s wait, 2 runs at once, only source and small data files copied (3000 files, 40 MB). Checks that the walls hold are in backend/tests/test_sandbox_tests.py.
+- `.sonic/notes.md` and `.sonic/tests/` in the person's own folder (backend/utils/sonic_notes.py): the guide and the end of the notes go into the local-workspace paragraph each turn.
+- Approval levels (local/src/editApproval.ts, folder menu): ask / automatic inside .sonic/ / automatic this session. Always asks: Word documents, more than 8 files, a burst of more than 6 automatic applies in a minute.
+- Next: scratch files for long turns, a test line on the diff card, pytest and JavaScript in the sandbox, a server-side copy of the approval setting.
