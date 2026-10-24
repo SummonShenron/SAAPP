@@ -24,8 +24,10 @@ from dotenv import load_dotenv
 
 try:
     from . import json_chunks
+    from . import text_files
 except ImportError:  # run as a script (the upload starts it that way), where this folder is on the path instead of being a package
     import json_chunks
+    import text_files
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 # --- Standalone Self-Contained Configuration ---
@@ -239,6 +241,27 @@ def _is_json_filename(filename: str) -> bool:
     return filename.lower().endswith((".json", ".jsonl", ".ndjson"))
 
 
+def _redacted_mongo_host(uri) -> str:
+    """The host part of a MongoDB connection string, never the user name, password or options."""
+    text = str(uri or "")
+    if not text:
+        return "(not set)"
+    after_scheme = text.split("://", 1)[-1]
+    return after_scheme.rsplit("@", 1)[-1].split("/", 1)[0].split("?", 1)[0] or "(unreadable)"
+
+
+def _is_markdown_filename(filename: str) -> bool:
+    return filename.lower().endswith((".md", ".markdown"))
+
+
+def _is_text_filename(filename: str) -> bool:
+    return filename.lower().endswith((".txt", ".log"))
+
+
+def _is_docx_filename(filename: str) -> bool:
+    return filename.lower().endswith(".docx")
+
+
 def _replace_earlier_version(db, fs, new_file_id, affiliate: str, filename: str, ingest_id: str) -> None:
     """Called only once the new JSON file's chunks are safely stored: removes what an earlier upload of the same file name left in this knowledge base (its chunks, which
     carry another ingest_id, and its stored copy), so re-exporting a file replaces it instead of piling up duplicates. A failed re-upload never gets here, so the earlier
@@ -249,6 +272,66 @@ def _replace_earlier_version(db, fs, new_file_id, affiliate: str, filename: str,
             fs.delete(earlier._id)
             logger.info(f"       -> Replaced an earlier upload of {filename}.")
 
+
+
+def _index_text_upload(db, fs, embeddings, text_splitter, file_obj, filename: str, affiliate: str, kind: str) -> None:
+    """Indexes one .txt/.log, .md/.markdown or .docx upload: read it (text_files.py), chunk it, embed it, replace any earlier upload of the same name, add it to the graph, mark it done.
+
+    A FILE THAT FAILS LEAVES NOTHING BEHIND. Whatever THIS upload created is removed: its chunks (by its own ingest_id), its stored copy, and its graph edges when it got as far as touching
+    the graph or had already replaced the earlier version (whose edges are then gone with it). An earlier version that is still in place is left exactly as it was, edges included, so a
+    failed re-upload never damages the file it was meant to replace.
+      - A file that simply cannot be used (empty, binary, too big, not a Word document: text_files.TextIngestError) is removed completely and the other uploads carry on, as for a JSON file
+        that is not JSON.
+      - Any other failure is a real fault: the same complete removal, then the error is raised to stop the run and keep the original error reporting, as for a PDF."""
+    ingest_id = uuid.uuid4().hex
+    replaced_earlier = graph_touched = False
+    try:
+        raw = file_obj.read()
+        if kind == "docx":
+            document = text_files.build_docx_document(raw, filename, affiliate, Document, ingest_id)
+            content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        else:
+            doc_type = "markdown" if kind == "markdown" else "text"
+            document = text_files.build_text_document(raw, filename, affiliate, Document, ingest_id, doc_type)
+            content_type = "text/markdown" if kind == "markdown" else "text/plain"
+        chunks = text_splitter.split_documents([document])
+        if not chunks:
+            raise text_files.TextIngestError("The file has no readable text in it.")
+        if len(chunks) > text_files.MAX_CHUNKS:
+            raise text_files.TextIngestError(f"The file would make {len(chunks)} chunks, over the {text_files.MAX_CHUNKS} limit for one file.")
+
+        MongoDBAtlasVectorSearch.from_documents(
+            chunks,
+            embeddings,
+            collection=db["documents"],
+            index_name="vector_index"
+        )
+        replaced_earlier = True
+        _replace_earlier_version(db, fs, file_obj._id, affiliate, filename, ingest_id)
+        graph_touched = True
+        index_graph_for_source(db, affiliate, filename, [c.page_content for c in chunks])
+
+        db["fs.files"].update_one(
+            {"_id": file_obj._id},
+            {"$set": {"metadata.status": "pages", "metadata.content_type": content_type}}
+        )
+        logger.info(f"   [✓] Success: Indexed {kind} file {filename} as {len(chunks)} chunks.")
+
+    except Exception as e:
+        logger.error(f"   [X] Error processing {kind} file {filename}: {e}. Initiating rollback...")
+        try:
+            db["documents"].delete_many({"source": filename, "affiliate": affiliate, "ingest_id": ingest_id})
+        except Exception as clean_err:
+            logger.error(f"       -> Could not remove partial chunks for {filename}: {clean_err}")
+        if replaced_earlier or graph_touched:
+            try:
+                delete_graph_edges(db, affiliate, filename)
+            except Exception as clean_err:
+                logger.error(f"       -> Could not remove graph edges for {filename}: {clean_err}")
+        fs.delete(file_obj._id)
+        logger.info(f"       -> Deleted {filename} from GridFS storage.")
+        if not isinstance(e, text_files.TextIngestError):
+            raise e      # a real fault stops the run with its original error; a file that simply cannot be used must not stop the other uploads
 
 def _guess_image_mime_type(filename: str) -> str:
     ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
@@ -328,7 +411,8 @@ def _extract_embedded_images(reader, page_index, fs, affiliate, source_filename,
 
 def run_ingestion_pipeline():
     """Executes the multi-tenant document chunking and vector database indexing workflow."""
-    print(f"DEBUG: MONGO_URI is currently: {os.getenv('MONGO_URI')}")
+    # Which database this run talks to, WITHOUT the credentials: the connection string holds the user name and password, and stdout ends up in logs and test output.
+    print(f"DEBUG: MONGO_URI host is: {_redacted_mongo_host(os.getenv('MONGO_URI'))}")
     print(f"DEBUG: DB_NAME is currently: {os.getenv('DB_NAME')}")
     logger.info("--- STARTING MULTI-TENANT INGESTION PIPELINE ---")
     
@@ -462,6 +546,12 @@ def run_ingestion_pipeline():
                     if not isinstance(e, json_chunks.JsonIngestError):
                         raise e      # a real fault keeps the original error reporting; a file that simply is not usable JSON must not stop the other uploads
 
+                continue
+
+            if _is_text_filename(filename) or _is_markdown_filename(filename) or _is_docx_filename(filename):
+                # --- TEXT, MARKDOWN AND WORD BRANCH: one shared path (see _index_text_upload), which leaves nothing behind if a file fails. ---
+                kind = "docx" if _is_docx_filename(filename) else ("markdown" if _is_markdown_filename(filename) else "text")
+                _index_text_upload(db, fs, embeddings, text_splitter, file_obj, filename, affiliate, kind)
                 continue
 
             # Create file with delete=False to avoid Windows file-locking permission errors

@@ -50,6 +50,8 @@ from backend.utils.safety_utils import (
     remember_support, RISK_NONE, KIND_LADDER_ANSWER, _ORDER as _RISK_ORDER,
 )
 from backend.services import local_edit_decisions
+from backend.services import sandbox_tests
+from backend.utils import sonic_notes
 from backend.services.local_workspace import apply_sync as apply_workspace_sync, get_workspace_handle, is_guest_username, workspace_status
 from backend.services.local_edits import validate_edit_proposal
 from backend.services.memory_search import embed_and_store_memory_chunk, recall_explicit
@@ -2103,6 +2105,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 f"a description of the change or ask 'would you like me to apply this?' in "
                 f"chat: that leaves them with nothing to click."
             )
+            # Sonic's own notes and tests live in the person's folder under .sonic/ (backend/utils/sonic_notes.py): the guide, and the end of its earlier notes when it has kept some.
+            schema_parts.append(await asyncio.to_thread(sonic_notes.build_context, username))
         if is_admin:
             schema_parts.append(f"mongodb_collections={mongo_schema}")
         schema = ", ".join(schema_parts)
@@ -2982,6 +2986,12 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 "why: don't repeat the code, and don't say it has been applied — it hasn't until "
                 "the user presses Apply."
             )
+            menu_lines.append(
+                "- run_sandbox_tests — args: tests (a list of Python unittest file paths in the folder, or new ones you create in `edits`; at most 5), edits (optional: the same text edits "
+                "propose_local_edits takes, {\"path\", \"old_string\", \"new_string\"} or {\"path\", \"content\"}). Runs the tests in a locked-down sandbox (no network, standard library only) against "
+                "a COPY of the user's folder as it would be AFTER those edits, and returns the real pass/fail with tracebacks. It changes nothing and shows the user nothing. Use it to check "
+                "a change before you propose it: write a small unittest in .sonic/tests/, run it, fix the change if it fails. Call it as a \"query\" step."
+            )
         actions_menu = "\n".join(menu_lines)
         # The ops actions are batchable only for an admin who is actually offered them (they are not even named for anyone else).
         batchable_actions = TOOL_AGENT_BATCHABLE_ACTIONS | (
@@ -3084,6 +3094,20 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 local_edit_decisions.forget(proposal_id)
             return await _decision_result(shown, result, decision)
 
+        async def _run_sandbox_tests(args: dict) -> str:
+            """Runs Python tests against a copy of the folder, optionally with proposed edits applied to the copy first (backend/services/sandbox_tests.py). Changes and shows nothing."""
+            overlay = None
+            if args.get("edits"):
+                checked = await asyncio.to_thread(validate_edit_proposal, args.get("edits"), lambda path: _fetch_file_content(path)[0])
+                if not checked["ok"]:
+                    return (
+                        "ERROR: these edits could not be applied cleanly, so nothing was tested:\n- " + "\n- ".join(checked["errors"])
+                        + "\nFix them and call run_sandbox_tests again with the complete corrected list."
+                    )
+                overlay = checked.get("texts") or {}
+            outcome = await sandbox_tests.run_tests(username, args.get("tests"), overlay)
+            return sandbox_tests.format_result(outcome, with_edits=bool(args.get("edits")))
+
         async def _decision_result(shown: str, result: dict, decision: dict | None) -> str:
             """What the loop is told once the person has decided on a proposal (or has not within the wait)."""
             if decision is None:
@@ -3150,6 +3174,11 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 if local_workspace_handle is None:
                     return "ERROR: no local folder is connected, so there is nothing to propose edits against"
                 return await _propose_local_edits(args)
+
+            if tool_action == "run_sandbox_tests":
+                if local_workspace_handle is None:
+                    return "ERROR: no local folder is connected, so there is nothing to test"
+                return await _run_sandbox_tests(args)
 
             if tool_action == "run_mongo_query":
                 if not is_admin:

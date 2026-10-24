@@ -74,3 +74,12 @@
   color: var(--text-muted);
   padding: 1rem 0;
 }
+
+.reading-takeaway {
+  margin: 0.5rem 0 0;
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid var(--accent-primary);
+  color: var(--text-main);
+  line-height: 1.5;
+  font-size: 0.92rem;
+}

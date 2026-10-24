@@ -7,6 +7,7 @@ import LocalFolderConsent from '../components/LocalFolderConsent';
 import { hasLocalFolderConsent, recordLocalFolderConsent } from '../localWorkspace';
 import type { ApplyResult, UndoResult } from '../localEdits';
 import type { EditProposal } from '../localEditsCore';
+import { decideAutoApply, levelLabel, loadLevel, nextLevel, saveLevel, type ApprovalLevel } from '../editApproval';
 import ConversationsBlade from '../components/ConversationsBlade';
 import MiniPatchy, { type PatchyEnergy } from '../components/MiniPatchy';
 import PatchyHero from '../components/PatchyHero';
@@ -688,6 +689,11 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [feedbackTag, setFeedbackTag] = useState<string>('hallucination');
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [showFolderConsent, setShowFolderConsent] = useState(false);
+  // How much of what Sonic proposes to the folder is applied without a click (src/editApproval.ts); kept in this browser, because this browser writes the files.
+  const [approvalLevel, setApprovalLevel] = useState<ApprovalLevel>(() => loadLevel());
+  const approvalLevelRef = useRef<ApprovalLevel>(approvalLevel);
+  const autoAppliedAtRef = useRef<number[]>([]);
+  useEffect(() => { approvalLevelRef.current = approvalLevel; }, [approvalLevel]);
   const [conversationsRefreshKey, setConversationsRefreshKey] = useState(0);
   const [isMobileTraceOpen, setIsMobileTraceOpen] = useState(false);
   const [latestStepTitle, setLatestStepTitle] = useState("");
@@ -1632,6 +1638,11 @@ useEffect(() => {
                   edits: payload.edits,
                   awaiting: payload.awaiting_decision === true,
                 };
+                // The person's approval level may apply this one without a click (never a Word document, a large proposal, or a burst of them).
+                const decision = decideAutoApply(approvalLevelRef.current, proposal, autoAppliedAtRef.current, Date.now());
+                proposal.auto = decision.auto;
+                proposal.autoSkipReason = decision.auto ? undefined : decision.reason;
+                if (decision.auto) autoAppliedAtRef.current = [...autoAppliedAtRef.current.filter(t => Date.now() - t < 60_000), Date.now()];
                 setMessages(prev => {
                   const updated = [...prev];
                   const lastIndex = updated.length - 1;
@@ -2084,7 +2095,18 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
     if (hasLocalFolderConsent()) void workspace.connect();
     else setShowFolderConsent(true);
   };
+  const cycleApprovalLevel = () => {
+    const next = nextLevel(approvalLevel);
+    if (next === 'session' && !window.confirm('Apply every change Sonic proposes to your folder without asking, until you close this tab?\n\nEach change is still shown on its card with an Undo button.')) {
+      setApprovalLevel('ask');
+      saveLevel('ask');
+      return;
+    }
+    setApprovalLevel(next);
+    saveLevel(next);
+  };
   const folderMenuEntries: { item: OptionWheelItem; run: () => void }[] = [
+    { item: { label: levelLabel(approvalLevel), icon: folderGlyph }, run: cycleApprovalLevel },
     { item: { label: `Resync${workspace.fileCount !== null ? ` (${workspace.fileCount} files)` : ''}`, disabled: loading, icon: folderGlyph }, run: () => { void workspace.resync(); } },
     { item: { label: 'Disconnect folder', disabled: loading, icon: folderGlyph }, run: () => { void workspace.disconnect(); } },
     // Survives reloads (the saved originals live in IndexedDB), so a change applied earlier can

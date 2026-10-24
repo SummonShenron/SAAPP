@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ApplyResult, UndoResult } from '../localEdits';
 import type { EditProposal } from '../localEditsCore';
 import './__styles__/LocalEditCard.css';
@@ -55,6 +55,17 @@ export default function LocalEditCard({ proposal, canApply, onApply, onUndo, onD
     setDeclining(false);
     if (proposal.awaiting) onDecision?.(proposal.proposal_id, 'declined', reason.trim());
   };
+
+  // An approval level other than "ask" (src/editApproval.ts) applies this one as soon as the card appears, exactly as if the button had been pressed: the files are written,
+  // the waiting turn is told, and Undo stays. Once only, and only when there is a folder to write to.
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (proposal.auto && canApply && !autoStarted.current) {
+      autoStarted.current = true;
+      void apply();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const undo = async () => {
     setPhase('undoing');
@@ -134,6 +145,7 @@ export default function LocalEditCard({ proposal, canApply, onApply, onUndo, onD
               <button type="button" className="led-btn" onClick={() => setDeclining(true)}>Decline</button>
             )}
             {!canApply && <span className="led-note">Connect your local folder (… menu) to apply these.</span>}
+            {proposal.autoSkipReason && <span className="led-note">Asking because {proposal.autoSkipReason}.</span>}
           </>
         )}
         {phase === 'pending' && declining && (
@@ -148,7 +160,7 @@ export default function LocalEditCard({ proposal, canApply, onApply, onUndo, onD
         {phase === 'declined' && <span className="led-note">Declined. Nothing was changed{proposal.awaiting ? '; Sonic will carry on from that.' : '.'}</span>}
         {(phase === 'applied' || phase === 'undoing') && (
           <>
-            <span className="led-note led-ok">Applied to your folder.</span>
+            <span className="led-note led-ok">{proposal.auto ? 'Applied to your folder automatically (your edit-approval setting).' : 'Applied to your folder.'}</span>
             <button type="button" className="led-btn" onClick={undo} disabled={phase === 'undoing'}>
               {phase === 'undoing' ? 'Undoing…' : 'Undo'}
             </button>

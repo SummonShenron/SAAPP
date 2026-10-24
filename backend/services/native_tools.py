@@ -113,6 +113,25 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
     "propose_append_target_doc": _object({
         "content": {"type": "string", "description": "the finished text to append, composed by you from what you gathered this turn"},
     }, ["content"]),
+    # a connected local folder: run Python tests in the WASI sandbox against a copy of it (backend/services/sandbox_tests.py). Changes nothing.
+    "run_sandbox_tests": _object({
+        "tests": {"type": "array", "items": {"type": "string"}, "description": "paths of Python test files (unittest) in the folder, or created by `edits`, at most 5"},
+        "edits": {
+            "type": "array",
+            "description": "optional: edits (the same text forms propose_local_edits takes) to apply to the COPY before running, including new test files; nothing is changed or shown",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "old_string": {"type": "string", "description": "text copied EXACTLY from the file as you read it, matching once"},
+                    "new_string": {"type": "string"},
+                    "replace_all": {"type": "boolean"},
+                    "content": {"type": "string", "description": "the whole text of a NEW file (a test, or a module)"},
+                },
+                "required": ["path"],
+            },
+        },
+    }, ["tests"]),
     # a connected local folder: a proposal the person applies (or not) from a diff card. Nothing is written by the call.
     "propose_local_edits": _object({
         "summary": {"type": "string", "description": "one or two sentences on what the edits do and why"},
@@ -175,6 +194,13 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
 # Descriptions that replace the menu line's text for the native engine. The old menu line describes the OLD engine's way of calling a tool ("as a query step ... never a field
 # inside a final answer"), which would mislead a model that makes real function calls.
 NATIVE_DESCRIPTIONS: Dict[str, str] = {
+    "run_sandbox_tests": (
+        "Run Python unittest files against a COPY of the person's connected folder, in a locked-down sandbox (no network, nothing outside the copy, a compute limit). It changes nothing and shows "
+        "nothing to the person. Pass `edits` (the same text edits propose_local_edits takes, including a NEW test file) and the tests run against the folder as it would be AFTER those edits, so you "
+        "can check a change before you propose it and fix it if it fails. Write tests with unittest and the standard library only, put them in .sonic/tests/, and keep them small and specific. The "
+        "sandbox has no installed packages: code that imports FastAPI, LangChain, pymongo and the like cannot run there (use it for pure logic, or give the test a stand-in). A pass covers only what "
+        "the tests exercise; say that, not that the change is proven. A failing result is real: read the traceback, fix the change, run again."
+    ),
     "propose_append_target_doc": (
         "Append text to the Google Doc the person set as their target document under Integrations. It writes nothing by itself: the person sees your text on an approval card and "
         "approves, edits or rejects it. Use it when they ask to add, append, save or put something in their doc, after you have gathered and written the finished content. "

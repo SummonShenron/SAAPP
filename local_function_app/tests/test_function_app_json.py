@@ -139,5 +139,8 @@ def test_the_pdf_and_image_paths_do_not_see_json_files(pipeline, monkeypatch):
 
 
 def test_the_upload_route_serves_json_citations_as_json():
+    from backend.utils import citation_media
+
+    assert citation_media.media_for("week.json") == ("application/json", "inline")
     source = open(__import__("os").path.join(__import__("os").path.dirname(__file__), "..", "..", "app.py"), encoding="utf-8").read()
-    assert 'media_type = "application/json" if clean_basename.lower().endswith((".json", ".jsonl", ".ndjson")) else "application/pdf"' in source
+    assert "citation_media.media_for(clean_basename)" in source
