@@ -21,7 +21,7 @@ export const EVERYDAY: Record<string, Content> = {
       <ul>
         <li>Ask it anything, including who Jack is, what he has built, and how this system works.</li>
         <li>Ask what it has been reading lately, or for a dry joke. It has a personality and a profile you can read under "About Sonic".</li>
-        <li>Open the <strong>Trace</strong> in the "…" menu to watch the steps it takes to answer.</li>
+        <li>Press the <strong>microscope</strong> button at the top right to watch the steps it takes to answer.</li>
         <li>For questions about the demo library, Sonic uses its documents first and cites the page. For anything they don't cover, it answers from general knowledge. If you'd rather it stuck to the documents, turn off <strong>Open Answers</strong> in the "…" menu.</li>
         <li>Guests share one temporary identity, so nothing here is personal and nothing is remembered about you.</li>
       </ul>
@@ -122,7 +122,7 @@ export const EVERYDAY: Record<string, Content> = {
         <li>"Tell me a joke about vibe coding."</li>
         <li>"What's the most famous bug in computing history?"</li>
       </ul>
-      <p>Open the <strong>Trace</strong> in the "…" menu to watch the steps Sonic takes to answer.</p>
+      <p>Press the <strong>microscope</strong> button at the top right to watch the steps Sonic takes to answer.</p>
     </>
   ) : (
     <>
@@ -405,20 +405,19 @@ export const EVERYDAY: Record<string, Content> = {
     </>
   ),
 
-  menu: () => (
+  menu: ctx => (
     <>
       <p>The "…" button next to the message box holds the less common controls:</p>
       <ul>
         <li><strong>Conversations:</strong> opens the list of your conversations.</li>
-        <li><strong>Trace:</strong> shows the steps Sonic took to answer, such as searching or reading a file.</li>
         <li><strong>Export</strong> and <strong>Delete:</strong> save this conversation as a file, or delete it.</li>
         <li><strong>Scope:</strong> which library Sonic looks in: everything you can use, or just one.</li>
         <li><strong>Open Answers:</strong> on (the default), Sonic can also use its general knowledge when your documents don't have the answer. Off, it sticks to your documents.</li>
         <li><strong>Deep Thinking:</strong> slower but more thorough, for tricky questions with several parts.</li>
         <li><strong>Code model:</strong> which AI does the reasoning steps when Sonic reads code, searches or writes code for you: Gemini or Claude. Sonic's reply is still written by Gemini either way. It only appears when Claude is set up, and it isn't offered in the guest demo.</li>
-        <li><strong>Message First:</strong> lets Sonic open a conversation with one question about something you told it. Off until you turn it on.</li>
-        <li><strong>SAAPP:</strong> shows or hides the little robot.</li>
       </ul>
+      <p>The choices about how Sonic behaves are on the Account page: letting Sonic start conversations and bring things up (under "About you"), showing or hiding the little robot, and, for admins, the incident digest. The steps Sonic took to answer are under the <strong>microscope</strong> button at the top right.</p>
+      <p><HelpLink go={ctx.go} path="/account">Open Account settings</HelpLink></p>
     </>
   ),
 

@@ -14,10 +14,10 @@ export type PatchyLook = 'idle' | 'thinking' | 'searching' | 'puzzled' | 'writin
 /** The usage budget's level as far as he is concerned ('off' and unknown count as fine). */
 export type PatchyBudget = 'ok' | 'notice' | 'throttled' | 'blocked';
 
-export type PatchyMood = 'laugh' | 'soft' | 'error' | 'active' | 'done' | 'asleep' | 'watching' | 'drowsy' | 'idle';
+export type PatchyMood = 'laugh' | 'soft' | 'error' | 'active' | 'done' | 'praise' | 'sad' | 'asleep' | 'watching' | 'drowsy' | 'idle';
 
 /** The poses of the right arm (PatchyParts.tsx draws them). */
-export type ArmPose = 'hang' | 'type' | 'ready' | 'think' | 'search' | 'puzzle' | 'cheer' | 'hug';
+export type ArmPose = 'hang' | 'type' | 'ready' | 'think' | 'search' | 'puzzle' | 'cheer' | 'fistpump' | 'hug';
 
 /** The class on a Patchy's root: it picks the accent color and every animation in MiniPatchy.css. */
 export function patchyRootClass(p: { mood: PatchyMood; look: PatchyLook; energy: PatchyEnergy; budget: PatchyBudget; steered: boolean; reading?: boolean }): string {
@@ -28,6 +28,8 @@ export function patchyRootClass(p: { mood: PatchyMood; look: PatchyLook; energy:
 /** The hover text: what he is doing, or the invitation to poke him (a low person is not invited to). */
 export function patchyTitle(p: { mood: PatchyMood; look: PatchyLook; energy: PatchyEnergy }): string {
   if (p.mood === 'laugh') return 'Hehe!';
+  if (p.mood === 'praise') return 'Yes!';
+  if (p.mood === 'sad') return 'Hmm…';
   if (p.mood === 'error') return 'Something went wrong';
   if (p.mood === 'asleep') return 'Resting while chat is paused';
   if (p.mood === 'active') {
@@ -74,6 +76,10 @@ export interface MoodInputs {
   nudged: boolean;
   faulted: boolean;
   celebrating: boolean;
+  /** A fist pump: a praise bump just arrived (optional, so older callers still type-check). */
+  praised?: boolean;
+  /** The sad face: a sad bump just arrived (optional, so older callers still type-check). */
+  sad?: boolean;
   /** The person is engaged with the input (clicked into it or typed, and has not sent or left): he watches it. Not "is typing", which flickers with every pause, and not plain focus, which the page gives the box itself and never takes back. */
   watching: boolean;
   drowsy: boolean;
@@ -90,6 +96,8 @@ export function resolveMood(s: MoodInputs): PatchyMood {
   if (s.nudged) return 'soft';
   if (s.faulted) return 'error';
   if (s.look !== 'idle') return 'active';
+  if (s.praised) return 'praise';
+  if (s.sad) return 'sad';
   if (s.celebrating) return 'done';
   if (s.budget === 'blocked') return 'asleep';
   if (s.watching) return 'watching';
@@ -99,6 +107,10 @@ export function resolveMood(s: MoodInputs): PatchyMood {
 
 // How long each short-lived state lasts, in milliseconds.
 export const CELEBRATE_MS = 1600;
+/** How long the fist pump lasts. */
+export const PRAISE_MS = 1600;
+/** How long the sad face holds, still, before he settles again. */
+export const SAD_MS = 3000;
 export const LAUGH_MS = 1400;
 export const NUDGE_MS = 1200;
 /** How long the failure face stays before he settles again. */

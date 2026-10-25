@@ -25,7 +25,7 @@ def turn(tools=(), steps=3, cap=False, loop=True):
 # ---- which turns are coding turns -------------------------------------------------------------------------------------------------------------
 
 def test_a_turn_that_read_the_repo_is_a_coding_turn_and_one_that_searched_the_web_is_not():
-    assert co.summarize_turn(turn([("read_repo_file", True), ("search_code", True)])) == {"cap_hit": False, "edited": False, "verified": False}
+    assert co.summarize_turn(turn([("read_repo_file", True), ("search_code", True)])) == {"cap_hit": False, "edited": False, "verified": False, "edit_calls": 0, "edit_errors": 0, "test_runs": 0}
     assert co.summarize_turn(turn([("web_search", True), ("read_url", True)])) is None
 
 
@@ -117,3 +117,113 @@ def test_the_repo_tools_match_the_ones_the_trace_announces():
     from backend.services import agent_workflow
 
     assert co.REPO_TOOLS == agent_workflow._REPO_SOURCE_TOOLS
+
+
+# ---- edit attempts, test runs and what happens to a proposal ---------------------------------------------------------------------------------------
+
+def test_edit_attempts_and_errors_and_test_runs_are_counted_with_the_turn():
+    summary = co.summarize_turn(turn([("read_repo_file", True), ("propose_local_edits", False), ("propose_local_edits", True), ("run_sandbox_tests", True), ("run_snippet", False)]))
+    assert summary["edit_calls"] == 2 and summary["edit_errors"] == 1 and summary["test_runs"] == 2 and summary["edited"] is True and summary["verified"] is True
+    counts = {"turns_total": 1}
+    co.tally_turn(counts, summary)
+    assert counts["code_edit_calls"] == 2 and counts["code_edit_errors"] == 1 and counts["code_test_runs"] == 2 and counts["code_turns"] == 1
+    quiet = {}
+    co.tally_turn(quiet, co.summarize_turn(turn([("read_repo_file", True)])))
+    assert quiet == {"code_turns": 1}, "nothing is added for what did not happen"
+
+
+def test_the_sandbox_tests_count_as_checking_the_work():
+    assert co.summarize_turn(turn([("read_repo_file", True), ("propose_local_edits", True), ("run_sandbox_tests", True)]))["verified"] is True
+    assert co.summarize_turn(turn([("read_repo_file", True), ("propose_local_edits", True), ("run_sandbox_tests", False)]))["verified"] is False
+
+
+def test_an_edit_is_small_when_it_is_one_file_and_a_few_lines():
+    assert co.size_bucket({"a.py": (5, 5)}) == "small" and co.size_bucket({"a.py": (15, 5)}) == "small"
+    assert co.size_bucket({"a.py": (15, 6)}) == "large" and co.size_bucket({"a.py": (1, 0), "b.py": (1, 0)}) == "large" and co.size_bucket({}) == "small"
+
+
+def test_each_outcome_becomes_two_counters_and_anything_else_none():
+    assert co.outcome_counts("applied", {"a.py": (3, 1)}) == {"code_edit_applied": 1, "code_edit_applied_small": 1}
+    assert co.outcome_counts("undone", {"a.py": (30, 1)}) == {"code_edit_undone": 1, "code_edit_undone_large": 1}
+    assert co.outcome_counts("declined", {"a.py": (1, 1), "b.py": (1, 1)}) == {"code_edit_declined": 1, "code_edit_declined_large": 1}
+    assert co.outcome_counts("ignored", {"a.py": (1, 1)}) == {} and co.outcome_counts("", {}) == {}
+    from backend.utils.self_counters import KEYS
+
+    assert all(key in KEYS for outcome in co.OUTCOMES for size in ("small", "large") for key in co.outcome_counts(outcome, {"a.py": (1, 1)} if size == "small" else {"a.py": (99, 1)}))
+
+
+# ---- the message after a coding reply: pushback in words OR in how it felt -----------------------------------------------------------------------------
+
+def feeling(valence="frustrated", intensity=0.6, fresh=True):
+    return {"valence": valence, "intensity": intensity, "read_this_turn": fresh, "turns_since": 0}
+
+
+def test_only_a_fresh_reading_of_frustration_at_least_as_strong_as_the_floor_counts():
+    assert co.is_frustrated(feeling()) is True and co.is_frustrated(feeling(intensity=co.FRUSTRATION_MIN)) is True
+    assert co.is_frustrated(feeling(intensity=0.2)) is False, "too faint to hold against the reply"
+    assert co.is_frustrated(feeling(fresh=False)) is False, "carried over from earlier: not about this reply"
+    for other in ("low", "distressed", "positive", "neutral", ""):
+        assert co.is_frustrated(feeling(valence=other)) is False, other
+    for junk in (None, {}, "frustrated", {"valence": "frustrated", "read_this_turn": True, "intensity": "lots"}, []):
+        assert co.is_frustrated(junk) is False, junk
+
+
+def test_the_pushback_counters_say_how_it_was_heard_and_count_it_once():
+    assert co.pushback_counts(None, feeling()) == {}, "the last reply was not coding work"
+    assert co.pushback_counts("followed", None) == {} and co.pushback_counts("followed", feeling(intensity=0.1)) == {}
+    assert co.pushback_counts("redo", None) == {"code_pushback": 1}, "the phrase list alone"
+    assert co.pushback_counts("followed", feeling()) == {"code_frustrated": 1, "code_pushback": 1}, "the feeling alone"
+    assert co.pushback_counts("redo", feeling()) == {"code_frustrated": 1, "code_pushback": 1}, "both are still one pushback"
+    from backend.utils.self_counters import KEYS
+
+    assert {"code_pushback", "code_frustrated", "code_proposals", "code_proposal_rework"} <= KEYS
+
+
+# ---- rework: a proposal for a file the person applied a short while ago ------------------------------------------------------------------------------
+
+from datetime import datetime, timedelta, timezone
+
+NOW = datetime(2026, 10, 25, 20, 0, tzinfo=timezone.utc)
+
+
+def at(minutes_ago):
+    return {"at": (NOW - timedelta(minutes=minutes_ago)).isoformat()}
+
+
+def test_a_proposal_for_a_file_applied_within_the_window_is_rework_and_older_or_unknown_files_are_not():
+    applied = {"a.py": at(10), "b.py": at(co.REWORK_WINDOW_MINUTES + 1), "c.py": at(0)}
+    assert co.rework_paths({"a.py": (1, 1), "b.py": (1, 1), "z.py": (1, 1)}, applied, NOW) == ["a.py"]
+    assert co.rework_paths({"c.py": (1, 1)}, applied, NOW) == ["c.py"], "applied a moment ago"
+    assert co.rework_paths({"a.py": (1, 1)}, {}, NOW) == [] and co.rework_paths({}, applied, NOW) == [] and co.rework_paths(None, None, NOW) == []
+    assert co.rework_paths({"a.py": (1, 1)}, {"a.py": {"at": "not a time"}}, NOW) == [] and co.rework_paths({"a.py": (1, 1)}, {"a.py": {}}, NOW) == []
+    naive = {"a.py": {"at": (NOW - timedelta(minutes=5)).replace(tzinfo=None).isoformat()}}
+    assert co.rework_paths({"a.py": (1, 1)}, naive, NOW) == ["a.py"], "a time with no zone is read as UTC"
+
+
+def test_each_proposal_is_counted_and_the_rework_ones_twice():
+    assert co.proposal_counts({"a.py": (1, 1)}, {}, NOW) == {"code_proposals": 1}
+    assert co.proposal_counts({"a.py": (1, 1)}, {"a.py": at(3)}, NOW) == {"code_proposals": 1, "code_proposal_rework": 1}
+    assert co.proposal_counts({"a.py": (1, 1), "b.py": (1, 1)}, {"a.py": at(3), "b.py": at(4)}, NOW) == {"code_proposals": 1, "code_proposal_rework": 1}, "one proposal, counted once however many files"
+
+
+def test_a_proposal_is_counted_when_it_reaches_the_person_and_the_wiring_is_in_place(monkeypatch):
+    import asyncio
+    import pathlib
+
+    from backend.services import agent_workflow as aw
+    from backend.utils import applied_changes
+
+    recorded = []
+    monkeypatch.setattr("backend.utils.self_counters.record_turn_counts", lambda counts: recorded.append(dict(counts)))
+    just_now = {"at": (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()}
+    monkeypatch.setattr(applied_changes, "pending", lambda username: {"a.py": just_now})
+    asyncio.run(aw._count_proposal("jack", {"a.py": (1, 1)}))
+    asyncio.run(aw._count_proposal("jack", {"b.py": (1, 1)}))
+    assert recorded == [{"code_proposals": 1, "code_proposal_rework": 1}, {"code_proposals": 1}]
+    monkeypatch.setattr(applied_changes, "pending", lambda username: (_ for _ in ()).throw(RuntimeError("db down")))
+    asyncio.run(aw._count_proposal("jack", {"a.py": (1, 1)}))                       # never raises: a counter must not break a proposal
+    root = pathlib.Path(__file__).resolve().parents[2]
+    source = (root / "backend" / "services" / "agent_workflow.py").read_text(encoding="utf-8")
+    assert "await _count_proposal(username, proposed)" in source
+    app = (root / "app.py").read_text(encoding="utf-8")
+    assert 'code_outcomes.pushback_counts(code_followup, final_state.get("emotional_state"))' in app

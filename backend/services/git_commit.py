@@ -396,7 +396,7 @@ def build_plan(api: Any, repo: str, branch: str, files: Dict[str, str], expected
         if base_text is not None and text == base_text:
             continue
         adds, dels = count_changes(base_text or "", text)
-        item = {"path": path, "status": "new" if entry is None else "modified", "mode": (entry or {}).get("mode", "100644"), "text": text, "additions": adds, "deletions": dels,
+        item = {"path": path, "status": "new" if entry is None else "modified", "mode": (entry or {}).get("mode", "100644"), "text": text, "base_text": base_text, "additions": adds, "deletions": dels,
                 "fingerprint": fingerprint(files[path]), "drift": False}
         if expected and path in expected and base_text is not None:
             want_adds, want_dels = expected[path]

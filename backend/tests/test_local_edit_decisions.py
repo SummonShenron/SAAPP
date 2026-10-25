@@ -188,3 +188,26 @@ def test_the_decisions_module_logs_nothing_the_person_wrote():
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("info", "warning", "error", "exception", "debug"):
             raise AssertionError("a log line in the decisions module")
+
+
+def test_an_outcome_is_counted_once_per_proposal_and_only_for_its_owner():
+    from backend.services import local_edit_decisions as led
+
+    led.remember_proposal("jack", "p-count", {"a.py": (3, 1)})
+    assert led.note_outcome("jack", "p-count", "applied") == {"a.py": (3, 1)}
+    assert led.note_outcome("jack", "p-count", "applied") == {}, "the same report twice counts once"
+    assert led.note_outcome("jack", "p-count", "undone") == {"a.py": (3, 1)} and led.note_outcome("jack", "p-count", "undone") == {}
+    assert led.note_outcome("mallory", "p-count", "declined") == {} and led.note_outcome("jack", "p-count", "sideways") == {} and led.note_outcome("jack", "unknown", "applied") == {}
+    led.remember_proposal("jack", "p-empty", {})
+    assert led.note_outcome("jack", "p-empty", "declined") == {"": (0, 0)}, "a proposal with no recorded files is still counted (its size reads as small)"
+
+
+def test_the_decision_endpoint_counts_outcomes_and_the_card_reports_declines_and_undos():
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    app = (root / "app.py").read_text(encoding="utf-8")
+    assert "local_edit_decisions.note_outcome(username, proposal_id, payload.outcome)" in app and "code_outcomes.outcome_counts(payload.outcome" in app and '"applied", "declined" or "undone"' in app
+    card = (root / "local" / "src" / "components" / "LocalEditCard.tsx").read_text(encoding="utf-8")
+    assert "onDecision?.(proposal.proposal_id, 'undone', '')" in card and "if (proposal.awaiting) onDecision" not in card
+    assert "'applied' | 'declined' | 'undone'" in (root / "local" / "src" / "api.ts").read_text(encoding="utf-8")

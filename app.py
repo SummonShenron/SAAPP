@@ -374,7 +374,7 @@ class ChatRequest(BaseModel):
     folder_expected: bool = False   # the browser has a local folder connected, so a turn that finds none on the server can say so (the answer then used GitHub)
 
 class EditDecisionRequest(BaseModel):
-    outcome: str                    # "applied" or "declined"
+    outcome: str                    # "applied", "declined" or "undone" (an applied change taken back)
     reason: str = ""                # why it was declined, in the person's words (optional)
 
 class SteerRequest(BaseModel):
@@ -1000,6 +1000,10 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 final_state = await workflow.ainvoke(initial_state, config=graph_config)
 
             t_graph_end = time.perf_counter()
+            # The message after a coding reply: did it read as pushback (backend/utils/code_outcomes.py)? The reasoner has just read its feeling, so this costs nothing; counts only, no text.
+            pushback = code_outcomes.pushback_counts(code_followup, final_state.get("emotional_state"))
+            if pushback:
+                await asyncio.to_thread(record_turn_counts, pushback)
 
             # 2. EVALUATE FINAL STATE & BUILD PROMPT
             relevance_grade = final_state.get("relevance_grade")
@@ -3349,6 +3353,10 @@ async def report_local_edit_decision(proposal_id: str, payload: EditDecisionRequ
     """The diff card's Apply or Decline, reported to the tool loop that is waiting on it (backend/services/local_edit_decisions.py). Applying itself happens in the browser."""
     username = current_user.get("sub")
     status = local_edit_decisions.decide(username, proposal_id, payload.outcome, payload.reason)
+    # What happened to the proposal, counted once, by size (backend/utils/code_outcomes.py): aggregate counts only, no person and no text.
+    counted = local_edit_decisions.note_outcome(username, proposal_id, payload.outcome)
+    if counted:
+        await asyncio.to_thread(record_turn_counts, code_outcomes.outcome_counts(payload.outcome, {p: v for p, v in counted.items() if p}))
     if payload.outcome == "applied":
         # Whether or not a turn was waiting: these files are now changed work that a commit may include (backend/utils/applied_changes.py).
         applied_changes.record(username, local_edit_decisions.changes_for(username, proposal_id))

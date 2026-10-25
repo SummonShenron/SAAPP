@@ -115,7 +115,7 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
     }, ["content"]),
     # a connected local folder + the person's own GitHub token: commit (and optionally branch and open a pull request). Shows a card; commits nothing until the person approves.
     "propose_commit": _object({
-        "message": {"type": "string", "description": "one or two plain sentences saying what the change does, like a pull request summary"},
+        "message": {"type": "string", "description": "optional: what the change DOES, like a pull request title and a line or two (for example \"feat: add a merge tool that builds a fresh card\"); never \"commit the working changes\". Leave it out when you do not know what changed: one is written from the diff"},
         "new_branch": {"type": "string", "description": "optional: create this branch first and commit to it, for example sonic/fix-clamp"},
         "branch": {"type": "string", "description": "optional: the branch to commit to (or to branch from); default is the branch their folder is on"},
         "open_pull_request": {"type": "boolean", "description": "optional: also open a pull request from the branch"},
@@ -124,7 +124,7 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
         "pr_draft": {"type": "boolean", "description": "open it as a draft"},
         "paths": {"type": "array", "items": {"type": "string"}, "description": "optional: only these files"},
         "scope": {"type": "string", "enum": ["applied", "working"], "description": "applied = only the files you changed and they applied; working = every file in their folder that differs from the branch on GitHub (what git status would list). Default: applied when any are waiting, otherwise working"},
-    }, ["message"]),
+    }, []),
     # the person's own GitHub token: a card for merging an open pull request, by number or by the branch it comes from. Merges nothing until the person approves.
     "propose_merge": _object({
         "pr_number": {"type": "integer", "description": "the pull request's number"},
@@ -222,8 +222,8 @@ NATIVE_DESCRIPTIONS: Dict[str, str] = {
     "propose_commit": (
         "Commit their work to GitHub, with THEIR token, the way a person commits after a piece of work: the files you changed and they applied (scope applied), or all their working changes, meaning every file in their folder that differs from the branch on GitHub (scope working: use it for \"commit our working changes\" or \"commit everything\"). A short message, onto the branch their folder is on, or onto a "
         "new branch you name (new_branch), optionally opening a pull request (open_pull_request, pr_title, pr_base, pr_draft). It changes nothing by itself: they see a card with the repo, branch, files with line counts and the "
-        "message, and nothing is committed until they approve. Use it when they ask you to commit, push, or open a pull request for the work. The message is one or two plain sentences about what "
-        "the change does; do not add trailers. Call it once and then stop: say that the card is waiting for their approval, never that it was committed. It is refused in a turn where you read a web "
+        "message, and nothing is committed until they approve. Use it when they ask you to commit, push, or open a pull request for the work. The message says what the change DOES, as a pull request title and a line or two "
+        "(never \"commit the working changes\"); leave it out if you do not know what changed, and one is written from the diff; do not add trailers. Call it once and then stop: say that the card is waiting for their approval, never that it was committed. It is refused in a turn where you read a web "
         "page, email, shared document or logs."
     ),
     "run_sandbox_tests": (

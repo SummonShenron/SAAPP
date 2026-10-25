@@ -38,6 +38,8 @@ export function MiniPatchy(props: PatchySignals) {
   const pose: ArmPose =
     mood === 'active' ? (look === 'thinking' ? 'think' : look === 'searching' ? 'search' : look === 'puzzled' ? 'puzzle' : 'type')
     : mood === 'idle' ? 'hang'
+    : mood === 'praise' ? 'fistpump' // praise: right arm snaps up into the fist pump
+    : mood === 'sad' ? 'hang' // sad: the arm hangs still
     : mood === 'watching' ? 'ready' // you are writing: his free hand comes down to hover over the keys, getting ready to answer
     : 'type'; // celebrating, laughing, nodding, sorry, drowsy, asleep: hands on the laptop
   const wave = mood === 'idle' && energy !== 'subdued' && budget !== 'throttled';

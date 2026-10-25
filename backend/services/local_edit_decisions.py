@@ -59,6 +59,22 @@ def remember_proposal(username: str, proposal_id: str, changes: Dict[str, Any]) 
     _proposals[proposal_id] = {"username": username, "changes": dict(changes), "at": now}
 
 
+def note_outcome(username: str, proposal_id: str, outcome: Any) -> Dict[str, Any]:
+    """The {path: (added, removed)} of a proposal the FIRST time this outcome ("applied", "declined" or "undone") is reported for it, so a button pressed twice or a report that arrives twice is
+    counted once. {} when it was already counted, is not this person's, or is unknown (expired): nothing is then counted. Never raises."""
+    try:
+        entry = _proposals.get(proposal_id)
+        if not entry or entry["username"] != username or outcome not in ("applied", "declined", "undone"):
+            return {}
+        done = entry.setdefault("counted", set())
+        if outcome in done:
+            return {}
+        done.add(outcome)
+        return dict(entry["changes"]) or {"": (0, 0)}
+    except Exception:
+        return {}
+
+
 def changes_for(username: str, proposal_id: str) -> Dict[str, Any]:
     """The {path: (added, removed)} a proposal made for this person, or {} (unknown, expired, or someone else's)."""
     entry = _proposals.get(proposal_id)

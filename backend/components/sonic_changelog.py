@@ -237,7 +237,7 @@ CHANGELOG = [
         "month": "2026-10",
         "title": "Committing and pushing for you",
         "line": (
-            "I can now commit your working changes, or just the files I changed, push them to your branch or a new one and open a pull request, then merge it into main once you approve each card."
+            "I can now commit your working changes with a message that says what changed, push them to your branch or a new one, open a pull request, and merge any open pull request you ask about, once you approve each card."
         ),
         "keywords": ["commit", "push", "pull request", "pr", "branch", "git", "co-authored", "merge", "github"],
         "volunteer": [],

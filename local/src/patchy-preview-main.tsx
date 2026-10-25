@@ -11,7 +11,7 @@ import type { PatchyBudget, PatchyEnergy, PatchyLook } from './components/patchy
 
 // A gallery of every Patchy look and mood, for checking them by eye (open /patchy-preview.html on the dev server).
 // `bump` repeats a short-lived trigger every few seconds so its animation can be watched: a failure, a celebration, a steer nod, typing or a poke.
-type Bump = 'fault' | 'cheer' | 'steer' | 'poke';
+type Bump = 'fault' | 'cheer' | 'praise' | 'sad' | 'steer' | 'poke';
 
 function Cell({ label, look = 'idle', energy = 'open', budget = 'ok', bump, drowsy, hero, engaged, typed = 0 }: {
   label: string; look?: PatchyLook; energy?: PatchyEnergy; budget?: PatchyBudget; bump?: Bump; drowsy?: boolean; hero?: boolean; engaged?: boolean; typed?: number;
@@ -32,6 +32,8 @@ function Cell({ label, look = 'idle', energy = 'open', budget = 'ok', bump, drow
     look, energy, budget,
     cheer: bump === 'cheer' ? n : 0,
     fault: bump === 'fault' ? n : 0,
+    praise: bump === 'praise' ? n : 0,
+    sad: bump === 'sad' ? n : 0,
     steer: bump === 'steer' ? n : 0,
     engaged,
     typed,
@@ -165,6 +167,12 @@ function Live() {
 
 createRoot(document.getElementById('root')!).render(
   params.get('chat') ? chatMock : params.get('live') ? <Live /> : params.get('empty') ? emptyChat : <div>
+    <Section title="New reactions: praise (fist pump) and sad (still, head down, eyes on his feet)">
+      <Cell label="praise" bump="praise" />
+      <Cell label="praise, subdued" bump="praise" energy="subdued" />
+      <Cell label="sad" bump="sad" />
+      <Cell label="sad, subdued" bump="sad" energy="subdued" />
+    </Section>
     <Section title="What he does while a turn runs">
       <Cell label="idle" />
       <Cell label="thinking" look="thinking" />

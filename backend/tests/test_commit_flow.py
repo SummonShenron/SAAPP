@@ -101,7 +101,6 @@ def test_the_default_branch_is_allowed_with_a_plain_warning(world):
 
 def test_every_reason_the_commit_cannot_be_drafted_is_said_in_words(world, monkeypatch):
     for args, branch, fragment in (
-        ({"message": "x"}, "feat/x", "short commit message"),
         ({"new_branch": "feat/x"}, "feat/x", "already exists"),
         ({"new_branch": "bad name"}, "feat/x", "not a branch name"),
         ({}, "", "which branch your folder is on"),
@@ -195,13 +194,17 @@ def test_a_branch_that_moved_after_the_card_and_a_missing_token_are_reported_and
 
 # ---- the tool inside the tool agent ----------------------------------------------------------------------------------------------------------
 
-async def _turn(monkeypatch, decisions, *, branch="feat/x"):
+async def _turn(monkeypatch, decisions, *, branch="feat/x", groups=None):
     """Runs tool_agent_node with a fake native loop that makes each decision through the real dispatcher and raises the unsafe signal the way the loop does."""
     from backend.tests.test_tool_agent_node import _setup_github_repo, _state
 
     monkeypatch.setenv("TOOL_AGENT_ENGINE", "native")
     monkeypatch.setattr(aw, "fetch_and_extract_checkout", lambda *a, **k: (_ for _ in ()).throw(rc.RepoCheckoutError("x")))
     _setup_github_repo(monkeypatch)
+    if groups is not None:
+        monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: groups)
+        if "Global_Admins" in groups:                                       # an admin's turn lists the database's collections first
+            monkeypatch.setattr(aw, "get_db", lambda: type("Db", (), {"list_collection_names": staticmethod(lambda: ["users"])})())
     monkeypatch.setattr(aw, "safe_emit_event", AsyncMock())
     seen = {}
 
@@ -254,7 +257,7 @@ def test_the_tool_is_in_the_menu_the_native_schema_and_the_unsafe_list_and_the_f
     from backend.services import native_tools as nt
 
     declared = nt.declarations_from_menu(["- propose_commit — args: message, new_branch"])
-    assert declared[0]["name"] == "propose_commit" and declared[0]["parameters"]["required"] == ["message"]
+    assert declared[0]["name"] == "propose_commit" and declared[0]["parameters"]["required"] == []
     assert {"message", "new_branch", "branch", "open_pull_request", "pr_title", "pr_base", "pr_draft", "paths", "scope"} == set(declared[0]["parameters"]["properties"])
     line = cf.pending_line(USER, "feat/x")
     assert "branch 'feat/x'" in line and "src/app.py" in line and "propose_commit" in line and "open_pull_request" in line
@@ -687,9 +690,32 @@ def test_the_tool_agent_answers_a_merge_request_with_a_card_and_merges_nothing(w
 
 
 def test_a_merge_request_that_cannot_be_drafted_says_so_and_never_claims_merging_is_impossible(world, monkeypatch):
-    out, _ = run(_turn(monkeypatch, [merge_decision(head="not-a-branch")]))
-    assert out["relevance_grade"] == "conversational" and out["pending_action"] is None and out["content_to_format"].startswith("I can't merge this yet: There is no open pull request")
-    assert "no approval card exists" in out["content_to_format"] and "say that merging is something you cannot do" in out["content_to_format"]
+    out, _ = run(_turn(monkeypatch, [merge_decision(head="not-a-branch")], groups=[]))                 # not an admin: the older one-step route is not open to them
+    assert out["relevance_grade"] == "conversational" and out["pending_action"] is None and out["content_to_format"].startswith("There is no open pull request")
+    assert "limited to admins" in out["content_to_format"] and "no approval card exists" in out["content_to_format"] and "say that merging is something you cannot do" in out["content_to_format"]
+
+
+def test_with_no_pull_request_yet_an_admin_gets_the_older_open_and_merge_card_as_it_always_worked(world, monkeypatch):
+    seen = {}
+
+    def old_draft(state):
+        seen.update(head=state["head_branch"], base=state["base_branch"], repo=state["repo"])
+        details = {"title": "feat: x", "body": "b", "head_branch": state["head_branch"], "base_branch": state["base_branch"], "repo": state["repo"]}
+        return details, f"Ready to create a Pull Request for `{state['repo']}`:\n- **Title:** feat: x\n- **Base Branch:** `{state['base_branch']}` <- `{state['head_branch']}`"
+
+    monkeypatch.setattr(aw, "_draft_create_pr", old_draft)
+    out, _ = run(_turn(monkeypatch, [merge_decision(head="feat/pushed", base="main")], groups=["Global_Admins"]))
+    assert seen == {"head": "feat/pushed", "base": "main", "repo": "SummonShenron/SAAPP"}
+    assert out["relevance_grade"] == "hitl_approval_required" and out["pending_action"]["action_type"] == "create_pr" and out["pending_action"]["details"]["head_branch"] == "feat/pushed"
+    card = out["content_to_format"]
+    assert card.startswith("**Approval Required**") and "Ready to create a Pull Request" in card and "opens this pull request and merges it into `main` in one step (squash)" in card
+    assert aw.WRITE_ACTIONS["create_pr"]["card_marker"] in card and world.pulls == [] and world.merge_calls == []
+
+
+def test_the_older_route_that_cannot_make_a_card_says_why_without_a_card(world, monkeypatch):
+    monkeypatch.setattr(aw, "_draft_create_pr", lambda state: (None, "I couldn't compare `main` with `x` on GitHub, so I haven't drafted a pull request."))
+    out, _ = run(_turn(monkeypatch, [merge_decision(head="x")], groups=["Global_Admins"]))
+    assert out["pending_action"] is None and out["content_to_format"].startswith("I couldn't compare") and "no approval card exists" in out["content_to_format"]
 
 
 def test_a_turn_that_read_outside_text_will_not_merge_in_the_same_message(world, monkeypatch):
@@ -713,3 +739,72 @@ def test_merge_requests_are_recognised_routed_to_the_tool_agent_and_the_tool_is_
     assert "propose_merge" in nt.REGISTRY and nt.REGISTRY["propose_merge"]["required"] == [] and "propose_merge" in nt.NATIVE_DESCRIPTIONS
     source = (ROOT / "backend" / "services" / "agent_workflow.py").read_text(encoding="utf-8")
     assert "propose_merge — args: pr_number" in source and "\"propose_merge\"}" in source and "commit_flow.draft_merge" in source
+
+
+
+# ---- commit messages that say what changed ----------------------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("message,branch,generic", [
+    ("Commit the working changes from the local folder to GitHub.", "main", True),
+    ("Adds the current working changes from the local folder on a new feat/checkouts branch.", "feat/checkouts", True),
+    ("feat(checkouts): commit working changes from local folder", "feat/checkouts", True),
+    ("Update files", "main", True), ("commit changes", "main", True), ("WIP", "main", True), ("", "main", True),
+    ("Say hello instead of hi in the greeting.", "main", False), ("fix: refuse a merge when the head moved", "main", False), ("Add a merge tool that builds a fresh card", "feat/x", False),
+    ("Fix typo in README", "main", False),
+])
+def test_a_message_that_says_nothing_about_the_change_is_recognised(message, branch, generic):
+    assert cf.is_generic_message(message, __import__("re").findall(r"[A-Za-z0-9]+", branch)) is generic
+
+
+def test_the_digest_names_each_file_and_shows_some_of_what_changed_and_is_bounded():
+    files = [
+        {"path": "src/app.py", "status": "modified", "additions": 1, "deletions": 1, "base_text": "a = 1\nb = 2\n", "text": "a = 1\nb = 3\n"},
+        {"path": "src/new.py", "status": "new", "additions": 2, "deletions": 0, "base_text": None, "text": "x = 1\n\ny = 2\n"},
+    ]
+    digest = cf.change_digest(files)
+    assert "src/app.py (modified, +1 -1)" in digest and "  -b = 2" in digest and "  +b = 3" in digest and "src/new.py (new, +2 -0)" in digest and "  +x = 1" in digest and "  +y = 2" in digest
+    many = [{"path": f"f{n}.py", "status": "new", "additions": 1, "deletions": 0, "base_text": None, "text": "z = " + "9" * 500 + "\n"} for n in range(30)]
+    big = cf.change_digest(many)
+    assert len(big) <= 5000 and "and 18 more files" in big or len(big) == 5000
+
+
+def test_a_generic_or_missing_message_is_replaced_by_one_written_from_the_change_and_a_good_one_is_kept(world):
+    prompts = []
+
+    def writer(prompt):
+        prompts.append(prompt)
+        return "feat: say hello in the greeting\n\nThe greeting now says hello instead of hi."
+
+    details, card = draft({"message": "Commit the working changes from the local folder to GitHub."}, branch="feat/x") if False else cf.draft(
+        USER, {"message": "Commit the working changes from the local folder to GitHub."}, repo=REPO, current_branch="feat/x", message_writer=writer)
+    assert details["message"] == "feat: say hello in the greeting\n\nThe greeting now says hello instead of hi." and "> feat: say hello in the greeting" in card
+    assert len(prompts) == 1 and "src/app.py (modified, +1 -1)" in prompts[0] and "+    return 'hello ' + name" in prompts[0] and "-    return 'hi ' + name" in prompts[0]
+    prompts.clear()
+    kept, _ = cf.draft(USER, {"message": "Say hello instead of hi in the greeting."}, repo=REPO, current_branch="feat/x", message_writer=writer)
+    assert kept["message"] == "Say hello instead of hi in the greeting." and prompts == []
+    missing, _ = cf.draft(USER, {}, repo=REPO, current_branch="feat/x", message_writer=writer)
+    assert missing["message"].startswith("feat: say hello") and len(prompts) == 1
+    short, _ = cf.draft(USER, {"message": "x"}, repo=REPO, current_branch="feat/x", message_writer=writer)
+    assert short["message"].startswith("feat: say hello")
+
+
+def test_when_no_message_can_be_written_a_plain_true_one_is_used(world):
+    def failing(prompt):
+        raise RuntimeError("model down")
+
+    for writer in (failing, lambda p: "[System Note: AI model is experiencing high traffic. Please try again.]", lambda p: "Commit the working changes.", lambda p: ""):
+        details, _ = cf.draft(USER, {}, repo=REPO, current_branch="feat/x", message_writer=writer)
+        assert details["message"] == "Update app.py", writer
+    long_line, _ = cf.draft(USER, {}, repo=REPO, current_branch="feat/x", message_writer=lambda p: "feat: " + "make the greeting warmer and friendlier for everyone " * 4)
+    assert len(long_line["message"].split("\n")[0]) <= 100 and long_line["message"].startswith("feat: make the greeting warmer")
+    assert cf.parse_card(cf.approval_message(cf.draft(USER, {}, repo=REPO, current_branch="feat/x", message_writer=failing)[1]))["message"] == "Update app.py"
+
+
+def test_a_message_written_from_the_change_is_never_logged_and_the_plan_keeps_what_the_files_were(world, caplog):
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    cf.draft(USER, {}, repo=REPO, current_branch="feat/x", message_writer=lambda p: "feat: say hello in the greeting")
+    assert "say hello in the greeting" not in caplog.text and "return 'hello '" not in caplog.text
+    plan = gc.build_plan(world, REPO, "feat/x", {"src/app.py": APP_NEW})
+    assert plan["files"][0]["base_text"] == APP and plan["files"][0]["text"] == APP_NEW

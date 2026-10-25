@@ -3015,7 +3015,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 "a change before you propose it: write a small unittest in .sonic/tests/, run it, fix the change if it fails. Call it as a \"query\" step."
             )
             menu_lines.append(
-                "- propose_commit — args: message (one or two plain sentences saying what the change does, like a pull request summary; no trailers), new_branch (optional: create this "
+                "- propose_commit — args: message (what the change DOES, as a pull request title and a line or two, for example \"feat: add a merge tool that builds a fresh card\"; never \"commit the working changes\"; leave it out if you do not know what changed and one is written from the diff; no trailers), new_branch (optional: create this "
                 "branch first and commit to it), branch (optional: the branch to commit to or to branch from; default is the branch their folder is on), open_pull_request (optional: true to "
                 "also open a pull request from the branch), pr_title (optional), pr_base (optional, default the repo's default branch), pr_draft (optional: true for a draft), paths (optional: only "
                 "these files), scope (\"applied\": only the files you changed and they applied; \"working\": every file in their folder that differs from the branch on GitHub, for \"commit our working changes\" or \"commit everything\"; default applied when any are waiting, otherwise working). Commits, as their folder holds the files, to GitHub with THEIR token: it shows them a card with the repo, branch, "
@@ -3094,8 +3094,9 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 )
             proposal_id = uuid.uuid4().hex
             # Which paths this proposal changes and by how much, so an Apply reported later is noted as work waiting to be committed (backend/utils/applied_changes.py).
-            local_edit_decisions.remember_proposal(
-                username, proposal_id, {f["path"]: (f.get("additions", 0), f.get("deletions", 0)) for f in result["files"] if f["path"] in (result.get("texts") or {})})
+            proposed = {f["path"]: (f.get("additions", 0), f.get("deletions", 0)) for f in result["files"] if f["path"] in (result.get("texts") or {})}
+            local_edit_decisions.remember_proposal(username, proposal_id, proposed)
+            await _count_proposal(username, proposed)
             # The native loop waits here for the person's decision and carries on with it; the page says it can report one (edit_decisions). Anything else ends the turn with the
             # card, as it always did.
             waiting = bool(state.get("edit_decisions")) and use_native and local_edit_decisions.enabled()
@@ -3607,6 +3608,26 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                                 "Ask me to merge in a new message."
                             )
                         merge_details, merge_card_text = await asyncio.to_thread(commit_flow.draft_merge, username, e.decision.get("args") or {}, repo=repo)
+                    except commit_flow.NoOpenPullRequest as none_open:
+                        # No pull request exists yet: the older route, as it always worked, opens one from the named branch and merges it in one approval (admins only, like before).
+                        legacy_message, legacy_details = await _legacy_pr_and_merge_card(state, username, repo, none_open, is_admin)
+                        if legacy_details is None:
+                            return {
+                                **state,
+                                "pending_action": None,
+                                "relevance_grade": "conversational",
+                                "generation": legacy_message,
+                                "content_to_format": f"{legacy_message}\n\nNOTE (authoritative): no approval card exists and nothing was opened or merged. Do not tell the person to approve anything or say that merging is something you cannot do; give the reason above.",
+                                "messages": list(state.get("messages", [])) + [AIMessage(content=legacy_message)],
+                            }
+                        return {
+                            **state,
+                            "pending_action": {"action_type": "create_pr", "details": legacy_details},
+                            "relevance_grade": "hitl_approval_required",
+                            "generation": legacy_message,
+                            "content_to_format": legacy_message,
+                            "messages": list(state.get("messages", [])) + [AIMessage(content=legacy_message)],
+                        }
                     except git_commit.GitCommitError as problem:
                         refusal = f"I can't merge this yet: {problem}"
                         return {
@@ -3852,6 +3873,39 @@ def _looks_like_approval_card(text: Any) -> bool:
     if "Approval Required" in content and ("Approve" in content or "Reject" in content):
         return True
     return any(action.get("card_marker") and action["card_marker"] in content for action in WRITE_ACTIONS.values())
+
+
+async def _legacy_pr_and_merge_card(state: dict, username: str, repo: str, none_open: "commit_flow.NoOpenPullRequest", is_admin: bool) -> tuple:
+    """(message, details) for "merge X into Y" when no pull request exists yet: the older create_pr card, which on approval opens the pull request from X into Y and squash-merges it in one step
+    (_execute_create_pr, run by execute_write_node). details is None when no card could be made, and message then says why. Admins only, as that route always was."""
+    if not is_admin:
+        return (
+            f"{none_open} Opening a pull request and merging it in one step is limited to admins; ask me to commit the changes and open the pull request instead, and I'll show a card for merging it after.",
+            None,
+        )
+    draft_state = {**state, "username": username, "repo": repo, "head_branch": none_open.head, "base_branch": none_open.base or state.get("base_branch") or "main", "pending_action": None}
+    details, summary_line = await asyncio.to_thread(_draft_create_pr, draft_state)
+    if details is None:
+        return summary_line, None
+    card = (
+        "**Approval Required**\n\n"
+        f"{summary_line}\n\n"
+        f"Approving opens this pull request and merges it into `{details['base_branch']}` in one step (squash).\n\n"
+        "*Please Approve, Modify parameters, or Reject this action.*"
+    )
+    return card, details
+
+
+async def _count_proposal(username: str, changes: dict) -> None:
+    """Counts one proposal that reached the person as a card, and whether it touches a file they applied from Sonic a short while ago (rework: backend/utils/code_outcomes.py). Counts only; never raises."""
+    try:
+        from backend.utils import applied_changes, code_outcomes
+        from backend.utils.self_counters import record_turn_counts
+
+        applied = await asyncio.to_thread(applied_changes.pending, username)
+        await asyncio.to_thread(record_turn_counts, code_outcomes.proposal_counts(changes, applied))
+    except Exception:
+        logger.warning("[code outcomes] could not count a proposal.", exc_info=True)
 
 
 def resolve_pr_number(user_msg: str, repo: str, headers: dict, api_base: str) -> int | None:

@@ -14,6 +14,7 @@ import ConversationsBlade from '../components/ConversationsBlade';
 import MiniPatchy, { type PatchyEnergy } from '../components/MiniPatchy';
 import PatchyHero from '../components/PatchyHero';
 import { TURN_SENT_STATUS, budgetFromLevel, lookForNode } from '../components/patchyLook';
+import { SHOW_PATCHY_EVENT, loadShowPatchy } from '../chatPreferences';
 import OptionWheel, { type OptionWheelItem } from '../components/OptionWheel';
 import { getWelcomeCards } from '../utils/Example_List';
 import type { WelcomeCard } from '../welcomeCards';
@@ -622,8 +623,6 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [deepThinking, setDeepThinking] = useState<boolean>(false);
   const [toolModel, setToolModel] = useState<'gemini' | 'claude'>('gemini');
   const [toolModelAvailable, setToolModelAvailable] = useState<boolean>(false);
-  const [proactiveOpening, setProactiveOpening] = useState<boolean>(false);
-  const [opsDigest, setOpsDigest] = useState<{ enabled: boolean; available: boolean }>({ enabled: false, available: false });
   const [budget, setBudget] = useState<BudgetView | null>(null);
   const openingRequestedRef = useRef<string | null>(null);
   const [allowedAffiliates, setAllowedAffiliates] = useState<KnowledgeBase[]>([]);
@@ -729,30 +728,24 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   // Bumped when a turn fails (his face turns sorry instead of celebrating), and when a message is steered into a running turn (he nods).
   const [patchyFault, setPatchyFault] = useState(0);
   const [patchySteer, setPatchySteer] = useState(0);
+  // Bumped on positive feedback (fist pump) and when a negative feedback note is submitted (sad face).
+  const [patchyPraise, setPatchyPraise] = useState(0);
+  const [patchySad, setPatchySad] = useState(0);
   // Whether the person is engaged with the message box (clicked into it or typed, and hasn't sent or clicked away): Patchy turns to watch it, and reads
   // along once there is text in it. Plain focus doesn't count: the page focuses the box itself on load, and it stays focused between turns.
   const [inputEngaged, setInputEngaged] = useState(false);
-  // Patchy is on by default; the "..." menu can hide him. Remembered per browser (storage can be
-  // blocked, so a failed read/write just means the default / a non-sticky choice).
-  const [showPatchy, setShowPatchy] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem('showPatchy') !== 'false';
-    } catch {
-      return true;
-    }
-  });
+  // Patchy is on by default; the Account page's Chat card can hide him (src/chatPreferences.ts), and this follows it.
+  const [showPatchy, setShowPatchy] = useState<boolean>(() => loadShowPatchy());
+  useEffect(() => {
+    const reread = () => setShowPatchy(loadShowPatchy());
+    window.addEventListener(SHOW_PATCHY_EVENT, reread);
+    return () => window.removeEventListener(SHOW_PATCHY_EVENT, reread);
+  }, []);
   // The energy ceiling the backend says is in force for this conversation (it follows the user's own
   // emotional state); Patchy's mood mirrors it. Resets when the conversation does.
   const [patchyEnergy, setPatchyEnergy] = useState<PatchyEnergy>('open');
   // The usage budget as Patchy shows it: a sweat drop at the notice level, heavy lids when throttled, asleep when chat is paused.
   const patchyBudget = budgetFromLevel(budget?.level);
-  const togglePatchy = () => {
-    setShowPatchy(prev => {
-      const next = !prev;
-      try { localStorage.setItem('showPatchy', String(next)); } catch { /* not persisted */ }
-      return next;
-    });
-  };
 
   const [showTooltip, setShowTooltip] = useState(false);
   const tooltipRef = useRef<HTMLDivElement>(null);
@@ -1009,13 +1002,6 @@ useEffect(() => {
       .catch(() => { /* guests and embeds have no such setting */ });
   }, [principal]);
 
-  useEffect(() => {
-    if (!principal) return;
-    api.getProactiveOpening()
-      .then(data => setProactiveOpening(data.enabled))
-      .catch(() => { /* guests and embeds have no such setting */ });
-  }, [principal]);
-
   // The usage budget status (backend/utils/budget_guard.py): read on load, pushed by the server when a turn starts under a notice,
   // and read again each time a reply finishes. Hidden in the embedded view, which keeps its own layout.
   const refreshBudget = React.useCallback(() => {
@@ -1030,34 +1016,6 @@ useEffect(() => {
   useEffect(() => {
     if (!loading) refreshBudget();
   }, [loading, refreshBudget]);
-
-  useEffect(() => {
-    if (!principal) return;
-    api.getOpsDigest()
-      .then(setOpsDigest)
-      .catch(() => { /* not an admin, or no such setting here: the menu item stays hidden */ });
-  }, [principal]);
-
-  const handleOpsDigestChange = async (enabled: boolean) => {
-    setOpsDigest(prev => ({ ...prev, enabled }));
-    try {
-      setOpsDigest(await api.updateOpsDigest(enabled));
-    } catch (err) {
-      console.error("Failed to update the incident digest setting:", err);
-      setOpsDigest(prev => ({ ...prev, enabled: !enabled }));
-    }
-  };
-
-  const handleProactiveOpeningChange = async (enabled: boolean) => {
-    setProactiveOpening(enabled);
-    try {
-      const result = await api.updateProactiveOpening(enabled);
-      setProactiveOpening(result.enabled);
-    } catch (err) {
-      console.error("Failed to update the message-first setting:", err);
-      setProactiveOpening(!enabled);
-    }
-  };
 
   const handleToolModelChange = async (next: 'gemini' | 'claude') => {
     const before = toolModel;
@@ -1901,6 +1859,7 @@ useEffect(() => {
   }
 
   // Handle positive feedback immediately
+  setPatchyPraise(n => n + 1);
   await sendFeedbackPayload(messageId, 'like', 'Positive feedback', 'positive');
 };
 
@@ -1999,6 +1958,9 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
     feedbackReason || 'No specific reason provided.',
     feedbackTag
   );
+
+  // Patchy looks sad once negative feedback is sent
+  setPatchySad(n => n + 1);
 
   // Reset modal state
   setFeedbackModal({ isOpen: false, messageId: null });
@@ -2206,36 +2168,10 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
       run: () => handleToolModelChange(toolModel === 'claude' ? 'gemini' : 'claude'),
       keepOpen: true,
     }]),
-    {
-      item: {
-        label: `Message First: ${proactiveOpening ? 'On' : 'Off'}`,
-        disabled: settingsLocked,
-        icon: settingsGlyph(<><path d="M4 5h16v11H8l-4 4V5z" /><line x1="8" y1="9" x2="16" y2="9" /><line x1="8" y1="12" x2="13" y2="12" /></>),
-      },
-      run: () => handleProactiveOpeningChange(!proactiveOpening),
-      keepOpen: true,
-    },
-    ...(!opsDigest.available ? [] : [{
-      item: {
-        label: `Incident Digest: ${opsDigest.enabled ? 'On' : 'Off'}`,
-        disabled: settingsLocked,
-        icon: settingsGlyph(<><path d="M12 3l9 16H3L12 3z" /><line x1="12" y1="10" x2="12" y2="14" /><circle cx="12" cy="17" r="0.5" /></>),
-      },
-      run: () => handleOpsDigestChange(!opsDigest.enabled),
-      keepOpen: true,
-    }]),
-    ...(!patchyAllowed ? [] : [{
-      item: {
-        label: `SAAPP: ${showPatchy ? 'On' : 'Off'}`,
-        icon: settingsGlyph(<><rect x="5" y="8" width="14" height="11" rx="3" /><line x1="12" y1="8" x2="12" y2="4" /><circle cx="12" cy="3" r="1" /><circle cx="9.5" cy="13" r="1" /><circle cx="14.5" cy="13" r="1" /></>),
-      },
-      run: togglePatchy,
-      keepOpen: true,
-    }]),
   ];
 
-  // The conversations list lives in the rail now; the embedded widget has no rail, so only it keeps the menu entry (and the overlay it opens).
-  const baseOverflowEntries = baseOverflowItems.map((item, index) => ({ item, index })).filter(e => isEmbedded || e.item.label !== 'Conversations');
+  // The conversations list lives in the rail now, and the trace has its microscope button in the top bar; the embedded widget has neither, so only it keeps those two menu entries.
+  const baseOverflowEntries = baseOverflowItems.map((item, index) => ({ item, index })).filter(e => isEmbedded || (e.item.label !== 'Conversations' && e.item.label !== 'Trace'));
   const overflowItems: OptionWheelItem[] = [...settingsEntries.map(e => e.item), ...baseOverflowEntries.map(e => e.item)];
 
   const runOverflowAction = (index: number) => {
@@ -2257,7 +2193,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
         {!hasChatted && !isEmbedded && (
           <div className="empty-brand">
             {patchyAllowed && showPatchy
-              ? <PatchyHero energy={patchyEnergy} budget={patchyBudget} engaged={inputEngaged} typed={input.length} />
+              ? <PatchyHero energy={patchyEnergy} budget={patchyBudget} engaged={inputEngaged} typed={input.length} praise={patchyPraise} sad={patchySad} />
               : <LogoMark size={64} label={BRAND_NAME} />}
             <h2 className="empty-brand-title">{BRAND_NAME}</h2>
             <p className="empty-brand-sub">{BRAND_TAGLINE}</p>
@@ -2471,6 +2407,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                   cheer={patchyCheer}
                   fault={patchyFault}
                   steer={patchySteer}
+                  praise={patchyPraise}
+                  sad={patchySad}
                   engaged={inputEngaged}
                   typed={input.length}
                   energy={patchyEnergy}

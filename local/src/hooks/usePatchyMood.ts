@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  CELEBRATE_MS, DROWSY_AFTER_MS, FAULT_MS, LAUGH_MS, NUDGE_MS, STEER_MS,
+  CELEBRATE_MS, DROWSY_AFTER_MS, FAULT_MS, LAUGH_MS, NUDGE_MS, PRAISE_MS, SAD_MS, STEER_MS,
   resolveMood,
   type PatchyBudget, type PatchyEnergy, type PatchyLook, type PatchyMood,
 } from '../components/patchyLook';
@@ -10,6 +10,10 @@ export interface PatchySignals {
   look?: PatchyLook;
   /** Bump to celebrate (a turn just finished well). */
   cheer?: number;
+  /** Bump for a fist pump (praise). */
+  praise?: number;
+  /** Bump for the sad face (he stays still a while). */
+  sad?: number;
   /** Bump to show the failure face (a turn just failed). */
   fault?: number;
   /** Bump to nod "got it" (a message was steered into the running turn). */
@@ -29,7 +33,7 @@ export interface PatchySignals {
  * are bumped, or plain values); the short-lived states they start (a celebration, a failure face, typing, a laugh) end on their own timers.
  */
 export function usePatchyMood({
-  look = 'idle', cheer = 0, fault = 0, steer = 0, engaged = false, typed = 0, energy = 'open', budget = 'ok', drowsyAfterMs = DROWSY_AFTER_MS,
+  look = 'idle', cheer = 0, praise = 0, sad = 0, fault = 0, steer = 0, engaged = false, typed = 0, energy = 'open', budget = 'ok', drowsyAfterMs = DROWSY_AFTER_MS,
 }: PatchySignals) {
   const [laughing, setLaughing] = useState(false);
   const [nudged, setNudged] = useState(false);
@@ -38,18 +42,22 @@ export function usePatchyMood({
   const [steered, setSteered] = useState(false);
   const [drowsy, setDrowsy] = useState(false);
   const [pokes, setPokes] = useState(0);
+  const [praised, setPraised] = useState(false);
+  const [saddened, setSaddened] = useState(false);
 
   // Reacting to a changed prop during render (not in an effect) is React's own pattern for "derive state when a prop changes".
-  const [seen, setSeen] = useState({ cheer, fault, steer });
-  if (seen.cheer !== cheer || seen.fault !== fault || seen.steer !== steer) {
-    setSeen({ cheer, fault, steer });
+  const [seen, setSeen] = useState({ cheer, praise, sad, fault, steer });
+  if (seen.cheer !== cheer || seen.praise !== praise || seen.sad !== sad || seen.fault !== fault || seen.steer !== steer) {
+    setSeen({ cheer, praise, sad, fault, steer });
     if (seen.cheer !== cheer) setCelebrating(true);
+    if (seen.praise !== praise) setPraised(true);
+    if (seen.sad !== sad) setSaddened(true);
     if (seen.fault !== fault) setFaulted(true);
     if (seen.steer !== steer) setSteered(true);
   }
 
   // Anything he can notice wakes him and starts the quiet over.
-  const activity = `${typed}|${engaged}|${look}|${cheer}|${fault}|${steer}|${pokes}|${budget}`;
+  const activity = `${typed}|${engaged}|${look}|${cheer}|${praise}|${sad}|${fault}|${steer}|${pokes}|${budget}`;
   const [seenActivity, setSeenActivity] = useState(activity);
   if (activity !== seenActivity) {
     setSeenActivity(activity);
@@ -87,12 +95,24 @@ export function usePatchyMood({
   }, [nudged]);
 
   useEffect(() => {
+    if (!praised) return;
+    const timer = setTimeout(() => setPraised(false), PRAISE_MS);
+    return () => clearTimeout(timer);
+  }, [praised, praise]);
+
+  useEffect(() => {
+    if (!saddened) return;
+    const timer = setTimeout(() => setSaddened(false), SAD_MS);
+    return () => clearTimeout(timer);
+  }, [saddened, sad]);
+
+  useEffect(() => {
     if (drowsy) return;
     const timer = setTimeout(() => setDrowsy(true), drowsyAfterMs);
     return () => clearTimeout(timer);
   }, [drowsy, activity, drowsyAfterMs]);
 
-  const mood: PatchyMood = resolveMood({ laughing, nudged, faulted, celebrating, watching: engaged, drowsy, look, budget });
+  const mood: PatchyMood = resolveMood({ laughing, nudged, faulted, celebrating, praised, sad: saddened, watching: engaged, drowsy, look, budget });
 
   // A low or frustrated user doesn't get giggled at: poking him just earns a soft nod.
   const poke = () => {
