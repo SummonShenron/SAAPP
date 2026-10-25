@@ -115,7 +115,7 @@ from backend.utils import memory_sources
 from backend.services import steering
 from backend.services import image_gen, library_search, native_loop, ops_incidents, photo_cards
 from backend.services import native_tools as native_tools_module
-from backend.utils import budget_guard, date_resolve, llm_turns, memory_grounding, progress_notes, reading_shelf, routines, self_report
+from backend.utils import code_plan, budget_guard, date_resolve, llm_turns, memory_grounding, progress_notes, reading_shelf, routines, self_report
 from backend.services.repo_checkout import (
     RepoCheckoutError, fetch_and_extract_checkout, cleanup_checkout, find_declarations_in_checkout,
 )
@@ -140,6 +140,10 @@ TOOL_AGENT_MAX_ITERATIONS_DEEP = int(os.getenv("TOOL_AGENT_MAX_ITERATIONS_DEEP",
 # second read. A cost-tuned TOOL_AGENT_MAX_ITERATIONS (4 on the server) left it saying it "ran out of tool steps" on a one-line edit. Edit turns never get fewer than
 # this (low-power mode still caps them: that is the point of it).
 TOOL_AGENT_LOCAL_EDIT_MIN_STEPS = int(os.getenv("TOOL_AGENT_LOCAL_EDIT_MIN_STEPS", "6"))
+# A plan turn (plan mode, backend/utils/code_plan.py) is read-only, so it cannot damage anything and may read as much as the plan needs: this many tool steps, cut to the native engine's
+# own ceiling (TOOL_AGENT_NATIVE_MAX_STEPS) and by low-power mode. What keeps a lost or stuck plan turn from running on is the loop's own guards: a call repeated three times ends it,
+# and checkpoints at a third and two thirds of the steps make it submit the plan or name what it still has to read.
+TOOL_AGENT_PLAN_STEPS = int(os.getenv("TOOL_AGENT_PLAN_STEPS", "12"))
 TOOL_AGENT_MAX_RETRY_NUDGES = int(os.getenv("TOOL_AGENT_MAX_RETRY_NUDGES", "1"))
 TOOL_AGENT_MAX_RETRY_NUDGES_DEEP = int(os.getenv("TOOL_AGENT_MAX_RETRY_NUDGES_DEEP", "3"))
 # TOOL_AGENT_PROMPT's {question} used to be filled from ONLY state["messages"][-1] — a real
@@ -319,6 +323,26 @@ _LOCAL_EDIT_REQUIRED_ACTION = {
     "steps_notice": (
         "Your next tool step must be propose_local_edits, with old_string copied exactly from what you have read (ask for one more read in the same step only if you "
         "truly have not seen the lines yet). Do not paste the change as code for them to apply; the diff card is how they apply it."
+    ),
+}
+# A plan turn (plan mode, backend/utils/code_plan.py) offers these and nothing else: it reads, then submits the plan. No edit, test run, commit or web tool is among them.
+_PLAN_TURN_TOOLS = frozenset({"read_repo_file", "find_file", "search_literal", "list_repo_tree", "submit_plan"})
+_PLAN_REQUIRED_ACTION = {
+    "tool_action": "submit_plan",
+    "nudge_after_step": 2,
+    "max_final_rejections": 2,
+    "nudge": (
+        "You have read enough. Your next action must be submit_plan: the files that change and why, the ordered steps with their files, the tests worth running and what you could not tell. "
+        "Do not keep re-reading, and do not describe the plan only in chat: the person approves it from the plan card."
+    ),
+    "final_notice": (
+        "The person asked for a plan before any edit, and you tried to finish without calling submit_plan. Call submit_plan now with the plan (read the files first if you have not seen them). "
+        "It is shown as a card they can approve, change or cancel; do not write the plan out in chat instead."
+    ),
+    "steps_notice": "Your next tool step must be submit_plan, with every path as it exists in the folder (ask for one more read in the same step only if you truly have not seen a file you are naming).",
+    "checkpoint_notice": (
+        "CHECKPOINT: you have used {used} of {total} tool steps, and this turn is for a plan. Decide now. If you have read enough, call submit_plan. If something specific still has to be "
+        "read first, call continue_working with one line on what. Prefer submitting: more reading is only worth it for something you can name."
     ),
 }
 _SEARCH_LITERAL_MAX_MATCHES = 50
@@ -2084,6 +2108,15 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         # to satisfy it is propose_local_edits, so the loop is told so mechanically — see
         # run_react_loop's required_action.
         edit_turn = local_workspace_handle is not None and looks_like_edit_request(state.get("messages", []))
+        # Plan mode (backend/utils/code_plan.py). A PLAN turn is read-only and ends in submit_plan; it needs the native engine, which has that tool. An EXECUTE turn carries an approved plan
+        # out: "continue" or "go ahead" counts as the edit request it is, with a fresh step budget.
+        plan_phase = state.get("code_plan_phase") if local_workspace_handle is not None and code_plan.enabled() else None
+        if plan_phase == code_plan.PLAN_PHASE and not (edit_turn and native_loop.enabled() and not native_loop.needs_old_engine(latest_message_content, state.get("reasoner_flags"))):
+            plan_phase = None
+        if plan_phase == code_plan.EXECUTE_PHASE and not edit_turn and code_plan.reads_as_continue(latest_message_content):
+            edit_turn = True
+        if plan_phase == code_plan.EXECUTE_PHASE and not edit_turn:
+            plan_phase = None
         if edit_turn:
             logger.info("[tool_agent_node] edit request with a connected local folder — propose_local_edits is required this turn.")
         else:
@@ -2129,6 +2162,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         if state.get("working_notes"):
             # What this conversation has already decided, ruled out and left open (backend/utils/working_state.py): data, kept so a long session does not lose its thread.
             schema_parts.append(state["working_notes"])
+        if plan_phase and state.get("code_plan_context"):
+            schema_parts.append(state["code_plan_context"])      # the approved plan to carry out, or the earlier plan to revise (backend/utils/code_plan.py)
         if is_admin:
             schema_parts.append(f"mongodb_collections={mongo_schema}")
         schema = ", ".join(schema_parts)
@@ -3028,6 +3063,12 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 "Shows the person a card for merging an OPEN pull request, built from the pull request as GitHub has it right now, with THEIR token; nothing is merged until they approve it. Use it whenever they ask "
                 "you to merge a pull request or a branch into another: you CAN do this, never say you cannot. Call it as a \"query\" step and then stop: the card is your answer, so do not say it was merged."
             )
+        if plan_phase == code_plan.PLAN_PHASE:
+            menu_lines = [line for line in menu_lines if not line.startswith("- propose_code_plan")]
+            menu_lines.append(
+                "- submit_plan — args: goal, files (a list of {\"path\", \"why\", \"new\": true only for a file the change creates}), steps (a list of {\"text\", \"files\"}), tests, unknowns. "
+                "Hands the person your plan for the change instead of editing; call it once, after reading what you need."
+            )
         actions_menu = "\n".join(menu_lines)
         # The ops actions are batchable only for an admin who is actually offered them (they are not even named for anyone else).
         batchable_actions = TOOL_AGENT_BATCHABLE_ACTIONS | (
@@ -3080,6 +3121,17 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             return any(kw in code for kw in unsafe_keywords)
 
         async def _propose_local_edits(args: dict) -> str:
+            if plan_phase == code_plan.EXECUTE_PHASE:
+                # The deviation cap (backend/utils/code_plan.py): the person approved these files. More than a file's worth outside them stops the turn instead of widening the change unseen.
+                off_plan = code_plan.off_plan_paths(await asyncio.to_thread(code_plan.load, get_db(), username, state.get("session_id") or ""), args.get("edits"))
+                if len(off_plan) > code_plan.MAX_OFF_PLAN_FILES:
+                    from backend.utils.self_counters import record_turn_counts
+
+                    await asyncio.to_thread(record_turn_counts, {"code_plan_deviation": 1})
+                    return (
+                        "ERROR: these edits touch files the approved plan does not name (" + ", ".join(off_plan) + "), so nothing was proposed. Do not widen the change on your own: "
+                        "propose only the plan's files, or finish with a short answer saying what else is needed and why, and the person can ask for a revised plan."
+                    )
             # Validates against the folder's snapshot exactly as the browser will later apply the
             # edits, then hands the user a diff card (streamed as a custom event, like
             # browser_live_view) — nothing is written here or anywhere on the server.
@@ -3134,6 +3186,33 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 local_edit_decisions.forget(proposal_id)
             return await _decision_result(shown, result, decision)
 
+        async def _submit_plan(args: dict) -> str:
+            """Checks the plan against the folder (an existing file must exist, a new one must not), stores it for the person to approve, and shows it as a card. Nothing is edited."""
+            from backend.utils.self_counters import record_turn_counts
+
+            cleaned, errors = await asyncio.to_thread(code_plan.clean_plan, args, lambda path: _fetch_file_content(path)[0] is not None)
+            if errors:
+                await asyncio.to_thread(record_turn_counts, {"code_plan_invalid": 1})
+                return "ERROR: the plan could not be saved:\n- " + "\n- ".join(errors) + "\nFix these and call submit_plan again with the complete plan."
+            plan = await asyncio.to_thread(code_plan.propose, get_db(), username, state.get("session_id") or "", cleaned)
+            await asyncio.to_thread(record_turn_counts, {"code_plan_submitted": 1})
+            await safe_emit_event("code_plan", code_plan.public_view(plan))
+            return "Plan saved. The person sees it as a card and can approve it, change a step or cancel. Nothing has been changed. Reply in one or two sentences pointing at the plan, and stop."
+
+        async def _plan_files_block() -> str:
+            """The next plan step's files, read by the server with no model call (backend/utils/code_plan.py files_block), so the turn starts at the edit. Never raises."""
+            try:
+                plan = await asyncio.to_thread(code_plan.load, get_db(), username, state.get("session_id") or "")
+                block = await asyncio.to_thread(code_plan.files_block, plan, lambda path: _fetch_file_content(path)[0])
+                if block:
+                    from backend.utils.self_counters import record_turn_counts
+
+                    await asyncio.to_thread(record_turn_counts, {"code_plan_prefetched": 1})
+                return f"\n\n{block}" if block else ""
+            except Exception:
+                logger.warning("[tool_agent_node] could not read the plan's files ahead.", exc_info=True)
+                return ""
+
         async def _run_sandbox_tests(args: dict) -> str:
             """Runs Python tests against a copy of the folder, optionally with proposed edits applied to the copy first (backend/services/sandbox_tests.py). Changes and shows nothing."""
             overlay = None
@@ -3176,6 +3255,16 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                     note = " (The server's copy of the folder could not be refreshed, so reading these files again may still show the old text.)"
             if any(f.get("format") in ("docx", "docx_edit") for f in result.get("files", [])):
                 note += " (Word documents are written to the folder but are not re-read until the next sync.)"
+            if plan_phase == code_plan.EXECUTE_PHASE and texts:
+                try:
+                    from backend.utils.self_counters import record_turn_counts
+
+                    finished = await asyncio.to_thread(code_plan.record_applied, get_db(), username, state.get("session_id") or "", list(texts))
+                    if finished:
+                        await asyncio.to_thread(record_turn_counts, {"code_plan_steps_done": finished})
+                    note += code_plan.progress_note(await asyncio.to_thread(code_plan.load, get_db(), username, state.get("session_id") or ""))
+                except Exception:
+                    logger.warning("[tool_agent_node] could not update the plan after an applied change.", exc_info=True)
             return (
                 shown + " APPLIED: the person applied the edits, so those files now contain them." + note + " You can read the changed files to check them, propose a follow-up "
                 "change, or finish with a short answer on what changed."
@@ -3211,7 +3300,13 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                     f"see the user's connected local folder — use search_literal (exact text or "
                     f"identifier) or find_file (file names) instead."
                 )
+            if tool_action == "submit_plan":
+                if plan_phase != code_plan.PLAN_PHASE:
+                    return "ERROR: submit_plan is only available when the person asked for a plan first."
+                return await _submit_plan(args)
             if tool_action == "propose_local_edits":
+                if plan_phase == code_plan.PLAN_PHASE:
+                    return "ERROR: this turn is for the plan only; call submit_plan, and nothing is edited until the person approves it."
                 if local_workspace_handle is None:
                     return "ERROR: no local folder is connected, so there is nothing to propose edits against"
                 return await _propose_local_edits(args)
@@ -3431,6 +3526,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         # The native tool-calling engine (backend/services/native_loop.py): a measured spike behind TOOL_AGENT_ENGINE=native. It runs only
         # when this turn needs nothing but the read-only tools it can offer; everything else keeps the ReAct loop.
         native_tools = native_tools_module.declarations_from_menu(menu_lines) if native_loop.enabled() else []
+        if plan_phase == code_plan.PLAN_PHASE:
+            native_tools = [tool for tool in native_tools if tool.get("name") in _PLAN_TURN_TOOLS]     # read-only: nothing here can change the folder
         # The request and the one thing the person said before it: "yes, do it" after asking about an email is still an email request.
         # (Only one message back: people discuss "the database" or "email" as code topics all the time, and every match sends the turn
         # to the dearer old engine.)
@@ -3441,7 +3538,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         use_native = native_loop.eligible(
             # The native engine offers propose_local_edits too (backend/services/native_tools.py), so a change request with a folder connected stays on it; only when that tool is
             # missing from its menu does an edit turn go to the old engine.
-            edit_turn=edit_turn and not any(tool.get("name") == "propose_local_edits" for tool in native_tools), resumed=bool(resumed_attempts), tools=native_tools,
+            edit_turn=edit_turn and plan_phase != code_plan.PLAN_PHASE and not any(tool.get("name") == "propose_local_edits" for tool in native_tools), resumed=bool(resumed_attempts), tools=native_tools,
             text=recent_user_text, flags=state.get("reasoner_flags"),
         )
         # Counted per turn (backend/utils/llm_turns.py): which engine ran, and what switched deep mode on: the user's setting, the
@@ -3495,6 +3592,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 emit_step=_announce_step, emit_facts=emit_trace_facts,
                 steering_source=kwargs.get("steering_source"), on_steering_applied=kwargs.get("on_steering_applied"),
                 library_allowance=kwargs.get("library_allowance"), is_unsafe=kwargs.get("is_unsafe"),
+                plan_budget=code_plan.PlanBudget(await asyncio.to_thread(code_plan.load, get_db(), username, state.get("session_id") or "")) if plan_phase == code_plan.EXECUTE_PHASE else None,
                 # With a folder connected: where reads come from (the folder, not GitHub) and, on a request for a change, the same "you must propose it" rule the old loop enforces.
                 environment_note=schema if local_workspace_handle is not None else "", required_action=kwargs.get("required_action"),
                 shorten_old=not (isinstance(kwargs["llm"], ClaudeLLM) and kwargs["llm"].caches_prompt),   # a model that caches the conversation keeps old results whole (native_loop.py)
@@ -3505,13 +3603,14 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         try:
             try:
                 loop_result = await (_native_engine if use_native else run_react_loop)(
-                    question=msg,
+                    question=msg + (f"\n\n{code_plan.PLAN_RULES}" if plan_phase == code_plan.PLAN_PHASE else "") + (await _plan_files_block() if plan_phase == code_plan.EXECUTE_PHASE else ""),
                     schema=schema,
                     prompt_template=prompt_template,
                     act=_counted_act,
                     is_unsafe=_is_unsafe,
                     max_iterations=budget_guard.tool_steps(
-                        max(TOOL_AGENT_MAX_ITERATIONS_DEEP if wide_budget else TOOL_AGENT_MAX_ITERATIONS, TOOL_AGENT_LOCAL_EDIT_MIN_STEPS if edit_turn else 0),
+                        max(TOOL_AGENT_MAX_ITERATIONS_DEEP if wide_budget else TOOL_AGENT_MAX_ITERATIONS, TOOL_AGENT_LOCAL_EDIT_MIN_STEPS if edit_turn else 0,
+                            TOOL_AGENT_PLAN_STEPS if plan_phase == code_plan.PLAN_PHASE else 0),
                         budget_state,
                     ),
                     node_name="tool_agent_node",
@@ -3527,7 +3626,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                     # (exact-once match) on the server and again in the browser, so a deliberate
                     # mid-file read can't produce a fabricated edit — don't force reading to EOF.
                     partial_read_windows_ok=local_workspace_handle is not None,
-                    required_action=_LOCAL_EDIT_REQUIRED_ACTION if edit_turn else None,
+                    required_action=_PLAN_REQUIRED_ACTION if plan_phase == code_plan.PLAN_PHASE else (_LOCAL_EDIT_REQUIRED_ACTION if edit_turn else None),
                     steering_source=lambda: steering.drain(steering_key),
                     on_steering_applied=_on_steering_applied,
                     conversation_text=earlier_conversation_text,
@@ -3821,20 +3920,27 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             unread_note = library_allowance.unread_note(attempts)
             if unread_note:
                 final_answer = f"{final_answer}\n\n{unread_note}"
+        finishing_tool = "submit_plan" if plan_phase == code_plan.PLAN_PHASE else "propose_local_edits"
         if edit_turn and not any(
-            str(a.get("action_desc", "")).startswith("propose_local_edits(")
+            str(a.get("action_desc", "")).startswith(f"{finishing_tool}(")
             and not str(a.get("observation", "")).startswith("ERROR")
             for a in attempts
         ):
             # The turn asked for a change and ended without one. Whatever the model wrote, the
             # reader must not come away believing edits are impossible — they aren't, it just ran
             # out of road. Appended as plain data so the voice stage can't contradict it.
+            if plan_phase == code_plan.PLAN_PHASE:
+                tail = ("this turn ended before a plan was saved. Say the reading ran out of steps, that nothing was changed, and suggest they send the request again "
+                        "(naming the files helps).")
+            elif plan_phase == code_plan.EXECUTE_PHASE:
+                tail = ("this turn ran out of steps before the next step's edit was proposed. The approved plan is still saved, so nothing is lost: say so, and that replying "
+                        "\"continue\" picks up at the first step not done without planning again.")
+            else:
+                tail = ("this turn simply ended before a proposal was made. Do not tell the user you lack the ability to edit files; say the search ran out of steps and "
+                        "suggest they send the request again (naming the file helps).")
             final_answer = (
                 f"{final_answer}\n\nNOTE (authoritative): the user's local folder "
-                f"'{workspace_status(username).get('name', 'local folder')}' IS connected and edits CAN "
-                "be proposed — this turn simply ended before a proposal was made. Do not tell the "
-                "user you lack the ability to edit files; say the search ran out of steps and "
-                "suggest they send the request again (naming the file helps)."
+                f"'{workspace_status(username).get('name', 'local folder')}' IS connected and edits CAN be proposed — {tail}"
             )
 
         # The live trace panel already shows every step in real time — repeating it in the chat

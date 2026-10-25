@@ -414,6 +414,7 @@ export const EVERYDAY: Record<string, Content> = {
         <li><strong>Scope:</strong> which library Sonic looks in: everything you can use, or just one.</li>
         <li><strong>Open Answers:</strong> on (the default), Sonic can also use its general knowledge when your documents don't have the answer. Off, it sticks to your documents.</li>
         <li><strong>Deep Thinking:</strong> slower but more thorough, for tricky questions with several parts.</li>
+        <li><strong>Plan first</strong> (with a folder connected): a request to change your files starts with a plan you approve. Sonic reads, then shows the files, the steps and what it is unsure of; nothing is edited until you press Approve. Steps tick off as you apply their edits, and "Continue" picks up where a long change left off. It costs an extra reading pass, so it is off by default.</li>
         <li><strong>Code model:</strong> which AI does the reasoning steps when Sonic reads code, searches or writes code for you: Gemini or Claude. Sonic's reply is still written by Gemini either way. It only appears when Claude is set up, and it isn't offered in the guest demo.</li>
       </ul>
       <p>The choices about how Sonic behaves are on the Account page: letting Sonic start conversations and bring things up (under "About you"), showing or hiding the little robot, and, for admins, the incident digest. The steps Sonic took to answer are under the <strong>microscope</strong> button at the top right.</p>

@@ -848,6 +848,9 @@ const CountersCard: React.FC<{ counters: CountersSummary }> = ({ counters }) => 
           <tr><td>Coding turns that ran out of steps ({totals.code_turns ?? 0} coding turns)</td><td>{pct(rates.code_cap_hit)}</td><td>{pct(previous.code_cap_hit)}</td><td>{change(changes.code_cap_hit)}</td></tr>
           <tr><td>Proposed edits that were also tested ({totals.code_edited ?? 0} edits)</td><td>{pct(rates.code_verified)}</td><td>{pct(previous.code_verified)}</td><td>{change(changes.code_verified)}</td></tr>
           <tr><td>Messages after coding work that said it did not work ({totals.code_followed ?? 0} messages)</td><td>{pct(rates.code_redo)}</td><td>{pct(previous.code_redo)}</td><td>{change(changes.code_redo)}</td></tr>
+          <tr><td>Plans the person approved ({totals.code_plan_submitted ?? 0} plans written)</td><td>{pct(rates.code_plan_approved)}</td><td>{pct(previous.code_plan_approved)}</td><td>{change(changes.code_plan_approved)}</td></tr>
+          <tr><td>Turns carrying out a plan that ran out of steps ({totals.code_plan_exec_turns ?? 0} such turns, against the coding turns above)</td><td>{pct(rates.code_plan_exec_cap_hit)}</td><td>{pct(previous.code_plan_exec_cap_hit)}</td><td>{change(changes.code_plan_exec_cap_hit)}</td></tr>
+          <tr><td>Plan steps finished by an applied edit / edits refused for leaving the plan</td><td>{totals.code_plan_steps_done ?? 0} / {totals.code_plan_deviation ?? 0}</td><td>{previous.code_plan_steps_done ?? 0} / {previous.code_plan_deviation ?? 0}</td><td></td></tr>
         </tbody>
       </table>
       <h3 className="sh-subhead">Questions about Sonic's own feelings</h3>

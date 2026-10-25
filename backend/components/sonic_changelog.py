@@ -630,7 +630,7 @@ CHANGELOG = [
         "month": "2026-10",
         "title": "Knowing what has changed about me",
         "line": (
-            "I keep a short list of what has changed about me, so when you ask what's new I can answer from that instead of "
+            "I keep a short list of what has changed about me, so when you ask what's new, what I can do or what I'm missing, I answer from that instead of "
             "guessing."
         ),
         # Not "what's new" / "what changed": those are what triggers this whole feature, so as keywords they would rank this
@@ -979,6 +979,18 @@ CHANGELOG = [
         "title": "How much I reach out",
         "line": "On the Account page you can set how much I reach out on my own, from not at all to more. It changes how often I bring something up or open a chat, never the times I hold back.",
         "keywords": ["reach out", "bring something up", "start conversations", "message first", "account page"],
+        "volunteer": [],
+    },
+    {
+        "id": "plan_first",
+        "requires": [
+            "backend/utils/code_plan.py::def clean_plan",
+            "backend/services/agent_workflow.py::async def _submit_plan",
+        ],
+        "month": "2026-10",
+        "title": "Planning a change before I make it",
+        "line": "With Plan first on and a folder connected, I read, show you the files and steps, and wait for your approval. Then I carry the plan out step by step, and it survives a turn that runs out of steps.",
+        "keywords": ["plan first", "plan mode", "make a plan", "planner", "planning", "multi-file", "multiple files", "approve a plan", "ran out of steps", "step limit"],
         "volunteer": [],
     },
     {

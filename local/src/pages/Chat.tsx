@@ -21,7 +21,8 @@ import type { WelcomeCard } from '../welcomeCards';
 import { HEIC_NOTICE, isUnreadableHeic, shrinkImageFile } from '../utils/imageShrink';
 import MeetingControl from '../components/MeetingControl';
 import WorkingNotesControl from '../components/WorkingNotesControl';
-import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type BudgetView, type KnowledgeBase, type MemorySources } from '../api';
+import PlanCard from '../components/PlanCard';
+import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type BudgetView, type CodePlan, type KnowledgeBase, type MemorySources } from '../api';
 import MemorySourceDialog from '../components/MemorySourceDialog';
 import BudgetBanner from '../components/BudgetBanner';
 import UsageRing from '../components/UsageRing';
@@ -177,6 +178,8 @@ interface ChatMessageListProps {
   handleFeedbackRef: React.MutableRefObject<(messageId: string, choice: 'like' | 'dislike') => void>;
   getTokenRef: React.MutableRefObject<(() => Promise<string | null>) | undefined>;
   canEditLocal: boolean;
+  /** The plan card (plan mode), shown after the last message while there is a plan. */
+  planCard?: React.ReactNode;
   localGitMode: Exclude<LocalGitMode, 'off'> | 'off';
   localEditActionsRef: React.MutableRefObject<{
     apply: (proposal: EditProposal) => Promise<ApplyResult>;
@@ -246,7 +249,7 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
 const ChatMessageList = React.memo(function ChatMessageList({
   messages, earlierCount, loadingEarlier, loadEarlierRef, hasChatted, loading, agentStatus, latestStepTitle, theme, isEmbedded,
   chatWindowRef, messagesEndRef, attachmentsRef, handleSendMessageRef, handleFeedbackRef, getTokenRef,
-  canEditLocal, localEditActionsRef, localGitMode,
+  canEditLocal, localEditActionsRef, localGitMode, planCard,
 }: ChatMessageListProps) {
   // The reply whose "Source: Memory" citation was clicked: its viewer is open while this is set.
   const [memoryViewer, setMemoryViewer] = useState<Message | null>(null);
@@ -541,8 +544,9 @@ const ChatMessageList = React.memo(function ChatMessageList({
           </div>
         )
       )}
+      {planCard}
       <div ref={messagesEndRef} />
-      {memoryViewer && <MemorySourceDialog sources={memoryViewer.memorySources} onClose={closeMemoryViewer} />}
+      {memoryViewer &&<MemorySourceDialog sources={memoryViewer.memorySources} onClose={closeMemoryViewer} />}
     </div>
   );
 });
@@ -621,6 +625,8 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [selectedAffiliate, setSelectedAffiliate] = useState<string>('All');
   const [ragMode, setRagMode] = useState<string>('open');
   const [deepThinking, setDeepThinking] = useState<boolean>(false);
+  const [planMode, setPlanMode] = useState<boolean>(false);
+  const [codePlan, setCodePlan] = useState<CodePlan | null>(null);
   const [toolModel, setToolModel] = useState<'gemini' | 'claude'>('gemini');
   const [toolModelAvailable, setToolModelAvailable] = useState<boolean>(false);
   const [budget, setBudget] = useState<BudgetView | null>(null);
@@ -996,6 +1002,19 @@ useEffect(() => {
   }, [principal]);
 
   useEffect(() => {
+    if (!principal || isGuestPrincipal(principal)) return;
+    api.getPlanMode()
+      .then(data => setPlanMode(data.plan_mode))
+      .catch(err => console.error("Failed to fetch the plan setting:", err));
+  }, [principal]);
+
+  // The conversation's plan (plan mode): read when the conversation opens and again when a reply ends, since applied edits tick its steps off.
+  useEffect(() => {
+    if (!principal || isGuestPrincipal(principal) || !sessionId || loading) return;
+    api.getCodePlan(sessionId).then(data => setCodePlan(data.plan)).catch(() => { /* no plan card is the normal outcome */ });
+  }, [principal, sessionId, loading]);
+
+  useEffect(() => {
     if (!principal) return;
     api.getToolModel()
       .then(data => { setToolModel(data.tool_model); setToolModelAvailable(data.available); })
@@ -1026,6 +1045,16 @@ useEffect(() => {
     } catch (err) {
       console.error("Failed to update the code model setting:", err);
       setToolModel(before);
+    }
+  };
+
+  const handlePlanModeChange = async (enabled: boolean) => {
+    setPlanMode(enabled);
+    try {
+      setPlanMode((await api.updatePlanMode(enabled)).plan_mode);
+    } catch (err) {
+      console.error("Failed to update the plan setting:", err);
+      setPlanMode(!enabled);
     }
   };
 
@@ -1600,6 +1629,9 @@ useEffect(() => {
                   return updated;
                 });
               }
+              if (payload.event === 'code_plan' && payload.plan) {
+                setCodePlan(payload.plan as CodePlan);       // the plan Sonic just wrote (plan mode): shown as a card to approve
+              }
               if (payload.event === 'local_edit_proposal' && Array.isArray(payload.edits)) {
                 // A validated set of edits to the connected local folder, shown as a diff card on
                 // the in-progress AI bubble. Nothing is written until the user presses Apply.
@@ -2157,6 +2189,16 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
       run: () => handleDeepThinkingChange(!deepThinking),
       keepOpen: true,
     },
+    // Plan first: with a folder connected, a change request starts with a plan to approve (backend/utils/code_plan.py). Costs an extra reading pass, so it is the person's choice.
+    ...(!workspace.canEdit ? [] : [{
+      item: {
+        label: `Plan first: ${planMode ? 'On' : 'Off'}`,
+        disabled: settingsLocked,
+        icon: settingsGlyph(<><path d="M9 11l3 3 8-8" /><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h9" /></>),
+      },
+      run: () => handlePlanModeChange(!planMode),
+      keepOpen: true,
+    }]),
     // Which model does the tool agent's reasoning and code-writing steps. The reply you read is still written by Gemini, so Claude here is the hybrid.
     // Not offered when Claude isn't set up on the server, or to guests.
     ...(!toolModelAvailable ? [] : [{
@@ -2240,6 +2282,15 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           canEditLocal={workspace.canEdit}
           localGitMode={localGitMode}
           localEditActionsRef={localEditActionsRef}
+          planCard={codePlan && workspace.canEdit ? (
+            <PlanCard
+              sessionId={sessionId}
+              plan={codePlan}
+              busy={loading}
+              onChange={setCodePlan}
+              onApproved={() => { void handleSendMessage(codePlan.state === 'approved' ? 'Continue with the approved plan.' : 'Go ahead with the approved plan.', []); }}
+            />
+          ) : null}
         />
 
         {/* 3. INPUT AREA & FOOTER */}

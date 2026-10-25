@@ -151,6 +151,29 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
             },
         },
     }, ["tests"]),
+    # plan mode (backend/utils/code_plan.py), offered only on a plan turn: the plan the person approves before anything is edited. Nothing is written to their folder.
+    "submit_plan": _object({
+        "goal": {"type": "string", "description": "one sentence: what the change is"},
+        "files": {
+            "type": "array",
+            "description": "every file the change touches",
+            "items": _object({
+                "path": {"type": "string", "description": "the file's path in the folder, exactly as it is there"},
+                "why": {"type": "string", "description": "what changes in it, in a short line"},
+                "new": {"type": "boolean", "description": "true only for a file the change creates (it must not exist yet)"},
+            }, ["path", "why"]),
+        },
+        "steps": {
+            "type": "array",
+            "description": "the ordered steps; each names the files it changes, and every file above belongs to a step",
+            "items": _object({
+                "text": {"type": "string", "description": "what this step does, in a short line"},
+                "files": {"type": "array", "items": _STRING, "description": "the paths (from files above) this step changes"},
+            }, ["text", "files"]),
+        },
+        "tests": {"type": "array", "items": _STRING, "description": "the tests worth running after the change (short lines)"},
+        "unknowns": {"type": "array", "items": _STRING, "description": "what you could not tell from reading, instead of guessing"},
+    }, ["goal", "files", "steps"]),
     # a connected local folder: a proposal the person applies (or not) from a diff card. Nothing is written by the call.
     "propose_local_edits": _object({
         "summary": {"type": "string", "description": "one or two sentences on what the edits do and why"},
@@ -237,6 +260,11 @@ NATIVE_DESCRIPTIONS: Dict[str, str] = {
         "Append text to the Google Doc the person set as their target document under Integrations. It writes nothing by itself: the person sees your text on an approval card and "
         "approves, edits or rejects it. Use it when they ask to add, append, save or put something in their doc, after you have gathered and written the finished content. "
         "Call it once with the complete text, then stop: the card is the answer, so do not say it was added."
+    ),
+    "submit_plan": (
+        "Hand the person your plan for the change they asked for, instead of editing. It changes nothing: they see the plan as a card and approve it, change a step, or cancel. Call it ONCE, "
+        "after reading what you need: the goal, every file the change touches with why (an existing file must exist in the folder, exactly as you read it; mark a file you create with new), "
+        "ordered steps that each name their files, the tests worth running, and what you could not tell from reading. If it returns an error, fix what it names and call it again."
     ),
     "propose_local_edits": (
         "Make a change to the person's connected local folder. It changes nothing by itself: the person sees a diff with an Apply button, which is their confirmation, and can undo it. "
