@@ -62,3 +62,9 @@ export function restorableStamps(
   if (!Array.isArray(saved.stamps)) return null;
   return new Map(saved.stamps);
 }
+
+/** The branch name out of the text of `.git/HEAD` ("ref: refs/heads/feat/x" -> "feat/x"), or null for a detached HEAD, a worktree pointer or anything unreadable. */
+export function parseGitHead(text: string): string | null {
+  const match = /^ref:\s*refs\/heads\/(\S+)\s*$/m.exec(text || '');
+  return match ? match[1] : null;
+}

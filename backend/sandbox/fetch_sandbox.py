@@ -38,11 +38,24 @@ def actual_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def precompile() -> None:
+    """Writes the compiled interpreter next to the .wasm (python-3.12.0.cwasm) so a run never has to compile it on the server: compiling peaks near 500 MB, loading the cache is nearly free.
+    Best effort: without it the first run makes it."""
+    import subprocess
+
+    cwasm = DEST_PATH.with_suffix(".cwasm")
+    try:
+        subprocess.run([sys.executable, "-I", str(SANDBOX_DIR / "sandbox_worker.py"), "--precompile", str(DEST_PATH), str(cwasm)], check=True, timeout=300)
+    except Exception as problem:
+        print(f"Could not precompile the interpreter ({type(problem).__name__}); the first test run will do it.", file=sys.stderr)
+
+
 def main() -> int:
     expected = expected_sha256()
 
     if DEST_PATH.exists() and actual_sha256(DEST_PATH) == expected:
         print(f"{FILENAME} already present and verified.")
+        precompile()
         return 0
 
     print(f"Downloading {FILENAME} from {RELEASE_TAG} ...")
@@ -55,6 +68,7 @@ def main() -> int:
         return 1
 
     print(f"Downloaded and verified {FILENAME} ({DEST_PATH.stat().st_size:,} bytes).")
+    precompile()
     return 0
 
 

@@ -7,7 +7,10 @@ WHAT RUNS. The same genuine CPython-on-WASI interpreter the `run_python` tool us
 - NO NETWORK, no process spawning, no clock tricks: WASI preview1 has none of them to grant.
 - THE FOLDER IS A COPY, MOUNTED READ-ONLY. The guest sees `/work` and nothing else (verified: listing `/` fails, writing into `/work` is refused, the host is never touched). It is a fresh
   directory per run, deleted afterwards, built only from THIS person's snapshot, so nothing crosses between people.
-- BOUNDED. A fuel budget (an instruction count, so an infinite loop is trapped in well under a second), a memory ceiling, a wall-clock wait, a cap on output, and a cap on how much of
+- ITS OWN PROCESS. The interpreter runs in a child process (backend/sandbox/sandbox_worker.py), never inside the server: loading it costs hundreds of MB, and a crash or a kill must only be able to
+  take the child. Before a run starts the server checks it has the memory to spare and refuses (in words) when it does not; SANDBOX_TESTS=off switches the tool off. The compiled interpreter is
+  cached on disk (python-3.12.0.cwasm, made at build by fetch_sandbox.py or by the first run), which makes a run small and fast.
+- BOUNDED. A fuel budget (an instruction count, so an infinite loop is trapped in well under a second), a memory ceiling (128 MB for the guest), a wall-clock wait, a cap on output, and a cap on how much of
   the folder is copied (only source and small data files, never binaries). At most MAX_CONCURRENT runs at once on the server; a busy server says so instead of queueing.
 - STANDARD LIBRARY ONLY. The interpreter has no installed packages. Tests of code that imports FastAPI, LangChain, pymongo and the like cannot import them and fail with
   ModuleNotFoundError; the result says so plainly, and the useful tests are of pure logic (parsers, helpers, algorithms) or use stand-ins. This is not a replacement for the project's real
@@ -19,7 +22,6 @@ the copy, so the tests run against the result of the change. Nothing is written 
 NO FILE TEXT IS LOGGED: only counts.
 """
 import asyncio
-import gc
 import json
 import logging
 import os
@@ -35,7 +37,7 @@ logger = logging.getLogger("SASS Logger")
 
 TEST_FUEL = int(os.getenv("SANDBOX_TEST_FUEL", "4000000000"))     # unittest alone starts up on about 1.3 billion
 WALL_SECONDS = float(os.getenv("SANDBOX_TEST_WALL_SECONDS", "25"))
-MEMORY_BYTES = int(os.getenv("SANDBOX_TEST_MEMORY_BYTES", str(256 * 1024 * 1024)))
+MEMORY_BYTES = int(os.getenv("SANDBOX_TEST_MEMORY_BYTES", str(128 * 1024 * 1024)))
 MAX_CONCURRENT = int(os.getenv("SANDBOX_TEST_MAX_CONCURRENT", "2"))
 MAX_TEST_FILES = 5
 MAX_OUTPUT_CHARS = 6000
@@ -113,34 +115,89 @@ def _build_tree(username: str, dest: str, overlay: Dict[str, str]) -> int:
     return count
 
 
+WORKER = Path(__file__).resolve().parent.parent / "sandbox" / "sandbox_worker.py"
+# Memory the server must have free before a run starts. Measured 2026-10-25: a run with the compiled interpreter cached peaks near 60 MB (0.7 s); one that has to compile it first peaks near
+# 430 MB (3 s). The guest's own memory is capped at 128 MB, so a warm run is held to 200 MB of headroom and a cold one to 700 MB. A run that would not fit is refused in words instead of being started, because an out-of-memory kill takes the whole server with it
+# (2026-10-25: the instance restarted about 30 seconds after a run began).
+NEED_MB_WARM = int(os.getenv("SANDBOX_TEST_NEED_MB_WARM", "200"))
+NEED_MB_COLD = int(os.getenv("SANDBOX_TEST_NEED_MB_COLD", "700"))
+_ENV_KEEP = ("PATH", "SYSTEMROOT", "SYSTEMDRIVE", "TMP", "TEMP", "TMPDIR", "HOME", "LANG", "LC_ALL")
+
+
+def enabled() -> bool:
+    """SANDBOX_TESTS=off switches the tool off without a deploy of code (the setting is read on every run)."""
+    return os.getenv("SANDBOX_TESTS", "on").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _read_text(path: str) -> Optional[str]:
+    try:
+        return Path(path).read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+
+
+def headroom_mb() -> Optional[float]:
+    """How much memory this server can still use, in MB: from its container limit (cgroup v2 or v1) when it has one, otherwise what the machine reports as available. None when it cannot be
+    told (a developer's own machine), which is taken to mean "plenty"."""
+    limit, used = _read_text("/sys/fs/cgroup/memory.max"), _read_text("/sys/fs/cgroup/memory.current")
+    if limit and limit != "max" and used and limit.isdigit() and used.isdigit():
+        return (int(limit) - int(used)) / 1e6
+    limit, used = _read_text("/sys/fs/cgroup/memory/memory.limit_in_bytes"), _read_text("/sys/fs/cgroup/memory/memory.usage_in_bytes")
+    if limit and used and limit.isdigit() and used.isdigit() and int(limit) < 2 ** 60:
+        return (int(limit) - int(used)) / 1e6
+    meminfo = _read_text("/proc/meminfo")
+    if meminfo:
+        for line in meminfo.splitlines():
+            if line.startswith("MemAvailable:"):
+                try:
+                    return int(line.split()[1]) / 1e3
+                except (IndexError, ValueError):
+                    return None
+    return None
+
+
+def _clean_env() -> Dict[str, str]:
+    """The environment the worker gets: the few variables a process needs to start, and none of the server's settings or secrets."""
+    return {key: os.environ[key] for key in _ENV_KEEP if key in os.environ}
+
+
+def _cache_path() -> Path:
+    from backend.services.python_sandbox import SANDBOX_WASM_PATH
+
+    return SANDBOX_WASM_PATH.with_suffix(".cwasm")
+
+
 def _run_guest(root: str, paths: List[str]) -> Dict[str, Any]:
-    """Blocking. Runs the runner in a fresh interpreter with `root` mounted read-only at /work. Returns {"stdout", "stderr", "out_of_fuel"}."""
-    from wasmtime import Store, WasiConfig
+    """Blocking. Runs the runner in a fresh interpreter, in its own process (backend/sandbox/sandbox_worker.py), with `root` mounted read-only at /work.
+    Returns {"stdout", "stderr", "out_of_fuel"}. Raises SandboxError, in words, when the run cannot be started safely or the process dies."""
+    import subprocess
+    import sys
 
-    from backend.services.python_sandbox import _get_sandbox
+    from backend.services.python_sandbox import SANDBOX_WASM_PATH
 
-    engine, linker, module = _get_sandbox()
-    config = WasiConfig()
-    config.argv = ("python", "-c", RUNNER, *paths)
-    config.preopen_dir(root, "/work", False)                  # read-only; the only capability the guest is given
-    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as logs:
-        out_path, err_path = os.path.join(logs, "out.log"), os.path.join(logs, "err.log")
-        config.stdout_file, config.stderr_file = out_path, err_path
-        store = Store(engine)
-        store.set_fuel(TEST_FUEL)
-        store.set_limits(memory_size=MEMORY_BYTES)
-        store.set_wasi(config)
-        try:
-            instance = linker.instantiate(store, module)
-            instance.exports(store)["_start"](store)
-        except Exception:
-            logger.debug("sandbox_tests guest ended via trap or non-zero exit", exc_info=True)
-        out_of_fuel = store.get_fuel() == 0
-        stdout = Path(out_path).read_text(errors="replace") if os.path.exists(out_path) else ""
-        stderr = Path(err_path).read_text(errors="replace") if os.path.exists(err_path) else ""
-        del store
-        gc.collect()                                           # lets go of the mount, so the copy can be deleted on every platform
-    return {"stdout": stdout, "stderr": stderr, "out_of_fuel": out_of_fuel}
+    if not SANDBOX_WASM_PATH.exists():
+        raise FileNotFoundError(f"Python sandbox interpreter not found at {SANDBOX_WASM_PATH}. Run backend/sandbox/fetch_sandbox.py.")
+    cache = _cache_path()
+    need = NEED_MB_WARM if cache.exists() else NEED_MB_COLD
+    room = headroom_mb()
+    if room is not None and room < need:
+        logger.warning("[sandbox_tests] refused a run: %d MB free, %d MB needed.", int(room), need)
+        raise SandboxError("The server is short of memory right now, so the tests were not started (starting them could have restarted the server). Nothing was tested; try again in a moment.")
+    job = {"wasm": str(SANDBOX_WASM_PATH), "cwasm": str(cache), "root": root, "argv": ["python", "-c", RUNNER, *paths], "fuel": TEST_FUEL, "memory": MEMORY_BYTES}
+    try:
+        done = subprocess.run([sys.executable, "-I", str(WORKER)], input=json.dumps(job), capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=max(WALL_SECONDS - 3, 5), env=_clean_env(), cwd=tempfile.gettempdir())
+    except subprocess.TimeoutExpired:
+        raise SandboxError(f"The tests did not finish within {int(WALL_SECONDS)} seconds and were stopped, so the result is unknown.") from None
+    try:
+        result = json.loads(done.stdout) if done.returncode == 0 and done.stdout.strip() else None
+    except ValueError:
+        result = None
+    if not isinstance(result, dict):
+        logger.warning("[sandbox_tests] the sandbox process ended abnormally (exit code %d).", int(done.returncode))
+        raise SandboxError("The sandbox process stopped unexpectedly (most likely it ran out of memory), so nothing was tested. The server itself is unaffected.")
+    logger.info("[sandbox_tests] the sandbox process used about %d MB%s.", int(result.get("peak_mb") or 0), " and compiled the interpreter" if result.get("compiled") else "")
+    return {"stdout": str(result.get("stdout", "")), "stderr": str(result.get("stderr", "")), "out_of_fuel": bool(result.get("out_of_fuel"))}
 
 
 def parse_output(stdout: str, stderr: str, out_of_fuel: bool) -> Dict[str, Any]:
@@ -217,6 +274,8 @@ def format_result(result: Dict[str, Any], *, with_edits: bool = False) -> str:
 
 async def run_tests(username: str, tests: Any, overlay: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     """Runs the named test files against a copy of the person's folder (with `overlay` written over it). Returns the parsed result, or {"error": text}. Never raises."""
+    if not enabled():
+        return {"error": "Running tests in the sandbox is switched off on this server right now."}
     try:
         paths = clean_test_paths(tests)
     except SandboxError as problem:

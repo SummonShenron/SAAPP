@@ -40,7 +40,7 @@ def _http_response(status_code, json_data=None, text=""):
 # ---------------------------------------------------------------------------
 
 def test_propose_write_node_create_pr_resolves_repo_from_an_earlier_turn(monkeypatch):
-    monkeypatch.setattr(aw.requests, "get", lambda url, headers=None, params=None, **kwargs: Mock(status_code=404, text="not found"))
+    monkeypatch.setattr(aw, "fetch_branch_diff_summary", lambda *args, **kwargs: "Commits (1):\n- fix the thing")
     monkeypatch.setattr(
         aw, "get_chat_llm",
         lambda username: SimpleNamespace(invoke=lambda prompt: _llm_json(

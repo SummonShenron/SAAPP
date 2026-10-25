@@ -113,6 +113,18 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
     "propose_append_target_doc": _object({
         "content": {"type": "string", "description": "the finished text to append, composed by you from what you gathered this turn"},
     }, ["content"]),
+    # a connected local folder + the person's own GitHub token: commit (and optionally branch and open a pull request). Shows a card; commits nothing until the person approves.
+    "propose_commit": _object({
+        "message": {"type": "string", "description": "one or two plain sentences saying what the change does, like a pull request summary"},
+        "new_branch": {"type": "string", "description": "optional: create this branch first and commit to it, for example sonic/fix-clamp"},
+        "branch": {"type": "string", "description": "optional: the branch to commit to (or to branch from); default is the branch their folder is on"},
+        "open_pull_request": {"type": "boolean", "description": "optional: also open a pull request from the branch"},
+        "pr_title": {"type": "string", "description": "the pull request's title (default: the first line of the message)"},
+        "pr_base": {"type": "string", "description": "the branch the pull request merges into (default: the repository's default branch)"},
+        "pr_draft": {"type": "boolean", "description": "open it as a draft"},
+        "paths": {"type": "array", "items": {"type": "string"}, "description": "optional: only these files"},
+        "scope": {"type": "string", "enum": ["applied", "working"], "description": "applied = only the files you changed and they applied; working = every file in their folder that differs from the branch on GitHub (what git status would list). Default: applied when any are waiting, otherwise working"},
+    }, ["message"]),
     # a connected local folder: run Python tests in the WASI sandbox against a copy of it (backend/services/sandbox_tests.py). Changes nothing.
     "run_sandbox_tests": _object({
         "tests": {"type": "array", "items": {"type": "string"}, "description": "paths of Python test files (unittest) in the folder, or created by `edits`, at most 5"},
@@ -194,6 +206,13 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
 # Descriptions that replace the menu line's text for the native engine. The old menu line describes the OLD engine's way of calling a tool ("as a query step ... never a field
 # inside a final answer"), which would mislead a model that makes real function calls.
 NATIVE_DESCRIPTIONS: Dict[str, str] = {
+    "propose_commit": (
+        "Commit their work to GitHub, with THEIR token, the way a person commits after a piece of work: the files you changed and they applied (scope applied), or all their working changes, meaning every file in their folder that differs from the branch on GitHub (scope working: use it for \"commit our working changes\" or \"commit everything\"). A short message, onto the branch their folder is on, or onto a "
+        "new branch you name (new_branch), optionally opening a pull request (open_pull_request, pr_title, pr_base, pr_draft). It changes nothing by itself: they see a card with the repo, branch, files with line counts and the "
+        "message, and nothing is committed until they approve. Use it when they ask you to commit, push, or open a pull request for the work. The message is one or two plain sentences about what "
+        "the change does; do not add trailers. Call it once and then stop: say that the card is waiting for their approval, never that it was committed. It is refused in a turn where you read a web "
+        "page, email, shared document or logs."
+    ),
     "run_sandbox_tests": (
         "Run Python unittest files against a COPY of the person's connected folder, in a locked-down sandbox (no network, nothing outside the copy, a compute limit). It changes nothing and shows "
         "nothing to the person. Pass `edits` (the same text edits propose_local_edits takes, including a NEW test file) and the tests run against the folder as it would be AFTER those edits, so you "

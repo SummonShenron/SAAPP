@@ -62,6 +62,7 @@ const TOOL_REASON_SHORT: Record<string, string> = {
   admin_ops: 'incidents, logs, deploys',
   approval_continuation: 'answering an approval',
   clarification_resume: 'answering its own question',
+  commit_request: 'commit, push or new branch',
 };
 
 /** A panel that is also a button: the whole thing opens the tab it summarises. */

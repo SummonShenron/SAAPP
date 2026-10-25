@@ -103,6 +103,7 @@ from backend.utils.agent_utils import is_stale_capability_denial, scrub_stale_ca
 from backend.utils.embedding_utils import embed_text
 from backend.utils import relevant_findings
 from backend.utils import citation_media
+from backend.utils import applied_changes
 from backend.utils.emotion_utils import build_emotional_context, effective_intensity, energy_tier
 from backend.utils.encouragement_utils import (
     ENCOURAGEMENT_MARK, build_encouragement_block, build_encouragement_revision_prompt, encouragement_reply_issue,
@@ -365,6 +366,7 @@ class ChatRequest(BaseModel):
     affiliate: str 
     attachments: list[Attachment] | None = None
     session_id: str | None = None
+    git_branch: str | None = None   # the git branch the connected folder is on, read by the browser from .git/HEAD (None when unknown or detached)
     edit_decisions: bool = False    # the page reports Apply / Decline back (POST /api/local-edits/{id}/decision), so the tool loop may wait for it and carry on
     folder_expected: bool = False   # the browser has a local folder connected, so a turn that finds none on the server can say so (the answer then used GitHub)
 
@@ -789,6 +791,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         "deep_thinking": effective_deep_thinking,
         "tool_model": effective_tool_model,
         "edit_decisions": bool(request.edit_decisions),
+        "git_branch": (request.git_branch or "").strip()[:100] or None,
         "budget_level": budget_state.get("level"),
         "repo": effective_target_repo,
         "documents": [],
@@ -3321,7 +3324,12 @@ async def retire_observation(key: str, admin = Depends(require_global_admin)):
 @app.post("/api/local-edits/{proposal_id}/decision")
 async def report_local_edit_decision(proposal_id: str, payload: EditDecisionRequest, current_user = Depends(get_current_user)):
     """The diff card's Apply or Decline, reported to the tool loop that is waiting on it (backend/services/local_edit_decisions.py). Applying itself happens in the browser."""
-    return {"status": local_edit_decisions.decide(current_user.get("sub"), proposal_id, payload.outcome, payload.reason)}
+    username = current_user.get("sub")
+    status = local_edit_decisions.decide(username, proposal_id, payload.outcome, payload.reason)
+    if payload.outcome == "applied":
+        # Whether or not a turn was waiting: these files are now changed work that a commit may include (backend/utils/applied_changes.py).
+        applied_changes.record(username, local_edit_decisions.changes_for(username, proposal_id))
+    return {"status": status}
 
 
 @app.get("/api/reading-shelf")

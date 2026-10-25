@@ -43,7 +43,7 @@ export default function LocalEditCard({ proposal, canApply, onApply, onUndo, onD
     const result = await onApply(proposal);
     if (result.ok) {
       setPhase('applied');
-      if (proposal.awaiting) onDecision?.(proposal.proposal_id, 'applied', '');
+      onDecision?.(proposal.proposal_id, 'applied', '');      // always: the server notes the files as work waiting to be committed, whether or not a turn is waiting
     } else {
       setErrors(result.errors);
       setPhase('pending');

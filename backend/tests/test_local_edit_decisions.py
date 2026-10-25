@@ -172,7 +172,7 @@ async def test_the_old_engine_never_waits(monkeypatch):
 def test_the_endpoint_the_request_flag_and_the_card_are_wired():
     app_source = (ROOT / "app.py").read_text(encoding="utf-8")
     block = app_source[app_source.index('@app.post("/api/local-edits/{proposal_id}/decision")'):app_source.index('@app.get("/api/reading-shelf")')]
-    assert "Depends(get_current_user)" in block and 'local_edit_decisions.decide(current_user.get("sub")' in block
+    assert "Depends(get_current_user)" in block and "local_edit_decisions.decide(username, proposal_id" in block and "applied_changes.record(username" in block
     assert "edit_decisions: bool = False" in app_source and '"edit_decisions": bool(request.edit_decisions)' in app_source
     card = (ROOT / "local" / "src" / "components" / "LocalEditCard.tsx").read_text(encoding="utf-8")
     assert "onDecision?.(proposal.proposal_id, 'applied'" in card and "onDecision?.(proposal.proposal_id, 'declined'" in card and "proposal.awaiting" in card
