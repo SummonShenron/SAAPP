@@ -35,6 +35,7 @@ TONES = ("direct", "balanced", "warm")
 HUMOR = ("none", "default", "more")
 # How many getting-to-know-you questions Sonic asks (backend/utils/clarifications.py): "less" is none at all, for someone who wants Sonic as a tool.
 QUESTIONS = ("less", "balanced", "more")
+REACH_LEVELS = ("none", "low", "default", "more")
 DEFAULT_STYLE = {"length": "balanced", "tone": "balanced", "humor": "default", "questions": "balanced"}
 
 
@@ -102,6 +103,7 @@ def normalize_profile(raw: Any) -> Dict[str, Any]:
     raw = raw if isinstance(raw, dict) else {}
     style_in = raw.get("style") if isinstance(raw.get("style"), dict) else {}
     pronouns = clean_text(raw.get("pronouns"), "pronouns", PRONOUN_MAX)
+    reach_level = _choice(raw.get("reach") if raw.get("reach") is not None else ("none" if raw.get("offers") is False else "default"), "reach", REACH_LEVELS, "default")
     return {
         "name": clean_text(raw.get("name"), "name", NAME_MAX),
         "pronouns": pronouns,
@@ -115,7 +117,9 @@ def normalize_profile(raw: Any) -> Dict[str, Any]:
         },
         "avoid": _clean_list(raw.get("avoid"), "avoid", AVOID_MAX, MAX_AVOID),
         # Sonic may bring something up by itself at a quiet moment: the open question, a leaning, something it read.
-        "offers": raw.get("offers") is not False,
+        "offers": reach_level != "none",
+        # How often, from none to more (backend/utils/reach.py). "offers" above stays in step with it for everything that only asks yes or no.
+        "reach": reach_level,
     }
 
 
@@ -135,7 +139,9 @@ def is_empty(profile: Dict[str, Any]) -> bool:
 
 def offers_allowed(profile: Optional[Dict[str, Any]]) -> bool:
     """Whether Sonic may bring something up by itself at a quiet moment (default yes)."""
-    return (profile or {}).get("offers") is not False
+    from backend.utils import reach
+
+    return reach.level_of(profile) != reach.NONE
 
 
 def touches_avoided(text: Any, profile: Optional[Dict[str, Any]]) -> bool:

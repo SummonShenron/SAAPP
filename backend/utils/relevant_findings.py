@@ -22,7 +22,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
-from backend.utils import curiosity, offer_response, profile_utils
+from backend.utils import curiosity, offer_response, profile_utils, reach
 from backend.utils import reading_shelf as shelf
 from backend.utils.self_counters import tally
 
@@ -52,9 +52,10 @@ def select(
             return None
         if not curiosity.finding_slot_open(question, messages, source_type=source_type, risk_active=risk_active, energy_tier=energy_tier, proactive_taken=proactive_taken):
             return None
-        if shelf.findings_in_last_day(db, username, now) >= shelf.FINDINGS_PER_DAY:
+        level = reach.reach_of(user_profile)       # the person's own dial: how many a day, and how long between offers
+        if shelf.findings_in_last_day(db, username, now) >= level.findings_per_day:
             return None
-        if offer_response.pacing(db, username, now, counts=counts) != offer_response.CLEAR:
+        if offer_response.pacing(db, username, now, counts=counts, gap_hours=level.gap_hours) != offer_response.CLEAR:
             return None
         seen = shelf.seen_keys(db, username)
         fresh = [item for item in shelf.live_items(db, now) if item["_id"] not in seen]

@@ -970,6 +970,18 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "reach_dial",
+        "requires": [
+            "backend/utils/reach.py::def reach_of",
+            "app.py::reach_utils.reach_of(",
+        ],
+        "month": "2026-10",
+        "title": "How much I reach out",
+        "line": "On the Account page you can set how much I reach out on my own, from not at all to more. It changes how often I bring something up or open a chat, never the times I hold back.",
+        "keywords": ["reach out", "bring something up", "start conversations", "message first", "account page"],
+        "volunteer": [],
+    },
+    {
         "id": "memory_while_working",
         "requires": [
             "backend/services/tool_agent_memory.py::async def search_for_agent",

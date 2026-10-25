@@ -558,6 +558,8 @@ export interface UserProfile {
   style: { length: string; tone: string; humor: string; questions?: string };
   avoid: string[];
   offers: boolean;
+  /** How often Sonic may bring something up on its own, from none to more (backend/utils/reach.py). `offers` is kept in step with it. */
+  reach?: 'none' | 'low' | 'default' | 'more';
 }
 
 /** The server refused a value: which field, and the reason to show next to it. */

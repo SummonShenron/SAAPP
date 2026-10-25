@@ -35,7 +35,7 @@ def test_a_good_profile_is_saved_as_given_with_tidy_whitespace():
 
 def test_an_empty_profile_has_the_defaults_and_is_reported_empty():
     out = pu.normalize_profile({})
-    assert out == {"name": "", "pronouns": "", "work": "", "interests": [], "style": pu.DEFAULT_STYLE, "avoid": [], "offers": True} and pu.is_empty(out)
+    assert out == {"name": "", "pronouns": "", "work": "", "interests": [], "style": pu.DEFAULT_STYLE, "avoid": [], "offers": True, "reach": "default"} and pu.is_empty(out)
     assert not pu.is_empty(pu.normalize_profile({"name": "Sam"}))
     assert not pu.is_empty(pu.normalize_profile({"work": "retired"}))
 

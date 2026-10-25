@@ -9,7 +9,7 @@ const PRONOUN_MAX = 30;
 const WORK_MAX = 60;
 
 const EMPTY: UserProfile = {
-  name: '', pronouns: '', work: '', interests: [], style: { length: 'balanced', tone: 'balanced', humor: 'default', questions: 'balanced' }, avoid: [], offers: true,
+  name: '', pronouns: '', work: '', interests: [], style: { length: 'balanced', tone: 'balanced', humor: 'default', questions: 'balanced' }, avoid: [], offers: true, reach: 'default',
 };
 
 /**
@@ -143,21 +143,25 @@ const ProfileCard: React.FC = () => {
         {fieldError('avoid')}
       </div>
 
-      <div className="account-row-action">
-        <div>
-          <div className="account-label">Let Sonic bring something up on its own</div>
-          <div className="account-hint">At a quiet moment it may ask what else is going on, mention something it leans toward, or something it has read. At most once in a conversation.</div>
-        </div>
-        <input type="checkbox" className="profile-switch" checked={profile.offers} onChange={e => update({ offers: e.target.checked })} aria-label="Let Sonic bring something up on its own" />
+      <div className="profile-field">
+        <label className="account-label" htmlFor="profile-reach">How much Sonic reaches out</label>
+        <select id="profile-reach" className="account-input" value={profile.reach ?? 'default'}
+          onChange={e => update({ reach: e.target.value as NonNullable<UserProfile['reach']>, offers: e.target.value !== 'none' })}>
+          <option value="none">Not at all</option><option value="low">Less</option><option value="default">Sonic's usual</option><option value="more">More</option>
+        </select>
+        <div className="account-hint">At a quiet moment Sonic may ask what else is going on, mention something it leans toward, or something it has read. Less is rare and gentle, more is a little
+          more often. It still holds back when you seem low or are wrapping up, and never raises what you asked it to leave alone. Not at all turns off the next switch too.</div>
+        {fieldError('reach')}
       </div>
 
       {messageFirst !== null && (
         <div className="account-row-action">
           <div>
             <div className="account-label">Let Sonic start conversations</div>
-            <div className="account-hint">It may open a chat with one question about something you told it, like how a date went. Saved as soon as you change it.</div>
+            <div className="account-hint">It may open a chat with one question about something you told it, like how a date went. How often follows the setting above: about once a day and a half
+              when less, once a day when usual, up to a few a day when more, and never twice in a row. Saved as soon as you change it.</div>
           </div>
-          <input type="checkbox" className="profile-switch" checked={messageFirst} onChange={e => toggleMessageFirst(e.target.checked)} aria-label="Let Sonic start conversations" />
+          <input type="checkbox" className="profile-switch" checked={messageFirst && profile.reach !== 'none'} disabled={profile.reach === 'none'} onChange={e => toggleMessageFirst(e.target.checked)} aria-label="Let Sonic start conversations" />
         </div>
       )}
 

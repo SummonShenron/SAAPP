@@ -136,6 +136,7 @@ from backend.utils import open_loops as open_loops_utils
 from backend.utils import working_state as working_state_utils
 from backend.utils import clarifications as clarify_utils
 from backend.utils import initiation as initiation_utils
+from backend.utils import reach as reach_utils
 from backend.utils import budget_guard
 from backend.utils import llm_turns, llm_usage, loop_watchdog
 from backend.utils import ops_digest as ops_digest_utils
@@ -733,6 +734,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     effective_tool_model = _settings.get("tool_model")      # "claude" | "gemini" | None (never chose: the server's default)
     effective_target_repo = _settings["target_repo"]
     user_profile = _settings.get("profile") or profile_utils.stored_profile({})  # what they set on the Account page (backend/utils/profile_utils.py)
+    reach_level = reach_utils.reach_of(user_profile)  # how often Sonic may bring something up by itself (backend/utils/reach.py)
     # The usage budget guard (backend/utils/budget_guard.py). Off, and free, unless a budget is configured. In low-power mode deep
     # thinking is off whatever the setting says, and the optional extras further down are skipped.
     is_admin_user = is_global_admin(directory, username)
@@ -1345,9 +1347,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     callback_slot_ok = (not finding_offer) and ((not callback_lull) or (
                         profile_utils.offers_allowed(user_profile)
                         and curiosity_utils.slot_open(question, chat_sessions[history_key], source_type=source_type, risk_active=False,
-                                                  energy_tier="open", proactive_taken=False)
+                                                  energy_tier="open", proactive_taken=False, max_offers=reach_level.extenders)
                         and not curiosity_utils.last_reply_asked(chat_sessions[history_key])
-                        and await asyncio.to_thread(offer_response.pacing, get_db(), username, None, counts=turn_counts) == offer_response.CLEAR
+                        and await asyncio.to_thread(offer_response.pacing, get_db(), username, None, counts=turn_counts, gap_hours=reach_level.gap_hours) == offer_response.CLEAR
                     ))
                     if callback_slot_ok and callback_allowed(
                         True, chat_sessions[history_key], source_type=source_type, risk_active=risk_level != RISK_NONE,
@@ -1396,12 +1398,12 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 asked_listing = shelf_utils.shelf_enabled() and (reading_asked or shelf_utils.asks_about_day(question))
                 offers = profile_utils.offers_allowed(user_profile)  # the person's own switch for Sonic bringing something up by itself
                 topic_ok = offers and shelf_utils.shelf_enabled() and shelf_utils.topic_for(question) is not None and curiosity_utils.slot_open(
-                    question, chat_sessions[history_key], min_turns=2, **slot)
-                lull_ok = offers and curiosity_utils.curiosity_allowed(question, chat_sessions[history_key], **slot)
+                    question, chat_sessions[history_key], min_turns=2, max_offers=reach_level.extenders, **slot)
+                lull_ok = offers and curiosity_utils.curiosity_allowed(question, chat_sessions[history_key], max_offers=reach_level.extenders, **slot)
                 # A softer lull (a short reaction like "huh, that makes sense now") may also bring up a shelf item, never the plain question, and only after its own
                 # longer gap since the last shelf item this person was offered (backend/utils/reading_shelf.py soft_gap_clear).
                 soft_ok = bool(not lull_ok and offers and shelf_utils.shelf_enabled() and shelf_utils.soft_lulls_enabled() and curiosity_utils.is_soft_lull(question)
-                               and curiosity_utils.slot_open(question, chat_sessions[history_key], **slot)
+                               and curiosity_utils.slot_open(question, chat_sessions[history_key], max_offers=reach_level.extenders, **slot)
                                and not curiosity_utils.last_reply_asked(chat_sessions[history_key]))
                 db_for_shelf = get_db()
                 if asked_listing and db_for_shelf is not None:
@@ -1409,7 +1411,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                         shelf_utils.offer_for_turn, db_for_shelf, username, question, listing=True, topic_ok=False, lull_ok=False,
                         framing="" if reading_asked else "day")
                 elif (topic_ok or lull_ok or soft_ok) and await asyncio.to_thread(
-                        offer_response.pacing, get_db(), username, None, counts=turn_counts) == offer_response.CLEAR:
+                        offer_response.pacing, get_db(), username, None, counts=turn_counts, gap_hours=reach_level.gap_hours) == offer_response.CLEAR:
                     if soft_ok and not (topic_ok or lull_ok) and db_for_shelf is not None:
                         soft_ok = shelf_utils.soft_gap_clear(await asyncio.to_thread(shelf_utils.last_shelf_offer_at, db_for_shelf, username))
                     if db_for_shelf is not None and (topic_ok or lull_ok or soft_ok):

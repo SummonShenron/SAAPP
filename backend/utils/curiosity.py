@@ -113,10 +113,15 @@ def current_stretch(messages: Iterable[Any], gap_hours: Optional[float] = None) 
     return ordered[start:]
 
 
-def already_offered(messages: Iterable[Any]) -> bool:
-    """Whether Sonic has used its one extender in this conversation (this stretch of the chat, see current_stretch). An item from the reading
-    shelf spends it too: it carries the same mark."""
-    return any((getattr(m, "additional_kwargs", None) or {}).get(CURIOSITY_MARK) for m in current_stretch(messages))
+def offers_made(messages: Iterable[Any]) -> int:
+    """How many unprompted offers Sonic has made in this conversation (this stretch of the chat, see current_stretch). An item from the reading shelf counts too: it
+    carries the same mark."""
+    return sum(1 for m in current_stretch(messages) if (getattr(m, "additional_kwargs", None) or {}).get(CURIOSITY_MARK))
+
+
+def already_offered(messages: Iterable[Any], limit: int = 1) -> bool:
+    """Whether Sonic has used its extenders in this conversation: one at the default level, the person's reach level (backend/utils/reach.py) may change that."""
+    return offers_made(messages) >= max(1, limit)
 
 
 def user_turns(messages: Iterable[Any]) -> int:
@@ -142,6 +147,7 @@ def slot_open(
     energy_tier: str,
     proactive_taken: bool,
     min_turns: int = MIN_USER_TURNS,
+    max_offers: int = 1,
 ) -> bool:
     """The gates every conversation extender shares (the open question here, an item from the reading shelf in
     backend/utils/reading_shelf.py): the right route, nothing that calls for a quiet reply, the turn's one proactive slot still free,
@@ -150,7 +156,7 @@ def slot_open(
         return False
     if risk_active or energy_tier != "open" or proactive_taken or is_closing_message(user_message):
         return False
-    return user_turns(messages) >= min_turns and not already_offered(messages)
+    return user_turns(messages) >= min_turns and not already_offered(messages, max_offers)
 
 
 FINDING_MIN_CHARS = 30      # a message shorter than this has too little in it to match on meaning
@@ -188,13 +194,14 @@ def curiosity_allowed(
     risk_active: bool,
     energy_tier: str,
     proactive_taken: bool,
+    max_offers: int = 1,
 ) -> bool:
     """Every check that costs nothing, for the open question at a lull. The per-person gap is separate (gap_clear), since it
     needs a database read and only matters once everything here has passed."""
     return (
         is_lull(user_message)
         and slot_open(user_message, messages, source_type=source_type, risk_active=risk_active, energy_tier=energy_tier,
-                      proactive_taken=proactive_taken)
+                      proactive_taken=proactive_taken, max_offers=max_offers)
         and not last_reply_asked(messages)
     )
 

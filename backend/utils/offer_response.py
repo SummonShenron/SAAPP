@@ -127,7 +127,8 @@ def people_view(db: Any, now: Optional[datetime] = None) -> Dict[str, int]:
 CLEAR, HELD, STRETCHED = "clear", "held", "stretched"
 
 
-def pacing(db: Any, username: str, now: Optional[datetime] = None, *, apply: Optional[bool] = None, counts: Optional[Dict[str, int]] = None) -> str:
+def pacing(db: Any, username: str, now: Optional[datetime] = None, *, apply: Optional[bool] = None, counts: Optional[Dict[str, int]] = None,
+           gap_hours: Optional[float] = None) -> str:
     """CLEAR when enough time has passed since this person was last offered something, HELD when the usual gap has not, STRETCHED when the usual gap has passed but the
     longer one this person's responses call for has not. The last case is the lever acting: it is added to `counts` (this turn's tally) as offer_held_back, which is
     how Sonic Health shows what the lever did. `apply` defaults to whether the welcome goal is approved and its guardrail is holding (backend/utils/goals.py). Blocking."""
@@ -135,8 +136,9 @@ def pacing(db: Any, username: str, now: Optional[datetime] = None, *, apply: Opt
     from backend.utils.self_counters import tally
 
     now = now or datetime.now(timezone.utc)
+    base = curiosity.MIN_HOURS_BETWEEN if gap_hours is None else gap_hours      # the person's reach level sets the usual gap (backend/utils/reach.py)
     last = curiosity.last_offer_at(username)
-    if not curiosity.gap_clear(last, now):
+    if not curiosity.gap_clear(last, now, base):
         return HELD
     try:
         if apply is None:
@@ -145,7 +147,7 @@ def pacing(db: Any, username: str, now: Optional[datetime] = None, *, apply: Opt
     except Exception:
         logger.warning("[offer response] could not read the pacing; using the usual gap.", exc_info=True)
         stretch = 1.0                     # a failed read must not hold an offer back: Sonic's usual behaviour is the safe default
-    if stretch > 1.0 and not curiosity.gap_clear(last, now, curiosity.MIN_HOURS_BETWEEN * stretch):
+    if stretch > 1.0 and not curiosity.gap_clear(last, now, base * stretch):
         if counts is not None:
             tally(counts, "offer_held_back")
         return STRETCHED

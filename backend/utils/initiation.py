@@ -157,7 +157,7 @@ def is_initiated(message: Any) -> bool:
 
 
 def refusal_reason(
-    state: Dict[str, Any], transcript: List[Any], now: datetime, *, is_guest: bool = False
+    state: Dict[str, Any], transcript: List[Any], now: datetime, *, is_guest: bool = False, min_hours: Optional[float] = None
 ) -> Optional[str]:
     """Why Sonic must NOT open this conversation, or None if every gate passes."""
     if is_guest:
@@ -169,7 +169,7 @@ def refusal_reason(
     if state["unanswered"] >= MAX_UNANSWERED:
         return "ignored"
     last = state["last_initiated_at"]
-    if last and (now - last) < timedelta(hours=MIN_HOURS_BETWEEN):
+    if last and (now - last) < timedelta(hours=MIN_HOURS_BETWEEN if min_hours is None else min_hours):
         return "too_soon"
     return thread_refusal(transcript, now)
 
@@ -362,6 +362,7 @@ async def maybe_open_conversation(
     now: Optional[datetime] = None,
     is_guest: bool = False,
     db=None,
+    min_hours: Optional[float] = None,
 ) -> Optional[Dict[str, Any]]:
     """Appends and saves one opening message to `transcript` and returns it as `{type, content, sent_at, initiated}`, or
     returns None (the usual case) when any gate says no or nothing qualifies. Never raises: a failure here must not stop
@@ -379,7 +380,7 @@ async def maybe_open_conversation(
             return None
         moment = now or datetime.now(timezone.utc)
         state = await asyncio.to_thread(load_state, db, username)
-        reason = refusal_reason(state, transcript, moment, is_guest=is_guest)
+        reason = refusal_reason(state, transcript, moment, is_guest=is_guest, min_hours=min_hours)
         if reason:
             logger.debug("[initiation] not opening %s::%s: %s", username, session_id, reason)
             return None
@@ -458,6 +459,15 @@ async def open_for_request(
         return None
     opener_on = await asyncio.to_thread(get_enabled, username)
     digest_on = await asyncio.to_thread(ops_digest.get_enabled, username)  # a separate, admin-only toggle
+    reach_hours = None
+    if opener_on:
+        # The person's reach dial (backend/utils/reach.py): "none" turns openers off with everything else, and the other levels set the wait between two.
+        from backend.utils import reach
+        from backend.utils.user_settings_utils import get_user_profile
+
+        level = reach.reach_of(await asyncio.to_thread(get_user_profile, username))
+        reach_hours = level.opener_hours
+        opener_on = level.level != reach.NONE
     if opener_on:
         from backend.utils import budget_guard
 
@@ -484,5 +494,5 @@ async def open_for_request(
     return await maybe_open_conversation(
         username, session_id, chat_sessions[key],
         tz_name=await asyncio.to_thread(get_timezone, username),
-        invoke=get_llm(username).ainvoke, save=save, now=now, is_guest=is_guest, db=db,
+        invoke=get_llm(username).ainvoke, save=save, now=now, is_guest=is_guest, db=db, min_hours=reach_hours,
     )
