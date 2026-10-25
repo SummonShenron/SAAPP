@@ -35,8 +35,17 @@ def _person(raw: Any) -> Dict[str, str]:
     return {"name": str(raw.get("name") or ""), "email": str(raw.get("email") or ""), "date": str(raw.get("date") or "")}
 
 
-def build_bundle(api: Any, repo: str, commit_sha: str) -> Dict[str, Any]:
-    """The bundle for one commit, or GitCommitError in words. Blocking (GitHub calls)."""
+def _tree_of(api: Any, repo: str, commit_sha: Optional[str]) -> Optional[str]:
+    """The folder-listing id of a commit as GitHub has it, or None when there is no such commit there (a commit made only on the person's machine) or none was asked about."""
+    if not commit_sha or not _SHA_RE.match(commit_sha):
+        return None
+    status, data = api.request("GET", f"/repos/{repo}/git/commits/{commit_sha}")
+    return (data.get("tree") or {}).get("sha") if status == 200 and isinstance(data, dict) else None
+
+
+def build_bundle(api: Any, repo: str, commit_sha: str, compare_with: Optional[str] = None) -> Dict[str, Any]:
+    """The bundle for one commit, or GitCommitError in words. `compare_with` is the commit the person's own branch is at now: when Sonic merged a pull request, whether that commit holds exactly the
+    merged content (`compare_tree` equal to the commit's tree) is what makes switching their branch safe. Blocking (GitHub calls)."""
     if not _REPO_RE.match(repo or "") or not _SHA_RE.match(commit_sha or ""):
         raise gc.GitCommitError("That is not a repository and commit this can read.")
     commit = _get(api, f"/repos/{repo}/git/commits/{commit_sha}", "read the commit")
@@ -99,11 +108,11 @@ def build_bundle(api: Any, repo: str, commit_sha: str) -> Dict[str, Any]:
             "sha": commit_sha, "tree": root, "parents": parents, "author": _person(commit.get("author")), "committer": _person(commit.get("committer")),
             "message": str(commit.get("message") or ""), "signature": verification.get("signature") or None,
         },
-        "trees": trees, "blobs": blobs, "files": files,
+        "trees": trees, "blobs": blobs, "files": files, "compare_tree": _tree_of(api, repo, compare_with),
     }
 
 
-def bundle_for(username: str, repo: str, commit_sha: str, api_factory: Optional[Any] = None) -> Dict[str, Any]:
+def bundle_for(username: str, repo: str, commit_sha: str, compare_with: Optional[str] = None, api_factory: Optional[Any] = None) -> Dict[str, Any]:
     """build_bundle with the person's own token. Blocking."""
     api = (api_factory or gc.GitHubApi)(commit_flow._own_token(username))
-    return build_bundle(api, repo, commit_sha)
+    return build_bundle(api, repo, commit_sha, compare_with)

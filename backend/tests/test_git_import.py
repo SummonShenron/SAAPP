@@ -112,9 +112,34 @@ def test_the_committed_reply_matches_what_the_browser_looks_for(world):
     import re
 
     source = (ROOT / "local" / "src" / "localGit" / "commitResult.ts").read_text(encoding="utf-8")
-    literal = re.search(r"const PATTERN = /(.+)/;", source).group(1)
+    literal = re.search(r"const COMMITTED = /(.+)/;", source).group(1)
     pattern = re.compile(literal.replace("\/", "/"))
     _, card = cf.draft(USER, {"message": "Say hello and add docs.", "new_branch": "feat/notes", "open_pull_request": True}, repo=REPO, current_branch="feat/x")
     out = cf.execute(USER, cf.parse_card(card))
     found = pattern.search(out)
     assert found and found.group(1) == REPO and found.group(2) == world.branches["feat/notes"] and found.group(3) == "feat/notes" and found.group(4) == REPO
+
+
+def test_the_merged_reply_matches_what_the_browser_looks_for(world):
+    import re
+
+    source = (ROOT / "local" / "src" / "localGit" / "commitResult.ts").read_text(encoding="utf-8")
+    literal = re.search(r"const MERGED = /(.+)/;", source).group(1)
+    pattern = re.compile(literal.replace("\/", "/"))
+    _, card = cf.draft(USER, {"message": "Say hello and add docs.", "new_branch": "feat/notes", "open_pull_request": True}, repo=REPO, current_branch="feat/x")
+    out = cf.execute(USER, cf.parse_card(card))
+    merged = cf.execute_merge(USER, cf.parse_merge_card(out))
+    found = pattern.search(merged)
+    assert found and found.group(1) == "main" and found.group(2) == REPO and found.group(3) == REPO and found.group(4) == world.branches["main"], merged
+
+
+def test_the_bundle_says_what_the_commit_the_person_is_on_contains(world):
+    sha = commit_on_new_branch(world)
+    parent = world.branches["feat/x"]
+    same = gi.build_bundle(world, REPO, sha, compare_with=sha)
+    assert same["compare_tree"] == same["commit"]["tree"]
+    other = gi.build_bundle(world, REPO, sha, compare_with=parent)
+    assert other["compare_tree"] == world.commits[parent]["tree"] != other["commit"]["tree"]
+    assert gi.build_bundle(world, REPO, sha)["compare_tree"] is None
+    assert gi.build_bundle(world, REPO, sha, compare_with="e" * 40)["compare_tree"] is None, "a commit that exists only on their machine"
+    assert gi.build_bundle(world, REPO, sha, compare_with="not a sha")["compare_tree"] is None

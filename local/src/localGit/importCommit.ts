@@ -20,6 +20,7 @@ export interface CommitBundle {
   trees: { sha: string; entries: TreeEntry[] }[];    // the root tree and every folder on the way to a changed file
   blobs: { sha: string; content: string }[];          // base64
   files: { path: string; sha: string; mode: string }[];
+  compare_tree?: string | null;                       // the folder-listing id of the commit the person's branch is at now, when GitHub has that commit (see backend/services/git_import.py)
 }
 
 export interface ImportPlan {
@@ -28,13 +29,19 @@ export interface ImportPlan {
   commit: string;
   parent: string;
   currentBranch: string;
-  action: 'advance' | 'switch';
+  action: 'advance' | 'create-switch' | 'move-switch';
   objects: { id: string; type: ObjectType; body: Uint8Array }[];
   files: { path: string; mode: string; sha: string; size: number }[];
   summary: string[];
 }
 
-export type PlanResult = { ok: true; plan: ImportPlan } | { ok: false; reasons: string[] };
+export type PlanResult = { ok: true; plan: ImportPlan } | { ok: false; reasons: string[]; already?: boolean };
+
+/** The commit the branch the person is on points at, or null (no repository, detached HEAD, nothing there). Used to ask GitHub whether that commit holds exactly what Sonic merged. */
+export async function headTip(fs: GitFs): Promise<string | null> {
+  const head = await readHead(fs);
+  return head && head.kind === 'branch' ? resolveRef(fs, head.ref) : null;
+}
 
 const short = (sha: string) => sha.slice(0, 7);
 
@@ -46,6 +53,14 @@ function base64ToBytes(text: string): Uint8Array {
 }
 
 const personOf = (p: BundlePerson) => ({ name: p.name, email: p.email, ...(() => { const d = parseIsoDate(p.date); return { timestamp: d.timestamp, offset: d.offset }; })() });
+
+/** Time-zone offsets ("-0500") to try, most likely first: the ones given, this browser's own, UTC, then every quarter hour from -12:00 to +14:00. */
+export function candidateOffsets(given: string[] = []): string[] {
+  const format = (minutes: number) => `${minutes < 0 ? '-' : '+'}${String(Math.floor(Math.abs(minutes) / 60)).padStart(2, '0')}${String(Math.abs(minutes) % 60).padStart(2, '0')}`;
+  const all: string[] = [...given, format(-new Date().getTimezoneOffset()), '+0000'];
+  for (let minutes = -720; minutes <= 840; minutes += 15) all.push(format(minutes));
+  return [...new Set(all)];
+}
 
 /** Hashes everything in the bundle and checks it is consistent: the commit rebuilds to its id, each tree to its id, each blob to its id, and each changed file is where its tree says. */
 async function verifiedObjects(bundle: CommitBundle): Promise<{ objects: ImportPlan['objects']; sizes: Map<string, number> } | string> {
@@ -67,13 +82,23 @@ async function verifiedObjects(bundle: CommitBundle): Promise<{ objects: ImportP
     treeById.set(tree.sha, tree.entries);
   }
   const c = bundle.commit;
-  let commitBody: Uint8Array;
+  // GitHub's API gives a commit's dates in UTC ("...Z") and drops the time zone the commit was written with (a commit made for someone in Chicago is stored with -0500), but the zone is part of
+  // the commit and therefore of its id. It is found by trying the zones people live in until the commit rebuilds to exactly the id GitHub reports: the id is the check, so nothing is guessed.
+  let commitBody: Uint8Array | null = null;
   try {
-    commitBody = serializeCommit({ tree: c.tree, parents: c.parents, author: personOf(c.author), committer: personOf(c.committer), message: c.message, signature: c.signature });
+    const author = personOf(c.author);
+    const committer = personOf(c.committer);
+    for (const offset of candidateOffsets([author.offset])) {
+      const body = serializeCommit({ tree: c.tree, parents: c.parents, author: { ...author, offset }, committer: { ...committer, offset }, message: c.message, signature: c.signature });
+      if ((await objectId('commit', body)) === c.sha) {
+        commitBody = body;
+        break;
+      }
+    }
   } catch {
     return 'The commit has a date this could not read, so nothing was written.';
   }
-  if ((await objectId('commit', commitBody)) !== c.sha) return 'The commit as rebuilt here does not match the id GitHub reports (so it may be signed or in a form this does not handle). Nothing was written.';
+  if (!commitBody) return 'The commit as rebuilt here does not match the id GitHub reports (so it may be signed or in a form this does not handle). Nothing was written.';
   objects.push({ id: c.sha, type: 'commit', body: commitBody });
   for (const file of bundle.files) {
     let treeId = c.tree;
@@ -102,14 +127,27 @@ export async function planImport(fs: GitFs, bundle: CommitBundle, branch: string
   if (reasons.length || !head || head.kind !== 'branch') return { ok: false, reasons };
 
   const parent = bundle.commit.parents[0];
-  const tip = await resolveRef(fs, head.ref);
-  if (tip !== parent) {
-    reasons.push(`Your branch ${head.name} is at ${tip ? short(tip) : 'an unknown commit'}, but Sonic's commit starts from ${short(parent)}. Update your branch first (git pull), or use the commands instead.`);
-    return { ok: false, reasons };
-  }
-  const existing = branch === head.name ? tip : await resolveRef(fs, `refs/heads/${branch}`);
-  if (branch !== head.name && existing && existing !== bundle.commit.sha) {
-    return { ok: false, reasons: [`A branch called ${branch} already exists in your repository at ${short(existing)}, so it was left alone.`] };
+  const currentTip = await resolveRef(fs, head.ref);
+  const targetTip = branch === head.name ? currentTip : await resolveRef(fs, `refs/heads/${branch}`);
+  if (targetTip === bundle.commit.sha) return { ok: false, already: true, reasons: [`Your repository already has this commit on ${branch}.`] };
+  const startsFrom = (name: string, tip: string | null) => `Your branch ${name} is at ${tip ? short(tip) : 'an unknown commit'}, but Sonic's commit starts from ${short(parent)}. Update your branch first (git pull), or use the commands instead.`;
+  let action: ImportPlan['action'];
+  if (branch === head.name) {
+    // A push to the branch they are on.
+    if (currentTip !== parent) return { ok: false, reasons: [startsFrom(head.name, currentTip)] };
+    action = 'advance';
+  } else if (targetTip === null) {
+    // A new branch, made from where they are.
+    if (currentTip !== parent) return { ok: false, reasons: [startsFrom(head.name, currentTip)] };
+    action = 'create-switch';
+  } else {
+    // The branch exists here: the commit is a pull request Sonic merged into it. It must be at exactly the commit the merge started from, and the branch they are on must hold exactly the merged
+    // content, so that moving to it changes no file of theirs.
+    if (targetTip !== parent) return { ok: false, reasons: [startsFrom(branch, targetTip)] };
+    if (!bundle.compare_tree || bundle.compare_tree !== bundle.commit.tree) {
+      return { ok: false, reasons: [`A branch called ${branch} already exists here, and your current branch (${head.name}) does not hold exactly what Sonic's commit contains, so switching to ${branch} could change your files. Use the commands instead.`] };
+    }
+    action = 'move-switch';
   }
   const indexBytes = await fs.read('.git/index');
   if (!indexBytes) return { ok: false, reasons: ['This repository has no index file yet, so it was left alone.'] };
@@ -121,7 +159,6 @@ export async function planImport(fs: GitFs, bundle: CommitBundle, branch: string
 
   const verified = await verifiedObjects(bundle);
   if (typeof verified === 'string') return { ok: false, reasons: [verified] };
-  const action = branch === head.name ? 'advance' : 'switch';
   const files = bundle.files.map(file => ({ path: file.path, mode: file.mode, sha: file.sha, size: verified.sizes.get(file.sha) ?? 0 }));
   return {
     ok: true,
@@ -129,7 +166,7 @@ export async function planImport(fs: GitFs, bundle: CommitBundle, branch: string
       repo: bundle.repo, branch, commit: bundle.commit.sha, parent, currentBranch: head.name, action, objects: verified.objects, files,
       summary: [
         `Write ${verified.objects.length} git objects (${files.length} changed file${files.length === 1 ? '' : 's'}) into .git, each checked against GitHub's id.`,
-        action === 'advance' ? `Move your branch ${branch} forward to ${short(bundle.commit.sha)}.` : `Create the branch ${branch} at ${short(bundle.commit.sha)} and switch to it (you are on ${head.name} now).`,
+        action === 'advance' ? `Move your branch ${branch} forward to ${short(bundle.commit.sha)}.` : action === 'create-switch' ? `Create the branch ${branch} at ${short(bundle.commit.sha)} and switch to it (you are on ${head.name} now).` : `Move ${branch} forward to ${short(bundle.commit.sha)} and switch to it (you are on ${head.name}, which holds exactly the same files).`,
         `Update git's index for the changed files, and the remote-tracking branch origin/${branch}.`,
         'Your working files are not touched: anything that was not part of the commit stays a normal local change.',
       ],
@@ -172,7 +209,7 @@ export async function applyImport(fs: GitFs, plan: ImportPlan): Promise<ApplyRes
     await fs.write('.git/index', await serializeIndex(withEntries(parseIndex(indexBytes), entries)));
     await fs.write(`.git/refs/remotes/origin/${plan.branch}`, lineOf(plan.commit));
     await fs.write(`.git/refs/heads/${plan.branch}`, lineOf(plan.commit));
-    if (plan.action === 'switch') await fs.write('.git/HEAD', lineOf(`ref: refs/heads/${plan.branch}`));
+    if (plan.action !== 'advance') await fs.write('.git/HEAD', lineOf(`ref: refs/heads/${plan.branch}`));
     return { ok: true, wrote };
   } catch (error) {
     return { ok: false, reason: `Something went wrong while writing (${error instanceof Error ? error.message : 'unknown error'}). Your working files are untouched; run "git status" and "git fsck" to check the repository.` };
