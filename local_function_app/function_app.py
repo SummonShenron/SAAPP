@@ -25,9 +25,11 @@ from dotenv import load_dotenv
 try:
     from . import json_chunks
     from . import text_files
+    from . import spreadsheet_files
 except ImportError:  # run as a script (the upload starts it that way), where this folder is on the path instead of being a package
     import json_chunks
     import text_files
+    import spreadsheet_files
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 # --- Standalone Self-Contained Configuration ---
@@ -262,6 +264,18 @@ def _is_docx_filename(filename: str) -> bool:
     return filename.lower().endswith(".docx")
 
 
+SPREADSHEET_MIME_TYPES = {
+    "csv": "text/csv",
+    "tsv": "text/tab-separated-values",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
+}
+
+
+def _is_spreadsheet_filename(filename: str) -> bool:
+    return filename.lower().endswith((".csv", ".tsv", ".xlsx", ".xlsm"))
+
+
 def _replace_earlier_version(db, fs, new_file_id, affiliate: str, filename: str, ingest_id: str) -> None:
     """Called only once the new JSON file's chunks are safely stored: removes what an earlier upload of the same file name left in this knowledge base (its chunks, which
     carry another ingest_id, and its stored copy), so re-exporting a file replaces it instead of piling up duplicates. A failed re-upload never gets here, so the earlier
@@ -290,6 +304,10 @@ def _index_text_upload(db, fs, embeddings, text_splitter, file_obj, filename: st
         if kind == "docx":
             document = text_files.build_docx_document(raw, filename, affiliate, Document, ingest_id)
             content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        elif kind == "spreadsheet":
+            text = spreadsheet_files.spreadsheet_text(raw, filename)
+            document = text_files._document(Document, text, filename, affiliate, ingest_id, "spreadsheet")
+            content_type = SPREADSHEET_MIME_TYPES.get(filename.lower().rsplit(".", 1)[-1], "application/octet-stream")
         else:
             doc_type = "markdown" if kind == "markdown" else "text"
             document = text_files.build_text_document(raw, filename, affiliate, Document, ingest_id, doc_type)
@@ -548,9 +566,9 @@ def run_ingestion_pipeline():
 
                 continue
 
-            if _is_text_filename(filename) or _is_markdown_filename(filename) or _is_docx_filename(filename):
-                # --- TEXT, MARKDOWN AND WORD BRANCH: one shared path (see _index_text_upload), which leaves nothing behind if a file fails. ---
-                kind = "docx" if _is_docx_filename(filename) else ("markdown" if _is_markdown_filename(filename) else "text")
+            if _is_text_filename(filename) or _is_markdown_filename(filename) or _is_docx_filename(filename) or _is_spreadsheet_filename(filename):
+                # --- TEXT, MARKDOWN, WORD AND SPREADSHEET BRANCH: one shared path (see _index_text_upload), which leaves nothing behind if a file fails. ---
+                kind = "docx" if _is_docx_filename(filename) else ("spreadsheet" if _is_spreadsheet_filename(filename) else ("markdown" if _is_markdown_filename(filename) else "text"))
                 _index_text_upload(db, fs, embeddings, text_splitter, file_obj, filename, affiliate, kind)
                 continue
 

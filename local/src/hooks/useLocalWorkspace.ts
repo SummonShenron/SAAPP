@@ -11,6 +11,7 @@ import {
   loadFolderHandle,
   loadSyncState,
   pickFolder,
+  readGitBranch,
   saveFolderHandle,
   saveSyncState,
   serverSnapshotMatches,
@@ -258,11 +259,17 @@ export function useLocalWorkspace({ enabled }: UseLocalWorkspaceOptions) {
     await runSync(false);
   }, [runSync]);
 
+  /** The git branch the connected folder is on (from `.git/HEAD`), or null. Sent with each message so a commit can go to the branch the person is working on. */
+  const currentGitBranch = useCallback(async (): Promise<string | null> => {
+    const handle = handleRef.current;
+    return handle && permittedRef.current ? readGitBranch(handle) : null;
+  }, []);
+
   /** True when the browser has a readable folder, so the server is expected to hold a copy: the chat request says so, and the answer can then tell the person if it did not. */
   const folderExpected = useCallback(() => handleRef.current !== null && permittedRef.current, []);
 
   return {
-    supported, status, folderName, fileCount, message, lastEdit, folderExpected,
+    supported, status, folderName, fileCount, message, lastEdit, folderExpected, currentGitBranch,
     // Applying only needs the folder handle: the write permission is requested at Apply time.
     canEdit: supported && folderName !== null,
     connect, reconnect, resync, disconnect, ensureSynced, applyEdits, undoEdits,

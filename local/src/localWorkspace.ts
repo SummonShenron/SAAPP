@@ -11,7 +11,7 @@ import {
   syncLocalWorkspaceBatch,
   type LocalWorkspaceSyncResult,
 } from './api';
-import { SyncRequestError, withRetry, type SavedSyncState } from './localWorkspaceCore';
+import { SyncRequestError, parseGitHead, withRetry, type SavedSyncState } from './localWorkspaceCore';
 
 interface FsEntryBase {
   name: string;
@@ -109,7 +109,7 @@ export function isSyncableFileName(name: string): boolean {
     return false;
   }
   if (lower.startsWith('~$')) return false; // Word's lock file for a document that is open
-  if (lower.endsWith('.docx')) return true;
+  if (lower.endsWith('.docx') || lower.endsWith('.xlsx') || lower.endsWith('.xlsm')) return true;
   if (ENV_TEMPLATE_SUFFIXES.some(s => lower.endsWith(s))) return true;
   if (TEXT_FILENAMES.has(lower)) return true;
   const dot = lower.lastIndexOf('.');
@@ -228,7 +228,7 @@ export async function scanFolder(root: FsDirectoryHandle, prev: Map<string, stri
         skipped += 1;
         continue;
       }
-      if (file.size > (entry.name.toLowerCase().endsWith('.docx') ? MAX_DOCX_BYTES : MAX_FILE_BYTES)) {
+      if (file.size > (/\.(docx|xlsx|xlsm)$/i.test(entry.name) ? MAX_DOCX_BYTES : MAX_FILE_BYTES)) {
         skipped += 1;
         continue;
       }
@@ -335,7 +335,7 @@ export async function syncFolder(
 
   for (const { path, file } of scan.changed) {
     // Both go as base64, so what the file says is not visible to anything on the way.
-    batch.push(path.toLowerCase().endsWith('.docx') ? { path, content_base64: await fileToBase64(file) } : { path, text_b64: await fileToBase64(file) });
+    batch.push(/\.(docx|xlsx|xlsm)$/i.test(path) ? { path, content_base64: await fileToBase64(file) } : { path, text_b64: await fileToBase64(file) });
     batchBytes += file.size;
     if (batchBytes >= BATCH_MAX_BYTES || batch.length >= BATCH_MAX_FILES) await flush();
   }
@@ -359,4 +359,15 @@ export async function serverSnapshotMatches(expectedFileCount: number | null): P
   if (expectedFileCount === null) return false;
   const status = await getLocalWorkspaceStatus();
   return status.connected && status.file_count === expectedFileCount;
+}
+
+/** The git branch the connected folder is on, read from `.git/HEAD` (read-only), or null when it cannot be known. Never throws. */
+export async function readGitBranch(root: FsDirectoryHandle): Promise<string | null> {
+  try {
+    const git = await root.getDirectoryHandle('.git');
+    const head = await git.getFileHandle('HEAD');
+    return parseGitHead(await (await head.getFile()).text());
+  } catch {
+    return null;
+  }
 }

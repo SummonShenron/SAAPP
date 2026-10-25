@@ -27,6 +27,12 @@ MAX_REASON_CHARS = 300
 
 _waiting: Dict[str, Dict[str, Any]] = {}
 
+# What each proposal touched ({path: (lines added, lines removed)}), kept for a while whether or not a turn is waiting on it, so that an Apply reported later can be noted as work waiting to be
+# committed (backend/utils/applied_changes.py). Paths and counts only, in memory, six hours.
+_PROPOSALS_TTL_SECONDS = 6 * 3600
+_PROPOSALS_CAP = 300
+_proposals: Dict[str, Dict[str, Any]] = {}
+
 
 def enabled() -> bool:
     return os.getenv("LOCAL_EDIT_WAIT", "on").strip().lower() not in ("0", "false", "no", "off")
@@ -39,6 +45,24 @@ def _clean_reason(text: Any) -> str:
 def register(username: str, proposal_id: str) -> None:
     """Starts waiting for `proposal_id`. Call before the card is streamed, so a very quick button press cannot arrive first."""
     _waiting[proposal_id] = {"username": username, "event": asyncio.Event(), "outcome": None}
+
+
+def remember_proposal(username: str, proposal_id: str, changes: Dict[str, Any]) -> None:
+    """Notes which paths a proposal changes and by how much, for applied_changes. `changes` is {path: (added, removed)}."""
+    import time
+
+    now = time.time()
+    for key in [k for k, v in _proposals.items() if now - v["at"] > _PROPOSALS_TTL_SECONDS]:
+        _proposals.pop(key, None)
+    while len(_proposals) >= _PROPOSALS_CAP:
+        _proposals.pop(next(iter(_proposals)))
+    _proposals[proposal_id] = {"username": username, "changes": dict(changes), "at": now}
+
+
+def changes_for(username: str, proposal_id: str) -> Dict[str, Any]:
+    """The {path: (added, removed)} a proposal made for this person, or {} (unknown, expired, or someone else's)."""
+    entry = _proposals.get(proposal_id)
+    return dict(entry["changes"]) if entry and entry["username"] == username else {}
 
 
 def forget(proposal_id: str) -> None:

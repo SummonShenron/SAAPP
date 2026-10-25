@@ -1561,6 +1561,7 @@ useEffect(() => {
       // Pushes only what changed in the connected folder since the last message (a no-op when none
       // is connected). Never throws, so a sync problem can't block the message itself.
       await workspace.ensureSynced();
+      const gitBranch = await workspace.currentGitBranch();
       await api.sendChatMessage(
         principal,
         textToSend,
@@ -1758,7 +1759,8 @@ useEffect(() => {
         undefined,
         controller.signal,
         workspace.folderExpected(),
-        true
+        true,
+        gitBranch
       );
 
       // Attachments are scoped to the turn that sent them (already durably stored server-side
