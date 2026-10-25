@@ -236,6 +236,12 @@ div.chat-page.chat-page { flex: 1 1 auto; min-height: 0; display: flex; flex-dir
   /* A reply has no visible bubble, so the bubble's own side padding was only taking width from the text. */
   .chat-page .message-bubble.ai { padding-left: 0.5rem; padding-right: 0.5rem; }
   .chat-page .empty-brand { padding-top: 1rem; }
+  /* All of the example cards show on a phone, as a 2 x 2 (index.css hides every card after the first on small screens, and that rule is still what the embedded widget keeps: it has no .chat-page).
+     Both rules are !important, so this one wins on specificity. The cards are a little tighter so four fit above the input. */
+  .chat-page .example-cards-container .query-card:not(:first-child) { display: flex !important; }
+  .chat-page .example-cards-container { gap: 0.5rem; }
+  .chat-page .example-cards-container .query-card { padding: 0.7rem 0.75rem; }
+  .chat-page .example-cards-container .query-card p { font-size: 0.85rem; margin-bottom: 0.5rem; }
 }
 
 /* Flat, no drop shadows on the bubbles or the input. The input's border was white in the light theme (invisible once the shadow went), so it gets the

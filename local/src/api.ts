@@ -1034,7 +1034,7 @@ export interface GoalView {
   measure_only: boolean;
   rate_label: string;
   sample_label: string;
-  state: 'on_track' | 'drifting' | 'not_enough_data';
+  state: 'on_track' | 'drifting' | 'unproven' | 'not_enough_data';
   numbers: {
     taken: number;
     passed: number;
@@ -1047,6 +1047,8 @@ export interface GoalView {
     people: { measured: number; stretched: number; any: number };
     /** Exact, admin-only sentences about the week's counts. */
     details: string[];
+    /** Why a good-looking share is not being called on track (the numbers behind it cannot tell), in words. Empty when nothing is in the way. */
+    unproven?: string[];
   };
   target_rate: number;
   min_sample: number;
@@ -2019,7 +2021,7 @@ export async function steerChat(sessionId: string, message: string): Promise<{ s
 }
 
 /** Tells the waiting turn what the person decided on a proposed folder change. Best effort: nothing breaks if no turn is waiting any more. */
-export async function reportEditDecision(proposalId: string, outcome: 'applied' | 'declined', reason = ''): Promise<void> {
+export async function reportEditDecision(proposalId: string, outcome: 'applied' | 'declined' | 'undone', reason = ''): Promise<void> {
   try {
     const authHeaders = await getAuthHeaders();
     await fetch(`${BASE_URL}/api/local-edits/${encodeURIComponent(proposalId)}/decision`, {

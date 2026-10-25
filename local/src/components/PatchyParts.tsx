@@ -32,6 +32,8 @@ const POSES: Record<ArmPose, Pose> = {
   // An elbow-out shrug.
   puzzle: { v: [90, 66, 92, 56, 86, 50], alt: [90, 64, 93, 53, 87, 46], dur: 1.8 },
   cheer: { v: [84, 50, 86, 36, 82, 24] },
+  // A fist pump: the arm is up as in cheer, and the fist bounces twice (1.6 s). The bounce is smaller when subdued (see MiniPatchy.css).
+  fistpump: { v: [84, 60, 88, 48, 84, 38], alt: [84, 46, 86, 30, 82, 16], dur: 0.8 },
   hug: { v: [72, 75, 64, 75, 57, 70] },
 };
 
@@ -136,7 +138,8 @@ export function PatchyHead({ mood, look, energy, budget, focused = false, turned
   const worried = mood === 'error' || (energy === 'subdued' && doing !== 'puzzled');
 
   const mouth: Vec10 =
-    mood === 'error' ? quad(43, 44, 50, 39, 57, 44)
+    mood === 'sad' ? quad(43, 46, 50, 41, 57, 46) // a frown: the ends dip below the middle, the reverse of the smile
+    : mood === 'error' ? quad(43, 44, 50, 39, 57, 44)
     : mood === 'asleep' ? flat(46, 43, 54)
     : doing === 'puzzled' ? [42, 43, 46, 40, 50, 43, 54, 46, 58, 43]
     : doing === 'thinking' ? flat(46, 42.5, 54)

@@ -69,3 +69,15 @@ test('a throttled or notice-level budget does not change the mood by itself', ()
   assert.equal(resolveMood({ ...calm, budget: 'throttled' }), 'idle');
   assert.equal(resolveMood({ ...calm, budget: 'notice' }), 'idle');
 });
+
+test('a fist pump shows praise, and the sad face shows sad, over a quiet or finished turn', () => {
+  assert.equal(resolveMood({ ...calm, praised: true }), 'praise');
+  assert.equal(resolveMood({ ...calm, praised: true, celebrating: true }), 'praise');
+  assert.equal(resolveMood({ ...calm, sad: true, drowsy: true }), 'sad');
+});
+
+test('praise and sad still yield to a poke, a failure and a running turn', () => {
+  assert.equal(resolveMood({ ...calm, praised: true, laughing: true }), 'laugh');
+  assert.equal(resolveMood({ ...calm, sad: true, faulted: true }), 'error');
+  assert.equal(resolveMood({ ...calm, praised: true, look: 'writing' }), 'active');
+});

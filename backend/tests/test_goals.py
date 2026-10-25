@@ -467,7 +467,7 @@ def view_of(db, goal_id):
 
 def test_the_coding_headline_is_the_share_of_follow_ups_that_did_not_say_it_failed():
     db = Db()
-    counters(db, **coding_week(followed=50, redo=10, turns=40, capped=8, edited=20, tested=7))
+    counters(db, **coding_week(followed=50, redo=10, turns=40, capped=8, edited=20, tested=12))
     view = view_of(db, "coding")
     assert view["numbers"]["rate"] == 0.8 and view["numbers"]["sample"] == 50 and view["state"] == goals.ON_TRACK
     assert view["numbers"]["taken"] == 40 and view["numbers"]["passed"] == 10
@@ -496,9 +496,10 @@ def test_the_supporting_rates_are_said_rounded_and_only_with_enough_behind_them(
     db = Db()
     counters(db, **coding_week(followed=50, redo=5, turns=40, capped=10, edited=20, tested=7))
     said = view_of(db, "coding")["numbers"]["said"]
-    assert said == ["About 25% of my coding turns this week ran out of steps before I finished.", "About 35% of the edits I proposed this week I also tested in the same turn."]
+    assert said == ["About 25% of my coding turns this week ran out of steps before I finished.", "About 35% of the edits I proposed this week I also tested in the same turn.",
+                    "About 10% of the messages that followed my coding work this week read as pushback, and about 0% as frustrated."]
     few = Db()
-    counters(few, **coding_week(followed=50, redo=5, turns=10, capped=9, edited=4, tested=2))
+    counters(few, **coding_week(followed=50, redo=0, turns=10, capped=9, edited=4, tested=2))
     assert view_of(few, "coding")["numbers"]["said"] == []
 
 
@@ -521,7 +522,7 @@ def test_the_welcome_goal_is_unchanged_beside_it():
 
 def test_the_goals_answer_says_the_coding_goal_is_only_measured_and_never_asks_for_approval():
     db = Db()
-    counters(db, **coding_week(followed=50, redo=5, turns=40, capped=10, edited=20, tested=7))
+    counters(db, **coding_week(followed=50, redo=5, turns=40, capped=10, edited=20, tested=12))
     block = sr.build_block(snap_for(db), "goals")
     assert "Coding work that holds up" in block and "This one I only measure: nothing about it changes what I do." in block
     assert "about 90% of the messages that followed my coding work did not say it had failed" in block and "About 25% of my coding turns" in block
@@ -613,3 +614,121 @@ def test_the_local_folder_sync_logs_counts_only_never_the_folder_name():
     source = open("backend/services/local_workspace.py", encoding="utf-8").read()
     line = source[source.index("[local_workspace] sync applied"):][:160]
     assert "name=" not in line and "accepted=%d rejected=%d file_count=%d" in line
+
+
+# ---- a high share that the numbers cannot back up is "unproven", not "on track" ---------------------------------------------------------------------
+
+def edit_week(day="2026_10_20", **extra):
+    return {day: {"code_followed": 50, "code_redo": 5, "code_turns": 40, "code_cap_hit": 4, "code_edited": 20, "code_verified": 12, "turns_total": 100, **extra}}
+
+
+def test_a_week_where_no_follow_up_was_ever_read_as_a_failure_is_unproven_however_high_the_share(  ):
+    db = Db()
+    counters(db, **coding_week(followed=50, redo=0, turns=63, capped=10, edited=23, tested=23))
+    view = view_of(db, "coding")
+    assert view["numbers"]["rate"] == 1.0 and view["state"] == goals.UNPROVEN
+    assert any("none of the 50 follow-up messages" in reason and "may not be hearing" in reason for reason in view["numbers"]["unproven"])
+
+
+def test_edits_that_are_mostly_not_tested_make_a_high_share_unproven_and_enough_tests_make_it_on_track():
+    untested = Db()
+    counters(untested, **coding_week(followed=50, redo=5, turns=40, capped=4, edited=23, tested=0))
+    assert view_of(untested, "coding")["state"] == goals.UNPROVEN
+    assert view_of(untested, "coding")["numbers"]["unproven"] == ["only 0% of my proposed edits were tested in the same turn"]
+    tested = Db()
+    counters(tested, **coding_week(followed=50, redo=5, turns=40, capped=4, edited=23, tested=15))
+    assert view_of(tested, "coding")["state"] == goals.ON_TRACK and view_of(tested, "coding")["numbers"]["unproven"] == []
+    thin = Db()
+    counters(thin, **coding_week(followed=50, redo=5, turns=40, capped=4, edited=6, tested=0))        # too few edits to hold it against anyone
+    assert view_of(thin, "coding")["state"] == goals.ON_TRACK
+
+
+def test_a_bad_share_is_still_drifting_and_a_thin_week_still_not_enough_data_whatever_is_unproven():
+    bad = Db()
+    counters(bad, **coding_week(followed=50, redo=20, turns=40, capped=4, edited=23, tested=0))
+    assert view_of(bad, "coding")["state"] == goals.DRIFTING
+    thin = Db()
+    counters(thin, **coding_week(followed=12, redo=0, edited=30, tested=0))
+    assert view_of(thin, "coding")["state"] == goals.NOT_ENOUGH
+
+
+def test_what_happened_to_the_proposed_edits_is_reported_in_numbers_and_in_words():
+    db = Db()
+    counters(db, **edit_week(code_edit_calls=30, code_edit_errors=6, code_test_runs=9, code_edit_applied=14, code_edit_declined=6, code_edit_undone=3,
+                             code_edit_applied_small=10, code_edit_declined_small=2, code_edit_undone_small=1, code_edit_applied_large=4, code_edit_declined_large=4, code_edit_undone_large=2))
+    numbers = view_of(db, "coding")["numbers"]
+    assert "30 edit attempts; 6 failed to apply. Of the edits decided on: 14 applied, 6 declined; 3 applied ones taken back." in numbers["details"][1]
+    assert "Small edits: 10 applied, 2 declined, 1 taken back. Larger edits: 4 applied, 4 declined, 2 taken back." in numbers["details"][1]
+    assert "9 test or snippet runs" in numbers["details"][0]
+    said = " ".join(numbers["said"])
+    assert "About 20% of my attempts to propose an edit this week failed outright" in said
+    assert "about 70% were applied and 30% declined; about 20% of the applied ones were taken back" in said
+    assert "Small edits stuck (applied and not taken back) about 75% of the time; larger ones about 25%" in said
+
+
+def test_the_numbers_are_only_said_when_there_are_enough_of_them():
+    db = Db()
+    counters(db, **edit_week(code_edit_calls=4, code_edit_errors=2, code_edit_applied=3, code_edit_declined=1, code_edit_applied_small=3, code_edit_declined_small=1))
+    said = " ".join(view_of(db, "coding")["numbers"]["said"])
+    assert "attempts to propose an edit" not in said and "you decided on" not in said and "Small edits stuck" not in said
+
+
+def test_the_chat_answer_does_not_call_an_unproven_goal_on_track():
+    db = Db()
+    counters(db, **coding_week(followed=50, redo=0, turns=63, capped=10, edited=23, tested=2))
+    only_coding = {**snap_for(db), "goals": [v for v in snap_for(db)["goals"] if v["id"] == "coding"]}
+    block = sr.build_block(only_coding, "goals")
+    assert "I can't say yet that it is going well" in block and "none of the 50 follow-up messages" in block and "only 10% of my proposed edits were tested" in block
+    assert "OVERALL: a share looks high but the numbers behind it cannot back it up. You must not say it is going well" in block
+    assert "My target is at least" not in block.split("Coding work that holds up")[1]
+    snap = snap_for(db)
+    assert sr.goals_reply_issue("My coding work is on track and hitting its target.", snap) is not None
+
+
+def test_the_goal_was_revised_so_nothing_about_it_needs_approval_and_the_counters_are_registered():
+    coding = next(g for g in __import__("backend.components.sonic_goals", fromlist=["GOALS"]).GOALS if g["id"] == "coding")
+    assert coding["revision"] == 2 and coding["lever"] is None and coding["unproven_when"] == {"silent_after": 30, "min_edits": 10, "min_tested_share": 0.5}
+    assert "not proof that it was right" in coding["statement"]
+    for key in ("code_edit_calls", "code_edit_errors", "code_test_runs", "code_edit_applied", "code_edit_declined", "code_edit_undone", "code_edit_applied_small", "code_edit_undone_large"):
+        assert key in self_counters.KEYS, key
+
+
+# ---- pushback is heard in how a message felt, and rework is counted --------------------------------------------------------------------------------
+
+def test_the_headline_subtracts_pushback_so_a_frustrated_follow_up_counts_even_when_no_phrase_matched():
+    db = Db()
+    counters(db, **{"2026_10_20": {"code_followed": 50, "code_redo": 2, "code_pushback": 12, "code_frustrated": 11, "code_turns": 40, "code_edited": 20, "code_verified": 15, "turns_total": 100}})
+    view = view_of(db, "coding")
+    assert view["numbers"]["passed"] == 12 and view["numbers"]["taken"] == 38 and view["numbers"]["rate"] == 0.76 and view["state"] == goals.DRIFTING
+    said = " ".join(view["numbers"]["said"])
+    assert "About 25% of the messages that followed my coding work this week read as pushback, and about 20% as frustrated." in said
+    assert "12 read as pushback (2 in words that said it did not work, 11 as frustrated)" in view["numbers"]["details"][0]
+
+
+def test_weeks_from_before_the_feeling_signal_fall_back_to_the_phrase_list_alone():
+    db = Db()
+    counters(db, **coding_week(followed=50, redo=5, turns=40, capped=4, edited=20, tested=15))
+    numbers = view_of(db, "coding")["numbers"]
+    assert numbers["passed"] == 5 and numbers["taken"] == 45
+
+
+def test_a_week_with_frustrated_follow_ups_is_no_longer_called_silent():
+    db = Db()
+    counters(db, **{"2026_10_20": {"code_followed": 50, "code_redo": 0, "code_pushback": 3, "code_frustrated": 3, "code_turns": 40, "code_edited": 20, "code_verified": 15, "turns_total": 100}})
+    view = view_of(db, "coding")
+    assert view["state"] == goals.ON_TRACK and view["numbers"]["unproven"] == []
+    silent = Db()
+    counters(silent, **coding_week(followed=50, redo=0, turns=40, capped=4, edited=20, tested=15))
+    reasons = view_of(silent, "coding")["numbers"]["unproven"]
+    assert view_of(silent, "coding")["state"] == goals.UNPROVEN and "none of the 50 follow-up messages this week read as pushback, in words or in how they felt" in reasons[0]
+
+
+def test_rework_is_said_once_there_are_enough_proposals():
+    db = Db()
+    counters(db, **{"2026_10_20": {"code_followed": 50, "code_redo": 5, "code_turns": 40, "code_edited": 20, "code_verified": 15, "code_proposals": 40, "code_proposal_rework": 10, "turns_total": 100}})
+    numbers = view_of(db, "coding")["numbers"]
+    assert "About 25% of the edits I proposed this week touched a file I had changed for you in the last 45 minutes" in " ".join(numbers["said"])
+    assert "40 proposals reached a card; 10 touched a file applied in the last 45 minutes." in numbers["details"][0]
+    few = Db()
+    counters(few, **{"2026_10_20": {"code_followed": 50, "code_redo": 5, "code_turns": 40, "code_edited": 20, "code_verified": 15, "code_proposals": 4, "code_proposal_rework": 4, "turns_total": 100}})
+    assert "touched a file I had changed" not in " ".join(view_of(few, "coding")["numbers"]["said"])

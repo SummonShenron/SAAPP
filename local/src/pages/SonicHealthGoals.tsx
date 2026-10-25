@@ -5,6 +5,7 @@ import { StatTile } from './sonicHealthParts';
 const STATE_LABEL: Record<GoalView['state'], string> = {
   on_track: 'On track',
   drifting: 'Drifting',
+  unproven: 'Unproven: looks fine, but the numbers cannot back it up',
   not_enough_data: 'Not enough data yet',
 };
 
@@ -29,7 +30,7 @@ const GoalCard: React.FC<{ goal: GoalView; busy: boolean; onApprove: (goalId: st
       <h2>{goal.title}</h2>
       <div className="sh-hint">{goal.statement}</div>
       <div className="sh-stats">
-        <StatTile value={STATE_LABEL[goal.state]} label="This week" warn={goal.state === 'drifting'} />
+        <StatTile value={STATE_LABEL[goal.state]} label="This week" warn={goal.state === 'drifting' || goal.state === 'unproven'} />
         <StatTile value={percent(numbers.rate)} label={`${goal.rate_label} (target ${percent(goal.target_rate)})`} />
         <StatTile value={numbers.sample} label={`${goal.sample_label} (${goal.min_sample} needed)`} />
         <StatTile value={percent(numbers.previous_rate)} label="the week before" />
@@ -64,6 +65,9 @@ const GoalCard: React.FC<{ goal: GoalView; busy: boolean; onApprove: (goalId: st
               </tr>
             </>
           )}
+          {(numbers.unproven ?? []).map((reason, index) => (
+            <tr key={`unproven-${index}`}><th>{index === 0 ? 'Why unproven' : ''}</th><td className="sh-err">{reason}</td></tr>
+          ))}
           {numbers.details.map((line, index) => (
             <tr key={index}><th>{index === 0 ? 'This week' : ''}</th><td>{line}</td></tr>
           ))}

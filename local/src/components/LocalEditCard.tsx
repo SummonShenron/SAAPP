@@ -12,7 +12,7 @@ interface LocalEditCardProps {
   onApply: (proposal: EditProposal) => Promise<ApplyResult>;
   onUndo: (proposalId: string) => Promise<UndoResult>;
   /** Reports Apply (after the files were written) or Decline to the turn that is waiting on this proposal. */
-  onDecision?: (proposalId: string, outcome: 'applied' | 'declined', reason: string) => void;
+  onDecision?: (proposalId: string, outcome: 'applied' | 'declined' | 'undone', reason: string) => void;
 }
 
 function diffLineClass(line: string): string {
@@ -53,7 +53,7 @@ export default function LocalEditCard({ proposal, canApply, onApply, onUndo, onD
   const decline = () => {
     setPhase('declined');
     setDeclining(false);
-    if (proposal.awaiting) onDecision?.(proposal.proposal_id, 'declined', reason.trim());
+    onDecision?.(proposal.proposal_id, 'declined', reason.trim());      // always: the server counts a decline whether or not a turn is waiting on it
   };
 
   // An approval level other than "ask" (src/editApproval.ts) applies this one as soon as the card appears, exactly as if the button had been pressed: the files are written,
@@ -73,6 +73,7 @@ export default function LocalEditCard({ proposal, canApply, onApply, onUndo, onD
     const result = await onUndo(proposal.proposal_id);
     if (result.ok) {
       setPhase('undone');
+      onDecision?.(proposal.proposal_id, 'undone', '');      // counted once, by size, as a change that was taken back
     } else {
       setErrors(result.errors);
       setPhase('applied');

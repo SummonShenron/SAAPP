@@ -303,7 +303,7 @@ def _about(share: float) -> str:
 
 
 def goal_facts(snap: Optional[Dict[str, Any]], person: Optional[Dict[str, Any]] = None, *, admin: bool = False) -> Dict[str, Any]:
-    """{"facts": [...], "state": "on_track" | "drifting" | "not_enough_data" | None, "unreadable": bool} for a question about Sonic's goals. Fixed sentences from the goals'
+    """{"facts": [...], "state": "on_track" | "drifting" | "unproven" | "not_enough_data" | None, "unreadable": bool} for a question about Sonic's goals. Fixed sentences from the goals'
     own status (backend/utils/goals.py); a number about other people is only said when at least MIN_PEOPLE stand behind it (admins see the exact ones). `person` is
     what is true of the one asking (offer_response.person_view): only they hear that Sonic has been bringing things up less for them."""
     views = (snap or {}).get("goals")
@@ -318,6 +318,9 @@ def goal_facts(snap: Optional[Dict[str, Any]], person: Optional[Dict[str, Any]] 
         enough_people = admin or not view.get("people_gated") or numbers["people"]["any"] >= MIN_PEOPLE
         if state == "not_enough_data" or numbers["rate"] is None:
             facts.append(f"It is too early to say how it is going: there are not enough {view['sample_label']} this week yet to tell.")
+        elif state == "unproven":
+            facts.append("I can't say yet that it is going well. The share looks high, but " + "; and ".join(numbers.get("unproven") or ["the numbers behind it cannot tell yet"]) + ", so I do not treat it as proof that the work is right.")
+            facts.extend(numbers.get("said") or [])
         elif not enough_people:
             facts.append(f"How it is going: {'on track' if state == 'on_track' else 'drifting'}. I leave the numbers out because too few people are behind them.")
         else:
@@ -343,7 +346,7 @@ def goal_facts(snap: Optional[Dict[str, Any]], person: Optional[Dict[str, Any]] 
             facts.append("The part that changes what I do is switched off until a person approves it. For now I only measure.")
         if view.get("id") == "welcome" and (person or {}).get("applied"):
             facts.append("For you in particular, I have been bringing things up less often, because most of what I offered you recently was not picked up. It fades by itself if that changes.")
-    state = "drifting" if "drifting" in states else "not_enough_data" if "not_enough_data" in states else "on_track"
+    state = "drifting" if "drifting" in states else "unproven" if "unproven" in states else "not_enough_data" if "not_enough_data" in states else "on_track"
     return {"facts": facts, "state": state, "states": states, "unreadable": False}
 
 
@@ -423,6 +426,7 @@ def _goals_block(snap: Optional[Dict[str, Any]], person: Optional[Dict[str, Any]
         "on_track": "OVERALL: what is listed is on track. You may say so.",
         "drifting": "OVERALL: at least one goal is drifting. Say so; you must not say it is going well, on track or hitting its target.",
         "not_enough_data": "OVERALL: there is not enough yet to say. You must not say it is going well or badly.",
+        "unproven": "OVERALL: a share looks high but the numbers behind it cannot back it up. You must not say it is going well, on track or hitting its target; say what is and is not measured.",
     }[built["state"]]
     if len(set(built["states"])) > 1:
         overall = "OVERALL: the goals differ, so say how each one is going as it is listed above, and do not say they are all on track or all behind."

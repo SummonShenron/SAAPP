@@ -38,18 +38,22 @@ GOALS = [
     },
     {
         "id": "coding",
-        "revision": 1,
+        "revision": 2,
         "title": "Coding work that holds up",
-        "statement": "I keep track of how often my coding work gets sent back as not working, how often I run out of steps partway through, and how often I test an edit before offering it. "
+        "statement": "I keep track of whether my coding work holds up: how often a proposed edit is applied, declined or taken back, how often an edit fails to apply at all, how often I run out of steps, "
+                     "and how often I test an edit before offering it. A person not saying it failed is not proof that it was right, so I do not call this on track unless the numbers can actually tell. "
                      "For now I only measure these.",
-        "signal": "Of the messages that follow my coding work (reading or changing the repo or the connected folder), the share that do not say it failed or did not work. Also: coding turns that "
-                  "ran out of steps, and proposed edits that were also tested in the same turn.",
+        "signal": "Of the messages that follow my coding work (reading or changing the repo or the connected folder), the share that do not say it failed or did not work. Also: edits applied, "
+                  "declined and undone (small and larger edits apart), edit attempts that failed to apply, coding turns that ran out of steps, and proposed edits that were also tested.",
         # MEASURE ONLY: no lever and no guardrail, so there is nothing to approve. A lever is chosen after a few weeks of numbers (docs/goals-plan.md).
         "lever": None,
         "guardrail": None,
         "target_rate": 0.8,        # a guess to be tuned from real numbers: at least this share of follow-ups not saying it failed is on track
         "drop_alarm": 0.1,
         "min_sample": 20,          # follow-up messages this week before any rate is said
+        # "On track" needs the numbers to be able to tell. The share above is high whenever nobody objects in words the detector knows (2026-10-25: 50 of 50 follow-ups "did not fail" in a week
+        # of visible corrections, and 0 of 23 edits tested), so it is "unproven" while any of these holds.
+        "unproven_when": {"silent_after": 30, "min_edits": 10, "min_tested_share": 0.5},
         "rate_label": "did not come back as failed",
         "sample_label": "follow-up messages",
         "rate_phrase": "of the messages that followed my coding work did not say it had failed",

@@ -10,7 +10,7 @@ NOTHING HERE LOGS FILE TEXT OR THE MESSAGE.
 """
 import logging
 import re
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from backend.services import git_commit as gc
 from backend.services import local_workspace
@@ -25,6 +25,14 @@ _FILE_RE = re.compile(r"^- `([^`]+)` (new|modified) \+(\d+) −(\d+) `([0-9a-f]{
 
 class NoGitHubToken(gc.GitCommitError):
     pass
+
+
+class NoOpenPullRequest(gc.GitCommitError):
+    """No open pull request comes from the branch the person named. `head` and `base` say which, so the older route (open it and merge it in one step) can take over."""
+
+    def __init__(self, message: str, head: str, base: Optional[str]):
+        super().__init__(message)
+        self.head, self.base = head, base
 
 
 def _own_token(username: str) -> str:
@@ -150,11 +158,101 @@ def _files_to_commit(username: str, args: Dict[str, Any], api: Any, repo: str, b
     return texts, None, notes
 
 
-def draft(username: str, args: Dict[str, Any], *, repo: str, current_branch: Optional[str], api_factory: Optional[Callable[[str], Any]] = None) -> Tuple[Dict[str, Any], str]:
-    """(details, card text) for a commit the model proposed, or GitCommitError in words for the person. Blocking (GitHub calls)."""
+# ---------------------------------------------------------------------------------------------------------------
+# The commit message: the model's own when it says what the change does, otherwise written from the change itself
+# ---------------------------------------------------------------------------------------------------------------
+
+# Words that say "a commit of my work" and nothing about the work. A message left with fewer than two other words says nothing about what changed.
+_GENERIC_WORDS = frozenset(
+    "commit commits committed committing update updates updated add adds added push pushed save saved the a an my our your their its current latest recent all some new more working work in progress "
+    "change changes changed file files folder folders local workspace tree directory from to on in of for and with into github git repo repository branch main master checkout feat fix chore".split()
+)
+
+MESSAGE_PROMPT = """Write the git commit message for this change.
+
+THE CHANGE (each file with how much changed, and some of the lines that changed):
+{digest}
+
+Rules:
+- The first line says WHAT the change does in terms of what the code now does or what it fixes, in the imperative ("Add a merge tool that builds a fresh card"), at most 72 characters. A conventional prefix such as feat:, fix:, refactor:, test: or docs: is welcome when it fits.
+- Optionally one blank line and then one to three short lines on the main parts of the change, only if they add something the first line does not.
+- Only what the lines above show. Never invent a reason, a ticket or a result. No file lists, no "working changes", no "from the local folder", no trailers, no markdown, no quotes around it.
+Reply with the message only.
+"""
+
+_MAX_DIGEST_FILES = 12
+_MAX_DIGEST_LINES_PER_FILE = 12
+_MAX_DIGEST_CHARS = 5000
+
+
+def is_generic_message(message: Any, extra_words: Iterable[str] = ()) -> bool:
+    """True when a commit message says nothing about the change ("Commit the working changes from the local folder to GitHub."): after the words that only name a commit, the work or the branch are
+    taken away, fewer than two words are left. `extra_words` are the branch's own words. Pure."""
+    first = str(message or "").strip().split("\n", 1)[0].lower()
+    skip = _GENERIC_WORDS | {w for w in re.findall(r"[a-z0-9]+", " ".join(str(x).lower() for x in extra_words))}
+    words = [w for w in re.findall(r"[a-z0-9]+", first) if len(w) >= 3 and w not in skip]
+    return len(words) < 2
+
+
+def change_digest(files: List[Dict[str, Any]]) -> str:
+    """A short, plain account of a planned commit for a model to write a message from: each file, how much changed, and up to a dozen of the lines that changed. Pure."""
+    import difflib
+
+    parts: List[str] = []
+    for f in files[:_MAX_DIGEST_FILES]:
+        head = f"{f['path']} ({f['status']}, +{f['additions']} -{f['deletions']})"
+        if f["base_text"] is None:
+            sample = [f"+{line}" for line in f["text"].splitlines() if line.strip()][:8]
+        else:
+            diff = difflib.unified_diff(f["base_text"].splitlines(), f["text"].splitlines(), n=0, lineterm="")
+            sample = [line for line in diff if line[:1] in "+-" and not line.startswith(("+++", "---")) and line[1:].strip()][:_MAX_DIGEST_LINES_PER_FILE]
+        parts.append(head + "\n" + "\n".join("  " + line[:120] for line in sample))
+    if len(files) > _MAX_DIGEST_FILES:
+        parts.append(f"... and {len(files) - _MAX_DIGEST_FILES} more files")
+    return "\n".join(parts)[:_MAX_DIGEST_CHARS]
+
+
+def fallback_message(files: List[Dict[str, Any]]) -> str:
+    """A plain, true message for when none could be written: what was touched. Pure."""
+    names = [f["path"].rsplit("/", 1)[-1] for f in files]
+    shown = ", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else "")
+    return f"Update {shown}"[: gc.MAX_SUBJECT_CHARS]
+
+
+def _lite_message_writer(prompt: str) -> str:
+    from backend.models.models import lite_llm
+
+    response = lite_llm.invoke(prompt)
+    content = getattr(response, "content", response)
+    if isinstance(content, list):
+        content = "".join(block.get("text", "") if isinstance(block, dict) else str(block) for block in content)
+    return str(content or "")
+
+
+def suggest_message(files: List[Dict[str, Any]], writer: Optional[Callable[[str], str]] = None, branch_words: Iterable[str] = ()) -> str:
+    """A commit message written from the change itself, or fallback_message when the model is unavailable or says nothing useful. Never raises. Blocking (one small model call)."""
+    try:
+        raw = (writer or _lite_message_writer)(MESSAGE_PROMPT.format(digest=change_digest(files)))
+        raw = re.sub(r"^```[a-z]*\n|\n```$", "", str(raw or "").strip()).strip().strip('"')
+        if raw.startswith("[System Note") or raw.startswith("[DEV_MODE]"):
+            return fallback_message(files)
+        message = gc.clean_message(raw)
+        return message if not is_generic_message(message, branch_words) else fallback_message(files)
+    except Exception:
+        logger.warning("[commit] a message could not be written from the change; using a plain one.", exc_info=True)
+        return fallback_message(files)
+
+
+def draft(username: str, args: Dict[str, Any], *, repo: str, current_branch: Optional[str], api_factory: Optional[Callable[[str], Any]] = None,
+          message_writer: Optional[Callable[[str], str]] = None) -> Tuple[Dict[str, Any], str]:
+    """(details, card text) for a commit the model proposed, or GitCommitError in words for the person. Blocking (GitHub calls). The model's message is used when it says what the change does; a missing,
+    too short or generic one ("commit the working changes") is replaced by one written from the change itself (see suggest_message)."""
     if not repo:
         raise gc.GitCommitError("I don't know which repository to commit to. Set your target repo first.")
-    message = gc.clean_message(args.get("message"))
+    try:
+        message: Optional[str] = gc.clean_message(args.get("message"))
+    except gc.GitCommitError:
+        message = None
     api = (api_factory or gc.GitHubApi)(_own_token(username))
     info = gc.repo_info(api, repo)
     if not info["can_push"]:
@@ -181,6 +279,8 @@ def draft(username: str, args: Dict[str, Any], *, repo: str, current_branch: Opt
         shown = ", ".join(f"`{p}`" for p in plan["skipped"][:6]) + (f" and {len(plan['skipped']) - 6} more" if len(plan["skipped"]) > 6 else "")
         notes.append(f"Left out because the copy on GitHub is not UTF-8 text (Sonic will not overwrite it): {shown}.")
     target = new_branch or base_branch
+    if message is None or is_generic_message(message, re.findall(r"[A-Za-z0-9]+", f"{new_branch or ''} {base_branch}")):
+        message = suggest_message(plan["files"], message_writer, re.findall(r"[A-Za-z0-9]+", f"{new_branch or ''} {base_branch}"))
 
     pr: Optional[Dict[str, Any]] = None
     if args.get("open_pull_request") or args.get("pull_request"):
@@ -387,7 +487,7 @@ def draft_merge(username: str, args: Dict[str, Any], *, repo: str, api_factory: 
     if number is None and head:
         number = gc.find_open_pull_request(api, repo, gc.clean_branch(head), gc.clean_branch(base) if base else None)
         if number is None:
-            raise gc.GitCommitError(f"There is no open pull request from {head!r}{f' into {base!r}' if base else ''} in {repo}. If the changes are not pushed yet, ask me to commit them and open one.")
+            raise NoOpenPullRequest(f"There is no open pull request from {head!r}{f' into {base!r}' if base else ''} in {repo}. If the changes are not pushed yet, ask me to commit them and open one.", head, base)
     if number is None:
         raise gc.GitCommitError("Tell me which pull request to merge: its number, or the branch it comes from.")
     try:

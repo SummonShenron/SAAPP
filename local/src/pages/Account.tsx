@@ -1,12 +1,13 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getEffectivePrincipal, isGuestPrincipal } from '../api';
+import ChatSettingsCard from '../components/ChatSettingsCard';
 import ProfileCard from '../components/ProfileCard';
 import './__styles__/Account.css';
 
 /**
  * Account settings: where the user chip in the rail leads. For now it shows who you are signed in as, lets you pick the theme, and points to the
- * pages that already hold your data. More settings (the ones that live in the chat box's "..." menu today) move here over time.
+ * pages that already hold your data. The chat box's "..." menu keeps only what acts on the conversation you are in (scope, answers, thinking, help, export, delete); the choices about how Sonic behaves live here.
  */
 export const AccountPage: React.FC<{ theme: string; toggleTheme: () => void }> = ({ theme, toggleTheme }) => {
   const navigate = useNavigate();
@@ -28,6 +29,8 @@ export const AccountPage: React.FC<{ theme: string; toggleTheme: () => void }> =
       </section>
 
       {!guest && <ProfileCard />}
+
+      <ChatSettingsCard mascotAllowed={principal !== 'guest_bty'} />
 
       <section className="account-card">
         <h3>Appearance</h3>

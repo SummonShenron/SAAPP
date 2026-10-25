@@ -3,7 +3,7 @@ change one bounded behaviour.
 
 What lives here:
 
-- STATUS (`status_view`): for each goal, `on_track`, `drifting` or `not_enough_data`, with the numbers behind it. Computed from the aggregate daily counters
+- STATUS (`status_view`): for each goal, `on_track`, `drifting`, `unproven` (looks fine, but the numbers cannot back it up) or `not_enough_data`, with the numbers behind it. Computed from the aggregate daily counters
   (backend/utils/self_counters.py: no user, no text) and counts of how many people there is evidence about, cached for a minute and shared by everyone. Shown to every
   user (the status answer reads it) and to admins on Sonic Health.
 - APPROVAL (`approval`, `set_approval`): one document per goal in `sonic_goal_approvals` naming the revision an admin approved. A lever acts only while the stored revision
@@ -26,7 +26,7 @@ logger = logging.getLogger("SASS Logger")
 
 APPROVALS_COLLECTION = "sonic_goal_approvals"
 CACHE_SECONDS = 60
-ON_TRACK, DRIFTING, NOT_ENOUGH = "on_track", "drifting", "not_enough_data"
+ON_TRACK, DRIFTING, NOT_ENOUGH, UNPROVEN = "on_track", "drifting", "not_enough_data", "unproven"
 
 _lock = threading.Lock()
 _cache: Dict[str, Any] = {"at": 0.0, "views": None}
@@ -126,23 +126,59 @@ def _about_share(part: int, whole: int) -> int:
 
 
 def coding_numbers(db: Any, now: datetime, definition: Dict[str, Any]) -> Dict[str, Any]:
+    from backend.utils import code_outcomes
+
     """The coding goal's raw numbers (backend/utils/code_outcomes.py): follow-up messages that did NOT say the work failed, against those that did; plus how many coding turns ran
     out of steps and how many edits were also tested. The counters hold no person, so there is no people count: the sample floor is the only gate."""
     this, before = _week_totals(db, now)
-    followed, redo = this.get("code_followed", 0), this.get("code_redo", 0)
-    previous_followed, previous_redo = before.get("code_followed", 0), before.get("code_redo", 0)
+    followed = this.get("code_followed", 0)
+    frustrated = this.get("code_frustrated", 0)
+    # Pushback is the phrase list OR a message that read as frustrated (counted once); weeks from before it existed fall back to the phrase list alone.
+    redo = max(this.get("code_redo", 0), this.get("code_pushback", 0))
+    previous_followed, previous_redo = before.get("code_followed", 0), max(before.get("code_redo", 0), before.get("code_pushback", 0))
     turns, capped = this.get("code_turns", 0), this.get("code_cap_hit", 0)
     edits, tested = this.get("code_edited", 0), this.get("code_verified", 0)
+    calls, errors, test_runs = this.get("code_edit_calls", 0), this.get("code_edit_errors", 0), this.get("code_test_runs", 0)
+    applied, declined, undone = this.get("code_edit_applied", 0), this.get("code_edit_declined", 0), this.get("code_edit_undone", 0)
+    decided = applied + declined
+    proposals, rework = this.get("code_proposals", 0), this.get("code_proposal_rework", 0)
     said = []
     if turns >= definition["min_sample"]:
         said.append(f"About {_about_share(capped, turns)}% of my coding turns this week ran out of steps before I finished.")
     if edits >= 10:
         said.append(f"About {_about_share(tested, edits)}% of the edits I proposed this week I also tested in the same turn.")
+    if calls >= 10:
+        said.append(f"About {_about_share(errors, calls)}% of my attempts to propose an edit this week failed outright, before anyone saw them.")
+    if decided >= 10:
+        said.append(f"Of the edits you decided on this week, about {_about_share(applied, decided)}% were applied and {_about_share(declined, decided)}% declined; about {_about_share(undone, max(applied, 1))}% of the applied ones were taken back.")
+    small_applied, small_declined, small_undone = this.get("code_edit_applied_small", 0), this.get("code_edit_declined_small", 0), this.get("code_edit_undone_small", 0)
+    large_applied, large_declined, large_undone = this.get("code_edit_applied_large", 0), this.get("code_edit_declined_large", 0), this.get("code_edit_undone_large", 0)
+    small_n, large_n = small_applied + small_declined, large_applied + large_declined
+    if small_n >= 5 and large_n >= 5:
+        small_kept, large_kept = small_applied - small_undone, large_applied - large_undone
+        said.append(f"Small edits stuck (applied and not taken back) about {_about_share(small_kept, small_n)}% of the time; larger ones about {_about_share(large_kept, large_n)}%.")
+    if followed >= definition["min_sample"] and redo:
+        said.append(f"About {_about_share(redo, followed)}% of the messages that followed my coding work this week read as pushback, and about {_about_share(frustrated, followed)}% as frustrated.")
+    if proposals >= 10:
+        said.append(f"About {_about_share(rework, proposals)}% of the edits I proposed this week touched a file I had changed for you in the last {code_outcomes.REWORK_WINDOW_MINUTES} minutes, which usually means the first try needed fixing.")
+    # "Unproven": the share above is high whenever nobody objects in words the detector knows, so on its own it proves nothing (see the definition).
+    rules = definition.get("unproven_when") or {}
+    unproven = []
+    if rules and followed >= rules["silent_after"] and redo == 0:
+        unproven.append(f"none of the {followed} follow-up messages this week read as pushback, in words or in how they felt, which a working detector would rarely manage, so it may not be hearing")
+    if rules and edits >= rules["min_edits"] and tested / edits < rules["min_tested_share"]:
+        unproven.append(f"only {_about_share(tested, edits)}% of my proposed edits were tested in the same turn")
     return {
         **_headline(max(followed - redo, 0), redo, max(previous_followed - previous_redo, 0), previous_redo),
         "made": turns, "held_back": 0,
         "people": {"measured": 0, "stretched": 0, "any": 0},
-        "details": [f"{turns} coding turns this week; {capped} ran out of steps. {edits} proposed edits; {tested} also tested in the same turn. {followed} follow-up messages; {redo} said it did not work."],
+        "unproven": unproven,
+        "details": [
+            f"{turns} coding turns this week; {capped} ran out of steps. {edits} proposed edits; {tested} also tested in the same turn; {test_runs} test or snippet runs. {followed} follow-up messages; {redo} read as pushback "
+            f"({this.get('code_redo', 0)} in words that said it did not work, {frustrated} as frustrated). {proposals} proposals reached a card; {rework} touched a file applied in the last {code_outcomes.REWORK_WINDOW_MINUTES} minutes.",
+            f"{calls} edit attempts; {errors} failed to apply. Of the edits decided on: {applied} applied, {declined} declined; {undone} applied ones taken back. Small edits: {small_applied} applied, {small_declined} declined, {small_undone} taken back. "
+            f"Larger edits: {large_applied} applied, {large_declined} declined, {large_undone} taken back.",
+        ],
         "said": said,
     }
 
@@ -151,14 +187,18 @@ NUMBERS = {"welcome": welcome_numbers, "coding": coding_numbers}
 
 
 def judge(numbers: Dict[str, Any], definition: Dict[str, Any]) -> str:
-    """on_track / drifting / not_enough_data. Drifting is a rate below the target or a fall of `drop_alarm` against the week before."""
+    """on_track / drifting / unproven / not_enough_data. Drifting is a rate below the target or a fall of `drop_alarm` against the week before. Unproven is a rate that looks fine while the numbers behind
+    it cannot tell (numbers["unproven"] lists why, in words)."""
     if numbers["sample"] < definition["min_sample"] or numbers["rate"] is None:
         return NOT_ENOUGH
     fell = (
         numbers["previous_rate"] is not None and numbers["previous_sample"] >= definition["min_sample"]
         and numbers["previous_rate"] - numbers["rate"] >= definition["drop_alarm"]
     )
-    return DRIFTING if numbers["rate"] < definition["target_rate"] or fell else ON_TRACK
+    if numbers["rate"] < definition["target_rate"] or fell:
+        return DRIFTING
+    # A good-looking share that the numbers cannot back up is not "on track".
+    return UNPROVEN if numbers.get("unproven") else ON_TRACK
 
 
 def guardrail_tripped(numbers: Dict[str, Any], definition: Dict[str, Any]) -> bool:
