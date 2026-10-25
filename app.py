@@ -2844,6 +2844,7 @@ class ProfileUpdate(BaseModel):
     style: Dict[str, str] = {}
     avoid: List[str] = []
     offers: bool = True
+    reach: Optional[str] = None      # none | low | default | more (backend/utils/reach.py); left out by an older page, then "offers" decides
 
 
 @app.get("/api/settings/profile")

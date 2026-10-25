@@ -91,3 +91,13 @@ def test_the_findings_limit_comes_from_the_level():
 
     source = open(relevant_findings.__file__, encoding="utf-8").read()
     assert "level.findings_per_day" in source and "gap_hours=level.gap_hours" in source
+
+
+def test_the_save_endpoint_model_carries_the_level_the_page_sends():
+    # app.py cannot be imported in a test (it connects to the database), so read the model: without this field the page's choice was dropped and fell back to the default.
+    source = open("app.py", encoding="utf-8").read()
+    model = source[source.index("class ProfileUpdate"):source.index('@app.get("/api/settings/profile")')]
+    assert "reach: Optional[str] = None" in model
+    assert profile_utils.normalize_profile({"reach": "more", "offers": True})["reach"] == "more"
+    assert profile_utils.normalize_profile({"reach": None, "offers": False})["reach"] == "none"       # an older page that only knows the switch
+    assert profile_utils.normalize_profile({"reach": None, "offers": True})["reach"] == "default"
