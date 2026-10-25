@@ -40,6 +40,7 @@ ROUTE_REASONS = (
     "admin_ops",               # an admin asking about incidents, logs or deploys
     "approval_continuation",   # answering a pending web-search approval
     "clarification_resume",    # answering the tool agent's own question
+    "commit_request",          # asked to commit, push or open a branch for the changes (the older pull-request drafter cannot do that)
 )
 # HOW MANY STEPS the tool agent's loop used, and whether it ran into its limit. A turn that reached the last step it was allowed (the forced final answer) may have wanted more:
 # this is the number that says whether the step budget (TOOL_AGENT_MAX_ITERATIONS and the deep one) is too tight, or whether it never matters. Counts only.

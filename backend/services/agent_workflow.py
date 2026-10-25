@@ -51,6 +51,7 @@ from backend.utils.safety_utils import (
 )
 from backend.services import local_edit_decisions
 from backend.services import sandbox_tests
+from backend.services import commit_flow, git_commit
 from backend.utils import sonic_notes
 from backend.services.local_workspace import apply_sync as apply_workspace_sync, get_workspace_handle, is_guest_username, workspace_status
 from backend.services.local_edits import validate_edit_proposal
@@ -203,6 +204,14 @@ _GITHUB_INDEX_ACTIONS_PREFIXES = ("- search_code", "- trace_symbol")
 _REPO_SOURCE_TOOLS = frozenset({
     "list_repo_tree", "read_repo_file", "search_code", "find_file", "trace_symbol", "search_literal",
     "diff_branches", "list_commits", "list_pull_requests", "propose_local_edits", "run_repo_tests", "run_snippet",
+})
+
+# Tools whose results are text written by someone else (web pages, email, shared documents, the person's library, app logs). Once one has been used in a turn, propose_commit is refused
+# in that turn: an instruction hidden in that text must not be able to lead to a commit. The person can ask again in the next message.
+_UNTRUSTED_CONTENT_TOOLS = frozenset({
+    "web_search", "read_url", "browser_navigate", "browser_click", "browser_type", "browser_read_text", "browser_screenshot",
+    "search_gmail", "read_gmail_message", "get_gmail_attachment", "search_drive_files", "read_drive_file", "search_outlook_mail", "read_outlook_message", "get_outlook_attachment",
+    "search_onedrive_files", "read_onedrive_file", "search_library", "read_library_file", "list_app_incidents", "read_app_incident", "read_app_logs", "check_deploy_status",
 })
 
 TOOL_AGENT_BATCHABLE_ACTIONS = frozenset({
@@ -715,6 +724,14 @@ def build_agent_plan(intent: str, state: dict) -> dict:
     # regex doesn't catch should still reach this path via the LLM's own semantic
     # classification. Detecting *which* write action is wanted stays per-action (inherently
     # semantic); state["write_action"] tells the shared propose_write_node which one to draft.
+    # A request to commit, push or open a new branch (with or without the pull request after it) is the tool agent's propose_commit, not this drafter: the drafter only compares two
+    # branches that already differ, and for "open a new branch called x and commit our changes" it invented a head branch that did not exist.
+    _last = _content_of(state["messages"][-1]) if state.get("messages") else ""
+    if (intent == "create_pr" or flags.get("needs_create_pr")) and (commit_flow.wants_commit(_last) or commit_flow.continues_commit_request(state.get("messages"), _content_of)):
+        llm_turns.note_route(["commit_request"])
+        state["last_intent"] = "tool_agent"
+        return {"agents": ["tool_agent", "formatter"], "skip": []}
+
     if intent == "create_pr" or flags.get("needs_create_pr"):
         state["last_intent"] = "propose_write"
         state["write_action"] = "create_pr"
@@ -2107,6 +2124,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             )
             # Sonic's own notes and tests live in the person's folder under .sonic/ (backend/utils/sonic_notes.py): the guide, and the end of its earlier notes when it has kept some.
             schema_parts.append(await asyncio.to_thread(sonic_notes.build_context, username))
+            # The branch their folder is on and the applied files waiting to be committed (backend/services/commit_flow.py): what lets "commit this" work.
+            schema_parts.append(await asyncio.to_thread(commit_flow.pending_line, username, state.get("git_branch")))
         if is_admin:
             schema_parts.append(f"mongodb_collections={mongo_schema}")
         schema = ", ".join(schema_parts)
@@ -2992,6 +3011,14 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 "a COPY of the user's folder as it would be AFTER those edits, and returns the real pass/fail with tracebacks. It changes nothing and shows the user nothing. Use it to check "
                 "a change before you propose it: write a small unittest in .sonic/tests/, run it, fix the change if it fails. Call it as a \"query\" step."
             )
+            menu_lines.append(
+                "- propose_commit — args: message (one or two plain sentences saying what the change does, like a pull request summary; no trailers), new_branch (optional: create this "
+                "branch first and commit to it), branch (optional: the branch to commit to or to branch from; default is the branch their folder is on), open_pull_request (optional: true to "
+                "also open a pull request from the branch), pr_title (optional), pr_base (optional, default the repo's default branch), pr_draft (optional: true for a draft), paths (optional: only "
+                "these files), scope (\"applied\": only the files you changed and they applied; \"working\": every file in their folder that differs from the branch on GitHub, for \"commit our working changes\" or \"commit everything\"; default applied when any are waiting, otherwise working). Commits, as their folder holds the files, to GitHub with THEIR token: it shows them a card with the repo, branch, "
+                "files and message, and commits nothing until they approve it. Use it when they ask you to commit, push, or open a pull request for the work. Call it as a \"query\" step and "
+                "then stop: the card is your answer, so do not say it was committed."
+            )
         actions_menu = "\n".join(menu_lines)
         # The ops actions are batchable only for an admin who is actually offered them (they are not even named for anyone else).
         batchable_actions = TOOL_AGENT_BATCHABLE_ACTIONS | (
@@ -3036,7 +3063,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             return await asyncio.to_thread(_scan)
 
         def _is_unsafe(decision: dict) -> bool:
-            if decision.get("tool_action") in {"propose_append_target_doc", "propose_send_email", "propose_code_plan"}:
+            if decision.get("tool_action") in {"propose_append_target_doc", "propose_send_email", "propose_code_plan", "propose_commit"}:
                 return True  # inherently a write — no keyword scan needed, unlike run_mongo_query
             if decision.get("tool_action") != "run_mongo_query":
                 return False
@@ -3057,6 +3084,9 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                     + "\nFix them and call propose_local_edits again with the complete corrected list."
                 )
             proposal_id = uuid.uuid4().hex
+            # Which paths this proposal changes and by how much, so an Apply reported later is noted as work waiting to be committed (backend/utils/applied_changes.py).
+            local_edit_decisions.remember_proposal(
+                username, proposal_id, {f["path"]: (f.get("additions", 0), f.get("deletions", 0)) for f in result["files"] if f["path"] in (result.get("texts") or {})})
             # The native loop waits here for the person's decision and carries on with it; the page says it can report one (edit_decisions). Anything else ends the turn with the
             # card, as it always did.
             waiting = bool(state.get("edit_decisions")) and use_native and local_edit_decisions.enabled()
@@ -3145,6 +3175,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         # carry it somewhere else or run code are refused (backend/services/ops_incidents.py BLOCKED_AFTER_INCIDENT_DATA): a
         # hostile string inside an error message can ask for them, but cannot get them.
         ops_state = {"data_seen": False}
+        untrusted_used: set = set()      # names of tools used this turn whose results are text written by someone else (see _UNTRUSTED_CONTENT_TOOLS)
 
         async def _act(decision: dict):
             tool_action = decision.get("tool_action")
@@ -3413,6 +3444,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             """The dispatcher, counting which tool was called and whether it came back as an error (names only: backend/utils/llm_turns.py)."""
             nonlocal memory_guard
             name = decision.get("tool_action")
+            if name in _UNTRUSTED_CONTENT_TOOLS:
+                untrusted_used.add(name)
             if name in _REPO_SOURCE_TOOLS and not source_announced["done"]:
                 source_announced["done"] = True  # set before awaiting: a batch runs its actions concurrently and must announce once
                 await safe_emit_event("trace_detail", {"node": "tool_agent_node", "title": "Reading from", "detail": source_note})
@@ -3524,6 +3557,37 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                         "generation": approval_message,
                         "content_to_format": approval_message,
                         "messages": new_messages,
+                    }
+
+                if e.decision.get("tool_action") == "propose_commit":
+                    try:
+                        if untrusted_used:
+                            raise git_commit.GitCommitError(
+                                "I read content written by someone else in this message (a web page, an email, a shared document or logs), and I don't commit in the same message as that. "
+                                "Ask me to commit in a new message."
+                            )
+                        commit_details, commit_card = await asyncio.to_thread(
+                            commit_flow.draft, username, e.decision.get("args") or {}, repo=repo, current_branch=state.get("git_branch"),
+                        )
+                    except git_commit.GitCommitError as problem:
+                        refusal = f"I can't commit this yet: {problem}"
+                        refusal_messages = list(state.get("messages", [])) + [AIMessage(content=refusal)]
+                        return {
+                            **state,
+                            "pending_action": None,
+                            "relevance_grade": "conversational",
+                            "generation": refusal,
+                            "content_to_format": f"{refusal}\n\nNOTE (authoritative): no approval card exists and nothing was committed, pushed or opened. Do not tell the person to approve anything or offer to run it on their say-so; give the reason above and what they can change, and offer to try again.",
+                            "messages": refusal_messages,
+                        }
+                    commit_message_text = commit_flow.approval_message(commit_card)
+                    return {
+                        **state,
+                        "pending_action": {"action_type": "commit_changes", "details": commit_details},
+                        "relevance_grade": "hitl_approval_required",
+                        "generation": commit_message_text,
+                        "content_to_format": commit_message_text,
+                        "messages": list(state.get("messages", [])) + [AIMessage(content=commit_message_text)],
                     }
 
                 if e.decision.get("tool_action") == "propose_send_email":
@@ -3689,6 +3753,11 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
 
         final_answer = loop_result["final_answer"]
         attempts = loop_result["attempts"]
+        if _looks_like_approval_card(final_answer):
+            # A real approval card is built by code and returned above, with its pending action. Text in a final answer that looks like one was written by the model (it copies the card it saw earlier in
+            # the conversation): the person would see Approve / Reject over nothing, and an approval is recovered from card text, so it is never passed on.
+            logger.warning("[tool_agent_node] the model wrote its own approval card; replaced it with a plain notice.")
+            final_answer = FORGED_CARD_NOTICE
         if library_allowance is not None and getattr(llm_turns.current(), "cap_hit", False):
             # The loop ran out of steps with listed library files unread: the reply must say which it read and which it did not (backend/utils/library_allowance.py).
             unread_note = library_allowance.unread_note(attempts)
@@ -3733,6 +3802,20 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             "content_to_format": output_msg,
             "relevance_grade": "tool_agent"
         }
+
+FORGED_CARD_NOTICE = (
+    "NOTE (authoritative): this turn did NOT produce any approval card. Nothing was proposed, nothing is waiting for the person to approve, and nothing was committed, pushed, merged or changed. "
+    "Say that plainly and briefly, say what you could not do and why in one sentence if you know it, and offer to try again. Do not show an approval card, a title, a base branch or a proposed body."
+)
+
+
+def _looks_like_approval_card(text: Any) -> bool:
+    """True when text contains a registered approval card's marker line or the card envelope's words. Only code writes those; a model that copies one is inventing an approval. Pure."""
+    content = str(text or "")
+    if "Approval Required" in content and ("Approve" in content or "Reject" in content):
+        return True
+    return any(action.get("card_marker") and action["card_marker"] in content for action in WRITE_ACTIONS.values())
+
 
 def resolve_pr_number(user_msg: str, repo: str, headers: dict, api_base: str) -> int | None:
     """Parses natural language (first, last, 5th, PR #2) and resolves the target PR number."""
@@ -3921,6 +4004,9 @@ def _fetch_pr_template(repo: str, headers: dict) -> str:
     return ""
 
 
+NO_DIFF_CONTEXT = "No diff context available."
+
+
 def fetch_branch_diff_summary(repo: str, base: str, head: str, token: str | None = None) -> str:
     """The evidence a drafted PR title and description are written from: the commit messages, the
     changed files with their patches (lockfiles and generated output left out, size-bounded, with a
@@ -3936,7 +4022,7 @@ def fetch_branch_diff_summary(repo: str, base: str, head: str, token: str | None
 
     res = requests.get(url, headers=headers, timeout=_GITHUB_API_TIMEOUT_SECONDS)
     if res.status_code != 200:
-        return "No diff context available."
+        return NO_DIFF_CONTEXT
 
     data = res.json()
     commits = data.get("commits", [])
@@ -3993,14 +4079,27 @@ def _draft_create_pr(state: GraphState) -> tuple[dict, str]:
     elif parsed.get("head_branch") and parsed.get("base_branch"):
         head_branch, base_branch = parsed["head_branch"], parsed["base_branch"]
     else:
-        head_branch = state.get("head_branch", "feature-branch")
-        base_branch = state.get("base_branch", "main")
+        base_branch = state.get("base_branch") or "main"
+        # Never invent a branch: the one the person's folder is on (as their browser reported it) when it is not the base, otherwise ask.
+        folder_branch = (state.get("git_branch") or "").strip()
+        head_branch = state.get("head_branch") or (folder_branch if folder_branch and folder_branch != base_branch else None)
+        if not head_branch:
+            return None, (
+                f"I need to know which branch to open the pull request from (into `{base_branch}`). Tell me its name, for example \"open a PR from my-branch into {base_branch}\", "
+                "or ask me to commit your changes to a new branch and open the pull request."
+            )
 
     logger.info(f"[propose_write_node:create_pr] Fetching real branch diff for {repo}: {base_branch} <- {head_branch}")
     diff_context = fetch_branch_diff_summary(
         repo, base_branch, head_branch,
         token=resolve_github_token(state.get("username"), purpose="draft_create_pr", repo=repo),
     )
+    if diff_context == NO_DIFF_CONTEXT:
+        # GitHub could not compare the two branches (most often the head branch is only on the person's own machine, not pushed). A card drafted from the request alone would be made up.
+        return None, (
+            f"I couldn't compare `{base_branch}` with `{head_branch}` on GitHub, so I haven't drafted a pull request. If `{head_branch}` is only on your machine, ask me to commit your changes to a new branch "
+            f"and open the pull request, and I'll show a card for that; otherwise tell me which branch to open it from."
+        )
 
     try:
         formatted_prompt = DRAFT_PR_PROMPT.format(
@@ -4447,6 +4546,38 @@ def _execute_append_target_doc(username: str, details: dict) -> str:
     return "**Appended successfully** to your target document."
 
 
+def _execute_commit_changes(username: str, details: dict) -> str:
+    return commit_flow.execute(username, details)
+
+
+def _is_complete_commit_changes(details: dict) -> bool:
+    return commit_flow.is_complete(details)
+
+
+def _recover_commit_changes(messages: list, repo_hint: str) -> dict | None:
+    for msg in reversed(messages or []):
+        parsed = commit_flow.parse_card(_content_of(msg))
+        if parsed:
+            return parsed
+    return None
+
+
+def _execute_merge_pull_request(username: str, details: dict) -> str:
+    return commit_flow.execute_merge(username, details)
+
+
+def _is_complete_merge_pull_request(details: dict) -> bool:
+    return commit_flow.is_complete_merge(details)
+
+
+def _recover_merge_pull_request(messages: list, repo_hint: str) -> dict | None:
+    for msg in reversed(messages or []):
+        parsed = commit_flow.parse_merge_card(_content_of(msg))
+        if parsed:
+            return parsed
+    return None
+
+
 def _is_complete_append_target_doc(details: dict) -> bool:
     return bool(details.get("content") and details.get("doc_id"))
 
@@ -4598,6 +4729,24 @@ WRITE_ACTIONS = {
         "is_complete": _is_complete_update_calendar_event,
         "recover_from_history": _recover_update_calendar_event,
         "card_marker": "Ready to update this calendar event",
+    },
+    "commit_changes": {
+        # Personal, like appending to your own document: it uses the person's OWN GitHub token and needs no role.
+        "required_role": None,
+        "draft": None,
+        "execute": _execute_commit_changes,
+        "is_complete": _is_complete_commit_changes,
+        "recover_from_history": _recover_commit_changes,
+        "card_marker": commit_flow.CARD_MARKER,
+    },
+    "merge_pull_request": {
+        # The second approval after a commit: merging the pull request Sonic opened, with the person's OWN token. Offered on the card the commit's result carries; nothing merges without it.
+        "required_role": None,
+        "draft": None,
+        "execute": _execute_merge_pull_request,
+        "is_complete": _is_complete_merge_pull_request,
+        "recover_from_history": _recover_merge_pull_request,
+        "card_marker": commit_flow.MERGE_MARKER,
     },
     "append_target_doc": {
         "required_role": None,

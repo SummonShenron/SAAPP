@@ -229,6 +229,20 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "commit_and_push",
+        "requires": [
+            "backend/services/commit_flow.py::def draft",
+            "backend/services/git_commit.py::def commit_and_push",
+        ],
+        "month": "2026-10",
+        "title": "Committing and pushing for you",
+        "line": (
+            "I can now commit your working changes, or just the files I changed, push them to your branch or a new one and open a pull request, then merge it into main once you approve each card."
+        ),
+        "keywords": ["commit", "push", "pull request", "pr", "branch", "git", "co-authored", "merge", "github"],
+        "volunteer": [],
+    },
+    {
         "id": "sandbox_tests",
         "requires": [
             "backend/services/sandbox_tests.py::async def run_tests",

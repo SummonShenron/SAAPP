@@ -2022,7 +2022,8 @@ export async function sendChatMessage(
   onTraceReceived?: (payload: any) => void,
   signal?: AbortSignal,
   folderExpected = false,
-  editDecisions = false
+  editDecisions = false,
+  gitBranch: string | null = null
 ): Promise<void> {
   const authHeaders = await getAuthHeaders();
   // A deliberate Stop surfaces as an AbortError and is the caller's to handle; every other failure is a ChatSendError that says what is
@@ -2046,6 +2047,8 @@ export async function sendChatMessage(
         folder_expected: folderExpected,
         // This page reports Apply / Decline on a proposed folder change, so Sonic can wait for it and carry on in the same turn.
         edit_decisions: editDecisions,
+        // The git branch the connected folder is on (read from .git/HEAD), so a commit goes where the person is working.
+        git_branch: gitBranch,
       }),
       signal,
     });

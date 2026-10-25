@@ -350,7 +350,7 @@ def test_every_schema_is_well_formed_and_the_tools_with_arguments_name_them():
     for name, schema in nt.REGISTRY.items():
         assert schema["type"] == "object" and set(schema["required"]) <= set(schema["properties"]), name
         for prop in schema["properties"].values():
-            assert prop["type"] in ("string", "integer", "array"), name
+            assert prop["type"] in ("string", "integer", "array", "boolean"), name
             if prop["type"] == "array":
                 assert prop["items"]["type"] in ("string", "object"), name       # the API needs every array to say what is in it
     assert set(ops.OPS_ACTIONS) <= set(nt.REGISTRY)           # every admin ops tool can be offered natively

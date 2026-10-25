@@ -586,6 +586,7 @@ const TOOL_REASON_LABELS: Record<string, string> = {
   admin_ops: 'incidents, logs or deploys',
   approval_continuation: 'answering a search approval',
   clarification_resume: 'answering its own question',
+  commit_request: 'commit, push or new branch',
 };
 
 const BUCKET_LABELS: Record<string, string> = { c1: '1 call', c2: '2 calls', c3_4: '3-4 calls', c5_8: '5-8 calls', c9_plus: '9 or more calls' };

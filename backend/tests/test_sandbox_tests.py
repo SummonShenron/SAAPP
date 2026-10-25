@@ -138,7 +138,92 @@ def test_the_output_is_parsed_trimmed_and_the_summary_line_is_not_shown():
 def test_the_module_logs_only_counts_and_mounts_the_copy_read_only():
     import ast
     source = (ROOT / "backend" / "services" / "sandbox_tests.py").read_text(encoding="utf-8")
-    assert 'config.preopen_dir(root, "/work", False)' in source and "store.set_limits(memory_size=MEMORY_BYTES)" in source
+    worker = (ROOT / "backend" / "sandbox" / "sandbox_worker.py").read_text(encoding="utf-8")
+    assert 'config.preopen_dir(job["root"], "/work", False)' in worker and 'store.set_limits(memory_size=int(job["memory"]))' in worker and "from backend" not in worker and "import backend" not in worker      # it imports nothing from the app
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("info", "warning", "error", "exception", "debug"):
             assert not any(isinstance(a, ast.JoinedStr) for a in node.args[:1])
+
+
+# ---- its own process, memory, and the compiled cache ---------------------------------------------------------------------------------------------
+
+import subprocess
+
+
+def test_a_sandbox_process_that_dies_or_overruns_is_reported_in_words_and_the_server_carries_on(monkeypatch):
+    connect("p1", {"mathy.py": MATHY, "tests/test_mathy.py": TEST_MATHY})
+    monkeypatch.setattr(st.subprocess if hasattr(st, "subprocess") else subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, -9, stdout="", stderr=""))
+    killed = run(st.run_tests("p1", ["tests/test_mathy.py"]))
+    assert "stopped unexpectedly" in killed["error"] and "most likely it ran out of memory" in killed["error"] and "server itself is unaffected" in killed["error"]
+
+    def too_slow(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], 1)
+
+    monkeypatch.setattr(subprocess, "run", too_slow)
+    assert "did not finish within" in run(st.run_tests("p1", ["tests/test_mathy.py"]))["error"]
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout="not json", stderr=""))
+    assert "stopped unexpectedly" in run(st.run_tests("p1", ["tests/test_mathy.py"]))["error"]
+
+
+def test_a_run_that_the_server_has_no_memory_for_is_not_started(monkeypatch):
+    connect("p2", {"mathy.py": MATHY, "tests/test_mathy.py": TEST_MATHY})
+    started = []
+    real_run = subprocess.run
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: started.append(1) or real_run(*a, **k))
+    monkeypatch.setattr(st, "headroom_mb", lambda: 120.0)
+    refused = run(st.run_tests("p2", ["tests/test_mathy.py"]))
+    assert "short of memory" in refused["error"] and "restarted the server" in refused["error"] and started == []
+    monkeypatch.setattr(st, "headroom_mb", lambda: None)                           # a machine that cannot say: assume plenty
+    assert run(st.run_tests("p2", ["tests/test_mathy.py"]))["ran"] == 2 and started == [1]
+
+
+def test_a_cold_start_needs_more_free_memory_than_one_with_the_compiled_cache(monkeypatch, tmp_path):
+    connect("p3", {"mathy.py": MATHY, "tests/test_mathy.py": TEST_MATHY})
+    monkeypatch.setattr(st, "_cache_path", lambda: tmp_path / "none.cwasm")
+    monkeypatch.setattr(st, "headroom_mb", lambda: float(st.NEED_MB_WARM + 10))      # enough to load the cache, not enough to compile
+    assert "short of memory" in run(st.run_tests("p3", ["tests/test_mathy.py"]))["error"]
+    warm = tmp_path / "warm.cwasm"
+    warm.write_bytes(b"x")
+    monkeypatch.setattr(st, "_cache_path", lambda: warm)
+    assert "short of memory" not in str(run(st.run_tests("p3", ["tests/test_mathy.py"])).get("error", ""))
+
+
+def test_the_first_run_leaves_the_compiled_interpreter_behind_a_broken_cache_is_replaced_and_the_second_run_uses_it(monkeypatch, tmp_path):
+    connect("p4", {"mathy.py": MATHY, "tests/test_mathy.py": TEST_MATHY})
+    cache = tmp_path / "python.cwasm"
+    monkeypatch.setattr(st, "_cache_path", lambda: cache)
+    monkeypatch.setattr(st, "headroom_mb", lambda: None)
+    assert run(st.run_tests("p4", ["tests/test_mathy.py"]))["ran"] == 2 and cache.exists() and cache.stat().st_size > 1_000_000
+    first = cache.stat().st_mtime_ns
+    assert run(st.run_tests("p4", ["tests/test_mathy.py"]))["ran"] == 2 and cache.stat().st_mtime_ns == first, "the second run loads the cache and does not rewrite it"
+    cache.write_bytes(b"not a compiled module")
+    assert run(st.run_tests("p4", ["tests/test_mathy.py"]))["ran"] == 2 and cache.stat().st_size > 1_000_000, "a cache that will not load is thrown away and made again"
+
+
+def test_the_server_can_say_how_much_memory_it_has_left(monkeypatch):
+    files = {"/sys/fs/cgroup/memory.max": "536870912", "/sys/fs/cgroup/memory.current": "400000000"}
+    monkeypatch.setattr(st, "_read_text", lambda path: files.get(path))
+    assert round(st.headroom_mb()) == 137                                           # a 512 MB container with 400 MB in use
+    files["/sys/fs/cgroup/memory.max"] = "max"
+    files["/proc/meminfo"] = "MemTotal: 8000000 kB\nMemAvailable: 2500000 kB\n"
+    assert round(st.headroom_mb()) == 2500
+    monkeypatch.setattr(st, "_read_text", lambda path: None)
+    assert st.headroom_mb() is None
+
+
+def test_the_worker_gets_none_of_the_servers_settings_and_the_tool_can_be_switched_off(monkeypatch):
+    monkeypatch.setenv("MONGO_URI", "mongodb://user:pass@host/db")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-secret")
+    monkeypatch.setenv("PATH", "/usr/bin")
+    env = st._clean_env()
+    assert "MONGO_URI" not in env and "ANTHROPIC_API_KEY" not in env and env.get("PATH") == "/usr/bin"
+    monkeypatch.setenv("SANDBOX_TESTS", "off")
+    assert "switched off" in run(st.run_tests("anyone", ["tests/test_x.py"]))["error"]
+    monkeypatch.setenv("SANDBOX_TESTS", "on")
+    assert st.enabled() is True
+
+
+def test_the_build_script_precompiles_and_the_cache_is_never_committed(monkeypatch):
+    fetch_source = (ROOT / "backend" / "sandbox" / "fetch_sandbox.py").read_text(encoding="utf-8")
+    assert fetch_source.count("precompile()") >= 3 and "--precompile" in fetch_source
+    assert "backend/sandbox/*.cwasm" in (ROOT / ".gitignore").read_text(encoding="utf-8")

@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from backend.services.repo_checkout import CheckoutHandle
-from backend.utils import docx_edit
+from backend.utils import docx_edit, spreadsheet_utils
 
 logger = logging.getLogger("SASS Logger")
 
@@ -139,9 +139,16 @@ def _write_manifest(username: str, manifest: Dict[str, Any]) -> None:
 
 
 def _docx_outline(path: str, encoded: str) -> tuple:
-    """(outline text, "") for a base64 .docx, or (None, why it was not taken)."""
+    """(outline text, "") for a base64 .docx or spreadsheet, or (None, why it was not taken)."""
+    if spreadsheet_utils.is_table_file(path):
+        try:
+            data = base64.b64decode(encoded, validate=True)
+        except (ValueError, TypeError):
+            return None, "could not be read"
+        text = spreadsheet_utils.table_text(path, data)
+        return (text, "") if text else (None, "spreadsheet could not be read")
     if not path.lower().endswith(".docx"):
-        return None, "only .docx files can be sent as documents"
+        return None, "only .docx and spreadsheet files can be sent as documents"
     try:
         data = base64.b64decode(encoded, validate=True)
     except (ValueError, TypeError):
@@ -380,6 +387,14 @@ def workspace_status(username: Optional[str]) -> Dict[str, Any]:
         "total_bytes": sum(files.values()),
         "synced_at": synced_at,
     }
+
+
+def snapshot_paths(username: Optional[str]) -> List[str]:
+    """The relative paths of every file in the person's synced folder (sorted), or [] when no folder is connected."""
+    if not workspace_status(username)["connected"]:
+        return []
+    manifest = _current_manifest(username) or {}
+    return sorted(str(path) for path in (manifest.get("files") or {}))
 
 
 def get_workspace_handle(username: Optional[str]) -> Optional[CheckoutHandle]:
