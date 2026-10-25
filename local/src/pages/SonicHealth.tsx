@@ -427,7 +427,7 @@ export const SonicHealthPage: React.FC = () => {
             <UsersCard users={health.users} />
           </div>
         ) : noData('model usage'))}
-        {tab === 'turns' && <>{health.usage?.turns && health.usage.turns.turns > 0 ? <TurnsCard turns={health.usage.turns} /> : noData('chat turns')}<ServerMemoryCard /></>}
+        {tab === 'turns' && <>{health.usage?.turns && health.usage.turns.turns > 0 ? <TurnsCard turns={health.usage.turns} /> : noData('chat turns')}{health.counters && <PromptCard totals={health.counters.totals} />}<ServerMemoryCard /></>}
         {tab === 'budget' && (health.budget ? <><BudgetCard budget={health.budget} /><BudgetRequestsPanel /></> : noData('budget'))}
         {tab === 'behavior' && <CountersCard counters={health.counters} />}
         {tab === 'goals' && <GoalsTab goals={health.goals} busyId={busyKey} onApprove={handleGoalApproval} />}
@@ -614,6 +614,51 @@ const STEP_BUCKET_LABELS: Record<string, string> = { steps_1_2: '1-2 steps', ste
 const mb = (value: number | null | undefined): string => (value === null || value === undefined ? 'not available here' : `${value} MB`);
 
 /** What is using the server's memory: the container's limit split into program memory and file cache, the sandbox's view of it, and what the app holds. Counts and sizes only. */
+const PROMPT_PARTS: [string, string][] = [
+  ['instructions', 'Rules for the tool agent'],
+  ['tools', 'Tool list (every tool offered, with its description)'],
+  ['preferences', 'Your coding preferences'],
+  ['architecture', 'Repo map (audit-style turns only)'],
+  ['memory', 'Saved notes about you'],
+  ['history', 'Conversation so far'],
+  ['environment', 'Folder, notes and plan'],
+  ['request', 'Your message'],
+];
+const CHARS_PER_TOKEN = 3.8;
+
+/** Where a tool turn's prompt goes: the average size of each part of the first call, and what a whole turn sends once every call has re-sent it. Counts only (backend/utils/prompt_meter.py). */
+const PromptCard: React.FC<{ totals: Record<string, number> }> = ({ totals }) => {
+  const runs = totals.native_runs ?? 0;
+  if (runs <= 0) return null;
+  const avg = (key: string) => Math.round((totals[key] ?? 0) / runs);
+  const rows = PROMPT_PARTS.map(([key, label]) => ({ key, label, chars: avg(`native_chars_${key}`) }));
+  const first = rows.reduce((sum, row) => sum + row.chars, 0);
+  const tokens = (chars: number) => `${Math.round(chars / CHARS_PER_TOKEN).toLocaleString()} tokens`;
+  const sent = avg('native_chars_sent');
+  const calls = Math.round(((totals.native_calls ?? 0) / runs) * 10) / 10;
+  return (
+    <section className="service-card sh-card">
+      <div className="card-badge">{runs} TOOL TURNS</div>
+      <h2>Where a tool turn's prompt goes</h2>
+      <p className="card-description">
+        Every model call in a tool turn re-sends the whole prompt so far. This is the average size of each part of the first call, and below it what a whole turn sends once every call has
+        re-sent it. Sizes are in characters with a rough token estimate (about {CHARS_PER_TOKEN} characters each). Only sizes are recorded, never any text.
+      </p>
+      <table className="sh-table">
+        <tbody>
+          {rows.map(row => (
+            <tr key={row.key}><td>{row.label}</td><td>{row.chars.toLocaleString()} chars ({tokens(row.chars)}, {first > 0 ? Math.round((row.chars / first) * 100) : 0}% of the first call)</td></tr>
+          ))}
+          <tr><td>First call, all parts</td><td>{first.toLocaleString()} chars ({tokens(first)})</td></tr>
+          <tr><td>Model calls per tool turn</td><td>{calls}</td></tr>
+          <tr><td>Tool results read during the turn</td><td>{avg('native_chars_results').toLocaleString()} chars ({tokens(avg('native_chars_results'))})</td></tr>
+          <tr><td><strong>Sent in total per tool turn, all calls added up</strong></td><td><strong>{sent.toLocaleString()} chars ({tokens(sent)})</strong></td></tr>
+        </tbody>
+      </table>
+    </section>
+  );
+};
+
 const ServerMemoryCard: React.FC = () => {
   const [memory, setMemory] = useState<ServerMemory | null>(null);
   const [failed, setFailed] = useState(false);

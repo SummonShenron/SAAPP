@@ -39,6 +39,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 from backend.utils import draft_checkpoint
+from backend.utils.prompt_meter import PromptMeter
 from backend.utils.agent_utils import _UnsafeActionRequested, build_tool_facts, build_trace_subject, new_trace_step_id
 
 logger = logging.getLogger("SASS Logger")
@@ -276,6 +277,13 @@ async def run(
         offered = offered | {"save_draft"}
     latest_draft: Optional[str] = None
     messages: List[Any] = [SystemMessage(content=system_prompt), HumanMessage(content=build_context(question, history, time_line, coding_preferences, architecture_map, user_memory, environment_note if can_edit else ""))]
+    # Sizes of the prompt's parts and of everything every call sends (backend/utils/prompt_meter.py): counts only, recorded once at the end.
+    meter = PromptMeter()
+    meter.part("instructions", system_prompt)
+    meter.tools(tools)
+    for name, text in (("preferences", coding_preferences), ("architecture", architecture_map), ("memory", user_memory), ("history", history), ("environment", environment_note if can_edit else ""),
+                       ("request", question)):
+        meter.part(name, text)
     attempts: List[Dict[str, str]] = []
     seen: Dict[str, int] = {}
     held: List[Dict[str, Any]] = []  # each tool result in the conversation: its message, the step it came from, its call and the full text
@@ -408,6 +416,7 @@ async def run(
         mark = len(messages)
         edit_notice = (required_action or {}).get("checkpoint_notice") or EDIT_CHECKPOINT_NOTICE      # a plan turn finishes with submit_plan, not a proposal
         messages.append(HumanMessage(content=(edit_notice if edit_turn else CHECKPOINT_NOTICE).format(used=used, total=budget)))
+        meter.note_call(messages, offered_here)
         reply = await llm.ainvoke_tools(messages, offered_here)
         text = _text(getattr(reply, "content", ""))
         calls = [call for call in (getattr(reply, "tool_calls", None) or []) if call.get("name")]
@@ -486,6 +495,7 @@ async def run(
             told_at.add("halfway")
             nudged = True
             messages.append(HumanMessage(content=nudge.strip()))
+        meter.note_call(messages, tools)
         reply = await llm.ainvoke_tools(messages, tools)
         if await absorb_steering(step):
             # The user redirected the work while this was being decided. Drop it rather than act on, or conclude from, a plan they
@@ -530,6 +540,7 @@ async def run(
         await absorb_steering(step)
         shorten_old_results(step + 1)
         messages.append(HumanMessage(content=STEP_LIMIT_NOTICE + draft_checkpoint.draft_block(latest_draft, how="fix it in your answer") + draft_checkpoint.forced_final_addition(latest_draft)))
+        meter.note_call(messages, [])
         final_text = _text(getattr(await llm.ainvoke_tools(messages, []), "content", "")) or draft_checkpoint.fallback_answer(latest_draft)
 
     had_error = any(str(a["observation"]).startswith("ERROR") for a in attempts)
@@ -537,6 +548,12 @@ async def run(
     from backend.utils import llm_turns
 
     llm_turns.note_tool_loop(step, forced, tool_steps=budget, had_draft=bool(latest_draft), nudged=nudged)
+    try:
+        from backend.utils.self_counters import record_turn_counts
+
+        await asyncio.to_thread(record_turn_counts, meter.counts(sum(len(item["text"]) for item in held)))
+    except Exception:
+        logger.debug("[native_loop] could not record the prompt sizes.", exc_info=True)
     return {
         "final_answer": final_text or "I couldn't complete that request.",
         "attempts": attempts,
