@@ -265,11 +265,14 @@ export function useLocalWorkspace({ enabled }: UseLocalWorkspaceOptions) {
     return handle && permittedRef.current ? readGitBranch(handle) : null;
   }, []);
 
+  /** The connected folder's handle, or null when none is connected and readable (for the local git update, which writes into its .git folder). */
+  const getFolderHandle = useCallback((): FsDirectoryHandle | null => (handleRef.current && permittedRef.current ? handleRef.current : null), []);
+
   /** True when the browser has a readable folder, so the server is expected to hold a copy: the chat request says so, and the answer can then tell the person if it did not. */
   const folderExpected = useCallback(() => handleRef.current !== null && permittedRef.current, []);
 
   return {
-    supported, status, folderName, fileCount, message, lastEdit, folderExpected, currentGitBranch,
+    supported, status, folderName, fileCount, message, lastEdit, folderExpected, currentGitBranch, getFolderHandle,
     // Applying only needs the folder handle: the write permission is requested at Apply time.
     canEdit: supported && folderName !== null,
     connect, reconnect, resync, disconnect, ensureSynced, applyEdits, undoEdits,

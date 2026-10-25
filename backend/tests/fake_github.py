@@ -21,6 +21,7 @@ class FakeGitHub:
         self.commits: Dict[str, Dict[str, Any]] = {}
         self.branches: Dict[str, str] = {}
         self.pulls = []
+        self._subtrees: Dict[str, Tuple[str, str]] = {}
         self.merged_pulls, self.closed_pulls, self.merge_calls = set(), set(), []
         self.merge_methods = {"squash", "merge", "rebase"}
         self.mergeable = True
@@ -82,7 +83,11 @@ class FakeGitHub:
         match = re.match(rf"{re.escape(base)}/git/commits/(\w+)$", path)
         if method == "GET" and match:
             commit = self.commits.get(match.group(1))
-            return (200, {"tree": {"sha": commit["tree"]}}) if commit else (404, {"message": "Not Found"})
+            if not commit:
+                return 404, {"message": "Not Found"}
+            who = {"name": "Sonic Person", "email": "person@example.com", "date": "2026-10-25T20:10:21Z"}
+            return 200, {"sha": match.group(1), "tree": {"sha": commit["tree"]}, "parents": [{"sha": p} for p in commit["parents"]], "message": commit["message"], "author": who, "committer": who,
+                         "verification": {"verified": False, "signature": None}}
         match = re.match(rf"{re.escape(base)}/git/trees/([^/?]+)\?recursive=1$", path)
         if method == "GET" and match:
             flat = self.trees.get(match.group(1))
@@ -149,8 +154,10 @@ class FakeGitHub:
         return 404, {"message": f"unhandled {method} {path}"}
 
     def _list_tree(self, ident: str) -> Tuple[int, Any]:
-        root, _, prefix = ident.partition(":")
-        prefix = prefix.replace("~", "/")                     # a subdirectory's id carries its path with ~ for /, because ids sit inside a URL path
+        if ident in self._subtrees:                           # a folder's id is made from what is in it, as on GitHub, so an unchanged folder has the same id in every commit
+            root, prefix = self._subtrees[ident]
+        else:
+            root, prefix = ident, ""
         flat = self.trees.get(root)
         if flat is None:
             return 404, {"message": "Not Found"}
@@ -161,7 +168,11 @@ class FakeGitHub:
             rest = path[len(prefix):]
             name, _, tail = rest.partition("/")
             if tail:
-                entries[name] = {"path": name, "mode": "040000", "type": "tree", "sha": f"{root}:{(prefix + name + '/').replace('/', '~')}"}
+                child = prefix + name + "/"
+                content = sorted((p, m, b) for p, (m, b) in flat.items() if p.startswith(child))
+                sub_id = _sha("subtree", child, repr(content))
+                self._subtrees[sub_id] = (root, child)
+                entries[name] = {"path": name, "mode": "040000", "type": "tree", "sha": sub_id}
             else:
                 entries[name] = {"path": name, "mode": mode, "type": "blob", "sha": blob}
         return 200, {"tree": list(entries.values())}

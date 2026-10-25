@@ -48,6 +48,8 @@ from backend.services.search import discover_workspace_documents
 from local_function_app.function_app import run_ingestion_pipeline, HOT_FOLDER_DIR
 from backend.state.graph_state import GraphState
 from backend.services import steering
+from backend.services import git_import
+from backend.services import git_commit as git_commit_service
 from backend.utils.app_utils import (
     save_conversation_turn,
     load_user_conversations,
@@ -3351,6 +3353,23 @@ async def report_local_edit_decision(proposal_id: str, payload: EditDecisionRequ
         # Whether or not a turn was waiting: these files are now changed work that a commit may include (backend/utils/applied_changes.py).
         applied_changes.record(username, local_edit_decisions.changes_for(username, proposal_id))
     return {"status": status}
+
+
+class LocalGitBundleRequest(BaseModel):
+    repo: str
+    commit: str
+
+
+@app.post("/api/local-git/bundle")
+async def local_git_bundle(body: LocalGitBundleRequest, current_user = Depends(get_current_user)):
+    """What the browser needs to bring a commit Sonic made on GitHub into the person's own repository (backend/services/git_import.py), read with their own token."""
+    username = current_user.get("sub")
+    if is_guest_username(username):
+        raise HTTPException(status_code=403, detail="Sign in to use this.")
+    try:
+        return await asyncio.to_thread(git_import.bundle_for, username, body.repo.strip(), body.commit.strip().lower())
+    except git_commit_service.GitCommitError as problem:
+        raise HTTPException(status_code=422, detail=str(problem))
 
 
 class WorkingNoteEdit(BaseModel):

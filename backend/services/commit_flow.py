@@ -220,6 +220,47 @@ def approval_message(card: str, merge: bool = False) -> str:
 
 
 # ---------------------------------------------------------------------------------------------------------------
+# What to run afterwards: Sonic works through GitHub's API, so the person's own git has not seen the commit
+# ---------------------------------------------------------------------------------------------------------------
+
+_SAFE_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+
+
+def _ref(name: Any) -> str:
+    """A branch name that is safe to print in a command the person will paste (gc.clean_branch already limits what can be a branch; this is the last check before it reaches a shell). Pure."""
+    text = str(name or "").strip()
+    return text if _SAFE_REF_RE.match(text) and ".." not in text else ""
+
+
+def catch_up_after_commit(branch: str, *, new_branch: bool) -> str:
+    """The commands that bring the person's own repository in line with a commit Sonic made on GitHub, as a copyable block. Their working files already hold the committed changes, so the
+    old copy is stashed (nothing is thrown away) before the branch is checked out; a plain push to a branch they were already on is followed by a fast-forward pull. Pure."""
+    target = _ref(branch)
+    if not target:
+        return "Your own git has not seen this commit yet: run `git fetch origin`, then check out the branch."
+    commands = ["git fetch origin", 'git stash push -u -m "before syncing with the sonic commit"', f"git checkout {target}"]
+    if not new_branch:
+        commands.append(f"git pull --ff-only origin {target}")
+    block = "```bash\n" + "\n".join(commands) + "\n```"
+    return (
+        f"**Your own git has not seen this commit yet** (Sonic made it on GitHub). To catch up, run these in your terminal. The stash keeps your current files, which already hold these changes, "
+        f"in case anything was left out of the commit:\n\n{block}\n\nThen `git stash show --stat --include-untracked` lists anything the stash holds that is not in the commit; when you have checked it, `git stash drop` clears it."
+    )
+
+
+def catch_up_after_merge(base: str, head: str) -> str:
+    """The commands to bring the person's copy of the target branch up to date after Sonic merged a pull request on GitHub, and a note on the merged branch. Pure."""
+    target, merged = _ref(base), _ref(head)
+    if not target:
+        return "Your own git has not seen this merge yet: run `git fetch origin` and pull the target branch."
+    block = "```bash\ngit fetch origin\ngit checkout " + target + "\ngit pull --ff-only origin " + target + "\n```"
+    text = f"To bring your own copy of `{target}` up to date, run this in your terminal (if `git checkout` refuses because of local changes, run `git stash push -u` first):\n\n{block}"
+    if merged and merged != target:
+        text += f"\n\n`{merged}` is merged now. When you like, delete your local copy with `git branch -D {merged}` (capital D, because a squash merge looks unmerged to git)."
+    return text
+
+
+# ---------------------------------------------------------------------------------------------------------------
 # Step 2: the approval (the card is all that is left)
 # ---------------------------------------------------------------------------------------------------------------
 
@@ -279,7 +320,7 @@ def execute(username: str, details: Dict[str, Any], api_factory: Optional[Callab
         lines.append(f"**Opened pull request** [#{result['pr_number']}]({result['pr_url']}) into `{details['pr']['base']}`.")
     elif result.get("pr_error"):
         lines.append(f"The commit is on GitHub, but the pull request was not opened: {result['pr_error']}")
-    lines.append("Your local branch is behind GitHub by this commit: pull to catch up. Your working files already match it.")
+    lines.append(catch_up_after_commit(result["branch"], new_branch=bool(details.get("new_branch"))))
     if result.get("pr_url") and not (details.get("pr") or {}).get("draft"):
         try:
             info = gc.pull_request_info(api, details["repo"], result["pr_number"])
@@ -347,4 +388,4 @@ def execute_merge(username: str, details: Dict[str, Any], api_factory: Optional[
     except Exception:
         logger.warning("[commit] the approved merge failed.", exc_info=True)
         return "**Not merged:** something went wrong talking to GitHub. Nothing was changed."
-    return f"**Merged** pull request #{details['number']} into `{info['base_ref']}` ({result['method']}) on `{details['repo']}`. Pull `{info['base_ref']}` to bring your local copy up to date."
+    return f"**Merged** pull request #{details['number']} into `{info['base_ref']}` ({result['method']}) on `{details['repo']}`.\n\n" + catch_up_after_merge(info["base_ref"], info["head_ref"])
