@@ -4,7 +4,7 @@ import { useAffiliateScope } from '../hooks/useAffiliateScope';
 import { useLocalWorkspace } from '../hooks/useLocalWorkspace';
 import LocalEditCard from '../components/LocalEditCard';
 import LocalGitUpdate from '../components/LocalGitUpdate';
-import { localGitSpikeEnabled, parseCommittedReply } from '../localGit/commitResult';
+import { loadLocalGitMode, localGitModeLabel, nextLocalGitMode, parseGitReply, saveLocalGitMode, type LocalGitMode } from '../localGit/commitResult';
 import LocalFolderConsent from '../components/LocalFolderConsent';
 import { hasLocalFolderConsent, recordLocalFolderConsent, type FsDirectoryHandle } from '../localWorkspace';
 import type { ApplyResult, UndoResult } from '../localEdits';
@@ -176,6 +176,7 @@ interface ChatMessageListProps {
   handleFeedbackRef: React.MutableRefObject<(messageId: string, choice: 'like' | 'dislike') => void>;
   getTokenRef: React.MutableRefObject<(() => Promise<string | null>) | undefined>;
   canEditLocal: boolean;
+  localGitMode: Exclude<LocalGitMode, 'off'> | 'off';
   localEditActionsRef: React.MutableRefObject<{
     apply: (proposal: EditProposal) => Promise<ApplyResult>;
     undo: (proposalId: string) => Promise<UndoResult>;
@@ -244,7 +245,7 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
 const ChatMessageList = React.memo(function ChatMessageList({
   messages, earlierCount, loadingEarlier, loadEarlierRef, hasChatted, loading, agentStatus, latestStepTitle, theme, isEmbedded,
   chatWindowRef, messagesEndRef, attachmentsRef, handleSendMessageRef, handleFeedbackRef, getTokenRef,
-  canEditLocal, localEditActionsRef,
+  canEditLocal, localEditActionsRef, localGitMode,
 }: ChatMessageListProps) {
   // The reply whose "Source: Memory" citation was clicked: its viewer is open while this is set.
   const [memoryViewer, setMemoryViewer] = useState<Message | null>(null);
@@ -440,9 +441,9 @@ const ChatMessageList = React.memo(function ChatMessageList({
                 />
               )}
 
-              {msg.sender === 'ai' && !loading && canEditLocal && localGitSpikeEnabled() && (() => {
-                const committed = parseCommittedReply(msg.text);
-                return committed ? <LocalGitUpdate repo={committed.repo} commit={committed.commit} branch={committed.branch} getHandle={() => localEditActionsRef.current.getFolderHandle()} /> : null;
+              {msg.sender === 'ai' && !loading && canEditLocal && localGitMode !== 'off' && (() => {
+                const committed = parseGitReply(msg.text);
+                return committed ? <LocalGitUpdate key={committed.commit} reply={committed} mode={localGitMode} isLatest={messages[messages.length - 1]?.id === msg.id} getHandle={() => localEditActionsRef.current.getFolderHandle()} /> : null;
               })()}
 
               {msg.noted && msg.noted.length > 0 && (
@@ -700,6 +701,8 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [showFolderConsent, setShowFolderConsent] = useState(false);
   // How much of what Sonic proposes to the folder is applied without a click (src/editApproval.ts); kept in this browser, because this browser writes the files.
   const [approvalLevel, setApprovalLevel] = useState<ApprovalLevel>(() => loadLevel());
+  // Whether, and how, the page brings Sonic's GitHub commits into the person's own repository (src/localGit/commitResult.ts); kept in this browser, because this browser writes the .git folder.
+  const [localGitMode, setLocalGitMode] = useState<LocalGitMode>(() => loadLocalGitMode());
   const approvalLevelRef = useRef<ApprovalLevel>(approvalLevel);
   const autoAppliedAtRef = useRef<number[]>([]);
   useEffect(() => { approvalLevelRef.current = approvalLevel; }, [approvalLevel]);
@@ -2120,6 +2123,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
   };
   const folderMenuEntries: { item: OptionWheelItem; run: () => void }[] = [
     { item: { label: levelLabel(approvalLevel), icon: folderGlyph }, run: cycleApprovalLevel },
+    { item: { label: localGitModeLabel(localGitMode), icon: folderGlyph }, run: () => { const next = nextLocalGitMode(localGitMode); setLocalGitMode(next); saveLocalGitMode(next); } },
     { item: { label: `Resync${workspace.fileCount !== null ? ` (${workspace.fileCount} files)` : ''}`, disabled: loading, icon: folderGlyph }, run: () => { void workspace.resync(); } },
     { item: { label: 'Disconnect folder', disabled: loading, icon: folderGlyph }, run: () => { void workspace.disconnect(); } },
     // Survives reloads (the saved originals live in IndexedDB), so a change applied earlier can
@@ -2298,6 +2302,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           handleFeedbackRef={handleFeedbackRef}
           getTokenRef={getTokenRef}
           canEditLocal={workspace.canEdit}
+          localGitMode={localGitMode}
           localEditActionsRef={localEditActionsRef}
         />
 

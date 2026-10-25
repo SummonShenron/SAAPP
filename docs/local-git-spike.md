@@ -34,3 +34,11 @@ In the browser console: `localStorage.setItem('sonic.localGitSpike', '1')`, relo
 - Not for a repository using a split index, SHA-256 objects, worktrees or submodule folders (refused).
 - Reflogs are not written. A concurrent git command in a terminal is guarded only by `index.lock`.
 - Merges (after Sonic merges a pull request) are not handled yet; the reply still prints the commands for that.
+
+## Update 2026-10-25 (later): merges, a setting, and automatic mode
+
+- **Merges.** After Sonic merges a pull request, the reply carries the merge commit's link (`**Merged** pull request #9 into `main` (squash) on `owner/repo`: [`abc1234`](...)`) and the same button works for it. The branch the merge went into must be at exactly the commit the merge started from, and the branch the person is on must hold EXACTLY the merged content (the server returns `compare_tree`, the folder-listing id of the commit they are on, and the browser compares it with the merge commit's): then moving `main` forward and switching to it changes no file of theirs. Otherwise it refuses and the commands apply. Squash and rebase merges (one parent) only.
+- **A setting, not a console switch.** The folder menu has "Local git: ..." which cycles `button` (the default: a button, a plan, "Do it"), `auto` and `off` (`localStorage sonic.localGitMode`).
+- **Automatic mode.** When the newest "Committed" or "Merged" reply arrives, the page checks and, if everything is safe, does the update at once (the commit was already approved on the card). It acts only once per commit per tab, only on the latest reply, and only when the browser has ALREADY been allowed to change the folder (the Apply buttons ask for that); otherwise it shows the button. Anything unsafe shows the reasons and the commands still work.
+- **Already there.** A commit the repository already has is recognised ("Your repository already has this commit"), not refused.
+- Tested against real git, including the squash merge from a feature branch, a merge when already on `main`, and the refusals.

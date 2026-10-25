@@ -3358,6 +3358,7 @@ async def report_local_edit_decision(proposal_id: str, payload: EditDecisionRequ
 class LocalGitBundleRequest(BaseModel):
     repo: str
     commit: str
+    compare_with: str | None = None     # the commit the person's own branch is at now (see git_import.build_bundle)
 
 
 @app.post("/api/local-git/bundle")
@@ -3367,7 +3368,7 @@ async def local_git_bundle(body: LocalGitBundleRequest, current_user = Depends(g
     if is_guest_username(username):
         raise HTTPException(status_code=403, detail="Sign in to use this.")
     try:
-        return await asyncio.to_thread(git_import.bundle_for, username, body.repo.strip(), body.commit.strip().lower())
+        return await asyncio.to_thread(git_import.bundle_for, username, body.repo.strip(), body.commit.strip().lower(), (body.compare_with or "").strip().lower() or None)
     except git_commit_service.GitCommitError as problem:
         raise HTTPException(status_code=422, detail=str(problem))
 

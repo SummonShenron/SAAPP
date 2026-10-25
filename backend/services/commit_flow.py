@@ -388,4 +388,5 @@ def execute_merge(username: str, details: Dict[str, Any], api_factory: Optional[
     except Exception:
         logger.warning("[commit] the approved merge failed.", exc_info=True)
         return "**Not merged:** something went wrong talking to GitHub. Nothing was changed."
-    return f"**Merged** pull request #{details['number']} into `{info['base_ref']}` ({result['method']}) on `{details['repo']}`.\n\n" + catch_up_after_merge(info["base_ref"], info["head_ref"])
+    merged = f" [`{result['sha'][:7]}`](https://github.com/{details['repo']}/commit/{result['sha']})" if re.fullmatch(r"[0-9a-f]{40}", result.get("sha") or "") else ""
+    return f"**Merged** pull request #{details['number']} into `{info['base_ref']}` ({result['method']}) on `{details['repo']}`:{merged}\n\n" + catch_up_after_merge(info["base_ref"], info["head_ref"])

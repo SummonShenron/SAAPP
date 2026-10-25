@@ -122,7 +122,7 @@ gitTest('git itself accepts the result: a new branch at the commit, switched to,
     assert.notEqual(porcelain(s.local), '', 'before the import git sees the changes as uncommitted');
     const planned = await planImport(nodeFs(s.local), bundleFrom(s.sonic, s.sha, s.parent), 'feat/notes');
     assert.equal(planned.ok, true, JSON.stringify(planned));
-    assert.equal(planned.plan.action, 'switch');
+    assert.equal(planned.plan.action, 'create-switch');
     const done = await applyImport(nodeFs(s.local), planned.plan);
     assert.equal(done.ok, true, JSON.stringify(done));
     assert.equal(git(s.local, 'rev-parse', 'HEAD').trim(), s.sha);
@@ -248,7 +248,8 @@ gitTest('the same bundle is idempotent: importing it again after it worked refus
     assert.equal((await applyImport(nodeFs(s.local), planned.plan)).ok, true);
     const again = await planImport(nodeFs(s.local), bundle, 'feat/notes');
     assert.equal(again.ok, false);
-    assert.match(again.reasons.join(' '), /starts from/);
+    assert.equal(again.already, true);
+    assert.match(again.reasons.join(' '), /already has this commit/);
     assert.equal(porcelain(s.local), '');
   } finally {
     cleanup(s);
@@ -288,4 +289,87 @@ test('objects are built the way git builds them', async () => {
     message: 'subject\n\nbody', signature: '-----BEGIN-----\n\nabc\n-----END-----',
   }));
   assert.equal(commit, `tree ${'c'.repeat(40)}\nparent ${'d'.repeat(40)}\nauthor A <a@x> 1 +0000\ncommitter B <b@x> 2 -0500\ngpgsig -----BEGIN-----\n \n abc\n -----END-----\n\nsubject\n\nbody`);
+});
+
+
+/** Sonic's pull request merged on GitHub: a squash commit on main, with the same content as the feature commit, whose only parent is where main was. */
+function squashMerge(sonic, featureSha, parent) {
+  const tree = git(sonic, 'rev-parse', `${featureSha}^{tree}`).trim();
+  const merged = git(sonic, 'commit-tree', tree, '-p', parent, '-m', 'feat: Say hello (#9)').trim();
+  return { merged, featureTree: tree };
+}
+
+async function importFeatureThenMerge(s) {
+  applyWorkingChanges(s.local);
+  const planned = await planImport(nodeFs(s.local), bundleFrom(s.sonic, s.sha, s.parent), 'feat/notes');
+  assert.equal((await applyImport(nodeFs(s.local), planned.plan)).ok, true);
+  const { merged, featureTree } = squashMerge(s.sonic, s.sha, s.parent);
+  return { merged, bundle: { ...bundleFrom(s.sonic, merged, s.parent), compare_tree: featureTree } };
+}
+
+gitTest('after Sonic merges the pull request, main moves to the merge commit and you are switched to it, with nothing changed on disk', async () => {
+  const s = scenario();
+  try {
+    const { merged, bundle } = await importFeatureThenMerge(s);
+    assert.equal(git(s.local, 'symbolic-ref', '--short', 'HEAD').trim(), 'feat/notes');
+    const planned = await planImport(nodeFs(s.local), bundle, 'main');
+    assert.equal(planned.ok, true, JSON.stringify(planned));
+    assert.equal(planned.plan.action, 'move-switch');
+    const before = readFileSync(join(s.local, 'a.txt'), 'utf8');
+    assert.equal((await applyImport(nodeFs(s.local), planned.plan)).ok, true);
+    assert.equal(git(s.local, 'symbolic-ref', '--short', 'HEAD').trim(), 'main');
+    assert.equal(git(s.local, 'rev-parse', 'main').trim(), merged);
+    assert.equal(git(s.local, 'rev-parse', 'origin/main').trim(), merged);
+    assert.equal(porcelain(s.local), '');
+    assert.equal(readFileSync(join(s.local, 'a.txt'), 'utf8'), before);
+    execFileSync('git', ['fsck', '--strict', '--no-progress'], { cwd: s.local, env: ENV, stdio: 'pipe' });
+    assert.equal(git(s.local, 'log', '-1', '--format=%s', 'main').trim(), 'feat: Say hello (#9)');
+    const again = await planImport(nodeFs(s.local), bundle, 'main');
+    assert.equal(again.ok === false && again.already, true, 'importing the merge twice is recognised, not repeated');
+  } finally {
+    cleanup(s);
+  }
+});
+
+gitTest('the merge is not brought in when it could change your files or your main is not where the merge started', async () => {
+  let s = scenario();
+  try {
+    const { bundle } = await importFeatureThenMerge(s);
+    const noTree = { ...bundle, compare_tree: null };
+    const refused = await planImport(nodeFs(s.local), noTree, 'main');
+    assert.equal(refused.ok, false);
+    assert.match(refused.reasons.join(' '), /already exists here/);
+    const different = await planImport(nodeFs(s.local), { ...bundle, compare_tree: 'f'.repeat(40) }, 'main');
+    assert.equal(different.ok, false);
+  } finally {
+    cleanup(s);
+  }
+  s = scenario();
+  try {
+    const { bundle } = await importFeatureThenMerge(s);
+    git(s.local, 'checkout', '-q', 'main');
+    git(s.local, 'commit', '-q', '--allow-empty', '-m', 'local only');
+    git(s.local, 'checkout', '-q', 'feat/notes');
+    const behind = await planImport(nodeFs(s.local), bundle, 'main');
+    assert.equal(behind.ok, false);
+    assert.match(behind.reasons.join(' '), /starts from/);
+  } finally {
+    cleanup(s);
+  }
+});
+
+gitTest('when the person is already on main, the merge simply moves it forward', async () => {
+  const s = scenario();
+  try {
+    applyWorkingChanges(s.local);
+    const { merged, featureTree } = squashMerge(s.sonic, s.sha, s.parent);
+    const bundle = { ...bundleFrom(s.sonic, merged, s.parent), compare_tree: featureTree };
+    const planned = await planImport(nodeFs(s.local), bundle, 'main');
+    assert.equal(planned.ok && planned.plan.action, 'advance');
+    assert.equal((await applyImport(nodeFs(s.local), planned.plan)).ok, true);
+    assert.equal(git(s.local, 'rev-parse', 'main').trim(), merged);
+    assert.equal(porcelain(s.local), '');
+  } finally {
+    cleanup(s);
+  }
 });
