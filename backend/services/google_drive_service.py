@@ -7,11 +7,23 @@ skipping it would leave already-paid-for capability unused.
 import logging
 
 from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload
 import io
 
 logger = logging.getLogger("SASS Logger")
+
+
+def build(*args, **kwargs):
+    """googleapiclient's build, imported when a Google service is first used: the library costs the server about 14 MB and most turns never touch Google (backend/utils/server_memory.py)."""
+    from googleapiclient.discovery import build as _build
+
+    return _build(*args, **kwargs)
+
+
+def MediaIoBaseDownload(*args, **kwargs):
+    """googleapiclient's MediaIoBaseDownload (imported on use, like build); the name is kept so it can be replaced in tests."""
+    from googleapiclient.http import MediaIoBaseDownload as _download
+
+    return _download(*args, **kwargs)
 
 _EXPORT_MIME_TYPES = {
     "application/vnd.google-apps.document": "text/plain",

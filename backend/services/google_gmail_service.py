@@ -13,7 +13,13 @@ import json
 import logging
 
 from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
+
+
+def build(*args, **kwargs):
+    """googleapiclient's build, imported when a Google service is first used: the library costs the server about 14 MB and most turns never touch Google (backend/utils/server_memory.py)."""
+    from googleapiclient.discovery import build as _build
+
+    return _build(*args, **kwargs)
 
 logger = logging.getLogger("SASS Logger")
 

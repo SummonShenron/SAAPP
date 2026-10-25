@@ -133,18 +133,17 @@ def snapshot(chat_sessions: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         from backend.services import sandbox_tests
 
         box = container()
-        sees = sandbox_tests.headroom_mb()
-        limit, working = box.get("limit_mb"), box.get("working_set_mb")
-        without_cache = round(limit - working, 1) if limit is not None and working is not None else None
+        sees = sandbox_tests.headroom_mb()                              # what the sandbox check uses now: the returnable cache is not counted as used
+        counting_cache = sandbox_tests.headroom_mb(count_cache=True)    # the stricter figure it used before
         cache_share = round(box["inactive_cache_mb"] / box["used_mb"], 2) if box.get("inactive_cache_mb") is not None and box.get("used_mb") else None
         need_warm, need_cold = sandbox_tests.NEED_MB_WARM, sandbox_tests.NEED_MB_COLD
         return {
             "container": box, "process": process(), "held": held_by_app(chat_sessions),
             "sandbox": {
-                "headroom_now_mb": round(sees, 1) if sees is not None else None, "headroom_without_cache_mb": without_cache,
+                "headroom_now_mb": round(sees, 1) if sees is not None else None, "headroom_counting_cache_mb": round(counting_cache, 1) if counting_cache is not None else None,
                 "need_warm_mb": need_warm, "need_cold_mb": need_cold, "compiled_cache_present": sandbox_tests._cache_path().exists(),
                 "would_run_now": None if sees is None else sees >= (need_warm if sandbox_tests._cache_path().exists() else need_cold),
-                "would_run_without_cache": None if without_cache is None else without_cache >= (need_warm if sandbox_tests._cache_path().exists() else need_cold),
+                "would_run_counting_cache": None if counting_cache is None else counting_cache >= (need_warm if sandbox_tests._cache_path().exists() else need_cold),
             },
             "reclaimable_share_of_used": cache_share,
         }

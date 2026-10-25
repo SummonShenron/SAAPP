@@ -17,11 +17,18 @@ import logging
 import re
 
 from langchain_core.messages import HumanMessage
-from playwright.async_api import async_playwright
 
 from backend.components.constraints import BROWSER_SCREENSHOT_DESCRIBE_PROMPT
 
 logger = logging.getLogger("SASS Logger")
+
+
+def async_playwright():
+    """playwright's async_playwright, imported when a browser session first starts: the package costs the server about 8 MB and most turns never open a browser
+    (backend/utils/server_memory.py). The name is kept so it can be replaced in tests."""
+    from playwright.async_api import async_playwright as _async_playwright
+
+    return _async_playwright()
 
 BROWSER_ACTION_TIMEOUT_MS_DEFAULT = 20_000
 _BROWSER_TEXT_CHAR_CAP = 6000

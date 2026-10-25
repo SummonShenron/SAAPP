@@ -11,7 +11,6 @@ import uuid
 import base64
 from pymongo import MongoClient
 from gridfs import GridFS
-from pypdf import PdfReader
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
@@ -586,6 +585,8 @@ def run_ingestion_pipeline():
                 documents = loader.load()
 
                 try:
+                    from pypdf import PdfReader      # loaded when a PDF is read, not at startup (this module is imported by the main server too)
+
                     reader = PdfReader(tmp_path)
                 except Exception as e:
                     logger.warning(f"   -> Could not open {filename} for embedded-image extraction: {e}")

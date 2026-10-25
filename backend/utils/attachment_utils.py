@@ -2,8 +2,6 @@ import os
 import base64
 import logging
 from typing import List, Dict, Optional
-import pdfplumber
-from docx import Document
 from gridfs import GridFS
 from langchain_core.messages import HumanMessage
 
@@ -127,6 +125,8 @@ def extract_text_from_attachment(attachment: Attachment) -> str:
     if attachment.filename.lower().endswith(".pdf"):
         text = ""
         try:
+            import pdfplumber       # loaded when a PDF is read, not when the server starts (backend/utils/server_memory.py)
+
             with pdfplumber.open(temp_path) as pdf:
                 for page in pdf.pages:
                     extracted = page.extract_text()
@@ -142,6 +142,8 @@ def extract_text_from_attachment(attachment: Attachment) -> str:
     # Process DOCX
     if attachment.filename.lower().endswith(".docx"):
         try:
+            from docx import Document
+
             doc = Document(temp_path)
             return "\n".join([p.text for p in doc.paragraphs])
         except Exception as e:

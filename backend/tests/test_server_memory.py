@@ -75,11 +75,11 @@ def test_the_sandbox_verdicts_compare_headroom_with_and_without_the_reclaimable_
 
     original = sm.container
     monkeypatch.setattr(sm, "container", lambda read=None: original(reader(V2)))
-    monkeypatch.setattr(sandbox_tests, "headroom_mb", lambda: 69.0)
+    monkeypatch.setattr(sandbox_tests, "headroom_mb", lambda count_cache=False: 69.0 if count_cache else 219.0)      # 512 limit: minus 443 used (old), or minus the 293 working set (now)
     box = sm.snapshot({})["sandbox"]
-    assert box["headroom_now_mb"] == 69.0 and box["headroom_without_cache_mb"] == 219.0       # 512 limit minus the 293 working set
+    assert box["headroom_now_mb"] == 219.0 and box["headroom_counting_cache_mb"] == 69.0
     if box["compiled_cache_present"]:
-        assert box["would_run_now"] is False and box["would_run_without_cache"] is True
+        assert box["would_run_now"] is True and box["would_run_counting_cache"] is False
 
 
 def test_the_endpoint_is_admin_only_and_the_page_reads_it():

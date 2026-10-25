@@ -639,9 +639,9 @@ const ServerMemoryCard: React.FC = () => {
           <tr><td>File cache (of which can be given back)</td><td>{mb(container.file_cache_mb)} ({mb(container.inactive_cache_mb)})</td></tr>
           <tr><td>Used without the cache that can be given back</td><td>{mb(container.working_set_mb)}</td></tr>
           <tr><td>This server process, now / peak</td><td>{mb(memory.process.rss_mb)} / {mb(memory.process.peak_rss_mb)}</td></tr>
-          <tr><td>Headroom the test sandbox sees / without the returnable cache</td><td>{mb(sandbox.headroom_now_mb)} / {mb(sandbox.headroom_without_cache_mb)}</td></tr>
+          <tr><td>Headroom the test sandbox sees now / if the returnable cache were counted as used (the old check)</td><td>{mb(sandbox.headroom_now_mb)} / {mb(sandbox.headroom_counting_cache_mb)}</td></tr>
           <tr><td>Sandbox needs ({sandbox.compiled_cache_present ? 'warm: compiled interpreter present' : 'cold: no compiled interpreter'})</td><td>{sandbox.compiled_cache_present ? sandbox.need_warm_mb : sandbox.need_cold_mb} MB</td></tr>
-          <tr><td>Would run now / without the returnable cache</td><td>{sandbox.would_run_now === null ? 'not available here' : sandbox.would_run_now ? 'yes' : 'no'} / {sandbox.would_run_without_cache === null ? 'not available here' : sandbox.would_run_without_cache ? 'yes' : 'no'}</td></tr>
+          <tr><td>Would run now / under the old check</td><td>{sandbox.would_run_now === null ? 'not available here' : sandbox.would_run_now ? 'yes' : 'no'} / {sandbox.would_run_counting_cache === null ? 'not available here' : sandbox.would_run_counting_cache ? 'yes' : 'no'}</td></tr>
           <tr><td>Conversations / messages kept in memory</td><td>{held.conversations_in_memory} / {held.messages_in_memory}</td></tr>
           <tr><td>Connected folders on disk ({held.folder_people} {held.folder_people === 1 ? 'person' : 'people'}, {held.folder_files} files)</td><td>{mb(held.folder_mb)}{held.temp_is_memory ? ' (the temp disk is memory: this counts as memory)' : ''}</td></tr>
         </tbody>

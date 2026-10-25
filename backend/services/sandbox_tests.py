@@ -136,15 +136,28 @@ def _read_text(path: str) -> Optional[str]:
         return None
 
 
-def headroom_mb() -> Optional[float]:
+def _inactive_cache_bytes(stat_path: str, key: str) -> int:
+    """The inactive file cache in a container's memory.stat, in bytes (0 when it cannot be read). The kernel gives this back before it refuses anyone memory, so it is not use."""
+    for line in (_read_text(stat_path) or "").splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0] == key and parts[1].isdigit():
+            return int(parts[1])
+    return 0
+
+
+def headroom_mb(count_cache: bool = False) -> Optional[float]:
     """How much memory this server can still use, in MB: from its container limit (cgroup v2 or v1) when it has one, otherwise what the machine reports as available. None when it cannot be
-    told (a developer's own machine), which is taken to mean "plenty"."""
+    told (a developer's own machine), which is taken to mean "plenty". The container's "used" figure includes file cache (every file written or read stays cached), and the inactive part of
+    it is handed back before anything is refused, so by default it is not counted as used (the working set, as `docker stats` has it). `count_cache=True` gives the old, stricter figure;
+    the Sonic Health memory card shows both (backend/utils/server_memory.py)."""
     limit, used = _read_text("/sys/fs/cgroup/memory.max"), _read_text("/sys/fs/cgroup/memory.current")
     if limit and limit != "max" and used and limit.isdigit() and used.isdigit():
-        return (int(limit) - int(used)) / 1e6
+        back = 0 if count_cache else _inactive_cache_bytes("/sys/fs/cgroup/memory.stat", "inactive_file")
+        return (int(limit) - max(int(used) - back, 0)) / 1e6
     limit, used = _read_text("/sys/fs/cgroup/memory/memory.limit_in_bytes"), _read_text("/sys/fs/cgroup/memory/memory.usage_in_bytes")
     if limit and used and limit.isdigit() and used.isdigit() and int(limit) < 2 ** 60:
-        return (int(limit) - int(used)) / 1e6
+        back = 0 if count_cache else _inactive_cache_bytes("/sys/fs/cgroup/memory/memory.stat", "total_inactive_file")
+        return (int(limit) - max(int(used) - back, 0)) / 1e6
     meminfo = _read_text("/proc/meminfo")
     if meminfo:
         for line in meminfo.splitlines():

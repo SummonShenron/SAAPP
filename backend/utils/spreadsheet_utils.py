@@ -7,11 +7,14 @@ tell the person what it cannot see instead of guessing.
 
 No model call is made here: the text is built with fixed rules, so it is cheap and the same file always reads the same way.
 """
+from __future__ import annotations
+
 import io
 import logging
-from typing import Dict, List
+from typing import TYPE_CHECKING, Dict, List
 
-import pandas as pd
+if TYPE_CHECKING:       # pandas costs the server about 40 MB, so it is loaded when a spreadsheet is read, not when the server starts (backend/utils/server_memory.py)
+    import pandas as pd
 
 logger = logging.getLogger("SASS Logger")
 
@@ -60,6 +63,8 @@ def unreadable_note(filename: str) -> str:
 
 
 def _load(filename: str, raw: bytes) -> Dict[str, pd.DataFrame]:
+    import pandas as pd
+
     ext = extension_of(filename)
     if ext in ("xlsx", "xlsm"):
         return pd.read_excel(io.BytesIO(raw), sheet_name=None, engine="openpyxl", dtype=object)
@@ -74,6 +79,8 @@ def _load(filename: str, raw: bytes) -> Dict[str, pd.DataFrame]:
 
 
 def _cell(value) -> str:
+    import pandas as pd
+
     if pd.isna(value):
         return ""
     text = str(value).replace("\n", " ").replace("|", "/").strip()
@@ -83,7 +90,9 @@ def _cell(value) -> str:
 def _numeric(series: pd.Series) -> pd.Series:
     """The column read as numbers, aligned with its rows (a cell that is not a number is NaN), or an empty series when most of its filled cells are
     not numbers. Money signs, commas and percent signs are allowed."""
-    cleaned = series.astype(str).str.replace(r"[,$£€%\s]", "", regex=True).where(series.notna())
+    import pandas as pd
+
+    cleaned =series.astype(str).str.replace(r"[,$£€%\s]", "", regex=True).where(series.notna())
     numbers = pd.to_numeric(cleaned, errors="coerce")
     filled = series.notna().sum()
     if filled and numbers.notna().sum() >= 0.8 * filled:

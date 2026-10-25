@@ -211,6 +211,17 @@ def test_the_server_can_say_how_much_memory_it_has_left(monkeypatch):
     assert st.headroom_mb() is None
 
 
+def test_returnable_file_cache_is_not_counted_as_used_unless_asked(monkeypatch):
+    files = {"/sys/fs/cgroup/memory.max": "536870912", "/sys/fs/cgroup/memory.current": "400000000", "/sys/fs/cgroup/memory.stat": "\n".join(["anon 300000000", "file 90000000", "inactive_file 80000000", ""])}
+    monkeypatch.setattr(st, "_read_text", lambda path: files.get(path))
+    assert round(st.headroom_mb()) == 217 and round(st.headroom_mb(count_cache=True)) == 137      # the 80 MB of inactive cache is handed back before anything is refused
+    files["/sys/fs/cgroup/memory.stat"] = "garbage"
+    assert round(st.headroom_mb()) == 137                                                         # a stat file that cannot be read changes nothing
+    v1 = {"/sys/fs/cgroup/memory/memory.limit_in_bytes": "536870912", "/sys/fs/cgroup/memory/memory.usage_in_bytes": "400000000", "/sys/fs/cgroup/memory/memory.stat": "total_inactive_file 80000000"}
+    monkeypatch.setattr(st, "_read_text", lambda path: v1.get(path))
+    assert round(st.headroom_mb()) == 217
+
+
 def test_the_worker_gets_none_of_the_servers_settings_and_the_tool_can_be_switched_off(monkeypatch):
     monkeypatch.setenv("MONGO_URI", "mongodb://user:pass@host/db")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-secret")

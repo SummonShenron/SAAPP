@@ -8,13 +8,25 @@ import json
 import logging
 
 from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 
 logger = logging.getLogger("SASS Logger")
 
 
-def _error_details(error: HttpError) -> dict:
+def build(*args, **kwargs):
+    """googleapiclient's build, imported when a Google service is first used: the library costs the server about 14 MB and most turns never touch Google (backend/utils/server_memory.py)."""
+    from googleapiclient.discovery import build as _build
+
+    return _build(*args, **kwargs)
+
+
+def _http_error():
+    """googleapiclient's HttpError, for the except clauses below (imported on use, like build)."""
+    from googleapiclient.errors import HttpError
+
+    return HttpError
+
+
+def _error_details(error) -> dict:
     """Pulls Google's own reason out of an HttpError body. A 403 alone is ambiguous — it covers a
     document the user can't edit, a missing OAuth scope, AND the Docs API being switched off for the
     whole Cloud project — and reporting all three as "you don't have edit access" sent a user with a
@@ -59,7 +71,7 @@ def append_text(access_token: str, document_id: str, text: str) -> str:
             body={"requests": [{"insertText": {"endOfSegmentLocation": {}, "text": formatted_text}}]},
         ).execute()
         return "Appended successfully."
-    except HttpError as error:
+    except _http_error() as error:
         status = getattr(error.resp, "status", None)
         if status == 404:
             return "ERROR: that document no longer exists or was deleted."
