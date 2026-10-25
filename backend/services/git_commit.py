@@ -413,6 +413,18 @@ def build_plan(api: Any, repo: str, branch: str, files: Dict[str, str], expected
 MERGE_METHODS = ("squash", "merge", "rebase")
 
 
+def find_open_pull_request(api: Any, repo: str, head: str, base: Optional[str] = None) -> Optional[int]:
+    """The number of the open pull request from branch `head` (into `base`, when given), or None. Blocking."""
+    owner = repo.split("/", 1)[0]
+    status, data = api.request("GET", f"/repos/{repo}/pulls?state=open&head={owner}:{head}&per_page=10")
+    if status != 200 or not isinstance(data, list):
+        raise _explain(status, data, "list the pull requests")
+    for pull in data:
+        if isinstance(pull, dict) and (base is None or (pull.get("base") or {}).get("ref") == base):
+            return int(pull.get("number"))
+    return None
+
+
 def pull_request_info(api: Any, repo: str, number: int) -> Dict[str, Any]:
     """The state of a pull request as GitHub has it now, or GitCommitError."""
     status, data = api.request("GET", f"/repos/{repo}/pulls/{int(number)}")

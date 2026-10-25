@@ -125,6 +125,13 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
         "paths": {"type": "array", "items": {"type": "string"}, "description": "optional: only these files"},
         "scope": {"type": "string", "enum": ["applied", "working"], "description": "applied = only the files you changed and they applied; working = every file in their folder that differs from the branch on GitHub (what git status would list). Default: applied when any are waiting, otherwise working"},
     }, ["message"]),
+    # the person's own GitHub token: a card for merging an open pull request, by number or by the branch it comes from. Merges nothing until the person approves.
+    "propose_merge": _object({
+        "pr_number": {"type": "integer", "description": "the pull request's number"},
+        "head": {"type": "string", "description": "or: the branch the pull request comes from, for example feat/checkouts"},
+        "base": {"type": "string", "description": "optional: the branch it merges into"},
+        "method": {"type": "string", "enum": ["squash", "merge", "rebase"], "description": "optional; default squash"},
+    }, []),
     # a connected local folder: run Python tests in the WASI sandbox against a copy of it (backend/services/sandbox_tests.py). Changes nothing.
     "run_sandbox_tests": _object({
         "tests": {"type": "array", "items": {"type": "string"}, "description": "paths of Python test files (unittest) in the folder, or created by `edits`, at most 5"},
@@ -206,6 +213,12 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
 # Descriptions that replace the menu line's text for the native engine. The old menu line describes the OLD engine's way of calling a tool ("as a query step ... never a field
 # inside a final answer"), which would mislead a model that makes real function calls.
 NATIVE_DESCRIPTIONS: Dict[str, str] = {
+    "propose_merge": (
+        "Show the person a card for merging an OPEN pull request, built from the pull request as GitHub has it right now, using THEIR token. Pass the number (pr_number) or the branch it comes from "
+        "(head, for example feat/checkouts), and base if they named the target. Nothing is merged until they approve the card. Use it whenever they ask you to merge a pull request or a branch into "
+        "another: you CAN do this, never say you cannot. Call it once and then stop: say the card is waiting for their approval, never that it was merged. It is refused in a turn where you read a web "
+        "page, email, shared document or logs."
+    ),
     "propose_commit": (
         "Commit their work to GitHub, with THEIR token, the way a person commits after a piece of work: the files you changed and they applied (scope applied), or all their working changes, meaning every file in their folder that differs from the branch on GitHub (scope working: use it for \"commit our working changes\" or \"commit everything\"). A short message, onto the branch their folder is on, or onto a "
         "new branch you name (new_branch), optionally opening a pull request (open_pull_request, pr_title, pr_base, pr_draft). It changes nothing by itself: they see a card with the repo, branch, files with line counts and the "

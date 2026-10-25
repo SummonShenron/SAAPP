@@ -59,6 +59,14 @@ def wants_commit(text: Any) -> bool:
     return False
 
 
+_MERGE_REQUEST = re.compile(r"^\W*(?:(?:please|can you|could you|go ahead and)\s+)?merge\b", re.IGNORECASE)
+
+
+def wants_merge(text: Any) -> bool:
+    """True when the message asks to merge something ("merge feat/x into main", "merge PR 129"), as opposed to mentioning a merge. Pure."""
+    return bool(_MERGE_REQUEST.search(str(text or "")))
+
+
 def continues_commit_request(messages: Any, content_of: Callable[[Any], str]) -> bool:
     """True when one of the person's last two messages before this one asked for a commit, push or new branch: a short follow-up ("make the message shorter", "try again", "okay do it") belongs to
     the same request even though it has none of those words itself. `messages` is the whole conversation including this message; `content_of` reads a message's text. Pure."""
@@ -359,6 +367,47 @@ def parse_merge_card(content: str) -> Optional[Dict[str, Any]]:
         "repo": repo.group(1), "number": int(pr.group(1)), "title": pr.group(2) or "", "head": branches.group(1) if branches else None, "base": branches.group(2) if branches else None,
         "method": branches.group(3) if branches else "squash", "head_sha": head.group(1) if head else None,
     }
+
+
+def draft_merge(username: str, args: Dict[str, Any], *, repo: str, api_factory: Optional[Callable[[str], Any]] = None) -> Tuple[Dict[str, Any], str]:
+    """(details, card text) for merging an open pull request the person asked about, by number or by the branch it comes from, or GitCommitError in words. The card is the same one that follows a
+    commit, built from the pull request as GitHub has it NOW (so a card made earlier, for a head that has since moved, is replaced by one for the current head). Nothing is merged. Blocking."""
+    if not repo:
+        raise gc.GitCommitError("I don't know which repository to merge in. Set your target repo first.")
+    api = (api_factory or gc.GitHubApi)(_own_token(username))
+    info = gc.repo_info(api, repo)
+    if not info["can_push"]:
+        raise gc.GitCommitError(f"Your GitHub token can read {repo} but not push to it, so it cannot merge here. It needs write access.")
+    method = str(args.get("method") or "squash").strip().lower()
+    if method not in gc.MERGE_METHODS:
+        raise gc.GitCommitError("The merge method has to be squash, merge or rebase.")
+    number = args.get("pr_number")
+    head = _flat(args.get("head"), gc.MAX_BRANCH_CHARS)
+    base = _flat(args.get("base"), gc.MAX_BRANCH_CHARS) or None
+    if number is None and head:
+        number = gc.find_open_pull_request(api, repo, gc.clean_branch(head), gc.clean_branch(base) if base else None)
+        if number is None:
+            raise gc.GitCommitError(f"There is no open pull request from {head!r}{f' into {base!r}' if base else ''} in {repo}. If the changes are not pushed yet, ask me to commit them and open one.")
+    if number is None:
+        raise gc.GitCommitError("Tell me which pull request to merge: its number, or the branch it comes from.")
+    try:
+        number = int(number)
+    except (TypeError, ValueError):
+        raise gc.GitCommitError("The pull request number has to be a number.") from None
+    pull = gc.pull_request_info(api, repo, number)
+    if pull["merged"]:
+        raise gc.GitCommitError(f"Pull request #{number} is already merged.")
+    if pull["state"] != "open":
+        raise gc.GitCommitError(f"Pull request #{number} is closed.")
+    if pull["draft"]:
+        raise gc.GitCommitError(f"Pull request #{number} is a draft; mark it ready for review on GitHub first.")
+    if pull["mergeable"] is False:
+        raise gc.GitCommitError(f"GitHub says pull request #{number} has conflicts with {pull['base_ref']}, so it cannot be merged yet.")
+    if base and pull["base_ref"] != base:
+        raise gc.GitCommitError(f"Pull request #{number} merges into {pull['base_ref']}, not {base}.")
+    title = pull["title"] or "Merge"
+    details = {"repo": repo, "number": number, "title": title, "head": pull["head_ref"], "base": pull["base_ref"], "method": method, "head_sha": (pull["head_sha"] or "")[:12] or None}
+    return details, merge_card(repo, number, title, pull["head_ref"] or "", pull["base_ref"] or "", pull["head_sha"] or "", method)
 
 
 def is_complete_merge(details: Dict[str, Any]) -> bool:

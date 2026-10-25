@@ -727,7 +727,7 @@ def build_agent_plan(intent: str, state: dict) -> dict:
     # A request to commit, push or open a new branch (with or without the pull request after it) is the tool agent's propose_commit, not this drafter: the drafter only compares two
     # branches that already differ, and for "open a new branch called x and commit our changes" it invented a head branch that did not exist.
     _last = _content_of(state["messages"][-1]) if state.get("messages") else ""
-    if (intent == "create_pr" or flags.get("needs_create_pr")) and (commit_flow.wants_commit(_last) or commit_flow.continues_commit_request(state.get("messages"), _content_of)):
+    if (intent == "create_pr" or flags.get("needs_create_pr")) and (commit_flow.wants_commit(_last) or commit_flow.wants_merge(_last) or commit_flow.continues_commit_request(state.get("messages"), _content_of)):
         llm_turns.note_route(["commit_request"])
         state["last_intent"] = "tool_agent"
         return {"agents": ["tool_agent", "formatter"], "skip": []}
@@ -3022,6 +3022,12 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 "files and message, and commits nothing until they approve it. Use it when they ask you to commit, push, or open a pull request for the work. Call it as a \"query\" step and "
                 "then stop: the card is your answer, so do not say it was committed."
             )
+        if not is_guest_username(username):
+            menu_lines.append(
+                "- propose_merge — args: pr_number (the pull request's number), or head (the branch it comes from, for example feat/checkouts) and optionally base, method (squash, merge or rebase; default squash). "
+                "Shows the person a card for merging an OPEN pull request, built from the pull request as GitHub has it right now, with THEIR token; nothing is merged until they approve it. Use it whenever they ask "
+                "you to merge a pull request or a branch into another: you CAN do this, never say you cannot. Call it as a \"query\" step and then stop: the card is your answer, so do not say it was merged."
+            )
         actions_menu = "\n".join(menu_lines)
         # The ops actions are batchable only for an admin who is actually offered them (they are not even named for anyone else).
         batchable_actions = TOOL_AGENT_BATCHABLE_ACTIONS | (
@@ -3066,7 +3072,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             return await asyncio.to_thread(_scan)
 
         def _is_unsafe(decision: dict) -> bool:
-            if decision.get("tool_action") in {"propose_append_target_doc", "propose_send_email", "propose_code_plan", "propose_commit"}:
+            if decision.get("tool_action") in {"propose_append_target_doc", "propose_send_email", "propose_code_plan", "propose_commit", "propose_merge"}:
                 return True  # inherently a write — no keyword scan needed, unlike run_mongo_query
             if decision.get("tool_action") != "run_mongo_query":
                 return False
@@ -3591,6 +3597,34 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                         "generation": commit_message_text,
                         "content_to_format": commit_message_text,
                         "messages": list(state.get("messages", [])) + [AIMessage(content=commit_message_text)],
+                    }
+
+                if e.decision.get("tool_action") == "propose_merge":
+                    try:
+                        if untrusted_used:
+                            raise git_commit.GitCommitError(
+                                "I read content written by someone else in this message (a web page, an email, a shared document or logs), and I don't merge in the same message as that. "
+                                "Ask me to merge in a new message."
+                            )
+                        merge_details, merge_card_text = await asyncio.to_thread(commit_flow.draft_merge, username, e.decision.get("args") or {}, repo=repo)
+                    except git_commit.GitCommitError as problem:
+                        refusal = f"I can't merge this yet: {problem}"
+                        return {
+                            **state,
+                            "pending_action": None,
+                            "relevance_grade": "conversational",
+                            "generation": refusal,
+                            "content_to_format": f"{refusal}\n\nNOTE (authoritative): no approval card exists and nothing was merged. Do not tell the person to approve anything or say that merging is something you cannot do; give the reason above and offer to try again.",
+                            "messages": list(state.get("messages", [])) + [AIMessage(content=refusal)],
+                        }
+                    merge_message_text = commit_flow.approval_message(merge_card_text, merge=True)
+                    return {
+                        **state,
+                        "pending_action": {"action_type": "merge_pull_request", "details": merge_details},
+                        "relevance_grade": "hitl_approval_required",
+                        "generation": merge_message_text,
+                        "content_to_format": merge_message_text,
+                        "messages": list(state.get("messages", [])) + [AIMessage(content=merge_message_text)],
                     }
 
                 if e.decision.get("tool_action") == "propose_send_email":

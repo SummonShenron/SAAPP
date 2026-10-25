@@ -250,7 +250,7 @@ def test_a_commit_that_cannot_be_drafted_says_why_instead_of_showing_a_card(worl
 
 def test_the_tool_is_in_the_menu_the_native_schema_and_the_unsafe_list_and_the_folder_paragraph_tells_it_what_is_waiting(world):
     source = (ROOT / "backend" / "services" / "agent_workflow.py").read_text(encoding="utf-8")
-    assert '"- propose_commit — args: message' in source and '"propose_commit"}' in source and "commit_flow.pending_line, username, state.get(\"git_branch\")" in source
+    assert '"- propose_commit — args: message' in source and '"propose_commit", "propose_merge"}' in source and "commit_flow.pending_line, username, state.get(\"git_branch\")" in source
     from backend.services import native_tools as nt
 
     declared = nt.declarations_from_menu(["- propose_commit — args: message, new_branch"])
@@ -612,3 +612,104 @@ def test_after_a_merge_the_result_says_how_to_update_the_target_branch_and_offer
     assert _block(out) == ["git fetch origin", "git checkout main", "git pull --ff-only origin main"]
     assert "git branch -D sonic/hello" in out and "capital D" in out
     assert "git branch -D" not in cf.catch_up_after_merge("main", "main")
+
+
+# ---- "merge feat/x into main": a card on request, from the pull request as it is now ---------------------------------------------------------------
+
+def _open_pr(world, **extra):
+    """A commit on a new branch with an open pull request, as Sonic leaves it (the merge card from that reply is ignored here)."""
+    _committed_with_pr(world, **extra)
+    return world.pulls[-1]
+
+
+def test_a_request_to_merge_gets_a_fresh_card_by_number_or_by_branch(world):
+    _open_pr(world)
+    for args in ({"pr_number": 1}, {"head": "sonic/hello"}, {"head": "sonic/hello", "base": "main"}, {"pr_number": "1", "method": "rebase"}):
+        details, card = cf.draft_merge(USER, args, repo=REPO)
+        assert details["number"] == 1 and details["head"] == "sonic/hello" and details["base"] == "main" and details["head_sha"] == world.branches["sonic/hello"][:12]
+        parsed = cf.parse_merge_card(cf.approval_message(card, merge=True))
+        assert parsed["number"] == 1 and parsed["head"] == "sonic/hello" and parsed["method"] == details["method"] and parsed["head_sha"] == details["head_sha"]
+    assert world.merge_calls == [], "a card is not a merge"
+
+
+def test_a_card_made_before_the_branch_moved_is_replaced_by_one_for_the_current_head(world):
+    _open_pr(world)
+    old, _ = cf.draft_merge(USER, {"head": "sonic/hello"}, repo=REPO)
+    world.move_branch_elsewhere("sonic/hello")                      # a second commit lands on the branch, as it did on PR 129
+    assert "new commits since the card was shown" in cf.execute_merge(USER, {**old, "head_sha": old["head_sha"]})
+    fresh, card = cf.draft_merge(USER, {"head": "sonic/hello"}, repo=REPO)
+    assert fresh["head_sha"] == world.branches["sonic/hello"][:12] != old["head_sha"] and fresh["head_sha"] in card
+    assert cf.execute_merge(USER, fresh).startswith("**Merged** pull request #1")
+
+
+def test_a_merge_request_that_cannot_be_carried_out_says_why(world):
+    _open_pr(world)
+    for args, fragment in (({}, "which pull request"), ({"head": "nope"}, "no open pull request"), ({"pr_number": 99}, "could not find"), ({"pr_number": "abc"}, "has to be a number"),
+                           ({"pr_number": 1, "method": "fast"}, "squash, merge or rebase")):
+        with pytest.raises(gc.GitCommitError, match=fragment):
+            cf.draft_merge(USER, args, repo=REPO)
+    with pytest.raises(gc.GitCommitError, match="which repository"):
+        cf.draft_merge(USER, {"pr_number": 1}, repo="")
+    world.mergeable = False
+    with pytest.raises(gc.GitCommitError, match="conflicts"):
+        cf.draft_merge(USER, {"pr_number": 1}, repo=REPO)
+    world.mergeable = True
+    with pytest.raises(gc.GitCommitError, match="merges into main, not develop"):
+        cf.draft_merge(USER, {"pr_number": 1, "base": "develop"}, repo=REPO)
+    world.closed_pulls.add(1)
+    with pytest.raises(gc.GitCommitError, match="closed"):
+        cf.draft_merge(USER, {"pr_number": 1}, repo=REPO)
+    world.closed_pulls.clear()
+    world.merged_pulls.add(1)
+    with pytest.raises(gc.GitCommitError, match="already merged"):
+        cf.draft_merge(USER, {"pr_number": 1}, repo=REPO)
+    world.can_push = False
+    with pytest.raises(gc.GitCommitError, match="cannot merge here"):
+        cf.draft_merge(USER, {"pr_number": 1}, repo=REPO)
+
+
+def test_a_draft_pull_request_is_not_offered_for_merging(world):
+    _open_pr(world, pr_draft=True)
+    with pytest.raises(gc.GitCommitError, match="is a draft"):
+        cf.draft_merge(USER, {"head": "sonic/hello"}, repo=REPO)
+
+
+def merge_decision(**args):
+    return {"tool_action": "propose_merge", "args": args}
+
+
+def test_the_tool_agent_answers_a_merge_request_with_a_card_and_merges_nothing(world, monkeypatch):
+    _open_pr(world)
+    out, _ = run(_turn(monkeypatch, [merge_decision(head="sonic/hello", base="main")]))
+    assert out["relevance_grade"] == "hitl_approval_required" and out["pending_action"]["action_type"] == "merge_pull_request"
+    assert out["content_to_format"].startswith("**Approval Required**") and cf.MERGE_MARKER in out["content_to_format"] and "Nothing is merged until you approve" in out["content_to_format"]
+    assert world.merge_calls == [] and out["pending_action"]["details"]["number"] == 1
+
+
+def test_a_merge_request_that_cannot_be_drafted_says_so_and_never_claims_merging_is_impossible(world, monkeypatch):
+    out, _ = run(_turn(monkeypatch, [merge_decision(head="not-a-branch")]))
+    assert out["relevance_grade"] == "conversational" and out["pending_action"] is None and out["content_to_format"].startswith("I can't merge this yet: There is no open pull request")
+    assert "no approval card exists" in out["content_to_format"] and "say that merging is something you cannot do" in out["content_to_format"]
+
+
+def test_a_turn_that_read_outside_text_will_not_merge_in_the_same_message(world, monkeypatch):
+    _open_pr(world)
+    monkeypatch.setattr(aw, "_UNTRUSTED_CONTENT_TOOLS", frozenset({"list_repo_tree"}))
+    out, _ = run(_turn(monkeypatch, [{"tool_action": "list_repo_tree", "args": {}}, merge_decision(pr_number=1)]))
+    assert out["pending_action"] is None and "Ask me to merge in a new message" in out["content_to_format"]
+
+
+def test_merge_requests_are_recognised_routed_to_the_tool_agent_and_the_tool_is_offered():
+    from langchain_core.messages import HumanMessage
+
+    for text in ("merge feat/checkouts into main", "Merge PR 129", "please merge it", "can you merge the pull request", "  merge #129"):
+        assert cf.wants_merge(text) is True, text
+    for text in ("what does a merge conflict mean", "I merged it myself", "open a pr to merge x into main", "the merge went fine"):
+        assert cf.wants_merge(text) is False, text
+    state = {"reasoner_flags": {"needs_create_pr": True}, "messages": [HumanMessage(content="merge feat/checkouts into main")]}
+    assert aw.build_agent_plan("create_pr", state)["agents"] == ["tool_agent", "formatter"] and "write_action" not in state
+    from backend.services import native_tools as nt
+
+    assert "propose_merge" in nt.REGISTRY and nt.REGISTRY["propose_merge"]["required"] == [] and "propose_merge" in nt.NATIVE_DESCRIPTIONS
+    source = (ROOT / "backend" / "services" / "agent_workflow.py").read_text(encoding="utf-8")
+    assert "propose_merge — args: pr_number" in source and "\"propose_merge\"}" in source and "commit_flow.draft_merge" in source

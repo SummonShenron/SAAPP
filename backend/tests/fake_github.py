@@ -126,6 +126,13 @@ class FakeGitHub:
         if method == "POST" and path == f"{base}/pulls":
             self.pulls.append(body)
             return 201, {"html_url": f"https://github.com/{self.repo}/pull/{len(self.pulls)}", "number": len(self.pulls)}
+        listing = re.match(rf"{re.escape(base)}/pulls\?(.*)$", path)
+        if method == "GET" and listing:
+            query = dict(part.split("=", 1) for part in listing.group(1).split("&") if "=" in part)
+            wanted = query.get("head", "").split(":", 1)[-1]
+            found = [{"number": i + 1, "head": {"ref": pull["head"]}, "base": {"ref": pull["base"]}} for i, pull in enumerate(self.pulls)
+                     if (not wanted or pull["head"] == wanted) and (i + 1) not in self.merged_pulls and (i + 1) not in self.closed_pulls]
+            return 200, found
         match = re.match(rf"{re.escape(base)}/pulls/(\d+)$", path)
         if method == "GET" and match:
             number = int(match.group(1))
