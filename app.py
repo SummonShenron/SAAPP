@@ -134,6 +134,7 @@ from backend.components.sonic_profile import SONIC_PROFILE
 from backend.utils.time_utils import build_time_context, local_today, sent_at, stamp
 from backend.utils import open_loops as open_loops_utils
 from backend.utils import working_state as working_state_utils
+from backend.utils import code_plan as code_plan_utils
 from backend.utils import clarifications as clarify_utils
 from backend.utils import initiation as initiation_utils
 from backend.utils import reach as reach_utils
@@ -164,7 +165,7 @@ from backend.utils import calendar_headsups as headsups_utils
 from backend.utils.shared_history import CALLBACK_MARK, build_callback_block, callback_allowed
 from backend.utils.user_settings_utils import (
     get_user_rag_mode, set_user_rag_mode, VALID_RAG_MODES,
-    get_user_deep_thinking_mode, set_user_deep_thinking_mode,
+    get_user_deep_thinking_mode, set_user_deep_thinking_mode, get_user_plan_mode, set_user_plan_mode,
     tool_model_view, save_tool_model_choice,
     get_user_target_repo, set_user_target_repo,
     get_user_settings_bundle,
@@ -404,6 +405,14 @@ class GoalApproval(BaseModel):
 
 class DeepThinkingUpdate(BaseModel):
     deep_thinking: bool
+
+class PlanModeUpdate(BaseModel):
+    plan_mode: bool
+
+class CodePlanAction(BaseModel):
+    action: str                                  # "approve" | "cancel" | "edit_step" | "remove_step"
+    step_id: Optional[str] = None
+    text: Optional[str] = None
 
 class ToolModelUpdate(BaseModel):
     tool_model: str
@@ -789,9 +798,18 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     request_id = uuid.uuid4().hex
     # This conversation's working notes (backend/utils/working_state.py), for the tool agent; empty for most conversations, and read from a short-lived cache.
     working_notes = "" if is_guest_username(username) else await asyncio.to_thread(working_state_utils.load_context, username, session_id)
+    # Plan mode (backend/utils/code_plan.py): the person's opt-in, held back in low-power mode (a plan turn is an extra model loop). An approved plan is carried out whatever the setting says now.
+    plan_turn = {"phase": None, "context": ""}
+    if folder_connected and not is_guest_username(username):
+        plan_turn = await asyncio.to_thread(
+            code_plan_utils.prepare, get_db(), username, session_id, question,
+            plan_mode=bool(_settings.get("plan_mode")) and budget_guard.allows("plan_mode", budget_state),
+        )
     initial_state: GraphState = {
         "messages": messages_state,
         "working_notes": working_notes or None,
+        "code_plan_phase": plan_turn["phase"],
+        "code_plan_context": plan_turn["context"] or None,
         "username": username,
         "session_id": session_id,
         "target_scope": target_scope,
@@ -1673,7 +1691,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             code_summary = code_outcomes.summarize_turn(llm_turn)  # None unless the tool agent worked on the repo or the connected folder this turn
             if code_summary:
                 ai_message.additional_kwargs[code_outcomes.CODE_MARK] = True  # so the next message can be read as what happened to the work
-                code_outcomes.tally_turn(turn_counts, code_summary)
+                code_outcomes.tally_turn(turn_counts, code_summary, final_state.get("code_plan_phase"))
             if ai_message.additional_kwargs.get(curiosity_utils.CURIOSITY_MARK):
                 tally(turn_counts, "offer_made")  # whatever kind of offer it was, once: the volume the welcome goal's guardrail reads (backend/utils/goals.py)
             if clarify_entry:
@@ -2313,6 +2331,7 @@ async def clear_memory(current_user = Depends(get_current_user)):
     await asyncio.to_thread(headsups_utils.forget_all, username)
     await asyncio.to_thread(clarify_utils.forget_all, username)
     await asyncio.to_thread(working_state_utils.clear_all, get_db(), username)
+    await asyncio.to_thread(code_plan_utils.clear_all, get_db(), username)
     if result["failed"]:
         # Never report a partial wipe as success: the page says it permanently deletes everything.
         raise HTTPException(status_code=500, detail="Some of your memory could not be deleted. Please try again.")
@@ -2754,6 +2773,47 @@ async def update_deep_thinking_setting(payload: DeepThinkingUpdate, current_user
     username = current_user.get("sub")
     saved = set_user_deep_thinking_mode(username, payload.deep_thinking)
     return {"deep_thinking": saved}
+
+
+@app.get("/api/settings/plan-mode")
+async def get_plan_mode_setting(current_user = Depends(get_current_user)):
+    return {"plan_mode": get_user_plan_mode(current_user.get("sub"))}
+
+
+@app.put("/api/settings/plan-mode")
+async def update_plan_mode_setting(payload: PlanModeUpdate, current_user = Depends(get_current_user)):
+    return {"plan_mode": set_user_plan_mode(current_user.get("sub"), payload.plan_mode)}
+
+
+@app.get("/api/code-plan")
+async def get_code_plan(session_id: str = Query(...), current_user = Depends(get_current_user)):
+    """The conversation's plan for the plan card (backend/utils/code_plan.py): {"plan": null} when there is none."""
+    username = current_user.get("sub")
+    if is_guest_username(username):
+        return {"plan": None}
+    return code_plan_utils.public_view(await asyncio.to_thread(code_plan_utils.load, get_db(), username, session_id))
+
+
+@app.patch("/api/code-plan")
+async def act_on_code_plan(action: CodePlanAction, session_id: str = Query(...), current_user = Depends(get_current_user)):
+    """The person approves or cancels the plan, rewrites a step, or removes one. Nothing is edited by any of these."""
+    username = current_user.get("sub")
+    if is_guest_username(username):
+        raise HTTPException(status_code=403, detail="Sign in to use plans.")
+    db = get_db()
+    if action.action in ("approve", "cancel"):
+        plan = await asyncio.to_thread(code_plan_utils.set_state, db, username, session_id, code_plan_utils.APPROVED if action.action == "approve" else code_plan_utils.CANCELLED)
+    elif action.action in ("edit_step", "remove_step") and action.step_id:
+        plan = await asyncio.to_thread(code_plan_utils.edit_step, db, username, session_id, action.step_id, action.text if action.action == "edit_step" else None)
+    else:
+        raise HTTPException(status_code=400, detail="Unknown plan action.")
+    if plan is None:
+        raise HTTPException(status_code=404, detail="There is no plan to change.")
+    if action.action in ("approve", "cancel"):
+        from backend.utils.self_counters import record_turn_counts
+
+        await asyncio.to_thread(record_turn_counts, {"code_plan_approved" if action.action == "approve" else "code_plan_cancelled": 1})
+    return code_plan_utils.public_view(plan)
 
 
 @app.get("/api/settings/tool-model")
@@ -3363,6 +3423,10 @@ async def report_local_edit_decision(proposal_id: str, payload: EditDecisionRequ
     if payload.outcome == "applied":
         # Whether or not a turn was waiting: these files are now changed work that a commit may include (backend/utils/applied_changes.py).
         applied_changes.record(username, local_edit_decisions.changes_for(username, proposal_id))
+        # An approved plan (backend/utils/code_plan.py): the steps these files finish are done now, whether or not a turn is waiting.
+        finished = await asyncio.to_thread(code_plan_utils.record_applied_for_user, get_db(), username, list(local_edit_decisions.changes_for(username, proposal_id)))
+        if finished:
+            await asyncio.to_thread(record_turn_counts, {"code_plan_steps_done": finished})
     return {"status": status}
 
 

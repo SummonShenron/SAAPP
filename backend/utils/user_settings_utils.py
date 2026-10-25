@@ -23,6 +23,7 @@ VALID_RAG_MODES = {RAG_MODE_STRICT, RAG_MODE_OPEN}
 DEFAULT_RAG_MODE = RAG_MODE_OPEN
 
 DEFAULT_DEEP_THINKING = False
+DEFAULT_PLAN_MODE = False       # "Plan first": a change to the person's folder starts with a plan they approve (backend/utils/code_plan.py)
 
 # Which model does the tool agent's reasoning steps (reading code, searching, writing the code in its answer): "gemini" or "claude". The reply the person reads is
 # still written by Gemini either way, so "claude" is the hybrid. A person who never chose has no stored value and gets the server's default (TOOL_AGENT_PROVIDER,
@@ -111,6 +112,11 @@ def _resolve_deep_thinking(doc: dict) -> bool:
     return enabled if isinstance(enabled, bool) else DEFAULT_DEEP_THINKING
 
 
+def _resolve_plan_mode(doc: dict) -> bool:
+    enabled = doc.get("plan_mode")
+    return enabled if isinstance(enabled, bool) else DEFAULT_PLAN_MODE
+
+
 def _resolve_target_repo(doc: dict) -> Optional[str]:
     repo = doc.get("target_repo")
     return repo if repo and _TARGET_REPO_RE.match(repo) else None
@@ -195,6 +201,27 @@ def set_user_deep_thinking_mode(username: str, enabled: bool) -> bool:
     return enabled
 
 
+def get_user_plan_mode(username: str) -> bool:
+    """Whether the person asked for a plan before edits (default off; locked identities always off)."""
+    if username in TOGGLE_LOCKED_USERS:
+        return DEFAULT_PLAN_MODE
+    return _resolve_plan_mode(_fetch_settings_doc(username))
+
+
+def set_user_plan_mode(username: str, enabled: bool) -> bool:
+    """Validates and persists the "Plan first" setting. Locked identities are always forced off."""
+    enabled = bool(enabled)
+    if username in TOGGLE_LOCKED_USERS:
+        enabled = DEFAULT_PLAN_MODE
+
+    db = get_db()
+    if db is not None:
+        db["user_settings"].update_one({"username": username}, {"$set": {"plan_mode": enabled}}, upsert=True)
+
+    _write_local_setting(username, "plan_mode", enabled)
+    return enabled
+
+
 def get_user_tool_model(username: str) -> Optional[str]:
     """The person's stored choice of tool-agent model, or None when they never chose. A guest or the embed is always Gemini."""
     if username in TOOL_MODEL_LOCKED_USERS:
@@ -255,11 +282,12 @@ def get_user_settings_bundle(username: str) -> dict:
     chat-request path, which used to call the three getters above separately (3 network round
     trips per message for 3 fields on the exact same document) instead of once."""
     if username in TOGGLE_LOCKED_USERS:
-        return {"rag_mode": RAG_MODE_STRICT, "deep_thinking": DEFAULT_DEEP_THINKING, "target_repo": None, "tool_model": TOOL_MODEL_GEMINI, "profile": profile_utils.stored_profile({})}
+        return {"rag_mode": RAG_MODE_STRICT, "deep_thinking": DEFAULT_DEEP_THINKING, "plan_mode": DEFAULT_PLAN_MODE, "target_repo": None, "tool_model": TOOL_MODEL_GEMINI, "profile": profile_utils.stored_profile({})}
     doc = _fetch_settings_doc(username)
     return {
         "rag_mode": _resolve_rag_mode(doc),
         "deep_thinking": _resolve_deep_thinking(doc),
+        "plan_mode": _resolve_plan_mode(doc),
         "target_repo": _resolve_target_repo(doc),
         "tool_model": TOOL_MODEL_GEMINI if username in TOOL_MODEL_LOCKED_USERS else _resolve_tool_model(doc),
         "profile": _resolve_profile(doc),  # the profile page's fields (backend/utils/profile_utils.py), read from the same document

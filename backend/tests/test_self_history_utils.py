@@ -236,3 +236,36 @@ def test_the_drift_check_actually_catches_a_missing_file_and_a_missing_symbol():
     assert _check_requirement("backend/utils/open_loops.py::def select_followup") is None
     assert "does not exist" in _check_requirement("backend/utils/removed_feature.py")
     assert "no longer contains" in _check_requirement("backend/utils/open_loops.py::def a_function_that_was_renamed")
+
+
+# ---- questions about what Sonic has or lacks (it proposed building things it already had) ---------------------------
+
+@pytest.mark.parametrize("message", [
+    "lets do it, what do you think is missing from your aresenal?",
+    "what are you capable of?",
+    "what should we add next?",
+    "check your changelog you can already do most of that",
+    "you already have that",
+])
+def test_ability_questions_and_pushback_bring_in_the_whole_list(message):
+    got = pick(message)
+    assert got["mode"] == "inventory" and len(got["titles"]) == len(CHANGELOG) and 0 < len(got["entries"]) <= sh.MAX_INVENTORY_ENTRIES
+    block = sh.build_self_history_block(got)
+    assert "WHAT YOU CAN ALREADY DO" in block and CHANGELOG[0]["title"] in block
+
+
+@pytest.mark.parametrize("message", ["what's missing from this function?", "what is the largest file you already have in the repo", "can you write me a poem", "what's new in python 3.13"])
+def test_questions_about_something_else_leave_the_changelog_alone(message):
+    got = pick(message)
+    assert got is None or got["mode"] != "inventory"
+
+
+def test_the_entries_are_ranked_on_what_sonic_just_said():
+    reply = SimpleNamespace(type="ai", content="The biggest gap is running tests in a sandbox before proposing a change.", additional_kwargs={})
+    got = pick("check your changelog", [reply])
+    assert "sandbox_tests" in [e["id"] for e in got["entries"]]
+
+
+def test_a_safety_context_or_a_closing_message_still_gets_nothing():
+    assert pick("what are you missing?", risk_active=True) is None and pick("what are you missing?", closing=True) is None
+    assert pick("what are you missing?", source_type="rag") is None

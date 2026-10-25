@@ -645,7 +645,7 @@ def test_the_steps_notice_on_a_change_request_asks_for_the_proposal_not_for_the_
 
 def test_the_engine_choice_keeps_a_change_request_native_when_the_tool_is_offered():
     source = open("backend/services/agent_workflow.py", encoding="utf-8").read()
-    assert 'edit_turn=edit_turn and not any(tool.get("name") == "propose_local_edits" for tool in native_tools)' in source
+    assert 'edit_turn=edit_turn and plan_phase != code_plan.PLAN_PHASE and not any(tool.get("name") == "propose_local_edits" for tool in native_tools)' in source
     assert 'required_action=kwargs.get("required_action")' in source
 
 

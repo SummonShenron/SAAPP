@@ -24,6 +24,7 @@ SELF_HISTORY_MARK = "self_history_offered"
 SELF_HISTORY_MIN_GAP = 12  # messages (both sides) that must pass after a volunteered mention before another
 VOLUNTEER_MAX_AGE_DAYS = 120
 MAX_ASKED_ENTRIES = 3
+MAX_INVENTORY_ENTRIES = 5
 _ROUTES = {"conversational"}
 
 # Every pattern has to point at Sonic itself: "what's new in python 3.13" and "what changed in this commit" are about
@@ -48,6 +49,27 @@ _ASKS_RE = re.compile(
     r"|\bhow old are you\b|\bwhat were you (?:like )?(?:before|originally|at first)\b",
     re.IGNORECASE,
 )
+
+
+# Questions about what Sonic has or lacks, and a person pointing back at what it already does. The changelog is the only true record of that, so these get it too:
+# without it Sonic proposes building things it already has ("a planner / reflection node"), because nothing in its prompt says they exist.
+_ABILITY_RE = re.compile(
+    r"\bwhat(?:'s| is| are)?\s+you(?:'re| are)\s+(?:missing|lacking)\b|\b(?:missing|lacking)\s+(?:from|in)\s+(?:you|your)\b"
+    r"|\bwhat do you (?:lack|not have|still need)\b|\bwhat (?:else )?(?:are|do) you (?:still )?(?:missing|lack)"
+    r"|\b(?:your|ur)\s+(?:arsenal|aresenal|toolbox|toolkit|tool belt|capabilities|abilities|limitations|weaknesses|gaps|blind spots)\b"
+    r"|\bwhat are you (?:capable|able) of\b|\bwhat (?:tools|abilities|capabilities|features) do you (?:have|lack)\b"
+    r"|\bwhat (?:should|could|would|can) (?:we|i) (?:add|build|work on|improve|upgrade|do) (?:to|for|on)? ?(?:you|next)\b|\bwhat(?:'s| is) next for you\b"
+    r"|\bwhat would make you (?:better|stronger|more capable|more useful|smarter)\b|\bhow (?:could|can|should) (?:we|i) (?:improve|upgrade|level up) you\b"
+    r"|\b(?:check|read|look (?:at|in|through)|consult|see|review)\s+(?:your|the)\s+(?:change ?log|release notes|capabilities|abilities)\b|\byour change ?log\b"
+    r"|\byou (?:can |could )?already (?:can |could )?(?:do|handle|support)\b|\byou already (?:have|had|got) (?:that|this|it|those|these)\b|\byou (?:do|can) (?:already )?have (?:that|this|it|those|these)(?: already)?\b"
+    r"|\bdon'?t you (?:already )?(?:have|do|support)\b",
+    re.IGNORECASE,
+)
+
+
+def asks_about_abilities(message: str) -> bool:
+    """Whether the person is asking what Sonic has or lacks, or telling it that it already has something."""
+    return bool(_ABILITY_RE.search(message or ""))
 
 
 def asks_about_history(message: str) -> bool:
@@ -90,6 +112,13 @@ def _ranked_for_ask(message: str, entries: List[Dict[str, Any]]) -> List[Dict[st
     return [t[3] for t in scored]
 
 
+def _last_reply_text(recent_messages: Iterable[Any]) -> str:
+    for m in reversed(list(recent_messages)):
+        if getattr(m, "type", "") == "ai":
+            return str(getattr(m, "content", "") or "")[:1500]
+    return ""
+
+
 def select_self_history(
     message: str,
     recent_messages: Iterable[Any],
@@ -108,6 +137,10 @@ def select_self_history(
         return None
     if asks_about_history(message):
         return {"mode": "asked", "entries": _ranked_for_ask(message, entries)[:MAX_ASKED_ENTRIES]}
+    if asks_about_abilities(message):
+        # The question often says little ("check your changelog") and points at what Sonic just said, so the entries are ranked on that reply too.
+        context = f"{message} {_last_reply_text(recent_messages)}"
+        return {"mode": "inventory", "entries": _ranked_for_ask(context, entries)[:MAX_INVENTORY_ENTRIES], "titles": [e.get("title", "") for e in entries if e.get("title")]}
     if proactive_taken or energy_tier != "open" or recently_offered(recent_messages):
         return None
     moment = now or datetime.now(timezone.utc)
@@ -125,6 +158,18 @@ def build_self_history_block(selection: Optional[Dict[str, Any]]) -> str:
     if not selection or not selection.get("entries"):
         return ""
     entries = selection["entries"]
+    if selection["mode"] == "inventory":
+        lines = "\n".join(f"- ({month_label(e['month'])}) {e['line']}" for e in entries)
+        titles = "; ".join(selection.get("titles") or [])
+        return (
+            "\nWHAT YOU CAN ALREADY DO (your own changelog; true, and the only record you have of it):\n"
+            f"Everything listed, by title: {titles}.\n"
+            f"The ones closest to this conversation, in full:\n{lines}\n"
+            "Before you suggest that something is missing or should be built, check it against this list. If it is here, say you can already do it, in what you can do now "
+            "(\"I can already...\"), and say plainly that you were wrong to treat it as missing; do not repeat the suggestion. If it is not here, say it is not on your list, which is "
+            "not proof you cannot do it, and do not invent abilities, dates or reasons. Never describe it as something you remember going through or felt. If you are asked what is "
+            "missing, answer only from what is NOT on this list and what they have told you, and say that the list is curated, so it may be incomplete. Keep it short.\n"
+        )
     if selection["mode"] == "volunteer":
         entry = entries[0]
         return (

@@ -105,10 +105,20 @@ def outcome_counts(outcome: str, changes: Dict[str, Any]) -> Dict[str, int]:
     return {f"code_edit_{outcome}": 1, f"code_edit_{outcome}_{size_bucket(changes)}": 1}
 
 
-def tally_turn(counts: Dict[str, int], summary: Optional[Dict[str, Any]]) -> None:
+def tally_turn(counts: Dict[str, int], summary: Optional[Dict[str, Any]], plan_phase: Optional[str] = None) -> None:
     if not summary:
         return
     tally(counts, "code_turns")
+    if plan_phase == "plan":            # plan mode (backend/utils/code_plan.py): the turn that reads and writes the plan, and the turns that carry an approved one out
+        tally(counts, "code_plan_turns")
+        if summary.get("cap_hit"):
+            tally(counts, "code_plan_turn_cap_hit")
+    elif plan_phase == "execute":
+        tally(counts, "code_plan_exec_turns")
+        if summary.get("cap_hit"):
+            tally(counts, "code_plan_exec_cap_hit")
+        if summary.get("edited"):
+            tally(counts, "code_plan_exec_edited")
     _add(counts, "code_edit_calls", summary.get("edit_calls", 0))
     _add(counts, "code_edit_errors", summary.get("edit_errors", 0))
     _add(counts, "code_test_runs", summary.get("test_runs", 0))

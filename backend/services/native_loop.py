@@ -259,6 +259,7 @@ async def run(
     environment_note: str = "",
     required_action: Optional[Dict[str, Any]] = None,
     is_unsafe: Optional[Callable[[Dict[str, Any]], bool]] = None,
+    plan_budget: Any = None,
 ) -> Dict[str, Any]:
     """Runs the loop and returns what the old loop returns: `{"final_answer", "attempts", "show_work"}`, where each attempt is
     `{"purpose", "action_desc", "observation"}`. `llm` must offer `ainvoke_tools(messages, tools)`. `act(decision)` is the turn's
@@ -405,7 +406,8 @@ async def run(
         tool_name = (required_action or {}).get("tool_action") or ""
         offered_here = [CONTINUE_TOOL] + ([t for t in tools if t.get("name") == tool_name] if can_propose else [])
         mark = len(messages)
-        messages.append(HumanMessage(content=(EDIT_CHECKPOINT_NOTICE if edit_turn else CHECKPOINT_NOTICE).format(used=used, total=budget)))
+        edit_notice = (required_action or {}).get("checkpoint_notice") or EDIT_CHECKPOINT_NOTICE      # a plan turn finishes with submit_plan, not a proposal
+        messages.append(HumanMessage(content=(edit_notice if edit_turn else CHECKPOINT_NOTICE).format(used=used, total=budget)))
         reply = await llm.ainvoke_tools(messages, offered_here)
         text = _text(getattr(reply, "content", ""))
         calls = [call for call in (getattr(reply, "tool_calls", None) or []) if call.get("name")]
@@ -510,6 +512,16 @@ async def run(
                     budget += grant
                     messages.append(HumanMessage(content=library_allowance.note(grant)))
                     logger.info("[native_loop] step %s: a library listing added %d step(s), budget now %d.", step, grant, budget)
+        if plan_budget is not None:
+            # Carrying out an approved plan (backend/utils/code_plan.py PlanBudget): a step on the plan is handed back, so a long plan runs as long as it needs; a step off it counts
+            # against a small allowance, and past that (or the ceiling) the loop stops and the model says what else it needs.
+            outcome = plan_budget.after_step(calls, step)
+            budget += int(outcome.get("refund") or 0)
+            if outcome.get("note"):
+                messages.append(HumanMessage(content=outcome["note"]))
+            if outcome.get("stop"):
+                logger.info("[native_loop] step %s: the plan's step allowance ended the loop.", step)
+                break
         if repeats >= MAX_REPEATS:
             break
 

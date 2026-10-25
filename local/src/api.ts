@@ -1747,6 +1747,25 @@ export const editWorkingNote = (sessionId: string, itemId: string, text: string 
 export const clearWorkingNotes = (sessionId: string): Promise<{ status: string }> =>
   taskRequest(`/api/working-notes?session_id=${encodeURIComponent(sessionId)}`, { method: 'DELETE' }, 'Failed to clear the working notes.');
 
+/** Plan mode (backend/utils/code_plan.py): a plan the person approves before Sonic edits their folder. */
+export interface CodePlanStep { id: string; text: string; files: string[]; status: 'todo' | 'done'; }
+export interface CodePlan {
+  state: 'proposed' | 'approved' | 'done';
+  goal: string;
+  files: { path: string; why: string; new?: boolean }[];
+  steps: CodePlanStep[];
+  tests: string[];
+  unknowns: string[];
+  revision: number;
+}
+export const getPlanMode = (): Promise<{ plan_mode: boolean }> => taskRequest('/api/settings/plan-mode', {}, 'Failed to load the plan setting.');
+export const updatePlanMode = (planMode: boolean): Promise<{ plan_mode: boolean }> =>
+  taskRequest('/api/settings/plan-mode', { method: 'PUT', body: JSON.stringify({ plan_mode: planMode }) }, 'Failed to update the plan setting.');
+export const getCodePlan = (sessionId: string): Promise<{ plan: CodePlan | null }> =>
+  taskRequest(`/api/code-plan?session_id=${encodeURIComponent(sessionId)}`, {}, 'Failed to load the plan.');
+export const actOnCodePlan = (sessionId: string, action: 'approve' | 'cancel' | 'edit_step' | 'remove_step', stepId?: string, text?: string): Promise<{ plan: CodePlan | null }> =>
+  taskRequest(`/api/code-plan?session_id=${encodeURIComponent(sessionId)}`, { method: 'PATCH', body: JSON.stringify({ action, step_id: stepId, text }) }, 'Failed to change the plan.');
+
 export const listMeetings = (): Promise<{ meetings: Meeting[]; limits: { max_meetings: number } }> => taskRequest('/api/meetings', {}, 'Failed to load your meetings.');
 export const getMeetingsState = (sessionId: string): Promise<MeetingsState> =>
   taskRequest(`/api/meetings/state?session_id=${encodeURIComponent(sessionId)}`, {}, 'Failed to load your meetings.');
@@ -2210,6 +2229,10 @@ export const api = {
   listMeetings,
   getMeetingsState,
   getWorkingNotes,
+  getPlanMode,
+  updatePlanMode,
+  getCodePlan,
+  actOnCodePlan,
   getLocalGitBundle,
   editWorkingNote,
   clearWorkingNotes,

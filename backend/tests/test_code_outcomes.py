@@ -105,7 +105,7 @@ def test_the_rates_are_shares_of_the_right_denominators():
 def test_the_chat_endpoint_marks_and_counts_coding_turns_and_reads_the_next_message():
     source = open("app.py", encoding="utf-8").read()
     assert "code_outcomes.followup(previous_marks, question)" in source and "code_outcomes.tally_followup(turn_counts, code_followup)" in source
-    assert "code_outcomes.summarize_turn(llm_turn)" in source and "ai_message.additional_kwargs[code_outcomes.CODE_MARK] = True" in source and "code_outcomes.tally_turn(turn_counts, code_summary)" in source
+    assert "code_outcomes.summarize_turn(llm_turn)" in source and "ai_message.additional_kwargs[code_outcomes.CODE_MARK] = True" in source and "code_outcomes.tally_turn(turn_counts, code_summary, final_state.get(\"code_plan_phase\"))" in source
 
 
 def test_the_health_page_shows_the_coding_rows():
