@@ -54,6 +54,14 @@ function base64ToBytes(text: string): Uint8Array {
 
 const personOf = (p: BundlePerson) => ({ name: p.name, email: p.email, ...(() => { const d = parseIsoDate(p.date); return { timestamp: d.timestamp, offset: d.offset }; })() });
 
+/** Time-zone offsets ("-0500") to try, most likely first: the ones given, this browser's own, UTC, then every quarter hour from -12:00 to +14:00. */
+export function candidateOffsets(given: string[] = []): string[] {
+  const format = (minutes: number) => `${minutes < 0 ? '-' : '+'}${String(Math.floor(Math.abs(minutes) / 60)).padStart(2, '0')}${String(Math.abs(minutes) % 60).padStart(2, '0')}`;
+  const all: string[] = [...given, format(-new Date().getTimezoneOffset()), '+0000'];
+  for (let minutes = -720; minutes <= 840; minutes += 15) all.push(format(minutes));
+  return [...new Set(all)];
+}
+
 /** Hashes everything in the bundle and checks it is consistent: the commit rebuilds to its id, each tree to its id, each blob to its id, and each changed file is where its tree says. */
 async function verifiedObjects(bundle: CommitBundle): Promise<{ objects: ImportPlan['objects']; sizes: Map<string, number> } | string> {
   const objects: ImportPlan['objects'] = [];
@@ -74,13 +82,23 @@ async function verifiedObjects(bundle: CommitBundle): Promise<{ objects: ImportP
     treeById.set(tree.sha, tree.entries);
   }
   const c = bundle.commit;
-  let commitBody: Uint8Array;
+  // GitHub's API gives a commit's dates in UTC ("...Z") and drops the time zone the commit was written with (a commit made for someone in Chicago is stored with -0500), but the zone is part of
+  // the commit and therefore of its id. It is found by trying the zones people live in until the commit rebuilds to exactly the id GitHub reports: the id is the check, so nothing is guessed.
+  let commitBody: Uint8Array | null = null;
   try {
-    commitBody = serializeCommit({ tree: c.tree, parents: c.parents, author: personOf(c.author), committer: personOf(c.committer), message: c.message, signature: c.signature });
+    const author = personOf(c.author);
+    const committer = personOf(c.committer);
+    for (const offset of candidateOffsets([author.offset])) {
+      const body = serializeCommit({ tree: c.tree, parents: c.parents, author: { ...author, offset }, committer: { ...committer, offset }, message: c.message, signature: c.signature });
+      if ((await objectId('commit', body)) === c.sha) {
+        commitBody = body;
+        break;
+      }
+    }
   } catch {
     return 'The commit has a date this could not read, so nothing was written.';
   }
-  if ((await objectId('commit', commitBody)) !== c.sha) return 'The commit as rebuilt here does not match the id GitHub reports (so it may be signed or in a form this does not handle). Nothing was written.';
+  if (!commitBody) return 'The commit as rebuilt here does not match the id GitHub reports (so it may be signed or in a form this does not handle). Nothing was written.';
   objects.push({ id: c.sha, type: 'commit', body: commitBody });
   for (const file of bundle.files) {
     let treeId = c.tree;

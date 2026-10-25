@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { parseIndex, serializeIndex } from './gitIndex.ts';
 import { applyImport, planImport } from './importCommit.ts';
+import { candidateOffsets } from './importCommit.ts';
 import { objectId, parseIsoDate, serializeCommit, serializeTree } from './objects.ts';
 
 const haveGit = (() => {
@@ -42,7 +43,7 @@ function nodeFs(root) {
 const write = (root, path, text) => { mkdirSync(dirname(join(root, path)), { recursive: true }); writeFileSync(join(root, path), text); };
 
 /** A repository with one commit on main and an origin URL, and the "Sonic" clone that makes the next commit. */
-function scenario({ eol = '\n' } = {}) {
+function scenario({ eol = '\n', zone = '+0000' } = {}) {
   const base = mkdtempSync(join(tmpdir(), 'sonic-git-'));
   const local = join(base, 'local');
   mkdirSync(local);
@@ -64,7 +65,8 @@ function scenario({ eol = '\n' } = {}) {
   write(sonic, 'src/new.txt', 'brand new\n');
   write(sonic, 'docs/deep/c.txt', 'seen\n');
   git(sonic, 'add', '-A');
-  git(sonic, 'commit', '-q', '-m', 'Add three, a new file and a deeper change', '-m', 'Second paragraph of the message.');
+  const stamp = `2026-10-25T20:10:21${zone}`;
+  execFileSync('git', ['commit', '-q', '-m', 'Add three, a new file and a deeper change', '-m', 'Second paragraph of the message.'], { cwd: sonic, env: { ...ENV, GIT_AUTHOR_DATE: stamp, GIT_COMMITTER_DATE: stamp } });
   return { base, local, sonic, parent, sha: git(sonic, 'rev-parse', 'HEAD').trim() };
 }
 
@@ -372,4 +374,35 @@ gitTest('when the person is already on main, the merge simply moves it forward',
   } finally {
     cleanup(s);
   }
+});
+
+
+for (const zone of ['-0500', '+0530', '-0800', '+1245']) {
+  gitTest(`a commit written in the time zone ${zone} is recognised although GitHub's API shows its dates in UTC`, async () => {
+    const s = scenario({ zone });
+    try {
+      applyWorkingChanges(s.local);
+      const bundle = bundleFrom(s.sonic, s.sha, s.parent);
+      assert.match(bundle.commit.author.date, /Z$/, 'the bundle carries UTC dates, as the API does');
+      const planned = await planImport(nodeFs(s.local), bundle, 'feat/notes');
+      assert.equal(planned.ok, true, JSON.stringify(planned));
+      assert.equal((await applyImport(nodeFs(s.local), planned.plan)).ok, true);
+      assert.equal(git(s.local, 'cat-file', 'commit', s.sha), git(s.sonic, 'cat-file', 'commit', s.sha), 'the very same commit object, zone included');
+      assert.equal(porcelain(s.local), '');
+    } finally {
+      cleanup(s);
+    }
+  });
+}
+
+test('a real commit Sonic made through the API rebuilds to its id only with the zone GitHub left out of the API', async () => {
+  // Commit 74e59899ff54 of SummonShenron/SAAPP, as `git cat-file commit` shows it (author and committer -0500) and as the API reports it (UTC "Z"), the case that was refused before.
+  const fields = zone => ({
+    tree: '17d33ebb17c1baa50f729c49d0968b21c5384b83', parents: ['6a87f695273ff2fa32143284cfdb0483dec52e04'],
+    author: { name: 'Jack Harper', email: 'jackharper0517@outlook.com', timestamp: 1792945818, offset: zone }, committer: { name: 'Jack Harper', email: 'jackharper0517@outlook.com', timestamp: 1792945818, offset: zone },
+    message: 'Adds the current working changes from the local folder on a new feat/checkouts branch.\n\nCo-authored-by: Sonic Assistant <sonic-assistant@users.noreply.github.com>',
+  });
+  assert.notEqual(await objectId('commit', serializeCommit(fields('+0000'))), '74e59899ff547ed68226165203f1e02ae2edca1b', 'read as UTC it is a different commit');
+  assert.equal(await objectId('commit', serializeCommit(fields('-0500'))), '74e59899ff547ed68226165203f1e02ae2edca1b');
+  assert.ok(candidateOffsets(['+0000']).includes('-0500') && candidateOffsets().includes('+0530') && candidateOffsets().includes('+1245') && new Set(candidateOffsets()).size === candidateOffsets().length);
 });
