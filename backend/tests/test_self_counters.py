@@ -199,3 +199,52 @@ def test_the_chat_stream_tallies_each_signal_and_flushes_on_both_exits():
         assert needle in source, needle
     # Three exits save the turn's counts: one paused by the usage budget (before any model call), one that finished, one that failed.
     assert source.count("await asyncio.to_thread(record_turn_counts, turn_counts)") == 3
+
+
+def test_each_initiation_refusal_reason_tallies_under_its_own_key():
+    reasons = sc._GROUPS["initiation_refused"]
+    assert "no_anchor" in reasons
+    for reason in reasons:
+        counts = {}
+        sc.tally(counts, "initiation_refused", reason)
+        assert counts == {f"initiation_refused_{reason}": 1}, reason
+
+
+def test_unknown_initiation_reason_is_dropped_and_only_fixed_integer_keys_are_recorded():
+    counts = {}
+    sc.tally(counts, "initiation_refused", "a reason with someone's own words")
+    assert counts == {}
+    for reason in sc._GROUPS["initiation_refused"]:
+        sc.tally(counts, "initiation_refused", reason)
+    for key, value in counts.items():
+        assert key.startswith("initiation_refused_"), key
+        assert key.replace("_", "").isalpha(), key
+        assert isinstance(value, int), key
+
+
+def test_every_reason_the_opener_gates_can_return_has_a_counter():
+    """A reason missing from the closed list is silently dropped by tally, which is how recent_activity and unknown_gap went uncounted at first."""
+    import ast
+    import inspect
+
+    from backend.utils import initiation
+
+    returned = set()
+    for function in (initiation.refusal_reason, initiation.thread_refusal):
+        for node in ast.walk(ast.parse(inspect.getsource(function).lstrip())):
+            if isinstance(node, ast.Return) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                returned.add(node.value.value)
+    assert returned and returned <= set(sc._GROUPS["initiation_refused"]), returned - set(sc._GROUPS["initiation_refused"])
+    assert {"opener_off", "reach_none", "low_power", "no_anchor"} <= set(sc._GROUPS["initiation_refused"])
+
+
+def test_a_declined_opening_is_counted_without_a_person_or_text(monkeypatch):
+    import asyncio
+
+    from backend.utils import initiation
+
+    recorded = []
+    monkeypatch.setattr(sc, "record_turn_counts", lambda counts, now=None: recorded.append(dict(counts)))
+    asyncio.run(initiation.count_refusal("too_soon"))
+    asyncio.run(initiation.count_refusal("something with someone's own words"))
+    assert recorded[0] == {"initiation_refused_too_soon": 1} and recorded[1] == {}

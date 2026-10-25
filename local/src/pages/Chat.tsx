@@ -1009,10 +1009,19 @@ useEffect(() => {
   }, [principal]);
 
   // The conversation's plan (plan mode): read when the conversation opens and again when a reply ends, since applied edits tick its steps off.
+  // A finished plan is only shown while it finishes: it is not brought back when a conversation is opened, it goes when the next message starts, and it can be dismissed.
   useEffect(() => {
-    if (!principal || isGuestPrincipal(principal) || !sessionId || loading) return;
-    api.getCodePlan(sessionId).then(data => setCodePlan(data.plan)).catch(() => { /* no plan card is the normal outcome */ });
+    if (!principal || isGuestPrincipal(principal) || !sessionId) return;
+    if (loading) {
+      setCodePlan(prev => (prev && prev.state === 'done' ? null : prev));
+      return;
+    }
+    api.getCodePlan(sessionId)
+      .then(data => setCodePlan(prev => (data.plan && data.plan.state === 'done' && !prev ? null : data.plan)))
+      .catch(() => { /* no plan card is the normal outcome */ });
   }, [principal, sessionId, loading]);
+
+  useEffect(() => { setCodePlan(null); }, [sessionId]);
 
   useEffect(() => {
     if (!principal) return;

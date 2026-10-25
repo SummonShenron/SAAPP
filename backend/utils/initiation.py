@@ -351,6 +351,21 @@ def _stamp_goal_nudged(username: str, fact_id: str, now: datetime) -> None:
     save_user_facts(username, facts)
 
 
+async def count_refusal(reason: str) -> None:
+    """Counts one declined opening under initiation_refused_<reason> (backend/utils/self_counters.py): a fixed list of reasons, no person and no text. An attempt is counted every time a
+    conversation is opened and Sonic holds back, so the numbers measure how often it declined, not how many people. Never raises."""
+    import asyncio
+
+    try:
+        from backend.utils.self_counters import record_turn_counts, tally
+
+        counts: Dict[str, int] = {}
+        tally(counts, "initiation_refused", reason)
+        await asyncio.to_thread(record_turn_counts, counts)
+    except Exception:
+        logger.debug("[initiation] could not count a declined opening.", exc_info=True)
+
+
 async def maybe_open_conversation(
     username: str,
     session_id: str,
@@ -383,6 +398,7 @@ async def maybe_open_conversation(
         reason = refusal_reason(state, transcript, moment, is_guest=is_guest, min_hours=min_hours)
         if reason:
             logger.debug("[initiation] not opening %s::%s: %s", username, session_id, reason)
+            await count_refusal(reason)
             return None
 
         today = local_today(tz_name, moment)
@@ -400,6 +416,7 @@ async def maybe_open_conversation(
             # Last and lightest: nothing to follow up on, so a topic they told Sonic they're into (interest_anchor.py).
             anchor = await interest_anchor.choose_interest(username, invoke, moment)
         if not anchor:
+            await count_refusal("no_anchor")
             return None
 
         written = await write_opening(invoke, anchor, today, tz_name, moment)
@@ -459,6 +476,7 @@ async def open_for_request(
         return None
     opener_on = await asyncio.to_thread(get_enabled, username)
     digest_on = await asyncio.to_thread(ops_digest.get_enabled, username)  # a separate, admin-only toggle
+    held_back = None if opener_on else "opener_off"          # why no opener is possible before any gate looks at the conversation (counted below)
     reach_hours = None
     if opener_on:
         # The person's reach dial (backend/utils/reach.py): "none" turns openers off with everything else, and the other levels set the wait between two.
@@ -468,13 +486,16 @@ async def open_for_request(
         level = reach.reach_of(await asyncio.to_thread(get_user_profile, username))
         reach_hours = level.opener_hours
         opener_on = level.level != reach.NONE
+        held_back = None if opener_on else "reach_none"
     if opener_on:
         from backend.utils import budget_guard
 
         # An opener costs model calls and nobody asked for it: paused in low-power mode (the usage budget guard).
         if budget_guard.low_power(await asyncio.to_thread(budget_guard.current_state)):
             opener_on = False
+            held_back = "low_power"
     if not (opener_on or digest_on):
+        await count_refusal(held_back or "opener_off")
         return None
     key = f"{username}::{session_id}"
     # Both read the stored thread, megabytes for a long one: on the event loop that froze every request for as long as the database took.

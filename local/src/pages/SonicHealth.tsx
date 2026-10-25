@@ -94,6 +94,23 @@ const REWRITE_ROWS: Array<[string, string]> = [
   ['revised_closing', 'Fishing after a close'],
 ];
 
+/** Why Sonic declined to open a conversation (backend/utils/initiation.py), counted under initiation_refused_<reason>. */
+const INITIATION_REFUSAL_ROWS: Array<[string, string]> = [
+  ['guest', 'guest user'],
+  ['disabled', 'openers turned off'],
+  ['recent_risk', 'recent safety flag'],
+  ['ignored', 'earlier openers ignored'],
+  ['too_soon', 'too soon after the last one'],
+  ['new_thread', 'a new thread'],
+  ['already_waiting', 'already waiting for a reply'],
+  ['recent_activity', 'you were still active a moment ago'],
+  ['unknown_gap', 'an older thread with no timestamps'],
+  ['no_anchor', 'nothing to follow up on'],
+  ['opener_off', 'start conversations is off'],
+  ['reach_none', 'reach is set to not at all'],
+  ['low_power', 'paused by the usage budget'],
+];
+
 const ROUTE_LABELS: Record<string, string> = {
   conversational: 'conversation',
   kb_strict: 'strict KB',
@@ -843,6 +860,14 @@ const CountersCard: React.FC<{ counters: CountersSummary }> = ({ counters }) => 
           <tr><td>Messages Sonic started that got a reply</td><td>{pct(rates.initiation_answered)}</td><td>{pct(previous.initiation_answered)}</td><td>{change(changes.initiation_answered)}</td></tr>
           <tr><td>Messages about something they're into that got a reply</td><td>{pct(rates.initiation_interest_answered)}</td><td>{pct(previous.initiation_interest_answered)}</td><td>{change(changes.initiation_interest_answered)}</td></tr>
           <tr><td>Messages Sonic started that fell back to the plain template</td><td>{pct(rates.initiation_fallback)}</td><td>{pct(previous.initiation_fallback)}</td><td>{change(changes.initiation_fallback)}</td></tr>
+          {INITIATION_REFUSAL_ROWS.map(([key, label]) => (
+            <tr key={key}>
+              <td>Declined to open a message: {label}</td>
+              <td>{(totals as Record<string, number | undefined>)[`initiation_refused_${key}`] ?? 0}</td>
+              <td>{(previousTotals as Record<string, number | undefined>)[`initiation_refused_${key}`] ?? 0}</td>
+              <td><span className="sh-flat">count</span></td>
+            </tr>
+          ))}
           <tr><td>Turns that asked how something went</td><td>{pct(rates.open_loop_offered)}</td><td>{pct(previous.open_loop_offered)}</td><td>{change(changes.open_loop_offered)}</td></tr>
           <tr><td>Turns where the reply mentioned a leaning of its own</td><td>{pct(rates.self_mention)}</td><td>{pct(previous.self_mention)}</td><td>{change(changes.self_mention)}</td></tr>
           <tr><td>Coding turns that ran out of steps ({totals.code_turns ?? 0} coding turns)</td><td>{pct(rates.code_cap_hit)}</td><td>{pct(previous.code_cap_hit)}</td><td>{change(changes.code_cap_hit)}</td></tr>

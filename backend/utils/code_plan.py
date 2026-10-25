@@ -29,9 +29,9 @@ LIVE_STATES = (PROPOSED, APPROVED)
 MAX_FILES = 12
 MAX_STEPS = 8
 MAX_LIST = 4
-GOAL_MAX = 200
-TEXT_MAX = 160
-SHORT_MAX = 140
+GOAL_MAX = 320
+TEXT_MAX = 320
+SHORT_MAX = 220
 PROMPT_MAX_CHARS = 2600
 
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]+")
@@ -44,7 +44,12 @@ def enabled() -> bool:
 
 
 def _flat(text: Any, limit: int) -> str:
-    return _CONTROL_RE.sub(" ", re.sub(r"\s+", " ", str(text or ""))).strip()[:limit].rstrip()
+    """One plain line, no control characters. Too long is cut at a word and says so ("..."), never in the middle of one: the plan the person approves is the plan that is carried out."""
+    flat = _CONTROL_RE.sub(" ", re.sub(r"\s+", " ", str(text or ""))).strip()
+    if len(flat) <= limit:
+        return flat
+    room = flat[: limit - 1]
+    return (room.rsplit(" ", 1)[0] if " " in room[limit // 2:] else room).rstrip(" ,;:") + "…"
 
 
 def clean_path(path: Any) -> str:
@@ -158,7 +163,11 @@ def file_lines(plan: Dict[str, Any]) -> List[str]:
 EXECUTE_RULES = (
     "The person approved this plan, so do not plan again and do not explore. Work on the first step not marked done. Its files may already be included below: if so, go straight to "
     "propose_local_edits. Otherwise read only the files it names, together in one step, then call propose_local_edits for that step; you may include later steps in the same proposal when you have read their files. If a file differs from what the "
-    "plan expects, say in one line what is different and stop, instead of improvising a different plan. A step is marked done only when its edits are applied."
+    "plan expects, say in one line what is different and stop, instead of improvising a different plan. A step is marked done only when its edits are applied. "
+    "KEEP GOING: carry on through the remaining steps in this one turn; steps that stay on the plan do not use up your tool steps. Do not end the turn between steps to report or to ask "
+    "whether to continue. Do not ask the person anything the folder can answer: if a step's wording is cut off or unclear, read the file it names and decide from the code (a reason, name or "
+    "case the plan did not list is still yours to find: search the file for it). Stop only when every step is done, when the person's own decision is needed, or when you are blocked. "
+    "Finish with a short answer on what changed and what was not checked (say plainly if no test was run)."
 )
 
 
@@ -380,8 +389,8 @@ def progress_note(plan: Optional[Dict[str, Any]]) -> str:
     step = next_step(plan)
     if plan.get("state") != APPROVED or not step:
         return ""
-    return (f" PLAN: the next step is {step['id']}: {step.get('text', '')}. Do it now if you have steps left; otherwise finish with a short answer saying what is done and that this step is next "
-            "(the person says continue to carry on).")
+    return (f" PLAN: the next step is {step['id']}: {step.get('text', '')}. Do it now, in this turn: do not stop to report between steps. Only if you are blocked or out of steps, finish with "
+            "a short answer saying what is done and that this step is next (the person says continue to carry on).")
 
 
 def record_applied_for_user(db, username: str, applied_paths: List[str], now: Optional[datetime] = None) -> int:

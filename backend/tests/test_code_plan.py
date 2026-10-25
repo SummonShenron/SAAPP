@@ -451,3 +451,13 @@ def test_nothing_is_read_for_a_plan_that_is_not_approved_or_finished():
 def test_the_execution_turn_reads_the_files_ahead_in_the_agent():
     workflow = (ROOT / "backend" / "services" / "agent_workflow.py").read_text(encoding="utf-8")
     assert "await _plan_files_block() if plan_phase == code_plan.EXECUTE_PHASE" in workflow and "code_plan.files_block," in workflow
+
+
+def test_long_text_is_cut_at_a_word_with_an_ellipsis_never_mid_word():
+    long_step = " ".join(["add"] + ["counter"] * 80)
+    plan, errors = cp.clean_plan(good_plan(steps=[{"text": long_step, "files": ["local/src/components/NewBurst.tsx"]},
+                                                 {"text": "Play it from Chat", "files": ["local/src/pages/Chat.tsx", "local/src/chatPreferences.ts"]}]), exists)
+    text = plan["steps"][0]["text"]
+    assert errors == [] and len(text) <= cp.TEXT_MAX and text.endswith("…") and text[:-1].split(" ")[-1] == "counter"
+    short = "Add the burst component"
+    assert cp._flat(short, cp.TEXT_MAX) == short and cp.TEXT_MAX >= 300

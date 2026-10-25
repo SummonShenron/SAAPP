@@ -57,7 +57,7 @@ export const PlanCard: React.FC<Props> = ({ sessionId, plan, busy, onChange, onA
           <li key={step.id} className={step.status === 'done' ? 'plan-step plan-step-done' : 'plan-step'}>
             {editing?.id === step.id ? (
               <form className="plan-step-edit" onSubmit={event => { event.preventDefault(); void act('edit_step', step.id, editing.text); }}>
-                <input autoFocus value={editing.text} maxLength={160} onChange={event => setEditing({ id: step.id, text: event.target.value })} aria-label="Edit this step" />
+                <input autoFocus value={editing.text} maxLength={320} onChange={event => setEditing({ id: step.id, text: event.target.value })} aria-label="Edit this step" />
                 <button type="submit" className="plan-link" disabled={working}>Save</button>
                 <button type="button" className="plan-link" onClick={() => setEditing(null)}>Cancel</button>
               </form>
@@ -100,6 +100,11 @@ export const PlanCard: React.FC<Props> = ({ sessionId, plan, busy, onChange, onA
         <div className="plan-card-actions">
           <button type="button" className="plan-approve" disabled={working || busy} onClick={onApproved}>Continue</button>
           <button type="button" className="plan-link" disabled={working} onClick={() => void act('cancel')}>Drop the plan</button>
+        </div>
+      )}
+      {plan.state === 'done' && (
+        <div className="plan-card-actions">
+          <button type="button" className="plan-link" onClick={() => onChange(null)}>Dismiss</button>
         </div>
       )}
       {message && <div className="plan-card-error" role="alert">{message}</div>}
