@@ -41,7 +41,7 @@ _GROUPS: Dict[str, tuple] = {
     "feeling_asked": FEELING_KINDS,
     "feeling_revised": FEELING_KINDS + ("other",),
 }
-_PLAIN_KEYS = ("turns_total", "reply_fit_checked", "reward_evaluated", "relatable_offered", "self_mention", "observations_injected", "encouragement_offered", "open_loop_captured", "open_loop_offered", "open_loop_resolved", "callback_offered", "self_history_offered", "initiation_offered", "initiation_fallback", "initiation_answered", "initiation_interest_offered", "initiation_interest_answered", "duration_offered", "curiosity_offered", "curiosity_taken", "shelf_offered", "shelf_taken", "shelf_listed", "finding_selected", "lean_offered", "guardrail_applied", "routines_offered", "followups_offered", "task_results_offered", "meeting_turns", "headsup_offered", "clarify_noted", "clarify_asked", "clarify_answered", "memory_note_dropped", "memory_note_trimmed", "status_offered", "offer_made", "offer_taken", "offer_passed", "offer_held_back", "code_turns", "code_cap_hit", "code_edited", "code_verified", "code_followed", "code_redo")
+_PLAIN_KEYS = ("turns_total", "working_notes_updated", "working_notes_item_added", "working_notes_item_dropped", "working_notes_injected", "working_notes_chat_read", "reply_fit_checked", "reward_evaluated", "relatable_offered", "self_mention", "observations_injected", "encouragement_offered", "open_loop_captured", "open_loop_offered", "open_loop_resolved", "callback_offered", "self_history_offered", "initiation_offered", "initiation_fallback", "initiation_answered", "initiation_interest_offered", "initiation_interest_answered", "duration_offered", "curiosity_offered", "curiosity_taken", "shelf_offered", "shelf_taken", "shelf_listed", "finding_selected", "lean_offered", "guardrail_applied", "routines_offered", "followups_offered", "task_results_offered", "meeting_turns", "headsup_offered", "clarify_noted", "clarify_asked", "clarify_answered", "memory_note_dropped", "memory_note_trimmed", "status_offered", "offer_made", "offer_taken", "offer_passed", "offer_held_back", "code_turns", "code_cap_hit", "code_edited", "code_verified", "code_followed", "code_redo")
 KEYS = frozenset(
     list(_PLAIN_KEYS) + [f"{group}_{name}" for group, names in _GROUPS.items() for name in names]
 )
@@ -167,6 +167,12 @@ def _rates(totals: Dict[str, int]) -> Dict[str, Optional[float]]:
     rates["code_cap_hit"] = _rate(totals.get("code_cap_hit", 0), totals.get("code_turns", 0))
     rates["code_verified"] = _rate(totals.get("code_verified", 0), totals.get("code_edited", 0))
     rates["code_redo"] = _rate(totals.get("code_redo", 0), totals.get("code_followed", 0))
+    # Working notes for coding conversations (backend/utils/working_state.py): how often the notes were updated, how often a coding turn was given them, and the share of what the
+    # model proposed that the checks threw out (a quote that was not word for word, a detail nobody said).
+    rates["working_notes_updated"] = _rate(totals.get("working_notes_updated", 0), turns)
+    rates["working_notes_injected"] = _rate(totals.get("working_notes_injected", 0), totals.get("code_turns", 0))
+    rates["working_notes_chat_read"] = _rate(totals.get("working_notes_chat_read", 0), turns)
+    rates["working_notes_dropped"] = _rate(totals.get("working_notes_item_dropped", 0), totals.get("working_notes_item_added", 0) + totals.get("working_notes_item_dropped", 0))
     # Questions about its own feelings: how many turns asked each kind, and the share of them whose reply the identity check sent back.
     for kind in FEELING_KINDS:
         rates[f"feeling_asked_{kind}"] = _rate(totals.get(f"feeling_asked_{kind}", 0), turns)

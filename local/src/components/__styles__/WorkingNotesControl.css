@@ -1,0 +1,167 @@
+.working-notes {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* The top bar's .topbar-btn is a fixed 34px icon square that loads after this file; the count badge sits on its corner. */
+.topbar-btn.working-notes-btn {
+  position: relative;
+}
+
+.working-notes-count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background-color: var(--accent-primary);
+  color: var(--on-accent);
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+.working-notes-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  width: min(380px, calc(100vw - 32px));
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  background-color: var(--card-bg, var(--input-bg));
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 0.75rem 0.85rem;
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.working-notes-intro {
+  margin: 0 0 0.6rem;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.working-notes-panel section {
+  margin-bottom: 0.7rem;
+}
+
+.working-notes-panel h4 {
+  margin: 0 0 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.working-notes-panel ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.working-notes-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.25rem;
+  padding: 0.1rem 0;
+}
+
+.working-notes-text {
+  flex: 1;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  line-height: 1.35;
+  padding: 0.2rem 0.3rem;
+  border-radius: 6px;
+  cursor: text;
+}
+
+.working-notes-text:hover {
+  background-color: color-mix(in srgb, var(--text-muted) 12%, transparent);
+}
+
+.working-notes-yours {
+  margin-left: 0.4rem;
+  padding: 0 0.35rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  white-space: nowrap;
+}
+
+.working-notes-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.working-notes-icon:hover {
+  color: var(--text);
+  background-color: color-mix(in srgb, var(--text-muted) 14%, transparent);
+}
+
+.working-notes-edit {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.working-notes-edit input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background-color: var(--input-bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.working-notes-add,
+.working-notes-clear {
+  background: none;
+  border: none;
+  padding: 0.15rem 0.3rem;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.working-notes-add:hover,
+.working-notes-clear:hover {
+  color: var(--text);
+}
+
+.working-notes-clear {
+  display: block;
+  margin-top: 0.2rem;
+}
+
+.working-notes-msg {
+  margin: 0.2rem 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}

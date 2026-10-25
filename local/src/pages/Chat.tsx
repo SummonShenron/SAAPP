@@ -17,6 +17,7 @@ import { getWelcomeCards } from '../utils/Example_List';
 import type { WelcomeCard } from '../welcomeCards';
 import { HEIC_NOTICE, isUnreadableHeic, shrinkImageFile } from '../utils/imageShrink';
 import MeetingControl from '../components/MeetingControl';
+import WorkingNotesControl from '../components/WorkingNotesControl';
 import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type BudgetView, type KnowledgeBase, type MemorySources } from '../api';
 import MemorySourceDialog from '../components/MemorySourceDialog';
 import BudgetBanner from '../components/BudgetBanner';
@@ -1211,11 +1212,13 @@ useEffect(() => {
     });
     return () => shell.setConversations(null);
   }, [isEmbedded, sessionId, conversationsRefreshKey]);
+  const userTurnCount = useMemo(() => messages.filter(m => m.sender === 'user').length, [messages]);
   useEffect(() => {
     if (isEmbedded) return;
     const traceOpen = isMobileView ? isMobileTraceOpen : showTracePanel;
     shell.setTopBarActions(
       <>
+        {!isGuestPrincipal(principal) && <WorkingNotesControl sessionId={sessionId} busy={loading} turns={userTurnCount} />}
         {!isGuestPrincipal(principal) && <MeetingControl sessionId={sessionId} onStarted={(name) => meetingStartedRef.current(name)} />}
         <button
           type="button"
@@ -1231,7 +1234,7 @@ useEffect(() => {
       </>
     );
     return () => shell.setTopBarActions(null);
-  }, [isEmbedded, showTracePanel, isMobileView, isMobileTraceOpen, loading, sessionId, principal]);
+  }, [isEmbedded, showTracePanel, isMobileView, isMobileTraceOpen, loading, sessionId, principal, userTurnCount]);
 
   // Prepends the page of saved messages just before the ones on screen. The smooth scroll-to-bottom
   // that normally fires when the message count changes is skipped here, and the viewport is held

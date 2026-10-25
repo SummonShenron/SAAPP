@@ -2126,6 +2126,9 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             schema_parts.append(await asyncio.to_thread(sonic_notes.build_context, username))
             # The branch their folder is on and the applied files waiting to be committed (backend/services/commit_flow.py): what lets "commit this" work.
             schema_parts.append(await asyncio.to_thread(commit_flow.pending_line, username, state.get("git_branch")))
+        if state.get("working_notes"):
+            # What this conversation has already decided, ruled out and left open (backend/utils/working_state.py): data, kept so a long session does not lose its thread.
+            schema_parts.append(state["working_notes"])
         if is_admin:
             schema_parts.append(f"mongodb_collections={mongo_schema}")
         schema = ", ".join(schema_parts)

@@ -572,3 +572,8 @@ def test_saying_approve_after_the_merge_card_runs_the_merge_through_the_graph(wo
     # a plain "no" after the card merges nothing
     other = {"username": USER, "messages": [HumanMessage(content="x"), AIMessage(content=_committed_with_pr(world, new_branch="sonic/three")), HumanMessage(content="no")]}
     assert aw.classify_intent("no", state=other) == "cancel_action" and len(world.merge_calls) == 1
+
+
+def test_the_browser_sync_sends_gitignore_so_a_change_to_it_can_be_committed():
+    source = (ROOT / "local" / "src" / "localWorkspace.ts").read_text(encoding="utf-8")
+    assert "'.gitignore'" in source.split("const TEXT_FILENAMES")[1].split("\n")[0]

@@ -80,6 +80,7 @@ PAUSED_FEATURES = [
     "extra tool-agent steps",
     "summarising conversations into memory",
     "noting upcoming things",
+    "keeping working notes",
     "re-checking grounded answers",
     "conversation openers",
     "scheduled tasks",

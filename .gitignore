@@ -21,6 +21,7 @@ chroma_db/
 # verifiable checksum (see backend/sandbox/README.md), not something to bloat repo history
 # with. Run backend/sandbox/fetch_sandbox.py to (re)download and verify it.
 backend/sandbox/*.wasm
+backend/sandbox/*.cwasm
 
 # Ignore live runtime ingestion data and history archives
 index-db/**/*_Pages/
