@@ -1114,6 +1114,19 @@ export function decideBudgetRequest(id: string, decision: 'approve' | 'decline')
   return adminRequest<BudgetIncreaseRequest>(`/api/admin/budget/requests/${encodeURIComponent(id)}/${decision}`, 'POST');
 }
 
+/** What is using the server's memory (backend/utils/server_memory.py). Every field can be null where the server cannot tell (a developer's machine). */
+export interface ServerMemory {
+  container: { limit_mb: number | null; used_mb: number | null; anon_mb: number | null; file_cache_mb: number | null; inactive_cache_mb: number | null; working_set_mb: number | null };
+  process: { rss_mb: number | null; peak_rss_mb: number | null };
+  held: { conversations_in_memory: number; messages_in_memory: number; folder_people: number; folder_files: number; folder_mb: number | null; temp_filesystem: string | null; temp_is_memory: boolean | null };
+  sandbox: { headroom_now_mb: number | null; headroom_without_cache_mb: number | null; need_warm_mb: number; need_cold_mb: number; compiled_cache_present: boolean; would_run_now: boolean | null; would_run_without_cache: boolean | null };
+  reclaimable_share_of_used: number | null;
+}
+
+export function getServerMemory(): Promise<ServerMemory> {
+  return adminRequest<ServerMemory>('/api/admin/server-memory', 'GET');
+}
+
 export function getSonicHealth(days: number): Promise<SonicHealth> {
   return adminRequest<SonicHealth>(`/api/admin/sonic-health?days=${encodeURIComponent(days)}`, 'GET');
 }
@@ -2285,6 +2298,7 @@ export const api = {
   startMicrosoftConnection,
   disconnectMicrosoft,
   getSonicHealth,
+  getServerMemory,
   setGoalApproval,
   approveObservation,
   retireObservation,

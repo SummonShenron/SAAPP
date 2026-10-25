@@ -135,6 +135,7 @@ from backend.utils.time_utils import build_time_context, local_today, sent_at, s
 from backend.utils import open_loops as open_loops_utils
 from backend.utils import working_state as working_state_utils
 from backend.utils import code_plan as code_plan_utils
+from backend.utils import server_memory
 from backend.utils import clarifications as clarify_utils
 from backend.utils import initiation as initiation_utils
 from backend.utils import reach as reach_utils
@@ -3364,6 +3365,12 @@ async def get_safety_stats(days: int = Query(7, ge=1, le=180), admin = Depends(r
     text, never names. Global_Admins only."""
     events = await asyncio.to_thread(fetch_recent_events, _admin_db(), days)
     return summarize_safety_events(events, days=days)
+
+
+@app.get("/api/admin/server-memory")
+async def get_server_memory(admin = Depends(require_global_admin)):
+    """What is using the server's memory (backend/utils/server_memory.py): sizes and counts only. For the memory card on Sonic Health."""
+    return await asyncio.to_thread(server_memory.snapshot, chat_sessions)
 
 
 @app.get("/api/admin/sonic-health")

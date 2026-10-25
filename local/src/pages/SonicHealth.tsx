@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   api,
@@ -8,6 +8,7 @@ import {
   type OpsSuggestion,
   type OpsSuggestions,
   type ReflectionResult,
+  type ServerMemory,
   type TurnKindRow,
   type TurnsSummary,
   type UsageSummary,
@@ -426,7 +427,7 @@ export const SonicHealthPage: React.FC = () => {
             <UsersCard users={health.users} />
           </div>
         ) : noData('model usage'))}
-        {tab === 'turns' && (health.usage?.turns && health.usage.turns.turns > 0 ? <TurnsCard turns={health.usage.turns} /> : noData('chat turns'))}
+        {tab === 'turns' && <>{health.usage?.turns && health.usage.turns.turns > 0 ? <TurnsCard turns={health.usage.turns} /> : noData('chat turns')}<ServerMemoryCard /></>}
         {tab === 'budget' && (health.budget ? <><BudgetCard budget={health.budget} /><BudgetRequestsPanel /></> : noData('budget'))}
         {tab === 'behavior' && <CountersCard counters={health.counters} />}
         {tab === 'goals' && <GoalsTab goals={health.goals} busyId={busyKey} onApprove={handleGoalApproval} />}
@@ -610,6 +611,46 @@ const BUCKET_LABELS: Record<string, string> = { c1: '1 call', c2: '2 calls', c3_
 const STEP_BUCKET_LABELS: Record<string, string> = { steps_1_2: '1-2 steps', steps_3_4: '3-4 steps', steps_5_6: '5-6 steps', steps_7_plus: '7 or more steps' };
 
 /** One chat turn is often several model calls. This is how many, by kind of turn, how often deep mode ran, and why turns went to the tool agent. */
+const mb = (value: number | null | undefined): string => (value === null || value === undefined ? 'not available here' : `${value} MB`);
+
+/** What is using the server's memory: the container's limit split into program memory and file cache, the sandbox's view of it, and what the app holds. Counts and sizes only. */
+const ServerMemoryCard: React.FC = () => {
+  const [memory, setMemory] = useState<ServerMemory | null>(null);
+  const [failed, setFailed] = useState(false);
+  const load = useCallback(() => { api.getServerMemory().then(m => { setMemory(m); setFailed(false); }).catch(() => setFailed(true)); }, []);
+  useEffect(() => { load(); }, [load]);
+  if (failed) return <section className="service-card sh-card"><h2>Server memory</h2><p className="card-description">Could not read the server's memory.</p></section>;
+  if (!memory) return null;
+  const { container, held, sandbox } = memory;
+  const share = memory.reclaimable_share_of_used;
+  return (
+    <section className="service-card sh-card">
+      <h2>Server memory</h2>
+      <p className="card-description">
+        The test sandbox refuses to start when the container looks short of memory. "Used" counts file cache, which the server gives back when it needs the room, so the number that matters is
+        the program's own memory. If most of "used" is cache, the sandbox is being held back by cache, not by the program.
+        {share !== null && ` Right now ${Math.round(share * 100)}% of used memory is cache that can be given back.`}
+      </p>
+      <table className="sh-table">
+        <tbody>
+          <tr><td>Container limit</td><td>{mb(container.limit_mb)}</td></tr>
+          <tr><td>Used (program + file cache)</td><td>{mb(container.used_mb)}</td></tr>
+          <tr><td>Program memory</td><td>{mb(container.anon_mb)}</td></tr>
+          <tr><td>File cache (of which can be given back)</td><td>{mb(container.file_cache_mb)} ({mb(container.inactive_cache_mb)})</td></tr>
+          <tr><td>Used without the cache that can be given back</td><td>{mb(container.working_set_mb)}</td></tr>
+          <tr><td>This server process, now / peak</td><td>{mb(memory.process.rss_mb)} / {mb(memory.process.peak_rss_mb)}</td></tr>
+          <tr><td>Headroom the test sandbox sees / without the returnable cache</td><td>{mb(sandbox.headroom_now_mb)} / {mb(sandbox.headroom_without_cache_mb)}</td></tr>
+          <tr><td>Sandbox needs ({sandbox.compiled_cache_present ? 'warm: compiled interpreter present' : 'cold: no compiled interpreter'})</td><td>{sandbox.compiled_cache_present ? sandbox.need_warm_mb : sandbox.need_cold_mb} MB</td></tr>
+          <tr><td>Would run now / without the returnable cache</td><td>{sandbox.would_run_now === null ? 'not available here' : sandbox.would_run_now ? 'yes' : 'no'} / {sandbox.would_run_without_cache === null ? 'not available here' : sandbox.would_run_without_cache ? 'yes' : 'no'}</td></tr>
+          <tr><td>Conversations / messages kept in memory</td><td>{held.conversations_in_memory} / {held.messages_in_memory}</td></tr>
+          <tr><td>Connected folders on disk ({held.folder_people} {held.folder_people === 1 ? 'person' : 'people'}, {held.folder_files} files)</td><td>{mb(held.folder_mb)}{held.temp_is_memory ? ' (the temp disk is memory: this counts as memory)' : ''}</td></tr>
+        </tbody>
+      </table>
+      <button type="button" className="sh-btn" onClick={load}>Refresh</button>
+    </section>
+  );
+};
+
 const TurnsCard: React.FC<{ turns: TurnsSummary }> = ({ turns }) => {
   const rows: [string, TurnKindRow][] = [
     ['All turns', turns.overall],
