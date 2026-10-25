@@ -60,7 +60,8 @@ const TEXT_EXTENSIONS = new Set([
   // plain-text documents and data a person keeps in a folder (notes, exports, subtitles, calendars)
   'csv', 'tsv', 'log', 'ics', 'tex', 'rst', 'org', 'srt', 'vtt',
 ]);
-const TEXT_FILENAMES = new Set(['dockerfile', 'makefile', 'procfile', 'license', 'readme']);
+// '.gitignore' and friends have no extension (the dot is the first character), so they are named here; without it a change to .gitignore never reached the server and could not be committed.
+const TEXT_FILENAMES = new Set(['dockerfile', 'makefile', 'procfile', 'license', 'readme', '.gitignore', '.gitattributes', '.dockerignore', '.editorconfig']);
 const SKIPPED_FILENAMES = new Set(['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'poetry.lock']);
 const SECRET_FILENAMES = new Set([
   'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', '.npmrc', '.pypirc', '.netrc', 'credentials.json',
