@@ -3,8 +3,10 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAffiliateScope } from '../hooks/useAffiliateScope';
 import { useLocalWorkspace } from '../hooks/useLocalWorkspace';
 import LocalEditCard from '../components/LocalEditCard';
+import LocalGitUpdate from '../components/LocalGitUpdate';
+import { localGitSpikeEnabled, parseCommittedReply } from '../localGit/commitResult';
 import LocalFolderConsent from '../components/LocalFolderConsent';
-import { hasLocalFolderConsent, recordLocalFolderConsent } from '../localWorkspace';
+import { hasLocalFolderConsent, recordLocalFolderConsent, type FsDirectoryHandle } from '../localWorkspace';
 import type { ApplyResult, UndoResult } from '../localEdits';
 import type { EditProposal } from '../localEditsCore';
 import { decideAutoApply, levelLabel, loadLevel, nextLevel, saveLevel, type ApprovalLevel } from '../editApproval';
@@ -177,6 +179,7 @@ interface ChatMessageListProps {
   localEditActionsRef: React.MutableRefObject<{
     apply: (proposal: EditProposal) => Promise<ApplyResult>;
     undo: (proposalId: string) => Promise<UndoResult>;
+    getFolderHandle: () => FsDirectoryHandle | null;
   }>;
 }
 
@@ -436,6 +439,11 @@ const ChatMessageList = React.memo(function ChatMessageList({
                   onDecision={(proposalId, outcome, reason) => { void api.reportEditDecision(proposalId, outcome, reason); }}
                 />
               )}
+
+              {msg.sender === 'ai' && !loading && canEditLocal && localGitSpikeEnabled() && (() => {
+                const committed = parseCommittedReply(msg.text);
+                return committed ? <LocalGitUpdate repo={committed.repo} commit={committed.commit} branch={committed.branch} getHandle={() => localEditActionsRef.current.getFolderHandle()} /> : null;
+              })()}
 
               {msg.noted && msg.noted.length > 0 && (
                 <div className="message-noted" role="status">
@@ -1908,14 +1916,14 @@ useEffect(() => {
 const handleSendMessageRef = useRef(handleSendMessage);
 const handleFeedbackRef = useRef(handleFeedback);
 const getTokenRef = useRef(getToken);
-const localEditActionsRef = useRef({ apply: workspace.applyEdits, undo: workspace.undoEdits });
+const localEditActionsRef = useRef({ apply: workspace.applyEdits, undo: workspace.undoEdits, getFolderHandle: workspace.getFolderHandle });
 useEffect(() => {
   // Pressing Start office hours is the person saying "let's begin": the first line goes in for them, and Sonic opens the meeting.
   meetingStartedRef.current = (name: string) => { void handleSendMessageRef.current(`Let's start our ${name}.`, []); };
   handleSendMessageRef.current = handleSendMessage;
   handleFeedbackRef.current = handleFeedback;
   getTokenRef.current = getToken;
-  localEditActionsRef.current = { apply: workspace.applyEdits, undo: workspace.undoEdits };
+  localEditActionsRef.current = { apply: workspace.applyEdits, undo: workspace.undoEdits, getFolderHandle: workspace.getFolderHandle };
 });
 
 // Re-sends deferred steers one at a time, only once the previous turn has fully finished. Declared

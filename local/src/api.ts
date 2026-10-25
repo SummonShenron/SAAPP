@@ -1723,6 +1723,10 @@ export interface MeetingsState {
   active: { run_id: string; meeting_id: string; name: string } | null;
 }
 
+/** What the browser needs to bring a commit Sonic made on GitHub into the person's own repository (backend/services/git_import.py). */
+export const getLocalGitBundle = (repo: string, commit: string): Promise<import('./localGit/importCommit').CommitBundle> =>
+  taskRequest('/api/local-git/bundle', { method: 'POST', body: JSON.stringify({ repo, commit }) }, 'Failed to read that commit from GitHub.');
+
 /** One line of a conversation's working notes. `by` says who wrote it; what the person wrote or edited is never changed by Sonic. */
 export interface WorkingNoteItem { id: string; text: string; evidence: string; by: 'model' | 'person'; }
 export interface WorkingNotes {
@@ -2202,6 +2206,7 @@ export const api = {
   listMeetings,
   getMeetingsState,
   getWorkingNotes,
+  getLocalGitBundle,
   editWorkingNote,
   clearWorkingNotes,
   createMeeting,

@@ -154,7 +154,7 @@ def test_the_card_reads_back_into_the_same_details(world):
 def test_approving_commits_pushes_opens_the_pull_request_and_clears_what_was_waiting(world):
     details, card = draft({"new_branch": "sonic/hello", "open_pull_request": True, "pr_title": "Say hello"})
     out = cf.execute(USER, cf.parse_card(card))
-    assert out.startswith("**Committed**") and "`sonic/hello` on `SummonShenron/SAAPP` (1 file)" in out and "**Opened pull request** [#1]" in out and "pull to catch up" in out
+    assert out.startswith("**Committed**") and "`sonic/hello` on `SummonShenron/SAAPP` (1 file)" in out and "**Opened pull request** [#1]" in out and "Your own git has not seen this commit yet" in out
     assert world.text_at("sonic/hello", "src/app.py") == APP_NEW and world.text_at("feat/x", "src/app.py") == APP
     assert world.pulls[0]["head"] == "sonic/hello" and world.pulls[0]["base"] == "main"
     assert ac.pending(USER) == {}, "committed files are no longer waiting"
@@ -577,3 +577,38 @@ def test_saying_approve_after_the_merge_card_runs_the_merge_through_the_graph(wo
 def test_the_browser_sync_sends_gitignore_so_a_change_to_it_can_be_committed():
     source = (ROOT / "local" / "src" / "localWorkspace.ts").read_text(encoding="utf-8")
     assert "'.gitignore'" in source.split("const TEXT_FILENAMES")[1].split("\n")[0]
+
+
+# ---- the commands to run afterwards ---------------------------------------------------------------------------------------------------------------
+
+def _block(text):
+    return text.split("```bash\n", 1)[1].split("\n```", 1)[0].split("\n")
+
+
+def test_after_a_commit_on_a_new_branch_the_result_ends_with_commands_to_paste(world):
+    out = _committed_with_pr(world)
+    assert _block(out.split("**Approval Required**")[0]) == ['git fetch origin', 'git stash push -u -m "before syncing with the sonic commit"', "git checkout sonic/hello"]
+    assert "git stash show --stat --include-untracked" in out and "git stash drop" in out
+
+
+def test_after_a_plain_push_the_commands_also_fast_forward_the_branch_and_never_force():
+    plain = cf.catch_up_after_commit("feat/x", new_branch=False)
+    assert _block(plain) == ['git fetch origin', 'git stash push -u -m "before syncing with the sonic commit"', "git checkout feat/x", "git pull --ff-only origin feat/x"]
+    assert all("--force" not in line and "reset --hard" not in line and "-f " not in line for line in _block(plain))
+
+
+def test_a_branch_name_that_is_not_safe_to_print_never_reaches_a_command():
+    for bad in ("x; rm -rf ~", "a b", "$(whoami)", "-rf", "", None, "a..b", "feat/x`id`"):
+        text = cf.catch_up_after_commit(bad, new_branch=True)
+        assert "```" not in text and "git fetch origin" in text, bad
+        assert "```" not in cf.catch_up_after_merge(bad, "feat/x"), bad
+    assert "git branch -D" not in cf.catch_up_after_merge("main", "feat/x`id`")
+
+
+def test_after_a_merge_the_result_says_how_to_update_the_target_branch_and_offers_to_delete_the_merged_one(world):
+    details = cf.parse_merge_card(_committed_with_pr(world))
+    out = cf.execute_merge(USER, details)
+    assert out.startswith("**Merged** pull request #1 into `main` (squash)")
+    assert _block(out) == ["git fetch origin", "git checkout main", "git pull --ff-only origin main"]
+    assert "git branch -D sonic/hello" in out and "capital D" in out
+    assert "git branch -D" not in cf.catch_up_after_merge("main", "main")
