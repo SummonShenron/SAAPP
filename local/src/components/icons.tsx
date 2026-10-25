@@ -116,6 +116,14 @@ const SHAPES = {
       <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
     </>
   ),
+  notes: (
+    <>
+      <path d="M8 3h8a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
+      <line x1="9" y1="8" x2="15" y2="8" />
+      <line x1="9" y1="12" x2="15" y2="12" />
+      <line x1="9" y1="16" x2="13" y2="16" />
+    </>
+  ),
   chevronUp: <polyline points="18 15 12 9 6 15" />,
   check: <polyline points="20 6 9 17 4 12" />,
   microscope: (

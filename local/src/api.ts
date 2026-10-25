@@ -1723,6 +1723,22 @@ export interface MeetingsState {
   active: { run_id: string; meeting_id: string; name: string } | null;
 }
 
+/** One line of a conversation's working notes. `by` says who wrote it; what the person wrote or edited is never changed by Sonic. */
+export interface WorkingNoteItem { id: string; text: string; evidence: string; by: 'model' | 'person'; }
+export interface WorkingNotes {
+  goal: WorkingNoteItem | null;
+  sections: { kind: string; label: string; items: WorkingNoteItem[] }[];
+  empty: boolean;
+}
+
+export const getWorkingNotes = (sessionId: string): Promise<WorkingNotes> =>
+  taskRequest(`/api/working-notes?session_id=${encodeURIComponent(sessionId)}`, {}, 'Failed to load the working notes.');
+/** Edit one item (text), delete it (text null), or add one (itemId "new" with a kind). Returns the notes as they are now. */
+export const editWorkingNote = (sessionId: string, itemId: string, text: string | null, kind?: string): Promise<WorkingNotes> =>
+  taskRequest(`/api/working-notes?session_id=${encodeURIComponent(sessionId)}`, { method: 'PATCH', body: JSON.stringify({ item_id: itemId, text, kind }) }, 'Failed to change that note.');
+export const clearWorkingNotes = (sessionId: string): Promise<{ status: string }> =>
+  taskRequest(`/api/working-notes?session_id=${encodeURIComponent(sessionId)}`, { method: 'DELETE' }, 'Failed to clear the working notes.');
+
 export const listMeetings = (): Promise<{ meetings: Meeting[]; limits: { max_meetings: number } }> => taskRequest('/api/meetings', {}, 'Failed to load your meetings.');
 export const getMeetingsState = (sessionId: string): Promise<MeetingsState> =>
   taskRequest(`/api/meetings/state?session_id=${encodeURIComponent(sessionId)}`, {}, 'Failed to load your meetings.');
@@ -2185,6 +2201,9 @@ export const api = {
   runTaskNow,
   listMeetings,
   getMeetingsState,
+  getWorkingNotes,
+  editWorkingNote,
+  clearWorkingNotes,
   createMeeting,
   updateMeeting,
   deleteMeeting,

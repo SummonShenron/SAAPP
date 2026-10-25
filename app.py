@@ -131,6 +131,7 @@ from backend.utils.example_questions import build_example_questions, build_welco
 from backend.components.sonic_profile import SONIC_PROFILE
 from backend.utils.time_utils import build_time_context, local_today, sent_at, stamp
 from backend.utils import open_loops as open_loops_utils
+from backend.utils import working_state as working_state_utils
 from backend.utils import clarifications as clarify_utils
 from backend.utils import initiation as initiation_utils
 from backend.utils import budget_guard
@@ -782,8 +783,11 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         messages_state = scrub_stale_capability_denials(messages_state)
 
     request_id = uuid.uuid4().hex
+    # This conversation's working notes (backend/utils/working_state.py), for the tool agent; empty for most conversations, and read from a short-lived cache.
+    working_notes = "" if is_guest_username(username) else await asyncio.to_thread(working_state_utils.load_context, username, session_id)
     initial_state: GraphState = {
         "messages": messages_state,
+        "working_notes": working_notes or None,
         "username": username,
         "session_id": session_id,
         "target_scope": target_scope,
@@ -1206,6 +1210,14 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             callback_offered = False
             callback_at_lull = False
             lean_entry = None
+            # A plain conversation turn in a conversation that has working notes (backend/utils/working_state.py): the reply may refer back to what was decided. Not on a tool-agent turn (it had
+            # them already), not when the person is emotional or in a safety context.
+            working_notes_for_reply = working_state_utils.for_chat_turn(
+                working_notes, tool_agent_turn=final_state.get("relevance_grade") == "tool_agent", emotional=bool(emotional_context), risk_active=risk_level != RISK_NONE,
+                guest=is_guest_username(username),
+            )
+            if working_notes_for_reply:
+                tally(turn_counts, "working_notes_chat_read")
             prompt = build_voice_prompt(
                 grounding_block=GROUNDING_BLOCKS.get(source_type, KB_STRICT_GROUNDING),
                 data=data,
@@ -1218,6 +1230,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 encouragement_context=build_encouragement_block(encouragement_entry),
                 open_loop_context=open_loops_utils.build_open_loop_block(open_loop_entry, today_local) + events_context,
                 headsup_context=headsups_utils.build_headsup_block(headsup_entry, bool(headsup_entry and headsup_entry.get("discreet"))),
+                working_notes_context=working_notes_for_reply,
                 self_history_context=build_self_history_block(self_history),
                 routines_context=routines_context,
                 followups_context=followups_context,
@@ -1677,6 +1690,13 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # later prompts as if it were a fact (a real memory chunk did exactly that).
             if budget_guard.allows("memory_summaries", budget_state) and not (folder_connected and is_stale_capability_denial(full_response)):
                 spawn_background_task(index_conversation_turn(services.get("user_memory_vector_store"), username, question, full_response, session_id, previous_reply))
+            # After a coding turn, the conversation's working notes are brought up to date when enough has passed (one small model call, off the response path: backend/utils/working_state.py).
+            if code_summary and working_notes:
+                tally(turn_counts, "working_notes_injected")      # a coding turn that was given the conversation's notes
+            if code_summary and not is_guest_username(username) and budget_guard.allows("keeping working notes", budget_state):
+                spawn_background_task(working_state_utils.capture(
+                    username, session_id, chat_sessions[history_key], coding=True, heavy=bool(code_summary.get("edited") or code_summary.get("cap_hit")), risk_active=risk_level != RISK_NONE,
+                ))
             # The reading shelf is topped up lazily, when a conversation starts: one search, a few page reads and two small model calls, only
             # when it is due (backend/services/shelf_refresh.py). After the reply is on its way, so it never slows one.
             if len(chat_sessions[history_key]) <= 2 and get_db() is not None and budget_guard.allows("shelf_refresh", budget_state):
@@ -2284,6 +2304,7 @@ async def clear_memory(current_user = Depends(get_current_user)):
     await asyncio.to_thread(progress_notes_utils.forget_all, username)
     await asyncio.to_thread(headsups_utils.forget_all, username)
     await asyncio.to_thread(clarify_utils.forget_all, username)
+    await asyncio.to_thread(working_state_utils.clear_all, get_db(), username)
     if result["failed"]:
         # Never report a partial wipe as success: the page says it permanently deletes everything.
         raise HTTPException(status_code=500, detail="Some of your memory could not be deleted. Please try again.")
@@ -3330,6 +3351,37 @@ async def report_local_edit_decision(proposal_id: str, payload: EditDecisionRequ
         # Whether or not a turn was waiting: these files are now changed work that a commit may include (backend/utils/applied_changes.py).
         applied_changes.record(username, local_edit_decisions.changes_for(username, proposal_id))
     return {"status": status}
+
+
+class WorkingNoteEdit(BaseModel):
+    item_id: str                        # an item's id, "g" for the goal, or "new" to add one
+    text: str | None = None             # the new wording; none deletes the item
+    kind: str | None = None             # for a new item: goal, decisions, constraints, progress or open
+
+
+@app.get("/api/working-notes")
+async def get_working_notes(session_id: str = Query(...), current_user = Depends(get_current_user)):
+    """This conversation's working notes (backend/utils/working_state.py): what the person can read, edit or clear."""
+    username = current_user.get("sub")
+    return working_state_utils.public_view(await asyncio.to_thread(working_state_utils.load, get_db(), username, session_id.strip()))
+
+
+@app.patch("/api/working-notes")
+async def edit_working_notes(edit: WorkingNoteEdit, session_id: str = Query(...), current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    view = await asyncio.to_thread(
+        working_state_utils.edit_item, get_db(), username, session_id.strip(), edit.item_id.strip(), edit.text, datetime.now(timezone.utc), kind=(edit.kind or "").strip() or None,
+    )
+    if view is None:
+        raise HTTPException(status_code=404, detail="That note item was not found, or the text was empty.")
+    return view
+
+
+@app.delete("/api/working-notes")
+async def clear_working_notes(session_id: str = Query(...), current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    await asyncio.to_thread(working_state_utils.clear, get_db(), username, session_id.strip())
+    return {"status": "cleared"}
 
 
 @app.get("/api/reading-shelf")

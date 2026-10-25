@@ -66,7 +66,8 @@ class GraphState(TypedDict):
     memory_hits: Optional[List[Any]]              # Semantic memory documents retrieved this turn
     rag_mode: Optional[str]                       # "strict" (default) or "open"
     deep_thinking: Optional[bool]                 # raises tool_agent_node's step cap + retry-nudge budget
-    git_branch: Optional[str]                     # the git branch the person's connected folder is on, as their browser reported it (for commits)
+    working_notes: Optional[str]                  # this conversation's working notes as a prompt block (backend/utils/working_state.py), for the tool agent; set fresh each turn
+    git_branch: Optional[str]                   # the git branch the person's connected folder is on, as their browser reported it (for commits)
     edit_decisions: Optional[bool]                # the page reports Apply / Decline on a proposed folder change, so the native tool loop may wait for it and continue
     tool_model: Optional[str]                     # "claude" | "gemini": the person's choice for the tool agent's reasoning steps; None = the server's default
     budget_level: Optional[str]                   # the usage budget guard's level this turn (backend/utils/budget_guard.py)

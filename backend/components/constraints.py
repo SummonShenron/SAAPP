@@ -270,6 +270,7 @@ def build_voice_prompt(
     progress_notes_context: str = "",
     meeting_context: str = "",
     headsup_context: str = "",
+    working_notes_context: str = "",
 ) -> str:
     """Composes the single unified final-answer prompt used by every response path (RAG,
     conversational, web search, code interpreter, GitHub search, PR summary) — one persona,
@@ -311,6 +312,8 @@ def build_voice_prompt(
         sections.append(encouragement_context)
     if open_loop_context:
         sections.append(open_loop_context)
+    if working_notes_context:
+        sections.append("\n" + working_notes_context + "\n")
     if emotional_context:
         sections.append(emotional_context)
     sections.append(f"\nCONVERSATION HISTORY:\n{history}\n\nCURRENT USER INPUT:\n{question}\n\nASSISTANT RESPONSE:\n")

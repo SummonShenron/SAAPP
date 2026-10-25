@@ -243,6 +243,20 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "working_notes",
+        "requires": [
+            "backend/utils/working_state.py::async def capture",
+            "backend/utils/working_state.py::def apply_patch",
+        ],
+        "month": "2026-10",
+        "title": "Working notes for coding conversations",
+        "line": (
+            "I can now keep short working notes through a long coding conversation: what we decided, what's off limits, what's done and what's still open. You can read and edit them from the notes button."
+        ),
+        "keywords": ["working notes", "notes", "lose track", "long conversation", "decided", "keep track", "thread", "coding session", "what we decided"],
+        "volunteer": [],
+    },
+    {
         "id": "sandbox_tests",
         "requires": [
             "backend/services/sandbox_tests.py::async def run_tests",
