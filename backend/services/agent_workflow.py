@@ -3199,6 +3199,24 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             await safe_emit_event("code_plan", code_plan.public_view(plan))
             return "Plan saved. The person sees it as a card and can approve it, change a step or cancel. Nothing has been changed. Reply in one or two sentences pointing at the plan, and stop."
 
+        async def _leanings_block() -> str:
+            """Sonic's own working leanings that fit this request, found by meaning (backend/utils/leanings.py), for a turn with code tools. One embedding, no model call; counts only are recorded. Never raises."""
+            try:
+                from backend.utils import leanings as leanings_module
+                from backend.utils.embedding_utils import embed_text
+                from backend.utils.self_counters import record_turn_counts
+
+                if not any(tool.get("name") in {"read_repo_file", "search_literal", "find_file", "propose_local_edits"} for tool in native_tools):
+                    return ""
+                request = f"{recent_user_text} {(state.get('code_plan_context') or '')[:500]}"
+                chosen = await asyncio.to_thread(leanings_module.select, request, get_db(), embed_text)
+                if chosen:
+                    await asyncio.to_thread(record_turn_counts, leanings_module.counts_for(chosen))
+                return leanings_module.build_block(chosen)
+            except Exception:
+                logger.warning("[tool_agent_node] could not choose working leanings.", exc_info=True)
+                return ""
+
         async def _plan_files_block() -> str:
             """The next plan step's files, read by the server with no model call (backend/utils/code_plan.py files_block), so the turn starts at the edit. Never raises."""
             try:
@@ -3592,6 +3610,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 emit_step=_announce_step, emit_facts=emit_trace_facts,
                 steering_source=kwargs.get("steering_source"), on_steering_applied=kwargs.get("on_steering_applied"),
                 library_allowance=kwargs.get("library_allowance"), is_unsafe=kwargs.get("is_unsafe"),
+                leanings=await _leanings_block(),
                 plan_budget=code_plan.PlanBudget(await asyncio.to_thread(code_plan.load, get_db(), username, state.get("session_id") or "")) if plan_phase == code_plan.EXECUTE_PHASE else None,
                 # With a folder connected: where reads come from (the folder, not GitHub) and, on a request for a change, the same "you must propose it" rule the old loop enforces.
                 environment_note=schema if local_workspace_handle is not None else "", required_action=kwargs.get("required_action"),

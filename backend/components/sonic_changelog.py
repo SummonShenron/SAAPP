@@ -994,6 +994,19 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "working_philosophy",
+        "requires": [
+            "backend/utils/leanings.py::def select",
+            "backend/components/sonic_leanings.py",
+            "backend/services/agent_workflow.py::async def _leanings_block",
+        ],
+        "month": "2026-10",
+        "title": "How I like to work on code",
+        "line": "When I work on frontend code I check which style rule actually wins, fix a problem where it renders, and say plainly what I couldn't run or look at. More of these are drafted and wait for your approval.",
+        "keywords": ["how do you work", "your approach", "your philosophy", "working style", "leanings", "principles", "how do you code"],
+        "volunteer": [],
+    },
+    {
         "id": "memory_while_working",
         "requires": [
             "backend/services/tool_agent_memory.py::async def search_for_agent",

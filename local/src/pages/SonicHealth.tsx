@@ -622,6 +622,7 @@ const PROMPT_PARTS: [string, string][] = [
   ['memory', 'Saved notes about you'],
   ['history', 'Conversation so far'],
   ['environment', 'Folder, notes and plan'],
+  ['leanings', 'Your own working leanings for this task'],
   ['request', 'Your message'],
 ];
 const CHARS_PER_TOKEN = 3.8;
