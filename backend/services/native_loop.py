@@ -217,7 +217,7 @@ def _describe(name: str, args: Dict[str, Any]) -> str:
     return f"{name}({shown})"
 
 
-def build_context(question: str, history: str, time_line: str, coding_preferences: str, architecture_map: str = "", user_memory: str = "", environment_note: str = "") -> str:
+def build_context(question: str, history: str, time_line: str, coding_preferences: str, architecture_map: str = "", user_memory: str = "", environment_note: str = "", leanings: str = "") -> str:
     """The one human message that opens the conversation: what is stable for this person first, then this request."""
     parts = []
     if coding_preferences:
@@ -232,6 +232,8 @@ def build_context(question: str, history: str, time_line: str, coding_preference
         parts.append(user_memory.strip())
     if environment_note:  # where this turn's reads come from (the person's folder, not GitHub), so a path it reads is known to be their live file
         parts.append("WHERE YOU ARE READING FROM:\n" + environment_note.strip())
+    if leanings:  # after everything stable, so the cached start of the prompt does not change from turn to turn (backend/utils/leanings.py)
+        parts.append(leanings.strip())
     parts.append("USER REQUEST:\n" + question.strip())
     return "\n\n".join(parts)
 
@@ -261,6 +263,7 @@ async def run(
     required_action: Optional[Dict[str, Any]] = None,
     is_unsafe: Optional[Callable[[Dict[str, Any]], bool]] = None,
     plan_budget: Any = None,
+    leanings: str = "",
 ) -> Dict[str, Any]:
     """Runs the loop and returns what the old loop returns: `{"final_answer", "attempts", "show_work"}`, where each attempt is
     `{"purpose", "action_desc", "observation"}`. `llm` must offer `ainvoke_tools(messages, tools)`. `act(decision)` is the turn's
@@ -276,12 +279,12 @@ async def run(
         tools = list(tools) + [SAVE_DRAFT_TOOL]
         offered = offered | {"save_draft"}
     latest_draft: Optional[str] = None
-    messages: List[Any] = [SystemMessage(content=system_prompt), HumanMessage(content=build_context(question, history, time_line, coding_preferences, architecture_map, user_memory, environment_note if can_edit else ""))]
+    messages: List[Any] = [SystemMessage(content=system_prompt), HumanMessage(content=build_context(question, history, time_line, coding_preferences, architecture_map, user_memory, environment_note if can_edit else "", leanings))]
     # Sizes of the prompt's parts and of everything every call sends (backend/utils/prompt_meter.py): counts only, recorded once at the end.
     meter = PromptMeter()
     meter.part("instructions", system_prompt)
     meter.tools(tools)
-    for name, text in (("preferences", coding_preferences), ("architecture", architecture_map), ("memory", user_memory), ("history", history), ("environment", environment_note if can_edit else ""),
+    for name, text in (("preferences", coding_preferences), ("architecture", architecture_map), ("memory", user_memory), ("history", history), ("leanings", leanings), ("environment", environment_note if can_edit else ""),
                        ("request", question)):
         meter.part(name, text)
     attempts: List[Dict[str, str]] = []

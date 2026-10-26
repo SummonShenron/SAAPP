@@ -297,6 +297,13 @@ async def lifespan(app: FastAPI):
     if get_db() is not None:
         ensure_calendar_indexes()
         microsoft_utils.ensure_indexes()
+    try:
+        # Sonic's working leanings are found by meaning (backend/utils/leanings.py): build their index in the background so no chat turn waits for it.
+        from backend.utils import leanings as leanings_utils
+
+        leanings_utils.warm(get_db(), embed_text)
+    except Exception:
+        logger.warning("Could not start the leanings index build.", exc_info=True)
     yield
     # Cleanup tasks would go here
     retention_task.cancel()

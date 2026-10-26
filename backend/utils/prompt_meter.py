@@ -12,7 +12,7 @@ from typing import Any, Dict, Iterable, Optional
 
 logger = logging.getLogger("SASS Logger")
 
-PARTS = ("instructions", "tools", "preferences", "architecture", "memory", "history", "environment", "request")
+PARTS = ("instructions", "tools", "preferences", "architecture", "memory", "history", "leanings", "environment", "request")
 COUNT_KEYS = ("native_runs", "native_calls", "native_chars_sent", "native_chars_results") + tuple(f"native_chars_{part}" for part in PARTS)
 CHARS_PER_TOKEN = 3.8        # a rough figure for English prose and code, used only to show an estimate next to the character counts
 
