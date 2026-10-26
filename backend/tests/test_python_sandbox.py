@@ -62,7 +62,7 @@ def test_syntax_error_rejected_without_crashing():
 async def test_never_raises_on_disallowed_import():
     called = {"n": 0}
 
-    def fake_run_in_sandbox(code, fuel):
+    def fake_run_in_sandbox(code, fuel, wall_seconds=None):
         called["n"] += 1
         return "should never run", ""
 
@@ -90,10 +90,7 @@ async def test_never_raises_on_empty_code():
 
 @run_async
 async def test_never_raises_when_sandbox_binary_missing(monkeypatch):
-    def fake_get_sandbox():
-        raise FileNotFoundError("Python sandbox interpreter not found at /nowhere.wasm.")
-
-    monkeypatch.setattr(sandbox, "_get_sandbox", fake_get_sandbox)
+    monkeypatch.setattr(sandbox, "SANDBOX_WASM_PATH", sandbox.Path("/nowhere/python-3.12.0.wasm"))
 
     result = await sandbox.run_python_sandboxed("print(1)")
 
@@ -103,7 +100,7 @@ async def test_never_raises_when_sandbox_binary_missing(monkeypatch):
 
 @run_async
 async def test_never_raises_on_unexpected_exception(monkeypatch):
-    def boom(code, fuel):
+    def boom(code, fuel, wall_seconds=None):
         raise RuntimeError("something wasmtime-internal exploded")
 
     monkeypatch.setattr(sandbox, "_run_in_sandbox", boom)
@@ -116,7 +113,7 @@ async def test_never_raises_on_unexpected_exception(monkeypatch):
 
 @run_async
 async def test_timeout_returns_error_not_raise(monkeypatch):
-    def slow(code, fuel):
+    def slow(code, fuel, wall_seconds=None):
         import time
         time.sleep(10)
         return "too slow", ""
@@ -190,5 +187,54 @@ async def test_real_sandbox_traps_infinite_loop_quickly():
         "while True:\n    pass", fuel=50_000_000, timeout_seconds=5.0
     )
     elapsed = time.time() - start
-    assert elapsed < 2.0  # fuel exhaustion, not the 5s wall-clock backstop, is what stopped it
+    assert elapsed < 4.5  # fuel exhaustion, not the 5s wall-clock backstop, is what stopped it (this now includes starting the sandbox's own process, about a second)
     assert result["output"] == ""
+
+
+# ---------------------------------------------------------------------------
+# The interpreter never runs inside the web server (it did once, and took it down)
+# ---------------------------------------------------------------------------
+
+def test_the_server_process_never_loads_the_interpreter():
+    import pathlib
+
+    source = pathlib.Path(sandbox.__file__).read_text(encoding="utf-8")
+    assert "from wasmtime" not in source and "import wasmtime" not in source and "Module.from_file" not in source
+    assert "run_worker(" in source
+
+
+@run_async
+async def test_a_server_short_of_memory_refuses_in_words_and_does_not_start_anything(monkeypatch):
+    from backend.services import sandbox_tests as st
+
+    monkeypatch.setattr(st, "headroom_mb", lambda count_cache=False: 10.0)
+    started = []
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: started.append(a))
+    result = await sandbox.run_python_sandboxed("print(1)")
+    assert result["output"] == "" and "short of memory" in result["error"] and "code was not run" in result["error"] and started == []
+
+
+@run_async
+async def test_a_worker_that_dies_or_overruns_comes_back_as_an_error_not_an_exception(monkeypatch):
+    import subprocess
+
+    from backend.services import sandbox_tests as st
+
+    monkeypatch.setattr(st, "headroom_mb", lambda count_cache=False: None)
+
+    def overrun(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="worker", timeout=1)
+
+    monkeypatch.setattr("subprocess.run", overrun)
+    assert "Timed out after" in (await sandbox.run_python_sandboxed("print(1)", timeout_seconds=1.0))["error"]
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: type("Done", (), {"returncode": 1, "stdout": "", "stderr": ""})())
+    assert "stopped unexpectedly" in (await sandbox.run_python_sandboxed("print(1)"))["error"]
+
+
+@requires_real_sandbox
+@run_async
+async def test_real_run_gives_the_guest_no_filesystem_and_reports_an_endless_loop_in_words():
+    mounted = await sandbox.run_python_sandboxed("print(open('/work/x').read())")
+    assert mounted["output"] == "" and "FileNotFoundError" in mounted["error"]          # nothing is mounted for run_python, not even an empty folder to find
+    looped = await sandbox.run_python_sandboxed("while True:\n    pass", fuel=50_000_000, timeout_seconds=8.0)
+    assert looped["output"] == "" and "compute budget" in looped["error"]

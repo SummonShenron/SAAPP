@@ -34,8 +34,6 @@ import ast
 import asyncio
 import logging
 import os
-import tempfile
-import threading
 from pathlib import Path
 
 logger = logging.getLogger("SASS Logger")
@@ -92,83 +90,24 @@ def _find_disallowed_import(code: str) -> str | None:
     return None
 
 
-_sandbox_lock = threading.Lock()
-_engine = None
-_linker = None
-_module = None
+def _run_in_sandbox(code: str, fuel: int, wall_seconds: float = DEFAULT_TIMEOUT_SECONDS) -> tuple[str, str]:
+    """Blocking, so it is always called via a thread (see run_python_sandboxed). Returns (stdout, stderr). The code runs in the sandbox's OWN PROCESS
+    (backend/sandbox/sandbox_worker.py, started by backend/services/sandbox_tests.py run_worker), never inside the web server: loading the interpreter in-process peaks near 450 MB while it
+    compiles and then stays resident for the life of the server, which restarted a 537 MB instance once, and this tool had the same exposure on a cold start. The guest gets no
+    filesystem at all (`root` None) and no network (WASI has none to give), its memory is capped, and its fuel is the real bound. Never raises for guest-code failures: a trap, an
+    uncaught exception in the guest or a denied access just means the guest's own stderr already holds the real Python traceback, which is what comes back as the error."""
+    from backend.services import sandbox_tests
 
-
-def _get_sandbox():
-    """Lazily builds the wasmtime Engine/Linker/Module once and reuses them — reloading the
-    ~26MB module from disk on every call would add needless latency to every invocation.
-    The module itself is stateless and safe to share; each call still gets its own fresh
-    Store (see _run_in_sandbox), i.e. its own fresh interpreter instance with no state
-    carried over from a previous call, matching the "no persistent state" requirement."""
-    global _engine, _linker, _module
-    if _module is not None:
-        return _engine, _linker, _module
-
-    with _sandbox_lock:
-        if _module is not None:
-            return _engine, _linker, _module
-
-        from wasmtime import Config, Engine, Linker, Module
-
-        if not SANDBOX_WASM_PATH.exists():
-            raise FileNotFoundError(
-                f"Python sandbox interpreter not found at {SANDBOX_WASM_PATH}. Download "
-                "python-3.12.0.wasm from vmware-labs/webassembly-language-runtimes (see "
-                "backend/sandbox/README.md) and place it there."
-            )
-
-        engine_cfg = Config()
-        engine_cfg.consume_fuel = True
-        engine = Engine(engine_cfg)
-        linker = Linker(engine)
-        linker.define_wasi()
-        module = Module.from_file(engine, str(SANDBOX_WASM_PATH))
-
-        _engine, _linker, _module = engine, linker, module
-        return _engine, _linker, _module
-
-
-def _run_in_sandbox(code: str, fuel: int) -> tuple[str, str]:
-    """Blocking — always called via a thread (see run_python_sandboxed). Returns
-    (stdout, stderr). Never raises for guest-code failures: a trap (fuel exhausted, an
-    uncaught exception in the guest, a denied filesystem/capability access) just means the
-    guest's own stderr — read from its redirected log file below — already has the real
-    Python traceback, which is what actually gets returned as the "error" field."""
-    from wasmtime import Store, WasiConfig
-
-    engine, linker, module = _get_sandbox()
-
-    wasi_config = WasiConfig()
-    wasi_config.argv = ("python", "-c", code)
-    # No preopen_dir call anywhere in this file — zero filesystem capabilities granted to
-    # the guest. No network configuration exists to grant in WASI preview1 at all; there is
-    # no socket syscall for this build's libc to bind to, so there's nothing to "block" —
-    # it's structurally absent from the platform, not merely disabled.
-
-    with tempfile.TemporaryDirectory() as chroot:
-        out_path = os.path.join(chroot, "out.log")
-        err_path = os.path.join(chroot, "err.log")
-        wasi_config.stdout_file = out_path
-        wasi_config.stderr_file = err_path
-
-        store = Store(engine)
-        store.set_fuel(fuel)
-        store.set_wasi(wasi_config)
-
-        try:
-            instance = linker.instantiate(store, module)
-            start = instance.exports(store)["_start"]
-            start(store)
-        except Exception:
-            logger.debug("python_sandbox guest run ended via trap/non-zero exit", exc_info=True)
-
-        stdout = Path(out_path).read_text(errors="replace") if os.path.exists(out_path) else ""
-        stderr = Path(err_path).read_text(errors="replace") if os.path.exists(err_path) else ""
-        return stdout, stderr
+    result = sandbox_tests.run_worker(
+        {"root": None, "argv": ["python", "-c", code], "fuel": fuel}, wall_seconds,
+        short_of_memory="The server is short of memory right now, so the code was not run (running it could have restarted the server). Try again in a moment.",
+        timed_out=f"Timed out after {wall_seconds:g}s.",
+        stopped="The sandbox process stopped unexpectedly (most likely it ran out of memory), so the code did not finish. The server itself is unaffected.",
+    )
+    stderr = result["stderr"]
+    if result["out_of_fuel"] and not stderr.strip():
+        stderr = "The code used up its compute budget and was stopped (an endless loop, or too much work)."
+    return result["stdout"], stderr
 
 
 async def run_python_sandboxed(
@@ -195,7 +134,7 @@ async def run_python_sandboxed(
 
     try:
         stdout, stderr = await asyncio.wait_for(
-            asyncio.to_thread(_run_in_sandbox, code, fuel),
+            asyncio.to_thread(_run_in_sandbox, code, fuel, timeout_seconds),
             timeout=timeout_seconds,
         )
     except asyncio.TimeoutError:
@@ -204,6 +143,10 @@ async def run_python_sandboxed(
         logger.error(str(e))
         return {"output": "", "error": str(e)}
     except Exception as e:
+        from backend.services.sandbox_tests import SandboxError
+
+        if isinstance(e, SandboxError):
+            return {"output": "", "error": str(e)}      # in words: out of memory, took too long, or the process died
         logger.exception("Unexpected error running the Python sandbox.")
         return {"output": "", "error": f"Sandbox error: {e}"}
 

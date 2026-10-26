@@ -11,7 +11,7 @@ cache that will not load is thrown away and made again.
 This file imports nothing from the app (only the standard library and wasmtime), so it can be run on its own with `python -I`.
 
 USAGE: a JSON job on stdin, a JSON result on stdout:
-  in:  {"wasm": path, "cwasm": path, "root": folder to mount read-only at /work, "argv": [...], "fuel": n, "memory": bytes}
+  in:  {"wasm": path, "cwasm": path, "root": folder to mount read-only at /work (null: no filesystem at all), "argv": [...], "fuel": n, "memory": bytes}
   out: {"stdout", "stderr", "out_of_fuel", "peak_mb", "compiled": true when this run had to compile}
   `--precompile <wasm> <cwasm>` only writes the cache.
 """
@@ -94,7 +94,8 @@ def run(job: dict) -> dict:
     linker.define_wasi()
     config = WasiConfig()
     config.argv = tuple(job["argv"])
-    config.preopen_dir(job["root"], "/work", False)                 # read-only: the only capability the guest is given
+    if job.get("root"):
+        config.preopen_dir(job["root"], "/work", False)             # read-only: the only capability the guest is given (run_python gives it none: root is None)
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as logs:
         out_path, err_path = os.path.join(logs, "out.log"), os.path.join(logs, "err.log")
         config.stdout_file, config.stderr_file = out_path, err_path

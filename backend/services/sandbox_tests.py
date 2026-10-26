@@ -180,9 +180,18 @@ def _cache_path() -> Path:
     return SANDBOX_WASM_PATH.with_suffix(".cwasm")
 
 
-def _run_guest(root: str, paths: List[str]) -> Dict[str, Any]:
-    """Blocking. Runs the runner in a fresh interpreter, in its own process (backend/sandbox/sandbox_worker.py), with `root` mounted read-only at /work.
-    Returns {"stdout", "stderr", "out_of_fuel"}. Raises SandboxError, in words, when the run cannot be started safely or the process dies."""
+def run_worker(
+    job: Dict[str, Any],
+    wall_seconds: float,
+    *,
+    short_of_memory: str = "The server is short of memory right now, so the tests were not started (starting them could have restarted the server). Nothing was tested; try again in a moment.",
+    timed_out: Optional[str] = None,
+    stopped: str = "The sandbox process stopped unexpectedly (most likely it ran out of memory), so nothing was tested. The server itself is unaffected.",
+) -> Dict[str, Any]:
+    """Blocking. Runs a job in the sandbox's own process (backend/sandbox/sandbox_worker.py) after checking the server has the memory for it, and returns the worker's answer
+    ({"stdout", "stderr", "out_of_fuel", ...}). The test runs and the run_python tool both go through here, so neither ever loads the interpreter inside the web server (compiling it
+    there peaks near 450 MB and took the server down once). `job` adds to the standard fields (the interpreter, its compiled cache, the guest's memory cap); a `root` of None grants the
+    guest no filesystem at all. Raises FileNotFoundError when the interpreter is missing and SandboxError, in words, when the run cannot be started safely or the process dies."""
     import subprocess
     import sys
 
@@ -195,22 +204,27 @@ def _run_guest(root: str, paths: List[str]) -> Dict[str, Any]:
     room = headroom_mb()
     if room is not None and room < need:
         logger.warning("[sandbox_tests] refused a run: %d MB free, %d MB needed.", int(room), need)
-        raise SandboxError("The server is short of memory right now, so the tests were not started (starting them could have restarted the server). Nothing was tested; try again in a moment.")
-    job = {"wasm": str(SANDBOX_WASM_PATH), "cwasm": str(cache), "root": root, "argv": ["python", "-c", RUNNER, *paths], "fuel": TEST_FUEL, "memory": MEMORY_BYTES}
+        raise SandboxError(short_of_memory)
+    full = {"wasm": str(SANDBOX_WASM_PATH), "cwasm": str(cache), "memory": MEMORY_BYTES, **job}
     try:
-        done = subprocess.run([sys.executable, "-I", str(WORKER)], input=json.dumps(job), capture_output=True, text=True, encoding="utf-8", errors="replace",
-                              timeout=max(WALL_SECONDS - 3, 5), env=_clean_env(), cwd=tempfile.gettempdir())
+        done = subprocess.run([sys.executable, "-I", str(WORKER)], input=json.dumps(full), capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=wall_seconds, env=_clean_env(), cwd=tempfile.gettempdir())
     except subprocess.TimeoutExpired:
-        raise SandboxError(f"The tests did not finish within {int(WALL_SECONDS)} seconds and were stopped, so the result is unknown.") from None
+        raise SandboxError(timed_out or f"The tests did not finish within {int(wall_seconds + 3)} seconds and were stopped, so the result is unknown.") from None
     try:
         result = json.loads(done.stdout) if done.returncode == 0 and done.stdout.strip() else None
     except ValueError:
         result = None
     if not isinstance(result, dict):
         logger.warning("[sandbox_tests] the sandbox process ended abnormally (exit code %d).", int(done.returncode))
-        raise SandboxError("The sandbox process stopped unexpectedly (most likely it ran out of memory), so nothing was tested. The server itself is unaffected.")
+        raise SandboxError(stopped)
     logger.info("[sandbox_tests] the sandbox process used about %d MB%s.", int(result.get("peak_mb") or 0), " and compiled the interpreter" if result.get("compiled") else "")
     return {"stdout": str(result.get("stdout", "")), "stderr": str(result.get("stderr", "")), "out_of_fuel": bool(result.get("out_of_fuel"))}
+
+
+def _run_guest(root: str, paths: List[str]) -> Dict[str, Any]:
+    """Blocking. Runs the test runner in a fresh interpreter, in its own process, with `root` mounted read-only at /work. Returns {"stdout", "stderr", "out_of_fuel"}."""
+    return run_worker({"root": root, "argv": ["python", "-c", RUNNER, *paths], "fuel": TEST_FUEL}, max(WALL_SECONDS - 3, 5))
 
 
 def parse_output(stdout: str, stderr: str, out_of_fuel: bool) -> Dict[str, Any]:
