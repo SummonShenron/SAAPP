@@ -137,6 +137,11 @@ from backend.utils import working_state as working_state_utils
 from backend.utils import code_plan as code_plan_utils
 from backend.utils import server_memory
 from backend.utils import leanings as leanings_utils
+from backend.utils import character as character_utils
+from backend.utils import experiences as experiences_utils
+from backend.utils import experience_capture
+from backend.utils import experience_reflections
+from backend.utils import self_model
 from backend.utils import clarifications as clarify_utils
 from backend.utils import initiation as initiation_utils
 from backend.utils import reach as reach_utils
@@ -303,6 +308,7 @@ async def lifespan(app: FastAPI):
         from backend.utils import leanings as leanings_utils
 
         leanings_utils.warm(get_db(), embed_text)
+        experiences_utils.warm(get_db(), embed_text)      # the index of real cases from its own record, built the same way
     except Exception:
         logger.warning("Could not start the leanings index build.", exc_info=True)
     yield
@@ -1034,6 +1040,18 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             pushback = code_outcomes.pushback_counts(code_followup, final_state.get("emotional_state"))
             if pushback:
                 await asyncio.to_thread(record_turn_counts, pushback)
+            if code_followup is not None and not is_guest_username(username):
+                # A signal about the PREVIOUS coding reply (backend/utils/experience_capture.py): the message after it read as pushback, or praised it. One small background call writes an abstract note, kept
+                # pending until a person approves it on Sonic Health. Nothing from the turn is stored.
+                capture_signal = "pushback" if pushback.get("code_pushback") else ("praise" if code_outcomes.is_praise(question) else None)
+                if capture_signal:
+                    previous_reply = next((m for m in reversed(chat_sessions[history_key][:-1]) if getattr(m, "type", "") == "ai"), None)
+                    spawn_background_task(experience_capture.run_capture(
+                        capture_signal, experience_capture.context_from_history(chat_sessions[history_key], question=question),
+                        guest=False, risk_active=effective_risk(final_state.get("safety_state"), datetime.now(timezone.utc)) != RISK_NONE,
+                        energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
+                        untrusted=bool((getattr(previous_reply, "additional_kwargs", None) or {}).get(experience_capture.UNTRUSTED_MARK)),
+                    ))
             if leanings_before:
                 # What followed a reply that used working leanings: counted per leaning, so over time it shows which ones earn their place. Counts only.
                 await asyncio.to_thread(
@@ -1471,6 +1489,29 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     prompt = prompt + (shelf_utils.build_listing_block(shelf_offer) if shelf_offer["kind"] == "listing" else shelf_utils.build_shelf_block(shelf_offer))
                 elif finding_offer:
                     shelf_offer = finding_offer      # already in the prompt (above); from here it is handled like any shelf offer: checked, counted, and spent only if the reply used it
+                # Sonic's own working leanings, and a real case from its own record when one genuinely fits (backend/utils/character.py): found by meaning from the embedding this turn already made, and
+                # only when the person is not holding a heavy mood. A case from the record takes the turn's one proactive slot, so it never stacks with another item.
+                if slot["energy_tier"] == "open" and question:
+                    may_cite = (not slot["proactive_taken"]) and experiences_utils.allowed(
+                        chat_sessions[history_key], risk_active=False, energy_tier=slot["energy_tier"], closing=is_closing_message(question),
+                    )
+                    chat_character = await asyncio.to_thread(character_utils.for_turn, question, get_db(), embed_text, vector=question_embedding, allow_experience=may_cite)
+                    if chat_character["text"]:
+                        prompt = prompt + chat_character["text"]
+                        chat_counts = leanings_utils.counts_for([{"id": leaning_id} for leaning_id in chat_character["leanings"]])
+                        llm_turn.leanings = list(chat_character["leanings"])
+                        if chat_character["experience"]:
+                            slot["proactive_taken"] = True
+                            llm_turn.experience_offered = True
+                            chat_counts.update(experiences_utils.counts_for(True))
+                        for key, count in chat_counts.items():
+                            turn_counts[key] = turn_counts.get(key, 0) + count
+                    if self_model.asks(question):
+                        # "What kind of system are you?": answered from what it knows about itself, the approved and current statements of the self-model (backend/utils/self_model.py).
+                        self_model_block = await asyncio.to_thread(self_model.approved_block, get_db())
+                        if self_model_block:
+                            prompt = prompt + self_model_block
+                            tally(turn_counts, "self_model_used")
             # "How are things going on your end / how was your day / any downtime?": answered from what the server really did (backend/utils/self_report.py),
             # for everyone, guests included. The routines answer above already covers "what have you been up to", so it is not stacked with this one.
             self_report_kind, self_report_snap = None, None
@@ -1639,6 +1680,12 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 tally(turn_counts, "reward_evaluated")
                 if verdict["verdict"] == "fail":
                     tally(turn_counts, "reward_failed", verdict.get("tag"))
+                    if not is_guest_username(username):
+                        spawn_background_task(experience_capture.run_capture(
+                            "answer_check", {"request": question, "reply": full_response, "tools": list(llm_turn.tools), "followup": "", "reason": str(verdict.get("reason") or "")},
+                            guest=False, risk_active=risk_level != RISK_NONE, energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
+                            tools_used=list(llm_turn.tools),
+                        ))
                     logger.info(f"Reward evaluator flagged response ({verdict['tag']}).")
                     yield f"data: {json.dumps({'event': 'node_progress', 'node': 'reward_evaluator', 'title': 'Reconsidering that answer...', 'detail': verdict['reason']})}\n\n"
                     yield f"data: {json.dumps({'event': 'regenerate_reset'})}\n\n"
@@ -1711,6 +1758,20 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     ai_message.additional_kwargs[code_outcomes.LEANINGS_MARK] = list(llm_turn.leanings)
                     for key, count in leanings_utils.capped_counts(llm_turn.leanings, llm_turn.cap_hit).items():
                         turn_counts[key] = turn_counts.get(key, 0) + count
+                if llm_turn.cap_hit and not is_guest_username(username):
+                    spawn_background_task(experience_capture.run_capture(
+                        "step_limit", {"request": question, "reply": str(ai_message.content), "tools": list(llm_turn.tools), "followup": "", "reason": ""},
+                        guest=False, risk_active=risk_level != RISK_NONE, energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
+                        tools_used=list(llm_turn.tools),
+                    ))
+            if set(llm_turn.tools) & experience_capture.UNTRUSTED_TOOLS:
+                ai_message.additional_kwargs[experience_capture.UNTRUSTED_MARK] = True       # text someone else wrote went into this turn: no note is ever written from a signal about it
+            if llm_turn.leanings and code_outcomes.LEANINGS_MARK not in ai_message.additional_kwargs:
+                # A plain conversation turn that used working leanings: stamped the same way, so the next message is counted against them.
+                ai_message.additional_kwargs[code_outcomes.LEANINGS_MARK] = list(llm_turn.leanings)
+            if llm_turn.experience_offered and experiences_utils.cited(str(ai_message.content)):
+                ai_message.additional_kwargs[experiences_utils.EXPERIENCE_MARK] = True       # rate-limits the next citation (backend/utils/experiences.py)
+                tally(turn_counts, "experience_cited")
             if ai_message.additional_kwargs.get(curiosity_utils.CURIOSITY_MARK):
                 tally(turn_counts, "offer_made")  # whatever kind of offer it was, once: the volume the welcome goal's guardrail reads (backend/utils/goals.py)
             if clarify_entry:
@@ -3383,6 +3444,117 @@ async def get_safety_stats(days: int = Query(7, ge=1, le=180), admin = Depends(r
     text, never names. Global_Admins only."""
     events = await asyncio.to_thread(fetch_recent_events, _admin_db(), days)
     return summarize_safety_events(events, days=days)
+
+
+class ExperienceEdit(BaseModel):
+    text: str
+
+
+class SelfModelEdit(BaseModel):
+    text: str
+
+
+@app.get("/api/admin/self-model")
+async def get_self_model(admin = Depends(require_global_admin)):
+    """What kind of system Sonic is, from evidence (backend/utils/self_model.py): the facts code gathered, the statements waiting for approval, and the approved ones (flagged stale when a fact
+    they rest on reads differently now)."""
+    db = _admin_db()
+    facts = await asyncio.to_thread(self_model.gather, db)
+    return {"facts": facts, **(await asyncio.to_thread(self_model.list_all, db, facts)), "limits": {"most": self_model.MAX_STATEMENTS, "used": self_model.USE_AT_MOST}}
+
+
+@app.post("/api/admin/self-model/write")
+async def write_self_model(admin = Depends(require_global_admin)):
+    """Gathers fresh facts and has the small model write new statements from them. They wait, pending, for approval; the ones that were waiting are replaced."""
+    from backend.models.models import lite_llm
+
+    db = _admin_db()
+    facts = await asyncio.to_thread(self_model.gather, db, None, use_cache=False)
+    result = await self_model.generate(db, lite_llm.ainvoke, facts)
+    return {**result, "view": await get_self_model(admin)}
+
+
+@app.post("/api/admin/self-model/{statement_id}/approve")
+async def approve_self_model_statement(statement_id: str, admin = Depends(require_global_admin)):
+    if not await asyncio.to_thread(self_model.approve, _admin_db(), statement_id, admin.get("sub")):
+        raise HTTPException(status_code=404, detail="Nothing waiting to approve there.")
+    return await get_self_model(admin)
+
+
+@app.patch("/api/admin/self-model/{statement_id}")
+async def edit_self_model_statement(statement_id: str, body: SelfModelEdit, admin = Depends(require_global_admin)):
+    problem = await asyncio.to_thread(self_model.edit, _admin_db(), statement_id, body.text)
+    if problem:
+        raise HTTPException(status_code=422, detail=f"That wording cannot be kept: {problem}.")
+    return await get_self_model(admin)
+
+
+@app.delete("/api/admin/self-model/{statement_id}")
+async def retire_self_model_statement(statement_id: str, admin = Depends(require_global_admin)):
+    await asyncio.to_thread(self_model.retire, _admin_db(), statement_id)
+    return await get_self_model(admin)
+
+
+@app.get("/api/admin/experiences")
+async def list_experiences(admin = Depends(require_global_admin)):
+    """The notes waiting for approval, the approved ones a person added, the hand-written ones, and each one's reflection (backend/utils/experience_capture.py, experience_reflections.py).
+    Abstract sentences only: no conversation text is ever stored."""
+    return await asyncio.to_thread(experiences_utils.admin_view, _admin_db())
+
+
+class ReflectionDecision(BaseModel):
+    action: str                         # approve | edit | remove
+    text: str | None = None
+
+
+@app.post("/api/admin/experiences/reflections/write")
+async def write_experience_reflections(admin = Depends(require_global_admin)):
+    """Writes a pending reflection (what Sonic takes from it, for a system like it) for up to a dozen citable notes that have none. Nothing is said until each is approved."""
+    from backend.models.models import lite_llm
+
+    db = _admin_db()
+    items = await asyncio.to_thread(experiences_utils.entries, db)
+    result = await experience_reflections.write_missing(db, items, lite_llm.ainvoke)
+    return {**result, "view": await list_experiences(admin)}
+
+
+@app.post("/api/admin/experiences/{experience_id}/reflection")
+async def decide_experience_reflection(experience_id: str, body: ReflectionDecision, admin = Depends(require_global_admin)):
+    """Approve, edit or remove the reflection on one note. An edit is held to the same checks as a written one."""
+    db = _admin_db()
+    items = await asyncio.to_thread(experiences_utils.entries, db)
+    kind = next((item["kind"] for item in items if item["id"] == experience_id), "failure")
+    outcome = await asyncio.to_thread(experience_reflections.decide, db, experience_id, body.action, kind, admin.get("sub"), body.text)
+    if not outcome["ok"]:
+        raise HTTPException(status_code=422, detail=outcome["problem"])
+    return await list_experiences(admin)
+
+
+@app.post("/api/admin/experiences/{experience_id}/approve")
+async def approve_experience(experience_id: str, admin = Depends(require_global_admin)):
+    """Makes a pending note part of the record Sonic may cite, recording who approved it."""
+    if not await asyncio.to_thread(experience_capture.approve, _admin_db(), experience_id, admin.get("sub")):
+        raise HTTPException(status_code=404, detail="Nothing waiting to approve there.")
+    experiences_utils.forget_cached()
+    return await list_experiences(admin)
+
+
+@app.patch("/api/admin/experiences/{experience_id}")
+async def edit_experience(experience_id: str, body: ExperienceEdit, admin = Depends(require_global_admin)):
+    """Rewords a note; the new wording must pass the same checks as one the model wrote."""
+    problem = await asyncio.to_thread(experience_capture.edit, _admin_db(), experience_id, body.text)
+    if problem:
+        raise HTTPException(status_code=422, detail=f"That wording cannot be kept: {problem}.")
+    experiences_utils.forget_cached()
+    return await list_experiences(admin)
+
+
+@app.delete("/api/admin/experiences/{experience_id}")
+async def delete_experience(experience_id: str, admin = Depends(require_global_admin)):
+    """Removing a note is final."""
+    await asyncio.to_thread(experience_capture.delete, _admin_db(), experience_id)
+    experiences_utils.forget_cached()
+    return await list_experiences(admin)
 
 
 @app.get("/api/admin/server-memory")

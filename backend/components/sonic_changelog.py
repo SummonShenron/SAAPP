@@ -1007,6 +1007,31 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "my_record",
+        "requires": [
+            "backend/utils/experiences.py::def select",
+            "backend/utils/experience_capture.py::async def capture",
+            "backend/utils/identity_checks.py::def felt_recollection_issue",
+        ],
+        "month": "2026-10",
+        "title": "A record of my own work",
+        "line": "I keep a short record of real things that happened in my own work, and when one fits I can cite it as a case in my record. I don't claim to remember it, and new notes wait for approval first.",
+        "keywords": ["your record", "reminds you", "remember when", "have you seen this before", "experience", "your history of mistakes", "past mistakes"],
+        "volunteer": [],
+    },
+    {
+        "id": "self_model",
+        "requires": [
+            "backend/utils/self_model.py::def approved_block",
+            "backend/utils/experience_reflections.py::async def generate",
+        ],
+        "month": "2026-10",
+        "title": "Describing what kind of system I am",
+        "line": "When you ask what kind of system I am or how I work, I can answer from approved statements built on real numbers about my own work, and I say so when something isn't covered.",
+        "keywords": ["what kind of system", "what are you", "tell me about yourself", "how do you work", "what do you spend your time on", "your purpose"],
+        "volunteer": [],
+    },
+    {
         "id": "memory_while_working",
         "requires": [
             "backend/services/tool_agent_memory.py::async def search_for_agent",

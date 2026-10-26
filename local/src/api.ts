@@ -1090,7 +1090,7 @@ export interface ReflectionResult {
   unsupported: string[];
 }
 
-async function adminRequest<T>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body?: unknown): Promise<T> {
+async function adminRequest<T>(path: string, method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', body?: unknown): Promise<T> {
   const authHeaders = await getAuthHeaders();
   const res = await fetch(`${BASE_URL}${path}`, {
     method,
@@ -1121,6 +1121,56 @@ export interface ServerMemory {
   held: { conversations_in_memory: number; messages_in_memory: number; folder_people: number; folder_files: number; folder_mb: number | null; temp_filesystem: string | null; temp_is_memory: boolean | null };
   sandbox: { headroom_now_mb: number | null; headroom_counting_cache_mb: number | null; need_warm_mb: number; need_cold_mb: number; compiled_cache_present: boolean; would_run_now: boolean | null; would_run_counting_cache: boolean | null };
   reclaimable_share_of_used: number | null;
+}
+
+/** Sonic's record of its own work (backend/utils/experience_capture.py): abstract dated notes, pending until approved. */
+export interface ExperienceReflection { status: string; text: string; }
+export interface ExperienceNote { id: string; on: string; kind: string; signal: string; area: string; what: string; status: string; count: number; reflection?: ExperienceReflection; }
+export interface RecordNote { id: string; on: string; kind: string; what: string; leaning: string; area: string; reflection: ExperienceReflection; }
+export interface ExperiencesView {
+  pending: ExperienceNote[]; approved: ExperienceNote[]; registry: RecordNote[];
+  limits: { per_day: number; waiting: number; expires_days: number; reflections_at_once: number };
+}
+
+export function getExperiences(): Promise<ExperiencesView> {
+  return adminRequest<ExperiencesView>('/api/admin/experiences', 'GET');
+}
+export function approveExperience(id: string): Promise<ExperiencesView> {
+  return adminRequest<ExperiencesView>(`/api/admin/experiences/${encodeURIComponent(id)}/approve`, 'POST');
+}
+export function editExperience(id: string, text: string): Promise<ExperiencesView> {
+  return adminRequest<ExperiencesView>(`/api/admin/experiences/${encodeURIComponent(id)}`, 'PATCH', { text });
+}
+export function deleteExperience(id: string): Promise<ExperiencesView> {
+  return adminRequest<ExperiencesView>(`/api/admin/experiences/${encodeURIComponent(id)}`, 'DELETE');
+}
+
+export function writeExperienceReflections(): Promise<{ pending: number; nothing: number; errors: number; view: ExperiencesView }> {
+  return adminRequest('/api/admin/experiences/reflections/write', 'POST');
+}
+export function decideExperienceReflection(id: string, action: 'approve' | 'edit' | 'remove', text?: string): Promise<ExperiencesView> {
+  return adminRequest<ExperiencesView>(`/api/admin/experiences/${encodeURIComponent(id)}/reflection`, 'POST', { action, text });
+}
+
+/** What kind of system Sonic is, from evidence (backend/utils/self_model.py). */
+export interface SelfModelFact { key: string; text: string; }
+export interface SelfModelStatement { id: string; text: string; status: string; cites: SelfModelFact[]; stale?: boolean; created_at?: string; }
+export interface SelfModelView { facts: SelfModelFact[]; pending: SelfModelStatement[]; approved: SelfModelStatement[]; limits: { most: number; used: number }; }
+
+export function getSelfModel(): Promise<SelfModelView> {
+  return adminRequest<SelfModelView>('/api/admin/self-model', 'GET');
+}
+export function writeSelfModel(): Promise<{ stored?: number; dropped?: number; facts?: number; error?: boolean; view: SelfModelView }> {
+  return adminRequest('/api/admin/self-model/write', 'POST');
+}
+export function approveSelfModelStatement(id: string): Promise<SelfModelView> {
+  return adminRequest<SelfModelView>(`/api/admin/self-model/${encodeURIComponent(id)}/approve`, 'POST');
+}
+export function editSelfModelStatement(id: string, text: string): Promise<SelfModelView> {
+  return adminRequest<SelfModelView>(`/api/admin/self-model/${encodeURIComponent(id)}`, 'PATCH', { text });
+}
+export function retireSelfModelStatement(id: string): Promise<SelfModelView> {
+  return adminRequest<SelfModelView>(`/api/admin/self-model/${encodeURIComponent(id)}`, 'DELETE');
 }
 
 export function getServerMemory(): Promise<ServerMemory> {
@@ -2299,6 +2349,17 @@ export const api = {
   disconnectMicrosoft,
   getSonicHealth,
   getServerMemory,
+  getSelfModel,
+  writeSelfModel,
+  approveSelfModelStatement,
+  editSelfModelStatement,
+  retireSelfModelStatement,
+  getExperiences,
+  writeExperienceReflections,
+  decideExperienceReflection,
+  approveExperience,
+  editExperience,
+  deleteExperience,
   setGoalApproval,
   approveObservation,
   retireObservation,

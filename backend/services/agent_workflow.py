@@ -3200,20 +3200,36 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             return "Plan saved. The person sees it as a card and can approve it, change a step or cancel. Nothing has been changed. Reply in one or two sentences pointing at the plan, and stop."
 
         async def _leanings_block() -> str:
-            """Sonic's own working leanings that fit this request, found by meaning (backend/utils/leanings.py), for a turn with code tools. One embedding, no model call; counts only are recorded. Never raises."""
+            """Sonic's own working leanings that fit this request, and a real case from its own record when one genuinely fits, found by meaning (backend/utils/character.py), for a turn with code tools.
+            One embedding, no model call; counts only are recorded. Never raises."""
             try:
+                from backend.utils import character as character_module
+                from backend.utils import experiences as experiences_module
                 from backend.utils import leanings as leanings_module
                 from backend.utils.embedding_utils import embed_text
+                from backend.utils.emotion_utils import energy_tier as _energy_tier
                 from backend.utils.self_counters import record_turn_counts
+                from backend.utils.wrapup_utils import is_closing_message as _is_closing
 
                 if not any(tool.get("name") in {"read_repo_file", "search_literal", "find_file", "propose_local_edits"} for tool in native_tools):
                     return ""
                 request = f"{recent_user_text} {(state.get('code_plan_context') or '')[:500]}"
-                chosen = await asyncio.to_thread(leanings_module.select, request, get_db(), embed_text)
-                if chosen:
-                    llm_turns.note_leanings([entry["id"] for entry in chosen])      # the reply is marked with them, so the next message can be counted against them
-                    await asyncio.to_thread(record_turn_counts, leanings_module.counts_for(chosen))
-                return leanings_module.build_block(chosen)
+                moment = datetime.now(timezone.utc)
+                may_cite = experiences_module.allowed(
+                    state.get("messages", []), risk_active=effective_risk(state.get("safety_state"), moment) != RISK_NONE,
+                    energy_tier=_energy_tier(state.get("emotional_state"), moment), closing=_is_closing(latest_message_content),
+                )
+                found = await asyncio.to_thread(character_module.for_turn, request, get_db(), embed_text, allow_experience=may_cite)
+                counts: dict = {}
+                if found["leanings"]:
+                    llm_turns.note_leanings(found["leanings"])      # the reply is marked with them, so the next message can be counted against them
+                    counts.update(leanings_module.counts_for([{"id": leaning_id} for leaning_id in found["leanings"]]))
+                if found["experience"]:
+                    llm_turns.note_experience()                      # counted as cited after the reply, if it says so
+                    counts.update(experiences_module.counts_for(True))
+                if counts:
+                    await asyncio.to_thread(record_turn_counts, counts)
+                return found["text"]
             except Exception:
                 logger.warning("[tool_agent_node] could not choose working leanings.", exc_info=True)
                 return ""

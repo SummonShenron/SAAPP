@@ -99,6 +99,7 @@ class Turn:
         self.checkpoints_continued = 0  # ... and where it chose to keep working
         self.checkpoints_acted = 0  # ... and, on a change to a folder, where it made the proposal there
         self.leanings: list = []  # the working leanings put in this turn's prompt (ids only: backend/utils/leanings.py)
+        self.experience_offered = False  # a real case from its own record was offered to this turn's reply (backend/utils/experiences.py)
         self.audit_wording = False  # the message had audit-style wording ("scan the repo", "every file"): wider step budget, normal model
         self.done = False
         self._lock = threading.Lock()
@@ -241,6 +242,17 @@ def note_leanings(ids: Any) -> None:
         if turn is None or turn.done:
             return
         turn.leanings = [str(i) for i in (ids or []) if str(i)][:8]
+    except Exception:
+        pass
+
+
+def note_experience() -> None:
+    """A real case from Sonic's own record was put in this turn's prompt (backend/utils/experiences.py), so the reply can be checked for citing it."""
+    try:
+        turn = _current.get()
+        if turn is None or turn.done:
+            return
+        turn.experience_offered = True
     except Exception:
         pass
 

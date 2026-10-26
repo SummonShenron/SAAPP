@@ -17,6 +17,8 @@ import {
 } from '../api';
 import { HomeTab } from './SonicHealthHome';
 import { ShelfTab } from './SonicHealthShelf';
+import { ExperiencesTab } from './SonicHealthExperiences';
+import { SelfModelTab } from './SonicHealthSelfModel';
 import { FeedbackTab, KnowledgeTab } from './SonicHealthFeedback';
 import { RoutinesTab } from './SonicHealthRoutines';
 import { GoalsTab } from './SonicHealthGoals';
@@ -43,6 +45,8 @@ const TABS = [
   { id: 'safety', label: 'Safety' },
   { id: 'observations', label: 'Observations' },
   { id: 'shelf', label: 'Reading shelf' },
+  { id: 'experiences', label: 'Its record' },
+  { id: 'selfmodel', label: 'Self-model' },
   { id: 'suggestions', label: 'Suggestions' },
 ] as const;
 type TabId = typeof TABS[number]['id'];
@@ -448,6 +452,8 @@ export const SonicHealthPage: React.FC = () => {
           />
         )}
         {tab === 'shelf' && <ShelfTab />}
+        {tab === 'experiences' && <ExperiencesTab />}
+        {tab === 'selfmodel' && <SelfModelTab />}
         {tab === 'suggestions' && (
           <SuggestionsCard
             data={suggestions}
@@ -1012,6 +1018,7 @@ const CountersCard: React.FC<{ counters: CountersSummary }> = ({ counters }) => 
           <tr><td>Messages after coding work that said it did not work ({totals.code_followed ?? 0} messages)</td><td>{pct(rates.code_redo)}</td><td>{pct(previous.code_redo)}</td><td>{change(changes.code_redo)}</td></tr>
           <tr><td>Plans the person approved ({totals.code_plan_submitted ?? 0} plans written)</td><td>{pct(rates.code_plan_approved)}</td><td>{pct(previous.code_plan_approved)}</td><td>{change(changes.code_plan_approved)}</td></tr>
           <tr><td>Turns carrying out a plan that ran out of steps ({totals.code_plan_exec_turns ?? 0} such turns, against the coding turns above)</td><td>{pct(rates.code_plan_exec_cap_hit)}</td><td>{pct(previous.code_plan_exec_cap_hit)}</td><td>{change(changes.code_plan_exec_cap_hit)}</td></tr>
+          <tr><td>Real cases from its own record offered to a reply / replies that cited one ({totals.experience_offered ?? 0} offered)</td><td>{totals.experience_offered ?? 0} / {totals.experience_cited ?? 0}</td><td>{previous.experience_offered ?? 0} / {previous.experience_cited ?? 0}</td><td></td></tr>
           <tr><td>Plan steps finished by an applied edit / edits refused for leaving the plan</td><td>{totals.code_plan_steps_done ?? 0} / {totals.code_plan_deviation ?? 0}</td><td>{previous.code_plan_steps_done ?? 0} / {previous.code_plan_deviation ?? 0}</td><td></td></tr>
         </tbody>
       </table>

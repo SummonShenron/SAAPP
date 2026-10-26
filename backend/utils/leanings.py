@@ -80,18 +80,20 @@ def rank(vector: List[float], entries: List[Dict[str, Any]], vectors: Dict[str, 
     return scored[: PER_TURN if k is None else k]
 
 
-def index_vectors(db: Any, embed: Callable[[str], Optional[List[float]]], entries: Optional[List[Dict[str, Any]]] = None, *, now: Optional[float] = None, fill: bool = True) -> Dict[str, List[List[float]]]:
+def index_vectors(db: Any, embed: Callable[[str], Optional[List[float]]], entries: Optional[List[Dict[str, Any]]] = None, *, now: Optional[float] = None, fill: bool = True, collection: Optional[str] = None, cache: Optional[Dict[str, Any]] = None) -> Dict[str, List[List[float]]]:
     """{entry id: its vectors (the description's, then each example's)} for every entry that could be embedded. Read from the stored index; an entry that is missing or whose text changed is embedded and stored. Cached for CACHE_SECONDS. Blocking."""
     entries = live(entries)
+    store = COLLECTION if collection is None else collection        # the same index machinery serves Sonic's recorded experiences (backend/utils/experiences.py), with its own collection and cache
+    memo = _cache if cache is None else cache
     moment = time.monotonic() if now is None else now
     wanted = {entry["id"]: text_hash(entry) for entry in entries}
-    cached = _cache["vectors"]
-    if cached and moment - _cache["at"] < CACHE_SECONDS and all(cached.get(i, ("", None))[0] == h for i, h in wanted.items()):
+    cached = memo["vectors"]
+    if cached and moment - memo["at"] < CACHE_SECONDS and all(cached.get(i, ("", None))[0] == h for i, h in wanted.items()):
         return {i: v for i, (_, v) in cached.items() if i in wanted}
     stored: Dict[str, Dict[str, Any]] = {}
     if db is not None:
         try:
-            stored = {doc["_id"]: doc for doc in db[COLLECTION].find({})}
+            stored = {doc["_id"]: doc for doc in db[store].find({})}
         except Exception:
             logger.warning("[leanings] could not read the stored index.", exc_info=True)
     fresh: Dict[str, Tuple[str, List[List[float]]]] = {}
@@ -116,11 +118,11 @@ def index_vectors(db: Any, embed: Callable[[str], Optional[List[float]]], entrie
         fresh[entry_id] = (digest, vectors)
         if db is not None:
             try:
-                db[COLLECTION].update_one({"_id": entry_id}, {"$set": {"hash": digest, "embeddings": [[round(x, 5) for x in vector] for vector in vectors]}}, upsert=True)
+                db[store].update_one({"_id": entry_id}, {"$set": {"hash": digest, "embeddings": [[round(x, 5) for x in vector] for vector in vectors]}}, upsert=True)
             except Exception:
                 logger.warning("[leanings] could not store an entry's vector.", exc_info=True)
     if not missing:                                # a partial index is not cached, so the next look sees entries that were stored meanwhile
-        _cache["vectors"], _cache["at"] = fresh, moment
+        memo["vectors"], memo["at"] = fresh, moment
     return {i: v for i, (_, v) in fresh.items()}
 
 
