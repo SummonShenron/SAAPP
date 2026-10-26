@@ -427,7 +427,7 @@ export const SonicHealthPage: React.FC = () => {
             <UsersCard users={health.users} />
           </div>
         ) : noData('model usage'))}
-        {tab === 'turns' && <>{health.usage?.turns && health.usage.turns.turns > 0 ? <TurnsCard turns={health.usage.turns} /> : noData('chat turns')}{health.counters && <PromptCard totals={health.counters.totals} />}<ServerMemoryCard /></>}
+        {tab === 'turns' && <>{health.usage?.turns && health.usage.turns.turns > 0 ? <TurnsCard turns={health.usage.turns} /> : noData('chat turns')}{health.counters && <PromptCard totals={health.counters.totals} />}{health.counters && <LeaningsCard totals={health.counters.totals} />}<ServerMemoryCard /></>}
         {tab === 'budget' && (health.budget ? <><BudgetCard budget={health.budget} /><BudgetRequestsPanel /></> : noData('budget'))}
         {tab === 'behavior' && <CountersCard counters={health.counters} />}
         {tab === 'goals' && <GoalsTab goals={health.goals} busyId={busyKey} onApprove={handleGoalApproval} />}
@@ -654,6 +654,56 @@ const PromptCard: React.FC<{ totals: Record<string, number> }> = ({ totals }) =>
           <tr><td>Model calls per tool turn</td><td>{calls}</td></tr>
           <tr><td>Tool results read during the turn</td><td>{avg('native_chars_results').toLocaleString()} chars ({tokens(avg('native_chars_results'))})</td></tr>
           <tr><td><strong>Sent in total per tool turn, all calls added up</strong></td><td><strong>{sent.toLocaleString()} chars ({tokens(sent)})</strong></td></tr>
+        </tbody>
+      </table>
+    </section>
+  );
+};
+
+const pctOf = (part: number, whole: number): string => (whole > 0 ? `${Math.round((part / whole) * 100)}%` : '-');
+
+/** Which of Sonic's own working leanings (backend/utils/leanings.py) are being used, and what followed the replies that used them. Counts only. A comparison, never a target: the leaning is not rewarded for a rate. */
+const LeaningsCard: React.FC<{ totals: Record<string, number> }> = ({ totals }) => {
+  const ids = Object.keys(totals)
+    .filter(key => key.startsWith('leaning_used_'))
+    .map(key => key.slice('leaning_used_'.length))
+    .sort((a, b) => (totals[`leaning_used_${b}`] ?? 0) - (totals[`leaning_used_${a}`] ?? 0));
+  const turns = totals.leaning_turns ?? 0;
+  if (turns <= 0) return null;
+  const codeTurns = totals.code_turns ?? 0;
+  const followed = totals.code_followed ?? 0;
+  const label = (id: string) => id.replace(/_/g, ' ');
+  return (
+    <section className="service-card sh-card">
+      <div className="card-badge">{turns} TURNS WITH LEANINGS</div>
+      <h2>Working leanings in use</h2>
+      <p className="card-description">
+        For each leaning: how often it was put in a tool turn's prompt, and what happened around it. "Next message" is how many of those replies were followed by another message; pushback and praise
+        are shares of those. The last row is every coding turn for comparison. These are small numbers and a correlation at most: the work it was used on differs from turn to turn, and a leaning is
+        never scored or rewarded for them. They only show which ones to reword or retire.
+      </p>
+      <table className="sh-table">
+        <thead>
+          <tr><th>Leaning</th><th>Used</th><th>Next message</th><th>Pushback</th><th>Praise</th><th>Hit step limit</th></tr>
+        </thead>
+        <tbody>
+          {ids.filter(id => (totals[`leaning_used_${id}`] ?? 0) > 0).map(id => {
+            const used = totals[`leaning_used_${id}`] ?? 0;
+            const next = totals[`leaning_followed_${id}`] ?? 0;
+            return (
+              <tr key={id}>
+                <td>{label(id)}</td><td>{used}</td><td>{next}</td>
+                <td>{next > 0 ? `${totals[`leaning_pushback_${id}`] ?? 0} (${pctOf(totals[`leaning_pushback_${id}`] ?? 0, next)})` : '-'}</td>
+                <td>{next > 0 ? `${totals[`leaning_praise_${id}`] ?? 0} (${pctOf(totals[`leaning_praise_${id}`] ?? 0, next)})` : '-'}</td>
+                <td>{totals[`leaning_capped_${id}`] ?? 0} ({pctOf(totals[`leaning_capped_${id}`] ?? 0, used)})</td>
+              </tr>
+            );
+          })}
+          <tr>
+            <td><strong>All coding turns</strong></td><td>{codeTurns}</td><td>{followed}</td>
+            <td>{followed > 0 ? `${totals.code_pushback ?? 0} (${pctOf(totals.code_pushback ?? 0, followed)})` : '-'}</td><td>-</td>
+            <td>{totals.code_cap_hit ?? 0} ({pctOf(totals.code_cap_hit ?? 0, codeTurns)})</td>
+          </tr>
         </tbody>
       </table>
     </section>

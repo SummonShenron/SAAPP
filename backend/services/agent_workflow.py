@@ -3211,6 +3211,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 request = f"{recent_user_text} {(state.get('code_plan_context') or '')[:500]}"
                 chosen = await asyncio.to_thread(leanings_module.select, request, get_db(), embed_text)
                 if chosen:
+                    llm_turns.note_leanings([entry["id"] for entry in chosen])      # the reply is marked with them, so the next message can be counted against them
                     await asyncio.to_thread(record_turn_counts, leanings_module.counts_for(chosen))
                 return leanings_module.build_block(chosen)
             except Exception:

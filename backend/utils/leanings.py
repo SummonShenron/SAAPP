@@ -202,6 +202,27 @@ def build_block(chosen: List[Dict[str, Any]], philosophies: Optional[List[Dict[s
     )
 
 
+def outcome_counts(used_before: Any, *, pushback: bool, praised: bool) -> Dict[str, int]:
+    """The counters for the message that follows a reply that used these leanings (by id): `followed` for each, plus `pushback` or `praise` when the message read as one. Ids that are not in the
+    registry are dropped (a leaning that was since removed). Counts only: no text, no person. Pure."""
+    known = {entry["id"] for entry in LEANINGS}
+    ids = [i for i in (used_before or []) if isinstance(i, str) and i in known]
+    counts: Dict[str, int] = {}
+    for leaning_id in ids:
+        counts[f"leaning_followed_{leaning_id}"] = 1
+        if pushback:
+            counts[f"leaning_pushback_{leaning_id}"] = 1
+        elif praised:
+            counts[f"leaning_praise_{leaning_id}"] = 1
+    return counts
+
+
+def capped_counts(used: Any, cap_hit: bool) -> Dict[str, int]:
+    """A turn that used these leanings and ran into its step limit: `capped` for each. Pure."""
+    known = {entry["id"] for entry in LEANINGS}
+    return {f"leaning_capped_{i}": 1 for i in (used or []) if cap_hit and isinstance(i, str) and i in known}
+
+
 def counts_for(chosen: List[Dict[str, Any]]) -> Dict[str, int]:
     """The counter increments for a turn that used these leanings. Pure."""
     if not chosen:

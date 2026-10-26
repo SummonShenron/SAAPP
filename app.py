@@ -136,6 +136,7 @@ from backend.utils import open_loops as open_loops_utils
 from backend.utils import working_state as working_state_utils
 from backend.utils import code_plan as code_plan_utils
 from backend.utils import server_memory
+from backend.utils import leanings as leanings_utils
 from backend.utils import clarifications as clarify_utils
 from backend.utils import initiation as initiation_utils
 from backend.utils import reach as reach_utils
@@ -787,6 +788,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     answers_curiosity = bool(previous_marks.get(curiosity_utils.CURIOSITY_MARK)) and curiosity_utils.taken(question)
     answers_shelf = bool(previous_marks.get(shelf_utils.SHELF_MARK)) and curiosity_utils.taken(question)
     # The same message is also the response to anything Sonic brought up on its own (backend/utils/offer_response.py): counted for everyone, and kept per person (counts only).
+    leanings_before = [i for i in (previous_marks.get(code_outcomes.LEANINGS_MARK) or []) if isinstance(i, str)]  # the working leanings the last reply used (backend/utils/leanings.py)
     code_followup = code_outcomes.followup(previous_marks, question)  # if the last reply was coding work: did this message say it did not work? (backend/utils/code_outcomes.py)
     offer_outcome = offer_response.outcome(previous_marks, question)
     if offer_outcome and not is_guest_username(username):
@@ -1032,6 +1034,11 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             pushback = code_outcomes.pushback_counts(code_followup, final_state.get("emotional_state"))
             if pushback:
                 await asyncio.to_thread(record_turn_counts, pushback)
+            if leanings_before:
+                # What followed a reply that used working leanings: counted per leaning, so over time it shows which ones earn their place. Counts only.
+                await asyncio.to_thread(
+                    record_turn_counts, leanings_utils.outcome_counts(leanings_before, pushback=bool(pushback.get("code_pushback")), praised=code_outcomes.is_praise(question)),
+                )
 
             # 2. EVALUATE FINAL STATE & BUILD PROMPT
             relevance_grade = final_state.get("relevance_grade")
@@ -1700,6 +1707,10 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             if code_summary:
                 ai_message.additional_kwargs[code_outcomes.CODE_MARK] = True  # so the next message can be read as what happened to the work
                 code_outcomes.tally_turn(turn_counts, code_summary, final_state.get("code_plan_phase"))
+                if llm_turn.leanings:
+                    ai_message.additional_kwargs[code_outcomes.LEANINGS_MARK] = list(llm_turn.leanings)
+                    for key, count in leanings_utils.capped_counts(llm_turn.leanings, llm_turn.cap_hit).items():
+                        turn_counts[key] = turn_counts.get(key, 0) + count
             if ai_message.additional_kwargs.get(curiosity_utils.CURIOSITY_MARK):
                 tally(turn_counts, "offer_made")  # whatever kind of offer it was, once: the volume the welcome goal's guardrail reads (backend/utils/goals.py)
             if clarify_entry:

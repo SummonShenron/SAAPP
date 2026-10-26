@@ -42,6 +42,11 @@ _GROUPS: Dict[str, tuple] = {
     "feeling_asked": FEELING_KINDS,
     # Which working leanings were put in a tool turn's prompt (backend/utils/leanings.py): one count per entry, so one that never matches can be reworded or removed.
     "leaning_used": tuple(entry["id"] for entry in LEANINGS),
+    # What happened after a reply that used a leaning (backend/utils/leanings.py): a message followed, it read as pushback, it praised, or the turn hit its step limit. Evidence of which leanings earn their place, never a target.
+    "leaning_followed": tuple(entry["id"] for entry in LEANINGS),
+    "leaning_pushback": tuple(entry["id"] for entry in LEANINGS),
+    "leaning_praise": tuple(entry["id"] for entry in LEANINGS),
+    "leaning_capped": tuple(entry["id"] for entry in LEANINGS),
     "feeling_revised": FEELING_KINDS + ("other",),
     # Why maybe_open_conversation (backend/utils/initiation.py) declined to open a conversation: one count per reason, and no_anchor for nothing to follow up on.
     "initiation_refused": ("guest", "disabled", "recent_risk", "ignored", "too_soon", "new_thread", "already_waiting", "recent_activity", "unknown_gap", "no_anchor", "opener_off", "reach_none", "low_power"),

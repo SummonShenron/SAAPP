@@ -264,3 +264,53 @@ def test_the_background_build_runs_once_at_a_time_and_fills_the_index():
 def test_the_server_starts_the_build_when_it_starts():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     assert "leanings_utils.warm(get_db(), embed_text)" in source
+
+
+# ---- what happened after a reply that used a leaning --------------------------------------------------------------------------------------
+
+def test_the_message_after_a_reply_is_counted_against_each_leaning_it_used():
+    assert lean.outcome_counts(["css_what_wins", "fix_where_it_renders"], pushback=False, praised=False) == {"leaning_followed_css_what_wins": 1, "leaning_followed_fix_where_it_renders": 1}
+    assert lean.outcome_counts(["css_what_wins"], pushback=True, praised=False) == {"leaning_followed_css_what_wins": 1, "leaning_pushback_css_what_wins": 1}
+    assert lean.outcome_counts(["css_what_wins"], pushback=False, praised=True) == {"leaning_followed_css_what_wins": 1, "leaning_praise_css_what_wins": 1}
+    assert lean.outcome_counts(["css_what_wins"], pushback=True, praised=True) == {"leaning_followed_css_what_wins": 1, "leaning_pushback_css_what_wins": 1}      # a message cannot be both
+    assert lean.outcome_counts(["removed_since", 5, None], pushback=True, praised=False) == {} and lean.outcome_counts(None, pushback=False, praised=True) == {}
+
+
+def test_a_turn_that_hit_its_step_limit_is_counted_against_the_leanings_it_used():
+    assert lean.capped_counts(["css_what_wins"], True) == {"leaning_capped_css_what_wins": 1}
+    assert lean.capped_counts(["css_what_wins"], False) == {} and lean.capped_counts(["unknown"], True) == {}
+
+
+def test_every_outcome_counter_exists_for_every_leaning_and_is_a_safe_name():
+    for group in ("leaning_used", "leaning_followed", "leaning_pushback", "leaning_praise", "leaning_capped"):
+        assert {f"{group}_{entry['id']}" for entry in sl.LEANINGS} <= sc.KEYS, group
+
+
+@pytest.mark.parametrize("message,expected", [
+    ("perfect, thanks!", True), ("that worked perfectly", True), ("it looks great", True), ("thank you saapp", True),
+    ("that didn't work", False), ("thanks but it still fails again", False), ("ok", False), ("add a test for the headroom check", False),
+    ("thank you " + "word " * 45, False),
+])
+def test_praise_is_short_and_not_pushback(message, expected):
+    from backend.utils import code_outcomes
+
+    assert code_outcomes.is_praise(message) is expected
+
+
+def test_the_turn_record_carries_the_leanings_it_used():
+    from backend.utils import llm_turns
+
+    turn = llm_turns.begin("someone")
+    llm_turns.note_leanings(["css_what_wins", "fix_where_it_renders"])
+    assert turn.leanings == ["css_what_wins", "fix_where_it_renders"]
+    llm_turns.note_leanings(None)
+    assert turn.leanings == []
+    llm_turns.finish(turn)
+
+
+def test_the_reply_is_marked_and_the_next_message_counted_in_the_app():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    workflow = (ROOT / "backend" / "services" / "agent_workflow.py").read_text(encoding="utf-8")
+    assert "leanings_before = [" in source and "leanings_utils.outcome_counts(leanings_before" in source
+    assert "ai_message.additional_kwargs[code_outcomes.LEANINGS_MARK] = list(llm_turn.leanings)" in source and "leanings_utils.capped_counts(llm_turn.leanings, llm_turn.cap_hit)" in source
+    assert "llm_turns.note_leanings(" in workflow

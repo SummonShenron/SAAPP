@@ -98,6 +98,7 @@ class Turn:
         self.checkpoints_answered = 0  # checkpoints (a decision point at a third and two thirds of a long budget) where it answered
         self.checkpoints_continued = 0  # ... and where it chose to keep working
         self.checkpoints_acted = 0  # ... and, on a change to a folder, where it made the proposal there
+        self.leanings: list = []  # the working leanings put in this turn's prompt (ids only: backend/utils/leanings.py)
         self.audit_wording = False  # the message had audit-style wording ("scan the repo", "every file"): wider step budget, normal model
         self.done = False
         self._lock = threading.Lock()
@@ -231,6 +232,17 @@ def exit_kind(steps_used: int, hit_cap: bool, tool_steps: Optional[int], had_dra
     if not tool_steps or tool_steps < 1:
         return ""
     return "early" if _count(steps_used) <= max(1, tool_steps // 2) else "late"
+
+
+def note_leanings(ids: Any) -> None:
+    """The working leanings (backend/utils/leanings.py) put in this turn's prompt, by id, so the reply can be marked with them and the message after it can be counted against them."""
+    try:
+        turn = _current.get()
+        if turn is None or turn.done:
+            return
+        turn.leanings = [str(i) for i in (ids or []) if str(i)][:8]
+    except Exception:
+        pass
 
 
 def note_checkpoint(answered: bool, acted: bool = False) -> None:

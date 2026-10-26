@@ -182,6 +182,20 @@ def proposal_counts(changes: Dict[str, Any], applied: Dict[str, Any], now: Optio
     return counts
 
 
+# The reply is stamped with the ids of the working leanings it used (backend/utils/leanings.py), so the next message can be counted against them.
+LEANINGS_MARK = "leanings_used"
+_PRAISE_RE = re.compile(
+    r"\b(?:perfect|thank(?:s| you)|thx|great|awesome|nice(?: work| one)?|love (?:it|that|this)|exactly|that'?s (?:it|right|what)|looks (?:great|good)|works? (?:now|great|perfectly)|worked|fixed it|good (?:job|call|idea|point)|helpful|genius|brilliant|well done|yay|woo)\b",
+    re.IGNORECASE,
+)
+
+
+def is_praise(message: str) -> bool:
+    """Whether a short message praises or thanks and says nothing that reads as pushback. Crude on purpose, and only ever counted, never acted on. Pure."""
+    text = message or ""
+    return len(text.split()) <= 40 and bool(_PRAISE_RE.search(text)) and not _REDO_RE.search(text)
+
+
 def tally_followup(counts: Dict[str, int], outcome: Optional[str]) -> None:
     if outcome:
         tally(counts, "code_followed")
