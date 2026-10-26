@@ -178,12 +178,38 @@ def _negated(text: str, start: int) -> bool:
     return bool(_NEGATION_RE.search(text[clause_start:start]))
 
 
+
+# A felt recollection of its OWN past. Sonic has a record (backend/utils/experiences.py): real, dated, abstract events it may cite. What it may not do is claim the act of remembering them, because that
+# asserts a retrieval that was felt, which is not there even when the event is real. "This is close to a case in my record" passes; "that reminds me of this one time", "I remember a similar case"
+# and "I've seen this before" do not, unless the same sentence anchors them in the record ("that reminds me of a case in my record"). A sentence about what the PERSON said or did ("I remember you
+# told me this before", "this is the same shape as the retry problem you sorted out") is the memory of what they told it, a different thing, and is left alone.
+_FELT_RECOLLECTION_RE = re.compile(
+    r"\b(?:remind(?:s|ed)? me (?:of|about)|rings? a bell|(?:this|that) one time|I(?:'ve| have) been here before"
+    r"|I (?:do |still )?(?:remember|recall)\b[^.?!]{0,60}\b(?:similar|same|before|once|this one|that one|a time|a case|an? (?:bug|failure|error|mistake|problem|issue))\b)", re.IGNORECASE)
+# Not caught on purpose: "I've seen this error pattern before: it is usually a stale cache" is ordinary knowledge of how a kind of problem tends to go (tests/test_identity_checks.py allows it).
+# Only a claim of recalling a particular case of its own, or of being reminded, is a felt recollection.
+_RECORD_ANCHOR_RE = re.compile(r"\b(?:in|from|on) my (?:own )?(?:record|log)\b|\bmy (?:own )?(?:record|log) (?:has|shows|holds|includes|lists)\b", re.IGNORECASE)
+_ABOUT_THE_PERSON_RE = re.compile(r"\b(?:you|your|you're|you've)\b", re.IGNORECASE)
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
+FELT_RECOLLECTION = "claims to remember or be reminded of something from its own past"
+
+
+def felt_recollection_issue(body: str) -> Optional[str]:
+    """FELT_RECOLLECTION when a sentence claims a recollection of Sonic's own past without anchoring it in its record, else None. Pure."""
+    for sentence in _SENTENCE_SPLIT_RE.split(body or ""):
+        if _FELT_RECOLLECTION_RE.search(sentence) and not _RECORD_ANCHOR_RE.search(sentence) and not _ABOUT_THE_PERSON_RE.search(sentence):
+            return FELT_RECOLLECTION
+    return None
+
 def identity_reply_issue(reply: str, *, person_signal: bool = False) -> Optional[str]:
     """A short description of what the reply does that crosses the boundary, or None if it stays inside it.
     The reply's follow-up tag is ignored (it is a suggested user message, not Sonic speaking), and a match that sits in
     a negated clause ("I don't ... hoping you'll return") is not a claim. `person_signal` is True on a turn with a real emotional signal on the table
     (a negative feeling the person is carrying): only then may Sonic say it is concerned about the person."""
     body = reply_body(reply or "")
+    felt = felt_recollection_issue(body)
+    if felt:
+        return felt
     patterns = _ALL if person_signal else _ALL + _PERSON_CONCERN
     for pattern, label in patterns:
         for match in pattern.finditer(body):
@@ -194,6 +220,7 @@ def identity_reply_issue(reply: str, *, person_signal: bool = False) -> Optional
 
 # How to say it instead, by what was wrong: the rewrite is told the replacement, not only the prohibition.
 _ISSUE_HINTS = {
+    FELT_RECOLLECTION: "Cite it as a record, not a memory (\"this is close to a case in my record: ...\"), or leave it out; do not say you remember it, recall it, or have seen it before.",
     "says it cares about the person": "Say what you will do or put first instead (\"I'd rather make sure you're okay than move on\"), not that you care.",
     "says the person matters to it": "Say what you will do or put first instead, not that they matter to you.",
     "is concerned about the person with no emotional signal on the table": "Name the concrete thing you noticed, or leave it out.",
