@@ -1,0 +1,27 @@
+.approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+}
+
+.approval-btn {
+  padding: 0.4rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 40%, transparent);
+  background: transparent;
+  color: var(--text-main);
+  font: inherit;
+  cursor: pointer;
+}
+
+.approval-btn:disabled { opacity: 0.55; cursor: default; }
+
+.approval-btn-primary {
+  background: var(--accent-primary);
+  border-color: transparent;
+  color: var(--on-accent);
+}
+
+.approval-note { color: var(--text-muted); font-size: 0.85rem; }

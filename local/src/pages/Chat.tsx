@@ -3,6 +3,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAffiliateScope } from '../hooks/useAffiliateScope';
 import { useLocalWorkspace } from '../hooks/useLocalWorkspace';
 import LocalEditCard from '../components/LocalEditCard';
+import ApprovalButtons from '../components/ApprovalButtons';
+import { showsApprovalButtons } from '../approvalCard';
 import LocalGitUpdate from '../components/LocalGitUpdate';
 import { loadLocalGitMode, localGitModeLabel, nextLocalGitMode, parseGitReply, saveLocalGitMode, type LocalGitMode } from '../localGit/commitResult';
 import LocalFolderConsent from '../components/LocalFolderConsent';
@@ -415,6 +417,10 @@ const ChatMessageList = React.memo(function ChatMessageList({
                   {cleanContent}
                 </ReactMarkdown>
               </div>
+
+              {msg.sender === 'ai' && showsApprovalButtons(msg.text, messages[messages.length - 1]?.id === msg.id, loading) && (
+                <ApprovalButtons onAnswer={text => handleSendMessageRef.current(text, attachmentsRef.current)} />
+              )}
 
               {msg.failure && (
                 <div className="message-failure">

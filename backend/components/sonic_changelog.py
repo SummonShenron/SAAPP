@@ -1020,6 +1020,17 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "approve_with_buttons",
+        "requires": [
+            "local/src/approvalCard.ts",
+        ],
+        "month": "2026-10",
+        "title": "Approving with a button",
+        "line": "When I ask you to approve something, like a pull request, an email or a commit, you can press Approve or Reject on the card instead of typing it. Typing still works.",
+        "keywords": ["approve", "reject", "approval", "button", "confirm", "yes"],
+        "volunteer": [],
+    },
+    {
         "id": "self_model",
         "requires": [
             "backend/utils/self_model.py::def approved_block",
