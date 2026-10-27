@@ -15,7 +15,13 @@ HOW IT STAYS HONEST.
 - HUMAN APPROVAL. Statements are stored `pending` and never said until approved on Sonic Health (they can be edited, with the same checks, or retired). Pending and retired ones never reach a prompt.
 - NOTHING ABOUT ANYONE. The facts are aggregates and curated text: counts, shares, names of routines and goals. No conversation, no person.
 
-WHERE IT IS USED. When someone asks what kind of system Sonic is, what it spends its time on, or how it works (`asks`), the approved, current statements are put in the prompt as what it knows about itself.
+HOW ITS MEMORY WORKS IS PART OF IT (Jack, 2026-10-26). Asked how a reading about agent memory made it think about its own, Sonic answered from general knowledge about agents ("relevance versus drift, clean
+separation of concerns"), because nothing described its own memory: not its profile, not these facts. `_memory_facts` now does, from the settings that govern it (the saved-state window, the fact limit and
+areas, the trust half-life, the recall bar, the second look, merging, stale notes), plus the fixed rules that pruning, saving, events, erasing and approval follow. `asks_memory` recognises the question and
+`approved_block` then puts the statements about memory first.
+
+WHERE IT IS USED. When someone asks what kind of system Sonic is, what it spends its time on, how it works, or how its own memory works (`asks`), the approved, current statements are put in the prompt as what it
+knows about itself.
 Nothing is logged but counts.
 """
 import logging
@@ -30,11 +36,14 @@ logger = logging.getLogger("SASS Logger")
 
 COLLECTION = "sonic_self_model"
 PENDING, APPROVED, RETIRED = "pending", "approved", "retired"
-MAX_STATEMENTS = 8
+MAX_STATEMENTS = 12
 MIN_WORDS, MAX_WORDS, MAX_CHARS = 8, 60, 420
 FACTS_CACHE_SECONDS = 600
 USE_AT_MOST = 6
-TOPICS = ("what kind of system I am", "what I spend my time on", "how I tend to work", "what keeps recurring in my record", "what I am paying attention to", "what function I serve", "what I am not")
+USE_AT_MOST_MEMORY = 8
+MEMORY_KEY_PREFIX = "memory_"
+TOPICS = ("what kind of system I am", "what I spend my time on", "how I tend to work", "what keeps recurring in my record", "what I am paying attention to", "what function I serve", "what I am not", "how my memory works")
+_DOMAIN_LABELS = {"work": "work", "own": "their own projects", "personal": "personal life", "general": "general"}
 
 _ASKS_RE = re.compile(
     r"what (?:kind|sort|type) of (?:thing|system|ai|assistant|bot|program) are you|what are you(?: exactly| really| like)?\s*[?.!]*$|who are you\b|how would you describe yourself|describe yourself"
@@ -42,7 +51,15 @@ _ASKS_RE = re.compile(
     r"|what are you made of|what makes you tick|what is it like being you|what is a user to you|what am i to you",
     re.IGNORECASE,
 )
-_STAKE_RE = re.compile(r"\b(?:target|targets|reward|rewards|optimi[sz]\w*|score|scores|maximi[sz]\w*|incentive|incentives)\b", re.IGNORECASE)
+# "How does that make you think about your own memory architecture?" Not "do you remember my dog?", which is a question about what a person told it, answered from their memory, not from how the system is built.
+_MEMORY_ASKS_RE = re.compile(
+    r"\b(?:your|ur) (?:own )?memory (?:architecture|system|design|setup|structure|works?|functions?|is built|is organi[sz]ed|like)\b"
+    r"|\bhow (?:does|do) (?:your|you) (?:own )?memory (?:work|function)\b|\bhow (?:do|does) you (?:remember|store|forget|keep track of) (?:things|stuff|information|facts|conversations|what)\b"
+    r"|\b(?:your|ur) own memory\b|\bwhat (?:do|does) you (?:forget|remember about yourself)\b|\bhow (?:much|long) (?:do|does) you (?:remember|keep)\b",
+    re.IGNORECASE,
+)
+# A stake in its OWN numbers. A note's similarity "score" is not one ("a match that scores at least 0.80"); "my score" or "its score" is.
+_STAKE_RE = re.compile(r"\b(?:target|targets|reward|rewards|optimi[sz]\w*|maximi[sz]\w*|incentive|incentives|(?:my|its|our) scores?)\b", re.IGNORECASE)
 # The facts count chat turns and tool calls, never time; and they say what is kept or done, never what it is for ("a shelf to inform my work" was written from a fact that only said the shelf exists).
 _TIME_SHARE_RE = re.compile(r"\b(?:of|with) (?:my|its) time\b|\b(?:my|its) time (?:on|in|with)\b|\bspends? (?:my|its) time\b", re.IGNORECASE)
 _PURPOSE_RE = re.compile(r"\b(?:to (?:inform|help|improve|support|learn|enable|ensure|guide|shape)|in order to|so that|helps? me|allows? me|lets? me)\b", re.IGNORECASE)
@@ -52,9 +69,14 @@ _CITE_RE = re.compile(r"\[\s*((?:F\d+\s*,?\s*)+)\]", re.IGNORECASE)
 _cache: Dict[str, Any] = {"at": 0.0, "facts": None}
 
 
+def asks_memory(message: str) -> bool:
+    """Whether a message asks how Sonic's own memory is built or works. Pure."""
+    return bool(_MEMORY_ASKS_RE.search((message or "").strip()))
+
+
 def asks(message: str) -> bool:
-    """Whether a message asks what kind of system Sonic is, what it does, or how it works. Pure."""
-    return bool(_ASKS_RE.search((message or "").strip()))
+    """Whether a message asks what kind of system Sonic is, what it does, how it works, or how its own memory works. Pure."""
+    return bool(_ASKS_RE.search((message or "").strip())) or asks_memory(message)
 
 
 def _now() -> datetime:
@@ -67,6 +89,46 @@ def _now() -> datetime:
 
 def _share_phrase(value: Any) -> str:
     return f"{int(round(float(value) * 100 / 5.0)) * 5}%"
+
+
+def _about(count: Any) -> str:
+    """A count as it is said: exact under a hundred, otherwise "about 1,300" (rounded to 50). Pure."""
+    n = int(count)
+    return str(n) if n < 100 else f"about {int(round(n / 50.0)) * 50:,}"
+
+
+def _memory_facts(memory: Dict[str, Any]) -> List[Dict[str, str]]:
+    """How Sonic's own memory is built, as facts. Every number is read from the setting that really governs it (`gather`), so a changed setting changes the fact, which makes any statement resting on
+    it stale. Plain sentences, no "over time" or "you". A setting that could not be read is left out. Pure."""
+    out: List[Dict[str, str]] = []
+
+    def add(key: str, text: str) -> None:
+        out.append({"key": f"{MEMORY_KEY_PREFIX}{key}", "text": " ".join(text.split())})
+
+    if memory.get("state_messages"):
+        add("working", f"Within one conversation my working memory is the most recent messages: my saved conversation state keeps only the latest {memory['state_messages']}.")
+    if memory.get("facts_cap"):
+        areas = ", ".join(_DOMAIN_LABELS.get(d, d) for d in memory.get("domains") or [])
+        add("facts", f"About each person I talk with I keep short facts, tagged by area of life ({areas}) and by how I came to know them, up to {memory['facts_cap']} per person.")
+    if memory.get("half_life"):
+        add("decay", f"How much I trust a fact fades with a half-life of {int(memory['half_life'])} days, worked out when the fact is read, and a fact about who someone is does not fade.")
+    if memory.get("cutoff"):
+        held = f" {_about(memory['notes'])} are stored in all, and" if memory.get("notes") else ""
+        add("notes", f"I also keep short notes of past conversations and find them by meaning;{held} a note is used only when its match to the question scores at least {memory['cutoff']:.2f}.")
+    if memory.get("band"):
+        add("second_look", f"When no note clears that bar but one comes within {memory['band']:.2f} of it and the message is about the person, a small model checks whether it really is what they mean.")
+    if memory.get("merge"):
+        archived = f" and {_about(memory['archived'])} archived copies are held" if memory.get("archived") else ""
+        add("merge", f"Notes that say nearly the same thing are merged when they pile up, at a match of {memory['merge']}, in groups of at most {memory['merge_group']}, with the originals archived first{archived}.")
+    if memory.get("stale"):
+        add("stale", f"When a newer fact replaces an older fact, the notes that match the replaced, older fact at {memory['stale']:.2f} or more are flagged stale and hidden from recall; they are not deleted.")
+    if memory.get("facts_cap"):
+        add("forget", "When a person's facts reach the limit, the ones I only inferred are removed first, then recurring patterns, then what they stated; identity facts and saved support contacts are never removed, and removed facts are archived.")
+        add("honest", "Before a note or fact is saved, code checks that each time, number, date and name in it appears in what the person said; a detail only I supplied is dropped.")
+        add("events", "A plan someone mentions is kept as an event whose time, companions and place stay marked not known until they are stated; I do not fill the gap.")
+        add("erase", "A person can erase everything I hold about them from the Memory page, including the notes from past conversations and the archived copies.")
+        add("habits", "My own habits, the leanings and the record, are written down and approved by a person before I use them; I do not change them on my own.")
+    return out
 
 
 def build_facts(parts: Dict[str, Any]) -> List[Dict[str, str]]:
@@ -103,6 +165,7 @@ def build_facts(parts: Dict[str, Any]) -> List[Dict[str, str]]:
     code = parts.get("code") or {}
     if code.get("turns"):
         add("coding", f"In the past month I handled {code['turns']} coding turns; {code['edited']} proposed or made an edit and {code['tested']} of those ran a test in the same turn.")
+    facts.extend(_memory_facts(parts.get("memory") or {}))
     add("between", "I do not exist between conversations the way a person does; what I do between them is the jobs that run on a schedule.")
     add("feelings", "I do not have feelings or experiences; I have a record of what I did, numbers about it, and habits I hold.")
     return facts
@@ -175,8 +238,29 @@ def gather(db: Any, now: Optional[datetime] = None, *, use_cache: bool = True) -
         totals = self_counters.summarize_counters(self_counters.fetch_counter_docs(db, 30, now), now, 30)["totals"]
         return {"turns": int(totals.get("code_turns", 0) or 0), "edited": int(totals.get("code_edited", 0) or 0), "tested": int(totals.get("code_verified", 0) or 0)}
 
+    def memory_part() -> Any:
+        """The settings that govern how memory works, read from the code that uses them, and (cheaply, as counts that move no data) how many notes and archived copies exist in all."""
+        from backend.services import memory_compaction, memory_search
+        from backend.state import graph_state
+        from backend.utils import memory_utils
+
+        first, second = memory_compaction.DEFAULT_SIMILARITY_THRESHOLD, memory_compaction.DEFAULT_META_SIMILARITY_THRESHOLD
+        out: Dict[str, Any] = {
+            "state_messages": graph_state.MAX_STATE_MESSAGES, "facts_cap": memory_utils.MAX_STORED_FACTS, "domains": list(memory_utils.VALID_DOMAINS),
+            "half_life": memory_utils.FACT_CONFIDENCE_HALF_LIFE_DAYS, "cutoff": memory_search.DEFAULT_RECALL_SIMILARITY_THRESHOLD,
+            "band": memory_search.NEAR_MISS_BAND if memory_search.SECOND_LOOK_ENABLED else None,
+            "merge": f"{first:.2f}" if first == second else f"{first:.2f} and then {second:.2f}", "merge_group": memory_compaction.MAX_CLUSTER_SIZE,
+            "stale": memory_search.STALE_CHUNK_SIMILARITY_THRESHOLD,
+        }
+        for key, collection in (("notes", memory_search.USER_MEMORY_COLLECTION), ("archived", memory_search.CHUNK_ARCHIVE_COLLECTION)):
+            try:
+                out[key] = int(db[collection].estimated_document_count())
+            except Exception:
+                logger.warning("[self model] could not count %s.", key, exc_info=True)
+        return out
+
     read("time_facts", week)
-    for name, fn in (("shelf", shelf), ("leanings", leanings_part), ("record", record_part), ("changelog", changelog_part), ("tools", tools_part), ("code", code_part)):
+    for name, fn in (("shelf", shelf), ("leanings", leanings_part), ("record", record_part), ("changelog", changelog_part), ("tools", tools_part), ("code", code_part), ("memory", memory_part)):
         read(name, fn)
     facts = build_facts(parts)
     _cache.update(at=time.monotonic(), facts=facts)
@@ -201,7 +285,23 @@ def build_prompt(facts: List[Dict[str, str]]) -> str:
         "- Say what the facts show, not what anything is for: no \"to inform my work\", \"so that\" or \"helps me\". Chat shares are shares of turns handled, never of your time; do not write \"of my time\".\n"
         "- Do not address anyone. No links. No hype, no moral.\n"
         "- Skip a topic the facts do not cover, rather than guessing.\n"
+        + (
+            "- Several facts describe how your memory works. Write at least four statements about it, each on a different part (what is kept in a conversation, the facts about people, how notes are found, how old ones are merged or hidden, what is removed, what is checked before saving, what a person can erase, what you do not change on your own).\n"
+            if any(fact["key"].startswith(MEMORY_KEY_PREFIX) for fact in facts) else ""
+        )
     )
+
+
+_THOUSANDS_RE = re.compile(r"(?<=\d),(?=\d{3}\b)")
+
+
+def _numbers(text: str) -> set:
+    """The numbers in a text by value, not spelling: "1,500" and "1500" are one number, and so are "0.80" and "0.8". Pure."""
+    found = set()
+    for raw in _NUMBER_RE.findall(_THOUSANDS_RE.sub("", text or "")):
+        value = float(raw)
+        found.add(str(int(value)) if value == int(value) else repr(value))
+    return found
 
 
 def parse(raw: Any) -> List[Dict[str, Any]]:
@@ -234,8 +334,8 @@ def statement_issue(text: str, cited_texts: List[str]) -> Optional[str]:
         return "not one plain passage"
     if not cited_texts:
         return "cites no fact"
-    allowed_numbers = set(_NUMBER_RE.findall(" ".join(cited_texts)))
-    if any(number not in allowed_numbers for number in _NUMBER_RE.findall(body)):
+    allowed_numbers = _numbers(" ".join(cited_texts))
+    if any(number not in allowed_numbers for number in _numbers(body)):
         return "has a number its facts do not"
     if not shelf_reflections._SYSTEM_RE.search(body):
         return "not about itself"
@@ -336,12 +436,19 @@ def retire(db: Any, statement_id: str, now: Optional[datetime] = None) -> bool:
     return bool(getattr(result, "modified_count", 0))
 
 
-def approved_block(db: Any, facts: Optional[List[Dict[str, str]]] = None) -> str:
-    """The prompt block of what Sonic knows about what kind of system it is: the approved, current statements, or "" when there are none. Never raises. Blocking."""
+def approved_block(db: Any, facts: Optional[List[Dict[str, str]]] = None, message: str = "") -> str:
+    """The prompt block of what Sonic knows about what kind of system it is: the approved, current statements, or "" when there are none. A question about how its memory works puts the statements
+    about memory first (and allows a few more); any other question leaves them for last. Never raises. Blocking."""
     try:
         facts = gather(db) if facts is None else facts
-        rows = list_all(db, facts)["approved"]
-        lines = [row["text"] for row in rows if not row.get("stale")][:USE_AT_MOST]
+        rows = [row for row in list_all(db, facts)["approved"] if not row.get("stale")]
+        about_memory = [row for row in rows if any(str(cite.get("key", "")).startswith(MEMORY_KEY_PREFIX) for cite in row.get("cites") or [])]
+        rest = [row for row in rows if row not in about_memory]
+        if asks_memory(message):
+            chosen = (about_memory + rest)[:USE_AT_MOST_MEMORY]
+        else:
+            chosen = (rest + about_memory)[:USE_AT_MOST]
+        lines = [row["text"] for row in chosen]
         if not lines:
             return ""
         return (

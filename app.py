@@ -1507,8 +1507,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                         for key, count in chat_counts.items():
                             turn_counts[key] = turn_counts.get(key, 0) + count
                     if self_model.asks(question):
-                        # "What kind of system are you?": answered from what it knows about itself, the approved and current statements of the self-model (backend/utils/self_model.py).
-                        self_model_block = await asyncio.to_thread(self_model.approved_block, get_db())
+                        # "What kind of system are you?" or "how does your memory work?": answered from what it knows about itself, the approved and current statements of the self-model (backend/utils/self_model.py).
+                        self_model_block = await asyncio.to_thread(self_model.approved_block, get_db(), None, question)
                         if self_model_block:
                             prompt = prompt + self_model_block
                             tally(turn_counts, "self_model_used")

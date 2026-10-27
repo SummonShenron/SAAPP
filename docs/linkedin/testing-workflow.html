@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>How a change gets tested</title>
+<style>
+  :root { --bg:#131416; --card:#1c1d20; --line:#34353b; --text:#ececee; --muted:#9a9aa2; --or:#e0955f; --teal:#43c79a; --vio:#a597f5; --yel:#e6c35c; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { background: var(--bg); color: var(--text); font-family: "Segoe UI", "Inter", Arial, sans-serif; }
+  .page { width: 1080px; height: 1350px; padding: 48px 96px 34px 56px; display: flex; flex-direction: column; background: var(--bg); overflow: hidden; position: relative; }
+  .top { display: flex; justify-content: space-between; align-items: center; }
+  .tag { font-size: 25px; font-weight: 600; letter-spacing: 1px; color: var(--muted); text-transform: uppercase; }
+  .legend { display: flex; gap: 10px; margin-right: -40px; }
+  h1 { font-size: 62px; line-height: 1.04; font-weight: 700; letter-spacing: -1.2px; margin-top: 6px; }
+  .lede { font-size: 27px; color: var(--muted); margin-top: 8px; line-height: 1.25; }
+
+  .flow { flex: 1; display: flex; flex-direction: column; justify-content: space-between; margin-top: 14px; min-height: 0; }
+  .box { background: var(--card); border: 2px solid var(--line); border-left: 8px solid var(--c); border-radius: 20px; padding: 12px 22px 13px 20px; position: relative; }
+  .box h3 { font-size: 35px; font-weight: 700; color: var(--c); line-height: 1.1; display: flex; align-items: center; gap: 14px; }
+  .box p { font-size: 26px; color: var(--muted); margin-top: 4px; line-height: 1.2; }
+  .n { display: inline-flex; width: 44px; height: 44px; border-radius: 50%; background: var(--c); color: #121212; font-size: 27px; font-weight: 700; align-items: center; justify-content: center; flex: none; }
+  .pill { font-size: 20px; font-weight: 700; letter-spacing: 1px; padding: 2px 11px; border-radius: 8px; border: 2px solid; flex: none; }
+  .box .pill { margin-left: auto; }
+  .pill.code { color: var(--teal); border-color: var(--teal); }
+  .pill.model { color: var(--vio); border-color: var(--vio); }
+  .pill.you { color: var(--or); border-color: var(--or); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 9px; }
+  .chip { font-size: 22px; padding: 2px 13px; border: 2px solid var(--line); border-radius: 999px; color: var(--muted); }
+  .start { border: 2px dashed var(--line); border-radius: 20px; padding: 10px 22px; font-size: 29px; text-align: center; }
+  .start b { color: var(--text); }
+  .down { height: 26px; position: relative; flex: none; }
+  .down::before { content: ""; position: absolute; left: 50%; top: 0; width: 3px; height: 17px; background: var(--muted); transform: translateX(-50%); }
+  .down::after { content: ""; position: absolute; left: 50%; bottom: 1px; border-left: 8px solid transparent; border-right: 8px solid transparent; border-top: 10px solid var(--muted); transform: translateX(-50%); }
+  .ask { text-align: center; font-size: 28px; color: var(--yel); font-weight: 600; margin-bottom: 8px; }
+  .branch { display: flex; gap: 14px; }
+  .branch .box { flex: 1; }
+  .branch .box.skip { flex: 0 0 250px; border-style: dashed; border-left-style: dashed; }
+  .tagline { font-size: 23px; font-weight: 700; letter-spacing: 1px; color: var(--c); margin-bottom: 2px; }
+  .foot { display: flex; justify-content: space-between; align-items: center; font-size: 24px; color: var(--muted); padding-top: 10px; }
+  .foot b { color: var(--text); font-weight: 600; }
+  svg.loop { position: absolute; left: 0; top: 0; width: 1080px; height: 1350px; pointer-events: none; }
+  svg.loop text { font: 600 23px "Segoe UI", Arial, sans-serif; fill: var(--yel); }
+</style></head>
+<body>
+<div class="page" id="page">
+  <div class="top">
+    <div class="tag">Testing workflow</div>
+    <div class="legend"><span class="pill code">CODE</span><span class="pill model">MODEL</span><span class="pill you">PERSON</span></div>
+  </div>
+  <h1>How a change gets tested</h1>
+  <p class="lede">Code checks first. The real model only when something changed.</p>
+
+  <div class="flow">
+    <div class="start" id="start"><b>A change</b> to code, a prompt, a tool or the model</div>
+    <div class="down"></div>
+
+    <div class="box" id="fast" style="--c:var(--teal)">
+      <h3><span class="n">1</span>Fast tests<span class="pill code">CODE</span></h3>
+      <p>About 6,000 cases in about 5 minutes. The model, database and embeddings are faked and blocked, so no cost.</p>
+      <div class="chips"><span class="chip">clean logs</span><span class="chip">approval on writes</span><span class="chip">tenant isolation</span><span class="chip">no undefined names</span></div>
+    </div>
+    <div class="down"></div>
+    <div class="ask">Did a prompt, tool or model change?</div>
+
+    <div class="branch">
+      <div class="box" id="evals" style="--c:var(--vio)">
+        <div class="tagline">YES</div>
+        <h3><span class="n">2</span>Real-model evals<span class="pill model">MODEL</span></h3>
+        <p>Several runs per scenario, scored by code, compared to a saved baseline. Worse means stop.</p>
+      </div>
+      <div class="box skip" style="--c:var(--muted)">
+        <div class="tagline">NO</div>
+        <h3 style="color:var(--text)">Skip</h3>
+        <p>no model spend</p>
+      </div>
+    </div>
+    <div class="down"></div>
+
+    <div class="box" id="read" style="--c:var(--or)">
+      <h3><span class="n">3</span>Read the replies<span class="pill you">PERSON</span></h3>
+      <p>A pass rate can stay flat while the answers get worse.</p>
+    </div>
+    <div class="down"></div>
+
+    <div class="box" id="deploy" style="--c:var(--or)">
+      <h3><span class="n">4</span>Deploy<span class="pill you">PERSON</span></h3>
+      <p>By hand, only after it passes.</p>
+    </div>
+    <div class="down"></div>
+
+    <div class="box" id="watch" style="--c:var(--yel)">
+      <h3><span class="n">5</span>Watch production<span class="pill code">CODE</span></h3>
+      <p>Cheap path or tool path, fallbacks, time, tokens, feedback, spend caps. Counts only, never user content.</p>
+    </div>
+  </div>
+
+  <div class="foot"><span><b>Sonic Assistant</b></span><span>Prose cannot guarantee behavior. Only mechanical checks can.</span></div>
+
+  <svg class="loop" id="loop" viewBox="0 0 1080 1350" xmlns="http://www.w3.org/2000/svg"></svg>
+</div>
+<script>
+  // The return path: from the last box up the right-hand side to the first, so "a failure becomes a check" reads as a loop.
+  (function () {
+    var page = document.getElementById('page').getBoundingClientRect();
+    function at(id) { var r = document.getElementById(id).getBoundingClientRect(); return { r: r.right - page.left, m: (r.top + r.bottom) / 2 - page.top }; }
+    var watch = at('watch'), start = at('start');
+    var x = 1020, c = '#e6c35c';
+    var d = 'M ' + watch.r + ' ' + watch.m + ' H ' + x + ' V ' + start.m + ' H ' + (start.r + 4);
+    document.getElementById('loop').innerHTML =
+      '<defs><marker id="ah" markerUnits="userSpaceOnUse" markerWidth="18" markerHeight="18" refX="16" refY="9" orient="auto"><path d="M0,1 L17,9 L0,17 z" fill="' + c + '"/></marker></defs>' +
+      '<path d="' + d + '" fill="none" stroke="' + c + '" stroke-width="4" stroke-dasharray="3 9" stroke-linecap="round" marker-end="url(#ah)"/>' +
+      '<text transform="translate(' + (x + 30) + ',' + ((watch.m + start.m) / 2) + ') rotate(90)" text-anchor="middle">every failure becomes a check</text>';
+  })();
+</script>
+</body></html>

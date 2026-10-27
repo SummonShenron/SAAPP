@@ -80,15 +80,16 @@ def test_insight_only_appears_when_provided():
 
 def test_affiliate_override_appears_only_when_provided():
     # Note: the persona itself always references "an AFFILIATE OVERRIDE section" so the model
-    # knows to defer to one if present — check for the actual override content instead.
+    # knows to defer to one if present, and its style-mirroring line says "if they're sarcastic,
+    # match that" — so check for the override's own instruction, not the bare word.
     no_override = build_voice_prompt(grounding_block=GROUNDING_BLOCKS["kb_strict"], data="", history="", question="hi")
-    assert "sarcastic" not in no_override
+    assert "You MUST be sarcastic" not in no_override
 
     with_override = build_voice_prompt(
         grounding_block=GROUNDING_BLOCKS["kb_strict"], data="", history="", question="hi",
         affiliate_override=get_affiliate_override("Affiliate_B"),
     )
-    assert "sarcastic" in with_override
+    assert "You MUST be sarcastic" in with_override
 
 
 def test_get_affiliate_override_bty_fitness_identity_swap():

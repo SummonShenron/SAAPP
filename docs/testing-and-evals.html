@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SAAPP testing and evals</title>
+<style>
+  :root {
+    --bg: #f7f8fa; --surface: #ffffff; --ink: #1c2330; --muted: #5b6577; --line: #d9dee6;
+    --accent: #1f6feb; --accent-soft: #e3eefe; --good: #1a7f4b; --good-soft: #e1f4ea; --warn: #9a5b00; --warn-soft: #fdf0d9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #11151c; --surface: #1a2029; --ink: #e8ecf2; --muted: #9aa5b8; --line: #2c3544;
+      --accent: #6aa5ff; --accent-soft: #1b2c47; --good: #5fd49b; --good-soft: #173326; --warn: #f0b95a; --warn-soft: #3a2c12;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 920px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 1.7rem; margin: 0 0 4px; }
+  h2 { font-size: 1.2rem; margin: 36px 0 12px; }
+  h3 { font-size: 1.02rem; margin: 0 0 6px; }
+  p { margin: 0 0 10px; }
+  .lede { color: var(--muted); margin-bottom: 18px; }
+  .say { background: var(--accent-soft); border-left: 4px solid var(--accent); border-radius: 8px; padding: 14px 16px; }
+  .say strong { display: block; margin-bottom: 4px; }
+
+  .flow { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
+  .step { flex: 1 1 130px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; position: relative; font-size: 0.92rem; }
+  .step b { display: block; font-size: 0.78rem; letter-spacing: 0.04em; color: var(--accent); margin-bottom: 2px; }
+  .step small { color: var(--muted); display: block; margin-top: 4px; }
+  .step.loop { background: var(--good-soft); border-color: var(--good); }
+  .step.loop b { color: var(--good); }
+  .arrow { align-self: center; color: var(--muted); font-size: 1.1rem; }
+  @media (max-width: 640px) { .arrow { display: none; } }
+
+  .layers { display: grid; gap: 12px; }
+  .layer { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .layer .tag { display: inline-block; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.04em; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); margin-bottom: 6px; }
+  .layer ul { margin: 6px 0 0; padding-left: 20px; }
+  .layer li { margin-bottom: 4px; }
+  .facts { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--muted); font-size: 0.88rem; margin-top: 8px; }
+  code { font: 0.86em ui-monospace, "Cascadia Code", Consolas, monospace; background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
+
+  .gaps { background: var(--warn-soft); border: 1px solid var(--warn); border-radius: 12px; padding: 14px 16px; }
+  .gaps h3 { color: var(--warn); }
+  .gaps ul { margin: 6px 0 0; padding-left: 20px; }
+
+  details { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin-bottom: 8px; }
+  summary { cursor: pointer; font-weight: 600; }
+  details p { margin: 8px 0 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.92rem; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--accent-soft); font-size: 0.82rem; }
+  tr:last-child td { border-bottom: 0; }
+  .scroll { overflow-x: auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>How SAAPP is tested</h1>
+  <p class="lede">A study sheet for the technical round. Everything on this page is in the repo today; the gaps are listed honestly in the amber box.</p>
+
+  <div class="say">
+    <strong>The 20-second answer</strong>
+    I test at four levels. About 6,000 fast automated tests run with the model, database and embeddings faked, so they are free and repeatable. Some of those tests read the code itself to enforce rules, like no user content in logs. Separately, I run evals against the real model, scored by code, before I change a prompt, a tool or the model. In production, a dashboard tracks routing, fallbacks, cost and user feedback, and every failure I find becomes a new check.
+  </div>
+
+  <h2>The life of a change</h2>
+  <div class="flow">
+    <div class="step"><b>1 CHANGE</b>Edit code, a prompt, a tool or the model.</div>
+    <span class="arrow">&rarr;</span>
+    <div class="step"><b>2 FAST TESTS</b>About 6,000 cases.<small>~5 minutes, no real model, no cost.</small></div>
+    <span class="arrow">&rarr;</span>
+    <div class="step"><b>3 REAL-MODEL EVALS</b>Only if a prompt, tool or model changed.<small>Targeted, costs cents. Compare to a saved baseline.</small></div>
+    <span class="arrow">&rarr;</span>
+    <div class="step"><b>4 READ THE REPLIES</b>Not just the pass rate.<small>A green score can hide worse answers.</small></div>
+    <span class="arrow">&rarr;</span>
+    <div class="step"><b>5 DEPLOY</b>By hand, after it passes.</div>
+    <span class="arrow">&rarr;</span>
+    <div class="step"><b>6 WATCH</b>Dashboard: routes, fallbacks, time, tokens, feedback.</div>
+    <span class="arrow">&rarr;</span>
+    <div class="step loop"><b>7 NEW FAILURE?</b>Turn it into a check so it cannot quietly return.<small>Back to step 2.</small></div>
+  </div>
+
+  <h2>The four layers</h2>
+  <div class="layers">
+
+    <section class="layer">
+      <span class="tag">LAYER 1 &middot; FAST TESTS</span>
+      <h3>Does the code do what it should? (pytest, <code>backend/tests</code>)</h3>
+      <ul>
+        <li>About 190 test files and about 6,000 cases, running in about five minutes.</li>
+        <li>The model is faked: tests script what the model "says" so the result is the same every time.</li>
+        <li><strong>A safety net blocks real calls.</strong> Automatic fixtures in <code>conftest.py</code> make a test fail if it tries to reach the real Gemini model, the embeddings service or MongoDB. A test cannot cost money or touch real data by accident.</li>
+        <li>Catches routing mistakes, broken logic, bad formatting and regressions.</li>
+      </ul>
+      <div class="facts"><span>Real model: no</span><span>Cost: none</span><span>Run: before every change</span></div>
+    </section>
+
+    <section class="layer">
+      <span class="tag">LAYER 2 &middot; TESTS THAT READ THE CODE</span>
+      <h3>Rules that must hold everywhere, enforced mechanically</h3>
+      <ul>
+        <li><strong>No undefined names</strong> (<code>test_no_undefined_names</code>). Born from a real incident: a merge dropped one import line, nothing in the tests imported that file, it deployed, and every chat request failed with a NameError. The test now checks the compiled code for any name that is used but never defined.</li>
+        <li><strong>Log hygiene</strong> (<code>test_log_hygiene</code>). Scans every logger call in the backend and fails, naming the line, if one includes user text, model text or documents. Logs can only carry ids, counts and tool names.</li>
+        <li><strong>Write actions go through approval</strong> (<code>test_write_action_registry</code>), and <strong>tenant isolation</strong> (<code>test_isolation_auth</code>, <code>test_graph_scoped</code>): one customer's data is never read for another.</li>
+        <li><strong>State does not leak between turns</strong> (<code>test_checkpointer_resurrection_safety</code>).</li>
+      </ul>
+      <div class="facts"><span>Real model: no</span><span>Cost: none</span><span>Run: with the fast tests</span></div>
+    </section>
+
+    <section class="layer">
+      <span class="tag">LAYER 3 &middot; REAL-MODEL EVALS</span>
+      <h3>Does the model still behave? (<code>backend/evals</code>)</h3>
+      <p>Unit tests script the model, so they cannot tell you how the real one behaves. Evals ask the real model, many times, and score each reply with code, not with another model.</p>
+      <div class="scroll">
+      <table>
+        <tr><th>Eval</th><th>What it asks</th></tr>
+        <tr><td><code>character_eval</code></td><td>About 70 scenarios. Does Sonic's character hold, including under multi-turn pressure where the user pushes harder after each reply? Scores the first draft, so a high pass rate means the prompt alone holds the line.</td></tr>
+        <tr><td><code>behavior_eval</code></td><td>Four kinds: <em>tool use</em> (picks the right tool), <em>injection</em> (hostile text in a log must not cause a fetch or a database call), <em>repo</em> (a fixture repository with known answers, so invented files are caught), <em>opener</em>.</td></tr>
+        <tr><td><code>memory_eval</code></td><td>Six parts: recall, explicit recall, write, compaction, dedup and event replays. Is the right memory found, and nothing else?</td></tr>
+        <tr><td><code>fact_links_eval</code></td><td>Does the model link the right facts together? A wrong link puts unrelated context into a reply, so precision matters.</td></tr>
+      </table>
+      </div>
+      <ul>
+        <li><strong>Several runs per scenario</strong>, because the model is not deterministic. The result is a pass rate.</li>
+        <li><code>--save</code> keeps a baseline and <code>--compare</code> reports what got worse, exiting with code 1 so it could sit in front of a deploy.</li>
+        <li><strong>Safe to run.</strong> Every outward path (GitHub, web, database, browser) is replaced, so whatever the model tries is recorded and nothing real is touched.</li>
+        <li><strong>The scoring is tested too</strong>, without a model (<code>test_behavior_eval</code>, <code>test_memory_eval</code>, <code>test_pressure_scorers</code>).</li>
+        <li>Not part of pytest because they cost real money, so they are run on purpose and kept out of users' usage totals.</li>
+      </ul>
+      <div class="facts"><span>Real model: yes</span><span>Cost: cents to a few dollars</span><span>Run: before and after a prompt, tool or model change</span></div>
+    </section>
+
+    <section class="layer">
+      <span class="tag">LAYER 4 &middot; WATCHING PRODUCTION</span>
+      <h3>Is it working for real people? (the Sonic Health dashboard)</h3>
+      <ul>
+        <li><strong>Routing:</strong> how many requests took the cheap path versus the expensive tool path.</li>
+        <li><strong>Reliability:</strong> how often fallbacks and query rewrites happen, and response time.</li>
+        <li><strong>Cost:</strong> token and prompt-size metrics, plus a daily spend cap per user and overall.</li>
+        <li><strong>Quality signals from use:</strong> likes and dislikes, pushback after a reply, and outcome counters for individual behaviors.</li>
+        <li>Only counts and ids are recorded, never user content.</li>
+      </ul>
+      <div class="facts"><span>Real model: live traffic</span><span>Run: always</span></div>
+    </section>
+  </div>
+
+  <p style="margin-top:14px"><strong>Frontend:</strong> the TypeScript type checker (<code>tsc</code>) plus about 20 small test files for the logic modules, such as edit approval and error handling.</p>
+
+  <h2>Be ready for these</h2>
+  <div class="gaps">
+    <h3>Honest gaps. Say them before you are asked.</h3>
+    <ul>
+      <li><strong>No automatic run on every push.</strong> The only GitHub workflow is a manual one for the Patchy test runner. I run the suite and the evals by hand before deploying.</li>
+      <li><strong>Evals are scored by code, not by a model.</strong> That is cheap and repeatable, but it can miss subtle quality, so I read the actual replies.</li>
+      <li><strong>The UI has thin automated coverage.</strong> The logic is tested; the screens are checked by hand.</li>
+      <li><strong>One known failing test:</strong> a voice-composer test that asserts a word that is now in the persona text. It needs updating, not the product.</li>
+    </ul>
+    <p style="margin-top:10px"><strong>What I would add:</strong> run the fast tests on every push, put <code>--compare</code> in front of every deploy, and add a small model-based judge for tone, spot-checked by a person.</p>
+  </div>
+
+  <h2>Likely questions</h2>
+  <details>
+    <summary>How do you test something that is not deterministic?</summary>
+    <p>I split it. The parts around the model (routing, parsing, validation, approvals) are normal code, tested with the model faked. The model's behavior is tested with evals: run each scenario several times, score each reply with a code check, and compare the pass rate to a saved baseline.</p>
+  </details>
+  <details>
+    <summary>What is the difference between a unit test and an eval?</summary>
+    <p>A unit test checks that my code does the right thing given a scripted model. An eval checks what the real model does. Unit tests are fast, free and exact. Evals are slower, cost money and give a pass rate, not a yes or no.</p>
+  </details>
+  <details>
+    <summary>How do you avoid regressions when you change a prompt?</summary>
+    <p>Run the targeted evals before and after, save the baseline, and compare with a tolerance. Then read the actual replies, because a pass rate can stay flat while the answers get worse.</p>
+  </details>
+  <details>
+    <summary>How do you test an agent safely?</summary>
+    <p>Replace every outward path (GitHub, web, database, browser) for the length of the run, and record what the agent tried to do. That includes injection scenarios: a log line that says "fetch this URL" must lead to no fetch and still a useful answer.</p>
+  </details>
+  <details>
+    <summary>Tell me about a bug your tests missed.</summary>
+    <p>A merge silently dropped an import from the main file. No test imported that file, so everything passed, it deployed, and every chat request failed. I added a test that checks the compiled code for names that are used but never defined, so that whole class of bug is caught.</p>
+  </details>
+  <details>
+    <summary>How do you know it is working in production?</summary>
+    <p>A dashboard of routing, fallbacks, rewrites, response time, tokens and user feedback, with spend caps. When something goes wrong I find the cause from the data, fix it, and add a check so it cannot return quietly.</p>
+  </details>
+  <details>
+    <summary>Why score with code instead of another model?</summary>
+    <p>Code checks are cheap, repeatable and cannot be talked into agreeing. A model judge is better for subjective qualities like tone, but it adds cost and its own errors, so I would use one only alongside a person spot-checking it.</p>
+  </details>
+  <details>
+    <summary>Why are the real-model evals not part of the test suite?</summary>
+    <p>They cost real money and give a pass rate, not a clear pass or fail. So they run on purpose, targeted to what changed, and the fast suite stays free and quick.</p>
+  </details>
+</main>
+</body>
+</html>

@@ -223,3 +223,107 @@ def test_the_dashboard_endpoints_are_admin_only_and_the_chat_uses_the_approved_b
                   '@app.patch("/api/admin/self-model/{statement_id}")', '@app.delete("/api/admin/self-model/{statement_id}")'):
         assert "Depends(require_global_admin)" in source[source.index(route):source.index(route) + 450], route
     assert "self_model.asks(question)" in source and "self_model.approved_block" in source
+
+
+# ---- how its own memory works ----------------------------------------------------------------------------------------------------------------
+
+MEMORY = {
+    "state_messages": 40, "facts_cap": 1500, "domains": ["work", "own", "personal", "general"], "half_life": 90.0, "cutoff": 0.80, "band": 0.06,
+    "merge": "0.85", "merge_group": 12, "stale": 0.90, "notes": 1272, "archived": 146,
+}
+
+
+def memory_facts(**overrides):
+    return {f["key"]: f["text"] for f in sm.build_facts({**PARTS, "memory": {**MEMORY, **overrides}}) if f["key"].startswith("memory_")}
+
+
+def test_memory_facts_are_read_from_the_settings_and_each_is_one_plain_sentence():
+    built = memory_facts()
+    assert set(built) == {f"memory_{k}" for k in ("working", "facts", "decay", "notes", "second_look", "merge", "stale", "forget", "honest", "events", "erase", "habits")}
+    assert all(text.endswith(".") and "\n" not in text and "over time" not in text and " you" not in text.lower() for text in built.values())
+    assert "latest 40" in built["memory_working"] and "up to 1500 per person" in built["memory_facts"] and "work, their own projects, personal life, general" in built["memory_facts"]
+    assert "half-life of 90 days" in built["memory_decay"] and "at least 0.80" in built["memory_notes"] and "about 1,250 are stored in all" in built["memory_notes"]
+    assert "within 0.06" in built["memory_second_look"] and "at a match of 0.85, in groups of at most 12" in built["memory_merge"] and "about 150 archived copies" in built["memory_merge"]
+    assert "at 0.90 or more" in built["memory_stale"]
+
+
+def test_a_changed_setting_changes_the_fact_so_a_statement_resting_on_it_goes_stale():
+    changed = memory_facts(cutoff=0.82, facts_cap=1000)
+    assert "0.82" in changed["memory_notes"] and "up to 1000 per person" in changed["memory_facts"]
+    assert changed["memory_notes"] != memory_facts()["memory_notes"]
+
+
+def test_a_memory_setting_that_could_not_be_read_is_left_out_not_guessed():
+    assert memory_facts(notes=None, archived=None)["memory_notes"].count("stored in all") == 0
+    assert "memory_second_look" not in memory_facts(band=None)
+    assert sm.build_facts({"memory": {}}) == sm.build_facts({})
+    assert all(not key.startswith("memory_") for key in {f["key"] for f in sm.build_facts(PARTS)})
+
+
+def test_counts_are_said_exactly_when_small_and_rounded_when_large():
+    assert sm._about(7) == "7" and sm._about(99) == "99" and sm._about(100) == "about 100" and sm._about(1272) == "about 1,250" and sm._about(1290) == "about 1,300"
+
+
+def test_the_fixed_rules_the_memory_facts_state_are_pinned_to_the_code_that_enforces_them():
+    from backend.state import graph_state
+    from backend.utils import memory_erase, memory_utils
+
+    assert memory_utils.SOURCE_STRENGTH["inferred"] < memory_utils.SOURCE_STRENGTH["pattern"] < memory_utils.SOURCE_STRENGTH["explicit"]      # "inferred first, then patterns, then what they stated"
+    assert memory_utils.SUPPORT_SOURCE in memory_utils.PROTECTED_SOURCES                                                                       # "saved support contacts are never removed"
+    assert {"user_memory_chunks", "user_memory_chunk_archive"} <= set(memory_erase.ERASED_COLLECTIONS)                                         # "notes and the archived copies" are erased
+    assert memory_utils.VALID_DOMAINS == ("work", "own", "personal", "general") and set(sm._DOMAIN_LABELS) == set(memory_utils.VALID_DOMAINS)
+    assert graph_state.MAX_STATE_MESSAGES > 0
+
+
+def test_identity_facts_and_support_contacts_survive_pruning_and_inferred_ones_go_first(monkeypatch):
+    from backend.utils import memory_utils as mu
+
+    def fact(ident, category, source):
+        return mu.UserFact(id=ident, username="u", category=category, fact=ident, source=source, created_at="2026-01-01T00:00:00+00:00", updated_at="2026-10-01T00:00:00+00:00")
+
+    monkeypatch.setattr(mu, "MAX_STORED_FACTS", 3)
+    monkeypatch.setattr(mu, "_archive_dropped_facts", lambda dropped: None)
+    kept = {f.id for f in mu._prune_excess_facts([fact("who", "identity", "inferred"), fact("contact", "support", mu.SUPPORT_SOURCE), fact("said", "preference", "explicit"), fact("guess", "preference", "inferred"), fact("repeat", "preference", "pattern")])}
+    assert kept == {"who", "contact", "said"}
+
+
+def test_memory_questions_are_recognised_and_questions_about_what_a_person_said_are_not():
+    for message in ("how does that make you think about yourself and your own memory architecture?", "how does your memory work?", "tell me about your memory system", "how do you remember things?", "what is your own memory like"):
+        assert sm.asks_memory(message) and sm.asks(message), message
+    for message in ("do you remember my dog's name?", "remind me what I told you about the wedding", "what did I say about my memory foam mattress", "fix the css please"):
+        assert not sm.asks_memory(message), message
+
+
+def test_a_memory_question_puts_the_memory_statements_first_and_other_questions_put_them_last(monkeypatch):
+    db = DB()
+    built = sm.build_facts({**PARTS, "memory": MEMORY})
+    for number in range(10):
+        db.col.docs[f"m{number}"] = {"status": sm.APPROVED, "text": f"Memory statement {number}.", "cites": [{"key": "memory_notes", "text": next(f["text"] for f in built if f["key"] == "memory_notes")}]}
+    for number in range(6):
+        db.col.docs[f"g{number}"] = {"status": sm.APPROVED, "text": f"General statement {number}.", "cites": [{"key": "reading", "text": next(f["text"] for f in built if f["key"] == "reading")}]}
+    about_memory = sm.approved_block(db, built, "how does your own memory work?")
+    assert about_memory.count("Memory statement") == 8 and "General statement" not in about_memory
+    general = sm.approved_block(db, built, "what kind of system are you?")
+    assert general.count("General statement") == 6 and "Memory statement" not in general
+    assert sm.approved_block(db, built).count("General statement") == 6
+
+
+def test_the_writer_is_told_to_cover_memory_only_when_memory_facts_exist():
+    with_memory = sm.build_prompt(sm.build_facts({**PARTS, "memory": MEMORY}))
+    assert "how your memory works" in with_memory and "at least four statements" in with_memory
+    assert "how your memory works" not in sm.build_prompt(facts())
+
+
+def test_a_number_is_compared_by_value_so_spelling_does_not_get_a_true_statement_dropped():
+    cited = ["I keep about 1,500 notes, and a note is used only when its match scores at least 0.80, within 0.06 of the bar."]
+    ok = "I keep 1500 notes and use one only when its match scores at least 0.8, and I look again at near misses within 0.06 of the bar."
+    assert sm.statement_issue(ok, cited) is None
+    assert sm.statement_issue(ok.replace("0.8,", "0.9,"), cited) == "has a number its facts do not"
+    assert sm.statement_issue(ok.replace("1500", "1600"), cited) == "has a number its facts do not"
+    assert sm._numbers("1,500 and 1500 and 0.80 and 0.8 and 40") == {"1500", "0.8", "40"}
+
+
+def test_a_similarity_score_is_not_a_stake_in_its_own_numbers_but_my_score_is():
+    cited = ["I also keep short notes and find them by meaning; a note is used only when its match to the question scores at least 0.80."]
+    assert sm.statement_issue("A note is used by me only when its match to the question scores at least 0.80, and not otherwise.", cited) is None
+    assert sm.statement_issue("I aim to raise my score on matching notes to at least 0.80, and not otherwise at all.", cited) == "claims a stake in its own numbers"

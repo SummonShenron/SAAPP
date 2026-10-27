@@ -1034,12 +1034,13 @@ CHANGELOG = [
         "id": "self_model",
         "requires": [
             "backend/utils/self_model.py::def approved_block",
+            "backend/utils/self_model.py::def asks_memory",
             "backend/utils/experience_reflections.py::async def generate",
         ],
         "month": "2026-10",
         "title": "Describing what kind of system I am",
-        "line": "When you ask what kind of system I am or how I work, I can answer from approved statements built on real numbers about my own work, and I say so when something isn't covered.",
-        "keywords": ["what kind of system", "what are you", "tell me about yourself", "how do you work", "what do you spend your time on", "your purpose"],
+        "line": "When you ask what kind of system I am, how I work or how my memory works, I can answer from approved statements built on real settings and numbers about my own work, and I say so when something isn't covered.",
+        "keywords": ["what kind of system", "what are you", "tell me about yourself", "how do you work", "what do you spend your time on", "your purpose", "your memory", "memory architecture", "how do you remember"],
         "volunteer": [],
     },
     {

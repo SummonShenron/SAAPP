@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>How I test an AI assistant</title>
+<style>
+  :root { --bg:#131416; --card:#1c1d20; --line:#34353b; --text:#ececee; --muted:#9a9aa2; --or:#e0955f; --teal:#43c79a; --vio:#a597f5; --yel:#e6c35c; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { background: var(--bg); color: var(--text); font-family: "Segoe UI", "Inter", Arial, sans-serif; }
+  .page { width: 1080px; height: 1350px; padding: 56px 60px 40px; display: flex; flex-direction: column; background: var(--bg); overflow: hidden; }
+  .tag { font-size: 26px; font-weight: 600; letter-spacing: 1px; color: var(--muted); text-transform: uppercase; }
+  h1 { font-size: 70px; line-height: 1.04; font-weight: 700; letter-spacing: -1.5px; margin-top: 10px; }
+  .lede { font-size: 30px; color: var(--muted); margin-top: 12px; line-height: 1.25; }
+  .stack { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 14px; margin-top: 18px; }
+  .layer { background: var(--card); border: 2px solid var(--line); border-left: 8px solid var(--c); border-radius: 22px; padding: 20px 26px 20px 24px; display: flex; align-items: flex-start; gap: 20px; }
+  .num { display: inline-flex; width: 58px; height: 58px; border-radius: 50%; background: var(--c); color: #121212; font-size: 34px; font-weight: 700; align-items: center; justify-content: center; flex: none; margin-top: 2px; }
+  .layer h3 { font-size: 38px; font-weight: 700; color: var(--c); line-height: 1.1; }
+  .layer .sub { font-size: 27px; color: var(--muted); margin-top: 4px; line-height: 1.22; }
+  .layer .what { font-size: 29px; color: var(--text); margin-top: 8px; line-height: 1.24; }
+  .down { text-align: center; font-size: 34px; color: var(--muted); line-height: 0.6; height: 12px; }
+  .lesson { border: 2px solid var(--or); border-radius: 22px; padding: 22px 28px; margin-top: 18px; font-size: 38px; font-weight: 700; line-height: 1.15; letter-spacing: -0.5px; }
+  .lesson span { color: var(--or); }
+  .foot { display: flex; justify-content: space-between; align-items: center; font-size: 25px; color: var(--muted); padding-top: 16px; }
+  .foot b { color: var(--text); font-weight: 600; }
+</style></head>
+<body>
+<div class="page">
+  <div class="tag">Testing, explained</div>
+  <h1>How I test an AI assistant</h1>
+  <p class="lede">The model is not deterministic, so one kind of test is never enough.</p>
+
+  <div class="stack">
+    <div class="layer" style="--c:var(--or)">
+      <span class="num">1</span>
+      <div>
+        <h3>Fast tests</h3>
+        <div class="sub">about 6,000 cases &middot; about 5 minutes &middot; no cost</div>
+        <div class="what">The model, database and embeddings are faked and blocked, so a test can never cost money or touch real data.</div>
+      </div>
+    </div>
+    <div class="layer" style="--c:var(--teal)">
+      <span class="num">2</span>
+      <div>
+        <h3>Tests that read the code</h3>
+        <div class="sub">rules that must hold everywhere</div>
+        <div class="what">No user content in logs. Writes need approval. One customer never reads another&rsquo;s data. A real outage became a test.</div>
+      </div>
+    </div>
+    <div class="layer" style="--c:var(--vio)">
+      <span class="num">3</span>
+      <div>
+        <h3>Real-model evals</h3>
+        <div class="sub">several runs each &middot; scored by code</div>
+        <div class="what">Does its character hold under pressure? Does it pick the right tool and resist hostile text? Compared to a saved baseline.</div>
+      </div>
+    </div>
+    <div class="layer" style="--c:var(--yel)">
+      <span class="num">4</span>
+      <div>
+        <h3>Production signals</h3>
+        <div class="sub">counts, never user content</div>
+        <div class="what">Cheap path or tool path, fallbacks, time, tokens, feedback and spend caps. Read the replies, not just the score.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="lesson">Prose cannot guarantee behavior. <span>Only mechanical checks can.</span></div>
+  <div class="foot"><span><b>Sonic Assistant</b></span><span>Every failure becomes a check</span></div>
+</div>
+</body></html>
