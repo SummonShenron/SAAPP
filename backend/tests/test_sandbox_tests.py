@@ -238,3 +238,57 @@ def test_the_build_script_precompiles_and_the_cache_is_never_committed(monkeypat
     fetch_source = (ROOT / "backend" / "sandbox" / "fetch_sandbox.py").read_text(encoding="utf-8")
     assert fetch_source.count("precompile()") >= 3 and "--precompile" in fetch_source
     assert "backend/sandbox/*.cwasm" in (ROOT / ".gitignore").read_text(encoding="utf-8")
+
+
+# ---- a file that can never run is said to be permanent, before the memory check ---------------------------------------------------------------
+
+PYTEST_FILE = "import pytest\nfrom mathy import clamp\n\ndef test_low():\n    assert clamp(-1, 0, 5) == 0\n"
+
+
+def test_a_file_that_imports_pytest_is_refused_as_permanent_before_the_memory_check(monkeypatch):
+    connect("q1", {"mathy.py": MATHY, "tests/test_pt.py": PYTEST_FILE})
+    started = []
+    real_run = subprocess.run
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: started.append(1) or real_run(*a, **k))
+    monkeypatch.setattr(st, "headroom_mb", lambda: 10.0)             # the server is ALSO short of memory: the permanent answer must still be the one it hears
+    text = st.format_result(run(st.run_tests("q1", ["tests/test_pt.py"])))
+    assert text.startswith("ERROR: tests/test_pt.py imports pytest, which the sandbox does not have")
+    assert "can never run here, however much memory the server has" in text and "It is written for pytest." in text and "Do not retry it." in text and "run_repo_tests" in text
+    assert "short of memory" not in text and "try again" not in text.lower() and started == []
+
+
+def test_a_good_file_is_still_refused_for_memory_when_the_server_is_short(monkeypatch):
+    connect("q2", {"mathy.py": MATHY, "tests/test_mathy.py": TEST_MATHY})
+    monkeypatch.setattr(st, "headroom_mb", lambda: 10.0)
+    assert "short of memory" in run(st.run_tests("q2", ["tests/test_mathy.py"]))["error"]
+
+
+def test_only_modules_the_sandbox_can_never_provide_are_named(tmp_path):
+    (tmp_path / "mathy.py").write_text(MATHY, encoding="utf-8")
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "helpers.py").write_text("X = 1\n", encoding="utf-8")
+    source = "import os, json\nimport unittest.mock\nfrom collections import abc\nimport mathy\nfrom pkg import thing\nimport helpers\nimport requests, yaml\nfrom requests.auth import HTTPBasicAuth\nimport pytest\n"
+    assert st.unavailable_imports(source, str(tmp_path), "tests/test_x.py") == ["requests", "yaml", "pytest"]
+    assert st.unavailable_imports("import unittest\nimport mathy\n", str(tmp_path), "tests/test_x.py") == []
+
+
+def test_a_guarded_nested_relative_or_unparseable_import_is_never_grounds_for_refusal(tmp_path, monkeypatch):
+    guarded = "try:\n    import pytest\nexcept ImportError:\n    pytest = None\n\nif False:\n    import requests\n\ndef later():\n    import yaml\n\nfrom . import sibling\nfrom .sibling import thing\n"
+    assert st.unavailable_imports(guarded, str(tmp_path), "t.py") == []
+    assert st.unavailable_imports("def broken(:\n", str(tmp_path), "t.py") == []
+    import sys
+
+    monkeypatch.delattr(sys, "stdlib_module_names")                    # a Python that cannot list its standard library: do not guess
+    assert st.unavailable_imports("import pytest\n", str(tmp_path), "t.py") == []
+
+
+def test_a_file_with_no_unittest_cases_says_why_nothing_ran():
+    connect("q3", {"tests/test_plain.py": "def test_x():\n    assert True\n"})
+    text = st.format_result(run(st.run_tests("q3", ["tests/test_plain.py"])))
+    assert text.startswith("SANDBOX TESTS NO TESTS FOUND") and "unittest.TestCase classes only" in text and "not collected" in text
+
+
+def test_the_tool_description_tells_the_model_a_pytest_file_cannot_run_here():
+    source = (ROOT / "backend" / "services" / "agent_workflow.py").read_text(encoding="utf-8")
+    assert "a pytest file cannot run here: the project's own suite is run_repo_tests" in source

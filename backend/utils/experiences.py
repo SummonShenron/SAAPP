@@ -90,12 +90,13 @@ def forget_cached() -> None:
     _stored_cache["at"] = 0.0
 
 
-def closest_in_record(db: Any, embed: Callable[[str], Optional[List[float]]], vector: List[float]) -> Optional[float]:
-    """How close `vector` is to the nearest note already in the record (None when the index is not ready), so a new note that only repeats one is merged, not added. Blocking."""
+def closest_in_record(db: Any, embed: Callable[[str], Optional[List[float]]], vector: List[float], *, kind: str) -> Optional[float]:
+    """How close `vector` is to the nearest note of the SAME kind already in the record (None when the index is not ready), so a new note that only repeats one of its kind is merged, not added. Matching is within the same kind: a note of another kind is never scored against it. Blocking."""
     try:
-        items = entries(db)
-        vectors = leanings.index_vectors(db, embed, items, fill=False, collection=COLLECTION, cache=_cache)
-        scores = [leanings.cosine(vector, v) for vs in vectors.values() for v in leanings._vector_list(vs)]
+        full = entries(db)
+        vectors = leanings.index_vectors(db, embed, full, fill=False, collection=COLLECTION, cache=_cache)
+        kinds = {item["id"]: item.get("kind") for item in full}
+        scores = [leanings.cosine(vector, v) for entry_id, vs in vectors.items() if kinds.get(entry_id) == kind for v in leanings._vector_list(vs)]
         return max(scores) if scores else None
     except Exception:
         return None

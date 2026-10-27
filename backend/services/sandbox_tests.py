@@ -249,6 +249,54 @@ def parse_output(stdout: str, stderr: str, out_of_fuel: bool) -> Dict[str, Any]:
     }
 
 
+def unavailable_imports(source: str, root: str, test_path: str) -> List[str]:
+    """The modules a test file imports at its top level that the sandbox can never provide: not in the standard library, and not a file or folder in the copy (at its root or beside the test).
+
+    WHY (2026-10-27). Sonic planned "run the test" for a pytest file. The server was short of memory, so the run was refused with "try again in a moment", which hid the real answer: the file
+    imports pytest, the sandbox has only the standard library, and it could never have run however much memory was free. A permanent failure is now said before the memory check, and said as permanent.
+
+    Only plain imports at the top of the file are read: one inside `try`, `if` or a function may be guarded, so it is never grounds for refusing. Imports of other files in the folder are not followed
+    (what THEY import is reported by the run itself). Empty when this Python cannot list its standard library, since guessing would refuse good files. Pure apart from looking at the copy."""
+    import ast
+    import sys
+
+    stdlib = getattr(sys, "stdlib_module_names", None)
+    if not stdlib:
+        return []
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return []                                                     # the guest reports a syntax error better than this can
+    base = Path(root)
+    beside = (base / test_path).parent
+    found: List[str] = []
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            modules = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            modules = [node.module]
+        else:
+            continue
+        for module in modules:
+            top = module.split(".")[0]
+            if top in stdlib or top in found:
+                continue
+            if any((where / f"{top}.py").is_file() or (where / top).is_dir() for where in (base, beside)):
+                continue
+            found.append(top)
+    return found
+
+
+def unavailable_message(path: str, modules: List[str]) -> str:
+    """What the model is told when a test file can never run here. Says so plainly and says what to do instead. Pure."""
+    names = ", ".join(modules)
+    pytest_file = " It is written for pytest." if "pytest" in modules else ""
+    return (
+        f"{path} imports {names}, which the sandbox does not have (it has only Python's standard library), so this file can never run here, however much memory the server has.{pytest_file} "
+        "Do not retry it. The project's own pytest suite runs with run_repo_tests on a pushed branch; or write the check as a unittest.TestCase that uses only the standard library and call run_sandbox_tests with that."
+    )
+
+
 def clean_test_paths(tests: Any) -> List[str]:
     """The test files asked for, as safe relative `.py` paths. Raises SandboxError in words."""
     if isinstance(tests, str):
@@ -290,6 +338,8 @@ def format_result(result: Dict[str, Any], *, with_edits: bool = False) -> str:
     if "ModuleNotFoundError" in seen or "ImportError" in seen:
         lines.append("The sandbox has only Python's standard library: no installed packages and no network. Code that imports anything else cannot run here; test code that needs only the "
                      "standard library, or give the test a stand-in for the missing module. This does not mean the code itself is wrong.")
+    if status == "NO TESTS FOUND":
+        lines.append("The sandbox runs unittest.TestCase classes only; test functions written for pytest are not collected, so this file has nothing it can run.")
     if result["output"]:
         lines.append(result["output"])
     elif result["guest_stderr"]:
@@ -317,6 +367,10 @@ async def run_tests(username: str, tests: Any, overlay: Optional[Dict[str, str]]
                 missing = [p for p in paths if not (Path(root) / p).is_file()]
                 if missing:
                     return {"error": f"No such test file in the folder (or in your proposed edits): {', '.join(missing)}. Create it in the same `edits`, or check the path."}
+                for path in paths:
+                    modules = unavailable_imports((Path(root) / path).read_text(encoding="utf-8", errors="replace"), root, path)
+                    if modules:
+                        return {"error": unavailable_message(path, modules)}          # before the memory check: a file that can never run must not be told "try again in a moment"
                 logger.info("[sandbox_tests] running %d test file(s) against a copy of %d file(s).", len(paths), files)
                 raw = _run_guest(root, paths)
                 return parse_output(raw["stdout"], raw["stderr"], raw["out_of_fuel"])

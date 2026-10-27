@@ -104,6 +104,12 @@ def embedder(table=None):
 CONTEXT = {"request": "make the banner glow on hover", "reply": "Here is the selector.", "followup": "that didn't work", "tools": ["read_repo_file"]}
 
 
+def test_plan_deviation_is_a_failure_signal_and_the_prompt_names_it():
+    assert xc.SIGNALS["plan_deviation"] == "failure"
+    prompt = xc.build_prompt("plan_deviation", CONTEXT)
+    assert "went outside its approved plan more times than it was allowed" in prompt and "It counts as: failure" in prompt
+
+
 # ---- every note is checked by code ---------------------------------------------------------------------------------------------------------
 
 def test_a_plain_abstract_sentence_passes():
@@ -194,6 +200,53 @@ def test_a_note_close_to_one_already_stored_adds_to_its_count_instead():
     again = "It wrote a style rule without first checking the page's nesting, and that rule did not apply either."
     out = run(xc.capture(db, "pushback", CONTEXT, model_says(again), embedder({again: [0.99, 0.05, 0.0]}), now=NOW))
     assert out["result"] == "merged" and len(db[xc.COLLECTION].docs) == 1 and db[xc.COLLECTION].docs[0]["count"] == 2
+
+
+def test_a_worked_note_close_to_a_failure_note_is_stored_separately_because_kind_is_checked():
+    db = DB()
+    failure = "It ran the tests before it said the work was finished, and the run failed on the last edit."
+    worked = "It ran the tests before it said the work was finished, and the run passed on the first try."
+    first = run(xc.capture(db, "pushback", CONTEXT, model_says(failure), embedder({failure: [1.0, 0.0, 0.0]}), now=NOW))
+    second = run(xc.capture(db, "praise", CONTEXT, model_says(worked), embedder({worked: [0.99, 0.05, 0.0]}), now=NOW))
+    assert first["result"] == "stored"
+    assert second["result"] == "stored"
+    assert len(db[xc.COLLECTION].docs) == 2
+    assert [doc["kind"] for doc in db[xc.COLLECTION].docs] == ["failure", "worked"]
+    assert all(doc["count"] == 1 for doc in db[xc.COLLECTION].docs)
+
+
+def test_a_same_kind_close_note_still_merges_into_the_one_it_repeats():
+    db = DB()
+    first_text = "It ran the tests before it said the work was finished, and the run passed on the first try."
+    again = "It ran the tests before it said the work was done, and the run passed on the first try too."
+    run(xc.capture(db, "praise", CONTEXT, model_says(first_text), embedder({first_text: [1.0, 0.0, 0.0]}), now=NOW))
+    out = run(xc.capture(db, "praise", CONTEXT, model_says(again), embedder({again: [0.99, 0.05, 0.0]}), now=NOW))
+    assert out["result"] == "merged" and len(db[xc.COLLECTION].docs) == 1 and db[xc.COLLECTION].docs[0]["count"] == 2
+
+
+def test_a_new_failure_note_close_to_an_approved_record_entry_is_stored_not_merged():
+    db = DB()
+    record = "It ran the tests before it said the work was finished, and the run passed on the first try."
+    run(xc.capture(db, "praise", CONTEXT, model_says(record), embedder({record: [1.0, 0.0, 0.0]}), now=NOW))
+    xc.approve(db, db[xc.COLLECTION].docs[0]["_id"], by="jack@example.com", now=NOW)
+    failure = "It ran the tests before it said the work was finished, and the run failed on the last edit."
+    out = run(xc.capture(db, "pushback", CONTEXT, model_says(failure), embedder({failure: [0.99, 0.05, 0.0]}), now=NOW))
+    assert out["result"] == "stored"
+    assert [doc["status"] for doc in db[xc.COLLECTION].docs] == [xc.APPROVED, xc.PENDING]
+    assert [doc["kind"] for doc in db[xc.COLLECTION].docs] == ["worked", "failure"]
+    assert db[xc.COLLECTION].docs[0]["count"] == 1
+
+
+def test_a_same_kind_note_close_to_an_approved_record_entry_merges_into_it():
+    db = DB()
+    record = "It ran the tests before it said the work was finished, and the run passed on the first try."
+    again = "It ran the tests before it said the work was done, and the run passed on the first try too."
+    run(xc.capture(db, "praise", CONTEXT, model_says(record), embedder({record: [1.0, 0.0, 0.0]}), now=NOW))
+    xc.approve(db, db[xc.COLLECTION].docs[0]["_id"], by="jack@example.com", now=NOW)
+    out = run(xc.capture(db, "praise", CONTEXT, model_says(again), embedder({again: [0.99, 0.05, 0.0]}), now=NOW))
+    assert out["result"] == "merged"
+    assert len(db[xc.COLLECTION].docs) == 1
+    assert db[xc.COLLECTION].docs[0]["status"] == xc.APPROVED and db[xc.COLLECTION].docs[0]["count"] == 2
 
 
 def test_a_different_note_is_a_new_one():
@@ -288,3 +341,11 @@ def test_the_counters_exist():
     from backend.utils import self_counters as sc
 
     assert {"experience_captured", "experience_capture_merged", "experience_capture_invalid"} <= sc.KEYS
+
+
+def test_app_captures_a_plan_deviation_from_the_turn_flag_for_coding_turns_and_never_for_guests():
+    # What sets the flag is tested by running the loop (test_code_plan.py); this pins only that the app reads the declared field, and for whom.
+    source = (ROOT / "app.py").read_text(encoding="utf-8").replace("\r\n", "\n")
+    gate = source.index("if llm_turn.plan_deviated and not is_guest_username(username):")
+    assert '"plan_deviation"' in source[gate:gate + 300]
+    assert "getattr(llm_turn" not in source[gate - 60:gate + 60]

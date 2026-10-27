@@ -3045,7 +3045,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             )
             menu_lines.append(
                 "- run_sandbox_tests — args: tests (a list of Python unittest file paths in the folder, or new ones you create in `edits`; at most 5), edits (optional: the same text edits "
-                "propose_local_edits takes, {\"path\", \"old_string\", \"new_string\"} or {\"path\", \"content\"}). Runs the tests in a locked-down sandbox (no network, standard library only) against "
+                "propose_local_edits takes, {\"path\", \"old_string\", \"new_string\"} or {\"path\", \"content\"}). Runs the tests in a locked-down sandbox (no network, standard library only, so a pytest file cannot run here: the project's own suite is run_repo_tests) against "
                 "a COPY of the user's folder as it would be AFTER those edits, and returns the real pass/fail with tracebacks. It changes nothing and shows the user nothing. Use it to check "
                 "a change before you propose it: write a small unittest in .sonic/tests/, run it, fix the change if it fails. Call it as a \"query\" step."
             )

@@ -370,6 +370,76 @@ def test_steps_on_the_plan_are_free_and_steps_off_it_are_counted():
     assert last["stop"] and "stop" in last["note"].lower()
 
 
+def test_only_the_deviation_allowance_says_it_stopped_for_a_deviation_not_the_ceiling_or_an_ordinary_step():
+    budget = cp.PlanBudget(_approved(), deviation_steps=2, hard_cap=5)
+    assert "deviation_stop" not in budget.after_step([_call("read_repo_file", path="local/src/pages/Chat.tsx")], 1)            # an on-plan step
+    assert "deviation_stop" not in budget.after_step([_call("search_literal", query="a")], 2)                                  # the 1st off-plan step: counted, not stopped
+    assert "deviation_stop" not in budget.after_step([_call("search_literal", query="b")], 3)                                  # the 2nd: still within the allowance of 2
+    over = budget.after_step([_call("search_literal", query="c")], 4)                                                          # the 3rd passes it
+    assert over["stop"] is True and over["deviation_stop"] is True
+    ceiling = cp.PlanBudget(_approved(), hard_cap=5).after_step([_call("read_repo_file", path="local/src/pages/Chat.tsx")], 5)  # the ceiling stops an ON-plan turn
+    assert ceiling["stop"] is True and "deviation_stop" not in ceiling
+
+
+def _run_loop_in_a_turn(script, plan_budget, max_steps):
+    """Runs the native loop with a scripted model inside a real llm_turns Turn and returns that Turn, so a test can see what the loop recorded on it."""
+    import asyncio
+
+    from langchain_core.messages import AIMessage
+
+    from backend.services import native_loop as nl
+    from backend.utils import llm_turns
+
+    class LLM:
+        async def ainvoke_tools(self, messages, tools):
+            if not tools:
+                return AIMessage(content="forced final")
+            item = script.pop(0)
+            return AIMessage(content=item if isinstance(item, str) else "", tool_calls=[] if isinstance(item, str) else [item])
+
+    async def act(decision):
+        return f"ok {decision['tool_action']}"
+
+    tools = [{"name": "read_repo_file", "description": "r"}, {"name": "search_literal", "description": "s"}, {"name": "propose_local_edits", "description": "p"}]
+    turn = llm_turns.begin("someone")
+    try:
+        asyncio.run(nl.run(llm=LLM(), tools=tools, act=act, question="go", max_steps=max_steps, plan_budget=plan_budget))
+    finally:
+        llm_turns._current.set(None)               # do not leave this turn current for the next test
+    return turn
+
+
+def _tool(name, **args):
+    return {"name": name, "args": args, "id": f"i{name}{len(args)}{id(args)}", "type": "tool_call"}
+
+
+def test_a_turn_stopped_for_wandering_off_the_plan_is_marked_so_the_app_can_capture_it():
+    wandering = [_tool("search_literal", query=f"q{i}") for i in range(5)]
+    turn = _run_loop_in_a_turn(wandering, cp.PlanBudget(_approved(), deviation_steps=2), max_steps=6)
+    assert turn.plan_deviated is True
+
+
+def test_a_turn_that_stays_on_the_plan_or_ends_at_the_ceiling_is_not_marked():
+    on_plan = [_tool("read_repo_file", path="local/src/pages/Chat.tsx"), _tool("propose_local_edits", edits=[{"path": "local/src/pages/Chat.tsx"}]), "all done"]
+    assert _run_loop_in_a_turn(on_plan, cp.PlanBudget(_approved()), max_steps=3).plan_deviated is False
+    long_on_plan = [_tool("read_repo_file", path="local/src/pages/Chat.tsx", start_line=i) for i in range(1, 9)]
+    assert _run_loop_in_a_turn(long_on_plan, cp.PlanBudget(_approved(), hard_cap=3), max_steps=4).plan_deviated is False       # stopped by the ceiling, not by wandering
+
+
+def test_the_turn_record_starts_unmarked_and_a_finished_turn_cannot_be_marked():
+    from backend.utils import llm_turns
+
+    turn = llm_turns.begin("u")
+    try:
+        assert turn.plan_deviated is False
+        turn.done = True
+        llm_turns.note_plan_deviation()
+        assert turn.plan_deviated is False
+    finally:
+        llm_turns._current.set(None)
+    llm_turns.note_plan_deviation()                 # no turn running: nothing to mark, and it must not raise
+
+
 def test_a_step_that_mixes_a_plan_read_with_a_search_counts_as_a_deviation():
     budget = cp.PlanBudget(_approved())
     assert budget.after_step([_call("read_repo_file", path="local/src/pages/Chat.tsx"), _call("search_literal", query="x")], 1)["refund"] == 0 and budget.deviations == 1

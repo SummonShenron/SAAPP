@@ -7,8 +7,9 @@ THE SIGNALS (set by code, never by the model, and they are what makes a note evi
 - `pushback`   the message after a coding reply read as pushback (the phrase list or a frustrated read);
 - `step_limit` a coding turn ran into its step limit;
 - `answer_check` the answer checker marked a reply as unsupported by its data;
+- `plan_deviation` a coding turn used up its plan deviation steps (off-plan steps) and stopped instead of staying on plan;
 - `praise`     a short thanks or praise after a coding reply.
-The kind follows from the signal (the first three are failures, praise is something that worked). The date is the day it happened. A number from the counters is a `record`, written by code, not here.
+The kind follows from the signal (the first four are failures, praise is something that worked). The date is the day it happened. A number from the counters is a `record`, written by code, not here.
 
 WHAT THE NOTE IS ALLOWED TO BE. One plain sentence, third person ("It ..."), about what Sonic did and what followed. Checked by code, not by the model: no quotes, names, links, file paths, identifiers or
 numbers from the conversation, nothing about feeling or intent, nothing addressed to anyone, the identity check, and a length limit. The model is given a short excerpt of the turn so it can describe what
@@ -32,7 +33,7 @@ logger = logging.getLogger("SASS Logger")
 
 COLLECTION = "sonic_experiences"
 PENDING, APPROVED, DELETED = "pending", "approved", "deleted"
-SIGNALS = {"pushback": "failure", "step_limit": "failure", "answer_check": "failure", "praise": "worked"}
+SIGNALS = {"pushback": "failure", "step_limit": "failure", "answer_check": "failure", "plan_deviation": "failure", "praise": "worked"}
 AREAS = ("frontend", "backend", "testing", "git", "general", "talk")
 MAX_PER_DAY = 3
 MAX_PENDING = 20
@@ -101,6 +102,7 @@ def build_prompt(signal: str, context: Dict[str, Any]) -> str:
         "pushback": "the person's next message read as pushback: it said the work did not work or was not right",
         "step_limit": "the turn ran into its step limit before it finished",
         "answer_check": "an answer checker found the reply claimed something its data did not support",
+        "plan_deviation": "the turn went outside its approved plan more times than it was allowed, and stopped",
         "praise": "the person's next message thanked or praised the work",
     }[signal]
 
@@ -233,13 +235,14 @@ async def capture(
             return {"result": "invalid", "why": issue}
         vector = await asyncio.to_thread(embed, parsed["what"])
         if vector:
-            # Close to something already in the record: it adds to that one instead of becoming another.
-            stored = await asyncio.to_thread(lambda: list(db[COLLECTION].find({"status": {"$in": [PENDING, APPROVED]}}, {"embedding": 1, "count": 1})))
+            # Close to something already in the record of the SAME kind (matching is within the kind): it adds to that one instead of becoming another.
+            kind = SIGNALS[signal]
+            stored = await asyncio.to_thread(lambda: list(db[COLLECTION].find({"status": {"$in": [PENDING, APPROVED]}, "kind": kind}, {"embedding": 1, "count": 1})))
             best = max(((leanings.cosine(vector, row.get("embedding") or []), row) for row in stored), key=lambda pair: pair[0], default=(0.0, None))
             if best[1] is not None and best[0] >= DUPLICATE_SCORE:
                 await asyncio.to_thread(db[COLLECTION].update_one, {"_id": best[1]["_id"]}, {"$set": {"count": int(best[1].get("count", 1)) + 1, "updated_at": now.isoformat()}})
                 return {"result": "merged"}
-            recorded = await asyncio.to_thread(experiences.closest_in_record, db, embed, vector)
+            recorded = await asyncio.to_thread(experiences.closest_in_record, db, embed, vector, kind=kind)
             if recorded is not None and recorded >= DUPLICATE_SCORE:
                 return {"result": "merged", "into": "the record"}
         doc = {

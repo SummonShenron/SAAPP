@@ -92,6 +92,7 @@ class Turn:
         self.loop_ran = False  # the tool agent's loop ran this turn (see note_tool_loop)
         self.loop_steps = 0  # how many steps (model decisions) it used
         self.cap_hit = False  # it reached the last step it was allowed, or ended without deciding to answer
+        self.plan_deviated = False  # an approved plan was being carried out and the turn was stopped for going off it more times than the plan allows (backend/utils/code_plan.py PlanBudget)
         self.loop_exit = ""  # how the loop's last run ended: "early", "late", "cap_draft" or "cap_no_draft" (see exit_kind)
         self.nudged = False  # the halfway nudge was shown to the model this turn
         self.nudge_drafted = False  # ... and a draft existed by the end
@@ -253,6 +254,18 @@ def note_experience() -> None:
         if turn is None or turn.done:
             return
         turn.experience_offered = True
+    except Exception:
+        pass
+
+
+def note_plan_deviation() -> None:
+    """The plan's deviation allowance (backend/utils/code_plan.py PlanBudget) ended this turn: it went off an approved plan more times than the plan allows. Read by app.py to capture the case
+    as a note in Sonic's record (the plan_deviation signal in backend/utils/experience_capture.py). Never raises."""
+    try:
+        turn = _current.get()
+        if turn is None or turn.done:
+            return
+        turn.plan_deviated = True
     except Exception:
         pass
 

@@ -1764,6 +1764,12 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                         guest=False, risk_active=risk_level != RISK_NONE, energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
                         tools_used=list(llm_turn.tools),
                     ))
+                if llm_turn.plan_deviated and not is_guest_username(username):
+                    spawn_background_task(experience_capture.run_capture(
+                        "plan_deviation", {"request": question, "reply": str(ai_message.content), "tools": list(llm_turn.tools), "followup": "", "reason": ""},
+                        guest=False, risk_active=risk_level != RISK_NONE, energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
+                        tools_used=list(llm_turn.tools),
+                    ))
             if set(llm_turn.tools) & experience_capture.UNTRUSTED_TOOLS:
                 ai_message.additional_kwargs[experience_capture.UNTRUSTED_MARK] = True       # text someone else wrote went into this turn: no note is ever written from a signal about it
             if llm_turn.leanings and code_outcomes.LEANINGS_MARK not in ai_message.additional_kwargs:

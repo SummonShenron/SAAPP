@@ -90,6 +90,42 @@ def test_a_failing_embedding_never_raises():
     assert ex.select("selector please now", None, lambda t: (_ for _ in ()).throw(RuntimeError("down")), items=ITEMS) is None
 
 
+def test_closest_in_record_scores_only_the_same_kind(monkeypatch):
+    reset()
+    worked = {"id": "w", "on": "2026-10", "kind": "worked", "what": "A cache fix held.", "leaning": "z", "area": "general", "when": "A cache fix held.", "line": "", "asks": [], "approved": True}
+    both = ITEMS + [worked]
+    monkeypatch.setattr(ex, "entries", lambda db=None: both)
+    # stub the index build so the vectors are fixed: the failure entry points along x, the worked entry along z
+    monkeypatch.setattr(lean, "index_vectors", lambda db, embed, items, *, fill=True, collection=None, cache=None: {"a": [1.0, 0.0, 0.0], "n": [0.0, 1.0, 0.0], "w": [0.0, 0.0, 1.0]})
+    near_failure = [1.0, 0.0, 0.0]
+    failure_score = ex.closest_in_record(None, lambda t: None, near_failure, kind="failure")
+    worked_score = ex.closest_in_record(None, lambda t: None, near_failure, kind="worked")
+    assert failure_score is not None and failure_score >= 0.9
+    assert worked_score is None or worked_score < ex.MIN_SCORE
+
+
+def test_a_kind_filtered_lookup_keeps_every_entry_in_the_shared_cache(monkeypatch):
+    reset()
+    worked = {"id": "w", "on": "2026-10", "kind": "worked", "what": "A cache fix held.", "leaning": "z", "area": "general", "when": "A cache fix held.", "line": "", "asks": [], "approved": True}
+    both = ITEMS + [worked]
+    monkeypatch.setattr(ex, "entries", lambda db=None: both)
+
+    class FakeDB:
+        def __init__(self, docs):
+            self.docs = docs
+
+        def __getitem__(self, name):
+            return self
+
+        def find(self, query):
+            return list(self.docs)
+
+    docs = [{"_id": item["id"], "hash": lean.text_hash(item), "embeddings": [[1.0, 0.0, 0.0]]} for item in both]
+    ex._cache["at"] = 0.0
+    ex.closest_in_record(FakeDB(docs), lambda t: None, [1.0, 0.0, 0.0], kind="failure")
+    assert set(ex._cache["vectors"]) == {item["id"] for item in both}
+
+
 # ---- how it is offered and how it may be said ------------------------------------------------------------------------------------------
 
 def test_the_block_offers_one_real_note_as_a_record_and_forbids_the_recollection_wording():

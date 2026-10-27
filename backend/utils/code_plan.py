@@ -457,7 +457,8 @@ class PlanBudget:
         self.deviations += 1
         left = self.deviation_steps - self.deviations
         if left < 0:
-            return {"refund": 0, "stop": True, "note": "DEVIATION: you have gone outside the approved plan more than it allows. Stop and say in a short answer what else you need and why; the person can ask for a revised plan."}
+            # "deviation_stop" says WHY it stopped (the allowance, not the ceiling above), so a reader never has to match the wording of the note.
+            return {"refund": 0, "stop": True, "deviation_stop": True, "note": "DEVIATION: you have gone outside the approved plan more than it allows. Stop and say in a short answer what else you need and why; the person can ask for a revised plan."}
         return {"refund": 0, "stop": False, "note": f"DEVIATION: that step was outside the approved plan ({self.deviations} of {self.deviation_steps} allowed, then you must stop). Get back to the plan's files and the first step not done."}
 
 

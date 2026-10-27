@@ -533,6 +533,12 @@ async def run(
             if outcome.get("note"):
                 messages.append(HumanMessage(content=outcome["note"]))
             if outcome.get("stop"):
+                if outcome.get("deviation_stop"):
+                    # Marks the turn so app.py can capture it (the plan_deviation signal); the loop's behaviour is unchanged. Aliased because `llm_turns` is imported further down in this function,
+                    # which makes the bare name local here, so using it before that line would raise UnboundLocalError.
+                    from backend.utils import llm_turns as _llm_turns
+
+                    _llm_turns.note_plan_deviation()
                 logger.info("[native_loop] step %s: the plan's step allowance ended the loop.", step)
                 break
         if repeats >= MAX_REPEATS:
