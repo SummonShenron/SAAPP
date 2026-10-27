@@ -1045,12 +1045,12 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 # pending until a person approves it on Sonic Health. Nothing from the turn is stored.
                 capture_signal = "pushback" if pushback.get("code_pushback") else ("praise" if code_outcomes.is_praise(question) else None)
                 if capture_signal:
-                    previous_reply = next((m for m in reversed(chat_sessions[history_key][:-1]) if getattr(m, "type", "") == "ai"), None)
+                    previous_ai = next((m for m in reversed(chat_sessions[history_key][:-1]) if getattr(m, "type", "") == "ai"), None)
                     spawn_background_task(experience_capture.run_capture(
                         capture_signal, experience_capture.context_from_history(chat_sessions[history_key], question=question),
                         guest=False, risk_active=effective_risk(final_state.get("safety_state"), datetime.now(timezone.utc)) != RISK_NONE,
                         energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
-                        untrusted=bool((getattr(previous_reply, "additional_kwargs", None) or {}).get(experience_capture.UNTRUSTED_MARK)),
+                        untrusted=bool((getattr(previous_ai, "additional_kwargs", None) or {}).get(experience_capture.UNTRUSTED_MARK)),
                     ))
             if leanings_before:
                 # What followed a reply that used working leanings: counted per leaning, so over time it shows which ones earn their place. Counts only.
@@ -1870,7 +1870,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             await asyncio.to_thread(record_turn_counts, turn_counts)
             llm_turns.finish(llm_turn, "error")
             await asyncio.to_thread(llm_usage.flush)
-            yield f"data: {json.dumps({'event': 'trace', 'title': 'Execution error', 'detail': 'The request failed on the server.', 'status': 'active'})}\n\n"
+            trace_detail = f"The request failed: {type(e).__name__}"
+            yield f"data: {json.dumps({'event': 'trace', 'title': 'Execution error', 'detail': trace_detail, 'status': 'active'})}\n\n"
             if not full_response:
                 yield f"data: {json.dumps({'event': 'final_generation', 'text': failed.reply})}\n\n"
         finally:
