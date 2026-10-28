@@ -33,8 +33,10 @@ from backend.utils.agent_utils import (
     _mentions_unresolved_truncation,
     _parse_agent_json,
     _truncate_observation,
+    build_tool_excerpt,
     build_tool_facts,
     build_trace_subject,
+    emit_trace_excerpt,
     emit_trace_facts,
     find_mismatched_start_line_note,
     format_steering_notes,
@@ -808,6 +810,7 @@ async def run_react_loop(
                 tool_action_name, args, elapsed, observation, retries=retries,
                 truncated="\n... [truncated — " in truncated_observation or _mentions_unresolved_truncation(truncated_observation),
             ))
+            await emit_trace_excerpt(step_id, build_tool_excerpt(tool_action_name, args, observation))
             return truncated_observation
 
         def _record_action_result(tool_action_name: str, args: dict, purpose: str, observation: str) -> None:

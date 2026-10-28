@@ -30,7 +30,7 @@ import MemorySourceDialog from '../components/MemorySourceDialog';
 import BudgetBanner from '../components/BudgetBanner';
 import UsageRing from '../components/UsageRing';
 import TracePanel, { type TraceStep } from '../components/TracePanel';
-import { mergeFacts, recordFacts, toolStepLabel, type TraceFactsById } from '../components/traceFacts';
+import { mergeExcerpts, mergeFacts, recordExcerpt, recordFacts, toolStepLabel, type TraceExcerptsById, type TraceFactsById } from '../components/traceFacts';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import LogoMark from '../components/LogoMark';
 import InputGlow from '../components/InputGlow';
@@ -43,6 +43,7 @@ import remarkGfm from 'remark-gfm';
 import { CODE_BOX_STYLE } from '../components/codeBoxStyle';
 import { useAuth } from '@clerk/clerk-react';
 import { describeChatError, toChatSendError } from '../chatErrors';
+import { formatMessageTime, fullMessageTime } from '../messageTime';
 
 interface MessageImage {
   filename: string;
@@ -56,6 +57,7 @@ interface Message {
   sender: 'user' | 'ai' | 'system';
   text: string;
   feedback?: 'like' | 'dislike' | null;
+  sentAt?: string; // ISO time the message was sent: the server's stamp for a saved message, the browser's clock for one sent now (shown beside the feedback hearts on hover)
   images?: MessageImage[];
   liveBrowserUrl?: string; // view-only browserless.io LiveURL — see browser_live_view handling
   editProposal?: EditProposal; // diff card for edits proposed to the connected local folder
@@ -150,6 +152,7 @@ function mapServerMessage(m: any): Message {
     id: crypto.randomUUID(),
     sender: m.type === 'human' ? 'user' : 'ai',
     text: m.content,
+    sentAt: typeof m.sent_at === 'string' ? m.sent_at : undefined,
     images: images.length > 0 ? images : undefined,
     initiated: m.initiated === true ? true : undefined,
     memorySources: m.memory_sources && (m.memory_sources.notes?.length || m.memory_sources.facts?.length) ? m.memory_sources : undefined,
@@ -528,6 +531,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
                       <path transform="translate(2 0)" d="M12 5.67L13.06 4.61A5.5 5.5 0 0 1 20.84 4.61A5.5 5.5 0 0 1 20.84 12.39L19.78 13.45L12 21.23L10.8 17.5L13.2 15L11.2 12L12.8 9.5Z" />
                     </svg>
                   </button>
+                  {formatMessageTime(msg.sentAt) && <span className="feedback-time" title={fullMessageTime(msg.sentAt)}>{formatMessageTime(msg.sentAt)}</span>}
                 </div>
               )}
             </div>
@@ -629,7 +633,8 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   // A step's facts can arrive before the step is drawn (steps are replayed with a delay by processNodeQueue), so they are kept by step id
   // and merged in when rendering rather than attached to a step that may not exist yet.
   const [traceFacts, setTraceFacts] = useState<TraceFactsById>({});
-  const tracePanelSteps = useMemo(() => mergeFacts(traceSteps, traceFacts), [traceSteps, traceFacts]);
+  const [traceExcerpts, setTraceExcerpts] = useState<TraceExcerptsById>({});
+  const tracePanelSteps = useMemo(() => mergeExcerpts(mergeFacts(traceSteps, traceFacts), traceExcerpts), [traceSteps, traceFacts, traceExcerpts]);
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const principal = getEffectivePrincipal();
   const [selectedAffiliate, setSelectedAffiliate] = useState<string>('All');
@@ -1542,6 +1547,7 @@ useEffect(() => {
   ) => {
     setTraceSteps([]);
     setTraceFacts({});
+    setTraceExcerpts({});
     if (!textToSend.trim() || loading) return;
 
     // Instant local preview from the base64 content already in hand — no round-trip needed.
@@ -1556,10 +1562,11 @@ useEffect(() => {
 
     const userMessageId = genId();
     const aiMessageId = genId();
+    const sentNow = new Date().toISOString();
     setMessages(prev => [
       ...(replaceIds.length ? prev.filter(m => !replaceIds.includes(m.id)) : prev),
-      { id: userMessageId, sender: 'user', text: textToSend, images: imageAttachments.length ? imageAttachments : undefined },
-      { id: aiMessageId, sender: 'ai', text: '' }
+      { id: userMessageId, sender: 'user', text: textToSend, sentAt: sentNow, images: imageAttachments.length ? imageAttachments : undefined },
+      { id: aiMessageId, sender: 'ai', text: '', sentAt: sentNow }
     ]);
 
     setHasChatted(true);
@@ -1614,6 +1621,9 @@ useEffect(() => {
               }
               if (payload.event === 'trace_facts') {
                 setTraceFacts(prev => recordFacts(prev, payload.step_id, payload.facts));
+              }
+              if (payload.event === 'trace_excerpt') {
+                setTraceExcerpts(prev => recordExcerpt(prev, payload.step_id, payload.excerpt));      // live only: kept in memory for this request, never saved
               }
               if (payload.event === 'budget') {
                 setBudget(prev => ({ ...(payload as BudgetView), increase_request: (payload as BudgetView).can_request_increase ? prev?.increase_request : null }));
@@ -1830,7 +1840,7 @@ useEffect(() => {
         failed = true;
         postPatchyStatus('error');
         const notice: Message = {
-          id: aiMessageId, sender: 'ai', text: view.message,
+          id: aiMessageId, sender: 'ai', text: view.message, sentAt: new Date().toISOString(),
           failure: { details: view.details, retryable: view.retryable, retryText: textToSend, userMessageId },
         };
         setMessages(prev => {

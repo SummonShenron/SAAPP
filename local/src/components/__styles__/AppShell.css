@@ -480,3 +480,13 @@ div.chat-page.chat-page { flex: 1 1 auto; min-height: 0; display: flex; flex-dir
 .app-shell:not(.theme-shadow) .rail-convo.active .rail-convo-main { font-weight: 500; }
 .app-shell:not(.theme-shadow) .app-rail .rail-new { background: transparent; border-color: var(--quiet-line); }
 .app-shell:not(.theme-shadow) .app-rail .user-chip { background: transparent; border-color: transparent; }
+
+/* The feedback hearts and the time a reply was sent appear only while its message is hovered (or has keyboard focus). They keep their space, so nothing moves when they appear. A touch screen
+   has no hover, so there they stay visible. */
+.message-bubble .feedback-actions { align-items: center; opacity: 0; transition: opacity 0.15s ease; }
+.message-bubble:hover .feedback-actions,
+.message-bubble:focus-within .feedback-actions { opacity: 1; }
+.message-bubble .feedback-time { margin-left: 4px; font-size: 0.72rem; line-height: 1; color: var(--text-muted); white-space: nowrap; user-select: none; }
+@media (hover: none) {
+  .message-bubble .feedback-actions { opacity: 1; }
+}

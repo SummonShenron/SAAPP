@@ -98,7 +98,7 @@ from backend.utils.agent_utils import (
     _FILE_EXTENSION_RE, _PATH_TOKEN_SPLIT_RE, _CAMEL_BOUNDARY_RE,
     _FUZZY_MATCH_CUTOFF, _FUZZY_MATCH_LIMIT, _tokenize_for_fuzzy_match, _fuzzy_path_score,
     fuzzy_query_tokens,
-    looks_like_edit_request,
+    looks_like_edit_request, looks_like_plan_request, recent_user_text,
     _classify_symbol_line,
     _VISUAL_INSPECTION_RE, _mentions_visual_inspection,
     _AUDIT_TASK_RE, _is_audit_style_task, _AUDIT_TASK_SEARCH_NUDGE,
@@ -107,7 +107,7 @@ from backend.utils.agent_utils import (
     _ARCH_MAP_PY_EXTENSION, _ARCH_MAP_JS_EXTENSIONS, _JS_IMPORT_RE,
     _extract_python_imports, _extract_js_imports, _is_internal_python_import,
     _import_scope_key, _repo_top_level_segments, _build_architecture_map,
-    resolve_recent_mention, safe_emit_event, emit_trace_facts, format_history,
+    resolve_recent_mention, safe_emit_event, emit_trace_excerpt, emit_trace_facts, format_history,
 )
 from backend.services.react_loop import run_react_loop, _MAX_BATCH_SIZE
 from backend.utils.library_allowance import LibraryAllowance
@@ -115,6 +115,7 @@ from backend.utils import memory_sources
 from backend.services import steering
 from backend.services import image_gen, library_search, native_loop, ops_incidents, photo_cards
 from backend.services import native_tools as native_tools_module
+from backend.utils import loop_rhythm
 from backend.utils import code_plan, budget_guard, date_resolve, llm_turns, memory_grounding, progress_notes, reading_shelf, routines, runner_commands, runner_jobs, self_report
 from backend.services.repo_checkout import (
     RepoCheckoutError, fetch_and_extract_checkout, cleanup_checkout, find_declarations_in_checkout,
@@ -2113,8 +2114,25 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         # Plan mode (backend/utils/code_plan.py). A PLAN turn is read-only and ends in submit_plan; it needs the native engine, which has that tool. An EXECUTE turn carries an approved plan
         # out: "continue" or "go ahead" counts as the edit request it is, with a fresh step budget.
         plan_phase = state.get("code_plan_phase") if local_workspace_handle is not None and code_plan.enabled() else None
-        if plan_phase == code_plan.PLAN_PHASE and not (edit_turn and native_loop.enabled() and not native_loop.needs_old_engine(latest_message_content, state.get("reasoner_flags"))):
-            plan_phase = None
+        # Asking for a plan ("make a plan for it", "use plan_mode") is the change request plan mode is for, though it has no code-shaped words of its own.
+        plan_requested = plan_phase == code_plan.PLAN_PHASE and not edit_turn and looks_like_plan_request(state.get("messages", []))
+        if plan_requested:
+            edit_turn = True
+        if plan_phase == code_plan.PLAN_PHASE:
+            # The same words the engine choice below looks at (the message and the one before it), so a word in the last message cannot send the turn to the old engine, which has no plan card,
+            # after the plan gate said yes. When plan mode is on, the turn is a change request and it still cannot be a plan turn, the person is told why instead of getting no plan in silence.
+            engine_text = recent_user_text(latest_message_content, state.get("messages", []))
+            if not (edit_turn and native_loop.enabled() and not native_loop.needs_old_engine(engine_text, state.get("reasoner_flags"))):
+                if edit_turn:
+                    why = native_loop.old_engine_reason(engine_text, state.get("reasoner_flags")) if native_loop.enabled() else ""
+                    await safe_emit_event("plan_skipped", {"text": (
+                        f"Plan first is on, but this turn skipped it: \"{why}\" in your message sends it to the other engine, which cannot show a plan card. Reword it, or say \"make a plan\" in a new message."
+                        if why else "Plan first is on, but this turn skipped it: the plan engine is not switched on for this server."
+                    )})
+                    logger.info("[tool_agent_node] plan mode was on and the turn was skipped (%s).", why or "engine off")
+                plan_phase = None
+                if plan_requested:
+                    edit_turn = False
         if plan_phase == code_plan.EXECUTE_PHASE and not edit_turn and code_plan.reads_as_continue(latest_message_content):
             edit_turn = True
         if plan_phase == code_plan.EXECUTE_PHASE and not edit_turn:
@@ -3282,7 +3300,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
 
                 if not any(tool.get("name") in {"read_repo_file", "search_literal", "find_file", "propose_local_edits"} for tool in native_tools):
                     return ""
-                request = f"{recent_user_text} {(state.get('code_plan_context') or '')[:500]}"
+                request = f"{engine_user_text} {(state.get('code_plan_context') or '')[:500]}"
                 moment = datetime.now(timezone.utc)
                 may_cite = experiences_module.allowed(
                     state.get("messages", []), risk_active=effective_risk(state.get("safety_state"), moment) != RISK_NONE,
@@ -3683,15 +3701,12 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         # The request and the one thing the person said before it: "yes, do it" after asking about an email is still an email request.
         # (Only one message back: people discuss "the database" or "email" as code topics all the time, and every match sends the turn
         # to the dearer old engine.)
-        recent_user_text = "\n".join(
-            [latest_message_content]
-            + [str(getattr(m, "content", "")) for m in [m for m in state.get("messages", [])[:-1] if getattr(m, "type", "") == "human"][-1:]]
-        )
+        engine_user_text = recent_user_text(latest_message_content, state.get("messages", []))
         use_native = native_loop.eligible(
             # The native engine offers propose_local_edits too (backend/services/native_tools.py), so a change request with a folder connected stays on it; only when that tool is
             # missing from its menu does an edit turn go to the old engine.
             edit_turn=edit_turn and plan_phase != code_plan.PLAN_PHASE and not any(tool.get("name") == "propose_local_edits" for tool in native_tools), resumed=bool(resumed_attempts), tools=native_tools,
-            text=recent_user_text, flags=state.get("reasoner_flags"),
+            text=engine_user_text, flags=state.get("reasoner_flags"),
         )
         # Counted per turn (backend/utils/llm_turns.py): which engine ran, and what switched deep mode on: the user's setting, the
         # audit-style wording of the message, or both (and whether low-power mode held it back).
@@ -3741,7 +3756,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 llm=kwargs["llm"], tools=native_tools, act=kwargs["act"], question=kwargs["question"], history=formatted_history,
                 time_line=build_agent_time_line(get_user_timezone(username)), coding_preferences=coding_preferences,
                 architecture_map=architecture_map, user_memory=user_memory, max_steps=kwargs["max_iterations"], emit=_announce,
-                emit_step=_announce_step, emit_facts=emit_trace_facts,
+                emit_step=_announce_step, emit_facts=emit_trace_facts, emit_excerpt=emit_trace_excerpt,
+                after_apply_hint=loop_rhythm.check_hint([t.get("name") for t in native_tools], [c.get("name") for c in runner_jobs.runnable_checks(runner_for_checks)] if runner_for_checks else []),
                 plan_feed=_next_step_files_after_apply if plan_phase == code_plan.EXECUTE_PHASE else None,
                 steering_source=kwargs.get("steering_source"), on_steering_applied=kwargs.get("on_steering_applied"),
                 library_allowance=kwargs.get("library_allowance"), is_unsafe=kwargs.get("is_unsafe"),

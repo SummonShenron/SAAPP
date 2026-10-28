@@ -24,7 +24,7 @@ Click a step in the "How it works" panel and see what it actually did. Everythin
 - The model's own "purpose" field is free: show it labelled "stated reason", never as fact.
 
 ## Rules
-- Metadata and shortened arguments only. Never full prompts or result bodies.
+- Metadata and shortened arguments only. Never full prompts or result bodies, except one capped, redacted excerpt (up to 1,000 characters) of a read step's text, shown only in the requester's live trace. It is never logged or saved (Pass 1 covers read_repo_file only; see build_tool_excerpt in agent_utils.py).
 - Goes only to the requester's browser; not logged, not stored (the log-hygiene test is untouched).
 - Admin-only data (logs, incidents) stays admin-only.
 - Cannot do without a model call: a plain-language "why the model chose this". Not attempted.

@@ -1339,6 +1339,17 @@ div:has(.portal-body) {
 .feedback-actions .circle-icon-button.feedback-dislike.active svg,
 .feedback-actions .circle-icon-button.feedback-dislike.active svg * { stroke: #ef4444 !important; }
 
+/* Hearts hidden until the message is hovered; stay visible while a heart is chosen. */
+.feedback-actions {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+div:has(> .feedback-actions):hover > .feedback-actions,
+.feedback-actions:focus-within,
+.feedback-actions:has(.active) {
+  opacity: 1;
+}
+
 
 .circle-icon-button:hover:not(:disabled) {
   transform: translateY(-2px);

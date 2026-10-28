@@ -166,3 +166,9 @@
 @media (prefers-reduced-motion: reduce) {
   .trace-node-core, .trace-node-active .trace-node-dot::after, .trace-node-running::after, .trace-node-chevron { animation: none; transition: none; }
 }
+
+/* What a read step read: a capped, redacted excerpt as plain text (the live trace only). It scrolls instead of growing the panel. */
+.trace-excerpt { margin-top: 8px; }
+.trace-excerpt-path { font-family: monospace; font-size: 0.72rem; color: var(--text-muted); overflow-wrap: anywhere; }
+.trace-excerpt-text { margin: 4px 0 0; padding: 6px 8px; max-height: 12rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: monospace; font-size: 0.72rem; line-height: 1.45; color: var(--text-main); background: var(--bg-secondary, transparent); border: 1px solid var(--border-color); border-radius: 6px; }
+.trace-excerpt-note { margin-top: 3px; font-size: 0.68rem; color: var(--text-muted); }

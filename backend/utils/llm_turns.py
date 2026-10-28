@@ -96,6 +96,7 @@ class Turn:
         self.plan_exit = ""  # how the loop ended while carrying out an approved plan (backend/utils/code_plan.py PLAN_STOP_REASONS), as the loop saw it
         self.plan_blocked = ""  # a decision the person made on a proposal this turn that can end it: "declined" or "no_decision"
         self.plan_stop = ""  # the final reason such a turn ended, once the plan's own state is known (code_plan.stop_reason)
+        self.rhythm: Optional[Dict[str, Any]] = None  # the coding loop's rhythm: reads before the first act, edits applied and checked, notices (backend/utils/loop_rhythm.py), counts only
         self.loop_exit = ""  # how the loop's last run ended: "early", "late", "cap_draft" or "cap_no_draft" (see exit_kind)
         self.nudged = False  # the halfway nudge was shown to the model this turn
         self.nudge_drafted = False  # ... and a draft existed by the end
@@ -302,6 +303,17 @@ def note_plan_stop(reason: str) -> None:
         if turn is None or turn.done:
             return
         turn.plan_stop = str(reason or "")
+    except Exception:
+        pass
+
+
+def note_rhythm(summary: Dict[str, Any]) -> None:
+    """The coding loop ended: how it read and acted (backend/utils/loop_rhythm.LoopRhythm.summary: counts only). A turn that resumes the loop keeps the latest. Never raises."""
+    try:
+        turn = _current.get()
+        if turn is None or turn.done or not isinstance(summary, dict):
+            return
+        turn.rhythm = {key: summary.get(key) for key in ("reads_before_first_act", "applies", "applies_checked", "notices")}
     except Exception:
         pass
 

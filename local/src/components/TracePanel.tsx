@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Icon from './icons';
-import { toggleExpanded } from './traceFacts';
+import { toggleExpanded, type TraceExcerpt } from './traceFacts';
 import './__styles__/TracePanel.css';
 
 export interface TraceStep {
@@ -14,6 +14,8 @@ export interface TraceStep {
   batchSize?: number;
   /** Measured values about what the step did (never content), shown when the step is expanded. */
   facts?: string[];
+  /** A capped, redacted excerpt of what a read step read (the live trace only: it is not stored). Shown as plain text, never HTML. */
+  excerpt?: TraceExcerpt;
 }
 
 /**
@@ -56,7 +58,10 @@ const TracePanel: React.FC<{ steps: TraceStep[]; running: boolean; onClose: () =
               const done = step.status === 'complete';
               const last = i === steps.length - 1;
               const hasFacts = !!step.facts && step.facts.length > 0;
-              const expanded = hasFacts && open.has(step.id);
+              const excerpt = step.excerpt;
+              const hasExcerpt = !!excerpt && excerpt.text.length > 0;
+              const hasDetails = hasFacts || hasExcerpt;
+              const expanded = hasDetails && open.has(step.id);
               const panelId = `trace-facts-${step.id}`;
               // A step with no friendly title ("Processing step: ...") shows what it is doing as the title instead, with no separate detail line.
               const untitled = step.title.startsWith('Processing step:') && !!step.detail;
@@ -81,7 +86,7 @@ const TracePanel: React.FC<{ steps: TraceStep[]; running: boolean; onClose: () =
                     {done ? <Icon name="check" size={11} /> : <span className="trace-node-core" />}
                   </span>
                   <div className="trace-node-text">
-                    {hasFacts ? (
+                    {hasDetails ? (
                       <button
                         type="button"
                         className="trace-node-toggle"
@@ -95,13 +100,22 @@ const TracePanel: React.FC<{ steps: TraceStep[]; running: boolean; onClose: () =
                     ) : (
                       <div className="trace-node-plain">{main}</div>
                     )}
-                    {hasFacts && expanded && (
+                    {hasDetails && expanded && (
                       <div className="trace-node-facts" id={panelId}>
+                        {hasFacts && (
                         <ul className="trace-facts-list">
                           {step.facts!.map((fact, index) => (
                             <li key={index}>{fact}</li>
                           ))}
                         </ul>
+                        )}
+                        {hasExcerpt && excerpt && (
+                          <div className="trace-excerpt" aria-label="What this step read">
+                            {excerpt.path && <div className="trace-excerpt-path">{excerpt.path}</div>}
+                            <pre className="trace-excerpt-text">{excerpt.text}</pre>
+                            {excerpt.truncated && <div className="trace-excerpt-note">Only the start is shown.</div>}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
