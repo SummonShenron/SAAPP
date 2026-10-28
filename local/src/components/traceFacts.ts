@@ -8,6 +8,40 @@ export const MAX_FACT_CHARS = 200;
 
 export type TraceFactsById = Record<string, string[]>;
 
+/** What a read step read: the file, a capped redacted piece of its text, and whether it was cut. The live trace only; never stored. */
+export interface TraceExcerpt { kind: 'read'; path: string; text: string; truncated: boolean; }
+export type TraceExcerptsById = Record<string, TraceExcerpt>;
+export const MAX_EXCERPT_CHARS = 1000;
+export const MAX_EXCERPT_PATH_CHARS = 300;
+
+/** What the server sent, kept to the same limits the server applies. Anything that is not a read excerpt with text is dropped. */
+export function cleanExcerpt(raw: unknown): TraceExcerpt | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const item = raw as Record<string, unknown>;
+  if (item.kind !== 'read' || typeof item.text !== 'string' || !item.text.trim()) return null;
+  const path = typeof item.path === 'string' ? item.path.slice(0, MAX_EXCERPT_PATH_CHARS) : '';
+  return { kind: 'read', path, text: item.text.slice(0, MAX_EXCERPT_CHARS), truncated: item.truncated === true || item.text.length > MAX_EXCERPT_CHARS };
+}
+
+/** Records a step's excerpt. Returns the same map when there is nothing to record. */
+export function recordExcerpt(byId: TraceExcerptsById, stepId: unknown, raw: unknown): TraceExcerptsById {
+  if (typeof stepId !== 'string' || !stepId) return byId;
+  const excerpt = cleanExcerpt(raw);
+  return excerpt ? { ...byId, [stepId]: excerpt } : byId;
+}
+
+/** The steps with their excerpts attached, whether the excerpt arrived before or after the step was drawn. */
+export function mergeExcerpts(steps: TraceStep[], byId: TraceExcerptsById): TraceStep[] {
+  let changed = false;
+  const merged = steps.map(step => {
+    const excerpt = step.stepId ? byId[step.stepId] : undefined;
+    if (!excerpt || step.excerpt === excerpt) return step;
+    changed = true;
+    return { ...step, excerpt };
+  });
+  return changed ? merged : steps;
+}
+
 /** What the server sent, kept to the same limits the server applies (it is shown as plain text, never as HTML). */
 export function cleanFacts(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];

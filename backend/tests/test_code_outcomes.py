@@ -25,7 +25,7 @@ def turn(tools=(), steps=3, cap=False, loop=True):
 # ---- which turns are coding turns -------------------------------------------------------------------------------------------------------------
 
 def test_a_turn_that_read_the_repo_is_a_coding_turn_and_one_that_searched_the_web_is_not():
-    assert co.summarize_turn(turn([("read_repo_file", True), ("search_code", True)])) == {"cap_hit": False, "edited": False, "verified": False, "edit_calls": 0, "edit_errors": 0, "test_runs": 0, "plan_stop": "", "tool_steps": 3}
+    assert co.summarize_turn(turn([("read_repo_file", True), ("search_code", True)])) == {"cap_hit": False, "edited": False, "verified": False, "edit_calls": 0, "edit_errors": 0, "test_runs": 0, "plan_stop": "", "tool_steps": 3, "rhythm": None}
     assert co.summarize_turn(turn([("web_search", True), ("read_url", True)])) is None
 
 

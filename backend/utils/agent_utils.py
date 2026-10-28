@@ -49,6 +49,39 @@ def new_trace_step_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
+# --- Trace excerpt (docs/trace-panel-verbose-plan.md, pass 1: read_repo_file only) ---
+# One capped, redacted excerpt of a read step's text, for the requester's live trace only. Never logged or saved.
+_SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)(password|passwd|secret|token|api[_-]?key|credential)\s*[:=]\s*\S+"
+)
+
+
+TRACE_EXCERPT_MAX_CHARS = 1000
+# Files whose text is never shown in a trace: env files, keys, certificates, credential and secrets files, package-manager auth files, state files, and anything inside a secrets folder.
+_SENSITIVE_PATH_RE = re.compile(
+    r"(?i)(^|/)(\.env(\.[^/]*)?|id_(rsa|dsa|ecdsa|ed25519)(\.[^/]*)?|[^/]*\.(pem|key|p12|pfx|kdbx|keystore|jks|ppk|tfstate)|[^/]*credentials[^/]*|secrets?(\.[^/]*)?|"
+    r"\.npmrc|\.pypirc|\.netrc|\.htpasswd|\.dockercfg)$|(^|/)\.(ssh|aws|gnupg|kube|azure)/"
+)
+
+
+def build_tool_excerpt(tool_name: str, args: dict | None, observation) -> dict | None:
+    """A capped, redacted excerpt of what a read step returned, for the requester's trace panel only. Never logged or saved."""
+    if tool_name != "read_repo_file" or not isinstance(args, dict) or not isinstance(observation, str):
+        return None
+    if observation.startswith("ERROR"):
+        return None
+    path = str(args.get("path") or "").strip().replace("\\", "/")
+    if _SENSITIVE_PATH_RE.search(path):
+        return None
+    redacted = "\n".join(
+        _SECRET_LOOKING_RE.sub("[redacted]", _SECRET_ASSIGNMENT_RE.sub("[redacted]", line))
+        for line in observation.splitlines()
+    )
+    # Measure the raw observation too: a long run that gets redacted to a short marker still means the file text was cut.
+    truncated = len(observation) > TRACE_EXCERPT_MAX_CHARS or len(redacted) > TRACE_EXCERPT_MAX_CHARS
+    return {"kind": "read", "path": path, "text": redacted[:TRACE_EXCERPT_MAX_CHARS], "truncated": truncated}
+
+
 def _trace_line(text) -> str:
     one_line = " ".join(str(text).split())
     return one_line if len(one_line) <= TRACE_FACT_MAX_CHARS else one_line[: TRACE_FACT_MAX_CHARS - 1] + "…"
@@ -148,6 +181,25 @@ def build_tool_facts(
     if retries > 0:
         facts.append(f"Retries so far this turn: {retries}")
     return clean_trace_facts(facts)
+
+
+def clean_trace_excerpt(excerpt) -> dict | None:
+    """What the caller built, checked again before it leaves the server: a read excerpt with a short path, text of at most TRACE_EXCERPT_MAX_CHARS characters and a yes/no for whether it was cut.
+    None for anything else, or for no text."""
+    if not isinstance(excerpt, dict) or excerpt.get("kind") != "read" or not isinstance(excerpt.get("text"), str) or not excerpt["text"].strip():
+        return None
+    path = str(excerpt.get("path") or "").strip().replace("\\", "/")[:300]
+    if _SENSITIVE_PATH_RE.search(path):
+        return None
+    return {"kind": "read", "path": path, "text": excerpt["text"][:TRACE_EXCERPT_MAX_CHARS], "truncated": bool(excerpt.get("truncated")) or len(excerpt["text"]) > TRACE_EXCERPT_MAX_CHARS}
+
+
+async def emit_trace_excerpt(step_id: str | None, excerpt) -> None:
+    """Sends a finished read step's excerpt to the requester's browser, next to emit_trace_facts. Never raises and never logs the excerpt."""
+    cleaned = clean_trace_excerpt(excerpt)
+    if not step_id or cleaned is None:
+        return
+    await safe_emit_event("trace_excerpt", {"step_id": str(step_id), "excerpt": cleaned})
 
 
 async def emit_trace_facts(step_id: str | None, facts) -> None:
@@ -1187,6 +1239,60 @@ def _is_human(message) -> bool:
     return getattr(message, "type", "") == "human"
 
 
+def _is_explicit_edit(text: str) -> bool:
+    """An edit verb plus something code-shaped to act on."""
+    return bool(_EDIT_VERB_RE.search(text) and _CODE_TARGET_RE.search(text))
+
+
+# A bare yes ("yes", "yes please.", "finish it!!!", "keep going") answers whatever Sonic offered last. In a coding thread that is usually "should I apply this edit?", and a yes to it was not read as an
+# edit request (the confirmation phrases above need "do it", "go ahead", "apply"...), so the turn was not required to call propose_local_edits and spent its steps reading again (2026-10-28 session).
+_BARE_YES_RE = re.compile(
+    r"^\W*(?:(?:yes|yep|yeah|yup|ok|okay|sure|please|do it|go ahead|go on|keep going|carry on|finish it|finish up|finish|just|now|come on|then|and|all right|alright)\W*)+$",
+    re.IGNORECASE,
+)
+BARE_YES_MAX_WORDS = 6
+# An offer to make a change ("Should I remove the duplicate from agent_utils.py?", "Say the word and I'll submit this file edit"): an offer phrase, then a change verb, in the last thing Sonic said.
+_OFFER_TO_CHANGE_RE = re.compile(
+    r"\b(?:should i|shall i|want me to|would you like me to|do you want me to|ready (?:for me )?to|say the word|i can|i'll|i will|let me know and i'll|go ahead and)\b(?:[^.?!]|\.(?=\w)){0,200}?"
+    r"\b(?:apply|submit|propose|make|update|change|edit|modify|implement|remove|delete|drop|patch|fix|wire|add|rename|rewrite|replace|write|define|restore|create|move|put)\b",
+    re.IGNORECASE,
+)
+OFFER_TAIL_CHARS = 320
+
+
+def offered_a_change(previous_reply: str) -> bool:
+    """Whether the end of Sonic's last reply offered to change code (an offer phrase and a change verb, with something code-shaped in the same stretch). Includes the text of its follow-up suggestion."""
+    tail = str(previous_reply or "")[-OFFER_TAIL_CHARS:]
+    return bool(_OFFER_TO_CHANGE_RE.search(tail) and _CODE_TARGET_RE.search(tail))
+
+
+# "make a plan", "create a plan for it", "use plan_mode", "plan it": asking for a plan. With plan mode on that IS the change request the plan is for, but it has no code-shaped words of its own,
+# so it was not read as one and plan mode was skipped exactly when the person asked for a plan (2026-10-28 session).
+_PLAN_REQUEST_RE = re.compile(
+    r"\b(?:make|create|write|draft|build|put together|come up with|give me|do|use|submit|start with|need|want)\b[^.?!\n]{0,30}\bplan(?:[_ ]mode)?\b|\bplan (?:it|this|that|the task|the work|first)\b|\bplan[_ ]mode\b",
+    re.IGNORECASE,
+)
+PLAN_REQUEST_MAX_WORDS = 25
+
+
+def looks_like_plan_request(messages) -> bool:
+    """True when the latest message is a short request for a plan and the thread has (or this message has) a real request to change code. Without that ("make a plan for my week") it is not one."""
+    humans = [m for m in (messages or []) if _is_human(m)]
+    if not humans:
+        return False
+    last = _message_text(humans[-1]).strip()
+    if not last or len(last.split()) > PLAN_REQUEST_MAX_WORDS or not _PLAN_REQUEST_RE.search(last):
+        return False
+    return _is_explicit_edit(last) or any(_is_explicit_edit(_message_text(m)) for m in humans[:-1])
+
+
+def recent_user_text(latest_message: str, messages) -> str:
+    """The latest message and the ONE human message before it: what decides which engine runs the turn (native_loop.needs_old_engine). One place, so the plan gate and the engine choice cannot disagree
+    about which words they looked at."""
+    earlier = [str(getattr(m, "content", "")) for m in [m for m in (messages or [])[:-1] if _is_human(m)][-1:]]
+    return "\n".join([latest_message] + earlier)
+
+
 def looks_like_edit_request(messages) -> bool:
     """True when the user's latest message is asking for a code/file change — either directly
     (an edit verb plus a code-shaped target: "change the header text in Chat.tsx") or as a
@@ -1203,11 +1309,13 @@ def looks_like_edit_request(messages) -> bool:
         return False
 
     def explicit(text: str) -> bool:
-        return bool(_EDIT_VERB_RE.search(text) and _CODE_TARGET_RE.search(text))
+        return _is_explicit_edit(text)
 
     if explicit(last):
         return True
     previous_ai = next((_message_text(m) for m in reversed(messages) if not _is_human(m)), "")
+    if len(last.split()) <= BARE_YES_MAX_WORDS and _BARE_YES_RE.match(last) and offered_a_change(previous_ai):
+        return True
     words = len(last.split())
     if words > 40:
         return False

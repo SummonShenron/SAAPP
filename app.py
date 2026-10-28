@@ -999,6 +999,13 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                             yield f"data: {json.dumps({'event': 'trace_facts', 'step_id': data['step_id'], 'facts': data['facts']})}\n\n"
                             await asyncio.sleep(0.01)
 
+                    # The capped, redacted excerpt of what a read step read (already checked by emit_trace_excerpt): live trace only, never saved or logged.
+                    if kind == "on_custom_event" and event.get("name") == "trace_excerpt":
+                        data = event.get("data", {})
+                        if data.get("step_id") and isinstance(data.get("excerpt"), dict):
+                            yield f"data: {json.dumps({'event': 'trace_excerpt', 'step_id': data['step_id'], 'excerpt': data['excerpt']})}\n\n"
+                            await asyncio.sleep(0.01)
+
                     # The tool agent folded one or more mid-run steering messages into its work
                     # (backend/services/steering.py) — lets the browser mark them as taken into account.
                     if kind == "on_custom_event" and event.get("name") == "steer_applied":
@@ -1026,6 +1033,11 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     # applies it only when the user presses Apply.
                     if kind == "on_custom_event" and event.get("name") == "local_edit_proposal":
                         yield f"data: {json.dumps({'event': 'local_edit_proposal', **event.get('data', {})})}\n\n"
+                        await asyncio.sleep(0.01)
+
+                    # Plan first was on and this change request still could not be a plan turn: one line under the reply, saying why (the same "noted" line the page already shows).
+                    if kind == "on_custom_event" and event.get("name") == "plan_skipped":
+                        yield f"data: {json.dumps({'event': 'noted', 'text': str(event.get('data', {}).get('text', ''))})}\n\n"
                         await asyncio.sleep(0.01)
 
                     # A check Sonic asks to run on the person's own machine (backend/utils/runner_jobs.py): the page shows a card with the exact command and Run / Cancel buttons.
@@ -1805,6 +1817,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 ai_message.additional_kwargs["kb_images"] = kb_images
             if memory_source_view:
                 ai_message.additional_kwargs["memory_sources"] = memory_source_view  # so the citation still opens after a reload
+            stamp(ai_message)  # the reply's send time, saved with the conversation (no-op if already stamped)
             chat_sessions[history_key].append(ai_message)
             await asyncio.to_thread(save_conversation_turn, username, session_id, chat_sessions[history_key])
             # A false "I can't edit files" reply would otherwise be remembered and recalled into

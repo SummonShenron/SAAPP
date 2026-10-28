@@ -38,7 +38,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
-from backend.utils import draft_checkpoint
+from backend.utils import draft_checkpoint, loop_rhythm
 from backend.utils.prompt_meter import PromptMeter
 from backend.utils.agent_utils import _UnsafeActionRequested, build_tool_facts, build_trace_subject, new_trace_step_id
 
@@ -172,6 +172,15 @@ _TEST_RUN_RE = re.compile(r"\b(?:pytest|unit\s+tests?|run\s+(?:the\s+)?tests?)\b
 _OLD_ENGINE_ONLY_FLAGS = ("needs_send_email",)
 
 
+def old_engine_reason(text: str = "", flags: Optional[Dict[str, Any]] = None, test_runs_native: bool = False) -> str:
+    """The word or phrase that sent a turn to the old engine ("browser", "database", "run the tests"), or the router's flag, or "" when nothing did. For telling the person why a mode was skipped."""
+    for name in _OLD_ENGINE_ONLY_FLAGS:
+        if (flags or {}).get(name):
+            return name
+    found = _OLD_ENGINE_ONLY_RE.search(text or "") or (None if test_runs_native else _TEST_RUN_RE.search(text or ""))
+    return " ".join(found.group(0).split()).lower() if found else ""
+
+
 def needs_old_engine(text: str = "", flags: Optional[Dict[str, Any]] = None, test_runs_native: bool = False) -> bool:
     """Whether the request, or the router's reading of it, points at a tool only the old engine has. `test_runs_native`: this turn's native tools include one that runs the person's tests."""
     if any((flags or {}).get(name) for name in _OLD_ENGINE_ONLY_FLAGS):
@@ -259,6 +268,7 @@ async def run(
     emit: Optional[Callable[[str, str], Awaitable[None]]] = None,
     emit_step: Optional[Callable[[str, str, str], Awaitable[None]]] = None,
     emit_facts: Optional[Callable[[str, List[str]], Awaitable[None]]] = None,
+    emit_excerpt: Optional[Callable[[str, Dict[str, Any]], Awaitable[None]]] = None,
     steering_source: Optional[Callable[[], List[str]]] = None,
     on_steering_applied: Optional[Callable[[List[str], int], Awaitable[None]]] = None,
     steering_extra_steps: int = 2,
@@ -271,6 +281,7 @@ async def run(
     plan_budget: Any = None,
     leanings: str = "",
     plan_feed: Optional[Callable[[], Awaitable[str]]] = None,
+    after_apply_hint: str = "",
 ) -> Dict[str, Any]:
     """Runs the loop and returns what the old loop returns: `{"final_answer", "attempts", "show_work"}`, where each attempt is
     `{"purpose", "action_desc", "observation"}`. `llm` must offer `ainvoke_tools(messages, tools)`. `act(decision)` is the turn's
@@ -314,6 +325,9 @@ async def run(
     if plan_budget is not None:
         checkpoints = ()
     stop_reason = ""      # how this run ended, for a turn carrying out a plan (backend/utils/code_plan.py PLAN_STOP_REASONS)
+    # THE RHYTHM of a turn that can change the folder (backend/utils/loop_rhythm.py): reads in a row since the last edit or check, and whether an applied edit was checked. After an applied edit the model
+    # is told once, in code, to run the check (`after_apply_hint`) and, after a streak of reads, to act. No model call.
+    rhythm = loop_rhythm.LoopRhythm() if can_edit else None
 
     async def absorb_steering(step_number: int) -> bool:
         """Folds newly arrived steering into the conversation as a user message and widens the budget. True when there was any."""
@@ -391,6 +405,15 @@ async def run(
         except Exception as exc:
             logger.warning("[native_loop] tool %s failed: %s", name, type(exc).__name__)
             result = f"ERROR: {name} failed ({type(exc).__name__})."
+        if emit_excerpt is not None:
+            # The excerpt goes to the requester's live trace only: never into attempts, the conversation, or the logs.
+            from backend.utils.agent_utils import build_tool_excerpt
+            excerpt = build_tool_excerpt(name, args, result)
+            if excerpt is not None:
+                try:
+                    await emit_excerpt(step_id, excerpt)
+                except Exception:
+                    logger.debug("[native_loop] could not emit a trace excerpt.", exc_info=True)
         if emit_facts is not None:
             retries = failed_runs_by_tool.get(name, 0)
             if result.startswith("ERROR"):
@@ -431,7 +454,11 @@ async def run(
         offered_here = [CONTINUE_TOOL] + ([t for t in tools if t.get("name") == tool_name] if can_propose else [])
         mark = len(messages)
         edit_notice = (required_action or {}).get("checkpoint_notice") or EDIT_CHECKPOINT_NOTICE      # a plan turn finishes with submit_plan, not a proposal
-        messages.append(HumanMessage(content=(edit_notice if edit_turn else CHECKPOINT_NOTICE).format(used=used, total=budget)))
+        notice = (edit_notice if edit_turn else CHECKPOINT_NOTICE).format(used=used, total=budget)
+        if rhythm is not None and after_apply_hint and rhythm.applies > rhythm.applies_checked and not edit_turn:
+            # An edit has been applied and not checked: "prefer answering" would end the turn untested, so say that checking is a reason to keep working (the one specific thing it can name).
+            notice += " You have applied an edit that has not been checked: if a check can run for it, call continue_working with that as the reason instead of answering."
+        messages.append(HumanMessage(content=notice))
         meter.note_call(messages, offered_here)
         reply = await llm.ainvoke_tools(messages, offered_here)
         text = _text(getattr(reply, "content", ""))
@@ -512,6 +539,9 @@ async def run(
             told_at.add("halfway")
             nudged = True
             messages.append(HumanMessage(content=nudge.strip()))
+        streak_notice = rhythm.notice() if rhythm is not None else None
+        if streak_notice:
+            messages.append(HumanMessage(content=streak_notice))
         meter.note_call(messages, tools)
         reply = await llm.ainvoke_tools(messages, tools)
         if await absorb_steering(step):
@@ -532,6 +562,14 @@ async def run(
             stop_reason = "model_answered"
             break
         results = await execute_calls(step, calls)
+        applied_now = any(call.get("name") == "propose_local_edits" and " APPLIED:" in str(result) for call, result in zip(calls, results))
+        if rhythm is not None:
+            rhythm.after_step([(str(call.get("name") or ""), result) for call, result in zip(calls, results)])
+        if after_apply_hint and applied_now:
+            # An edit was just applied: say what to do next (run the check), from the server, so it is not left to the model to remember. It joins the held results and is shortened like any old one.
+            hint = HumanMessage(content=after_apply_hint)
+            messages.append(hint)
+            held.append({"message": hint, "step": step, "text": after_apply_hint, "done": False, "key": f"after_apply|{step}"})
         if plan_feed is not None and any(call.get("name") == "propose_local_edits" and " APPLIED:" in str(result) for call, result in zip(calls, results)):
             # Carrying out an approved plan and a step's edit was just applied: hand over the next step's files now, from the server, so the model's next call is the edit and not a read (one model
             # call per plan step instead of two). It joins the held results, so it is shortened like any old result once the step it served is behind us.
@@ -587,6 +625,8 @@ async def run(
     from backend.utils import llm_turns
 
     llm_turns.note_tool_loop(step, forced, tool_steps=budget, had_draft=bool(latest_draft), nudged=nudged)
+    if rhythm is not None:
+        llm_turns.note_rhythm(rhythm.summary())
     if plan_budget is not None:
         llm_turns.note_plan_exit(stop_reason or "model_answered")
     try:
