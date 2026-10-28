@@ -161,26 +161,32 @@ def enabled() -> bool:
 _OLD_ENGINE_ONLY_RE = re.compile(
     r"\b(?:mongo(?:db)?|pymongo|database|db|"
     r"browser|screenshots?|navigate|click|"
-    r"pytest|unit\s+tests?|run\s+(?:the\s+)?(?:tests?|ci)|"
+    r"run\s+(?:the\s+)?ci|"
     r"(?:send|draft|write|compose|reply(?:\s+to)?|forward)\b[^.\n]{0,40}\be-?mails?|"
     r"(?:implementation|code)\s+plan)\b",
     re.IGNORECASE,
 )
+# Asking for tests to be run was old-engine-only (its test runners are GitHub Actions and a snippet runner). When the native engine is offering run_local_check (a runner on the person's own
+# machine, backend/utils/runner_jobs.py), it can do that too, so these phrases keep the turn native; "run CI" above still goes to the old engine, which has the GitHub runner.
+_TEST_RUN_RE = re.compile(r"\b(?:pytest|unit\s+tests?|run\s+(?:the\s+)?tests?)\b", re.IGNORECASE)
 _OLD_ENGINE_ONLY_FLAGS = ("needs_send_email",)
 
 
-def needs_old_engine(text: str = "", flags: Optional[Dict[str, Any]] = None) -> bool:
-    """Whether the request, or the router's reading of it, points at a tool only the old engine has."""
+def needs_old_engine(text: str = "", flags: Optional[Dict[str, Any]] = None, test_runs_native: bool = False) -> bool:
+    """Whether the request, or the router's reading of it, points at a tool only the old engine has. `test_runs_native`: this turn's native tools include one that runs the person's tests."""
     if any((flags or {}).get(name) for name in _OLD_ENGINE_ONLY_FLAGS):
         return True
-    return bool(_OLD_ENGINE_ONLY_RE.search(text or ""))
+    if _OLD_ENGINE_ONLY_RE.search(text or ""):
+        return True
+    return (not test_runs_native) and bool(_TEST_RUN_RE.search(text or ""))
 
 
 def eligible(*, edit_turn: bool, resumed: bool, tools: List[Dict[str, Any]], text: str = "", flags: Optional[Dict[str, Any]] = None) -> bool:
     """Whether THIS turn may use the native engine: it is switched on, there is at least one tool it can offer, the turn is not one of
     the kinds only the old engine handles (an edit request when the edit tool is not offered here, a resumed clarification), and nothing in `text`
     (the request and the recent conversation) or `flags` (the router's reading of it) calls for a tool the native engine lacks."""
-    return enabled() and bool(tools) and not edit_turn and not resumed and not needs_old_engine(text, flags)
+    test_runs_native = any(tool.get("name") == "run_local_check" for tool in tools)
+    return enabled() and bool(tools) and not edit_turn and not resumed and not needs_old_engine(text, flags, test_runs_native)
 
 
 def _text(content: Any) -> str:

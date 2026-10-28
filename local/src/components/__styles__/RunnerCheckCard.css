@@ -1,0 +1,68 @@
+/* The card for a check Sonic asks to run on the person's own machine (RunnerCheckCard.tsx). Same look as the edit card beside it. */
+.rcc-card {
+  margin: 0.5rem 0;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 25%, transparent);
+  border-left: 4px solid color-mix(in srgb, var(--text-muted) 45%, transparent);
+  border-radius: 10px;
+  padding: 0.65rem 0.8rem;
+  background: color-mix(in srgb, var(--card-bg) 96%, transparent);
+  color: var(--text-main);
+  font-size: 0.85rem;
+}
+
+.rcc-card[data-verdict="passed"] { border-left-color: var(--accent-success); }
+.rcc-card[data-verdict="failed"],
+.rcc-card[data-verdict="error"],
+.rcc-card[data-verdict="timed_out"] { border-left-color: var(--accent-danger); }
+.rcc-card[data-verdict="waiting"],
+.rcc-card[data-verdict="running"] { border-left-color: var(--accent-primary); }
+
+.rcc-title { font-size: 0.9rem; }
+.rcc-where { color: var(--text-muted); }
+
+.rcc-command {
+  margin: 0.5rem 0;
+  padding: 0.45rem 0.6rem;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-muted) 10%, transparent);
+  font: 0.82rem ui-monospace, "Cascadia Code", Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rcc-files { margin: 0.35rem 0; overflow-wrap: anywhere; }
+.rcc-label { color: var(--text-muted); }
+.rcc-note { margin: 0.35rem 0; color: var(--text-muted); font-size: 0.8rem; }
+.rcc-status { margin-top: 0.4rem; font-weight: 600; }
+
+.rcc-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.55rem; }
+
+.rcc-btn {
+  padding: 0.4rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 40%, transparent);
+  background: transparent;
+  color: var(--text-main);
+  font: inherit;
+  cursor: pointer;
+}
+
+.rcc-btn:disabled { opacity: 0.55; cursor: default; }
+.rcc-btn-primary { background: var(--accent-primary); border-color: transparent; color: var(--on-accent); }
+
+.rcc-output { margin-top: 0.55rem; }
+.rcc-output summary { cursor: pointer; color: var(--text-muted); }
+
+.rcc-output pre {
+  margin: 0.4rem 0 0;
+  padding: 0.5rem 0.6rem;
+  max-height: 18rem;
+  overflow: auto;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-muted) 10%, transparent);
+  font: 0.78rem ui-monospace, "Cascadia Code", Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rcc-error { margin-top: 0.5rem; color: var(--accent-danger); }

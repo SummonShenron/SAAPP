@@ -151,6 +151,11 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
             },
         },
     }, ["tests"]),
+    # a runner on the person's OWN machine (backend/utils/runner_jobs.py, runner/): one of THEIR named checks, run after they press Run on a card. Offered only when one is connected.
+    "run_local_check": _object({
+        "check": {"type": "string", "description": "the name of one of the person's checks, as listed in this tool's description"},
+        "files": {"type": "array", "items": {"type": "string"}, "description": "optional: paths of files in their project, only for a check that takes files"},
+    }, ["check"]),
     # plan mode (backend/utils/code_plan.py), offered only on a plan turn: the plan the person approves before anything is edited. Nothing is written to their folder.
     "submit_plan": _object({
         "goal": {"type": "string", "description": "one sentence: what the change is"},

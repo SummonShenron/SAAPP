@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "saapp-runner"
+version = "0.1.0"
+description = "Runs checks (tests, type checks, builds) you approve in SAAPP on your own machine, in your own project."
+readme = "README.md"
+license = { text = "Unlicense" }
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+saapp-runner = "saapp_runner.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

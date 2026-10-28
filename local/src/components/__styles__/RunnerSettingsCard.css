@@ -1,0 +1,83 @@
+/* Settings, "Run checks on your machine" (RunnerSettingsCard.tsx). Builds on the Account page's own card, button and input classes. */
+.runner-intro { margin-top: 0; }
+
+.runner-list { list-style: none; margin: 0.75rem 0 0; padding: 0; }
+
+.runner-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.6rem 0;
+}
+
+.runner-row + .runner-row { border-top: 1px solid var(--border-color); }
+.runner-main { min-width: 0; overflow-wrap: anywhere; }
+
+.runner-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 0.4rem;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text-muted) 55%, transparent);
+}
+
+.runner-dot-on { background: var(--accent-success); }
+
+.runner-add { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin-top: 0.9rem; }
+.runner-add .account-input { flex: 1 1 200px; }
+
+.runner-pairing {
+  margin-top: 1rem;
+  padding: 0.85rem 0.9rem;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text-muted) 6%, transparent);
+}
+
+.runner-code-line { display: flex; flex-wrap: wrap; align-items: center; gap: 0.7rem; }
+
+.runner-code {
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-muted) 14%, transparent);
+  font: 600 1.05rem ui-monospace, "Cascadia Code", Consolas, monospace;
+  letter-spacing: 0.12em;
+}
+
+.runner-os { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin-top: 0.8rem; }
+.runner-primary { background: var(--accent-primary); border-color: transparent; color: var(--on-accent); }
+.runner-primary:hover { filter: brightness(1.08); background: var(--accent-primary); }
+
+.runner-link {
+  border: 0;
+  background: none;
+  padding: 0.1rem 0.2rem;
+  color: var(--accent-primary);
+  font: inherit;
+  font-size: 0.84rem;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.runner-details { margin-top: 0.7rem; }
+.runner-details summary { cursor: pointer; font-size: 0.86rem; }
+
+.runner-details pre {
+  margin: 0.5rem 0;
+  padding: 0.6rem 0.7rem;
+  max-height: 20rem;
+  overflow: auto;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-muted) 10%, transparent);
+  font: 0.78rem ui-monospace, "Cascadia Code", Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.runner-done { display: flex; flex-wrap: wrap; align-items: center; gap: 0.8rem; margin-top: 0.9rem; }
+
+@media (max-width: 560px) {
+  .runner-row { align-items: flex-start; flex-direction: column; }
+}

@@ -1829,6 +1829,32 @@ export const getCodePlan = (sessionId: string): Promise<{ plan: CodePlan | null 
 export const actOnCodePlan = (sessionId: string, action: 'approve' | 'cancel' | 'edit_step' | 'remove_step', stepId?: string, text?: string): Promise<{ plan: CodePlan | null }> =>
   taskRequest(`/api/code-plan?session_id=${encodeURIComponent(sessionId)}`, { method: 'PATCH', body: JSON.stringify({ action, step_id: stepId, text }) }, 'Failed to change the plan.');
 
+/** The local runner (backend/utils/runner_jobs.py, runner/): a small program on the person's own machine that runs checks they approve on a card in the chat. */
+export interface RunnerCheck { name: string; command: string; }
+export interface RunnerInfo { id: string; name: string; created_at: string; root_name: string; version: string; checks: RunnerCheck[]; connected: boolean; }
+export type RunnerJobStatus = 'awaiting_approval' | 'approved' | 'running' | 'done' | 'cancelled' | 'expired' | 'failed';
+export interface RunnerJob {
+  id: string; runner_id: string | null; check: string; command_shown: string; files: string[]; status: RunnerJobStatus;
+  created_at: string | null; expires_at: string | null; finished_at: string | null;
+  exit_code: number | null; output_tail: string; truncated: boolean; timed_out: boolean; duration: number | null; error: string;
+}
+export interface RunnerScript { filename: string; text: string; }
+export interface RunnerPairing {
+  code: string; expires_at: string; version: string; install_configured: boolean; install_problem: string;
+  scripts: { windows: RunnerScript; mac: RunnerScript; linux: RunnerScript } | null; commands: string[] | null;
+}
+export interface RunnerList { runners: RunnerInfo[]; limit: number; min_version: string; install: { configured: boolean; version: string }; }
+export const listRunners = (): Promise<RunnerList> => taskRequest('/api/runner/runners', {}, 'Failed to load your runners.');
+export const createRunnerPairing = (name: string, folderName = ''): Promise<RunnerPairing> =>
+  taskRequest('/api/runner/pairings', { method: 'POST', body: JSON.stringify({ name, folder_name: folderName }) }, 'Failed to make a pairing code.');
+export const removeRunner = (id: string): Promise<{ status: string }> =>
+  taskRequest(`/api/runner/keys/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'Failed to remove that runner.');
+export const getRunnerJob = (id: string): Promise<RunnerJob> => taskRequest(`/api/runner/jobs/${encodeURIComponent(id)}`, {}, 'Failed to load that check.');
+export const approveRunnerJob = (id: string): Promise<RunnerJob> =>
+  taskRequest(`/api/runner/jobs/${encodeURIComponent(id)}/approve`, { method: 'POST' }, 'Failed to run that check.');
+export const cancelRunnerJob = (id: string): Promise<RunnerJob> =>
+  taskRequest(`/api/runner/jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }, 'Failed to cancel that check.');
+
 export const listMeetings = (): Promise<{ meetings: Meeting[]; limits: { max_meetings: number } }> => taskRequest('/api/meetings', {}, 'Failed to load your meetings.');
 export const getMeetingsState = (sessionId: string): Promise<MeetingsState> =>
   taskRequest(`/api/meetings/state?session_id=${encodeURIComponent(sessionId)}`, {}, 'Failed to load your meetings.');
@@ -2129,7 +2155,8 @@ export async function sendChatMessage(
   signal?: AbortSignal,
   folderExpected = false,
   editDecisions = false,
-  gitBranch: string | null = null
+  gitBranch: string | null = null,
+  runnerCards = false
 ): Promise<void> {
   const authHeaders = await getAuthHeaders();
   // A deliberate Stop surfaces as an AbortError and is the caller's to handle; every other failure is a ChatSendError that says what is
@@ -2155,6 +2182,8 @@ export async function sendChatMessage(
         edit_decisions: editDecisions,
         // The git branch the connected folder is on (read from .git/HEAD), so a commit goes where the person is working.
         git_branch: gitBranch,
+        // This page can show a check card (Run / Cancel) for a local runner, so Sonic may ask to run one of the person's own checks.
+        runner_cards: runnerCards,
       }),
       signal,
     });
@@ -2352,6 +2381,12 @@ export const api = {
   getSelfModel,
   writeSelfModel,
   approveSelfModelStatement,
+  listRunners,
+  createRunnerPairing,
+  removeRunner,
+  getRunnerJob,
+  approveRunnerJob,
+  cancelRunnerJob,
   editSelfModelStatement,
   retireSelfModelStatement,
   getExperiences,

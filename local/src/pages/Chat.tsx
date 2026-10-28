@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAffiliateScope } from '../hooks/useAffiliateScope';
 import { useLocalWorkspace } from '../hooks/useLocalWorkspace';
 import LocalEditCard from '../components/LocalEditCard';
+import RunnerCheckCard from '../components/RunnerCheckCard';
 import ApprovalButtons from '../components/ApprovalButtons';
 import { showsApprovalButtons } from '../approvalCard';
 import LocalGitUpdate from '../components/LocalGitUpdate';
@@ -24,7 +25,7 @@ import { HEIC_NOTICE, isUnreadableHeic, shrinkImageFile } from '../utils/imageSh
 import MeetingControl from '../components/MeetingControl';
 import WorkingNotesControl from '../components/WorkingNotesControl';
 import PlanCard from '../components/PlanCard';
-import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type BudgetView, type CodePlan, type KnowledgeBase, type MemorySources } from '../api';
+import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type BudgetView, type CodePlan, type KnowledgeBase, type MemorySources, type RunnerJob } from '../api';
 import MemorySourceDialog from '../components/MemorySourceDialog';
 import BudgetBanner from '../components/BudgetBanner';
 import UsageRing from '../components/UsageRing';
@@ -58,6 +59,7 @@ interface Message {
   images?: MessageImage[];
   liveBrowserUrl?: string; // view-only browserless.io LiveURL — see browser_live_view handling
   editProposal?: EditProposal; // diff card for edits proposed to the connected local folder
+  runnerCheck?: { job: RunnerJob; runner?: { name?: string | null; root_name?: string | null } }; // a check Sonic asked to run on the person's own machine (Run / Cancel card)
   // A message sent while Sonic was already working, meant to change what it does next.
   steer?: 'queued' | 'applied' | 'deferred' | 'dropped';
   // Sonic wrote this on its own when the conversation was opened (the "message first" setting), not in reply to anything.
@@ -450,6 +452,8 @@ const ChatMessageList = React.memo(function ChatMessageList({
                   onDecision={(proposalId, outcome, reason) => { void api.reportEditDecision(proposalId, outcome, reason); }}
                 />
               )}
+
+              {msg.runnerCheck && <RunnerCheckCard key={msg.runnerCheck.job.id} job={msg.runnerCheck.job} runner={msg.runnerCheck.runner} />}
 
               {msg.sender === 'ai' && !loading && canEditLocal && localGitMode !== 'off' && (() => {
                 const committed = parseGitReply(msg.text);
@@ -1672,6 +1676,17 @@ useEffect(() => {
                   return updated;
                 });
               }
+              if (payload.event === 'runner_check' && payload.job) {
+                // Sonic asked to run one of the person's own checks on their machine: a card with the exact command and Run / Cancel. Nothing runs until Run is pressed.
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const lastIndex = updated.length - 1;
+                  if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
+                    updated[lastIndex] = { ...updated[lastIndex], runnerCheck: { job: payload.job as RunnerJob, runner: payload.runner } };
+                  }
+                  return updated;
+                });
+              }
               if (payload.event === 'token') {
                 if (!hasStreamedRef.current) {
                   hasStreamedRef.current = true;
@@ -1779,7 +1794,8 @@ useEffect(() => {
         controller.signal,
         workspace.folderExpected(),
         true,
-        gitBranch
+        gitBranch,
+        true
       );
 
       // Attachments are scoped to the turn that sent them (already durably stored server-side
