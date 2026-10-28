@@ -142,6 +142,7 @@ from backend.utils import experiences as experiences_utils
 from backend.utils import experience_capture
 from backend.utils import experience_reflections
 from backend.utils import self_model
+from backend.utils import runner_jobs
 from backend.utils import clarifications as clarify_utils
 from backend.utils import initiation as initiation_utils
 from backend.utils import reach as reach_utils
@@ -2273,6 +2274,142 @@ async def store_feedback(
     )
     logger.info(f"[+] Correction stored for {username} (Tag: {payload.tag}).")
     return {"status": "success", "message": "Feedback indexed for dynamic self-correction."}
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# The local runner (backend/utils/runner_jobs.py, the saapp-runner package in runner/, docs/local-runner-plan.md): a program on the person's own machine that runs the checks they approve on a card.
+# The runner's own calls are authenticated by ITS key; the page's calls by the signed-in person. The handling lives in runner_jobs.api_* so these stay thin.
+# ---------------------------------------------------------------------------------------------------------------
+
+class RunnerPairingRequest(BaseModel):
+    name: str = ""
+
+
+def _runner_db_or_503():
+    db = get_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="Local runners are not available right now.")
+    return db
+
+
+def _runner_person(current_user) -> str:
+    username = current_user.get("sub")
+    if is_guest_username(username):
+        raise HTTPException(status_code=403, detail="Local runners are for signed-in accounts, so a runner has someone to belong to.")
+    return username
+
+
+def _runner_http_error(problem: "runner_jobs.RunnerError") -> HTTPException:
+    return HTTPException(status_code=runner_jobs.STATUS_FOR.get(problem.code, 400), detail=problem.message)
+
+
+async def get_runner_key(request: Request):
+    """Dependency for the runner's own calls: the key it was paired with, sent as a Bearer token. Returns the key's record."""
+    db = _runner_db_or_503()
+    presented = (request.headers.get("Authorization") or "").removeprefix("Bearer ").strip()
+    key = await asyncio.to_thread(runner_jobs.authenticate, db, presented)
+    if key is None:
+        raise HTTPException(status_code=401, detail="That runner key is not valid (it may have been removed).")
+    return key
+
+
+@app.post("/api/runner/pair")
+async def runner_pair(body: Dict[str, Any]):
+    """The runner trades the one-time code from Settings for its key. Not signed in: the single-use code is the proof."""
+    try:
+        return await asyncio.to_thread(runner_jobs.api_pair, _runner_db_or_503(), body)
+    except runner_jobs.RunnerError as problem:
+        raise _runner_http_error(problem)
+
+
+@app.post("/api/runner/hello")
+async def runner_hello(body: Dict[str, Any], key = Depends(get_runner_key)):
+    try:
+        return await asyncio.to_thread(runner_jobs.api_hello, _runner_db_or_503(), key, body)
+    except runner_jobs.RunnerError as problem:
+        raise _runner_http_error(problem)
+
+
+@app.get("/api/runner/next")
+async def runner_next(wait: int = Query(runner_jobs.POLL_SECONDS, ge=0, le=30), key = Depends(get_runner_key)):
+    """The runner asks for an approved job; the answer is held open for up to `wait` seconds so it hears about one quickly without asking in a tight loop."""
+    db = _runner_db_or_503()
+    deadline = asyncio.get_running_loop().time() + wait
+    while True:
+        answer = await asyncio.to_thread(runner_jobs.api_next, db, key)
+        if answer["job"] or asyncio.get_running_loop().time() >= deadline:
+            return answer
+        await asyncio.sleep(1.0)
+
+
+@app.post("/api/runner/jobs/{job_id}/heartbeat")
+async def runner_heartbeat(job_id: str, key = Depends(get_runner_key)):
+    try:
+        return await asyncio.to_thread(runner_jobs.api_heartbeat, _runner_db_or_503(), key, job_id)
+    except runner_jobs.RunnerError as problem:
+        raise _runner_http_error(problem)
+
+
+@app.post("/api/runner/jobs/{job_id}/result")
+async def runner_result(job_id: str, body: Dict[str, Any], key = Depends(get_runner_key)):
+    try:
+        return await asyncio.to_thread(runner_jobs.api_result, _runner_db_or_503(), key, job_id, body)
+    except runner_jobs.RunnerError as problem:
+        raise _runner_http_error(problem)
+
+
+@app.get("/api/runner/runners")
+async def list_runners(current_user = Depends(get_current_user)):
+    """The person's runners and whether each is connected, for Settings."""
+    username = _runner_person(current_user)
+    runners = await asyncio.to_thread(runner_jobs.runners_for, _runner_db_or_503(), username)
+    return {"runners": runners, "limit": runner_jobs.MAX_KEYS_PER_PERSON, "min_version": ".".join(str(p) for p in runner_jobs.MIN_RUNNER_VERSION)}
+
+
+@app.post("/api/runner/pairings")
+async def create_runner_pairing(body: RunnerPairingRequest, current_user = Depends(get_current_user)):
+    """A one-time pairing code for a new runner (shown once; the starter script carries it)."""
+    username = _runner_person(current_user)
+    try:
+        return await asyncio.to_thread(runner_jobs.create_pairing, _runner_db_or_503(), username, body.name)
+    except runner_jobs.RunnerError as problem:
+        raise _runner_http_error(problem)
+
+
+@app.delete("/api/runner/keys/{key_id}")
+async def remove_runner(key_id: str, current_user = Depends(get_current_user)):
+    username = _runner_person(current_user)
+    if not await asyncio.to_thread(runner_jobs.revoke_key, _runner_db_or_503(), username, key_id):
+        raise HTTPException(status_code=404, detail="No runner of yours has that id.")
+    return {"status": "removed"}
+
+
+@app.get("/api/runner/jobs/{job_id}")
+async def get_runner_job(job_id: str, current_user = Depends(get_current_user)):
+    username = _runner_person(current_user)
+    job = await asyncio.to_thread(runner_jobs.get_job, _runner_db_or_503(), username, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="No such check.")
+    return job
+
+
+@app.post("/api/runner/jobs/{job_id}/approve")
+async def approve_runner_job(job_id: str, current_user = Depends(get_current_user)):
+    """The person presses Run on the card. Only their own job, only while it waits and has not expired."""
+    username = _runner_person(current_user)
+    job = await asyncio.to_thread(runner_jobs.approve_job, _runner_db_or_503(), username, job_id)
+    if job is None:
+        raise HTTPException(status_code=409, detail="That check can no longer be run (it was answered, cancelled, or expired).")
+    return job
+
+
+@app.post("/api/runner/jobs/{job_id}/cancel")
+async def cancel_runner_job(job_id: str, current_user = Depends(get_current_user)):
+    username = _runner_person(current_user)
+    job = await asyncio.to_thread(runner_jobs.cancel_job, _runner_db_or_503(), username, job_id)
+    if job is None:
+        raise HTTPException(status_code=409, detail="That check is already finished or does not exist.")
+    return job
 
 
 @app.get("/api/memory")
