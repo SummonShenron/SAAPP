@@ -12,6 +12,12 @@ import logging
 import time
 
 from backend.models.models import lite_llm
+from backend.models.split_prompt import split_template
+
+# Where the prompt template's stable parts end (backend/components/constraints.py TOOL_AGENT_PROMPT): the fixed instructions come before this marker; this request's context, up to the request itself, is
+# the second stable part (the cut after the request is made by `hold`); the notices added at some steps and the attempts so far (which grow at every step) are the changing end. A model that caches reads
+# the first two back at a tenth of the price (backend/models/split_prompt.py).
+PROMPT_CACHE_MARKERS = ("=== THIS REQUEST ===",)
 from backend.utils import draft_checkpoint
 from backend.utils.log_hygiene import describe_observation
 from backend.utils.agent_utils import (
@@ -502,7 +508,8 @@ async def run_react_loop(
             question_for_step += f"\n\n({pending_duplicate_declaration_notice})"
             pending_duplicate_declaration_notice = None
 
-        prompt = prompt_template.format(
+        prompt = split_template(
+            prompt_template, PROMPT_CACHE_MARKERS, ("question", question),
             question=question_for_step,
             schema=schema,
             attempts=_format_react_attempts(attempts),
@@ -965,7 +972,8 @@ async def run_react_loop(
         # synthesis instead of silently returning the last raw observation.
         await _absorb_steering(len(attempts))
         try:
-            prompt = prompt_template.format(
+            prompt = split_template(
+                prompt_template, PROMPT_CACHE_MARKERS, ("question", question),
                 question=f"{question}{format_steering_notes(steering_notes)}{FORCED_FINAL_NOTICE}{draft_checkpoint.draft_block(latest_draft)}{draft_checkpoint.forced_final_addition(latest_draft)}",
                 schema=schema,
                 attempts=_format_react_attempts(attempts),
