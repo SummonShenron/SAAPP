@@ -107,7 +107,9 @@ def test_the_hint_names_the_check_that_exists_and_is_empty_when_none_does():
     assert "run_local_command" in check_hint(["propose_local_edits", "run_local_command"], [])
     assert "run_sandbox_tests" in check_hint(["propose_local_edits", "run_sandbox_tests"], [])
     assert check_hint(["propose_local_edits", "read_repo_file"], []) == "" and check_hint([], ["tests"]) == ""
-    assert check_hint(["run_local_check", "run_local_command"], ["tests"]).startswith("NEXT: the change is applied. Run a check on it now with run_local_check")
+    assert check_hint(["run_local_check", "run_local_command"], ["tests"]).startswith("NEXT: the change is applied. Check it with run_local_check")
+    for offered in (["run_local_check"], ["run_local_command"], ["run_sandbox_tests"]):
+        assert "if the tests for it do not exist yet, write them first" in check_hint(offered, ["tests"])            # a check that cannot exercise the change yet is not the next step
 
 
 def test_the_counter_increments_use_only_known_keys_and_only_nonzero_amounts():
@@ -229,3 +231,21 @@ def test_a_checkpoint_after_an_unchecked_edit_does_not_just_say_prefer_answering
                Reply([], "answer"), Reply([], "done")]
     llm, _ = asyncio.run(_run(replies, tools, {"propose_local_edits": APPLIED}, after_apply_hint=""))
     assert not any("has not been checked" in t for seen in llm.seen for t in seen)
+
+
+def test_an_approved_plan_with_steps_to_go_gets_no_run_the_check_line_but_its_last_step_does():
+    tools = ["read_repo_file", "propose_local_edits", "run_local_check"]
+    steps = {"left": 1}
+
+    async def plan_feed():
+        if steps["left"] > 0:
+            steps["left"] -= 1
+            return "FILES FOR STEP s2: ..."
+        return ""
+
+    replies = [Reply([call("propose_local_edits", 1, summary="step one", edits=[])]), Reply([call("propose_local_edits", 2, summary="step two", edits=[])]), Reply([], "done")]
+    llm, _ = asyncio.run(_run(replies, tools, {"propose_local_edits": APPLIED}, after_apply_hint="NEXT: run the check now.", plan_feed=plan_feed))
+    after_first = llm.seen[1]                                   # the decision after step 1 applied, with step 2 still to come
+    after_last = llm.seen[2]                                    # the decision after the last step applied
+    assert any(text.startswith("FILES FOR STEP s2") for text in after_first) and not any("NEXT: run the check now." in text for text in after_first)
+    assert any("NEXT: run the check now." in text for text in after_last)

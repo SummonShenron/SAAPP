@@ -1194,6 +1194,8 @@ _CODE_TARGET_RE = re.compile(
     r"\b(?:file|function|component|class|css|stylesheet|line|lines|code|button|header|sidebar|panel|"
     r"menu|navbar|banner|endpoint|route|test|tests|variable|import|prop|style|color|colour|label|"
     r"icon|tooltip|modal|loader|spinner|readme|hero|"
+    # things people name when they describe a screen change in words ("add a timestamp to the user message bubbles"), with no file name in the message
+    r"bubbles?|timestamps?|badges?|dropdowns?|checkbox(?:es)?|textarea|scrollbars?|avatars?|mascot|hearts?|animations?|layout|hover|"
     # design values: a css custom property ("--bg-main"), tokens, a theme, and the things a stylesheet sets
     r"tokens?|theme|font|padding|margin|background|border|radius|shadow|opacity|contrast|spacing|gray|grey)\b|"
     r"(?<![\w-])--[a-z][\w-]*",

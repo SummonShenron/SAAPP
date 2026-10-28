@@ -1,0 +1,17 @@
+/* Feedback timestamp: hidden until the message bubble is hovered */
+.message-bubble {
+  position: relative;
+}
+
+.message-bubble .feedback-time {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  padding-top: 4px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.message-bubble:hover .feedback-time {
+  opacity: 1;
+}

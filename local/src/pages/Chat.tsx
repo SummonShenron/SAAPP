@@ -39,6 +39,7 @@ import { BRAND_NAME, BRAND_TAGLINE } from '../components/brand';
 import { shell } from '../components/shellStore';
 import ReactMarkdown from 'react-markdown';
 import '../components/__styles__/ReplyText.css';
+import '../components/__styles__/FeedbackTime.css';
 import remarkGfm from 'remark-gfm';
 import { CODE_BOX_STYLE } from '../components/codeBoxStyle';
 import { useAuth } from '@clerk/clerk-react';
@@ -422,6 +423,10 @@ const ChatMessageList = React.memo(function ChatMessageList({
                   {cleanContent}
                 </ReactMarkdown>
               </div>
+
+              {msg.sender === 'user' && formatMessageTime(msg.sentAt) && (
+                <span className="feedback-time" title={fullMessageTime(msg.sentAt)}>{formatMessageTime(msg.sentAt)}</span>
+              )}
 
               {msg.sender === 'ai' && showsApprovalButtons(msg.text, messages[messages.length - 1]?.id === msg.id, loading) && (
                 <ApprovalButtons onAnswer={text => handleSendMessageRef.current(text, attachmentsRef.current)} />

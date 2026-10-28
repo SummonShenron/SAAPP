@@ -188,3 +188,25 @@ def test_both_the_gate_and_the_engine_choice_use_the_one_shared_text():
     source = (ROOT / "backend" / "services" / "agent_workflow.py").read_text(encoding="utf-8")
     assert source.count("recent_user_text(latest_message_content, state.get(\"messages\", []))") == 2
     assert "needs_old_engine(latest_message_content" not in source
+
+
+# ---- a change described in words, with no file name (2026-10-28, 6 PM: "add one to the user message bubbles too") ---------------------------------------------
+
+@pytest.mark.parametrize("ask", [
+    "okay, i'd like you to try one more thing today, you know the timestamp you added to the ai messages? i want you to add one to the user message bubbles too.",
+    "add a timestamp to the user bubbles", "make the hearts show only on hover", "change the mascot animation to be slower", "add a dropdown for the model choice",
+    "tweak the layout so the checkbox sits left", 
+])
+def test_a_change_described_in_words_about_the_screen_is_an_edit_request(ask):
+    assert au.looks_like_edit_request([h(ask)]) is True, ask
+
+
+@pytest.mark.parametrize("ask", ["make your replies shorter", "update my memory", "what is a timestamp?", "how do bubbles work in chat apps?", "tell me about the layout of the project", "remind me about hover states later"])
+def test_questions_and_changes_to_sonic_itself_are_still_not_edit_requests(ask):
+    assert au.looks_like_edit_request([h(ask)]) is False, ask
+
+
+@run_async
+async def test_that_request_in_plan_mode_now_gets_the_plan_card_tool(monkeypatch):
+    seen = await _turn(monkeypatch, [h("okay, i'd like you to try one more thing today, you know the timestamp you added to the ai messages? i want you to add one to the user message bubbles too.")])
+    assert "submit_plan" in seen["tools"] and not seen["noted"]

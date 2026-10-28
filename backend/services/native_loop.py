@@ -565,11 +565,7 @@ async def run(
         applied_now = any(call.get("name") == "propose_local_edits" and " APPLIED:" in str(result) for call, result in zip(calls, results))
         if rhythm is not None:
             rhythm.after_step([(str(call.get("name") or ""), result) for call, result in zip(calls, results)])
-        if after_apply_hint and applied_now:
-            # An edit was just applied: say what to do next (run the check), from the server, so it is not left to the model to remember. It joins the held results and is shortened like any old one.
-            hint = HumanMessage(content=after_apply_hint)
-            messages.append(hint)
-            held.append({"message": hint, "step": step, "text": after_apply_hint, "done": False, "key": f"after_apply|{step}"})
+        more_plan_steps = False
         if plan_feed is not None and any(call.get("name") == "propose_local_edits" and " APPLIED:" in str(result) for call, result in zip(calls, results)):
             # Carrying out an approved plan and a step's edit was just applied: hand over the next step's files now, from the server, so the model's next call is the edit and not a read (one model
             # call per plan step instead of two). It joins the held results, so it is shortened like any old result once the step it served is behind us.
@@ -579,9 +575,16 @@ async def run(
                 logger.warning("[native_loop] could not read the next plan step's files.", exc_info=True)
                 block = ""
             if block:
+                more_plan_steps = True
                 fed = HumanMessage(content=block)
                 messages.append(fed)
                 held.append({"message": fed, "step": step, "text": block, "done": False, "key": f"plan_feed|{step}"})
+        if after_apply_hint and applied_now and not more_plan_steps:
+            # An edit was just applied: say what to do next (check it, or write the test it needs first), from the server, so it is not left to the model to remember. Not while an approved plan still has
+            # steps to go: its tests are usually a later step, and a check run before they exist can only fail or run nothing (Jack, 2026-10-28). It joins the held results and is shortened like any old one.
+            hint = HumanMessage(content=after_apply_hint)
+            messages.append(hint)
+            held.append({"message": hint, "step": step, "text": after_apply_hint, "done": False, "key": f"after_apply|{step}"})
         if library_allowance is not None:
             # A listing of a long library adds the read steps it needs, once (backend/utils/library_allowance.py): the tool steps left AFTER this one (this loop's answer is an extra call, so none is kept back).
             for call, result in zip(calls, results):

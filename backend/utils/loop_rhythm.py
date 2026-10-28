@@ -21,20 +21,22 @@ CHECK_TOOLS = frozenset({"run_local_check", "run_local_command", "run_sandbox_te
 ACT_TOOLS = EDIT_TOOLS | CHECK_TOOLS
 
 STREAK_NOTICE = (
-    "READING STREAK: you have read {streak} times in a row since your last edit or check. Act on what you know now: make the next edit, or run the check on what you changed. If something specific "
-    "is still missing, ask for that one read in the SAME step as the action, and say what it is for. Reading more first is how the budget gets spent with nothing tested."
+    "READING STREAK: you have read {streak} times in a row since your last edit or check. Act on what you know now: make the next edit (a test for what you changed counts), or run a check that can "
+    "exercise it. If something specific is still missing, ask for that one read in the SAME step as the action, and say what it is for. Reading more first is how the budget gets spent with nothing tested."
 )
 
 
 def check_hint(offered: Sequence[str], check_names: Sequence[str] = ()) -> str:
     """The line added to an APPLIED result when a way to check the change exists, or "" when none does. `offered` are this turn's tool names; `check_names` the person's named checks."""
     names = [str(n) for n in check_names if str(n).strip()]
+    # A check only means something if it can exercise the change. When the tests for it do not exist yet, the next action is to write them (propose_local_edits), then run them.
+    caveat = " Only run a check that can exercise what you changed: if the tests for it do not exist yet, write them first, then run them."
     if "run_local_check" in offered and names:
-        return f"NEXT: the change is applied. Run a check on it now with run_local_check ({', '.join(names[:4])}), then read only what its result points at."
+        return f"NEXT: the change is applied. Check it with run_local_check ({', '.join(names[:4])}), then read only what its result points at." + caveat
     if "run_local_command" in offered:
-        return "NEXT: the change is applied. Check it now: run the project's tests or type check for what you changed with run_local_command, then read only what its result points at."
+        return "NEXT: the change is applied. Check it: run the project's tests or type check for what you changed with run_local_command, then read only what its result points at." + caveat
     if "run_sandbox_tests" in offered:
-        return "NEXT: the change is applied. Check it now with run_sandbox_tests on the files you changed, then read only what its result points at."
+        return "NEXT: the change is applied. Check it with run_sandbox_tests on the files you changed, then read only what its result points at." + caveat
     return ""
 
 
