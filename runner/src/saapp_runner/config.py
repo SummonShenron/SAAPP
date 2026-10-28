@@ -55,26 +55,24 @@ def _read_credentials() -> Dict[str, Any]:
         data = json.loads(credentials_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    return data if isinstance(data, dict) and isinstance(data.get("projects"), dict) else {}
+    return data if isinstance(data, dict) else {}
 
 
-def save_credentials(server: str, key: str, root: Path) -> None:
-    """Keeps the server address and the key for ONE project folder where only the owner can read them. Each project has its own runner and its own key, so pairing a second project never
-    replaces the first one's."""
+def save_credentials(server: str, key: str) -> None:
+    """Keeps the server address and THIS COMPUTER's key where only the owner can read them. There is one key per computer (one runner serves all of the computer's projects), and pairing again replaces it.
+    An older runner kept one key per project folder under `projects`; that file is not read any more, so a computer set up that way pairs once more."""
     folder = home()
     folder.mkdir(parents=True, exist_ok=True)
     _private(folder, 0o700)
-    data = _read_credentials()
-    data.setdefault("projects", {})[project_key(root)] = {"server": server.rstrip("/"), "key": key}
     path = credentials_path()
-    path.write_text(json.dumps(data), encoding="utf-8")
+    path.write_text(json.dumps({"server": server.rstrip("/"), "key": key}), encoding="utf-8")
     _private(path, 0o600)
 
 
-def load_credentials(root: Path) -> Optional[Dict[str, str]]:
-    """The server address and key this project folder was paired with, or None."""
-    entry = _read_credentials().get("projects", {}).get(project_key(root))
-    return entry if isinstance(entry, dict) and entry.get("server") and entry.get("key") else None
+def load_credentials() -> Optional[Dict[str, str]]:
+    """The server address and key this computer was paired with, or None."""
+    data = _read_credentials()
+    return {"server": data["server"], "key": data["key"]} if isinstance(data.get("server"), str) and isinstance(data.get("key"), str) and data["server"] and data["key"] else None
 
 
 def parse_command(value: Any) -> List[str]:

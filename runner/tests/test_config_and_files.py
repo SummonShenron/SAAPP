@@ -9,36 +9,31 @@ from saapp_runner import files as fl
 
 # ---- the key -------------------------------------------------------------------------------------------------------------------------------
 
-def test_the_key_is_saved_per_project_read_back_and_kept_private(runner_home, tmp_path):
-    project = tmp_path / "myapp"
-    project.mkdir()
-    assert cfg.load_credentials(project) is None
-    cfg.save_credentials("https://saapp.example.com/", "abc.def", project)
-    assert cfg.load_credentials(project) == {"server": "https://saapp.example.com", "key": "abc.def"}
+def test_the_key_is_one_per_computer_read_back_and_kept_private(runner_home):
+    assert cfg.load_credentials() is None
+    cfg.save_credentials("https://saapp.example.com/", "abc.def")
+    assert cfg.load_credentials() == {"server": "https://saapp.example.com", "key": "abc.def"}
     if os.name != "nt":
         assert oct(cfg.credentials_path().stat().st_mode & 0o777) == "0o600" and oct(runner_home.stat().st_mode & 0o777) == "0o700"
 
 
-def test_each_project_has_its_own_key_so_pairing_a_second_one_never_replaces_the_first(tmp_path):
-    first, second = tmp_path / "one", tmp_path / "two"
-    first.mkdir()
-    second.mkdir()
-    cfg.save_credentials("https://saapp.example.com", "key-one.secret", first)
-    cfg.save_credentials("https://saapp.example.com", "key-two.secret", second)
-    assert cfg.load_credentials(first)["key"] == "key-one.secret" and cfg.load_credentials(second)["key"] == "key-two.secret"
-    cfg.save_credentials("https://saapp.example.com", "key-one-again.secret", first)                # re-pairing one project changes only that one
-    assert cfg.load_credentials(first)["key"] == "key-one-again.secret" and cfg.load_credentials(second)["key"] == "key-two.secret"
-    assert cfg.load_credentials(tmp_path / "never-paired") is None
+def test_pairing_again_replaces_the_computers_key(runner_home):
+    cfg.save_credentials("https://saapp.example.com", "key-one.secret")
+    cfg.save_credentials("https://saapp.example.com", "key-two.secret")
+    assert cfg.load_credentials()["key"] == "key-two.secret"
 
 
-def test_a_damaged_key_file_reads_as_not_paired(runner_home, tmp_path):
+def test_a_damaged_or_old_style_key_file_reads_as_not_paired(runner_home):
     runner_home.mkdir(parents=True)
     cfg.credentials_path().write_text("not json", encoding="utf-8")
-    assert cfg.load_credentials(tmp_path) is None
-    cfg.credentials_path().write_text('{"server": "x", "key": "y"}', encoding="utf-8")             # not the per-project shape
-    assert cfg.load_credentials(tmp_path) is None
-    cfg.save_credentials("https://saapp.example.com", "a.b", tmp_path)                             # saving over a damaged file starts it fresh
-    assert cfg.load_credentials(tmp_path)["key"] == "a.b"
+    assert cfg.load_credentials() is None
+    cfg.credentials_path().write_text('{"projects": {"c:\\\\work\\\\app": {"server": "x", "key": "y"}}}', encoding="utf-8")       # the old one-key-per-project shape: not read, so the computer pairs once more
+    assert cfg.load_credentials() is None
+    cfg.credentials_path().write_text('{"server": "", "key": "y"}', encoding="utf-8")
+    assert cfg.load_credentials() is None
+    cfg.save_credentials("https://saapp.example.com", "a.b")                                         # saving over a damaged file starts it fresh
+    assert cfg.load_credentials()["key"] == "a.b"
+
 
 
 # ---- how a command is read -------------------------------------------------------------------------------------------------------------------

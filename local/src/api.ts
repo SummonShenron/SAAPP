@@ -1830,15 +1830,39 @@ export const actOnCodePlan = (sessionId: string, action: 'approve' | 'cancel' | 
   taskRequest(`/api/code-plan?session_id=${encodeURIComponent(sessionId)}`, { method: 'PATCH', body: JSON.stringify({ action, step_id: stepId, text }) }, 'Failed to change the plan.');
 
 /** The local runner (backend/utils/runner_jobs.py, runner/): a small program on the person's own machine that runs checks they approve on a card in the chat. */
-export interface RunnerCheck { name: string; command: string; }
-/** What the person chose for a runner: the checks turned off, and whether checks run with a fake AI key (on until turned off). Names and a yes or no only; the page never supplies a command. */
-export interface RunnerSettings { disabled: string[]; fake_keys: boolean; }
-export interface RunnerInfo { id: string; name: string; created_at: string; root_name: string; version: string; checks: RunnerCheck[]; settings: RunnerSettings; connected: boolean; }
+export interface RunnerCheck { name: string; command: string; /** false when the runner could not find this check's program on its computer; missing from an older runner. */ ready?: boolean; }
+/** What the person chose for one PROJECT of a runner: the checks turned off, and whether its checks run with a fake AI key (on until turned off). Names and a yes or no only; the page never supplies a command. */
+export interface ProjectSettings { disabled: string[]; fake_keys: boolean; }
+/** What the person chose for the runner (the computer) itself: whether it updates itself without a click (off until turned on). */
+export interface RunnerSettings { auto_update: boolean; /** run command lines that only look around (git status, ls...) without a click on a card; off until turned on */ read_only_auto: boolean; }
+/** One project folder a runner serves: chosen on that computer, reported by the runner with its checks and a status code. */
+export interface RunnerProject { id: string; name: string; status: string; checks: RunnerCheck[]; settings: ProjectSettings; }
+/** A request to add a project: the page sends only the folder NAME, and the person chooses the folder in a window on their own computer. */
+export type RunnerRequestState = 'waiting' | 'asked' | 'added' | 'declined' | 'no_picker' | 'error' | 'expired';
+export interface RunnerRequest { id: string; name: string; state: RunnerRequestState; }
+/** Whether this runner is older than the version the server wants, and whether a click on Update is still waiting for the runner to pick it up. */
+export interface RunnerUpdate { wanted: string; available: boolean; pending: boolean; }
+export interface RunnerInfo {
+  id: string; name: string; created_at: string; version: string; settings: RunnerSettings; connected: boolean;
+  /** The projects this computer's runner serves, and the recent requests to add one. */
+  projects: RunnerProject[]; requests: RunnerRequest[];
+  /** Whether this runner is new enough to run command lines. */
+  commands?: boolean;
+  /** One code from a fixed list the runner reports about itself ('' from an older runner), and when it was last seen. */
+  status: string; last_seen: string | null;
+  /** 'service' when the runner started by itself at login, 'hand' when a person ran it, '' from an older runner. */
+  launch: string;
+  update: RunnerUpdate;
+}
 export type RunnerJobStatus = 'awaiting_approval' | 'approved' | 'running' | 'done' | 'cancelled' | 'expired' | 'failed';
 export interface RunnerJob {
-  id: string; runner_id: string | null; check: string; command_shown: string; files: string[]; status: RunnerJobStatus;
+  id: string; runner_id: string | null; project_id?: string; project_name?: string; check: string; command_shown: string; files: string[]; status: RunnerJobStatus;
   created_at: string | null; expires_at: string | null; finished_at: string | null;
   exit_code: number | null; output_tail: string; truncated: boolean; timed_out: boolean; duration: number | null; error: string;
+  /** 'command' for a command line Sonic asked to run (shown word for word in `command_shown`); a named check otherwise. */
+  kind?: 'check' | 'command';
+  /** For a command: read (only looks), run (runs a program) or change (changes files, the project or uses the network), and why. */
+  command_class?: 'read' | 'run' | 'change' | ''; command_notes?: string[]; auto_approved?: boolean; needs_confirm?: boolean;
 }
 export interface RunnerScript { filename: string; text: string; }
 export interface RunnerPairing {
@@ -1849,13 +1873,22 @@ export interface RunnerList { runners: RunnerInfo[]; limit: number; min_version:
 export const listRunners = (): Promise<RunnerList> => taskRequest('/api/runner/runners', {}, 'Failed to load your runners.');
 export const createRunnerPairing = (name: string, folderName = ''): Promise<RunnerPairing> =>
   taskRequest('/api/runner/pairings', { method: 'POST', body: JSON.stringify({ name, folder_name: folderName }) }, 'Failed to make a pairing code.');
-export const updateRunnerSettings = (id: string, settings: RunnerSettings): Promise<{ settings: RunnerSettings }> =>
-  taskRequest(`/api/runner/runners/${encodeURIComponent(id)}/settings`, { method: 'POST', body: JSON.stringify(settings) }, 'Failed to save the runner settings.');
+/** Saves a choice: a project's checks and fake-key setting (give `project_id`), or the runner's own `auto_update`. Anything left out is unchanged. */
+export interface RunnerSettingsChange { project_id?: string; disabled?: string[]; fake_keys?: boolean; auto_update?: boolean; read_only_auto?: boolean; }
+export const updateRunnerSettings = (id: string, change: RunnerSettingsChange): Promise<{ settings: ProjectSettings & RunnerSettings }> =>
+  taskRequest(`/api/runner/runners/${encodeURIComponent(id)}/settings`, { method: 'POST', body: JSON.stringify(change) }, 'Failed to save the runner settings.');
+export const addRunnerProject = (id: string, name: string): Promise<{ request: RunnerRequest }> =>
+  taskRequest(`/api/runner/runners/${encodeURIComponent(id)}/projects`, { method: 'POST', body: JSON.stringify({ name }) }, 'Failed to ask for that project.');
+export const removeRunnerProject = (id: string, projectId: string): Promise<{ status: string }> =>
+  taskRequest(`/api/runner/runners/${encodeURIComponent(id)}/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE' }, 'Failed to remove that project.');
+export const requestRunnerUpdate = (id: string): Promise<{ update: RunnerUpdate }> =>
+  taskRequest(`/api/runner/runners/${encodeURIComponent(id)}/update`, { method: 'POST' }, 'Failed to ask the runner to update.');
 export const removeRunner = (id: string): Promise<{ status: string }> =>
   taskRequest(`/api/runner/keys/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'Failed to remove that runner.');
 export const getRunnerJob = (id: string): Promise<RunnerJob> => taskRequest(`/api/runner/jobs/${encodeURIComponent(id)}`, {}, 'Failed to load that check.');
-export const approveRunnerJob = (id: string): Promise<RunnerJob> =>
-  taskRequest(`/api/runner/jobs/${encodeURIComponent(id)}/approve`, { method: 'POST' }, 'Failed to run that check.');
+/** Presses Run. A command that changes things needs `confirmed` too (the second, stronger confirmation on its card). */
+export const approveRunnerJob = (id: string, confirmed = false): Promise<RunnerJob> =>
+  taskRequest(`/api/runner/jobs/${encodeURIComponent(id)}/approve`, { method: 'POST', body: JSON.stringify({ confirmed }) }, 'Failed to run that check.');
 export const cancelRunnerJob = (id: string): Promise<RunnerJob> =>
   taskRequest(`/api/runner/jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }, 'Failed to cancel that check.');
 
@@ -2388,6 +2421,9 @@ export const api = {
   listRunners,
   createRunnerPairing,
   updateRunnerSettings,
+  addRunnerProject,
+  removeRunnerProject,
+  requestRunnerUpdate,
   removeRunner,
   getRunnerJob,
   approveRunnerJob,

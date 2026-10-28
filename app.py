@@ -2294,9 +2294,20 @@ class RunnerPairingRequest(BaseModel):
     folder_name: str = ""           # the name of the folder connected in the page, so the starter script can warn when someone picks a different one
 
 
+class RunnerProjectRequest(BaseModel):
+    name: str = ""                  # the project's folder NAME (never a path): the runner asks the person to choose the folder in a dialog on their own computer
+
+
 class RunnerSettingsRequest(BaseModel):
-    disabled: List[str] = []        # names of the runner's checks the person turned off
+    project_id: str = ""            # which of the runner's projects the checks and the fake-key choice are for (none: only the runner's own setting, auto_update, changes)
+    disabled: List[str] = []        # names of that project's checks the person turned off
     fake_keys: bool = True          # run checks with a fake AI key, so a test cannot spend real money
+    auto_update: Optional[bool] = None   # let the runner update itself without a click (left out: unchanged, so a change to a project's checks never resets it)
+    read_only_auto: Optional[bool] = None   # run command lines that only look (git status, ls...) without a click on a card; off until the person turns it on (left out: unchanged)
+
+
+class RunnerApproveRequest(BaseModel):
+    confirmed: bool = False         # the second, stronger confirmation a command that changes things needs on its card
 
 
 def _runner_db_or_503():
@@ -2351,7 +2362,7 @@ async def runner_next(wait: int = Query(runner_jobs.POLL_SECONDS, ge=0, le=30), 
     deadline = asyncio.get_running_loop().time() + wait
     while True:
         answer = await asyncio.to_thread(runner_jobs.api_next, db, key)
-        if answer["job"] or asyncio.get_running_loop().time() >= deadline:
+        if answer["job"] or answer["update"] or answer["add_project"] or answer["remove_project"] or asyncio.get_running_loop().time() >= deadline:
             return answer
         await asyncio.sleep(1.0)
 
@@ -2378,20 +2389,23 @@ async def list_runners(current_user = Depends(get_current_user)):
     username = _runner_person(current_user)
     runners = await asyncio.to_thread(runner_jobs.runners_for, _runner_db_or_503(), username)
     return {"runners": runners, "limit": runner_jobs.MAX_KEYS_PER_PERSON, "min_version": ".".join(str(p) for p in runner_jobs.MIN_RUNNER_VERSION),
-            "install": {"configured": bool(os.getenv("SAAPP_RUNNER_INSTALL_URL", "").strip()), "version": runner_scripts.SCRIPT_VERSION}}
+            "install": {"configured": runner_scripts.install_address()[0] != "", "version": runner_scripts.RUNNER_VERSION}}
 
 
 @app.post("/api/runner/pairings")
 async def create_runner_pairing(body: RunnerPairingRequest, http_request: Request, current_user = Depends(get_current_user)):
-    """A one-time pairing code for a new runner, and (when the install address is configured, SAAPP_RUNNER_INSTALL_URL) the starter scripts that carry it and the same setup as commands to type. The
+    """A one-time pairing code for a new runner, and (the install address is built from the runner version, backend/utils/runner_scripts.py) the starter scripts that carry it and the same setup as commands to type. The
     code is shown once. The scripts carry the code, never a key."""
     username = _runner_person(current_user)
     try:
-        made = await asyncio.to_thread(runner_jobs.create_pairing, _runner_db_or_503(), username, body.name)
+        # The folder connected in the chat (the page's own, or else the one SAAPP holds for this person) becomes the first project the new runner is asked to add: the person then chooses it in a window on
+        # their computer, and the setup file asks them nothing.
+        folder_name = body.folder_name or str(local_workspace_status(username).get("name") or "")
+        made = await asyncio.to_thread(runner_jobs.create_pairing, _runner_db_or_503(), username, body.name, folder_name=folder_name)
     except runner_jobs.RunnerError as problem:
         raise _runner_http_error(problem)
-    install_url = os.getenv("SAAPP_RUNNER_INSTALL_URL", "").strip()
-    answer = {**made, "version": runner_scripts.SCRIPT_VERSION, "install_configured": bool(install_url), "scripts": None, "commands": None, "install_problem": ""}
+    install_url, install_problem = runner_scripts.install_address()
+    answer = {**made, "version": runner_scripts.RUNNER_VERSION, "install_configured": bool(install_url), "scripts": None, "commands": None, "install_problem": install_problem}
     if install_url:
         try:
             server = runner_scripts.public_server_url(
@@ -2408,10 +2422,45 @@ async def create_runner_pairing(body: RunnerPairingRequest, http_request: Reques
 async def update_runner_settings(runner_id: str, body: RunnerSettingsRequest, current_user = Depends(get_current_user)):
     """Which of a runner's checks are on, and whether checks use a fake AI key. Names and a yes or no only: this can never change a command."""
     username = _runner_person(current_user)
-    saved = await asyncio.to_thread(runner_jobs.update_settings, _runner_db_or_503(), username, runner_id, body.model_dump())
+    saved = await asyncio.to_thread(runner_jobs.update_settings, _runner_db_or_503(), username, runner_id, body.model_dump(exclude_none=True))
     if saved is None:
         raise HTTPException(status_code=404, detail="No runner of yours has that id.")
     return {"settings": saved}
+
+
+@app.post("/api/runner/runners/{runner_id}/projects")
+async def add_runner_project(runner_id: str, body: RunnerProjectRequest, current_user = Depends(get_current_user)):
+    """The person asks for a project to be added to one of their runners. Only a folder NAME is sent: the runner shows a dialog on their own computer and they choose the folder there."""
+    username = _runner_person(current_user)
+    try:
+        asked = await asyncio.to_thread(runner_jobs.request_project, _runner_db_or_503(), username, runner_id, body.name)
+    except runner_jobs.RunnerError as problem:
+        raise _runner_http_error(problem)
+    if asked is None:
+        raise HTTPException(status_code=404, detail="No runner of yours has that id.")
+    return {"request": asked}
+
+
+@app.delete("/api/runner/runners/{runner_id}/projects/{project_id}")
+async def remove_runner_project(runner_id: str, project_id: str, current_user = Depends(get_current_user)):
+    """The person removes a project from one of their runners: no check can be asked for it any more, and the runner forgets it the next time it asks."""
+    username = _runner_person(current_user)
+    if not await asyncio.to_thread(runner_jobs.request_remove_project, _runner_db_or_503(), username, runner_id, project_id):
+        raise HTTPException(status_code=404, detail="No such project on a runner of yours.")
+    return {"status": "removed"}
+
+
+@app.post("/api/runner/runners/{runner_id}/update")
+async def update_runner(runner_id: str, current_user = Depends(get_current_user)):
+    """The person pressed Update on a runner of theirs. The runner is told a version NUMBER the next time it asks and installs it from where it was installed; nothing here names an address."""
+    username = _runner_person(current_user)
+    try:
+        info = await asyncio.to_thread(runner_jobs.request_update, _runner_db_or_503(), username, runner_id)
+    except runner_jobs.RunnerError as problem:
+        raise _runner_http_error(problem)
+    if info is None:
+        raise HTTPException(status_code=404, detail="No runner of yours has that id.")
+    return {"update": info}
 
 
 @app.delete("/api/runner/keys/{key_id}")
@@ -2432,10 +2481,13 @@ async def get_runner_job(job_id: str, current_user = Depends(get_current_user)):
 
 
 @app.post("/api/runner/jobs/{job_id}/approve")
-async def approve_runner_job(job_id: str, current_user = Depends(get_current_user)):
-    """The person presses Run on the card. Only their own job, only while it waits and has not expired."""
+async def approve_runner_job(job_id: str, body: Optional[RunnerApproveRequest] = None, current_user = Depends(get_current_user)):
+    """The person presses Run on the card. Only their own job, only while it waits and has not expired. A command that changes things needs `confirmed` as well."""
     username = _runner_person(current_user)
-    job = await asyncio.to_thread(runner_jobs.approve_job, _runner_db_or_503(), username, job_id)
+    try:
+        job = await asyncio.to_thread(runner_jobs.approve_job, _runner_db_or_503(), username, job_id, None, bool(body and body.confirmed))
+    except runner_jobs.RunnerError as problem:
+        raise _runner_http_error(problem)
     if job is None:
         raise HTTPException(status_code=409, detail="That check can no longer be run (it was answered, cancelled, or expired).")
     return job

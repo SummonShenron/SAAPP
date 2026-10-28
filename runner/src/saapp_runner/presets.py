@@ -7,9 +7,9 @@ A check you write yourself in `~/.saapp-runner/config.toml` still works, and rep
 """
 import json
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
-from .config import load_checks
+from .config import ConfigError, load_checks
 
 # The AI provider keys a project's tests might read. While a check runs with "fake keys" on, each is set to this value, so a test can never spend real money even when the project's own `.env` file holds a
 # real key (a `.env` file does not replace a variable that is already set).
@@ -49,6 +49,15 @@ def detect(root: Path) -> Dict[str, List[str]]:
     if (root / "tsconfig.json").exists():
         found["types"] = ["npx", "tsc", "-b"]
     return found
+
+
+def scan(root: Path) -> Tuple[Dict[str, List[str]], bool, str]:
+    """(checks, config readable, what was wrong with the config, in words, or ""). A config that cannot be read does not stop the runner: it carries on with the checks found in the folder and says
+    so, and the status reported to SAAPP says why some checks may be missing."""
+    try:
+        return effective_checks(root), True, ""
+    except ConfigError as problem:
+        return detect(root), False, str(problem)
 
 
 def effective_checks(root: Path) -> Dict[str, List[str]]:

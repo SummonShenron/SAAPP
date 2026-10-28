@@ -240,3 +240,61 @@ def test_everything_else_that_only_the_old_engine_has_still_goes_there_even_with
         assert nl.needs_old_engine(text, test_runs_native=True) is True, text
         assert nl.eligible(edit_turn=False, resumed=False, tools=with_runner, text=text) is False, text
     assert nl.needs_old_engine("what does this function do?", test_runs_native=True) is False
+
+
+# ---- a computer with several projects: the folder connected in chat says which one ----------------------------------------------------------------------
+
+PA, PB = "a1b2c3d4", "e5f6a7b8"
+
+
+def connect_two_projects(db, username="multi"):
+    code = rj.create_pairing(db, username, "laptop")["code"]
+    record = rj.authenticate(db, rj.exchange_pairing(db, code)["key"])
+    rj.hello(db, record, {"version": "0.1.1", "projects": [
+        {"id": PA, "name": "local-rag", "status": "ok", "checks": [{"name": "tests", "command": "pytest -q {files}", "ready": True}]},
+        {"id": PB, "name": "other-app", "status": "ok", "checks": [{"name": "tests", "command": "npm test", "ready": True}, {"name": "types", "command": "npx tsc -b", "ready": True}]}]})
+    return record
+
+
+@pytest.fixture()
+def multi_workspace():
+    """The folder connected for the person "multi", removed again afterwards so no other test sees it."""
+    from backend.services import local_workspace as lw
+
+    lw.clear_workspace("multi")
+    yield lw
+    lw.clear_workspace("multi")
+
+
+def connect_folder(lw, name):
+    lw.apply_sync("multi", name, [{"path": "a.py", "content": "x = 1\n"}], [], True)
+
+
+def test_with_a_folder_connected_the_check_goes_to_the_project_of_that_name_and_the_card_says_which(monkeypatch, multi_workspace):
+    db = FakeDB()
+    connect_two_projects(db)
+    connect_folder(multi_workspace, "other-app")
+    monkeypatch.setattr(rj, "WAIT_SECONDS", 0.5)
+    seen = run(drive(monkeypatch, [call("types")], db=db, username="multi"))
+    assert "run_local_check" in seen["tools"]
+    card = [data for name, data in seen["events"] if name == "runner_check"][0]
+    assert card["job"]["project_id"] == PB and card["job"]["project_name"] == "other-app" and card["job"]["command_shown"] == "npx tsc -b"       # the types check only that project has
+    assert card["runner"] == {"name": "laptop", "root_name": "other-app"}
+
+
+def test_the_menu_lists_only_the_checks_of_the_project_the_chat_is_about(monkeypatch, multi_workspace):
+    db = FakeDB()
+    connect_two_projects(db)
+    connect_folder(multi_workspace, "local-rag")
+    prompt = run(drive(monkeypatch, [], db=db, username="multi", engine="react"))["prompt"]
+    line = next(l for l in prompt.splitlines() if l.startswith("- run_local_check"))                  # only the tool's own menu line: other lines of the prompt may mention npm for other reasons
+    assert "tests = pytest -q" in line and "npm test" not in line and "types = npx tsc -b" not in line
+
+
+def test_with_several_projects_and_no_way_to_tell_which_the_tool_is_not_offered(monkeypatch, multi_workspace):
+    db = FakeDB()
+    connect_two_projects(db)
+    seen = run(drive(monkeypatch, [], db=db, username="multi"))                       # no folder is connected in the chat: two projects, nothing to go by
+    assert "run_local_check" not in seen["tools"]
+    connect_folder(multi_workspace, "a-folder-no-project-has-that-name")
+    assert "run_local_check" not in run(drive(monkeypatch, [], db=db, username="multi"))["tools"]

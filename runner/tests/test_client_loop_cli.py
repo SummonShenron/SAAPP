@@ -4,61 +4,14 @@ import json
 import socket
 import sys
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from saapp_runner import cli, config as cfg, presets
+from saapp_runner import __version__, cli, config as cfg, presets, projects
 from saapp_runner.client import Client, ServerError, Unreachable, check_address
 from saapp_runner.loop import Runner
 
 PY = sys.executable
-
-
-# ---- a small server to talk to ----------------------------------------------------------------------------------------------------------------
-
-class Fake:
-    """Answers each (method, path) with a (status, body) and remembers what it was sent."""
-
-    def __init__(self):
-        self.routes, self.seen = {}, []
-
-    def start(self):
-        outer = self
-
-        class Handler(BaseHTTPRequestHandler):
-            def _answer(self):
-                length = int(self.headers.get("Content-Length") or 0)
-                body = json.loads(self.rfile.read(length) or b"{}") if length else None
-                outer.seen.append({"method": self.command, "path": self.path, "auth": self.headers.get("Authorization"), "agent": self.headers.get("User-Agent"), "body": body})
-                status, payload = outer.routes.get((self.command, self.path.split("?")[0]), (404, {"detail": "no route"}))
-                raw = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(raw)))
-                self.end_headers()
-                self.wfile.write(raw)
-
-            do_GET = do_POST = _answer
-
-            def log_message(self, *args):
-                return None
-
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
-        return self
-
-    def stop(self):
-        self.server.shutdown()
-        self.server.server_close()
-
-
-@pytest.fixture()
-def fake():
-    server = Fake().start()
-    yield server
-    server.stop()
 
 
 # ---- the client ------------------------------------------------------------------------------------------------------------------------------
@@ -77,12 +30,13 @@ def test_pairing_trades_a_code_for_a_key_without_any_credentials(fake):
     assert made == {"key": "abc.def", "name": "laptop"} and fake.seen[0]["auth"] is None and fake.seen[0]["body"] == {"code": "ABCDE-FGHJK"}
 
 
-def test_every_other_call_carries_the_key_and_the_version_and_names_the_checks(fake):
+def test_every_other_call_carries_the_key_and_the_version_and_names_the_projects_and_their_checks(fake):
     fake.routes[("POST", "/api/runner/hello")] = (200, {"ok": True})
-    Client(fake.url, "abc.def").hello("myapp", [{"name": "tests", "command": "pytest"}])
+    listed = [{"id": "a1b2c3d4", "name": "myapp", "status": "ok", "checks": [{"name": "tests", "command": "pytest", "ready": True}]}]
+    Client(fake.url, "abc.def").hello(listed, "", "hand", [{"id": "r1", "result": "added"}])
     sent = fake.seen[0]
-    assert sent["auth"] == "Bearer abc.def" and sent["agent"].startswith("saapp-runner/") and sent["body"]["root_name"] == "myapp" and sent["body"]["version"] == "0.1.0"
-    assert sent["body"]["checks"] == [{"name": "tests", "command": "pytest"}]
+    assert sent["auth"] == "Bearer abc.def" and sent["agent"].startswith("saapp-runner/") and sent["body"]["version"] == __version__
+    assert sent["body"]["projects"] == listed and sent["body"]["status"] == "" and sent["body"]["launch"] == "hand" and sent["body"]["request_results"] == [{"id": "r1", "result": "added"}]
 
 
 def test_the_next_job_is_the_job_or_none(fake):
@@ -124,10 +78,14 @@ class FakeClient:
     """Stands in for the server: hands out the jobs it was given, records what was reported, and can be told to cancel or to fail."""
 
     def __init__(self, jobs=(), cancel_after=None, next_errors=()):
-        self.jobs, self.reported, self.cancel_after, self.heartbeats, self.next_errors, self.hellos = list(jobs), [], cancel_after, 0, list(next_errors), []
+        self.jobs, self.reported, self.cancel_after, self.heartbeats, self.next_errors, self.hellos, self.statuses = list(jobs), [], cancel_after, 0, list(next_errors), [], []
 
-    def hello(self, root_name, checks):
-        self.hellos.append((root_name, checks))
+    def hello(self, projects, status="", launch="", request_results=None):
+        self.hellos.append(projects)
+        self.statuses.append(status)                                                      # the runner's own status
+        self.project_statuses = getattr(self, "project_statuses", []) + [[p["status"] for p in projects]]
+        self.launches = getattr(self, "launches", []) + [launch]
+        self.results = getattr(self, "results", []) + [list(request_results or [])]
         return {"ok": True}
 
     def next_job(self, wait=25):
@@ -158,12 +116,13 @@ def make_runner(client, project, checks, **kwargs):
     return runner, said
 
 
-def test_hello_introduces_the_folder_and_the_checks_with_their_command_text(project):
+def test_hello_introduces_the_project_and_its_checks_with_their_command_text(project):
     client = FakeClient()
     runner, _ = make_runner(client, project, {"tests": [PY, "-c", "print(1)"], "types": ["npx", "tsc", "-b"]})
     assert runner.hello() is True
-    root_name, checks = client.hellos[0]
-    assert root_name == "myapp" and [c["name"] for c in checks] == ["tests", "types"] and checks[1]["command"] == "npx tsc -b"
+    (introduced,) = client.hellos[0]
+    assert introduced["name"] == "myapp" and introduced["id"] == projects.project_id(project) and len(introduced["id"]) == 8
+    assert [c["name"] for c in introduced["checks"]] == ["tests", "types"] and introduced["checks"][1]["command"] == "npx tsc -b"
 
 
 def test_an_approved_job_runs_the_command_the_person_defined_and_reports_what_happened(project):
@@ -274,7 +233,7 @@ def test_serving_waits_out_a_server_that_cannot_be_reached_and_keeps_going(proje
 
 def test_hello_says_why_when_the_server_turns_the_runner_away(project):
     class Refusing(FakeClient):
-        def hello(self, root_name, checks):
+        def hello(self, projects, status="", launch="", request_results=None):
             raise ServerError(426, "Update the runner.")
 
     runner, said = make_runner(Refusing(), project, {"tests": [PY, "-c", "print(1)"]})
@@ -314,34 +273,38 @@ def test_init_asks_before_adding_each_check(tmp_path, monkeypatch):
     assert list(cfg.load_checks(root)) == ["types"]
 
 
-def test_pair_saves_the_key_for_that_project_and_says_where(fake, capsys, runner_home, tmp_path):
+def test_pair_saves_this_computers_key_and_says_where(fake, capsys, runner_home):
+    fake.routes[("POST", "/api/runner/pair")] = (200, {"key": "abc.def", "name": "laptop"})
+    assert cli.main(["pair", "--server", fake.url, "ABCDEFGHJK"]) == 0
+    assert cfg.load_credentials() == {"server": fake.url, "key": "abc.def"} and "Paired this computer" in capsys.readouterr().out
+    assert projects.load() == []                                                                          # no project is added by pairing alone
+
+
+def test_pair_can_allow_a_project_folder_right_away_when_one_is_typed(fake, capsys, runner_home, tmp_path):
     root = tmp_path / "proj"
     root.mkdir()
     fake.routes[("POST", "/api/runner/pair")] = (200, {"key": "abc.def", "name": "laptop"})
     assert cli.main(["pair", "--server", fake.url, "--root", str(root), "ABCDEFGHJK"]) == 0
-    assert cfg.load_credentials(root) == {"server": fake.url, "key": "abc.def"} and "Paired" in capsys.readouterr().out
-    other = tmp_path / "other"
-    other.mkdir()
-    assert cfg.load_credentials(other) is None                                                          # another project is still unpaired
+    assert projects.load() == [root.resolve()] and "Added the project proj" in capsys.readouterr().out
 
 
 def test_pair_says_what_went_wrong_and_saves_nothing(fake, capsys, tmp_path):
-    root = tmp_path / "proj"
-    root.mkdir()
     fake.routes[("POST", "/api/runner/pair")] = (401, {"detail": "That code is wrong, already used, or expired."})
-    assert cli.main(["pair", "--server", fake.url, "--root", str(root), "WRONGWRONG"]) == 1
-    assert "wrong, already used, or expired" in capsys.readouterr().out and cfg.load_credentials(root) is None
-    assert cli.main(["pair", "--server", "http://remote.example.com", "--root", str(root), "ABCDEFGHJK"]) == 1      # plain http to another machine
+    assert cli.main(["pair", "--server", fake.url, "WRONGWRONG"]) == 1
+    assert "wrong, already used, or expired" in capsys.readouterr().out and cfg.load_credentials() is None
+    assert cli.main(["pair", "--server", "http://remote.example.com", "ABCDEFGHJK"]) == 1                  # plain http to another machine
+    assert cfg.load_credentials() is None
+
+
+def test_pairing_works_even_when_the_typed_folder_is_not_one_and_says_so(fake, capsys, tmp_path):
+    fake.routes[("POST", "/api/runner/pair")] = (200, {"key": "abc.def", "name": "laptop"})
     assert cli.main(["pair", "--server", fake.url, "--root", str(tmp_path / "not-a-folder"), "ABCDEFGHJK"]) == 1
-    assert "is not a folder" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "That is not a folder." in out and cfg.load_credentials()["key"] == "abc.def" and projects.load() == []         # the computer is paired; only the folder was refused
 
 
-def test_start_will_not_begin_unpaired_or_when_the_project_has_nothing_to_run(tmp_path, capsys):
-    root = tmp_path / "proj"
-    root.mkdir()
-    assert cli.main(["start", "--root", str(root)]) == 1 and "not paired" in capsys.readouterr().out
-    cfg.save_credentials("https://saapp.example.com", "abc.def", root)
-    assert cli.main(["start", "--root", str(root)]) == 1 and "Found no tests or type check" in capsys.readouterr().out
+def test_start_will_not_begin_unpaired(tmp_path, capsys):
+    assert cli.main(["start"]) == 1 and "not paired" in capsys.readouterr().out
 
 
 # ---- checks found by the runner itself, and the settings chosen in the page ------------------------------------------------------------------------
@@ -379,14 +342,15 @@ def test_a_check_written_in_the_config_replaces_the_preset_of_the_same_name(tmp_
 def test_start_needs_no_init_because_the_runner_finds_the_checks_itself(fake, tmp_path, runner_home):
     root = tmp_path / "proj"
     (root / "tests").mkdir(parents=True)
-    cfg.save_credentials(fake.url, "abc.def", root)
+    cfg.save_credentials(fake.url, "abc.def")
+    projects.add(root)
     fake.routes[("POST", "/api/runner/hello")] = (200, {"ok": True})
     fake.routes[("GET", "/api/runner/next")] = (401, {"detail": "stop"})                 # the first poll ends the run
     said = []
     stop = threading.Event()
-    assert cli.cmd_start(argparse.Namespace(root=str(root), timeout=5), say=said.append, stop=stop) == 0
+    assert cli.cmd_start(argparse.Namespace(root=None, timeout=5), say=said.append, stop=stop) == 0
     hello = next(call for call in fake.seen if call["path"].endswith("/hello"))
-    assert [c["name"] for c in hello["body"]["checks"]] == ["tests"] and any("can run: tests" in line for line in said)
+    assert [c["name"] for c in hello["body"]["projects"][0]["checks"]] == ["tests"] and any("can run: tests" in line for line in said)
 
 
 def test_fake_ai_keys_are_set_only_when_the_job_says_yes_and_hide_a_real_one(project, monkeypatch):
@@ -415,3 +379,137 @@ def test_a_fake_key_beats_a_dotenv_file_in_the_project(project, tmp_path):
     runner.handle({"job_id": "j2", "check": "tests", "files": [], "settings": {"fake_keys": False}})
     outputs = {job: report["output_tail"].strip() for job, report in runner.client.reported}
     assert outputs == {"j1": "test-not-real", "j2": "real-from-dotenv"}
+
+
+# ---- the status the runner reports, and looking at the folder again ------------------------------------------------------------------------------
+
+def test_the_status_is_the_first_problem_that_applies_and_always_a_known_code(tmp_path):
+    from saapp_runner import status
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    good = {"tests": [PY, "-c", "print(1)"]}
+    assert status.assess(root, good) == (status.OK, {"tests": True})
+    assert status.assess(root, {})[0] == status.NO_CHECKS_FOUND
+    assert status.assess(root, {"tests": ["definitely-not-a-program-xyz", "-q"]})[0] == status.COMMAND_MISSING
+    assert status.assess(root, good, config_ok=False)[0] == status.CONFIG_PROBLEM
+    assert status.assess(tmp_path / "gone", good, config_ok=False)[0] == status.FOLDER_MISSING                           # the folder matters most
+    assert all(status.assess(root, checks, ok)[0] in status.CODES for checks in (good, {}) for ok in (True, False))
+    assert all(status.describe(code) for code in status.CODES) and status.describe("made-up") == ""
+
+
+def test_a_program_counts_as_found_the_way_the_runner_finds_it(tmp_path):
+    from saapp_runner import status
+
+    assert status.program_ready([PY, "-c", "x"]) is True                       # a full path that exists
+    assert status.program_ready(["definitely-not-a-program-xyz"]) is False and status.program_ready([]) is False and status.program_ready([" "]) is False
+    assert status.program_ready([str(tmp_path / "missing.exe")]) is False
+
+
+def test_hello_carries_the_projects_status_and_whether_each_checks_program_can_be_found(project):
+    client = FakeClient()
+    runner, _ = make_runner(client, project, {"tests": [PY, "-c", "print(1)"], "types": ["definitely-not-a-program-xyz", "-b"]})
+    assert runner.hello() is True
+    (introduced,) = client.hellos[0]
+    assert client.project_statuses == [["command_missing"]] and client.statuses == [""] and [(c["name"], c["ready"]) for c in introduced["checks"]] == [("tests", True), ("types", False)]
+
+
+def test_a_runner_with_nothing_to_run_still_introduces_itself_and_says_why(project):
+    client = FakeClient()
+    runner, _ = make_runner(client, project, {})
+    assert runner.hello() is True and client.project_statuses == [["no_checks_found"]] and client.hellos[0][0]["checks"] == []
+
+
+def test_a_runner_with_no_project_at_all_still_connects(project):
+    client = FakeClient()
+    runner = Runner(client, None, say=lambda line: None, poll_wait=0, roots_provider=lambda: [])
+    assert runner.hello() is True and client.hellos == [[]] and client.statuses == [""]
+
+
+def test_the_runner_notices_a_check_appearing_and_the_folder_going_missing_without_a_restart(tmp_path):
+    root = tmp_path / "proj"
+    root.mkdir()
+    client = FakeClient()
+    state = {"checks": {}, "ok": True}
+    runner, said = make_runner(client, root, None, scanner=lambda folder: (state["checks"], state["ok"], ""))
+    runner.hello()
+    runner.refresh()
+    assert len(client.hellos) == 1                                                       # nothing changed: nothing is sent again
+    state["checks"] = {"tests": [PY, "-c", "print(1)"]}
+    runner.refresh()
+    assert client.project_statuses == [["no_checks_found"], ["ok"]] and any("ready again: tests" in line for line in said)
+    root.rmdir()
+    runner.refresh()
+    assert client.project_statuses[-1] == ["folder_missing"] and any("could not be found" in line for line in said)
+    runner.refresh()
+    assert len(client.hellos) == 3                                                       # still missing: said once, not every minute
+
+
+def test_the_runner_follows_the_list_of_projects_as_it_changes_and_tells_the_server(tmp_path):
+    first, second = tmp_path / "one", tmp_path / "two"
+    for folder in (first, second):
+        (folder / "tests").mkdir(parents=True)
+    roots = [first]
+    client = FakeClient()
+    runner, said = make_runner(client, None, None, roots_provider=lambda: list(roots), scanner=lambda folder: ({"tests": [PY, "-c", "print(1)"]}, True, ""))
+    runner.hello()
+    assert [p["name"] for p in client.hellos[-1]] == ["one"]
+    roots.append(second)
+    runner.refresh()
+    assert [p["name"] for p in client.hellos[-1]] == ["one", "two"] and len({p["id"] for p in client.hellos[-1]}) == 2
+    roots.remove(first)
+    runner.refresh()
+    assert [p["name"] for p in client.hellos[-1]] == ["two"]
+
+
+def test_a_config_that_cannot_be_read_is_said_once_and_reported(tmp_path):
+    root = tmp_path / "proj"
+    root.mkdir()
+    client = FakeClient()
+    state = {"ok": True}
+    runner, said = make_runner(client, root, None, scanner=lambda folder: ({"tests": [PY, "-c", "print(1)"]}, state["ok"], "could not read config.toml: bad"))
+    runner.hello()
+    state["ok"] = False
+    runner.refresh()
+    runner.refresh()
+    assert client.project_statuses == [["ok"], ["config_problem"]] and said.count("proj: could not read config.toml: bad") == 1
+
+
+def test_the_serve_loop_looks_again_on_its_own_schedule(project):
+    client = FakeClient()
+    state = {"checks": {}}
+    runner, _ = make_runner(client, project, None, scanner=lambda folder: (state["checks"], True, ""), scan_every=0.0)
+    runner.hello()
+    state["checks"] = {"tests": [PY, "-c", "print(1)"]}
+    client.next_errors = [ServerError(401, "stop here")]                                 # the first poll ends the loop, after the scan that comes before it
+    runner.serve()
+    assert client.project_statuses == [["no_checks_found"], ["ok"]]
+
+
+def test_start_with_nothing_to_run_stays_connected_and_tells_the_server_why(fake, tmp_path, runner_home, capsys):
+    root = tmp_path / "proj"
+    root.mkdir()
+    cfg.save_credentials(fake.url, "abc.def")
+    projects.add(root)
+    fake.routes[("POST", "/api/runner/hello")] = (200, {"ok": True})
+    fake.routes[("GET", "/api/runner/next")] = (401, {"detail": "stop"})                 # the first poll ends the run
+    said = []
+    assert cli.cmd_start(argparse.Namespace(root=None, timeout=5), say=said.append, stop=threading.Event()) == 0
+    hello = next(call for call in fake.seen if call["path"].endswith("/hello"))
+    assert hello["body"]["projects"][0]["status"] == "no_checks_found" and hello["body"]["projects"][0]["checks"] == []
+    assert any("Found no tests or type check" in line and "no need to restart" in line for line in said) and "Connected." in " ".join(said)
+
+
+def test_start_with_no_project_yet_stays_connected_and_says_how_to_add_one(fake, runner_home):
+    cfg.save_credentials(fake.url, "abc.def")
+    fake.routes[("POST", "/api/runner/hello")] = (200, {"ok": True})
+    fake.routes[("GET", "/api/runner/next")] = (401, {"detail": "stop"})
+    said = []
+    assert cli.cmd_start(argparse.Namespace(root=None, timeout=5), say=said.append, stop=threading.Event()) == 0
+    hello = next(call for call in fake.seen if call["path"].endswith("/hello"))
+    assert hello["body"]["projects"] == [] and any("No project yet" in line and "Add a project" in line for line in said)
+
+
+def test_start_refuses_a_typed_folder_that_does_not_exist_before_connecting(fake, tmp_path, runner_home, capsys):
+    cfg.save_credentials(fake.url, "abc.def")
+    assert cli.main(["start", "--root", str(tmp_path / "missing")]) == 1 and "That is not a folder." in capsys.readouterr().out and not fake.seen

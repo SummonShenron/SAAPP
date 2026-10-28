@@ -156,6 +156,10 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
         "check": {"type": "string", "description": "the name of one of the person's checks, as listed in this tool's description"},
         "files": {"type": "array", "items": {"type": "string"}, "description": "optional: paths of files in their project, only for a check that takes files"},
     }, ["check"]),
+    # a command line on the person's OWN machine (runner/src/saapp_runner/commands.py rules): shown word for word on a card, approved there, decided on again by their runner. Offered only when one is connected.
+    "run_local_command": _object({
+        "line": {"type": "string", "description": "one command line in the small language described by this tool"},
+    }, ["line"]),
     # plan mode (backend/utils/code_plan.py), offered only on a plan turn: the plan the person approves before anything is edited. Nothing is written to their folder.
     "submit_plan": _object({
         "goal": {"type": "string", "description": "one sentence: what the change is"},

@@ -37,6 +37,11 @@ def check_address(server: str) -> str:
 class Client:
     def __init__(self, server: str, key: Optional[str] = None) -> None:
         self.server, self.key = check_address(server), key
+        # What the last poll said besides a job. `update_to` is a version NUMBER (never an address); `add_project` is {"id", "name"} (a request to ask the person to choose that project's folder: a name, never
+        # a path); `remove_project` is a project id to forget.
+        self.update_to: Optional[str] = None
+        self.add_project: Optional[Dict[str, str]] = None
+        self.remove_project: Optional[str] = None
 
     def _call(self, method: str, path: str, body: Optional[Dict[str, Any]] = None, timeout: float = 40) -> Dict[str, Any]:
         headers = {"Content-Type": "application/json", "User-Agent": f"saapp-runner/{__version__}"}
@@ -62,11 +67,18 @@ class Client:
     def pair(self, code: str) -> Dict[str, Any]:
         return self._call("POST", "/api/runner/pair", {"code": code})
 
-    def hello(self, root_name: str, checks: List[Dict[str, str]]) -> Dict[str, Any]:
-        return self._call("POST", "/api/runner/hello", {"version": __version__, "root_name": root_name, "checks": checks})
+    def hello(self, projects: List[Dict[str, Any]], status: str = "", launch: str = "", request_results: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
+        """Introduces the runner: the PROJECTS it serves (each with an id, a name, a status code and its checks, which say whether their program can be found on this computer), its own status (a code,
+        never free text), how it was started ("service" at login, "hand"), and what became of the projects SAAPP asked for."""
+        return self._call("POST", "/api/runner/hello", {"version": __version__, "projects": projects, "status": status, "launch": launch, "request_results": request_results or []})
 
     def next_job(self, wait: int = 25) -> Optional[Dict[str, Any]]:
-        return self._call("GET", f"/api/runner/next?wait={int(wait)}", timeout=wait + 15).get("job")
+        answer = self._call("GET", f"/api/runner/next?wait={int(wait)}", timeout=wait + 15)
+        offered, add, forget = answer.get("update"), answer.get("add_project"), answer.get("remove_project")
+        self.update_to = offered if isinstance(offered, str) else None
+        self.add_project = {"id": str(add["id"]), "name": str(add["name"])} if isinstance(add, dict) and add.get("id") and add.get("name") else None      # only the two words, whatever else was sent
+        self.remove_project = forget if isinstance(forget, str) else None
+        return answer.get("job")
 
     def heartbeat(self, job_id: str) -> Dict[str, Any]:
         return self._call("POST", f"/api/runner/jobs/{urllib.parse.quote(job_id)}/heartbeat", {})
