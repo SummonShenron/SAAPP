@@ -120,6 +120,22 @@ def clear_facts_cache_between_tests():
 
 
 @pytest.fixture(autouse=True)
+def background_index_builds_never_outlive_their_test(block_real_embedding_calls, block_real_db_calls, block_real_llm_calls):
+    """The leanings and experiences indexes are built by background threads (backend/utils/leanings.py and experiences.py `warm`), and a turn that finds an entry missing starts one. A test
+    that reaches that code starts a thread, and a daemon thread is not stopped when the test ends: it keeps embedding after this file's block_real_* fixtures have been undone, so its calls land
+    in a LATER test's setup, where nothing blocks them. With the fake key that is a failed call and a stack trace in the log (seen 2026-10-27, traced to these two threads); with a real key in .env
+    it would be real, billed embedding calls. It takes the block fixtures as arguments ON PURPOSE: a fixture is torn down before the ones it depends on, so this waits for the threads while the
+    blocks are still in place, and a thread that is still going finds its embedding calls refused, finishes at once, and is waited for here. (Declaring only an order by where it sits in this file does
+    not work: autouse fixtures are not set up in the order they are written, and the first version of this one ran after the blocks were gone.)"""
+    yield
+    import threading
+
+    for thread in threading.enumerate():
+        if thread.name in ("leanings-index", "experiences-index") and thread.is_alive():
+            thread.join(timeout=15)
+
+
+@pytest.fixture(autouse=True)
 def default_tool_engine(monkeypatch):
     """The suite runs the default (ReAct) tool loop unless a test chooses the native one. A developer's .env may set TOOL_AGENT_ENGINE=native (to match production), and the tests
     that script the ReAct loop's model calls must not change with it; the native tests set the variable themselves, and their setting wins."""
