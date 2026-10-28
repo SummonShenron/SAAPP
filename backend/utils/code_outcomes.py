@@ -45,7 +45,7 @@ REPO_TOOLS = frozenset({
     "diff_branches", "list_commits", "list_pull_requests", "propose_local_edits", "run_repo_tests", "run_snippet",
 })
 EDIT_TOOLS = frozenset({"propose_local_edits"})
-TEST_TOOLS = frozenset({"run_repo_tests", "run_snippet", "run_sandbox_tests"})
+TEST_TOOLS = frozenset({"run_repo_tests", "run_snippet", "run_sandbox_tests", "run_local_check"})
 VERIFY_TOOLS = TEST_TOOLS
 SMALL_EDIT_LINES = 20
 FRUSTRATION_MIN = float(os.getenv("CODE_FRUSTRATION_MIN", "0.4"))

@@ -312,22 +312,31 @@ def test_init_asks_before_adding_each_check(tmp_path, monkeypatch):
     assert list(cfg.load_checks(root)) == ["types"]
 
 
-def test_pair_saves_the_key_and_says_where(fake, capsys, runner_home):
+def test_pair_saves_the_key_for_that_project_and_says_where(fake, capsys, runner_home, tmp_path):
+    root = tmp_path / "proj"
+    root.mkdir()
     fake.routes[("POST", "/api/runner/pair")] = (200, {"key": "abc.def", "name": "laptop"})
-    assert cli.main(["pair", "--server", fake.url, "ABCDEFGHJK"]) == 0
-    assert cfg.load_credentials() == {"server": fake.url, "key": "abc.def"} and "Paired as laptop" in capsys.readouterr().out
+    assert cli.main(["pair", "--server", fake.url, "--root", str(root), "ABCDEFGHJK"]) == 0
+    assert cfg.load_credentials(root) == {"server": fake.url, "key": "abc.def"} and "Paired" in capsys.readouterr().out
+    other = tmp_path / "other"
+    other.mkdir()
+    assert cfg.load_credentials(other) is None                                                          # another project is still unpaired
 
 
-def test_pair_says_what_went_wrong_and_saves_nothing(fake, capsys):
+def test_pair_says_what_went_wrong_and_saves_nothing(fake, capsys, tmp_path):
+    root = tmp_path / "proj"
+    root.mkdir()
     fake.routes[("POST", "/api/runner/pair")] = (401, {"detail": "That code is wrong, already used, or expired."})
-    assert cli.main(["pair", "--server", fake.url, "WRONGWRONG"]) == 1
-    assert "wrong, already used, or expired" in capsys.readouterr().out and cfg.load_credentials() is None
-    assert cli.main(["pair", "--server", "http://remote.example.com", "ABCDEFGHJK"]) == 1                 # plain http to another machine
+    assert cli.main(["pair", "--server", fake.url, "--root", str(root), "WRONGWRONG"]) == 1
+    assert "wrong, already used, or expired" in capsys.readouterr().out and cfg.load_credentials(root) is None
+    assert cli.main(["pair", "--server", "http://remote.example.com", "--root", str(root), "ABCDEFGHJK"]) == 1      # plain http to another machine
+    assert cli.main(["pair", "--server", fake.url, "--root", str(tmp_path / "not-a-folder"), "ABCDEFGHJK"]) == 1
+    assert "is not a folder" in capsys.readouterr().out
 
 
 def test_start_will_not_begin_unpaired_or_with_no_checks_defined(tmp_path, capsys):
     root = tmp_path / "proj"
     root.mkdir()
     assert cli.main(["start", "--root", str(root)]) == 1 and "not paired" in capsys.readouterr().out
-    cfg.save_credentials("https://saapp.example.com", "abc.def")
+    cfg.save_credentials("https://saapp.example.com", "abc.def", root)
     assert cli.main(["start", "--root", str(root)]) == 1 and "No checks are defined" in capsys.readouterr().out

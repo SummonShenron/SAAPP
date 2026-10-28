@@ -334,8 +334,97 @@ def test_what_the_model_is_told_labels_the_output_as_data_and_says_when_the_star
     assert "CANCELLED" in rj.format_result({"check": "t", "status": rj.CANCELLED}) and "NOT FINISHED" in rj.format_result({"check": "t", "status": rj.RUNNING})
 
 
-def test_the_module_logs_only_ids_and_counts():
+def test_the_module_logs_only_fixed_messages_never_ids_output_or_commands():
     import pathlib
+    import re
 
     source = (pathlib.Path(rj.__file__)).read_text(encoding="utf-8")
-    assert source.count("logger.") == 1 and "could not create its indexes" in source
+    calls = re.findall(r"logger\.\w+\((.*)\)", source)
+    assert len(calls) == 2 and all(call.startswith('"[runner]') and call.endswith('."') for call in calls)        # a fixed sentence, with nothing interpolated into it
+
+
+# ---- asking again, and waiting ---------------------------------------------------------------------------------------------------------------
+
+def test_asking_for_the_same_check_again_returns_the_open_job_instead_of_a_second_card():
+    db = FakeDB()
+    record, _ = connected(db)
+    first, reused = rj.create_or_reuse_job(db, "jack@example.com", record["_id"], "tests", ["a.py"], NOW)
+    assert reused is False and first["status"] == rj.AWAITING
+    again, reused = rj.create_or_reuse_job(db, "jack@example.com", record["_id"], "Tests", ["./a.py"], later(seconds=5))
+    assert reused is True and again["id"] == first["id"]                                           # same check and the same files, however they were written
+    with pytest.raises(rj.RunnerError) as error:
+        rj.create_or_reuse_job(db, "jack@example.com", record["_id"], "tests", ["b.py"], later(seconds=6))
+    assert error.value.code == "busy"                                                              # a different request is not folded into the open one
+    rj.cancel_job(db, "jack@example.com", first["id"], later(seconds=7))
+    fresh, reused = rj.create_or_reuse_job(db, "jack@example.com", record["_id"], "tests", ["a.py"], later(seconds=8))
+    assert reused is False and fresh["id"] != first["id"]                                          # once closed, a new request is a new job
+
+
+def test_a_runners_checks_are_described_for_the_menu_with_whether_they_take_files():
+    runner = {"checks": [{"name": "tests", "command": "pytest -q {files}"}, {"name": "types", "command": "npx tsc -b"}]}
+    assert rj.describe_checks(runner) == "tests = pytest -q {files} (takes files); types = npx tsc -b" and rj.describe_checks({"checks": []}) == "none"
+
+
+def run_async(coro):
+    import asyncio
+
+    return asyncio.run(coro)
+
+
+def test_waiting_returns_the_finished_job_as_soon_as_the_runner_reports(monkeypatch):
+    import threading
+    import time
+
+    db = FakeDB()
+    record, _ = connected(db, now=rj._now())
+    job = rj.create_job(db, "jack@example.com", record["_id"], "tests", None)
+
+    def person_and_runner():
+        time.sleep(0.2)
+        rj.approve_job(db, "jack@example.com", job["id"])
+        rj.claim_next(db, record)
+        time.sleep(0.2)
+        rj.complete_job(db, record, job["id"], {"exit_code": 0, "output_tail": "all passed", "duration": 0.4})
+
+    threading.Thread(target=person_and_runner, daemon=True).start()
+    ticks = []
+
+    async def tick(seconds, status):
+        ticks.append(status)
+
+    monkeypatch.setattr(rj, "TICK_SECONDS", 0.1)
+    done = run_async(rj.wait_for_result(db, "jack@example.com", job["id"], timeout=15, on_tick=tick, poll=0.05))
+    assert done["status"] == rj.DONE and done["output_tail"] == "all passed" and ticks and ticks[0] in (rj.AWAITING, rj.APPROVED, rj.RUNNING)
+
+
+def test_waiting_gives_up_after_its_limit_and_returns_the_job_still_open_and_still_runnable():
+    db = FakeDB()
+    record, _ = connected(db, now=rj._now())
+    job = rj.create_job(db, "jack@example.com", record["_id"], "tests", None)
+    still = run_async(rj.wait_for_result(db, "jack@example.com", job["id"], timeout=0.3, poll=0.05))
+    assert still["status"] == rj.AWAITING and rj.approve_job(db, "jack@example.com", job["id"])      # the card is still there to press
+    assert "NOT FINISHED" in rj.format_result(still)
+
+
+def test_a_job_that_vanished_while_waiting_returns_none():
+    db = FakeDB()
+    assert run_async(rj.wait_for_result(db, "jack@example.com", "no-such-job", timeout=1, poll=0.05)) is None
+
+
+def test_stopping_the_turn_while_waiting_cancels_the_check_so_it_cannot_run_unseen():
+    import asyncio
+
+    db = FakeDB()
+    record, _ = connected(db, now=rj._now())
+    job = rj.create_job(db, "jack@example.com", record["_id"], "tests", None)
+
+    async def scenario():
+        task = asyncio.create_task(rj.wait_for_result(db, "jack@example.com", job["id"], timeout=30, poll=0.05))
+        await asyncio.sleep(0.3)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+    assert rj.get_job(db, "jack@example.com", job["id"])["status"] == rj.CANCELLED
+    assert rj.approve_job(db, "jack@example.com", job["id"]) is None                                  # and a late press of Run does nothing

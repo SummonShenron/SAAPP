@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { getEffectivePrincipal, isGuestPrincipal } from '../api';
 import ChatSettingsCard from '../components/ChatSettingsCard';
 import ProfileCard from '../components/ProfileCard';
+import RunnerSettingsCard from '../components/RunnerSettingsCard';
 import './__styles__/Account.css';
 
 /**
@@ -31,6 +32,8 @@ export const AccountPage: React.FC<{ theme: string; toggleTheme: () => void }> =
       {!guest && <ProfileCard />}
 
       <ChatSettingsCard mascotAllowed={principal !== 'guest_bty'} />
+
+      {!guest && <RunnerSettingsCard />}
 
       <section className="account-card">
         <h3>Appearance</h3>

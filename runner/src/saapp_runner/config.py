@@ -45,27 +45,36 @@ def _private(path: Path, mode: int) -> None:
         pass                         # a filesystem without permissions (some Windows setups): the folder is still in the person's own profile
 
 
-def save_credentials(server: str, key: str) -> None:
-    """Keeps the server address and this runner's key where only the owner can read them."""
-    folder = home()
-    folder.mkdir(parents=True, exist_ok=True)
-    _private(folder, 0o700)
-    path = credentials_path()
-    path.write_text(json.dumps({"server": server.rstrip("/"), "key": key}), encoding="utf-8")
-    _private(path, 0o600)
-
-
-def load_credentials() -> Optional[Dict[str, str]]:
-    try:
-        data = json.loads(credentials_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return data if isinstance(data, dict) and data.get("server") and data.get("key") else None
-
-
 def project_key(root: Path) -> str:
     """The name a project's section goes under: its full path, in the form the operating system compares paths in."""
     return os.path.normcase(str(Path(root).resolve()))
+
+
+def _read_credentials() -> Dict[str, Any]:
+    try:
+        data = json.loads(credentials_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) and isinstance(data.get("projects"), dict) else {}
+
+
+def save_credentials(server: str, key: str, root: Path) -> None:
+    """Keeps the server address and the key for ONE project folder where only the owner can read them. Each project has its own runner and its own key, so pairing a second project never
+    replaces the first one's."""
+    folder = home()
+    folder.mkdir(parents=True, exist_ok=True)
+    _private(folder, 0o700)
+    data = _read_credentials()
+    data.setdefault("projects", {})[project_key(root)] = {"server": server.rstrip("/"), "key": key}
+    path = credentials_path()
+    path.write_text(json.dumps(data), encoding="utf-8")
+    _private(path, 0o600)
+
+
+def load_credentials(root: Path) -> Optional[Dict[str, str]]:
+    """The server address and key this project folder was paired with, or None."""
+    entry = _read_credentials().get("projects", {}).get(project_key(root))
+    return entry if isinstance(entry, dict) and entry.get("server") and entry.get("key") else None
 
 
 def parse_command(value: Any) -> List[str]:

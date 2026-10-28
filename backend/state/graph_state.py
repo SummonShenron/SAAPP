@@ -71,6 +71,7 @@ class GraphState(TypedDict):
     working_notes: Optional[str]                  # this conversation's working notes as a prompt block (backend/utils/working_state.py), for the tool agent; set fresh each turn
     git_branch: Optional[str]                   # the git branch the person's connected folder is on, as their browser reported it (for commits)
     edit_decisions: Optional[bool]                # the page reports Apply / Decline on a proposed folder change, so the native tool loop may wait for it and continue
+    runner_cards: Optional[bool]                  # the page can show a local-runner check card (Run / Cancel), so the run_local_check tool may be offered (backend/utils/runner_jobs.py)
     tool_model: Optional[str]                     # "claude" | "gemini": the person's choice for the tool agent's reasoning steps; None = the server's default
     budget_level: Optional[str]                   # the usage budget guard's level this turn (backend/utils/budget_guard.py)
     insight_answer: Optional[str]                 # Woven into CONVERSATIONAL_PROMPT's {insight} slot

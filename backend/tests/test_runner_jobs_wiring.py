@@ -53,3 +53,20 @@ def test_the_wait_for_a_job_is_bounded_and_errors_map_through_the_one_status_tab
 def test_every_handler_does_its_database_work_off_the_event_loop():
     runner_section = SOURCE[SOURCE.index("class RunnerPairingRequest"):SOURCE.index('@app.get("/api/memory")')]
     assert runner_section.count("asyncio.to_thread(") >= 12 and "runner_jobs." in runner_section
+
+
+def test_the_pairing_answer_carries_the_starter_scripts_only_when_an_install_address_is_configured():
+    text = block('@app.post("/api/runner/pairings")', 2600)
+    assert 'os.getenv("SAAPP_RUNNER_INSTALL_URL"' in text and "runner_scripts.starter_scripts(" in text and "runner_scripts.terminal_commands(" in text
+    assert "runner_scripts.public_server_url(" in text and "x-forwarded-proto" in text and '"install_problem"' in text and "except ValueError" in text
+    assert '"scripts": None' in text and "body.folder_name" in text
+
+
+def test_the_runner_list_tells_the_page_whether_an_install_address_is_set():
+    text = block('@app.get("/api/runner/runners")', 900)
+    assert '"install": {"configured"' in text and "runner_scripts.SCRIPT_VERSION" in text
+
+
+def test_the_pairing_code_in_the_answer_is_the_one_just_made_and_no_key_is_ever_in_it():
+    text = block('@app.post("/api/runner/pairings")', 2600)
+    assert "**made" in text and "authenticate" not in text and "exchange_pairing" not in text

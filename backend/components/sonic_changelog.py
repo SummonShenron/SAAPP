@@ -1031,6 +1031,18 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "run_local_checks",
+        "requires": [
+            "backend/utils/runner_jobs.py::async def wait_for_result",
+            "runner/src/saapp_runner/execute.py",
+        ],
+        "month": "2026-10",
+        "title": "Running your checks on your own machine",
+        "line": "If you set up the SAAPP runner on your computer, I can ask to run your tests or other checks there. You see the exact command on a card and press Run, and I read the real result.",
+        "keywords": ["run the tests", "run tests", "runner", "local runner", "your machine", "pytest", "type check", "run a check", "local check"],
+        "volunteer": [],
+    },
+    {
         "id": "self_model",
         "requires": [
             "backend/utils/self_model.py::def approved_block",

@@ -143,6 +143,7 @@ from backend.utils import experience_capture
 from backend.utils import experience_reflections
 from backend.utils import self_model
 from backend.utils import runner_jobs
+from backend.utils import runner_scripts
 from backend.utils import clarifications as clarify_utils
 from backend.utils import initiation as initiation_utils
 from backend.utils import reach as reach_utils
@@ -389,6 +390,7 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
     git_branch: str | None = None   # the git branch the connected folder is on, read by the browser from .git/HEAD (None when unknown or detached)
     edit_decisions: bool = False    # the page reports Apply / Decline back (POST /api/local-edits/{id}/decision), so the tool loop may wait for it and carry on
+    runner_cards: bool = False      # the page can show a local-runner check card (Run / Cancel), so the run_local_check tool may be offered (backend/utils/runner_jobs.py)
     folder_expected: bool = False   # the browser has a local folder connected, so a turn that finds none on the server can say so (the answer then used GitHub)
 
 class EditDecisionRequest(BaseModel):
@@ -834,6 +836,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         "deep_thinking": effective_deep_thinking,
         "tool_model": effective_tool_model,
         "edit_decisions": bool(request.edit_decisions),
+        "runner_cards": bool(request.runner_cards),
         "git_branch": (request.git_branch or "").strip()[:100] or None,
         "budget_level": budget_state.get("level"),
         "repo": effective_target_repo,
@@ -1023,6 +1026,11 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     # applies it only when the user presses Apply.
                     if kind == "on_custom_event" and event.get("name") == "local_edit_proposal":
                         yield f"data: {json.dumps({'event': 'local_edit_proposal', **event.get('data', {})})}\n\n"
+                        await asyncio.sleep(0.01)
+
+                    # A check Sonic asks to run on the person's own machine (backend/utils/runner_jobs.py): the page shows a card with the exact command and Run / Cancel buttons.
+                    if kind == "on_custom_event" and event.get("name") == "runner_check":
+                        yield f"data: {json.dumps({'event': 'runner_check', **event.get('data', {})})}\n\n"
                         await asyncio.sleep(0.01)
 
                     # Catch Final State when the graph finishes (Look for the final dictionary output)
@@ -2283,6 +2291,7 @@ async def store_feedback(
 
 class RunnerPairingRequest(BaseModel):
     name: str = ""
+    folder_name: str = ""           # the name of the folder connected in the page, so the starter script can warn when someone picks a different one
 
 
 def _runner_db_or_503():
@@ -2363,17 +2372,31 @@ async def list_runners(current_user = Depends(get_current_user)):
     """The person's runners and whether each is connected, for Settings."""
     username = _runner_person(current_user)
     runners = await asyncio.to_thread(runner_jobs.runners_for, _runner_db_or_503(), username)
-    return {"runners": runners, "limit": runner_jobs.MAX_KEYS_PER_PERSON, "min_version": ".".join(str(p) for p in runner_jobs.MIN_RUNNER_VERSION)}
+    return {"runners": runners, "limit": runner_jobs.MAX_KEYS_PER_PERSON, "min_version": ".".join(str(p) for p in runner_jobs.MIN_RUNNER_VERSION),
+            "install": {"configured": bool(os.getenv("SAAPP_RUNNER_INSTALL_URL", "").strip()), "version": runner_scripts.SCRIPT_VERSION}}
 
 
 @app.post("/api/runner/pairings")
-async def create_runner_pairing(body: RunnerPairingRequest, current_user = Depends(get_current_user)):
-    """A one-time pairing code for a new runner (shown once; the starter script carries it)."""
+async def create_runner_pairing(body: RunnerPairingRequest, http_request: Request, current_user = Depends(get_current_user)):
+    """A one-time pairing code for a new runner, and (when the install address is configured, SAAPP_RUNNER_INSTALL_URL) the starter scripts that carry it and the same setup as commands to type. The
+    code is shown once. The scripts carry the code, never a key."""
     username = _runner_person(current_user)
     try:
-        return await asyncio.to_thread(runner_jobs.create_pairing, _runner_db_or_503(), username, body.name)
+        made = await asyncio.to_thread(runner_jobs.create_pairing, _runner_db_or_503(), username, body.name)
     except runner_jobs.RunnerError as problem:
         raise _runner_http_error(problem)
+    install_url = os.getenv("SAAPP_RUNNER_INSTALL_URL", "").strip()
+    answer = {**made, "version": runner_scripts.SCRIPT_VERSION, "install_configured": bool(install_url), "scripts": None, "commands": None, "install_problem": ""}
+    if install_url:
+        try:
+            server = runner_scripts.public_server_url(
+                os.getenv("SAAPP_PUBLIC_URL", ""), http_request.headers.get("x-forwarded-proto") or http_request.url.scheme, http_request.headers.get("x-forwarded-host") or http_request.headers.get("host") or "",
+            )
+            answer["scripts"] = runner_scripts.starter_scripts(server, made["code"], install_url, body.folder_name)
+            answer["commands"] = runner_scripts.terminal_commands(server, made["code"], install_url)
+        except ValueError as problem:
+            answer["install_problem"] = str(problem)
+    return answer
 
 
 @app.delete("/api/runner/keys/{key_id}")

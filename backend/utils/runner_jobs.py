@@ -18,6 +18,7 @@ THE RULES THIS FILE ENFORCES (each one is tested in backend/tests/test_runner_jo
 import hashlib
 import hmac
 import logging
+import os
 import re
 import secrets
 import uuid
@@ -32,6 +33,8 @@ MAX_KEYS_PER_PERSON = 5
 PAIRING_MINUTES = 10
 RUNNER_ALIVE_SECONDS = 90          # a runner that has not polled in this long is "not connected"
 POLL_SECONDS = 25
+WAIT_SECONDS = float(os.getenv("SAAPP_RUNNER_WAIT_SECONDS", "600"))     # how long Sonic's turn waits for the person to run a check and for it to finish
+TICK_SECONDS = 20.0                # how often the stream is touched while waiting
 JOB_APPROVAL_MINUTES = 10          # a card nobody answered
 JOB_START_MINUTES = 10             # approved, but the runner never picked it up
 RUN_SILENCE_SECONDS = 120          # a running job whose runner stopped sending heartbeats this long ago has failed
@@ -299,6 +302,57 @@ def create_job(db: Any, username: str, runner_id: str, check: Any, files: Any = 
     db[JOBS].insert_one({"_id": job_id, "username": username, "runner_id": runner_id, "check": name, "command_shown": command, "files": paths, "status": AWAITING, "created_at": now,
                          "expires_at": now + timedelta(minutes=JOB_APPROVAL_MINUTES)})
     return get_job(db, username, job_id, now) or {}
+
+
+def create_or_reuse_job(db: Any, username: str, runner_id: str, check: Any, files: Any = None, now: Optional[datetime] = None) -> Tuple[Dict[str, Any], bool]:
+    """Like `create_job`, except that when the same check on the same files is already open (its card is waiting, or it is running), that job is returned instead of a second card. This is what lets
+    Sonic ask again after its wait ran out ("is the check done?") without piling up cards or being told the runner is busy. Returns (job, reused). Blocking."""
+    now = now or _now()
+    sweep(db, username, now)
+    name = clean_check_name(check)
+    paths = clean_files(files)
+    for job in db[JOBS].find({"username": username, "runner_id": runner_id, "status": {"$in": list(OPEN_STATES)}}):
+        if job.get("check") == name and (job.get("files") or []) == paths:
+            return public_job(job), True
+    return create_job(db, username, runner_id, name, paths, now), False
+
+
+def describe_checks(runner: Dict[str, Any]) -> str:
+    """A runner's checks for the tool's menu line: `tests = pytest -q {files} (takes files); types = npx tsc -b`. The command text is the runner's own report. Pure."""
+    parts = []
+    for item in runner.get("checks") or []:
+        takes = " (takes files)" if "{files}" in item.get("command", "") else ""
+        parts.append(f"{item['name']} = {item['command']}{takes}")
+    return "; ".join(parts) or "none"
+
+
+async def wait_for_result(db: Any, username: str, job_id: str, timeout: Optional[float] = None, on_tick: Any = None, poll: float = 1.5) -> Optional[Dict[str, Any]]:
+    """Waits, at no model cost, for the person to run the check and for it to finish, then returns the job (None if it vanished). Gives up after `timeout` (WAIT_SECONDS) and returns the job as it is,
+    still open, so the caller can say it is not finished. If the turn is stopped while waiting (the person pressed Stop, or left), a check nobody is waiting for is cancelled, so it cannot run later unseen.
+    `on_tick(seconds, status)` is awaited about every TICK_SECONDS so the stream stays alive and the person sees Sonic is waiting."""
+    import asyncio
+    import time
+
+    limit = WAIT_SECONDS if timeout is None else timeout
+    started = last_tick = time.monotonic()
+    try:
+        while True:
+            job = await asyncio.to_thread(get_job, db, username, job_id)
+            if job is None or job["status"] not in OPEN_STATES:
+                return job
+            elapsed = time.monotonic() - started
+            if elapsed >= limit:
+                return job
+            if on_tick is not None and time.monotonic() - last_tick >= TICK_SECONDS:
+                last_tick = time.monotonic()
+                await on_tick(int(elapsed), job["status"])
+            await asyncio.sleep(poll)
+    except asyncio.CancelledError:
+        try:
+            cancel_job(db, username, job_id)
+        except Exception:
+            logger.warning("[runner] could not cancel a check after its turn was stopped.")
+        raise
 
 
 def approve_job(db: Any, username: str, job_id: str, now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:

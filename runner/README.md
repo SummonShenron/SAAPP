@@ -28,10 +28,10 @@ or run it without installing: `uvx --from "<the same address>" saapp-runner ...`
 ## First time
 
 1. In SAAPP, open Settings, **Run checks on your machine**, and choose **Add a runner**. You get a one-time code that works for a few minutes.
-2. Pair this machine with it:
+2. Pair this project with it (each project folder has its own runner and its own key):
 
    ```bash
-   saapp-runner pair --server https://<your-saapp-address> <CODE>
+   saapp-runner pair --server https://<your-saapp-address> --root . <CODE>
    ```
 
 3. In your project folder, choose which checks exist. It looks at your files, suggests some, and asks before adding each:
@@ -72,7 +72,7 @@ and delete `~/.saapp-runner`.
 
 ## Status
 
-Version 0.1.0. The runner and the server side are built and tested. The Settings section, the chat card and the assistant's `run_local_check` tool are the next stage: until they exist, there is no way to ask for a check from the page. The design is in `docs/local-runner-plan.md`.
+Version 0.1.0. The runner, the server side, SAAPP's Settings section (with a starter script that does the steps above for you) and the check card in the chat are built and tested. The design is in `docs/local-runner-plan.md`.
 
 ## Development
 

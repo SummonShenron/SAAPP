@@ -1,6 +1,6 @@
 """The `saapp-runner` command.
 
-    saapp-runner pair --server https://your-saapp-address CODE    one time: trade the code from SAAPP's settings for a key
+    saapp-runner pair --server https://your-saapp-address [--root .] CODE    one time per project: trade the code from SAAPP's settings for that project's key
     saapp-runner init [--root .]                                   one time per project: choose which checks exist (asks first)
     saapp-runner start [--root .]                                  run: waits for jobs you approve in SAAPP and runs them here
 
@@ -55,15 +55,19 @@ def _ask(question: str, assume_yes: bool) -> bool:
 
 
 def cmd_pair(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    if not root.is_dir():
+        print(f"{root} is not a folder.")
+        return 1
     try:
         client = Client(args.server)
         made = client.pair(args.code)
     except (ValueError, ServerError, Unreachable) as problem:
         print(f"Could not pair: {getattr(problem, 'message', None) or problem}")
         return 1
-    save_credentials(client.server, made["key"])
-    print(f"Paired as {made.get('name') or 'this runner'}. Your key is saved in {credentials_path()} (readable only by you).")
-    print("Next: saapp-runner init   (once per project),  then  saapp-runner start")
+    save_credentials(client.server, made["key"], root)
+    print(f"Paired {root} as {made.get('name') or 'this runner'}. Its key is saved in {credentials_path()} (readable only by you).")
+    print(f"Next: saapp-runner init --root \"{root}\"   (once per project),  then  saapp-runner start --root \"{root}\"")
     return 0
 
 
@@ -96,9 +100,9 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def cmd_start(args: argparse.Namespace, say=print, stop=None) -> int:
     root = Path(args.root).resolve()
-    credentials = load_credentials()
+    credentials = load_credentials(root)
     if not credentials:
-        print("This runner is not paired yet. Run: saapp-runner pair --server <address> <code>   (the code is in SAAPP's settings)")
+        print(f"This project is not paired yet. Run: saapp-runner pair --server <address> --root \"{root}\" <code>   (the code is in SAAPP's settings)")
         return 1
     try:
         checks = load_checks(root)
@@ -131,6 +135,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     pair = sub.add_parser("pair", help="trade the one-time code from SAAPP's settings for a key")
     pair.add_argument("code")
     pair.add_argument("--server", required=True, help="the SAAPP address, for example https://example.onrender.com")
+    pair.add_argument("--root", default=".", help="the project folder this runner is for (each project has its own runner and key)")
     init = sub.add_parser("init", help="choose which checks exist for a project (asks before adding each)")
     init.add_argument("--root", default=".")
     init.add_argument("--yes", action="store_true", help="add every suggestion without asking")
