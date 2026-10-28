@@ -6,7 +6,7 @@ server instance would see the same jobs.
 
 THE RULES THIS FILE ENFORCES (each one is tested in backend/tests/test_runner_jobs.py)
 - THE SERVER NEVER SENDS A COMMAND. A job names a CHECK ("tests") that the runner itself reported it has; the command on the card is the text the runner reported. Nothing here can make a runner run
-  anything else.
+  anything else. What the page can choose per runner (`update_settings`) is only which reported checks are turned off and a yes or no on fake AI keys, never a command, a variable name or a value.
 - A KEY BELONGS TO ONE PERSON. It is shown once, stored only as a hash, and can be revoked on its own. A runner can claim only the approved jobs of its own key, and report only on a job it is running.
 - A PAIRING CODE is single-use and expires in minutes. The starter script carries the code, never the key (a key sitting in a Downloads folder would be a leak).
 - A JOB RUNS ONLY AFTER A PERSON APPROVES IT, and only that person (the job's owner) can approve or cancel it. Unapproved, cancelled and expired jobs are never handed out.
@@ -233,15 +233,44 @@ def hello(db: Any, key: Dict[str, Any], payload: Dict[str, Any], now: Optional[d
     return {"ok": True, "runner_id": key["_id"], "min_version": ".".join(str(p) for p in MIN_RUNNER_VERSION), "poll_seconds": POLL_SECONDS}
 
 
+def settings_of(runner: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """A runner's settings as chosen on the page: {"disabled": [check names turned off], "fake_keys": whether checks run with a fake AI key}. Fake keys are ON until the person turns them off, so a
+    test can never spend real money by default. Pure."""
+    saved = (runner or {}).get("settings") or {}
+    disabled = [name for name in saved.get("disabled") or [] if isinstance(name, str) and _CHECK_RE.match(name)]
+    return {"disabled": disabled, "fake_keys": saved.get("fake_keys") is not False}
+
+
+def enabled_checks(runner: Dict[str, Any]) -> List[Dict[str, str]]:
+    """The checks a runner reported that the person has not turned off. Pure."""
+    off = settings_of(runner)["disabled"]
+    return [item for item in runner.get("checks") or [] if item.get("name") not in off]
+
+
+def update_settings(db: Any, username: str, runner_id: str, body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Saves which of a runner's checks are turned off and whether checks use a fake AI key. Only names of checks the runner reported are kept, and the fake-key choice is a plain yes or no: the page
+    never supplies anything that could be run. None when the runner is not this person's. Blocking."""
+    key = db[KEYS].find_one({"_id": runner_id, "username": username})
+    if not key or key.get("revoked"):
+        return None
+    reported = [item["name"] for item in (db[RUNNERS].find_one({"_id": runner_id}) or {}).get("checks") or []]
+    asked = (body or {}).get("disabled")
+    disabled = [name for name in dict.fromkeys(asked if isinstance(asked, list) else []) if isinstance(name, str) and name in reported]
+    fake_keys = (body or {}).get("fake_keys") is not False
+    db[RUNNERS].update_one({"_id": runner_id}, {"$set": {"settings": {"disabled": disabled, "fake_keys": fake_keys}}}, upsert=True)
+    return {"disabled": disabled, "fake_keys": fake_keys}
+
+
 def runners_for(db: Any, username: str, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
-    """The person's runners as the page shows them: name, folder, version, checks, and whether each is connected right now. Blocking."""
+    """The person's runners as the page shows them: name, folder, version, checks, settings, and whether each is connected right now. Blocking."""
     now = now or _now()
     out = []
     for key in _active_keys(db, username):
         runner = db[RUNNERS].find_one({"_id": key["_id"]}) or {}
         seen = _aware(runner.get("last_seen"))
         out.append({"id": key["_id"], "name": key.get("name") or "runner", "created_at": (_aware(key.get("created_at")) or now).isoformat(), "root_name": runner.get("root_name") or "",
-                    "version": runner.get("version") or "", "checks": runner.get("checks") or [], "connected": bool(seen and (now - seen).total_seconds() <= RUNNER_ALIVE_SECONDS)})
+                    "version": runner.get("version") or "", "checks": runner.get("checks") or [], "settings": settings_of(runner),
+                    "connected": bool(seen and (now - seen).total_seconds() <= RUNNER_ALIVE_SECONDS)})
     return out
 
 
@@ -290,9 +319,12 @@ def create_job(db: Any, username: str, runner_id: str, check: Any, files: Any = 
     seen = _aware(runner.get("last_seen"))
     if not seen or (now - seen).total_seconds() > RUNNER_ALIVE_SECONDS:
         raise RunnerError("not_connected", "Your runner is not connected right now. Start it in your project again.")
-    command = next((c["command"] for c in runner.get("checks") or [] if c["name"] == name), None)
+    if name in settings_of(runner)["disabled"]:
+        raise RunnerError("unknown_check", f"The check {name} is turned off in Settings (Run checks on your machine). Turn it on there to run it.")
+    available = enabled_checks(runner)
+    command = next((c["command"] for c in available if c["name"] == name), None)
     if command is None:
-        raise RunnerError("unknown_check", f"Your runner has no check called {name}. It has: {', '.join(c['name'] for c in runner.get('checks') or []) or 'none'}.")
+        raise RunnerError("unknown_check", f"Your runner has no check called {name}. It has: {', '.join(c['name'] for c in available) or 'none'}.")
     paths = clean_files(files)
     if paths and "{files}" not in command:
         raise RunnerError("no_placeholder", f"The check {name} does not take files, so it cannot be limited to them.")
@@ -320,7 +352,7 @@ def create_or_reuse_job(db: Any, username: str, runner_id: str, check: Any, file
 def describe_checks(runner: Dict[str, Any]) -> str:
     """A runner's checks for the tool's menu line: `tests = pytest -q {files} (takes files); types = npx tsc -b`. The command text is the runner's own report. Pure."""
     parts = []
-    for item in runner.get("checks") or []:
+    for item in enabled_checks(runner):
         takes = " (takes files)" if "{files}" in item.get("command", "") else ""
         parts.append(f"{item['name']} = {item['command']}{takes}")
     return "; ".join(parts) or "none"
@@ -379,7 +411,8 @@ def cancel_job(db: Any, username: str, job_id: str, now: Optional[datetime] = No
 
 
 def claim_next(db: Any, key: Dict[str, Any], now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
-    """What a runner's poll does: counts as the runner being alive, closes stale jobs, and hands out the oldest APPROVED job for this key (once). Returns {"job_id", "check", "files"} or None. Blocking."""
+    """What a runner's poll does: counts as the runner being alive, closes stale jobs, and hands out the oldest APPROVED job for this key (once). Returns {"job_id", "check", "files", "settings"} or None.
+    `settings` is only the person's yes or no on fake AI keys; a job never carries a command. Blocking."""
     from pymongo import ReturnDocument
 
     now = now or _now()
@@ -387,7 +420,9 @@ def claim_next(db: Any, key: Dict[str, Any], now: Optional[datetime] = None) -> 
     sweep(db, key["username"], now)
     doc = db[JOBS].find_one_and_update({"runner_id": key["_id"], "username": key["username"], "status": APPROVED}, {"$set": {"status": RUNNING, "started_at": now, "last_heartbeat": now}},
                                        sort=[("approved_at", 1)], return_document=ReturnDocument.AFTER)
-    return {"job_id": doc["_id"], "check": doc["check"], "files": doc.get("files") or []} if doc else None
+    if not doc:
+        return None
+    return {"job_id": doc["_id"], "check": doc["check"], "files": doc.get("files") or [], "settings": {"fake_keys": settings_of(db[RUNNERS].find_one({"_id": key["_id"]}))["fake_keys"]}}
 
 
 def heartbeat(db: Any, key: Dict[str, Any], job_id: str, now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:

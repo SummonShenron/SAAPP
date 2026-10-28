@@ -1,14 +1,14 @@
 """The runner's main loop: say hello, ask the server for approved jobs, run each one, report back.
 
-Everything it will do is limited by what is on THIS machine: a job names a check, the check's command comes from your own config file, the files are checked again here, and a job that names anything
-else is refused. The server cannot make this run a command you did not define.
+Everything it will do is limited by what is on THIS machine: a job names a check, the check's command is one this runner found in your project or you wrote in your own config file, the files are checked
+again here, and a job that names anything else is refused. The server cannot make this run a command of its own. The only other thing a job carries is the person's choice of fake AI keys (a yes or a no).
 """
 import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from . import execute
+from . import execute, presets
 from .client import Client, ServerError, Unreachable
 from .config import command_shown
 from .files import Refusal, clean_files
@@ -88,9 +88,11 @@ class Runner:
             self.say(f"Refused the {name} job: {problem}")
             self._report(job_id, {"exit_code": None, "error": f"The runner refused it: {problem}"})
             return
-        self.say(f"Running {name}" + (f" on {len(files)} file(s)" if files else "") + "...")
+        fake_keys = (job.get("settings") or {}).get("fake_keys") is True             # the one thing the page can ask for besides a name: a yes or a no, never a value
+        env = execute.clean_env({key: presets.FAKE_KEY_VALUE for key in presets.FAKE_KEY_NAMES} if fake_keys else None)
+        self.say(f"Running {name}" + (f" on {len(files)} file(s)" if files else "") + (" with fake AI keys" if fake_keys else "") + "...")
         cancel, holder = threading.Event(), {}
-        worker = threading.Thread(target=lambda: holder.update(execute.run(argv, self.root, self.timeout, self.max_chars, cancel)), daemon=True)
+        worker = threading.Thread(target=lambda: holder.update(execute.run(argv, self.root, self.timeout, self.max_chars, cancel, env)), daemon=True)
         worker.start()
         while worker.is_alive():
             worker.join(self.heartbeat_every)

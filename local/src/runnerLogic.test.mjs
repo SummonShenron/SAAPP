@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { OS_LABEL, detectOs, filesLine, headline, isFinal, minutesLeft, runHint, verdict } from './runnerLogic.ts';
+import { OS_LABEL, checkIsOn, detectOs, filesLine, headline, isFinal, minutesLeft, noChecksLine, runHint, verdict, withCheck, withFakeKeys } from './runnerLogic.ts';
 
 const job = (over = {}) => ({ id: 'j1', runner_id: 'r1', check: 'tests', command_shown: 'pytest -q {files}', files: [], status: 'done', created_at: null, expires_at: null, finished_at: null, exit_code: 0, output_tail: '', truncated: false, timed_out: false, duration: 1.5, error: '', ...over });
 
@@ -82,4 +82,36 @@ test('this page tells the server it can show a check card, and shows one on the 
 test('the settings section is on the account page for signed-in people only', () => {
   const account = readFileSync(new URL('./pages/Account.tsx', import.meta.url), 'utf8');
   assert.match(account, /\{!guest && <RunnerSettingsCard \/>\}/);
+});
+
+test('every check is on until it is turned off, and turning one off or on touches only that name', () => {
+  const start = { disabled: [], fake_keys: true };
+  assert.equal(checkIsOn(start, 'tests'), true);
+  const off = withCheck(start, 'types', false);
+  assert.deepEqual(off, { disabled: ['types'], fake_keys: true });
+  assert.equal(checkIsOn(off, 'types'), false);
+  assert.equal(checkIsOn(off, 'tests'), true);
+  assert.deepEqual(withCheck(off, 'types', false).disabled, ['types']);          // turning it off twice does not list it twice
+  assert.deepEqual(withCheck(off, 'types', true), start);
+  assert.deepEqual(start.disabled, [], 'the old settings are not changed in place');
+});
+
+test('the fake key choice changes only itself', () => {
+  const settings = { disabled: ['types'], fake_keys: true };
+  assert.deepEqual(withFakeKeys(settings, false), { disabled: ['types'], fake_keys: false });
+  assert.equal(settings.fake_keys, true);
+});
+
+test('a runner with no checks says why, depending on whether it has connected', () => {
+  assert.match(noChecksLine(true), /found no tests or type check/);
+  assert.match(noChecksLine(false), /once the runner has connected/);
+});
+
+test('the settings card saves names and a yes or no through the settings call', () => {
+  const card = readFileSync(new URL('./components/RunnerSettingsCard.tsx', import.meta.url), 'utf8');
+  const api = readFileSync(new URL('./api.ts', import.meta.url), 'utf8');
+  assert.match(card, /api\.updateRunnerSettings\(runner\.id, next\)/);
+  assert.match(card, /withCheck\(runner\.settings, check\.name, event\.target\.checked\)/);
+  assert.match(card, /withFakeKeys\(runner\.settings, event\.target\.checked\)/);
+  assert.match(api, /\/api\/runner\/runners\/\$\{encodeURIComponent\(id\)\}\/settings/);
 });

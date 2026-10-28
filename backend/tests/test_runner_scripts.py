@@ -99,15 +99,15 @@ def test_the_install_is_the_pinned_release_from_the_given_address_into_a_private
     assert '"%VENV%\\Scripts\\python.exe" -m pip install "%INSTALL_URL%"' in cmd and "%USERPROFILE%\\.saapp-runner" in cmd
 
 
-def test_each_project_is_paired_with_its_own_root_then_set_up_then_started():
+def test_each_project_is_paired_with_its_own_root_then_started_and_nobody_is_asked_to_set_up_checks():
     for text in (scripts()["mac"]["text"], scripts()["windows"]["text"]):
-        assert text.index("pair --server") < text.index(" init --root") < text.index(" start --root") and text.count("--root") == 3
+        assert text.index("pair --server") < text.index(" start --root") and text.count("--root") == 2 and " init " not in text
 
 
 def test_the_commands_for_typing_are_the_same_setup_with_the_folder_left_to_the_person():
     lines = rs.terminal_commands(SERVER, CODE, INSTALL)
     assert lines[0] == f'pipx install "{INSTALL}"' and lines[1] == f"saapp-runner pair --server {SERVER} --root <your project folder> {CODE}"
-    assert lines[2:] == ["saapp-runner init --root <your project folder>", "saapp-runner start --root <your project folder>"]
+    assert lines[2:] == ["saapp-runner start --root <your project folder>"]
 
 
 def test_a_percent_sign_in_an_address_is_doubled_for_the_windows_script_only():

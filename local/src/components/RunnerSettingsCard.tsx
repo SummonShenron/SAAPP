@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, type RunnerList, type RunnerPairing, type RunnerScript } from '../api';
-import { OS_LABEL, detectOs, minutesLeft, runHint, type OsKind } from '../runnerLogic';
+import { api, type RunnerInfo, type RunnerList, type RunnerPairing, type RunnerScript, type RunnerSettings } from '../api';
+import { OS_LABEL, checkIsOn, detectOs, minutesLeft, noChecksLine, runHint, withCheck, withFakeKeys, type OsKind } from '../runnerLogic';
 import './__styles__/RunnerSettingsCard.css';
 
 const POLL_WHILE_PAIRING_MS = 4000;
@@ -29,6 +29,7 @@ export default function RunnerSettingsCard() {
   const [error, setError] = useState('');
   const [copied, setCopied] = useState('');
   const [now, setNow] = useState(() => Date.now());
+  const [saving, setSaving] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -82,6 +83,23 @@ export default function RunnerSettingsCard() {
     }
   };
 
+  // A tick shows at once and is saved in the background; if the save fails the list goes back to how it was and says so.
+  const change = async (runner: RunnerInfo, next: RunnerSettings) => {
+    const before = list;
+    const show = (settings: RunnerSettings) => setList(current => current && { ...current, runners: current.runners.map(item => (item.id === runner.id ? { ...item, settings } : item)) });
+    show(next);
+    setSaving(runner.id);
+    setError('');
+    try {
+      show((await api.updateRunnerSettings(runner.id, next)).settings);
+    } catch (problem) {
+      setList(before);
+      setError(problem instanceof Error ? problem.message : 'Could not save that.');
+    } finally {
+      setSaving('');
+    }
+  };
+
   const copy = async (what: string, text: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -100,8 +118,8 @@ export default function RunnerSettingsCard() {
     <section className="account-card runner-card" aria-labelledby="runner-heading">
       <h3 id="runner-heading">Run checks on your machine</h3>
       <p className="account-note runner-intro">
-        Optional. A small program on your own computer, the SAAPP runner, can run your project's tests, type checks or builds when Sonic asks and you press Run on a card in the chat. It runs only the
-        commands you define on your machine, never one Sonic or SAAPP supplies, and only after you approve each run.
+        Optional. A small program on your own computer, the SAAPP runner, can run your project's tests or type check when Sonic asks and you press Run on a card in the chat. It finds those checks in your
+        project by itself, so there is nothing to configure: turn any of them off below. It never runs a command Sonic or SAAPP supplies, and only after you approve each run.
       </p>
 
       {list && list.runners.length === 0 && <p className="account-hint">You have no runners yet.</p>}
@@ -117,9 +135,29 @@ export default function RunnerSettingsCard() {
                   {runner.root_name ? ` · folder ${runner.root_name}` : ''}
                   {runner.version ? ` · version ${runner.version}` : ''}
                 </div>
-                {runner.checks.length > 0 && <div className="account-hint">Checks: {runner.checks.map(check => check.name).join(', ')}</div>}
               </div>
               <button type="button" className="account-btn" onClick={() => void remove(runner.id, runner.name)}>Remove</button>
+              <div className="runner-checks">
+                {runner.checks.length === 0 && <div className="account-hint">{noChecksLine(runner.connected)}</div>}
+                {runner.checks.map(check => (
+                  <label key={check.name} className="runner-check">
+                    <input type="checkbox" checked={checkIsOn(runner.settings, check.name)} disabled={saving === runner.id}
+                      onChange={event => void change(runner, withCheck(runner.settings, check.name, event.target.checked))} />
+                    <span className="runner-check-text">
+                      <span className="account-label">{check.name}</span>
+                      <code className="runner-check-command">{check.command}</code>
+                    </span>
+                  </label>
+                ))}
+                <label className="runner-check">
+                  <input type="checkbox" checked={runner.settings.fake_keys} disabled={saving === runner.id}
+                    onChange={event => void change(runner, withFakeKeys(runner.settings, event.target.checked))} />
+                  <span className="runner-check-text">
+                    <span className="account-label">Use a fake AI key while checks run</span>
+                    <span className="account-hint">Keeps a test from spending real money: GOOGLE_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY and GEMINI_API_KEY are set to a made-up value for the run, even if your project's .env file holds a real one.</span>
+                  </span>
+                </label>
+              </div>
             </li>
           ))}
         </ul>

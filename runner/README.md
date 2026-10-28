@@ -6,8 +6,8 @@ SAAPP's assistant can propose a check, such as "run the tests on these files". Y
 
 ## What it will and will not do
 
-- It runs **only the checks you defined**, in a config file in **your home folder** (`~/.saapp-runner/config.toml`), never in the project. A cloned repository cannot decide what runs when you press Run.
-- SAAPP never sends it a command. A job names a check, and the command comes from your config. If SAAPP asked for a check you did not define, or for a file outside the project, it refuses.
+- It runs **only checks it found in your project or you wrote yourself**. It finds the common ones by looking at the folder (pytest, `npm test`, the TypeScript compiler), and anything you write goes in a config file in **your home folder** (`~/.saapp-runner/config.toml`), never in the project. A cloned repository cannot add a command or choose what runs when you press Run.
+- SAAPP never sends it a command. A job names a check, and the command comes from the runner. The only other thing a job carries is your yes or no on fake AI keys (below). If SAAPP asked for a check it does not have, or for a file outside the project, it refuses.
 - It **never listens on a port**. It connects out to SAAPP and asks for jobs you approved.
 - Files are passed as separate arguments (`./path`), with **no shell**, so nothing is expanded or chained.
 - The command gets a **clean environment**: the secrets in your shell (API keys, tokens) are not passed to it.
@@ -34,23 +34,26 @@ or run it without installing: `uvx --from "<the same address>" saapp-runner ...`
    saapp-runner pair --server https://<your-saapp-address> --root . <CODE>
    ```
 
-3. In your project folder, choose which checks exist. It looks at your files, suggests some, and asks before adding each:
-
-   ```bash
-   saapp-runner init
-   ```
-
-4. Start it, and leave it running while you work:
+3. Start it, and leave it running while you work:
 
    ```bash
    saapp-runner start
    ```
 
-It prints the checks it can run and says **Connected** when SAAPP can see it. Stop it with Ctrl+C.
+It finds the project's checks by itself, prints them, and says **Connected** when SAAPP can see it. Stop it with Ctrl+C. There is nothing else to set up.
 
-## The config file
+## Choosing in SAAPP
 
-`init` writes this for you; you can edit it by hand. A command is a list of words.
+In SAAPP's settings, under your runner, you can:
+
+- **turn a check off** (an unticked check is never offered to the assistant and cannot be run);
+- **use a fake AI key while checks run** (on by default). `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` and `GEMINI_API_KEY` are set to a made-up value for the run, so a test cannot spend real money even when your project's `.env` file holds a real key (a `.env` file does not replace a variable that is already set).
+
+SAAPP can only send check names and that yes or no. It cannot add a check or change a command.
+
+## The config file (optional)
+
+You only need this for a check the runner does not find, or to change one it does. A check written here **replaces a detected check of the same name**. `saapp-runner init` writes the detected checks into it as a starting point (it asks before adding each); you can edit it by hand. A command is a list of words.
 
 ```toml
 [projects."C:\\Users\\you\\work\\myapp"]

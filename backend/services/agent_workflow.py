@@ -3068,7 +3068,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 )
             except Exception:
                 logger.warning("[tool_agent_node] could not look for a connected runner.", exc_info=True)
-        if runner_for_checks is not None and runner_for_checks.get("checks"):
+        if runner_for_checks is not None and runner_jobs.enabled_checks(runner_for_checks):
             menu_lines.append(
                 "- run_local_check — args: check (the name of one of the person's own checks on their machine: " + runner_jobs.describe_checks(runner_for_checks) + "), files (optional: a list of "
                 "paths in their project, only for a check that takes files). Asks to run that check on THEIR OWN MACHINE: they see a card with the exact command and press Run, and nothing runs "

@@ -207,7 +207,7 @@ def test_a_job_runs_only_after_its_owner_approves_it():
     assert rj.approve_job(db, "jack@example.com", job["id"], later(seconds=3))["status"] == rj.APPROVED
     assert rj.approve_job(db, "jack@example.com", job["id"], later(seconds=4)) is None          # once
     claimed = rj.claim_next(db, record, later(seconds=5))
-    assert claimed == {"job_id": job["id"], "check": "tests", "files": []}
+    assert claimed == {"job_id": job["id"], "check": "tests", "files": [], "settings": {"fake_keys": True}}       # a name, the files, and a yes or no: never a command
     assert rj.claim_next(db, record, later(seconds=6)) is None                                 # handed out once
 
 
@@ -363,6 +363,69 @@ def test_asking_for_the_same_check_again_returns_the_open_job_instead_of_a_secon
 def test_a_runners_checks_are_described_for_the_menu_with_whether_they_take_files():
     runner = {"checks": [{"name": "tests", "command": "pytest -q {files}"}, {"name": "types", "command": "npx tsc -b"}]}
     assert rj.describe_checks(runner) == "tests = pytest -q {files} (takes files); types = npx tsc -b" and rj.describe_checks({"checks": []}) == "none"
+
+
+# ---- settings chosen in the page: which checks are on, and fake AI keys ----------------------------------------------------------------------------
+
+def test_every_check_is_on_and_fake_keys_are_on_until_the_person_changes_it():
+    db = FakeDB()
+    record, _ = connected(db)
+    runner = rj.runners_for(db, "jack@example.com", NOW)[0]
+    assert runner["settings"] == {"disabled": [], "fake_keys": True}
+    assert rj.settings_of(None) == {"disabled": [], "fake_keys": True} and rj.settings_of({"settings": {"fake_keys": "no"}})["fake_keys"] is True      # only a real False turns it off
+
+
+def test_a_check_turned_off_is_not_offered_to_sonic_and_cannot_be_asked_for():
+    db = FakeDB()
+    record, _ = connected(db)
+    assert rj.update_settings(db, "jack@example.com", record["_id"], {"disabled": ["types"], "fake_keys": True}) == {"disabled": ["types"], "fake_keys": True}
+    runner = rj.runners_for(db, "jack@example.com", NOW)[0]
+    assert rj.describe_checks(runner) == "tests = pytest -q {files} (takes files)" and [c["name"] for c in rj.enabled_checks(runner)] == ["tests"]
+    with pytest.raises(rj.RunnerError) as error:
+        rj.create_job(db, "jack@example.com", record["_id"], "types", None, later(seconds=1))
+    assert error.value.code == "unknown_check" and "turned off" in error.value.message
+    assert rj.create_job(db, "jack@example.com", record["_id"], "tests", None, later(seconds=2))["status"] == rj.AWAITING
+    rj.update_settings(db, "jack@example.com", record["_id"], {"disabled": []})
+    assert rj.describe_checks(rj.runners_for(db, "jack@example.com", NOW)[0]).count(" = ") == 2
+
+
+def test_saving_settings_keeps_only_real_check_names_and_a_plain_yes_or_no():
+    db = FakeDB()
+    record, _ = connected(db)
+    saved = rj.update_settings(db, "jack@example.com", record["_id"], {"disabled": ["types", "types", "ghost", "../x", 7, None], "fake_keys": False})
+    assert saved == {"disabled": ["types"], "fake_keys": False}                                    # only names the runner reported, once each
+    assert rj.update_settings(db, "jack@example.com", record["_id"], {"disabled": "tests", "fake_keys": "no"}) == {"disabled": [], "fake_keys": True}
+    assert rj.update_settings(db, "jack@example.com", record["_id"], {}) == {"disabled": [], "fake_keys": True}
+
+
+def test_only_the_owner_can_change_a_runners_settings_and_not_after_it_is_removed():
+    db = FakeDB()
+    record, _ = connected(db)
+    assert rj.update_settings(db, "someone@else.com", record["_id"], {"disabled": ["tests"]}) is None
+    assert rj.update_settings(db, "jack@example.com", "no-such-runner", {"disabled": ["tests"]}) is None
+    assert rj.settings_of(db[rj.RUNNERS].docs[record["_id"]]) == {"disabled": [], "fake_keys": True}
+    rj.revoke_key(db, "jack@example.com", record["_id"], later(seconds=1))
+    assert rj.update_settings(db, "jack@example.com", record["_id"], {"disabled": ["tests"]}) is None
+
+
+def test_a_runner_saying_hello_again_does_not_undo_the_persons_settings():
+    db = FakeDB()
+    record, _ = connected(db)
+    rj.update_settings(db, "jack@example.com", record["_id"], {"disabled": ["types"], "fake_keys": False})
+    rj.hello(db, record, {"version": "0.1.0", "root_name": "saapp", "checks": CHECKS}, later(minutes=5))
+    assert rj.runners_for(db, "jack@example.com", later(minutes=5))[0]["settings"] == {"disabled": ["types"], "fake_keys": False}
+
+
+def test_a_handed_out_job_carries_the_current_fake_key_choice_and_never_a_command():
+    db = FakeDB()
+    record, _ = connected(db)
+    for step, choice in enumerate((True, False)):
+        rj.update_settings(db, "jack@example.com", record["_id"], {"fake_keys": choice})
+        job = rj.create_job(db, "jack@example.com", record["_id"], "tests", ["a.py"], later(minutes=step))
+        rj.approve_job(db, "jack@example.com", job["id"], later(minutes=step, seconds=1))
+        claimed = rj.claim_next(db, record, later(minutes=step, seconds=2))
+        assert claimed["settings"] == {"fake_keys": choice} and set(claimed) == {"job_id", "check", "files", "settings"}
+        rj.complete_job(db, record, claimed["job_id"], {"exit_code": 0}, later(minutes=step, seconds=3))
 
 
 def run_async(coro):

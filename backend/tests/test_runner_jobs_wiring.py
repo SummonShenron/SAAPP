@@ -16,7 +16,7 @@ def block(route: str, length: int = 900) -> str:
 
 
 RUNNER_SIDE = ['@app.post("/api/runner/hello")', '@app.get("/api/runner/next")', '@app.post("/api/runner/jobs/{job_id}/heartbeat")', '@app.post("/api/runner/jobs/{job_id}/result")']
-PAGE_SIDE = ['@app.get("/api/runner/runners")', '@app.post("/api/runner/pairings")', '@app.delete("/api/runner/keys/{key_id}")', '@app.get("/api/runner/jobs/{job_id}")',
+PAGE_SIDE = ['@app.get("/api/runner/runners")', '@app.post("/api/runner/runners/{runner_id}/settings")', '@app.post("/api/runner/pairings")', '@app.delete("/api/runner/keys/{key_id}")', '@app.get("/api/runner/jobs/{job_id}")',
              '@app.post("/api/runner/jobs/{job_id}/approve")', '@app.post("/api/runner/jobs/{job_id}/cancel")']
 
 
@@ -70,3 +70,11 @@ def test_the_runner_list_tells_the_page_whether_an_install_address_is_set():
 def test_the_pairing_code_in_the_answer_is_the_one_just_made_and_no_key_is_ever_in_it():
     text = block('@app.post("/api/runner/pairings")', 2600)
     assert "**made" in text and "authenticate" not in text and "exchange_pairing" not in text
+
+
+def test_the_settings_call_takes_check_names_and_a_yes_or_no_and_nothing_that_could_be_run():
+    model = block("class RunnerSettingsRequest", 400)
+    fields = [line.split(":")[0].strip() for line in model.splitlines()[1:] if ":" in line and not line.strip().startswith("#")]
+    assert fields == ["disabled", "fake_keys"] and "disabled: List[str]" in model and "fake_keys: bool" in model
+    text = block('@app.post("/api/runner/runners/{runner_id}/settings")', 900)
+    assert "runner_jobs.update_settings" in text and "asyncio.to_thread(" in text and "status_code=404" in text

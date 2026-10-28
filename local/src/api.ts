@@ -1831,7 +1831,9 @@ export const actOnCodePlan = (sessionId: string, action: 'approve' | 'cancel' | 
 
 /** The local runner (backend/utils/runner_jobs.py, runner/): a small program on the person's own machine that runs checks they approve on a card in the chat. */
 export interface RunnerCheck { name: string; command: string; }
-export interface RunnerInfo { id: string; name: string; created_at: string; root_name: string; version: string; checks: RunnerCheck[]; connected: boolean; }
+/** What the person chose for a runner: the checks turned off, and whether checks run with a fake AI key (on until turned off). Names and a yes or no only; the page never supplies a command. */
+export interface RunnerSettings { disabled: string[]; fake_keys: boolean; }
+export interface RunnerInfo { id: string; name: string; created_at: string; root_name: string; version: string; checks: RunnerCheck[]; settings: RunnerSettings; connected: boolean; }
 export type RunnerJobStatus = 'awaiting_approval' | 'approved' | 'running' | 'done' | 'cancelled' | 'expired' | 'failed';
 export interface RunnerJob {
   id: string; runner_id: string | null; check: string; command_shown: string; files: string[]; status: RunnerJobStatus;
@@ -1847,6 +1849,8 @@ export interface RunnerList { runners: RunnerInfo[]; limit: number; min_version:
 export const listRunners = (): Promise<RunnerList> => taskRequest('/api/runner/runners', {}, 'Failed to load your runners.');
 export const createRunnerPairing = (name: string, folderName = ''): Promise<RunnerPairing> =>
   taskRequest('/api/runner/pairings', { method: 'POST', body: JSON.stringify({ name, folder_name: folderName }) }, 'Failed to make a pairing code.');
+export const updateRunnerSettings = (id: string, settings: RunnerSettings): Promise<{ settings: RunnerSettings }> =>
+  taskRequest(`/api/runner/runners/${encodeURIComponent(id)}/settings`, { method: 'POST', body: JSON.stringify(settings) }, 'Failed to save the runner settings.');
 export const removeRunner = (id: string): Promise<{ status: string }> =>
   taskRequest(`/api/runner/keys/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'Failed to remove that runner.');
 export const getRunnerJob = (id: string): Promise<RunnerJob> => taskRequest(`/api/runner/jobs/${encodeURIComponent(id)}`, {}, 'Failed to load that check.');
@@ -2383,6 +2387,7 @@ export const api = {
   approveSelfModelStatement,
   listRunners,
   createRunnerPairing,
+  updateRunnerSettings,
   removeRunner,
   getRunnerJob,
   approveRunnerJob,

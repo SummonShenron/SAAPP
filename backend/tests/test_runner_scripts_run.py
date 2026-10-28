@@ -99,7 +99,7 @@ def test_the_bash_script_installs_pairs_sets_up_and_starts_in_that_order(tmp_pat
     done, calls, home = run_bash(tmp_path, f"y\n{project.as_posix()}\n")
     assert done.returncode == 0, done.stdout + done.stderr
     assert calls[0].startswith("make-venv ") and calls[0].endswith("/.saapp-runner/venv") and calls[1] == f"venv-python -m pip install {INSTALL}"
-    assert [c.split(" ")[1] for c in runner_calls(calls)] == ["pair", "init", "start"]
+    assert [c.split(" ")[1] for c in runner_calls(calls)] == ["pair", "start"]
     pair = runner_calls(calls)[0]
     assert pair.startswith(f"runner pair --server {SERVER} --root ") and pair.endswith(f" {CODE}")
     assert all(real(c.split("--root ")[1].split(" ")[0]) == real(project) for c in runner_calls(calls)[:3])
@@ -119,7 +119,7 @@ def test_a_carriage_return_after_an_answer_is_tolerated(tmp_path):
     project.mkdir()
     done, calls, _ = run_bash(tmp_path, f"y\r\n{project.as_posix()}\r\n")
     assert done.returncode == 0, done.stdout + done.stderr
-    assert [c.split(" ")[1] for c in runner_calls(calls)] == ["pair", "init", "start"]
+    assert [c.split(" ")[1] for c in runner_calls(calls)] == ["pair", "start"]
 
 
 @needs_bash
@@ -143,7 +143,7 @@ def test_a_folder_with_spaces_is_found_however_it_was_typed_or_dragged_in(tmp_pa
     typed = {"plain": path, "double quotes": f'"{path}"', "single quotes": f"'{path}'", "padded": f"   {path}   ", "escaped spaces": path.replace(" ", "\\ ")}[how]
     done, calls, _ = run_bash(tmp_path / "run", f"y\n{typed}\ny\n", folder_name="my app")
     assert done.returncode == 0, (how, done.stdout, done.stderr)
-    assert [c.split(" ")[1] for c in runner_calls(calls)] == ["pair", "init", "start"]
+    assert [c.split(" ")[1] for c in runner_calls(calls)] == ["pair", "start"]
     assert real(runner_calls(calls)[0].split("--root ")[1].rsplit(" ", 1)[0]) == real(project)
 
 
@@ -154,7 +154,7 @@ def test_a_folder_named_differently_from_the_connected_one_asks_before_going_on(
     declined, calls, _ = run_bash(tmp_path / "a", f"y\n{project.as_posix()}\nn\n", folder_name="myapp")
     assert declined.returncode == 1 and 'but SAAPP has "myapp" connected' in declined.stdout and runner_calls(calls) == []
     accepted, calls, _ = run_bash(tmp_path / "b", f"y\n{project.as_posix()}\ny\n", folder_name="myapp")
-    assert accepted.returncode == 0 and [c.split(" ")[1] for c in runner_calls(calls)] == ["pair", "init", "start"]
+    assert accepted.returncode == 0 and [c.split(" ")[1] for c in runner_calls(calls)] == ["pair", "start"]
 
 
 @needs_bash
@@ -225,9 +225,9 @@ def test_the_windows_script_installs_pairs_sets_up_and_starts_in_that_order(tmp_
     project = tmp_path / "myapp"
     project.mkdir()
     done, calls, home = run_cmd(tmp_path / "run", f"y\n{project}\n\n")
-    assert [c.split(" ")[0] for c in calls] == ["make-venv", "venv-python", "runner", "runner", "runner"], (calls, done.stdout, done.stderr)
+    assert [c.split(" ")[0] for c in calls] == ["make-venv", "venv-python", "runner", "runner"], (calls, done.stdout, done.stderr)
     assert "pip install" in calls[1] and INSTALL in calls[1]
-    assert [c.split(" ")[1] for c in calls[2:]] == ["pair", "init", "start"]
+    assert [c.split(" ")[1] for c in calls[2:]] == ["pair", "start"]
     plain = [c.replace('"', "") for c in calls]                                           # the script quotes its arguments, which is what lets a folder name hold spaces
     assert f"--server {SERVER}" in plain[2] and plain[2].endswith(CODE) and all(str(project) in c for c in plain[2:])
 
@@ -237,7 +237,7 @@ def test_the_windows_script_handles_a_quoted_folder_with_spaces_a_missing_one_an
     project = tmp_path / "my app"
     project.mkdir()
     done, calls, _ = run_cmd(tmp_path / "a", f'y\n"{project}"\n\n', folder_name="my app")
-    assert [c.split(" ")[1] for c in calls if c.startswith("runner")] == ["pair", "init", "start"], (calls, done.stdout)
+    assert [c.split(" ")[1] for c in calls if c.startswith("runner")] == ["pair", "start"], (calls, done.stdout)
     done, calls, _ = run_cmd(tmp_path / "b", f"y\n{tmp_path / 'nowhere'}\n\n")
     assert "That folder was not found" in done.stdout and not [c for c in calls if c.startswith("runner")]
     done, calls, _ = run_cmd(tmp_path / "c", "y\n\n\n")
@@ -248,4 +248,4 @@ def test_the_windows_script_handles_a_quoted_folder_with_spaces_a_missing_one_an
 def test_the_windows_script_keeps_going_when_python_is_a_bat_shim(tmp_path):
     # pyenv-win installs python.bat: without `call`, starting one ends the script. The stand-in py.cmd in these tests is exactly that kind of file, so every run above proves it; this pins the text.
     text = script("windows")
-    assert "call %1 -c" in text and "call %PY% -m venv" in text and text.count('call "%RUNNER%"') == 3
+    assert "call %1 -c" in text and "call %PY% -m venv" in text and text.count('call "%RUNNER%"') == 2

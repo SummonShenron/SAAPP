@@ -2,7 +2,7 @@
  * The words and decisions behind the local-runner cards, kept apart from the components so they can be tested without a browser (runnerLogic.test.mjs).
  * The runner is a small program on the person's own machine that runs checks they approve on a card (backend/utils/runner_jobs.py, runner/).
  */
-import type { RunnerJob, RunnerJobStatus } from './api';
+import type { RunnerJob, RunnerJobStatus, RunnerSettings } from './api';
 
 const FINAL: readonly RunnerJobStatus[] = ['done', 'cancelled', 'expired', 'failed'];
 
@@ -45,6 +45,29 @@ export function headline(job: RunnerJob): string {
 /** The files a check was limited to, for the card ("tests/test_a.py, tests/test_b.py"), or "" when it runs on everything. */
 export function filesLine(job: Pick<RunnerJob, 'files'>): string {
   return (job.files ?? []).join(', ');
+}
+
+/** Whether a check is turned on for a runner (every check is, until the person turns it off). */
+export function checkIsOn(settings: RunnerSettings, name: string): boolean {
+  return !settings.disabled.includes(name);
+}
+
+/** The settings after the person ticks or unticks one check. Only a name is ever stored, never a command. */
+export function withCheck(settings: RunnerSettings, name: string, on: boolean): RunnerSettings {
+  const rest = settings.disabled.filter(item => item !== name);
+  return { ...settings, disabled: on ? rest : [...rest, name] };
+}
+
+/** The settings after the person ticks or unticks "use a fake AI key". */
+export function withFakeKeys(settings: RunnerSettings, on: boolean): RunnerSettings {
+  return { ...settings, fake_keys: on };
+}
+
+/** What to say under a runner when it has no checks to show. */
+export function noChecksLine(connected: boolean): string {
+  return connected
+    ? 'This runner found no tests or type check in its folder. If the project has some, they can be written in the runner\'s config file (see its README).'
+    : 'Its checks appear here once the runner has connected.';
 }
 
 export type OsKind = 'windows' | 'mac' | 'linux';

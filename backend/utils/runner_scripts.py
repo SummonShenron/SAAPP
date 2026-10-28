@@ -1,7 +1,7 @@
 """The starter scripts a person downloads from Settings to set up the local runner (docs/local-runner-plan.md, "Installing it").
 
 Each script is short, readable and shown before it is downloaded. It says what it is about to do and asks first; it checks for a suitable Python and installs nothing system-wide; it makes a private
-environment in the person's own folder, installs the PINNED release of `saapp-runner` into it, pairs that project with the one-time code, offers to set up the project's checks, and starts the runner.
+environment in the person's own folder, installs the PINNED release of `saapp-runner` into it, pairs that project with the one-time code, and starts the runner (which finds the project's checks itself).
 
 THE SCRIPT CARRIES A ONE-TIME PAIRING CODE, NEVER A KEY. A key in a Downloads folder would be a leak; the code works once, for a few minutes.
 
@@ -60,9 +60,9 @@ say "  1. check that Python 3.11 or newer is installed (it installs nothing syst
 say "  2. make a private environment in $VENV and install saapp-runner into it, from:"
 say "       $INSTALL_URL"
 say "  3. pair the project you choose with $SERVER, using a one-time code"
-say "  4. offer to set up that project's checks, then start the runner"
+say "  4. start the runner, which finds that project's tests and type checks by itself"
 say ""
-say "The runner runs only the checks you define, and only after you press Run in SAAPP."
+say "The runner runs only those checks, only after you press Run in SAAPP. You turn them on or off in SAAPP's settings."
 printf 'Continue? [y/N] '
 read -r ANSWER
 ANSWER="${ANSWER%$'\r'}"
@@ -112,8 +112,6 @@ fi
 
 "$RUNNER" pair --server "$SERVER" --root "$FOLDER" "$CODE" || exit 1
 say ""
-"$RUNNER" init --root "$FOLDER"
-say ""
 say "Starting the runner. Leave this window open while you work; press Ctrl+C to stop it."
 exec "$RUNNER" start --root "$FOLDER"
 '''
@@ -135,9 +133,9 @@ echo   1. check that Python 3.11 or newer is installed (it installs nothing syst
 echo   2. make a private environment in %VENV% and install saapp-runner into it, from:
 echo        %INSTALL_URL%
 echo   3. pair the project you choose with %SERVER%, using a one-time code
-echo   4. offer to set up that project's checks, then start the runner
+echo   4. start the runner, which finds that project's tests and type checks by itself
 echo.
-echo The runner runs only the checks you define, and only after you press Run in SAAPP.
+echo The runner runs only those checks, only after you press Run in SAAPP. You turn them on or off in SAAPP's settings.
 set "ANSWER="
 set /p "ANSWER=Continue? [y/N] "
 if /i "%ANSWER%"=="y" goto confirmed
@@ -194,8 +192,6 @@ if errorlevel 1 (
   exit /b 1
 )
 echo.
-call "%RUNNER%" init --root "%FOLDER%"
-echo.
 echo Starting the runner. Leave this window open while you work; press Ctrl+C to stop it.
 call "%RUNNER%" start --root "%FOLDER%"
 pause
@@ -233,6 +229,5 @@ def terminal_commands(server_url: str, code: str, install_url: str) -> List[str]
     return [
         f'pipx install "{values["install"]}"',
         f'saapp-runner pair --server {values["server"]} --root <your project folder> {values["code"]}',
-        "saapp-runner init --root <your project folder>",
         "saapp-runner start --root <your project folder>",
     ]

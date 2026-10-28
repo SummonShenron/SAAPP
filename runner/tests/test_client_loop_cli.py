@@ -1,4 +1,5 @@
 """The runner talking to the server (client.py), its main loop (loop.py) and its commands (cli.py)."""
+import argparse
 import json
 import socket
 import sys
@@ -7,7 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from saapp_runner import cli, config as cfg
+from saapp_runner import cli, config as cfg, presets
 from saapp_runner.client import Client, ServerError, Unreachable, check_address
 from saapp_runner.loop import Runner
 
@@ -290,7 +291,8 @@ def test_init_suggests_checks_from_the_projects_files_and_never_runs_anything(tm
     (root / "package.json").write_text(json.dumps({"scripts": {"test": "vitest"}}), encoding="utf-8")
     (root / "tsconfig.json").write_text("{}", encoding="utf-8")
     found = cli.detect_checks(root)
-    assert found["tests"][1:] == ["-m", "pytest", "-q", "{files}"] and found["tests"][0].endswith("python.exe") and found["js-tests"] == ["npm", "test"] and found["types"] == ["npx", "tsc", "-b"]
+    assert found["tests"][1:] == ["-m", "pytest", "-q", "-p", "no:cacheprovider", "{files}"] and found["tests"][0].endswith("python.exe")
+    assert found["js-tests"] == ["npm", "test"] and found["types"] == ["npx", "tsc", "-b"]
     assert cli.detect_checks(tmp_path / "empty") == {}
 
 
@@ -334,9 +336,82 @@ def test_pair_says_what_went_wrong_and_saves_nothing(fake, capsys, tmp_path):
     assert "is not a folder" in capsys.readouterr().out
 
 
-def test_start_will_not_begin_unpaired_or_with_no_checks_defined(tmp_path, capsys):
+def test_start_will_not_begin_unpaired_or_when_the_project_has_nothing_to_run(tmp_path, capsys):
     root = tmp_path / "proj"
     root.mkdir()
     assert cli.main(["start", "--root", str(root)]) == 1 and "not paired" in capsys.readouterr().out
     cfg.save_credentials("https://saapp.example.com", "abc.def", root)
-    assert cli.main(["start", "--root", str(root)]) == 1 and "No checks are defined" in capsys.readouterr().out
+    assert cli.main(["start", "--root", str(root)]) == 1 and "Found no tests or type check" in capsys.readouterr().out
+
+
+# ---- checks found by the runner itself, and the settings chosen in the page ------------------------------------------------------------------------
+
+def test_a_venv_called_venv_is_used_and_no_venv_means_a_plain_pytest(tmp_path):
+    root = tmp_path / "proj"
+    (root / "venv" / "bin").mkdir(parents=True)
+    (root / "venv" / "bin" / "python").write_text("", encoding="utf-8")
+    (root / "pytest.ini").write_text("", encoding="utf-8")
+    assert presets.detect(root)["tests"][:3] == [str(root / "venv" / "bin" / "python"), "-m", "pytest"]
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    (bare / "pytest.ini").write_text("", encoding="utf-8")
+    assert presets.detect(bare)["tests"] == ["pytest", "-q", "-p", "no:cacheprovider", "{files}"]
+
+
+def test_a_package_json_without_a_test_script_or_with_junk_adds_no_check(tmp_path):
+    root = tmp_path / "proj"
+    root.mkdir()
+    for text in ('{"scripts": {"build": "vite build"}}', "not json", "[1, 2]", '{"scripts": "oops"}'):
+        (root / "package.json").write_text(text, encoding="utf-8")
+        assert "js-tests" not in presets.detect(root)
+
+
+def test_a_check_written_in_the_config_replaces_the_preset_of_the_same_name(tmp_path, runner_home):
+    root = tmp_path / "proj"
+    (root / "tests").mkdir(parents=True)
+    (root / "tsconfig.json").write_text("{}", encoding="utf-8")
+    assert presets.effective_checks(root)["tests"][-1] == "{files}"
+    cfg.append_project(root, {"tests": ["mytest", "--fast"], "lint": ["mylint"]})
+    checks = presets.effective_checks(root)
+    assert checks["tests"] == ["mytest", "--fast"] and checks["lint"] == ["mylint"] and checks["types"] == ["npx", "tsc", "-b"]
+
+
+def test_start_needs_no_init_because_the_runner_finds_the_checks_itself(fake, tmp_path, runner_home):
+    root = tmp_path / "proj"
+    (root / "tests").mkdir(parents=True)
+    cfg.save_credentials(fake.url, "abc.def", root)
+    fake.routes[("POST", "/api/runner/hello")] = (200, {"ok": True})
+    fake.routes[("GET", "/api/runner/next")] = (401, {"detail": "stop"})                 # the first poll ends the run
+    said = []
+    stop = threading.Event()
+    assert cli.cmd_start(argparse.Namespace(root=str(root), timeout=5), say=said.append, stop=stop) == 0
+    hello = next(call for call in fake.seen if call["path"].endswith("/hello"))
+    assert [c["name"] for c in hello["body"]["checks"]] == ["tests"] and any("can run: tests" in line for line in said)
+
+
+def test_fake_ai_keys_are_set_only_when_the_job_says_yes_and_hide_a_real_one(project, monkeypatch):
+    monkeypatch.setenv("GOOGLE_API_KEY", "real-secret-key")
+    script = "import os; print([os.environ.get(k) for k in ('GOOGLE_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GEMINI_API_KEY')])"
+    runner, said = make_runner(FakeClient(), project, {"tests": [PY, "-c", script]})
+    runner.handle({"job_id": "j1", "check": "tests", "files": [], "settings": {"fake_keys": True}})
+    runner.handle({"job_id": "j2", "check": "tests", "files": [], "settings": {"fake_keys": False}})
+    runner.handle({"job_id": "j3", "check": "tests", "files": []})
+    runner.handle({"job_id": "j4", "check": "tests", "files": [], "settings": {"fake_keys": "yes"}})              # only a real True counts
+    outputs = {job: report["output_tail"].strip() for job, report in runner.client.reported}
+    assert outputs["j1"] == "['test-not-real', 'test-not-real', 'test-not-real', 'test-not-real']"
+    assert outputs["j2"] == outputs["j3"] == outputs["j4"] == "[None, None, None, None]"                          # the shell's real key never reaches a check
+    assert any("with fake AI keys" in line for line in said) and "real-secret-key" not in " ".join(outputs.values()) + " ".join(said)
+
+
+def test_a_fake_key_beats_a_dotenv_file_in_the_project(project, tmp_path):
+    (project / ".env").write_text("GOOGLE_API_KEY=real-from-dotenv\n", encoding="utf-8")
+    script = ("import os, pathlib\n"
+              "for line in pathlib.Path('.env').read_text().splitlines():\n"
+              "    key, _, value = line.partition('=')\n"
+              "    os.environ.setdefault(key, value)               # what python-dotenv does by default: it never replaces a variable that is already set\n"
+              "print(os.environ['GOOGLE_API_KEY'])")
+    runner, _ = make_runner(FakeClient(), project, {"tests": [PY, "-c", script]})
+    runner.handle({"job_id": "j1", "check": "tests", "files": [], "settings": {"fake_keys": True}})
+    runner.handle({"job_id": "j2", "check": "tests", "files": [], "settings": {"fake_keys": False}})
+    outputs = {job: report["output_tail"].strip() for job, report in runner.client.reported}
+    assert outputs == {"j1": "test-not-real", "j2": "real-from-dotenv"}

@@ -5,6 +5,7 @@
 
 .runner-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
@@ -13,6 +14,18 @@
 
 .runner-row + .runner-row { border-top: 1px solid var(--border-color); }
 .runner-main { min-width: 0; overflow-wrap: anywhere; }
+
+.runner-main { flex: 1 1 12rem; }
+
+.runner-checks { flex: 1 1 100%; display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.2rem; }
+.runner-check { display: flex; align-items: flex-start; gap: 0.6rem; cursor: pointer; }
+.runner-check input { margin-top: 0.25rem; flex: none; }
+.runner-check-text { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; overflow-wrap: anywhere; }
+
+.runner-check-command {
+  font: 0.78rem ui-monospace, "Cascadia Code", Consolas, monospace;
+  color: var(--text-muted);
+}
 
 .runner-dot {
   display: inline-block;

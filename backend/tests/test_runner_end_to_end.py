@@ -165,6 +165,31 @@ def test_files_reach_the_command_as_safe_words(server, project):
         finish(runner, thread)
 
 
+# ---- the settings chosen in the page -----------------------------------------------------------------------------------------------------------
+
+def test_the_fake_key_choice_made_in_settings_reaches_the_command_and_a_turned_off_check_cannot_be_asked_for(server, project, monkeypatch):
+    monkeypatch.setenv("GOOGLE_API_KEY", "real-secret-key")
+    (project / ".env").write_text("GOOGLE_API_KEY=real-from-dotenv\n", encoding="utf-8")
+    script = ("import os, pathlib\n"
+              "for line in pathlib.Path('.env').read_text().splitlines():\n"
+              "    key, _, value = line.partition('=')\n"
+              "    os.environ.setdefault(key, value)\n"
+              "print('key=' + os.environ['GOOGLE_API_KEY'])")
+    runner, thread, runner_id = pair_and_start(server, project, {"tests": [PY, "-c", script], "types": [PY, "-c", "print('types')"]})
+    try:
+        outputs = []
+        for fake_keys in (True, False):
+            rj.update_settings(server.db, JACK, runner_id, {"disabled": ["types"], "fake_keys": fake_keys})
+            job = ask(server, JACK, runner_id, "tests")
+            outputs.append(until(lambda: (j := rj.get_job(server.db, JACK, job["id"])) and j["status"] == rj.DONE and j)["output_tail"].strip())
+        assert outputs == ["key=test-not-real", "key=real-from-dotenv"]                           # the page's yes/no decided it; the shell's own key never reached either run
+        with pytest.raises(rj.RunnerError) as error:
+            ask(server, JACK, runner_id, "types")
+        assert error.value.code == "unknown_check"
+    finally:
+        finish(runner, thread)
+
+
 # ---- approval, cancelling, revoking -----------------------------------------------------------------------------------------------------------
 
 def test_nothing_runs_until_the_person_approves_and_then_it_runs_once(server, project, tmp_path):

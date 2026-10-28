@@ -2294,6 +2294,11 @@ class RunnerPairingRequest(BaseModel):
     folder_name: str = ""           # the name of the folder connected in the page, so the starter script can warn when someone picks a different one
 
 
+class RunnerSettingsRequest(BaseModel):
+    disabled: List[str] = []        # names of the runner's checks the person turned off
+    fake_keys: bool = True          # run checks with a fake AI key, so a test cannot spend real money
+
+
 def _runner_db_or_503():
     db = get_db()
     if db is None:
@@ -2397,6 +2402,16 @@ async def create_runner_pairing(body: RunnerPairingRequest, http_request: Reques
         except ValueError as problem:
             answer["install_problem"] = str(problem)
     return answer
+
+
+@app.post("/api/runner/runners/{runner_id}/settings")
+async def update_runner_settings(runner_id: str, body: RunnerSettingsRequest, current_user = Depends(get_current_user)):
+    """Which of a runner's checks are on, and whether checks use a fake AI key. Names and a yes or no only: this can never change a command."""
+    username = _runner_person(current_user)
+    saved = await asyncio.to_thread(runner_jobs.update_settings, _runner_db_or_503(), username, runner_id, body.model_dump())
+    if saved is None:
+        raise HTTPException(status_code=404, detail="No runner of yours has that id.")
+    return {"settings": saved}
 
 
 @app.delete("/api/runner/keys/{key_id}")
