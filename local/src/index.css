@@ -50,6 +50,7 @@
      Use these, never a hex: the dark theme overrides every one of them below. */
   --card-bg: #ffffff;           /* cards and tiles */
   --input-bg: #f4f7fd;          /* a row or field sunk a little into its card */
+  --chat-input-bg: #f3f5f8;     /* the chat text-input field: a slight gray, so it is not the same as the page */
   --chip-bg: #e6edfb;           /* pills, chips, table headers */
   --line: var(--border-color);
   --line-strong: #a3b6dc;       /* an input's border, a hover edge */
@@ -86,6 +87,7 @@
   --popover-bg: #212225;         /* menus and popovers */
   --on-accent: #0a0a0b;          /* text on a solid accent button: white on the muted orange is too faint */
   --card-bg: #1d1e20;            /* cards and tiles */
+  --chat-input-bg: #1f2023;      /* the chat text-input field: a slight lift off the page */
   --input-bg: #161718;
   --line: #33343a;
   --bubble-user-bg: #1d1d20;     /* your messages: a faint lift off the page, no outline (the light theme's bubble is about this quiet) */
@@ -1449,7 +1451,7 @@ div:has(.portal-body) {
   padding: 0.85rem 1.2rem 2.5rem; /* extra bottom padding for icons */
   border-radius: 25px;
   border: 1px solid var(--ai-border-color);
-  background: var(--bg-main);
+  background: var(--chat-input-bg);
   color: var(--text);
   font-size: 0.95rem;
   box-shadow: var(--shadow);

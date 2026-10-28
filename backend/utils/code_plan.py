@@ -462,6 +462,32 @@ class PlanBudget:
         return {"refund": 0, "stop": False, "note": f"DEVIATION: that step was outside the approved plan ({self.deviations} of {self.deviation_steps} allowed, then you must stop). Get back to the plan's files and the first step not done."}
 
 
+# WHY A TURN CARRYING OUT A PLAN ENDED. Jack had to press Continue about twice per plan (2026-10-28), so every such turn is counted by the reason it stopped (counts only, never a word of the plan).
+# "plan_done" is the only good ending; every other reason means the person had to ask again. The loop reports how IT ended (`exit_reason`), and a decision the person made on a proposal (`blocked`)
+# explains an ending where the model simply stopped after being told "declined" or "no answer".
+PLAN_STOP_REASONS = (
+    "plan_done",             # every step is done
+    "checkpoint_answered",   # the loop's checkpoint asked it to decide and it answered instead of going on (steps were left)
+    "model_answered",        # it answered in text while steps were left, with no checkpoint, limit or decision to explain it
+    "deviation_allowance",   # it left the plan more often than the plan allows
+    "hard_cap",              # it used the most steps a plan may take in one turn
+    "step_limit",            # the turn's step budget ran out and it was made to answer
+    "repeats",               # it repeated one call until the loop stopped it
+    "declined",              # the person declined a proposed change and it stopped
+    "no_decision",           # nobody answered a proposed change within the wait and it stopped
+)
+
+
+def stop_reason(plan_done: bool, exit_reason: str = "", blocked: str = "") -> str:
+    """The reason a plan-carrying turn ended, one of PLAN_STOP_REASONS. A finished plan is "plan_done" whatever else happened; a plain "the model answered" is explained by a decision the person
+    made on a proposal when there was one (`blocked`: "declined" or "no_decision"); anything unrecognised is reported as "model_answered" so nothing is lost. Pure."""
+    if plan_done:
+        return "plan_done"
+    if exit_reason in ("model_answered", "") and blocked in ("declined", "no_decision"):
+        return blocked
+    return exit_reason if exit_reason in PLAN_STOP_REASONS and exit_reason != "plan_done" else "model_answered"
+
+
 # PREFETCH. The plan names the files of its next step, so the server reads them (no model call) and puts them in the prompt: the turn starts with them in hand and goes straight to the
 # edit, instead of spending its first steps on reads, which is where turns used to run out. Cut by size so the prompt stays small.
 PREFETCH_TOTAL_CHARS = int(os.getenv("CODE_PLAN_PREFETCH_CHARS", "30000"))

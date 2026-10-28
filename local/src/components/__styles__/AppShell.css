@@ -384,7 +384,7 @@ div.chat-page.chat-page { flex: 1 1 auto; min-height: 0; display: flex; flex-dir
 /* THE BOX IS THE WRAPPER, and the buttons have a row of their own under the text. The buttons used to float over the bottom of the text area, so a long message scrolled
    underneath them. Now the rounded, hairline-bordered box is the wrapper (a column: the text area, then the toolbar), and the text area scrolls only inside its own part of
    it. The hairline is an inset shadow: it takes no room, so the glow layer (the wrapper's size) still sits exactly on it. The embedded widget keeps its old layout (no .chat-page). */
-.chat-page .chat-input-wrapper { display: flex; flex-direction: column; border-radius: 25px; background: var(--bg-main); box-shadow: inset 0 0 0 1px var(--border-color); }
+.chat-page .chat-input-wrapper { display: flex; flex-direction: column; border-radius: 25px; background: var(--chat-input-bg); box-shadow: inset 0 0 0 1px var(--border-color); }
 .app-shell .chat-page .chat-input-wrapper .chat-textarea,
 .app-shell .chat-page .chat-input-wrapper .chat-textarea:active {
   border: 0; background: transparent; box-shadow: none; border-radius: 25px 25px 0 0; min-height: 0; padding: 0.85rem 1.2rem 0.5rem;

@@ -78,8 +78,9 @@ def test_the_wait_is_ten_minutes_by_default_and_can_be_switched_off():
 
 # ---- through the tool agent --------------------------------------------------------------------------------------------------------------
 
-async def _drive(monkeypatch, decision_for, *, edit_decisions=True):
-    """Runs tool_agent_node on the native engine with a fake loop that makes one proposal through the real dispatcher while the browser answers via `decision_for`."""
+async def _drive(monkeypatch, decision_for, *, edit_decisions=True, before=None, after=None, state_extra=None, question="make the greeting friendlier"):
+    """Runs tool_agent_node on the native engine with a fake loop that makes one proposal through the real dispatcher while the browser answers via `decision_for`.
+    `before(act, loop_kwargs)` and `after(act, loop_kwargs)` are optional coroutines run around the proposal with the real dispatcher (their results land in seen["before"] and seen["after"]), and `state_extra` adds to the turn's state."""
     from backend.tests.test_tool_agent_node import _setup_github_repo, _state
 
     monkeypatch.setenv("TOOL_AGENT_ENGINE", "native")
@@ -99,14 +100,19 @@ async def _drive(monkeypatch, decision_for, *, edit_decisions=True):
             await asyncio.sleep(0.005)
 
     async def fake_native_run(**kwargs):
+        seen["kwargs"] = kwargs
+        if before is not None:
+            seen["before"] = await before(kwargs["act"], kwargs)
         helper = asyncio.create_task(answer_when_shown())
         decision = {"tool_action": "propose_local_edits", "args": {"summary": "friendlier greeting", "edits": [_replace("src/app.py", "'hi ' + name", "'hello ' + name")]}}
         seen["observation"] = await kwargs["act"](decision)
         await helper
+        if after is not None:
+            seen["after"] = await after(kwargs["act"], kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
     monkeypatch.setattr(aw.native_loop, "run", fake_native_run)
-    await aw.tool_agent_node({**_state("make the greeting friendlier", username="jack"), "edit_decisions": edit_decisions})
+    await aw.tool_agent_node({**_state(question, username="jack"), "edit_decisions": edit_decisions, **(state_extra or {})})
     return seen
 
 
@@ -121,6 +127,27 @@ async def test_applied_tells_the_loop_so_and_brings_the_servers_copy_up_to_date(
     assert seen["card"]["awaiting_decision"] is True
     assert "APPLIED" in seen["observation"] and "src/app.py" in seen["observation"] and "read the changed files to check them" in seen["observation"]
     assert "'hello ' + name" in _text_on_server("src/app.py") and "'hi ' + name" not in _text_on_server("src/app.py")      # a read after this sees the change
+
+
+async def _read_app(act, kwargs=None):
+    return await act({"tool_action": "read_repo_file", "args": {"path": "src/app.py"}})
+
+
+@run_async
+async def test_a_file_read_before_an_applied_change_shows_the_change_when_it_is_read_again_in_the_same_turn(monkeypatch):
+    # The turn keeps the files it has read (so the same file is not fetched twice). After an Apply that copy was never refreshed, so a plan's NEXT step that touched the same file read the old text,
+    # and an edit written against it was checked against the old text too and then failed to apply in the browser.
+    _connect_folder()
+    seen = await _drive(monkeypatch, lambda pid: led.decide("jack", pid, "applied"), before=_read_app, after=_read_app)
+    assert "'hi ' + name" in seen["before"] and "'hello ' + name" not in seen["before"]
+    assert "'hello ' + name" in seen["after"] and "'hi ' + name" not in seen["after"]
+
+
+@run_async
+async def test_a_file_read_before_a_declined_change_is_unchanged_when_read_again(monkeypatch):
+    _connect_folder()
+    seen = await _drive(monkeypatch, lambda pid: led.decide("jack", pid, "declined"), before=_read_app, after=_read_app)
+    assert seen["before"] == seen["after"] and "'hi ' + name" in seen["after"]
 
 
 @run_async
@@ -211,3 +238,72 @@ def test_the_decision_endpoint_counts_outcomes_and_the_card_reports_declines_and
     card = (root / "local" / "src" / "components" / "LocalEditCard.tsx").read_text(encoding="utf-8")
     assert "onDecision?.(proposal.proposal_id, 'undone', '')" in card and "if (proposal.awaiting) onDecision" not in card
     assert "'applied' | 'declined' | 'undone'" in (root / "local" / "src" / "api.ts").read_text(encoding="utf-8")
+
+
+# ---- the next plan step's files after an applied edit ------------------------------------------------------------------------------------------
+
+def _approved_plan_two_steps():
+    return {"goal": "greeting", "state": "approved", "files": [{"path": "src/app.py", "why": "the greeting"}, {"path": "src/data.json", "why": "its data"}],
+            "steps": [{"id": "s1", "text": "Friendlier greeting", "files": ["src/app.py"], "status": "done"},
+                      {"id": "s2", "text": "Use it in the data", "files": ["src/app.py", "src/data.json"], "status": "todo"}]}
+
+
+@run_async
+async def test_after_an_applied_change_the_next_plan_steps_files_are_handed_over_as_they_are_now(monkeypatch):
+    _connect_folder()
+    from backend.utils import self_counters as sc
+
+    monkeypatch.setattr(aw, "get_db", lambda: None)             # the plan store is stubbed below; nothing here may reach a real database
+    monkeypatch.setattr(aw.code_plan, "load", lambda db, user, session: _approved_plan_two_steps())
+    monkeypatch.setattr(aw.code_plan, "record_applied", lambda db, user, session, paths: 1)
+    counted = []
+    monkeypatch.setattr(sc, "record_turn_counts", lambda counts, *a, **k: counted.append(counts))
+
+    async def feed(act, kwargs):
+        return await kwargs["plan_feed"]()
+
+    seen = await _drive(monkeypatch, lambda pid: led.decide("jack", pid, "applied"), after=feed, state_extra={"code_plan_phase": "execute", "code_plan_context": "PLAN"}, question="Go ahead with the approved plan.")
+    block = seen["after"]
+    assert block.startswith("FILES FOR STEP s2") and "--- src/app.py" in block and "--- src/data.json" in block and '{"a": 1}' in block
+    assert "'hello ' + name" in block and "'hi ' + name" not in block                       # the text the step just applied, not the old text
+    assert any(count.get("code_plan_fed_next") == 1 for count in counted)
+
+
+@run_async
+async def test_a_turn_that_is_not_carrying_out_a_plan_is_given_no_such_hook(monkeypatch):
+    _connect_folder()
+    seen = await _drive(monkeypatch, lambda pid: led.decide("jack", pid, "applied"))
+    assert seen["kwargs"]["plan_feed"] is None
+
+
+@run_async
+async def test_nothing_is_handed_over_when_the_plan_has_no_step_left_or_reading_the_files_fails(monkeypatch):
+    _connect_folder()
+    finished = _approved_plan_two_steps()
+    finished["steps"][1]["status"] = "done"
+    monkeypatch.setattr(aw, "get_db", lambda: None)
+    monkeypatch.setattr(aw.code_plan, "load", lambda db, user, session: finished)
+    monkeypatch.setattr(aw.code_plan, "record_applied", lambda db, user, session, paths: 1)
+
+    async def feed(act, kwargs):
+        return await kwargs["plan_feed"]()
+
+    seen = await _drive(monkeypatch, lambda pid: led.decide("jack", pid, "applied"), after=feed, state_extra={"code_plan_phase": "execute", "code_plan_context": "PLAN"}, question="Go ahead with the approved plan.")
+    assert seen["after"] == ""
+
+    def broken(plan, read):
+        raise RuntimeError("could not read")
+
+    monkeypatch.setattr(aw.code_plan, "load", lambda db, user, session: _approved_plan_two_steps())
+    monkeypatch.setattr(aw.code_plan, "files_block", broken)
+    seen = await _drive(monkeypatch, lambda pid: led.decide("jack", pid, "applied"), after=feed, state_extra={"code_plan_phase": "execute", "code_plan_context": "PLAN"}, question="Go ahead with the approved plan.")
+    assert seen["after"] == ""                                                               # it never raises: the turn just goes on without the head start
+
+
+def test_the_hook_is_given_to_the_native_loop_only_while_a_plan_is_carried_out_and_each_hand_over_is_counted():
+    source = (ROOT / "backend" / "services" / "agent_workflow.py").read_text(encoding="utf-8")
+    assert "plan_feed=_next_step_files_after_apply if plan_phase == code_plan.EXECUTE_PHASE else None" in source
+    assert "_turn_file_cache[path] = text" in source and '{"code_plan_fed_next": 1}' in source
+    from backend.utils import self_counters
+
+    assert "code_plan_fed_next" in self_counters.KEYS

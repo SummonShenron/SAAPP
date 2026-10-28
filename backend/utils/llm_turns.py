@@ -93,6 +93,9 @@ class Turn:
         self.loop_steps = 0  # how many steps (model decisions) it used
         self.cap_hit = False  # it reached the last step it was allowed, or ended without deciding to answer
         self.plan_deviated = False  # an approved plan was being carried out and the turn was stopped for going off it more times than the plan allows (backend/utils/code_plan.py PlanBudget)
+        self.plan_exit = ""  # how the loop ended while carrying out an approved plan (backend/utils/code_plan.py PLAN_STOP_REASONS), as the loop saw it
+        self.plan_blocked = ""  # a decision the person made on a proposal this turn that can end it: "declined" or "no_decision"
+        self.plan_stop = ""  # the final reason such a turn ended, once the plan's own state is known (code_plan.stop_reason)
         self.loop_exit = ""  # how the loop's last run ended: "early", "late", "cap_draft" or "cap_no_draft" (see exit_kind)
         self.nudged = False  # the halfway nudge was shown to the model this turn
         self.nudge_drafted = False  # ... and a draft existed by the end
@@ -266,6 +269,39 @@ def note_plan_deviation() -> None:
         if turn is None or turn.done:
             return
         turn.plan_deviated = True
+    except Exception:
+        pass
+
+
+def note_plan_exit(reason: str) -> None:
+    """The tool loop ended while carrying out an approved plan, for this reason (code_plan.PLAN_STOP_REASONS, as the loop saw it). The last one wins. Never raises."""
+    try:
+        turn = _current.get()
+        if turn is None or turn.done:
+            return
+        turn.plan_exit = str(reason or "")
+    except Exception:
+        pass
+
+
+def note_plan_blocked(reason: str) -> None:
+    """The person declined a proposed change, or did not answer it in time, while a plan was being carried out. Explains a turn that then simply stops. The last one wins. Never raises."""
+    try:
+        turn = _current.get()
+        if turn is None or turn.done:
+            return
+        turn.plan_blocked = str(reason or "")
+    except Exception:
+        pass
+
+
+def note_plan_stop(reason: str) -> None:
+    """The final reason a plan-carrying turn ended (code_plan.stop_reason): what app.py counts. Never raises."""
+    try:
+        turn = _current.get()
+        if turn is None or turn.done:
+            return
+        turn.plan_stop = str(reason or "")
     except Exception:
         pass
 

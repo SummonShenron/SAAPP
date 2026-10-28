@@ -270,6 +270,7 @@ async def run(
     is_unsafe: Optional[Callable[[Dict[str, Any]], bool]] = None,
     plan_budget: Any = None,
     leanings: str = "",
+    plan_feed: Optional[Callable[[], Awaitable[str]]] = None,
 ) -> Dict[str, Any]:
     """Runs the loop and returns what the old loop returns: `{"final_answer", "attempts", "show_work"}`, where each attempt is
     `{"purpose", "action_desc", "observation"}`. `llm` must offer `ainvoke_tools(messages, tools)`. `act(decision)` is the turn's
@@ -307,6 +308,12 @@ async def run(
     nudged = False        # the halfway nudge was shown (counted per turn, backend/utils/llm_turns.py)
     checkpoints = checkpoint_after(budget)
     checkpoints_done: set = set()
+    # Carrying out an approved plan: a step on the plan is handed back to the budget (PlanBudget), but the checkpoints count RAW steps and say "decide now, prefer answering" after a third and
+    # two thirds of the starting budget (4 and 8 of 12). With a read and an edit per plan step that was after about two steps, and a text answer there ended the turn with steps left, so the person had to
+    # press Continue (found 2026-10-28: about twice per plan). The plan's own allowance and hard cap bound the turn instead.
+    if plan_budget is not None:
+        checkpoints = ()
+    stop_reason = ""      # how this run ended, for a turn carrying out a plan (backend/utils/code_plan.py PLAN_STOP_REASONS)
 
     async def absorb_steering(step_number: int) -> bool:
         """Folds newly arrived steering into the conversation as a user message and widens the budget. True when there was any."""
@@ -495,6 +502,7 @@ async def run(
             outcome = await run_checkpoint(step - 1)
             if outcome == "answered":
                 step -= 1      # the step it was about to take was never taken
+                stop_reason = "checkpoint_answered"
                 break
             if outcome in ("steered", "acted"):
                 continue       # steered: decide again with the new instructions; acted: the proposal was this step
@@ -521,8 +529,21 @@ async def run(
                 logger.info("[native_loop] step %s: an answer without %s on a turn that requires it was sent back (%d/%d).", step, required_action["tool_action"], required_rejections, required_action.get("max_final_rejections", 2))
                 continue
             final_text = _text(getattr(reply, "content", ""))
+            stop_reason = "model_answered"
             break
         results = await execute_calls(step, calls)
+        if plan_feed is not None and any(call.get("name") == "propose_local_edits" and " APPLIED:" in str(result) for call, result in zip(calls, results)):
+            # Carrying out an approved plan and a step's edit was just applied: hand over the next step's files now, from the server, so the model's next call is the edit and not a read (one model
+            # call per plan step instead of two). It joins the held results, so it is shortened like any old result once the step it served is behind us.
+            try:
+                block = await plan_feed()
+            except Exception:
+                logger.warning("[native_loop] could not read the next plan step's files.", exc_info=True)
+                block = ""
+            if block:
+                fed = HumanMessage(content=block)
+                messages.append(fed)
+                held.append({"message": fed, "step": step, "text": block, "done": False, "key": f"plan_feed|{step}"})
         if library_allowance is not None:
             # A listing of a long library adds the read steps it needs, once (backend/utils/library_allowance.py): the tool steps left AFTER this one (this loop's answer is an extra call, so none is kept back).
             for call, result in zip(calls, results):
@@ -546,12 +567,15 @@ async def run(
 
                     _llm_turns.note_plan_deviation()
                 logger.info("[native_loop] step %s: the plan's step allowance ended the loop.", step)
+                stop_reason = "deviation_allowance" if outcome.get("deviation_stop") else "hard_cap"
                 break
         if repeats >= MAX_REPEATS:
+            stop_reason = "repeats"
             break
 
     if final_text is None:
         forced = True
+        stop_reason = stop_reason or "step_limit"
         await absorb_steering(step)
         shorten_old_results(step + 1)
         messages.append(HumanMessage(content=STEP_LIMIT_NOTICE + draft_checkpoint.draft_block(latest_draft, how="fix it in your answer") + draft_checkpoint.forced_final_addition(latest_draft)))
@@ -563,6 +587,8 @@ async def run(
     from backend.utils import llm_turns
 
     llm_turns.note_tool_loop(step, forced, tool_steps=budget, had_draft=bool(latest_draft), nudged=nudged)
+    if plan_budget is not None:
+        llm_turns.note_plan_exit(stop_reason or "model_answered")
     try:
         from backend.utils.self_counters import record_turn_counts
 

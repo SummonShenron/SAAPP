@@ -99,6 +99,19 @@ const REWRITE_ROWS: Array<[string, string]> = [
   ['revised_closing', 'Fishing after a close'],
 ];
 
+/** Why a turn carrying out an approved plan ended (backend/utils/code_plan.py PLAN_STOP_REASONS), counted under code_plan_stop_<reason>. Only "plan finished" is a good ending: every other one means the person had to press Continue. */
+const PLAN_STOP_ROWS: Array<[string, string]> = [
+  ['plan_done', 'the plan finished'],
+  ['checkpoint_answered', 'a checkpoint asked it to decide and it stopped'],
+  ['model_answered', 'it answered in text with steps left'],
+  ['deviation_allowance', 'it left the plan too often'],
+  ['hard_cap', 'it used the most steps a plan may take'],
+  ['step_limit', 'its step budget ran out'],
+  ['repeats', 'it repeated one call'],
+  ['declined', 'the person declined a change'],
+  ['no_decision', 'nobody answered a proposed change in time'],
+];
+
 /** Why Sonic declined to open a conversation (backend/utils/initiation.py), counted under initiation_refused_<reason>. */
 const INITIATION_REFUSAL_ROWS: Array<[string, string]> = [
   ['guest', 'guest user'],
@@ -1019,6 +1032,15 @@ const CountersCard: React.FC<{ counters: CountersSummary }> = ({ counters }) => 
           <tr><td>Plans the person approved ({totals.code_plan_submitted ?? 0} plans written)</td><td>{pct(rates.code_plan_approved)}</td><td>{pct(previous.code_plan_approved)}</td><td>{change(changes.code_plan_approved)}</td></tr>
           <tr><td>Turns carrying out a plan that ran out of steps ({totals.code_plan_exec_turns ?? 0} such turns, against the coding turns above)</td><td>{pct(rates.code_plan_exec_cap_hit)}</td><td>{pct(previous.code_plan_exec_cap_hit)}</td><td>{change(changes.code_plan_exec_cap_hit)}</td></tr>
           <tr><td>Real cases from its own record offered to a reply / replies that cited one ({totals.experience_offered ?? 0} offered)</td><td>{totals.experience_offered ?? 0} / {totals.experience_cited ?? 0}</td><td>{previous.experience_offered ?? 0} / {previous.experience_cited ?? 0}</td><td></td></tr>
+          <tr><td>Turns carrying out a plan that stopped with steps left, and tool steps they used on average ({totals.code_plan_exec_turns ?? 0} such turns)</td><td>{pctOf(totals.code_plan_exec_early ?? 0, totals.code_plan_exec_turns ?? 0)} / {totals.code_plan_exec_turns ? ((totals.code_plan_exec_tool_steps ?? 0) / totals.code_plan_exec_turns).toFixed(1) : '-'}</td><td>{pctOf(previousTotals.code_plan_exec_early ?? 0, previousTotals.code_plan_exec_turns ?? 0)} / {previousTotals.code_plan_exec_turns ? ((previousTotals.code_plan_exec_tool_steps ?? 0) / previousTotals.code_plan_exec_turns).toFixed(1) : '-'}</td><td><span className="sh-flat">share / steps</span></td></tr>
+          {PLAN_STOP_ROWS.map(([key, label]) => (
+            <tr key={`plan-stop-${key}`}>
+              <td>Plan turn ended because {label}</td>
+              <td>{(totals as Record<string, number | undefined>)[`code_plan_stop_${key}`] ?? 0}</td>
+              <td>{(previousTotals as Record<string, number | undefined>)[`code_plan_stop_${key}`] ?? 0}</td>
+              <td><span className="sh-flat">count</span></td>
+            </tr>
+          ))}
           <tr><td>Plan steps finished by an applied edit / edits refused for leaving the plan</td><td>{totals.code_plan_steps_done ?? 0} / {totals.code_plan_deviation ?? 0}</td><td>{previous.code_plan_steps_done ?? 0} / {previous.code_plan_deviation ?? 0}</td><td></td></tr>
         </tbody>
       </table>

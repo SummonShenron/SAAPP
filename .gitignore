@@ -66,3 +66,9 @@ index.html
 settings.toml
 
 .claude/**/*
+
+# Sonic's working files live in each person's own project folder (see .sonic/README.md) and are personal, so everything in .sonic/ is ignored by default,
+# including anything Sonic starts writing there later. Only the files listed below are shared. (It has to be .sonic/* and not .sonic/, or the exceptions would not work.)
+.sonic/*
+!.sonic/README.md
+!.sonic/notes.example.md

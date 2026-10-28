@@ -779,3 +779,66 @@ def test_a_checkpoint_is_counted_as_answered_or_continued_and_reaches_the_daily_
         lt.finish(turn, day="2026-10-24")
         day = lt.snapshot()["2026-10-24"]
         assert day["checkpoint_turns"] == 1 and day["checkpoint_answered_turns"] == answered and day["checkpoint_continued_turns"] == 1 - answered
+
+
+# ---- plan feed: the next step's files after an applied edit (no model call) -------------------------------------------------------------------
+
+APPLIED_RESULT = "Proposed 1 edit(s) across 1 file(s): local/src/index.css. APPLIED: the person applied the edits, so those files now contain them."
+
+
+class Feed:
+    """A stand-in for the node's hook: counts calls and returns what it was given."""
+
+    def __init__(self, block="FILES FOR STEP s2, read for you from the folder as they are right now.\n--- local/src/index.css\nbody { color: red }", fail=False):
+        self.block, self.fail, self.calls = block, fail, 0
+
+    async def __call__(self):
+        self.calls += 1
+        if self.fail:
+            raise RuntimeError("store down")
+        return self.block
+
+
+def test_after_an_applied_edit_the_next_steps_files_are_added_to_the_conversation_after_the_tool_result_and_cost_no_model_call():
+    feed = Feed()
+    second_proposal = {"summary": "the next step", "edits": [{"path": "local/src/other.css", "old_string": "c", "new_string": "d"}]}       # a different call: an identical one is refused as a repeat
+    llm = ToolLLM(asks(call("propose_local_edits", PROPOSAL, id="p1")), asks(call("propose_local_edits", second_proposal, id="p2")), answers("both applied"))
+    result = go(llm, Acts({"propose_local_edits": APPLIED_RESULT}), tools=EDIT_TOOLS, required_action=REQUIRED, max_steps=6, plan_feed=feed)
+    assert result["final_answer"] == "both applied" and feed.calls == 2 and len(llm.calls) == 3          # two proposals and the answer: no extra model call for the hand-over
+    second = llm.calls[1][0]
+    tool_index = next(i for i, m in enumerate(second) if getattr(m, "tool_call_id", None) == "p1")
+    assert isinstance(second[tool_index + 1], HumanMessage) and second[tool_index + 1].content.startswith("FILES FOR STEP s2") and "body { color: red }" in second[tool_index + 1].content
+
+
+def test_a_declined_or_unanswered_proposal_or_another_tool_is_not_followed_by_a_hand_over():
+    for text in ("Proposed 1 edit(s). DECLINED: the person did not apply these edits. Nothing was changed.", "Proposed 1 edit(s). NO DECISION: there was no answer within 10 minutes.", "ERROR: these edits could not be applied cleanly"):
+        feed = Feed()
+        go(ToolLLM(asks(call("propose_local_edits", PROPOSAL, id="p1")), answers("stopped")), Acts({"propose_local_edits": text}), tools=EDIT_TOOLS, max_steps=6, plan_feed=feed)
+        assert feed.calls == 0
+    feed = Feed()
+    go(ToolLLM(asks(call("read_repo_file", {"path": "a.css"}, id="r1")), answers("done")), Acts({"read_repo_file": "a file that says APPLIED: in its text"}), tools=EDIT_TOOLS, max_steps=6, plan_feed=feed)
+    assert feed.calls == 0                                                                                   # only a proposal's own APPLIED result counts
+
+
+def test_a_hand_over_that_is_empty_or_fails_changes_nothing_and_a_turn_without_the_hook_is_untouched():
+    for feed in (Feed(block=""), Feed(fail=True)):
+        llm = ToolLLM(asks(call("propose_local_edits", PROPOSAL, id="p1")), answers("applied"))
+        result = go(llm, Acts({"propose_local_edits": APPLIED_RESULT}), tools=EDIT_TOOLS, required_action=REQUIRED, max_steps=6, plan_feed=feed)
+        assert result["final_answer"] == "applied" and feed.calls == 1
+        assert not any(str(m.content).startswith("FILES FOR STEP") for m in llm.calls[1][0])
+    llm = ToolLLM(asks(call("propose_local_edits", PROPOSAL, id="p1")), answers("applied"))
+    assert go(llm, Acts({"propose_local_edits": APPLIED_RESULT}), tools=EDIT_TOOLS, required_action=REQUIRED, max_steps=6)["final_answer"] == "applied"
+
+
+def test_a_handed_over_block_is_shortened_like_any_old_result_once_its_step_is_behind_us():
+    big = "FILES FOR STEP s2, read for you from the folder as they are right now.\n" + "x" * 3000
+    snapshots = []                       # what the model was sent at each call, copied then (a later call shortens old messages in place)
+    holder = {}
+    llm = ToolLLM(asks(call("propose_local_edits", PROPOSAL, id="p1")), *[asks(call("read_repo_file", {"path": f"f{n}.css"}, id=f"r{n}")) for n in range(4)], answers("done"),
+                  on_call=lambda n: snapshots.append([str(m.content) for m in holder["llm"].calls[-1][0]]))
+    holder["llm"] = llm
+    go(llm, Acts({"propose_local_edits": APPLIED_RESULT}), tools=EDIT_TOOLS, required_action=REQUIRED, max_steps=8, plan_feed=Feed(block=big))
+    early = [text for text in snapshots[1] if text.startswith("FILES FOR STEP")]
+    late = [text for text in snapshots[-1] if text.startswith("FILES FOR STEP")]
+    assert early and len(early[0]) == len(big)                                                               # whole while the step it serves is the next one
+    assert late and len(late[0]) < 700 and "older result shortened" in late[0]                               # and cut down later, so it is not re-sent in full on every remaining call

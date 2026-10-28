@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from backend.utils import code_outcomes
 from backend.utils import code_plan as cp
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -488,6 +489,124 @@ def test_the_native_loop_runs_a_long_plan_on_a_small_base_budget_and_stops_when_
     llm = LLM(wandering)
     result = asyncio.run(nl.run(llm=llm, tools=tools, act=act, question="go", max_steps=6, plan_budget=cp.PlanBudget(plan, deviation_steps=2)))
     assert len(result["attempts"]) == 3 and result["final_answer"] == "forced final"                                  # the third step off the plan ended the loop
+
+
+# ---- why a plan-carrying turn ended (diagnostics) and the checkpoint that used to end it early --------------------------------------------------
+
+def test_the_stop_reason_is_one_of_the_known_reasons_and_a_finished_plan_always_wins():
+    assert cp.stop_reason(True, "model_answered", "declined") == "plan_done" and cp.stop_reason(True, "hard_cap") == "plan_done"
+    assert cp.stop_reason(False, "checkpoint_answered") == "checkpoint_answered" and cp.stop_reason(False, "hard_cap") == "hard_cap"
+    assert cp.stop_reason(False, "deviation_allowance") == "deviation_allowance" and cp.stop_reason(False, "step_limit") == "step_limit" and cp.stop_reason(False, "repeats") == "repeats"
+    assert cp.stop_reason(False, "model_answered", "declined") == "declined" and cp.stop_reason(False, "", "no_decision") == "no_decision"       # the person's decision explains a plain stop
+    assert cp.stop_reason(False, "hard_cap", "declined") == "hard_cap"                                                                         # but never hides a real limit
+    assert cp.stop_reason(False, "model_answered") == "model_answered" and cp.stop_reason(False) == "model_answered"
+    assert cp.stop_reason(False, "something new", "also new") == "model_answered" and cp.stop_reason(False, "plan_done") == "model_answered"      # unknown values still count somewhere
+    assert all(cp.stop_reason(False, reason) in cp.PLAN_STOP_REASONS for reason in cp.PLAN_STOP_REASONS) and len(set(cp.PLAN_STOP_REASONS)) == len(cp.PLAN_STOP_REASONS)
+
+
+def test_every_stop_reason_has_a_counter_and_the_counters_name_no_content():
+    from backend.utils import self_counters
+
+    assert {f"code_plan_stop_{reason}" for reason in cp.PLAN_STOP_REASONS} <= set(self_counters.KEYS) and {"code_plan_exec_early", "code_plan_exec_tool_steps"} <= set(self_counters.KEYS)
+
+
+def _calls_offered(script, plan_budget, max_steps):
+    """Like _run_loop_in_a_turn, but also returns the tool names the model was offered on each call, so a test can see whether a checkpoint question was asked."""
+    import asyncio
+
+    from langchain_core.messages import AIMessage
+
+    from backend.services import native_loop as nl
+    from backend.utils import llm_turns
+
+    offered = []
+
+    class LLM:
+        async def ainvoke_tools(self, messages, tools):
+            offered.append([t["name"] for t in tools])
+            if not tools:
+                return AIMessage(content="forced final")
+            item = script.pop(0)
+            return AIMessage(content=item if isinstance(item, str) else "", tool_calls=[] if isinstance(item, str) else [item])
+
+    async def act(decision):
+        return f"ok {decision['tool_action']}"
+
+    tools = [{"name": "read_repo_file", "description": "r"}, {"name": "search_literal", "description": "s"}, {"name": "propose_local_edits", "description": "p"}]
+    turn = llm_turns.begin("someone")
+    try:
+        result = asyncio.run(nl.run(llm=LLM(), tools=tools, act=act, question="go", max_steps=max_steps, plan_budget=plan_budget))
+    finally:
+        llm_turns._current.set(None)
+    return turn, result, offered
+
+
+def test_a_checkpoint_does_not_end_a_turn_that_is_carrying_out_a_plan():
+    # Seven on-plan steps (a read and an edit per plan step) on a budget of 12, which used to meet a checkpoint after four raw steps: "decide now, prefer answering".
+    steps = [_tool("read_repo_file", path="local/src/pages/Chat.tsx", start_line=i) if i % 2 else _tool("propose_local_edits", edits=[{"path": "local/src/pages/Chat.tsx"}]) for i in range(1, 8)]
+    turn, result, offered = _calls_offered(steps + ["every step is done"], cp.PlanBudget(_approved()), max_steps=12)
+    assert result["final_answer"] == "every step is done" and len(result["attempts"]) == 7
+    assert not any(names == ["continue_working"] or "continue_working" in names for names in offered)               # no checkpoint question was ever asked
+    assert turn.checkpoints_answered == 0 and turn.plan_exit == "model_answered"
+
+
+def test_the_same_turn_without_a_plan_still_meets_its_checkpoints():
+    steps = [_tool("read_repo_file", path=f"f{i}.py") for i in range(1, 6)]
+    turn, result, offered = _calls_offered(steps + ["answer"], None, max_steps=12)
+    assert any("continue_working" in names for names in offered)                                                      # the checkpoint is only skipped for a plan
+    assert turn.plan_exit == ""                                                                                        # and a turn that is not carrying out a plan records no plan exit
+
+
+def test_the_loop_says_how_a_plan_turn_ended():
+    stays = [_tool("read_repo_file", path="local/src/pages/Chat.tsx", start_line=i) for i in range(1, 9)]
+    assert _calls_offered(["done"], cp.PlanBudget(_approved()), 12)[0].plan_exit == "model_answered"
+    assert _calls_offered([_tool("search_literal", query=f"q{i}") for i in range(5)], cp.PlanBudget(_approved(), deviation_steps=2), 6)[0].plan_exit == "deviation_allowance"
+    assert _calls_offered(list(stays), cp.PlanBudget(_approved(), hard_cap=3), 4)[0].plan_exit == "hard_cap"
+    assert _calls_offered([_tool("search_literal", query=f"q{i}") for i in range(5)], cp.PlanBudget(_approved(), deviation_steps=10), 3)[0].plan_exit == "step_limit"
+
+
+def test_the_turn_record_keeps_the_plan_exit_the_decision_and_the_final_reason_and_ignores_a_finished_turn():
+    from backend.utils import llm_turns
+
+    turn = llm_turns.begin("u")
+    try:
+        assert (turn.plan_exit, turn.plan_blocked, turn.plan_stop) == ("", "", "")
+        llm_turns.note_plan_exit("hard_cap")
+        llm_turns.note_plan_blocked("declined")
+        llm_turns.note_plan_stop("declined")
+        assert (turn.plan_exit, turn.plan_blocked, turn.plan_stop) == ("hard_cap", "declined", "declined")
+        turn.done = True
+        llm_turns.note_plan_exit("repeats")
+        assert turn.plan_exit == "hard_cap"
+    finally:
+        llm_turns._current.set(None)
+    llm_turns.note_plan_exit("x"), llm_turns.note_plan_blocked("x"), llm_turns.note_plan_stop("x")                      # no turn running: nothing to mark, and none of them raises
+
+
+def test_a_plan_turn_is_counted_by_why_it_ended_and_a_stop_with_steps_left_is_counted_as_early():
+    from types import SimpleNamespace
+
+    done, early = {}, {}
+    code_outcomes.tally_turn(done, {"cap_hit": False, "edited": True, "plan_stop": "plan_done", "tool_steps": 9}, "execute")
+    code_outcomes.tally_turn(early, {"cap_hit": False, "edited": True, "plan_stop": "checkpoint_answered", "tool_steps": 4}, "execute")
+    assert done["code_plan_stop_plan_done"] == 1 and "code_plan_exec_early" not in done and done["code_plan_exec_tool_steps"] == 9
+    assert early["code_plan_stop_checkpoint_answered"] == 1 and early["code_plan_exec_early"] == 1 and early["code_plan_exec_tool_steps"] == 4
+    other = {}
+    code_outcomes.tally_turn(other, {"cap_hit": False, "edited": True, "plan_stop": "plan_done", "tool_steps": 3}, "plan")                    # only turns carrying out a plan count these
+    assert not any(key.startswith("code_plan_stop") for key in other)
+    # a turn that answered before calling any tool is still a coding turn when it was carrying out a plan: that is the ending worth counting
+    quiet = SimpleNamespace(loop_ran=True, tools={}, cap_hit=False, plan_stop="model_answered", loop_steps=1)
+    assert code_outcomes.summarize_turn(quiet)["plan_stop"] == "model_answered"
+    assert code_outcomes.summarize_turn(SimpleNamespace(loop_ran=True, tools={}, cap_hit=False, plan_stop="", loop_steps=1)) is None
+
+
+def test_the_turn_end_is_recorded_for_plan_execution_and_a_declined_or_unanswered_proposal_is_noted():
+    workflow = (ROOT / "backend" / "services" / "agent_workflow.py").read_text(encoding="utf-8")
+    assert "if plan_phase == code_plan.EXECUTE_PHASE:\n            await _note_plan_turn_end()" in workflow
+    assert 'llm_turns.note_plan_blocked("no_decision")' in workflow and 'llm_turns.note_plan_blocked("declined")' in workflow
+    assert "code_plan.stop_reason(done, getattr(turn, \"plan_exit\", \"\"), getattr(turn, \"plan_blocked\", \"\"))" in workflow and "[code plan] a turn carrying out the plan ended: reason=%s" in workflow
+    health = (ROOT / "local" / "src" / "pages" / "SonicHealth.tsx").read_text(encoding="utf-8")
+    assert "code_plan_stop_" in health
 
 
 # ---- reading the next step's files ahead (no model call) --------------------------------------------------------------------------------------

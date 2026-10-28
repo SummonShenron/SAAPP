@@ -3272,6 +3272,36 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 logger.warning("[tool_agent_node] could not choose working leanings.", exc_info=True)
                 return ""
 
+        async def _note_plan_turn_end() -> None:
+            """Records WHY a turn carrying out an approved plan ended (code_plan.stop_reason), once the plan's own state says whether every step is done. Counts and one log line of numbers and a reason
+            word, never a word of the plan. Never raises."""
+            try:
+                plan = await asyncio.to_thread(code_plan.load, get_db(), username, state.get("session_id") or "")
+                turn = llm_turns.current()
+                done = bool(plan) and (plan.get("state") == code_plan.DONE or code_plan.next_step(plan) is None)
+                reason = code_plan.stop_reason(done, getattr(turn, "plan_exit", ""), getattr(turn, "plan_blocked", ""))
+                llm_turns.note_plan_stop(reason)
+                steps = (plan or {}).get("steps") or []
+                left = sum(1 for step in steps if step.get("status") != "done")
+                logger.info("[code plan] a turn carrying out the plan ended: reason=%s, steps_left=%d of %d, tool_steps=%d.", reason, left, len(steps), int(getattr(turn, "loop_steps", 0) or 0))
+            except Exception:
+                logger.warning("[code plan] could not record why the turn ended.", exc_info=True)
+
+        async def _next_step_files_after_apply() -> str:
+            """After a plan step's edit was APPLIED: the files of the next unfinished step as they are now (the edit is already in this turn's file copy), read by the server with no model call, so the
+            model goes straight to the next edit instead of spending a step, and a whole model call, on reading them. "" when no step is left or none of its files exists yet. Never raises."""
+            try:
+                plan = await asyncio.to_thread(code_plan.load, get_db(), username, state.get("session_id") or "")
+                block = await asyncio.to_thread(code_plan.files_block, plan, lambda path: _fetch_file_content(path)[0])
+                if block:
+                    from backend.utils.self_counters import record_turn_counts
+
+                    await asyncio.to_thread(record_turn_counts, {"code_plan_fed_next": 1})
+                return block
+            except Exception:
+                logger.warning("[tool_agent_node] could not read the next plan step's files after an applied change.", exc_info=True)
+                return ""
+
         async def _plan_files_block() -> str:
             """The next plan step's files, read by the server with no model call (backend/utils/code_plan.py files_block), so the turn starts at the edit. Never raises."""
             try:
@@ -3304,11 +3334,15 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             """What the loop is told once the person has decided on a proposal (or has not within the wait)."""
             if decision is None:
                 logger.info("[tool_agent_node] no decision on a proposed change within the wait.")
+                if plan_phase == code_plan.EXECUTE_PHASE:
+                    llm_turns.note_plan_blocked("no_decision")       # explains a plan turn that then stops (code_plan.stop_reason)
                 return (
                     shown + " NO DECISION: there was no answer within "
                     f"{int(local_edit_decisions.WAIT_SECONDS // 60)} minutes, so nothing was changed. Say that plainly in a short answer and stop; do not propose it again."
                 )
             if decision["outcome"] == "declined":
+                if plan_phase == code_plan.EXECUTE_PHASE:
+                    llm_turns.note_plan_blocked("declined")
                 reason = decision.get("reason") or ""
                 return (
                     shown + " DECLINED: the person did not apply these edits" + (f", and said: {reason}" if reason else "") + ". Nothing was changed. "
@@ -3317,6 +3351,10 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             # Applied: the browser has written the files. Bring the server's copy of those files up to date now, so a read after this sees them (the next full sync agrees with it).
             note = ""
             texts = result.get("texts") or {}
+            for path, text in texts.items():
+                # The turn keeps every file it has read (_turn_file_cache), and nothing refreshed that copy after an Apply: a plan's next step that touched the same file read the OLD text, and an
+                # edit written against it was checked against the old text too, then failed to apply in the browser. The new text is known exactly, so it replaces the cached one.
+                _turn_file_cache[path] = text
             if texts:
                 try:
                     await asyncio.to_thread(
@@ -3668,6 +3706,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 time_line=build_agent_time_line(get_user_timezone(username)), coding_preferences=coding_preferences,
                 architecture_map=architecture_map, user_memory=user_memory, max_steps=kwargs["max_iterations"], emit=_announce,
                 emit_step=_announce_step, emit_facts=emit_trace_facts,
+                plan_feed=_next_step_files_after_apply if plan_phase == code_plan.EXECUTE_PHASE else None,
                 steering_source=kwargs.get("steering_source"), on_steering_applied=kwargs.get("on_steering_applied"),
                 library_allowance=kwargs.get("library_allowance"), is_unsafe=kwargs.get("is_unsafe"),
                 leanings=await _leanings_block(),
@@ -3989,6 +4028,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
 
         final_answer = loop_result["final_answer"]
         attempts = loop_result["attempts"]
+        if plan_phase == code_plan.EXECUTE_PHASE:
+            await _note_plan_turn_end()
         if _looks_like_approval_card(final_answer):
             # A real approval card is built by code and returned above, with its pending action. Text in a final answer that looks like one was written by the model (it copies the card it saw earlier in
             # the conversation): the person would see Approve / Reject over nothing, and an approval is recovered from card text, so it is never passed on.

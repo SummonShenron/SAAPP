@@ -76,12 +76,14 @@ def _count(tools: Dict[str, Dict[str, int]], names: frozenset, key: str) -> int:
 def summarize_turn(turn: Any) -> Optional[Dict[str, Any]]:
     """What a finished turn did (flags and small counts), or None when it was not a coding turn. `turn` is the llm_turns.Turn for this chat turn."""
     tools = getattr(turn, "tools", None) or {}
-    if turn is None or not getattr(turn, "loop_ran", False) or not _called(tools, REPO_TOOLS):
+    # A turn carrying out an approved plan is a coding turn even if the model answered before calling any tool: that is exactly the ending worth counting (code_plan.stop_reason).
+    if turn is None or not getattr(turn, "loop_ran", False) or not (_called(tools, REPO_TOOLS) or getattr(turn, "plan_stop", "")):
         return None
     edited = _called(tools, EDIT_TOOLS, ok_only=True)
     return {
         "cap_hit": bool(getattr(turn, "cap_hit", False)), "edited": edited, "verified": edited and _called(tools, VERIFY_TOOLS, ok_only=True),
         "edit_calls": _count(tools, EDIT_TOOLS, "calls"), "edit_errors": _count(tools, EDIT_TOOLS, "errors"), "test_runs": _count(tools, TEST_TOOLS, "calls"),
+        "plan_stop": str(getattr(turn, "plan_stop", "") or ""), "tool_steps": int(getattr(turn, "loop_steps", 0) or 0),
     }
 
 
@@ -119,6 +121,13 @@ def tally_turn(counts: Dict[str, int], summary: Optional[Dict[str, Any]], plan_p
             tally(counts, "code_plan_exec_cap_hit")
         if summary.get("edited"):
             tally(counts, "code_plan_exec_edited")
+        # Why the turn ended and how many tool steps it used (so steps per turn can be read off): a plan that ends any way but "plan_done" had to be continued by the person.
+        reason = summary.get("plan_stop") or ""
+        if reason:
+            tally(counts, f"code_plan_stop_{reason}")
+            if reason != "plan_done":
+                tally(counts, "code_plan_exec_early")
+        _add(counts, "code_plan_exec_tool_steps", int(summary.get("tool_steps") or 0))
     _add(counts, "code_edit_calls", summary.get("edit_calls", 0))
     _add(counts, "code_edit_errors", summary.get("edit_errors", 0))
     _add(counts, "code_test_runs", summary.get("test_runs", 0))
