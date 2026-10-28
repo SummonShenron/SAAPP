@@ -66,3 +66,10 @@
 }
 
 .rcc-error { margin-top: 0.5rem; color: var(--accent-danger); }
+
+.rcc-header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
+.rcc-class { font-size: 0.72rem; padding: 0.1rem 0.5rem; border-radius: 999px; border: 1px solid var(--border-color, currentColor); color: var(--text-muted); white-space: nowrap; }
+.rcc-class-change { color: var(--accent-danger); border-color: var(--accent-danger); }
+.rcc-notes { margin: 0.25rem 0 0.35rem 1.1rem; padding: 0; color: var(--text-muted); font-size: 0.8rem; }
+.rcc-strong { margin: 0.5rem 0; padding: 0.5rem 0.65rem; border-left: 3px solid var(--accent-danger); background: var(--bg-secondary, transparent); font-size: 0.85rem; }
+.rcc-btn-danger { background: var(--accent-danger); border-color: transparent; color: var(--on-accent); }

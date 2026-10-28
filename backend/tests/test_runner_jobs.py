@@ -14,6 +14,12 @@ def later(**delta):
     return NOW + timedelta(**delta)
 
 
+def view_of(db, now=NOW, index=0):
+    """The first runner seen through its first project: what a chat turn works with (rj.runner_view)."""
+    runner = rj.runners_for(db, "jack@example.com", now)[index]
+    return rj.runner_view(runner, runner["projects"][0])
+
+
 def polling(db, record, when):
     """The runner is still polling at `when` (what each of its polls does), so a test can move the clock without the runner looking disconnected."""
     db[rj.RUNNERS].docs[record["_id"]]["last_seen"] = when
@@ -133,7 +139,8 @@ def test_hello_records_the_runner_its_folder_and_its_checks_and_cleans_them():
         {"name": "tests", "command": "pytest -q {files}"}, {"name": "Types", "command": "npx tsc -b"}, {"name": "tests", "command": "dupe"}, {"name": "bad name", "command": "x"}, {"name": "empty", "command": ""}, "junk"]}, NOW)
     assert answer["ok"] and answer["poll_seconds"] == rj.POLL_SECONDS and answer["min_version"] == "0.1.0"
     runner = rj.runners_for(db, "jack@example.com", NOW)[0]
-    assert runner["root_name"] == "saapp" and [c["name"] for c in runner["checks"]] == ["tests", "types"] and runner["connected"] is True and runner["version"] == "0.1.0"
+    project = runner["projects"][0]                                                       # an older runner (one folder) is shown as a single project
+    assert project["id"] == rj.LEGACY_PROJECT_ID and project["name"] == "saapp" and [c["name"] for c in project["checks"]] == ["tests", "types"] and runner["connected"] is True and runner["version"] == "0.1.0"
 
 
 def test_a_runner_older_than_the_server_accepts_is_told_to_update(monkeypatch):
@@ -207,7 +214,7 @@ def test_a_job_runs_only_after_its_owner_approves_it():
     assert rj.approve_job(db, "jack@example.com", job["id"], later(seconds=3))["status"] == rj.APPROVED
     assert rj.approve_job(db, "jack@example.com", job["id"], later(seconds=4)) is None          # once
     claimed = rj.claim_next(db, record, later(seconds=5))
-    assert claimed == {"job_id": job["id"], "check": "tests", "files": [], "settings": {"fake_keys": True}}       # a name, the files, and a yes or no: never a command
+    assert claimed == {"job_id": job["id"], "check": "tests", "files": [], "project_id": "main", "settings": {"fake_keys": True}}       # a name, the files, and a yes or no: never a command
     assert rj.claim_next(db, record, later(seconds=6)) is None                                 # handed out once
 
 
@@ -371,31 +378,37 @@ def test_every_check_is_on_and_fake_keys_are_on_until_the_person_changes_it():
     db = FakeDB()
     record, _ = connected(db)
     runner = rj.runners_for(db, "jack@example.com", NOW)[0]
-    assert runner["settings"] == {"disabled": [], "fake_keys": True}
-    assert rj.settings_of(None) == {"disabled": [], "fake_keys": True} and rj.settings_of({"settings": {"fake_keys": "no"}})["fake_keys"] is True      # only a real False turns it off
+    assert runner["settings"] == {"auto_update": False, "read_only_auto": False} and runner["projects"][0]["settings"] == {"disabled": [], "fake_keys": True}
+    assert view_of(db)["settings"] == {"disabled": [], "fake_keys": True, "auto_update": False, "read_only_auto": False}
+    assert rj.settings_of(None) == {"disabled": [], "fake_keys": True, "auto_update": False, "read_only_auto": False} and rj.settings_of({"settings": {"fake_keys": "no"}})["fake_keys"] is True      # only a real False turns it off
 
 
 def test_a_check_turned_off_is_not_offered_to_sonic_and_cannot_be_asked_for():
     db = FakeDB()
     record, _ = connected(db)
-    assert rj.update_settings(db, "jack@example.com", record["_id"], {"disabled": ["types"], "fake_keys": True}) == {"disabled": ["types"], "fake_keys": True}
-    runner = rj.runners_for(db, "jack@example.com", NOW)[0]
+    assert rj.update_settings(db, "jack@example.com", record["_id"], {"project_id": "main", "disabled": ["types"], "fake_keys": True}) == {"disabled": ["types"], "fake_keys": True, "auto_update": False, "read_only_auto": False}
+    runner = view_of(db)
     assert rj.describe_checks(runner) == "tests = pytest -q {files} (takes files)" and [c["name"] for c in rj.enabled_checks(runner)] == ["tests"]
     with pytest.raises(rj.RunnerError) as error:
         rj.create_job(db, "jack@example.com", record["_id"], "types", None, later(seconds=1))
     assert error.value.code == "unknown_check" and "turned off" in error.value.message
     assert rj.create_job(db, "jack@example.com", record["_id"], "tests", None, later(seconds=2))["status"] == rj.AWAITING
-    rj.update_settings(db, "jack@example.com", record["_id"], {"disabled": []})
-    assert rj.describe_checks(rj.runners_for(db, "jack@example.com", NOW)[0]).count(" = ") == 2
+    rj.update_settings(db, "jack@example.com", record["_id"], {"project_id": "main", "disabled": []})
+    assert rj.describe_checks(view_of(db)).count(" = ") == 2
 
 
 def test_saving_settings_keeps_only_real_check_names_and_a_plain_yes_or_no():
     db = FakeDB()
     record, _ = connected(db)
-    saved = rj.update_settings(db, "jack@example.com", record["_id"], {"disabled": ["types", "types", "ghost", "../x", 7, None], "fake_keys": False})
-    assert saved == {"disabled": ["types"], "fake_keys": False}                                    # only names the runner reported, once each
-    assert rj.update_settings(db, "jack@example.com", record["_id"], {"disabled": "tests", "fake_keys": "no"}) == {"disabled": [], "fake_keys": True}
-    assert rj.update_settings(db, "jack@example.com", record["_id"], {}) == {"disabled": [], "fake_keys": True}
+    saved = rj.update_settings(db, "jack@example.com", record["_id"], {"project_id": "main", "disabled": ["types", "types", "ghost", "../x", 7, None], "fake_keys": False})
+    assert saved == {"disabled": ["types"], "fake_keys": False, "auto_update": False, "read_only_auto": False}                                    # only names the runner reported, once each
+    assert rj.update_settings(db, "jack@example.com", record["_id"], {"project_id": "main", "disabled": "tests", "fake_keys": "no"}) == {"disabled": [], "fake_keys": True, "auto_update": False, "read_only_auto": False}
+    assert rj.update_settings(db, "jack@example.com", record["_id"], {"project_id": "main"}) == {"disabled": [], "fake_keys": True, "auto_update": False, "read_only_auto": False}
+    # without a project only the runner's own setting can change: the checks and the fake-key choice are a project's, so nothing leaks between them
+    rj.update_settings(db, "jack@example.com", record["_id"], {"project_id": "main", "disabled": ["types"], "fake_keys": False})
+    assert rj.update_settings(db, "jack@example.com", record["_id"], {"disabled": [], "fake_keys": True, "auto_update": True, "read_only_auto": False}) == {"disabled": [], "fake_keys": True, "auto_update": True, "read_only_auto": False}
+    assert rj.runners_for(db, "jack@example.com", NOW)[0]["projects"][0]["settings"] == {"disabled": ["types"], "fake_keys": False}
+    assert rj.update_settings(db, "jack@example.com", record["_id"], {"project_id": "nope", "disabled": ["types"]})["disabled"] == []                   # a project the runner does not have changes nothing
 
 
 def test_only_the_owner_can_change_a_runners_settings_and_not_after_it_is_removed():
@@ -403,7 +416,7 @@ def test_only_the_owner_can_change_a_runners_settings_and_not_after_it_is_remove
     record, _ = connected(db)
     assert rj.update_settings(db, "someone@else.com", record["_id"], {"disabled": ["tests"]}) is None
     assert rj.update_settings(db, "jack@example.com", "no-such-runner", {"disabled": ["tests"]}) is None
-    assert rj.settings_of(db[rj.RUNNERS].docs[record["_id"]]) == {"disabled": [], "fake_keys": True}
+    assert rj.settings_of(db[rj.RUNNERS].docs[record["_id"]]) == {"disabled": [], "fake_keys": True, "auto_update": False, "read_only_auto": False}
     rj.revoke_key(db, "jack@example.com", record["_id"], later(seconds=1))
     assert rj.update_settings(db, "jack@example.com", record["_id"], {"disabled": ["tests"]}) is None
 
@@ -411,20 +424,21 @@ def test_only_the_owner_can_change_a_runners_settings_and_not_after_it_is_remove
 def test_a_runner_saying_hello_again_does_not_undo_the_persons_settings():
     db = FakeDB()
     record, _ = connected(db)
-    rj.update_settings(db, "jack@example.com", record["_id"], {"disabled": ["types"], "fake_keys": False})
+    rj.update_settings(db, "jack@example.com", record["_id"], {"project_id": "main", "disabled": ["types"], "fake_keys": False, "auto_update": True})
     rj.hello(db, record, {"version": "0.1.0", "root_name": "saapp", "checks": CHECKS}, later(minutes=5))
-    assert rj.runners_for(db, "jack@example.com", later(minutes=5))[0]["settings"] == {"disabled": ["types"], "fake_keys": False}
+    runner = rj.runners_for(db, "jack@example.com", later(minutes=5))[0]
+    assert runner["projects"][0]["settings"] == {"disabled": ["types"], "fake_keys": False} and runner["settings"] == {"auto_update": True, "read_only_auto": False}
 
 
 def test_a_handed_out_job_carries_the_current_fake_key_choice_and_never_a_command():
     db = FakeDB()
     record, _ = connected(db)
     for step, choice in enumerate((True, False)):
-        rj.update_settings(db, "jack@example.com", record["_id"], {"fake_keys": choice})
+        rj.update_settings(db, "jack@example.com", record["_id"], {"project_id": "main", "fake_keys": choice})
         job = rj.create_job(db, "jack@example.com", record["_id"], "tests", ["a.py"], later(minutes=step))
         rj.approve_job(db, "jack@example.com", job["id"], later(minutes=step, seconds=1))
         claimed = rj.claim_next(db, record, later(minutes=step, seconds=2))
-        assert claimed["settings"] == {"fake_keys": choice} and set(claimed) == {"job_id", "check", "files", "settings"}
+        assert claimed["settings"] == {"fake_keys": choice} and set(claimed) == {"job_id", "check", "files", "project_id", "settings"}
         rj.complete_job(db, record, claimed["job_id"], {"exit_code": 0}, later(minutes=step, seconds=3))
 
 
@@ -491,3 +505,343 @@ def test_stopping_the_turn_while_waiting_cancels_the_check_so_it_cannot_run_unse
     asyncio.run(scenario())
     assert rj.get_job(db, "jack@example.com", job["id"])["status"] == rj.CANCELLED
     assert rj.approve_job(db, "jack@example.com", job["id"]) is None                                  # and a late press of Run does nothing
+
+
+# ---- the runner's status and whether each check's program can be found --------------------------------------------------------------------------
+
+def test_a_runner_reports_a_status_from_the_fixed_list_and_anything_else_is_not_kept():
+    db = FakeDB()
+    record, _ = connected(db)
+    for sent, kept in (("ok", "ok"), ("no_checks_found", "no_checks_found"), ("command_missing", "command_missing"), ("config_problem", "config_problem"), ("folder_missing", "folder_missing"),
+                       ("<script>alert(1)</script>", ""), ("C:/Users/jack/secret-project", ""), ("", ""), (None, ""), (7, ""), (["ok"], "")):
+        rj.hello(db, record, {"version": "0.1.1", "root_name": "saapp", "checks": CHECKS, "status": sent}, later(seconds=1))
+        assert rj.runners_for(db, "jack@example.com", later(seconds=2))[0]["projects"][0]["status"] == kept, sent
+    rj.hello(db, record, {"version": "0.1.0", "root_name": "saapp", "checks": CHECKS}, later(seconds=3))                  # an older runner that says nothing
+    assert rj.runners_for(db, "jack@example.com", later(seconds=4))[0]["projects"][0]["status"] == ""
+
+
+def test_the_page_is_told_when_the_runner_was_last_seen_so_it_can_say_why_it_is_not_connected():
+    db = FakeDB()
+    record, _ = connected(db)
+    runner = rj.runners_for(db, "jack@example.com", later(seconds=10))[0]
+    assert runner["last_seen"] == NOW.isoformat() and runner["connected"] is True
+    late = rj.runners_for(db, "jack@example.com", later(hours=3))[0]
+    assert late["connected"] is False and late["last_seen"] == NOW.isoformat()
+    fresh = FakeDB()
+    key = paired(fresh)
+    assert rj.runners_for(fresh, "jack@example.com", NOW)[0]["last_seen"] is None and key                               # paired but never said hello
+
+
+def test_a_check_whose_program_the_runner_could_not_find_is_marked_not_offered_and_refused_with_a_reason():
+    db = FakeDB()
+    checks = [{"name": "tests", "command": "pytest -q {files}", "ready": True}, {"name": "types", "command": "npx tsc -b", "ready": False}, {"name": "old", "command": "make test"}]
+    record, _ = connected(db, checks=checks)
+    stored = {c["name"]: c["ready"] for c in rj.runners_for(db, "jack@example.com", NOW)[0]["projects"][0]["checks"]}
+    assert stored == {"tests": True, "types": False, "old": True}                                                          # no flag at all (an older runner) counts as ready
+    runner = view_of(db)
+    assert "types = npx tsc -b (CANNOT RUN: its program was not found" in rj.describe_checks(runner) and "tests = pytest -q {files} (takes files);" in rj.describe_checks(runner)
+    assert [c["name"] for c in rj.runnable_checks(runner)] == ["tests", "old"]
+    with pytest.raises(rj.RunnerError) as error:
+        rj.create_job(db, "jack@example.com", record["_id"], "types", None, later(seconds=1))
+    assert error.value.code == "unknown_check" and "program could not be found" in error.value.message
+    assert rj.create_job(db, "jack@example.com", record["_id"], "tests", None, later(seconds=2))["status"] == rj.AWAITING
+
+
+def test_when_no_check_can_run_the_tool_is_not_offered_to_sonic():
+    runner = {"checks": [{"name": "types", "command": "npx tsc -b", "ready": False}], "settings": {"disabled": [], "fake_keys": True}}
+    assert rj.runnable_checks(runner) == [] and rj.enabled_checks(runner) != []
+
+
+def test_how_a_runner_was_started_is_kept_only_when_it_is_one_of_the_two_known_ways():
+    db = FakeDB()
+    record, _ = connected(db)
+    for sent, kept in (("service", "service"), ("hand", "hand"), ("", ""), ("login", ""), ("<b>x</b>", ""), (None, ""), (3, "")):
+        rj.hello(db, record, {"version": "0.1.1", "root_name": "saapp", "checks": CHECKS, "launch": sent}, later(seconds=1))
+        assert rj.runners_for(db, "jack@example.com", later(seconds=2))[0]["launch"] == kept, sent
+    assert rj.RUNNER_LAUNCHES == ("service", "hand")
+
+
+# ---- updating a runner: a version number, only when asked, only when idle ------------------------------------------------------------------------
+
+def old_runner(db, version="0.1.0", **kwargs):
+    """A connected runner reporting an older version than the one the server wants."""
+    record, key = connected(db, **kwargs)
+    rj.hello(db, record, {"version": version, "root_name": "saapp", "checks": CHECKS}, NOW)
+    return record
+
+
+def test_the_server_wants_one_version_and_an_older_runner_is_available_for_update_but_nothing_is_sent_unasked(monkeypatch):
+    monkeypatch.setattr(rj, "WANTED_RUNNER_VERSION", "0.1.2")
+    db = FakeDB()
+    record = old_runner(db, "0.1.1")
+    info = rj.runners_for(db, "jack@example.com", NOW)[0]["update"]
+    assert info == {"wanted": "0.1.2", "available": True, "pending": False}
+    assert rj.api_next(db, record, later(seconds=5)) == {"job": None, "update": None, "add_project": None, "remove_project": None}                       # nobody asked: nothing is sent, however old it is
+    current = old_runner(FakeDB(), "0.1.2")
+    assert rj.update_info({"version": "0.1.2"}, NOW) == {"wanted": "0.1.2", "available": False, "pending": False} and current
+    assert rj.update_info({"version": "0.2.0"})["available"] is False and rj.update_info({"version": "junk"})["available"] is False and rj.update_info({})["available"] is False
+
+
+def test_pressing_update_makes_the_next_poll_carry_a_version_number_and_only_for_that_persons_own_older_runner(monkeypatch):
+    monkeypatch.setattr(rj, "WANTED_RUNNER_VERSION", "0.1.2")
+    db = FakeDB()
+    record = old_runner(db, "0.1.1")
+    assert rj.request_update(db, "someone@else.com", record["_id"], NOW) is None and rj.request_update(db, "jack@example.com", "no-such-runner", NOW) is None
+    info = rj.request_update(db, "jack@example.com", record["_id"], later(seconds=1))
+    assert info["pending"] is True and rj.runners_for(db, "jack@example.com", later(seconds=2))[0]["update"]["pending"] is True
+    answer = rj.api_next(db, record, later(seconds=3))
+    assert answer == {**{"job": None, "update": None, "add_project": None, "remove_project": None}, "update": "0.1.2"} and isinstance(answer["update"], str) and "/" not in answer["update"] and "http" not in answer["update"]      # a number, never an address
+    up_to_date = old_runner(FakeDB(), "0.1.2")
+    other = FakeDB()
+    done = old_runner(other, "0.1.2")
+    with pytest.raises(rj.RunnerError) as error:
+        rj.request_update(other, "jack@example.com", done["_id"], NOW)
+    assert error.value.code == "no_update" and rj.STATUS_FOR["no_update"] == 409 and up_to_date
+
+
+def test_a_click_that_nobody_picked_up_expires_and_a_runner_that_updated_stops_being_offered_one(monkeypatch):
+    monkeypatch.setattr(rj, "WANTED_RUNNER_VERSION", "0.1.2")
+    db = FakeDB()
+    record = old_runner(db, "0.1.1")
+    rj.request_update(db, "jack@example.com", record["_id"], NOW)
+    late = later(minutes=rj.UPDATE_REQUEST_MINUTES, seconds=1)
+    assert rj.api_next(db, record, late)["update"] is None and rj.runners_for(db, "jack@example.com", late)[0]["update"]["pending"] is False
+    rj.request_update(db, "jack@example.com", record["_id"], late)
+    rj.hello(db, record, {"version": "0.1.2", "root_name": "saapp", "checks": CHECKS}, later(minutes=90))              # it updated and came back
+    assert rj.api_next(db, record, later(minutes=91))["update"] is None and rj.runners_for(db, "jack@example.com", later(minutes=91))[0]["update"]["available"] is False
+
+
+def test_automatic_updates_are_off_until_turned_on_and_then_need_no_click(monkeypatch):
+    monkeypatch.setattr(rj, "WANTED_RUNNER_VERSION", "0.1.2")
+    db = FakeDB()
+    record = old_runner(db, "0.1.1")
+    assert rj.settings_of(db[rj.RUNNERS].docs[record["_id"]])["auto_update"] is False
+    assert rj.update_settings(db, "jack@example.com", record["_id"], {"auto_update": True})["auto_update"] is True
+    assert rj.api_next(db, record, later(seconds=2))["update"] == "0.1.2"
+    assert rj.update_settings(db, "jack@example.com", record["_id"], {"auto_update": "yes"})["auto_update"] is False        # only a real True counts
+    assert rj.api_next(db, record, later(seconds=3))["update"] is None
+
+
+def test_an_update_waits_while_a_check_is_waiting_approved_or_running_so_it_never_ends_a_run(monkeypatch):
+    monkeypatch.setattr(rj, "WANTED_RUNNER_VERSION", "0.1.2")
+    db = FakeDB()
+    record = old_runner(db, "0.1.1")
+    rj.update_settings(db, "jack@example.com", record["_id"], {"auto_update": True})
+    job = rj.create_job(db, "jack@example.com", record["_id"], "tests", None, later(seconds=1))
+    assert rj.api_next(db, record, later(seconds=2)) == {"job": None, "update": None, "add_project": None, "remove_project": None}                                      # a card is waiting for an answer
+    rj.approve_job(db, "jack@example.com", job["id"], later(seconds=3))
+    claimed = rj.api_next(db, record, later(seconds=4))
+    assert claimed["job"]["job_id"] == job["id"] and claimed["update"] is None                                           # the job comes first
+    assert rj.api_next(db, record, later(seconds=5))["update"] is None                                                   # running
+    rj.complete_job(db, record, job["id"], {"exit_code": 0}, later(seconds=6))
+    assert rj.api_next(db, record, later(seconds=7))["update"] == "0.1.2"                                                # idle again
+
+
+def test_a_runner_may_report_that_its_last_update_failed_and_the_page_gets_only_that_known_code():
+    db = FakeDB()
+    record, _ = connected(db)
+    rj.hello(db, record, {"version": "0.1.1", "projects": [], "status": "update_failed"}, later(seconds=1))                    # a current runner's own status
+    assert rj.runners_for(db, "jack@example.com", later(seconds=2))[0]["status"] == "update_failed" and "update_failed" in rj.RUNNER_STATUS_CODES
+    rj.hello(db, record, {"version": "0.1.1", "projects": [], "status": "<b>x</b>"}, later(seconds=3))
+    assert rj.runners_for(db, "jack@example.com", later(seconds=4))[0]["status"] == ""
+
+
+# ---- one runner per computer, serving several projects ----------------------------------------------------------------------------------------
+
+PA, PB = "a1b2c3d4", "e5f6a7b8"
+
+
+def two_projects(db, username="jack@example.com", name="laptop", status_b="ok", now=NOW):
+    """A paired runner (a computer) that has said hello with two projects."""
+    key = paired(db, username, name, now)
+    record = rj.authenticate(db, key["key"])
+    rj.hello(db, record, {"version": "0.1.1", "launch": "service", "status": "", "projects": [
+        {"id": PA, "name": "local-rag", "status": "ok", "checks": [{"name": "tests", "command": "pytest -q {files}", "ready": True}, {"name": "types", "command": "npx tsc -b", "ready": True}]},
+        {"id": PB, "name": "other-app", "status": status_b, "checks": [{"name": "tests", "command": "npm test", "ready": True}]}]}, now)
+    return record
+
+
+def request_state_of(db, request_id, now):
+    return [r for r in rj.runners_for(db, "jack@example.com", now)[0]["requests"] if r["id"] == request_id][0]["state"]
+
+
+def test_a_runner_reports_its_projects_cleaned_and_each_keeps_its_own_checks_and_status():
+    db = FakeDB()
+    record = two_projects(db, status_b="command_missing")
+    runner = rj.runners_for(db, "jack@example.com", NOW)[0]
+    assert [(p["id"], p["name"], p["status"]) for p in runner["projects"]] == [(PA, "local-rag", "ok"), (PB, "other-app", "command_missing")]
+    assert [c["name"] for c in runner["projects"][0]["checks"]] == ["tests", "types"] and [c["command"] for c in runner["projects"][1]["checks"]] == ["npm test"]
+    messy = {"version": "0.1.1", "projects": [{"id": PA, "name": " a\x00b ", "status": "<b>", "checks": "junk"}, {"id": PA, "name": "dupe"}, {"id": "../etc", "name": "bad id"}, {"id": "ABCDEF12", "name": "upper"},
+                                               "not a dict", {"id": PB}, {"name": "no id"}]}
+    rj.hello(db, record, messy, later(seconds=1))
+    cleaned = rj.runners_for(db, "jack@example.com", later(seconds=2))[0]["projects"]
+    assert [(p["id"], p["name"], p["status"], p["checks"]) for p in cleaned] == [(PA, "ab", "", []), (PB, "project", "", [])]                  # bad ids and duplicates dropped, text cleaned
+    many = {"version": "0.1.1", "projects": [{"id": f"{n:08x}", "name": f"p{n}"} for n in range(rj.MAX_PROJECTS + 5)]}
+    rj.hello(db, record, many, later(seconds=3))
+    assert len(rj.runners_for(db, "jack@example.com", later(seconds=4))[0]["projects"]) == rj.MAX_PROJECTS
+
+
+def test_each_projects_settings_are_its_own_and_the_runners_auto_update_is_separate():
+    db = FakeDB()
+    record = two_projects(db)
+    rj.update_settings(db, "jack@example.com", record["_id"], {"project_id": PA, "disabled": ["types"], "fake_keys": False})
+    rj.update_settings(db, "jack@example.com", record["_id"], {"auto_update": True})
+    runner = rj.runners_for(db, "jack@example.com", NOW)[0]
+    assert runner["projects"][0]["settings"] == {"disabled": ["types"], "fake_keys": False} and runner["projects"][1]["settings"] == {"disabled": [], "fake_keys": True}
+    assert runner["settings"] == {"auto_update": True, "read_only_auto": False}
+    rj.hello(db, record, {"version": "0.1.1", "projects": [{"id": PA, "name": "local-rag", "checks": CHECKS}, {"id": PB, "name": "other-app", "checks": CHECKS}]}, later(minutes=5))
+    assert rj.runners_for(db, "jack@example.com", later(minutes=5))[0]["projects"][0]["settings"]["disabled"] == ["types"]              # hello again undoes nothing
+
+
+def test_a_check_is_asked_for_in_a_named_project_and_the_job_remembers_which():
+    db = FakeDB()
+    record = two_projects(db)
+    with pytest.raises(rj.RunnerError) as error:
+        rj.create_job(db, "jack@example.com", record["_id"], "tests", None, later(seconds=1))
+    assert error.value.code == "no_project" and "local-rag" in error.value.message and "other-app" in error.value.message and rj.STATUS_FOR["no_project"] == 409      # two projects: it must say which
+    with pytest.raises(rj.RunnerError) as error:
+        rj.create_job(db, "jack@example.com", record["_id"], "tests", None, later(seconds=2), project_id="ffffffff")
+    assert error.value.code == "no_project"
+    job = rj.create_job(db, "jack@example.com", record["_id"], "tests", None, later(seconds=3), project_id=PB)
+    assert job["project_id"] == PB and job["project_name"] == "other-app" and job["command_shown"] == "npm test"               # the command is the one THAT project reported
+    rj.cancel_job(db, "jack@example.com", job["id"], later(seconds=3))
+    with pytest.raises(rj.RunnerError) as error:
+        rj.create_job(db, "jack@example.com", record["_id"], "types", None, later(seconds=4), project_id=PB)
+    assert error.value.code == "unknown_check" and "other-app has no check called types" in error.value.message
+
+
+def test_a_turned_off_check_and_fake_keys_follow_the_project_the_job_is_for():
+    db = FakeDB()
+    record = two_projects(db)
+    rj.update_settings(db, "jack@example.com", record["_id"], {"project_id": PA, "disabled": ["tests"], "fake_keys": False})
+    with pytest.raises(rj.RunnerError) as error:
+        rj.create_job(db, "jack@example.com", record["_id"], "tests", None, later(seconds=1), project_id=PA)
+    assert "turned off" in error.value.message
+    other = rj.create_job(db, "jack@example.com", record["_id"], "tests", None, later(seconds=2), project_id=PB)
+    rj.approve_job(db, "jack@example.com", other["id"], later(seconds=3))
+    claimed = rj.claim_next(db, record, later(seconds=4))
+    assert claimed["project_id"] == PB and claimed["settings"] == {"fake_keys": True}                                            # the other project still has its own default
+    rj.complete_job(db, record, other["id"], {"exit_code": 0}, later(seconds=5))
+    rj.update_settings(db, "jack@example.com", record["_id"], {"project_id": PA, "disabled": [], "fake_keys": False})
+    job = rj.create_job(db, "jack@example.com", record["_id"], "tests", None, later(seconds=6), project_id=PA)
+    rj.approve_job(db, "jack@example.com", job["id"], later(seconds=7))
+    claimed = rj.claim_next(db, record, later(seconds=8))
+    assert claimed["project_id"] == PA and claimed["settings"] == {"fake_keys": False}
+
+
+def test_asking_again_for_the_same_check_in_the_same_project_reuses_the_open_card_and_another_project_is_not_folded_in():
+    db = FakeDB()
+    record = two_projects(db)
+    first, reused = rj.create_or_reuse_job(db, "jack@example.com", record["_id"], "tests", ["a.py"], later(seconds=1), PA)
+    again, reused_again = rj.create_or_reuse_job(db, "jack@example.com", record["_id"], "tests", ["a.py"], later(seconds=2), PA)
+    assert reused is False and reused_again is True and again["id"] == first["id"]
+    with pytest.raises(rj.RunnerError) as error:
+        rj.create_or_reuse_job(db, "jack@example.com", record["_id"], "tests", None, later(seconds=3), PB)
+    assert error.value.code == "busy"                                                                                            # a different project's request is not the same card
+
+
+def test_the_project_a_chat_turn_uses_is_the_one_named_like_the_folder_connected_there():
+    db = FakeDB()
+    two_projects(db)
+    view = rj.connected_runner(db, "jack@example.com", "OTHER-app", NOW)
+    assert view["project_id"] == PB and view["root_name"] == "other-app" and [c["command"] for c in view["checks"]] == ["npm test"] and view["settings"]["fake_keys"] is True
+    assert rj.connected_runner(db, "jack@example.com", "local-rag", NOW)["project_id"] == PA
+    assert rj.connected_runner(db, "jack@example.com", "", NOW) is None                                                           # two projects and no folder to go by: ask
+    assert rj.connected_runner(db, "jack@example.com", "unknown-folder", NOW) is None
+    assert rj.connected_runner(db, "jack@example.com", "local-rag", later(hours=3)) is None                                       # not connected
+    solo = FakeDB()
+    made = paired(solo)
+    rj.hello(solo, rj.authenticate(solo, made["key"]), {"version": "0.1.1", "projects": [{"id": PA, "name": "only", "checks": CHECKS}]}, NOW)
+    assert rj.connected_runner(solo, "jack@example.com", "", NOW)["project_id"] == PA and rj.connected_runner(solo, "jack@example.com", "something-else", NOW)["project_id"] == PA
+
+
+def test_asking_for_a_project_sends_only_a_name_once_and_the_runner_answers_for_it():
+    db = FakeDB()
+    record = two_projects(db)
+    assert rj.request_project(db, "someone@else.com", record["_id"], "new-app", NOW) is None and rj.request_project(db, "jack@example.com", "nope", "new-app", NOW) is None
+    with pytest.raises(rj.RunnerError) as error:
+        rj.request_project(db, "jack@example.com", record["_id"], "   \x00 ", NOW)
+    assert error.value.code == "bad_name" and rj.STATUS_FOR["bad_name"] == 422
+    asked = rj.request_project(db, "jack@example.com", record["_id"], " new-app\x00 ", later(seconds=1))
+    assert asked["name"] == "new-app" and asked["state"] == "waiting"
+    first = rj.api_next(db, record, later(seconds=2))
+    assert first["add_project"] == {"id": asked["id"], "name": "new-app"} and first["update"] is None and first["job"] is None            # a name and an id: never a path
+    assert rj.api_next(db, record, later(seconds=3))["add_project"] is None                                                       # given once: the dialog must not come back again and again
+    assert rj.runners_for(db, "jack@example.com", later(seconds=4))[0]["requests"] == [{"id": asked["id"], "name": "new-app", "state": "asked"}]
+    rj.hello(db, record, {"version": "0.1.1", "projects": [], "request_results": [{"id": asked["id"], "result": "declined"}]}, later(seconds=5))
+    assert request_state_of(db, asked["id"], later(seconds=6)) == "declined"
+
+
+def test_a_request_counts_as_added_when_its_project_appears_and_an_unknown_answer_is_ignored():
+    db = FakeDB()
+    record = two_projects(db)
+    one = rj.request_project(db, "jack@example.com", record["_id"], "third-app", NOW)
+    rj.api_next(db, record, later(seconds=1))
+    rj.hello(db, record, {"version": "0.1.1", "projects": [{"id": "11223344", "name": "Third-App", "checks": CHECKS}], "request_results": [{"id": one["id"], "result": "<script>"}]}, later(seconds=2))
+    assert request_state_of(db, one["id"], later(seconds=3)) == "added"                                                           # the unknown answer is ignored; the project showing up says it
+    for result in ("no_picker", "error"):
+        asked = rj.request_project(db, "jack@example.com", record["_id"], f"app-{result}", later(seconds=4))
+        rj.api_next(db, record, later(seconds=5))
+        rj.hello(db, record, {"version": "0.1.1", "projects": [], "request_results": [{"id": asked["id"], "result": result}, "junk", {"id": "not-a-request", "result": "added"}]}, later(seconds=6))
+        assert request_state_of(db, asked["id"], later(seconds=7)) == result
+    unknown = rj.request_project(db, "jack@example.com", record["_id"], "app-unknown", later(seconds=8))
+    rj.api_next(db, record, later(seconds=9))
+    rj.hello(db, record, {"version": "0.1.1", "projects": [], "request_results": [{"id": unknown["id"], "result": "made-up"}]}, later(seconds=10))
+    assert request_state_of(db, unknown["id"], later(seconds=11)) == "asked" and rj.REQUEST_RESULTS == ("added", "declined", "no_picker", "error")
+
+
+def test_an_unanswered_request_expires_and_too_many_open_ones_are_refused():
+    db = FakeDB()
+    record = two_projects(db)
+    assert rj.request_state({"requested_at": NOW, "delivered_at": None}, later(minutes=rj.REQUEST_MINUTES - 1)) == "waiting"
+    assert rj.request_state({"requested_at": NOW, "delivered_at": None}, later(minutes=rj.REQUEST_MINUTES + 1)) == "expired"
+    assert rj.request_state({"requested_at": NOW, "delivered_at": NOW}, later(minutes=rj.REQUEST_MINUTES + 1)) == "expired"
+    for n in range(1, rj.MAX_OPEN_REQUESTS + 1):
+        rj.request_project(db, "jack@example.com", record["_id"], f"app-{n}", later(seconds=n))
+    with pytest.raises(rj.RunnerError) as error:
+        rj.request_project(db, "jack@example.com", record["_id"], "one-too-many", later(seconds=10))
+    assert error.value.code == "limit"
+    polling(db, record, later(minutes=rj.REQUEST_MINUTES + 2))
+    assert rj.api_next(db, record, later(minutes=rj.REQUEST_MINUTES + 2))["add_project"] is None                                   # an expired request is not delivered
+
+
+def test_the_folder_connected_in_chat_becomes_the_first_request_and_is_asked_once_the_runner_is_running():
+    db = FakeDB()
+    code = rj.create_pairing(db, "jack@example.com", "laptop", NOW, folder_name=" my-app\x00 ")["code"]
+    made = rj.exchange_pairing(db, code, NOW)
+    record = rj.authenticate(db, made["key"])
+    waiting = rj.runners_for(db, "jack@example.com", NOW)[0]
+    assert waiting["requests"] == [{"id": waiting["requests"][0]["id"], "name": "my-app", "state": "waiting"}] and waiting["projects"] == []
+    rj.hello(db, record, {"version": "0.1.1", "projects": []}, later(seconds=5))                                                   # its first hello must not lose the request
+    assert rj.api_next(db, record, later(seconds=6))["add_project"]["name"] == "my-app"
+    plain = rj.exchange_pairing(db, rj.create_pairing(db, "jack@example.com", "second", NOW)["code"], NOW)
+    assert rj.runners_for(db, "jack@example.com", NOW)[-1]["requests"] == [] and plain
+
+
+def test_removing_a_project_hides_it_at_once_cancels_its_open_check_and_is_repeated_until_the_runner_forgets_it():
+    db = FakeDB()
+    record = two_projects(db)
+    job = rj.create_job(db, "jack@example.com", record["_id"], "tests", None, later(seconds=1), project_id=PA)
+    assert rj.request_remove_project(db, "someone@else.com", record["_id"], PA) is False and rj.request_remove_project(db, "jack@example.com", record["_id"], "ffffffff") is False
+    assert rj.request_remove_project(db, "jack@example.com", record["_id"], PA) is True
+    assert [p["id"] for p in rj.runners_for(db, "jack@example.com", later(seconds=2))[0]["projects"]] == [PB]
+    assert rj.get_job(db, "jack@example.com", job["id"], later(seconds=2))["status"] == rj.CANCELLED
+    with pytest.raises(rj.RunnerError) as error:
+        rj.create_job(db, "jack@example.com", record["_id"], "tests", None, later(seconds=3), project_id=PA)
+    assert error.value.code == "no_project"
+    assert rj.api_next(db, record, later(seconds=4))["remove_project"] == PA and rj.api_next(db, record, later(seconds=5))["remove_project"] == PA       # until it is gone
+    still = {"version": "0.1.1", "projects": [{"id": PA, "name": "local-rag", "checks": CHECKS}, {"id": PB, "name": "other-app", "checks": CHECKS}]}
+    rj.hello(db, record, still, later(seconds=6))
+    assert [p["id"] for p in rj.runners_for(db, "jack@example.com", later(seconds=7))[0]["projects"]] == [PB]                  # a runner that still reports it does not bring it back
+    rj.hello(db, record, {"version": "0.1.1", "projects": still["projects"][1:]}, later(seconds=8))
+    assert rj.api_next(db, record, later(seconds=9))["remove_project"] is None
+
+
+def test_an_update_waits_while_a_project_is_being_added(monkeypatch):
+    monkeypatch.setattr(rj, "WANTED_RUNNER_VERSION", "0.1.2")
+    db = FakeDB()
+    record = two_projects(db)
+    rj.update_settings(db, "jack@example.com", record["_id"], {"auto_update": True})
+    rj.request_project(db, "jack@example.com", record["_id"], "new-app", NOW)
+    assert rj.api_next(db, record, later(seconds=1))["update"] is None                                                           # the dialog first: an update would end it
+    assert rj.api_next(db, record, later(seconds=2))["update"] == "0.1.2"

@@ -1043,6 +1043,19 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "run_local_commands",
+        "requires": [
+            "backend/utils/runner_jobs.py::def create_command_job",
+            "runner/src/saapp_runner/shell.py",
+            "runner/src/saapp_runner/commands.py",
+        ],
+        "month": "2026-10",
+        "title": "Running a command on your own machine",
+        "line": "With the SAAPP runner on your computer, I can now ask to run a command line in your project, like git status, a test run or a git commit. You see the exact line on a card and press Run, and a command that changes things also asks again on your computer.",
+        "keywords": ["run a command", "command line", "terminal", "git status", "git commit", "shell", "run git", "your machine", "local command"],
+        "volunteer": [],
+    },
+    {
         "id": "self_model",
         "requires": [
             "backend/utils/self_model.py::def approved_block",

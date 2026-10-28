@@ -94,12 +94,15 @@ class _Tail:
         return self.text
 
 
-def run(argv: List[str], cwd: Any, timeout: float, max_chars: int = 6000, cancel: Optional[threading.Event] = None, env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-    """Runs `argv` in `cwd` and returns {"exit_code", "output_tail", "truncated", "duration", "timed_out", "cancelled", "error"}. `exit_code` is None when it could not start, was killed for time, or was cancelled."""
+def run(argv: List[str], cwd: Any, timeout: float, max_chars: int = 6000, cancel: Optional[threading.Event] = None, env: Optional[Dict[str, str]] = None,
+        stdin_data: Optional[bytes] = None, separate_stderr: bool = False) -> Dict[str, Any]:
+    """Runs `argv` in `cwd` and returns {"exit_code", "output_tail", "truncated", "duration", "timed_out", "cancelled", "error"}. `exit_code` is None when it could not start, was killed for time, or was cancelled.
+    `stdin_data` is fed to the program's input (a command line's pipe); with `separate_stderr` the program's error output is kept apart in "stderr_tail" instead of being mixed into the output."""
     started = time.monotonic()
-    result: Dict[str, Any] = {"exit_code": None, "output_tail": "", "truncated": False, "duration": 0.0, "timed_out": False, "cancelled": False, "error": ""}
+    result: Dict[str, Any] = {"exit_code": None, "output_tail": "", "stderr_tail": "", "truncated": False, "duration": 0.0, "timed_out": False, "cancelled": False, "error": ""}
     program = shutil.which(argv[0], path=(env or clean_env()).get("PATH")) or argv[0]       # finds npm.cmd and the like the way a shell would
-    kwargs: Dict[str, Any] = {"cwd": str(cwd), "env": env or clean_env(), "stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE, "stderr": subprocess.STDOUT}
+    kwargs: Dict[str, Any] = {"cwd": str(cwd), "env": env or clean_env(), "stdin": subprocess.DEVNULL if stdin_data is None else subprocess.PIPE, "stdout": subprocess.PIPE,
+                              "stderr": subprocess.PIPE if separate_stderr else subprocess.STDOUT}
     if os.name != "nt":
         kwargs["start_new_session"] = True
     try:
@@ -110,20 +113,37 @@ def run(argv: List[str], cwd: Any, timeout: float, max_chars: int = 6000, cancel
     except OSError as problem:
         result["error"] = f"could not start it: {problem.__class__.__name__}"
         return result
-    tail = _Tail(max_chars)
+    tail, error_tail = _Tail(max_chars), _Tail(max_chars)
 
-    def read() -> None:
+    def read(stream: Any, into: _Tail) -> None:
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
-        assert proc.stdout is not None
         while True:
-            chunk = proc.stdout.read1(4096)               # whatever has arrived, so a quiet command does not wait on a full buffer
+            chunk = stream.read1(4096)               # whatever has arrived, so a quiet command does not wait on a full buffer
             if not chunk:
                 break
-            tail.add(decoder.decode(chunk))
-        tail.add(decoder.decode(b"", final=True))
+            into.add(decoder.decode(chunk))
+        into.add(decoder.decode(b"", final=True))
 
-    reader = threading.Thread(target=read, daemon=True)
-    reader.start()
+    def feed() -> None:
+        try:
+            assert proc.stdin is not None and stdin_data is not None
+            proc.stdin.write(stdin_data)
+        except (OSError, ValueError):
+            pass                                     # the program stopped reading (head does): that is fine
+        finally:
+            try:
+                proc.stdin.close()                   # type: ignore[union-attr]
+            except (OSError, ValueError, AttributeError):
+                pass
+
+    assert proc.stdout is not None
+    readers = [threading.Thread(target=read, args=(proc.stdout, tail), daemon=True)]
+    if separate_stderr and proc.stderr is not None:
+        readers.append(threading.Thread(target=read, args=(proc.stderr, error_tail), daemon=True))
+    if stdin_data is not None:
+        readers.append(threading.Thread(target=feed, daemon=True))
+    for reader in readers:
+        reader.start()
     while proc.poll() is None:
         if cancel is not None and cancel.is_set():
             result["cancelled"] = True
@@ -138,8 +158,10 @@ def run(argv: List[str], cwd: Any, timeout: float, max_chars: int = 6000, cancel
         proc.wait(timeout=10)
     except subprocess.TimeoutExpired:
         kill_tree(proc)
-    reader.join(timeout=5)
+    for reader in readers:
+        reader.join(timeout=5)
     result["output_tail"], result["truncated"] = tail.done(), tail.cut
+    result["stderr_tail"] = error_tail.done()
     result["duration"] = round(time.monotonic() - started, 2)
     if not (result["timed_out"] or result["cancelled"]):
         result["exit_code"] = proc.returncode

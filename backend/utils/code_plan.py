@@ -423,7 +423,7 @@ def off_plan_paths(plan: Optional[Dict[str, Any]], edits: Any) -> List[str]:
 # model says what else it needs. A hard ceiling on total steps keeps even an on-plan turn from running on.
 DEVIATION_STEPS = int(os.getenv("CODE_PLAN_DEVIATION_STEPS", "3"))
 EXEC_HARD_CAP = int(os.getenv("CODE_PLAN_EXEC_HARD_CAP", "30"))
-_ON_PLAN_TOOLS = frozenset({"read_repo_file", "propose_local_edits", "run_sandbox_tests", "run_local_check"})
+_ON_PLAN_TOOLS = frozenset({"read_repo_file", "propose_local_edits", "run_sandbox_tests", "run_local_check", "run_local_command"})
 
 
 class PlanBudget:
