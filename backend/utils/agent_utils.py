@@ -181,6 +181,8 @@ _TRACE_SUBJECT_ARGS = {
     "find_file": ("path", "query"),
     "read_url": ("url",),
     "search_literal": ("term",),
+    "mcp__maps__find_places": ("query",),
+    "mcp__maps__travel_times": ("origin",),
     "trace_symbol": ("symbol",),
     "read_library_file": ("name",),
 }

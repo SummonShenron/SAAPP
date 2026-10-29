@@ -223,6 +223,13 @@ def test_the_model_can_only_give_the_arguments_we_listed_and_each_is_checked():
             mc.clean_arguments(PLACES, bad)
 
 
+def test_an_enum_choice_in_the_wrong_case_is_the_same_choice_in_the_right_spelling():
+    policy = ToolPolicy(description="d", arguments={"mode": {"type": "string", "enum": ["DRIVE", "WALK"]}})
+    assert mc.clean_arguments(policy, {"mode": "walk"}) == {"mode": "WALK"} and mc.clean_arguments(policy, {"mode": " Drive "}) == {"mode": "DRIVE"}
+    with pytest.raises(McpError, match="one of: DRIVE, WALK"):
+        mc.clean_arguments(policy, {"mode": "fly"})
+
+
 def test_a_long_result_is_cut_to_our_size_and_says_so_and_an_empty_one_says_that(server_url):
     server = config(server_url)
     FAKE.tool_text = "a line of text about a place. " * 100

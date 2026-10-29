@@ -1092,6 +1092,19 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "place_lookup",
+        "requires": [
+            "backend/services/maps_tools.py::def run",
+            "backend/services/mcp_client.py::class McpHttpClient",
+            "backend/utils/place_questions.py::def looks_like_place_question",
+        ],
+        "month": "2026-10",
+        "title": "Real places and real distances",
+        "line": "I can now look up real places on Google Maps and measure how far each one is from where you are, by car, on foot, by bike or by transit, instead of guessing which part of town something is in.",
+        "keywords": ["bars near me", "restaurants near me", "date night", "how far", "drive time", "directions", "google maps", "places nearby", "coffee shops", "local bars"],
+        "volunteer": [],
+    },
+    {
         "id": "self_model",
         "requires": [
             "backend/utils/self_model.py::def approved_block",

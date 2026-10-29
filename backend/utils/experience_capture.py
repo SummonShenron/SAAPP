@@ -47,6 +47,8 @@ UNTRUSTED_TOOLS = frozenset({
     "browser_navigate", "browser_click", "browser_read_text", "browser_screenshot",
     "run_local_check",          # output from a command on someone's machine: anything it printed is text someone else wrote
     "run_local_command",
+    "mcp__maps__find_places",
+    "mcp__maps__travel_times",
 })
 
 _FEELING_RE = re.compile(

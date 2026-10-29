@@ -21,7 +21,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 import requests
@@ -48,6 +48,12 @@ class ToolPolicy:
     max_result_chars: int = DEFAULT_RESULT_CHARS
     daily_limit: int = 100                             # calls per person per day (counted in memory, per process: a safety valve, not billing)
     server_name: Optional[str] = None                  # the tool's name on the server, when it differs from the name Sonic uses
+    # How OUR tool becomes the server's, and what comes back, so the model sees a small interface and a small result instead of the server's: `build` turns the (already checked) arguments into the
+    # server's; `render` turns the result text into ours (when it fails the result is kept as it was, then capped); `execute` replaces the single server call altogether (for a tool that makes several,
+    # with no model step in between).
+    build: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None
+    render: Optional[Callable[[str], str]] = None
+    execute: Optional[Callable[["McpHttpClient", Dict[str, Any]], Tuple[str, bool]]] = None
 
 
 @dataclass
@@ -268,9 +274,21 @@ def clean_arguments(policy: ToolPolicy, arguments: Any) -> Dict[str, Any]:
         if expected and (not isinstance(value, expected) or (isinstance(value, bool) and schema.get("type") in ("integer", "number"))):
             raise McpError(f"The argument {name} must be a {schema.get('type')}.")
         if "enum" in schema and value not in schema["enum"]:
-            raise McpError(f"The argument {name} must be one of: {', '.join(map(str, schema['enum']))}.")
+            same = [option for option in schema["enum"] if isinstance(option, str) and isinstance(value, str) and option.lower() == value.strip().lower()]
+            if not same:
+                raise McpError(f"The argument {name} must be one of: {', '.join(map(str, schema['enum']))}.")
+            value = same[0]                                                       # a model writes "walk" for "WALK": the same choice, in the spelling the service wants
         if isinstance(value, str) and len(value) > 500:
             raise McpError(f"The argument {name} is too long.")
+        if isinstance(value, list):
+            if len(value) > int(schema.get("maxItems", 20)):
+                raise McpError(f"The argument {name} has too many items (at most {schema.get('maxItems', 20)}).")
+            item_type = _TYPES.get(str((schema.get("items") or {}).get("type")))
+            for item in value:
+                if item_type and not isinstance(item, item_type):
+                    raise McpError(f"The items of {name} must be {(schema.get('items') or {}).get('type')}s.")
+                if isinstance(item, str) and len(item) > 300:
+                    raise McpError(f"An item of {name} is too long.")
         clean[name] = value
     missing = [name for name in policy.required if name not in clean]
     if missing:
@@ -326,7 +344,11 @@ def call(server: McpServerConfig, tool: str, arguments: Any, username: str = "")
         logger.info("[mcp] %s: %s reached its daily limit for a person.", server.name, tool)
         return f"ERROR: the daily limit for {tool} was reached; try again tomorrow."
     try:
-        text, failed = client_for(server).call_tool(policy.server_name or tool, clean)
+        client = client_for(server)
+        if policy.execute is not None:
+            text, failed = policy.execute(client, clean)
+        else:
+            text, failed = client.call_tool(policy.server_name or tool, policy.build(clean) if policy.build else clean)
     except McpError as problem:
         logger.info("[mcp] %s: %s did not complete: %s", server.name, tool, problem)           # our own sentence naming the kind of failure, never what was sent or received
         return f"ERROR: {problem}"
@@ -336,6 +358,11 @@ def call(server: McpServerConfig, tool: str, arguments: Any, username: str = "")
     text = text.strip()
     if failed:
         return "ERROR: " + (text[:300] or "the service reported a problem.")
+    if policy.render is not None and text:
+        try:
+            text = policy.render(text).strip() or text
+        except Exception:
+            pass                                                                   # keep what the server said (it is capped below) rather than lose the answer
     if not text:
         return "The service returned nothing for that."
     return text if len(text) <= policy.max_result_chars else text[: policy.max_result_chars].rstrip() + f"\n[cut: only the first {policy.max_result_chars} characters are kept]"

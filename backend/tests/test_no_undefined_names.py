@@ -66,6 +66,12 @@ CHECKED = [
     "backend/utils/loop_watchdog.py",
     "backend/utils/budget_guard.py",
     "backend/evals/behavior_eval.py",
+    "backend/services/mcp_client.py",
+    "backend/services/maps_tools.py",
+    "backend/utils/place_questions.py",
+    "backend/utils/loop_rhythm.py",
+    "backend/utils/runner_commands.py",
+    "backend/models/split_prompt.py",
 ]
 _MODULE_DUNDERS = {"__file__", "__name__", "__doc__", "__builtins__", "__spec__", "__package__", "__path__"}
 

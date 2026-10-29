@@ -153,6 +153,8 @@ const TOOL_LABELS: Record<string, string> = {
   find_file: 'Looked for a file',
   list_repo_tree: 'Listed the files',
   search_literal: 'Searched for exact text',
+  mcp__maps__find_places: 'Looked up places',
+  mcp__maps__travel_times: 'Checked travel times',
   search_library: 'Searched your documents',
   list_library_files: 'Listed your documents',
   read_library_file: 'Read one of your documents',

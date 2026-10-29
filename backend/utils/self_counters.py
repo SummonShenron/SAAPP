@@ -58,7 +58,9 @@ _PLAIN_KEYS = ("turns_total", "self_model_used", "experience_captured", "experie
 # The rhythm of a coding turn (backend/utils/loop_rhythm.py): turns it was followed on, turns that acted at all, reads before the first act (summed), edits applied, applied edits checked in the next
 # step, and reading-streak notices shown. Counts only.
 RHYTHM_KEYS = ("code_rhythm_turns", "code_rhythm_acted_turns", "code_rhythm_reads_before_first_act", "code_rhythm_applies", "code_rhythm_applies_checked", "code_rhythm_streak_notices")
-_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS
+# Sonic's place tools (backend/services/maps_tools.py): turns that were given them, calls of each, and calls that came back as errors. Counts only: no place, no query, no person.
+MAPS_KEYS = ("maps_turns", "maps_find_places", "maps_travel_times", "maps_errors")
+_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS
 KEYS = frozenset(
     list(_PLAIN_KEYS) + [f"{group}_{name}" for group, names in _GROUPS.items() for name in names]
 )
