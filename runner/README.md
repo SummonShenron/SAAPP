@@ -93,6 +93,31 @@ refuse = ["git push", "npm install"]   # line beginnings that are always refused
 
 A file the runner cannot read falls back to the safe defaults (ask, allow nothing extra) and says so in the log. The log never contains a command line, a path or a refusal's reason.
 
+## Use it from other AI tools (MCP)
+
+The runner can also serve its projects, checks and the command language to any [MCP](https://modelcontextprotocol.io) client (Claude Desktop, Claude Code, an editor), over stdio. It needs no SAAPP account, no pairing and no key: it only uses the projects this computer allowed (`saapp-runner add-project --root <folder>`).
+
+```bash
+saapp-runner mcp --print-config
+```
+
+prints the entry to put in the client's configuration (Claude Desktop: `claude_desktop_config.json`; Claude Code: `.mcp.json`, or `claude mcp add saapp-runner -- <that command>`; GitHub Copilot: `~/.copilot/mcp-config.json`, or the workspace `.mcp.json`). VS Code's own `.vscode/mcp.json` names things differently (`servers`, and a `type` on each entry), so for that file use `saapp-runner mcp --print-config --format vscode`. The portable form looks like:
+
+```json
+{ "mcpServers": { "saapp-runner": { "command": "<this Python>", "args": ["-m", "saapp_runner", "mcp"] } } }
+```
+
+| Tool | Hint to the client | What it does |
+|---|---|---|
+| `list_projects` | read only | the projects this computer allowed, with the named checks found in each |
+| `run_check` | runs code | one of a project's named checks (its tests, type check), optionally on some files |
+| `look` | read only | one command line that only looks (`git status`, `git diff`, `ls`, `cat`, `grep -rn`); a stronger line is refused with the reason |
+| `run_command` | may change things | any line the command language allows; a line that changes things opens the runner's own window on this computer and runs nothing unless you say yes there |
+
+The rules are the runner's, unchanged: a model names a project, never a folder; no shell; nothing outside the project; no secrets files; your own `commands.toml` refuse list; a clean environment with made-up AI keys (`fake_keys = false` in `commands.toml` passes no key at all); a time limit (`--timeout`, 300 s); a capped output. Your client's own approval prompt is the first confirmation and the window is the second for anything that changes things. Every result says its output is text produced on your computer, to be read as data. One command runs at a time, and a call the client cancels is stopped.
+
+`stdout` carries only the protocol. Events go to `stderr` and never contain a command, a path or any output. It speaks protocol versions 2025-06-18, 2025-03-26 and 2024-11-05, and is written with the standard library only (`mcp_server.py` says what each message does).
+
 ## Choosing in SAAPP
 
 In SAAPP's settings, under each project of your runner, you can:

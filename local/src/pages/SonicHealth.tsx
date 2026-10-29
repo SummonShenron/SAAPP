@@ -16,6 +16,8 @@ import {
   type SonicHealth,
 } from '../api';
 import { HomeTab } from './SonicHealthHome';
+import SonicHealthMenu from './SonicHealthMenu';
+import { isTab, labelOf, type Badges, type TabId } from './sonicHealthTabs';
 import { ShelfTab } from './SonicHealthShelf';
 import { ExperiencesTab } from './SonicHealthExperiences';
 import { SelfModelTab } from './SonicHealthSelfModel';
@@ -32,29 +34,7 @@ import './__styles__/SonicHealth.css';
 
 const PERIODS = [7, 30, 90];
 
-const TABS = [
-  { id: 'home', label: 'Home' },
-  { id: 'usage', label: 'Usage' },
-  { id: 'turns', label: 'Turns' },
-  { id: 'budget', label: 'Budget' },
-  { id: 'behavior', label: 'Behavior' },
-  { id: 'goals', label: 'Goals' },
-  { id: 'feedback', label: 'Feedback' },
-  { id: 'knowledge', label: 'Knowledge graph' },
-  { id: 'routines', label: 'Routines' },
-  { id: 'safety', label: 'Safety' },
-  { id: 'observations', label: 'Observations' },
-  { id: 'shelf', label: 'Reading shelf' },
-  { id: 'experiences', label: 'Its record' },
-  { id: 'selfmodel', label: 'Self-model' },
-  { id: 'suggestions', label: 'Suggestions' },
-] as const;
-type TabId = typeof TABS[number]['id'];
 const LAST_TAB_KEY = 'sonic-health-tab';
-
-function isTab(value: string | null | undefined): value is TabId {
-  return TABS.some(t => t.id === value);
-}
 
 function rememberedTab(): TabId {
   try {
@@ -368,7 +348,7 @@ export const SonicHealthPage: React.FC = () => {
   const budgetLevel = health.budget?.level;
 
   // A small marker on a tab that has something waiting, so the bar says where to look without opening anything.
-  const badges: Partial<Record<TabId, { text: string; tone: 'info' | 'warn' }>> = {};
+  const badges: Badges = {};
   if (awaiting.length > 0) badges.observations = { text: String(awaiting.length), tone: 'info' };
   if (suggestionsWaiting > 0) badges.suggestions = { text: String(suggestionsWaiting), tone: 'info' };
   if (budgetLevel === 'notice') badges.budget = { text: '80%+', tone: 'info' };
@@ -379,15 +359,6 @@ export const SonicHealthPage: React.FC = () => {
   if ((health.feedback?.period.user_negative ?? 0) > 0) badges.feedback = { text: `${health.feedback?.period.user_negative} down`, tone: 'info' };
   if (health.graph && (health.graph.documents_without_edges > 0 || (health.graph.edges_total === 0 && health.graph.documents_total > 0))) badges.knowledge = { text: '!', tone: 'warn' };
   if ((health.usage?.turns?.error_turns ?? 0) > 0) badges.turns = { text: String(health.usage?.turns?.error_turns), tone: 'warn' };
-
-  const onTabKey = (e: React.KeyboardEvent, index: number) => {
-    const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
-    if (!step && e.key !== 'Home' && e.key !== 'End') return;
-    e.preventDefault();
-    const next = e.key === 'Home' ? 0 : e.key === 'End' ? TABS.length - 1 : (index + step + TABS.length) % TABS.length;
-    selectTab(TABS[next].id);
-    document.getElementById(`sh-tab-${TABS[next].id}`)?.focus();
-  };
 
   const noData = (what: string) => <div className="sh-hint">Nothing about {what} has been recorded yet.</div>;
 
@@ -410,32 +381,11 @@ export const SonicHealthPage: React.FC = () => {
         </div>
       </header>
 
-      <nav className="sh-tabs" role="tablist" aria-label="Sonic Health sections">
-        {TABS.map((t, index) => {
-          const badge = badges[t.id];
-          return (
-            <button
-              key={t.id}
-              id={`sh-tab-${t.id}`}
-              type="button"
-              role="tab"
-              aria-selected={tab === t.id}
-              aria-controls="sh-panel"
-              tabIndex={tab === t.id ? 0 : -1}
-              className={`sh-tab${tab === t.id ? ' sh-tab-active' : ''}`}
-              onClick={() => selectTab(t.id)}
-              onKeyDown={(e) => onTabKey(e, index)}
-            >
-              {t.label}
-              {badge && <span className={`sh-tab-badge sh-tab-badge-${badge.tone}`}>{badge.text}</span>}
-            </button>
-          );
-        })}
-      </nav>
+      <SonicHealthMenu tab={tab} onSelect={selectTab} badges={badges} />
 
       {notice && <div className="sh-notice" role="status">{notice}</div>}
 
-      <div id="sh-panel" role="tabpanel" aria-labelledby={`sh-tab-${tab}`} className="sh-panel">
+      <div id="sh-panel" role="region" aria-label={labelOf(tab)} className="sh-panel">
         {tab === 'home' && <HomeTab health={health} awaiting={awaiting.length} suggestionsWaiting={suggestionsWaiting} onOpen={selectTab} />}
         {tab === 'usage' && (health.usage ? (
           <div className="sh-stack">

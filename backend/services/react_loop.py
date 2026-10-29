@@ -12,12 +12,13 @@ import logging
 import time
 
 from backend.models.models import lite_llm
-from backend.models.split_prompt import split_template
+from backend.models.split_prompt import SplitPrompt, split_template
 
 # Where the prompt template's stable parts end (backend/components/constraints.py TOOL_AGENT_PROMPT): the fixed instructions come before this marker; this request's context, up to the request itself, is
 # the second stable part (the cut after the request is made by `hold`); the notices added at some steps and the attempts so far (which grow at every step) are the changing end. A model that caches reads
 # the first two back at a tenth of the price (backend/models/split_prompt.py).
 PROMPT_CACHE_MARKERS = ("=== THIS REQUEST ===",)
+_split_warned = False                    # said once per process: a template that cannot be split costs money on every step, and the log should say so without repeating itself
 from backend.utils import draft_checkpoint
 from backend.utils.log_hygiene import describe_observation
 from backend.utils.agent_utils import (
@@ -515,6 +516,10 @@ async def run_react_loop(
             attempts=_format_react_attempts(attempts),
             architecture_map=architecture_map,
         )
+        global _split_warned
+        if not _split_warned and not isinstance(prompt, SplitPrompt):
+            _split_warned = True
+            logger.warning("[%s] the prompt template could not be split into cacheable parts (its markers were not found exactly once), so every step is sent as one block.", node_name)
 
         try:
             response = await llm.ainvoke(prompt)

@@ -362,15 +362,4 @@ class Runner:
 
     def _ask_here(self, shown: str, notes: List[str], cancel: threading.Event) -> str:
         """The window on this computer: "yes", "no", "cancelled" (stopped in SAAPP meanwhile) or "none" (no window)."""
-        try:
-            handle = self.asker(shown, notes)
-        except Exception:
-            return "none"
-        while True:
-            answer = handle.poll()
-            if answer is not None:
-                return {"chosen": "yes", "declined": "no"}.get(answer.get("result"), "none")
-            if cancel.is_set() or self.stop.is_set():
-                handle.cancel()
-                return "cancelled"
-            time.sleep(0.2)
+        return confirm.ask_blocking(self.asker, shown, notes, cancel, self.stop)

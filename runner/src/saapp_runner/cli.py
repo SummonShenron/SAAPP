@@ -135,6 +135,27 @@ def cmd_confirm_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mcp(args: argparse.Namespace) -> int:
+    """Serves the runner's checks and commands to an MCP client over stdio (mcp_server.py). Needs no pairing and no key: it only uses the projects this computer allowed. stdout carries the protocol and
+    nothing else; messages go to stderr."""
+    if getattr(args, "print_config", False):
+        from .mcp_server import client_config
+
+        print(json.dumps(client_config(style=args.format), indent=2))
+        return 0
+    import io
+
+    from .mcp_server import McpServer
+
+    stdin = io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8", newline="\n")
+    stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", newline="\n", write_through=True)       # one JSON message per line, always "\n" (never "\r\n" on Windows)
+    server = McpServer(asker=confirm_module.new_asker(), timeout=args.timeout)
+    try:
+        return server.serve(stdin, stdout)
+    except KeyboardInterrupt:
+        return 0
+
+
 def cmd_start(args: argparse.Namespace, say=print, stop=None) -> int:
     credentials = load_credentials()
     if not credentials:
@@ -259,6 +280,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub.add_parser("remove-project", help="stop serving a project folder (nothing in it is touched)").add_argument("--root", required=True)
     pick = sub.add_parser("pick-folder", help=argparse.SUPPRESS)
     pick.add_argument("--name", required=True)
+    mcp = sub.add_parser("mcp", help="serve this computer's projects, checks and the command language to an MCP client (Claude Desktop, Claude Code...) over stdio")
+    mcp.add_argument("--timeout", type=float, default=300, help="seconds one call may run (default 300)")
+    mcp.add_argument("--print-config", action="store_true", help="print the entry an MCP client's configuration needs, then exit")
+    mcp.add_argument("--format", choices=("portable", "vscode"), default="portable", help="with --print-config: portable (mcpServers: Claude, Copilot's mcp-config.json) or vscode (servers, for .vscode/mcp.json)")
     ask = sub.add_parser("confirm-command", help=argparse.SUPPRESS)
     ask.add_argument("--line", required=True)
     ask.add_argument("--notes", default="[]")
@@ -267,7 +292,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         sub.add_parser(name, help=text)
     args = parser.parse_args(argv)
     return {"pair": cmd_pair, "init": cmd_init, "start": cmd_start, "install-service": cmd_install_service, "uninstall-service": cmd_uninstall_service, "status": cmd_status, "add-project": cmd_add_project,
-            "remove-project": cmd_remove_project, "projects": cmd_projects, "pick-folder": cmd_pick_folder, "confirm-command": cmd_confirm_command}[args.command](args)
+            "remove-project": cmd_remove_project, "projects": cmd_projects, "pick-folder": cmd_pick_folder, "confirm-command": cmd_confirm_command, "mcp": cmd_mcp}[args.command](args)
 
 
 if __name__ == "__main__":

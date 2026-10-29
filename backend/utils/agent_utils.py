@@ -64,22 +64,80 @@ _SENSITIVE_PATH_RE = re.compile(
 )
 
 
-def build_tool_excerpt(tool_name: str, args: dict | None, observation) -> dict | None:
-    """A capped, redacted excerpt of what a read step returned, for the requester's trace panel only. Never logged or saved."""
-    if tool_name != "read_repo_file" or not isinstance(args, dict) or not isinstance(observation, str):
-        return None
-    if observation.startswith("ERROR"):
-        return None
+def _redact_line(line: str) -> str:
+    return _SECRET_LOOKING_RE.sub("[redacted]", _SECRET_ASSIGNMENT_RE.sub("[redacted]", line))
+
+
+# A search step shows what it found, grouped by file with line numbers: at most this many files, this many matches in all and per file, and this many characters of a matching line.
+TRACE_EXCERPT_MAX_FILES = 10
+TRACE_EXCERPT_MAX_MATCHES = 25
+TRACE_EXCERPT_MAX_PER_FILE = 5
+TRACE_EXCERPT_MAX_LINE_CHARS = 160
+TRACE_EXCERPT_MAX_TERM_CHARS = 120
+_MATCH_LINE_RE = re.compile(r"^([^\s:][^:\n]*):(\d{1,7}): ?(.*)$")          # search_literal prints "path:line: the line"
+_PATH_ONLY_RE = re.compile(r"^[\w./@+\-\[\]()~]+$")                          # search_code prints one path per line; a line with a space in it is a message, not a path
+
+
+def _read_excerpt(args: dict, observation: str) -> dict | None:
     path = str(args.get("path") or "").strip().replace("\\", "/")
     if _SENSITIVE_PATH_RE.search(path):
         return None
-    redacted = "\n".join(
-        _SECRET_LOOKING_RE.sub("[redacted]", _SECRET_ASSIGNMENT_RE.sub("[redacted]", line))
-        for line in observation.splitlines()
-    )
+    redacted = "\n".join(_redact_line(line) for line in observation.splitlines())
     # Measure the raw observation too: a long run that gets redacted to a short marker still means the file text was cut.
     truncated = len(observation) > TRACE_EXCERPT_MAX_CHARS or len(redacted) > TRACE_EXCERPT_MAX_CHARS
     return {"kind": "read", "path": path, "text": redacted[:TRACE_EXCERPT_MAX_CHARS], "truncated": truncated}
+
+
+def _search_excerpt(tool_name: str, args: dict, observation: str) -> dict | None:
+    """What a search found: the files and, for search_literal, the matching lines with their numbers; for search_code (which returns paths only) just the files. Lines from files that hold secrets are left
+    out (and counted), every shown line is redacted, and what is kept is capped. None when it found nothing to show."""
+    term = " ".join(str(args.get("term" if tool_name == "search_literal" else "query") or "").split())[:TRACE_EXCERPT_MAX_TERM_CHARS]
+    by_file: dict = {}
+    hidden: set = set()
+    total_matches = 0
+    for raw in observation.splitlines():
+        text_line = raw.strip()
+        if tool_name == "search_literal":
+            found = _MATCH_LINE_RE.match(text_line)
+            if not found:
+                continue
+            path, number, text = found.group(1).replace("\\", "/"), int(found.group(2)), found.group(3)
+        else:
+            if not _PATH_ONLY_RE.match(text_line) or text_line.upper().startswith("ERROR"):
+                continue
+            path, number, text = text_line.replace("\\", "/"), 0, ""
+        if _SENSITIVE_PATH_RE.search(path):
+            hidden.add(path)
+            continue
+        entry = by_file.setdefault(path, [])
+        if number:
+            total_matches += 1
+            entry.append({"line": number, "text": _redact_line(text.strip())[:TRACE_EXCERPT_MAX_LINE_CHARS]})
+    if not by_file:
+        return None
+    files, kept, cut = [], 0, False
+    for path, matches in by_file.items():
+        if len(files) >= TRACE_EXCERPT_MAX_FILES:
+            cut = True
+            break
+        room = max(TRACE_EXCERPT_MAX_MATCHES - kept, 0)
+        shown = matches[:min(TRACE_EXCERPT_MAX_PER_FILE, room)]
+        cut = cut or len(shown) < len(matches)
+        kept += len(shown)
+        files.append({"path": path[:300], "matches": shown})
+    return {"kind": "search", "term": term, "files": files, "total_files": len(by_file), "total_matches": total_matches or len(by_file), "hidden": len(hidden), "truncated": cut}
+
+
+def build_tool_excerpt(tool_name: str, args: dict | None, observation) -> dict | None:
+    """A capped, redacted excerpt of what a step found or read, for the requester's trace panel only. Never logged or saved. Reads (read_repo_file) give a piece of the file; searches (search_literal,
+    search_code) give the files and matching lines. Any other tool, an error, or nothing found gives None."""
+    if not isinstance(args, dict) or not isinstance(observation, str) or observation.startswith("ERROR"):
+        return None
+    if tool_name == "read_repo_file":
+        return _read_excerpt(args, observation)
+    if tool_name in ("search_literal", "search_code"):
+        return _search_excerpt(tool_name, args, observation)
+    return None
 
 
 def _trace_line(text) -> str:
@@ -183,10 +241,35 @@ def build_tool_facts(
     return clean_trace_facts(facts)
 
 
+def _count(value) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+
 def clean_trace_excerpt(excerpt) -> dict | None:
-    """What the caller built, checked again before it leaves the server: a read excerpt with a short path, text of at most TRACE_EXCERPT_MAX_CHARS characters and a yes/no for whether it was cut.
-    None for anything else, or for no text."""
-    if not isinstance(excerpt, dict) or excerpt.get("kind") != "read" or not isinstance(excerpt.get("text"), str) or not excerpt["text"].strip():
+    """What the caller built, checked again before it leaves the server. A read: a short path, text of at most TRACE_EXCERPT_MAX_CHARS characters and a yes/no for whether it was cut. A search: the term, at
+    most TRACE_EXCERPT_MAX_FILES files (a path never from a secrets file) with at most TRACE_EXCERPT_MAX_MATCHES matches in all, each a line number and a line of at most TRACE_EXCERPT_MAX_LINE_CHARS characters, and
+    the counts. None for anything else, or for nothing to show."""
+    if not isinstance(excerpt, dict):
+        return None
+    if excerpt.get("kind") == "search":
+        files, kept = [], 0
+        for item in excerpt.get("files") if isinstance(excerpt.get("files"), list) else []:
+            if not isinstance(item, dict) or not isinstance(item.get("path"), str) or len(files) >= TRACE_EXCERPT_MAX_FILES:
+                continue
+            path = item["path"].strip().replace("\\", "/")[:300]
+            if not path or _SENSITIVE_PATH_RE.search(path):
+                continue
+            matches = []
+            for match in item.get("matches") if isinstance(item.get("matches"), list) else []:
+                if isinstance(match, dict) and isinstance(match.get("text"), str) and _count(match.get("line")) and kept < TRACE_EXCERPT_MAX_MATCHES and len(matches) < TRACE_EXCERPT_MAX_PER_FILE:
+                    matches.append({"line": match["line"], "text": match["text"][:TRACE_EXCERPT_MAX_LINE_CHARS]})
+                    kept += 1
+            files.append({"path": path, "matches": matches})
+        if not files:
+            return None
+        return {"kind": "search", "term": " ".join(str(excerpt.get("term") or "").split())[:TRACE_EXCERPT_MAX_TERM_CHARS], "files": files, "total_files": max(_count(excerpt.get("total_files")), len(files)),
+                "total_matches": max(_count(excerpt.get("total_matches")), kept), "hidden": _count(excerpt.get("hidden")), "truncated": bool(excerpt.get("truncated"))}
+    if excerpt.get("kind") != "read" or not isinstance(excerpt.get("text"), str) or not excerpt["text"].strip():
         return None
     path = str(excerpt.get("path") or "").strip().replace("\\", "/")[:300]
     if _SENSITIVE_PATH_RE.search(path):

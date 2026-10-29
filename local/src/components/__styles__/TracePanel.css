@@ -172,3 +172,12 @@
 .trace-excerpt-path { font-family: monospace; font-size: 0.72rem; color: var(--text-muted); overflow-wrap: anywhere; }
 .trace-excerpt-text { margin: 4px 0 0; padding: 6px 8px; max-height: 12rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: monospace; font-size: 0.72rem; line-height: 1.45; color: var(--text-main); background: var(--bg-secondary, transparent); border: 1px solid var(--border-color); border-radius: 6px; }
 .trace-excerpt-note { margin-top: 3px; font-size: 0.68rem; color: var(--text-muted); }
+
+/* A search step's results: a summary, then each file with its matching lines. It scrolls instead of growing the panel. */
+.trace-excerpt-summary { font-size: 0.74rem; font-weight: 600; color: var(--text-main); }
+.trace-search-list { margin-top: 6px; max-height: 16rem; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+.trace-search-file { min-width: 0; }
+.trace-search-line { display: flex; gap: 8px; margin-top: 2px; font-family: monospace; font-size: 0.72rem; line-height: 1.45; }
+.trace-search-number { flex: 0 0 3.2em; text-align: right; color: var(--text-muted); user-select: none; }
+.trace-search-text { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-main); }
+.trace-search-hit { background: color-mix(in srgb, var(--accent-primary) 28%, transparent); color: inherit; border-radius: 2px; padding: 0 1px; }

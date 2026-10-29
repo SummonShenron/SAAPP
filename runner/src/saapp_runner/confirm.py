@@ -7,6 +7,7 @@ nothing that changes the project unless the person answers yes. If this computer
 `~/.saapp-runner/commands.toml` holds the person's own rules. It is read here, never sent to the server and never changed by it:
 
     confirm_changes = true                 # ask here before a command that changes things (default true; false skips the question)
+    fake_keys = true                       # in the MCP server, run with made-up AI keys so a test cannot spend real money (default true); false passes no key at all (the environment is clean either way)
     allow = ["terraform-lint"]             # extra programs a line may use. They count as changes. The built-in never-list still wins over this.
     refuse = ["git push", "npm install"]   # command beginnings that are always refused, whatever SAAPP says: a program name, or a program and its first words
 """
@@ -29,8 +30,8 @@ def settings_path() -> Path:
 class Rules:
     """What the person set in commands.toml. `problem` says what was wrong with the file (the rules then default to the safest: ask, and allow nothing extra)."""
 
-    def __init__(self, confirm_changes: bool = True, allow: FrozenSet[str] = frozenset(), refuse: Tuple[Tuple[str, ...], ...] = (), problem: str = "") -> None:
-        self.confirm_changes, self.allow, self.refuse, self.problem = confirm_changes, allow, refuse, problem
+    def __init__(self, confirm_changes: bool = True, allow: FrozenSet[str] = frozenset(), refuse: Tuple[Tuple[str, ...], ...] = (), problem: str = "", fake_keys: bool = True) -> None:
+        self.confirm_changes, self.allow, self.refuse, self.problem, self.fake_keys = confirm_changes, allow, refuse, problem, fake_keys
 
 
 def load_rules() -> Rules:
@@ -44,10 +45,10 @@ def load_rules() -> Rules:
     allow = data.get("allow")
     refuse = data.get("refuse")
     bad = [name for name, value in (("allow", allow), ("refuse", refuse)) if value is not None and not (isinstance(value, list) and all(isinstance(v, str) for v in value))]
-    if bad or (data.get("confirm_changes") is not None and not isinstance(data.get("confirm_changes"), bool)):
-        return Rules(problem=f"{path.name}: allow and refuse are lists of words and confirm_changes is true or false")
+    if bad or any(data.get(name) is not None and not isinstance(data.get(name), bool) for name in ("confirm_changes", "fake_keys")):
+        return Rules(problem=f"{path.name}: allow and refuse are lists of words, and confirm_changes and fake_keys are true or false")
     return Rules(data.get("confirm_changes") is not False, frozenset(a.strip().lower() for a in allow or [] if a.strip()),
-                 tuple(tuple(w.lower() for w in r.split()) for r in refuse or [] if r.strip()))
+                 tuple(tuple(w.lower() for w in r.split()) for r in refuse or [] if r.strip()), fake_keys=data.get("fake_keys") is not False)
 
 
 def refused_by_person(plan: "commands.Plan", rules: Rules) -> str:
@@ -102,6 +103,24 @@ class _TkAsk:
 
     def close(self) -> None:
         self.root.destroy()
+
+
+def ask_blocking(asker: Callable[[str, List[str]], Any], shown: str, notes: List[str], cancel: Any, stop: Any = None, poll: float = 0.2) -> str:
+    """Asks the person in the window on this computer and waits: "yes", "no", "cancelled" (the caller's `cancel` or `stop` event was set meanwhile, and the window is closed) or "none" (no window could be shown)."""
+    import time
+
+    try:
+        handle = asker(shown, notes)
+    except Exception:
+        return "none"
+    while True:
+        answer = handle.poll()
+        if answer is not None:
+            return {"chosen": "yes", "declined": "no"}.get(answer.get("result"), "none")
+        if cancel.is_set() or (stop is not None and stop.is_set()):
+            handle.cancel()
+            return "cancelled"
+        time.sleep(poll)
 
 
 def new_asker(command: Optional[Callable[[str, List[str]], List[str]]] = None) -> Callable[[str, List[str]], "picker.Dialog"]:

@@ -5,6 +5,7 @@ whole path: both loops emit it, the stream forwards it, the page records it, and
 import ast
 import asyncio
 import inspect
+import json
 import logging
 import pathlib
 
@@ -136,7 +137,9 @@ def test_the_native_loop_emits_an_excerpt_for_a_successful_read_and_never_for_an
 
     result = asyncio.run(native_loop.run(llm=LLM(), tools=[{"name": "read_repo_file"}, {"name": "search_literal"}], act=act, question="q", emit_step=emit_step, emit_excerpt=emit_excerpt))
     assert result["final_answer"] == "finished"
-    assert excerpts == [(steps[0], {"kind": "read", "path": "a.py", "text": "print('hello')", "truncated": False})]
+    assert [(sid, ex["kind"]) for sid, ex in excerpts] == [(steps[0], "read"), (steps[2], "search")]           # the read, and the search that found something; not the secrets file, not the failed read
+    assert excerpts[0][1] == {"kind": "read", "path": "a.py", "text": "print('hello')", "truncated": False}
+    assert excerpts[1][1]["files"] == [{"path": "a.py", "matches": [{"line": 1, "text": "x"}]}]
 
 
 def test_the_tool_agent_hands_the_native_loop_the_excerpt_emitter_and_the_old_loop_uses_it_too():
@@ -162,3 +165,92 @@ def test_the_page_records_the_excerpt_and_shows_it_as_plain_text():
     assert "mergeExcerpts(mergeFacts(traceSteps, traceFacts), traceExcerpts)" in chat
     assert "dangerouslySetInnerHTML" not in panel and '<pre className="trace-excerpt-text">{excerpt.text}</pre>' in panel
     assert "localStorage" not in panel and "setItem" not in chat.split("trace_excerpt", 1)[1][:400]       # not kept anywhere
+
+
+# ---- searches: the files and matching lines ------------------------------------------------------------------------------------------------------
+
+LITERAL = """Found 6 matches for 'timestamp' in 3 of 700 files:
+local/src/pages/Chat.tsx:490: <span className="feedback-time">{formatMessageTime(msg.sentAt)}</span>
+local/src/pages/Chat.tsx:512: const timestamp = 1
+backend/utils/time_utils.py:55: def stamp(message):  # timestamp
+.env:3: TIMESTAMP_KEY=abcdefghijklmnopqrstuvwxyz0123456789ABCDEF
+keys/id_rsa:1: timestamp
+docs/notes.md:9: password = hunter2 timestamp
+"""
+
+
+def test_a_literal_search_is_grouped_by_file_with_line_numbers_and_leaves_out_secrets_files():
+    excerpt = build_tool_excerpt("search_literal", {"term": "timestamp"}, LITERAL)
+    assert excerpt["kind"] == "search" and excerpt["term"] == "timestamp"
+    assert [f["path"] for f in excerpt["files"]] == ["local/src/pages/Chat.tsx", "backend/utils/time_utils.py", "docs/notes.md"]
+    assert [m["line"] for m in excerpt["files"][0]["matches"]] == [490, 512] and excerpt["files"][1]["matches"] == [{"line": 55, "text": "def stamp(message):  # timestamp"}]
+    assert excerpt["hidden"] == 2 and excerpt["total_files"] == 3 and excerpt["total_matches"] == 4 and excerpt["truncated"] is False
+    shown = json.dumps(excerpt)
+    assert "TIMESTAMP_KEY" not in shown and "id_rsa" not in shown and ".env" not in shown and "hunter2" not in shown          # secrets files are counted, never shown; a secret-looking line is redacted
+
+
+def test_a_code_search_lists_the_files_it_found_and_nothing_else():
+    excerpt = build_tool_excerpt("search_code", {"query": "stamp"}, "backend/utils/time_utils.py\nlocal/src/a.tsx\nnotes with spaces.md\nERROR: nope\n.env")
+    assert excerpt["files"] == [{"path": "backend/utils/time_utils.py", "matches": []}, {"path": "local/src/a.tsx", "matches": []}] and excerpt["total_files"] == 2 and excerpt["hidden"] == 1
+
+
+def test_nothing_found_or_an_error_or_a_secrets_file_alone_gives_no_excerpt():
+    assert build_tool_excerpt("search_literal", {"term": "x"}, "No occurrences of 'x' in 700 files scanned.") is None
+    assert build_tool_excerpt("search_literal", {"term": "x"}, "ERROR: no term given") is None
+    assert build_tool_excerpt("search_code", {"query": "x"}, "No matches.") is None
+    assert build_tool_excerpt("search_literal", {"term": "x"}, ".env:1: x\nkeys/server.pem:2: x") is None
+    assert build_tool_excerpt("search_literal", {"term": "x"}, LITERAL) is not None and build_tool_excerpt("search_literal", None, LITERAL) is None and build_tool_excerpt("search_literal", {"term": "x"}, ["a"]) is None
+    assert build_tool_excerpt("find_file", {"query": "x"}, "a.py") is None                         # only these two searches have an excerpt
+
+
+def test_a_long_search_is_capped_by_files_matches_per_file_matches_in_all_and_line_length():
+    lines = []
+    for number in range(1, 16):
+        for line in range(1, 8):
+            lines.append(f"src/file{number:02d}.py:{line}: " + ("a plain line of code about the term " * 8))
+    excerpt = build_tool_excerpt("search_literal", {"term": "term"}, "\n".join(lines))
+    assert len(excerpt["files"]) == 10 and excerpt["total_files"] == 15 and excerpt["total_matches"] == 105 and excerpt["truncated"] is True
+    assert all(len(f["matches"]) <= 5 for f in excerpt["files"]) and sum(len(f["matches"]) for f in excerpt["files"]) <= 25
+    assert all(len(m["text"]) <= 160 for f in excerpt["files"] for m in f["matches"])
+    assert len(excerpt["term"]) <= 120 and len(build_tool_excerpt("search_literal", {"term": "t" * 500}, "a.py:1: t")["term"]) == 120
+
+
+def test_matches_from_a_search_that_fit_in_the_caps_are_not_marked_cut():
+    excerpt = build_tool_excerpt("search_literal", {"term": "x"}, "a.py:1: x\nb.py:2: x")
+    assert excerpt["truncated"] is False and excerpt["total_matches"] == 2
+
+
+def test_a_search_excerpt_is_checked_again_on_the_way_out(monkeypatch):
+    good = {"kind": "search", "term": "x", "files": [{"path": "a.py", "matches": [{"line": 3, "text": "x = 1"}]}], "total_files": 1, "total_matches": 1, "hidden": 0, "truncated": False}
+    assert clean_trace_excerpt(good) == good
+    messy = {"kind": "search", "term": "y" * 400, "files": [{"path": ".env", "matches": [{"line": 1, "text": "KEY=1"}]}, {"path": "keys/id_rsa", "matches": []}, "junk", {"path": 5},
+                                                              {"path": "ok.py", "matches": [{"line": 0, "text": "zero"}, {"line": 2, "text": "z" * 900}, {"line": "3", "text": "string line"}, {"line": 4, "text": 5}, "junk"]}], "total_files": "many", "hidden": -3}
+    cleaned = clean_trace_excerpt(messy)
+    assert [f["path"] for f in cleaned["files"]] == ["ok.py"] and cleaned["files"][0]["matches"] == [{"line": 2, "text": "z" * 160}]
+    assert len(cleaned["term"]) == 120 and cleaned["total_files"] == 1 and cleaned["hidden"] == 0 and cleaned["total_matches"] == 1
+    for bad in ({"kind": "search"}, {"kind": "search", "files": []}, {"kind": "search", "files": [{"path": ".env", "matches": []}]}, {"kind": "search", "files": "x"}):
+        assert clean_trace_excerpt(bad) is None, bad
+    many = {"kind": "search", "term": "t", "files": [{"path": f"f{n}.py", "matches": [{"line": k + 1, "text": "t"} for k in range(9)]} for n in range(20)]}
+    capped = clean_trace_excerpt(many)
+    assert len(capped["files"]) == 10 and sum(len(f["matches"]) for f in capped["files"]) == 25 and all(len(f["matches"]) <= 5 for f in capped["files"])
+
+
+def test_a_search_excerpt_is_sent_like_a_read_one_and_the_old_loop_sends_it_too(monkeypatch):
+    sent = []
+
+    async def fake_emit(name, data):
+        sent.append((name, data))
+
+    monkeypatch.setattr(au, "safe_emit_event", fake_emit)
+    excerpt = build_tool_excerpt("search_literal", {"term": "timestamp"}, LITERAL)
+    asyncio.run(emit_trace_excerpt("abc", excerpt))
+    assert sent == [("trace_excerpt", {"step_id": "abc", "excerpt": clean_trace_excerpt(excerpt)})]
+    assert "SECRET" not in json.dumps(sent) and "hunter2" not in json.dumps(sent)
+    react = (ROOT / "backend" / "services" / "react_loop.py").read_text(encoding="utf-8")
+    assert "await emit_trace_excerpt(step_id, build_tool_excerpt(tool_action_name, args, observation))" in react             # the same call serves reads and searches
+
+
+def test_the_search_excerpt_helpers_log_nothing():
+    for fn in (au._search_excerpt, au._read_excerpt, au._redact_line):
+        tree = ast.parse(inspect.getsource(fn).lstrip())
+        assert not [n for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id in {"logger", "log"}], fn.__name__

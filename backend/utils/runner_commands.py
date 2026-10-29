@@ -7,9 +7,12 @@ The server does not know the person's folder, so it classifies against a stand-i
 runner then classifies again with the real folder (links, files that exist) and has the last word.
 """
 import importlib.util
+import logging
 import sys
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger("SASS Logger")
 
 _FILE = Path(__file__).resolve().parents[2] / "runner" / "src" / "saapp_runner" / "commands.py"
 _NAME = "saapp_runner_commands_shared"
@@ -29,6 +32,7 @@ def _load() -> None:
     except Exception:
         sys.modules.pop(_NAME, None)
         commands, AVAILABLE = None, False
+        logger.warning("[runner_commands] the shared command rules could not be loaded, so Sonic cannot offer commands on this server.")
 
 
 _load()

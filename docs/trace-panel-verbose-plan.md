@@ -24,7 +24,7 @@ Click a step in the "How it works" panel and see what it actually did. Everythin
 - The model's own "purpose" field is free: show it labelled "stated reason", never as fact.
 
 ## Rules
-- Metadata and shortened arguments only. Never full prompts or result bodies, except one capped, redacted excerpt (up to 1,000 characters) of a read step's text, shown only in the requester's live trace. It is never logged or saved (Pass 1 covers read_repo_file only; see build_tool_excerpt in agent_utils.py).
+- Metadata and shortened arguments only. Never full prompts or result bodies, except one capped, redacted excerpt per step, shown only in the requester's live trace and never logged or saved (see build_tool_excerpt in agent_utils.py): up to 1,000 characters of a file for read_repo_file; for search_literal and search_code the matches grouped by file with line numbers (at most 10 files, 25 matches, 5 per file, 160 characters a line; lines from secrets files are left out and counted).
 - Goes only to the requester's browser; not logged, not stored (the log-hygiene test is untouched).
 - Admin-only data (logs, incidents) stays admin-only.
 - Cannot do without a model call: a plain-language "why the model chose this". Not attempted.

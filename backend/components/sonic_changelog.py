@@ -1056,6 +1056,42 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "plan_requests",
+        "requires": [
+            "backend/utils/agent_utils.py::def looks_like_plan_request",
+            "backend/utils/agent_utils.py::def offered_a_change",
+        ],
+        "month": "2026-10",
+        "title": "Plans when you ask for one",
+        "line": "When Plan first is on and you ask for a plan, or describe a screen change in your own words, I now write the plan card before editing, and if I cannot I say why. A short yes after I offered a change now counts as telling me to make it.",
+        "keywords": ["plan first", "plan mode", "make a plan", "plan card", "approve the plan", "skipped the plan"],
+        "volunteer": [],
+    },
+    {
+        "id": "check_after_edit",
+        "requires": [
+            "backend/utils/loop_rhythm.py::def check_hint",
+            "backend/utils/loop_rhythm.py::class LoopRhythm",
+        ],
+        "month": "2026-10",
+        "title": "Checking an edit after you apply it",
+        "line": "After you apply one of my edits I now try to check it, by running your tests or type check when a runner is connected, and I write the missing test first if there is none. Several reads in a row now get a nudge to act instead.",
+        "keywords": ["check the edit", "run the tests after", "test after editing", "read too much", "reading too much", "act sooner"],
+        "volunteer": [],
+    },
+    {
+        "id": "trace_read_excerpt",
+        "requires": [
+            "backend/utils/agent_utils.py::def build_tool_excerpt",
+            "local/src/components/TracePanel.tsx::trace-excerpt",
+        ],
+        "month": "2026-10",
+        "title": "Seeing what I read and found",
+        "line": "In the trace panel, a file I read or a search I ran can now be expanded: you see the start of the file, or the matches grouped by file with line numbers. Anything that looks like a key is hidden, secrets files are left out, and it is not saved.",
+        "keywords": ["trace panel", "what did you read", "see what you read", "execution trace", "show what you read"],
+        "volunteer": [],
+    },
+    {
         "id": "self_model",
         "requires": [
             "backend/utils/self_model.py::def approved_block",
