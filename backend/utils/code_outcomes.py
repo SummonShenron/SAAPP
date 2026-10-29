@@ -84,7 +84,7 @@ def summarize_turn(turn: Any) -> Optional[Dict[str, Any]]:
         "cap_hit": bool(getattr(turn, "cap_hit", False)), "edited": edited, "verified": edited and _called(tools, VERIFY_TOOLS, ok_only=True),
         "edit_calls": _count(tools, EDIT_TOOLS, "calls"), "edit_errors": _count(tools, EDIT_TOOLS, "errors"), "test_runs": _count(tools, TEST_TOOLS, "calls"),
         "plan_stop": str(getattr(turn, "plan_stop", "") or ""), "tool_steps": int(getattr(turn, "loop_steps", 0) or 0),
-        "rhythm": getattr(turn, "rhythm", None),
+        "rhythm": getattr(turn, "rhythm", None), "reading": getattr(turn, "reading", None),
     }
 
 
@@ -129,9 +129,11 @@ def tally_turn(counts: Dict[str, int], summary: Optional[Dict[str, Any]], plan_p
             if reason != "plan_done":
                 tally(counts, "code_plan_exec_early")
         _add(counts, "code_plan_exec_tool_steps", int(summary.get("tool_steps") or 0))
-    from backend.utils import loop_rhythm
+    from backend.utils import loop_rhythm, reading_waste
 
     for key, amount in loop_rhythm.counts_from(summary.get("rhythm")).items():
+        _add(counts, key, amount)
+    for key, amount in reading_waste.counts_from(summary.get("reading")).items():
         _add(counts, key, amount)
     _add(counts, "code_edit_calls", summary.get("edit_calls", 0))
     _add(counts, "code_edit_errors", summary.get("edit_errors", 0))

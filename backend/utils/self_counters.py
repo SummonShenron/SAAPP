@@ -60,7 +60,13 @@ _PLAIN_KEYS = ("turns_total", "self_model_used", "experience_captured", "experie
 RHYTHM_KEYS = ("code_rhythm_turns", "code_rhythm_acted_turns", "code_rhythm_reads_before_first_act", "code_rhythm_applies", "code_rhythm_applies_checked", "code_rhythm_streak_notices")
 # Sonic's place tools (backend/services/maps_tools.py): turns that were given them, calls of each, and calls that came back as errors. Counts only: no place, no query, no person.
 MAPS_KEYS = ("maps_turns", "maps_find_places", "maps_travel_times", "maps_errors")
-_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS
+# How much of a coding turn's reading was the right material (backend/utils/reading_waste.py): turns that read, distinct files read, re-reads, searches and empty ones, whole-tree listings, find_file calls, and
+# in turns where an edit was applied: how many files were read and how many of those were the ones edited. Counts only.
+READING_KEYS = ("reading_turns", "reading_files_read", "reading_rereads", "reading_searches", "reading_empty_searches", "reading_tree_listings", "reading_find_files", "reading_edit_turns",
+                "reading_edit_turn_files_read", "reading_edit_turn_files_used")
+# Turns that were given the connected folder's own guidance file (backend/utils/project_guidance.py).
+GUIDANCE_KEYS = ("project_guidance_turns",)
+_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS
 KEYS = frozenset(
     list(_PLAIN_KEYS) + [f"{group}_{name}" for group, names in _GROUPS.items() for name in names]
 )

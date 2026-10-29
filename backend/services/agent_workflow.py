@@ -116,7 +116,7 @@ from backend.services import steering
 from backend.services import image_gen, library_search, native_loop, ops_incidents, photo_cards
 from backend.services import native_tools as native_tools_module
 from backend.utils import loop_rhythm
-from backend.utils import place_questions
+from backend.utils import place_questions, project_guidance
 from backend.services import maps_tools
 from backend.utils import code_plan, budget_guard, date_resolve, llm_turns, memory_grounding, progress_notes, reading_shelf, routines, runner_commands, runner_jobs, self_report
 from backend.services.repo_checkout import (
@@ -3152,6 +3152,16 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             "{current_time}", build_agent_time_line(get_user_timezone(username)).replace("{", "{{").replace("}", "}}")
         )
         coding_preferences = await asyncio.to_thread(fetch_coding_preferences, username)
+        # The connected folder's own notes on where things are (.sonic/AGENTS.md, else AGENTS.md or CLAUDE.md): read from the server's copy of the folder, about a thousand tokens, the same every turn so the
+        # prompt cache keeps them, and labelled as data (backend/utils/project_guidance.py). It rides with the person's coding preferences, at the stable start of the prompt, for both engines.
+        if local_workspace_handle is not None:
+            guidance = await asyncio.to_thread(project_guidance.read, Path(local_workspace_handle.root))
+            if guidance:
+                coding_preferences = coding_preferences + project_guidance.block(guidance)
+                await safe_emit_event("trace_detail", {"node": "tool_agent_node", "title": "Read the project's guidance", "detail": f"Using {guidance['path']} to decide where to start."})
+                from backend.utils.self_counters import record_turn_counts
+
+                await asyncio.to_thread(record_turn_counts, {"project_guidance_turns": 1})
         prompt_template = prompt_template.replace(
             "{coding_preferences}", coding_preferences.replace("{", "{{").replace("}", "}}")
         )

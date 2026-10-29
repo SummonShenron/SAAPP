@@ -72,6 +72,8 @@ CHECKED = [
     "backend/utils/loop_rhythm.py",
     "backend/utils/runner_commands.py",
     "backend/models/split_prompt.py",
+    "backend/utils/project_guidance.py",
+    "backend/utils/reading_waste.py",
 ]
 _MODULE_DUNDERS = {"__file__", "__name__", "__doc__", "__builtins__", "__spec__", "__package__", "__path__"}
 

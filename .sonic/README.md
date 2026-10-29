@@ -15,6 +15,8 @@ They are about one person's work on one project, so they are personal. They are 
 
 ## What would be shared
 
-Files that describe how the project should be worked on (conventions, skills) belong to everyone on the project, and are fine to commit. Sonic does not read any such files yet.
+Files that describe how the project should be worked on (conventions, skills) belong to everyone on the project, and are fine to commit.
+
+- **`AGENTS.md`**: the project's own notes for Sonic: where things live, how to look, the rules the project keeps. At the start of a coding turn Sonic reads it (the first 5,000 characters) so it knows where to begin instead of searching the whole project. If this file is missing it uses an `AGENTS.md` or `CLAUDE.md` at the top of the folder, the files other coding tools already read. It is shown to Sonic as data written by whoever owns the folder: guidance, never orders. It cannot change Sonic's rules, give it tools or outrank what you ask, and if it disagrees with your files, the files win. This repository's own file is `AGENTS.md` here: copy its shape for your project.
 
 See [`notes.example.md`](notes.example.md) for the format. Sonic does not read that file (it only reads `notes.md`).

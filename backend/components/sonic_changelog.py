@@ -1105,6 +1105,18 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "project_guidance",
+        "requires": [
+            "backend/utils/project_guidance.py::def read",
+            ".sonic/AGENTS.md",
+        ],
+        "month": "2026-10",
+        "title": "Reading a project's own notes",
+        "line": "When a project folder is connected, I now read its own notes first (.sonic/AGENTS.md, or AGENTS.md or CLAUDE.md) so I know where to start looking instead of searching the whole project. They are guidance, not orders: they cannot change my rules.",
+        "keywords": ["agents.md", "claude.md", "project notes", "where to start", "project guidance", "read the readme", "know the project"],
+        "volunteer": [],
+    },
+    {
         "id": "self_model",
         "requires": [
             "backend/utils/self_model.py::def approved_block",

@@ -38,7 +38,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
-from backend.utils import draft_checkpoint, loop_rhythm
+from backend.utils import draft_checkpoint, loop_rhythm, reading_waste
 from backend.utils.prompt_meter import PromptMeter
 from backend.utils.agent_utils import _UnsafeActionRequested, build_tool_facts, build_trace_subject, new_trace_step_id
 
@@ -328,6 +328,7 @@ async def run(
     # THE RHYTHM of a turn that can change the folder (backend/utils/loop_rhythm.py): reads in a row since the last edit or check, and whether an applied edit was checked. After an applied edit the model
     # is told once, in code, to run the check (`after_apply_hint`) and, after a streak of reads, to act. No model call.
     rhythm = loop_rhythm.LoopRhythm() if can_edit else None
+    reading = reading_waste.ReadingLog()          # what this turn read and whether it was what it ended up editing: counts only, kept for the turn (backend/utils/reading_waste.py)
 
     async def absorb_steering(step_number: int) -> bool:
         """Folds newly arrived steering into the conversation as a user message and widens the budget. True when there was any."""
@@ -405,6 +406,7 @@ async def run(
         except Exception as exc:
             logger.warning("[native_loop] tool %s failed: %s", name, type(exc).__name__)
             result = f"ERROR: {name} failed ({type(exc).__name__})."
+        reading.note(name, args, result)
         if emit_excerpt is not None:
             # The excerpt goes to the requester's live trace only: never into attempts, the conversation, or the logs.
             from backend.utils.agent_utils import build_tool_excerpt
@@ -632,6 +634,7 @@ async def run(
     llm_turns.note_tool_loop(step, forced, tool_steps=budget, had_draft=bool(latest_draft), nudged=nudged)
     if rhythm is not None:
         llm_turns.note_rhythm(rhythm.summary())
+    llm_turns.note_reading(reading.summary())
     if plan_budget is not None:
         llm_turns.note_plan_exit(stop_reason or "model_answered")
     try:

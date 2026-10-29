@@ -1309,7 +1309,7 @@ div:has(.portal-body) {
   height: 28px;
   border-radius: 50%;
   background: none;
-  border: 1px solid var(--bg-surface);
+  /* border: 1px solid var(--bg-surface); */
   display: flex;
   align-items: center;
   justify-content: center;
