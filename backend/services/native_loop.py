@@ -542,6 +542,7 @@ async def run(
         streak_notice = rhythm.notice() if rhythm is not None else None
         if streak_notice:
             messages.append(HumanMessage(content=streak_notice))
+            logger.info("[native_loop] step %s: a reading-streak notice was added.", step)
         meter.note_call(messages, tools)
         reply = await llm.ainvoke_tools(messages, tools)
         if await absorb_steering(step):
@@ -584,6 +585,7 @@ async def run(
             # steps to go: its tests are usually a later step, and a check run before they exist can only fail or run nothing (Jack, 2026-10-28). It joins the held results and is shortened like any old one.
             hint = HumanMessage(content=after_apply_hint)
             messages.append(hint)
+            logger.info("[native_loop] step %s: an edit was applied; the check hint was added.", step)
             held.append({"message": hint, "step": step, "text": after_apply_hint, "done": False, "key": f"after_apply|{step}"})
         if library_allowance is not None:
             # A listing of a long library adds the read steps it needs, once (backend/utils/library_allowance.py): the tool steps left AFTER this one (this loop's answer is an extra call, so none is kept back).

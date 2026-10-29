@@ -1,7 +1,8 @@
 // Run with: node --experimental-test-module-mocks --test src/components/traceFacts.test.mjs   (from local/; Node 22.18+ runs the TypeScript module directly)
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { cleanExcerpt, cleanFacts, mergeExcerpts, mergeFacts, recordExcerpt, recordFacts, toggleExpanded, toolStepLabel } from './traceFacts.ts';
+import { cleanExcerpt, searchSummary, splitAroundTerm, cleanFacts, mergeExcerpts, mergeFacts, recordExcerpt, recordFacts, toggleExpanded, toolStepLabel } from './traceFacts.ts';
 
 test('tool steps get plain-words titles, browser tools share one, unknown tools get a generic one, no tool means no label', () => {
   assert.equal(toolStepLabel('web_search'), 'Searched the web');
@@ -103,4 +104,57 @@ test('an excerpt that arrives before or after its step lands on that step only, 
   const steps = [step('s1', 'abc')];
   const again = mergeExcerpts(mergeExcerpts(steps, byId), byId);
   assert.equal(again[0].excerpt, byId.abc);                                   // merging twice keeps the same object, so the panel does not redraw
+});
+
+
+// ---- what a search found ---------------------------------------------------------------------------------------------------------------------
+
+const search = (over = {}) => ({ kind: 'search', term: 'timestamp', files: [{ path: 'a.ts', matches: [{ line: 3, text: 'const timestamp = 1' }] }, { path: 'b.py', matches: [{ line: 9, text: 'Timestamp()' }] }], total_files: 2, total_matches: 2, hidden: 0, truncated: false, ...over });
+
+test('a search excerpt keeps its files and lines, to the same limits as the server, and drops anything that is not one', () => {
+  assert.deepEqual(cleanExcerpt(search()), search());
+  const big = { kind: 'search', term: 't'.repeat(400), files: Array.from({ length: 20 }, (_, n) => ({ path: `f${n}.py`, matches: Array.from({ length: 9 }, (_, k) => ({ line: k + 1, text: 'x'.repeat(500) })) })), total_files: 20 };
+  const cleaned = cleanExcerpt(big);
+  assert.equal(cleaned.files.length, 10);
+  assert.ok(cleaned.files.every(f => f.matches.length <= 5));
+  assert.equal(cleaned.files.reduce((n, f) => n + f.matches.length, 0), 25);
+  assert.ok(cleaned.files[0].matches[0].text.length === 160 && cleaned.term.length === 120 && cleaned.total_files === 20);
+  for (const bad of [{ kind: 'search' }, { kind: 'search', files: [] }, { kind: 'search', files: 'x' }, { kind: 'search', files: [{ path: '' }] }, { kind: 'search', files: [null, 5, { path: 7 }] }]) assert.equal(cleanExcerpt(bad), null, JSON.stringify(bad));
+  const odd = cleanExcerpt(search({ files: [{ path: 'a.ts', matches: [{ line: 0, text: 'zero' }, { line: '2', text: 'str' }, { line: 4, text: 9 }, null, { line: 5, text: 'ok' }] }], total_files: 'many', hidden: -1 }));
+  assert.deepEqual(odd.files[0].matches, [{ line: 5, text: 'ok' }]);
+  assert.equal(odd.total_files, 1);
+  assert.equal(odd.hidden, 0);
+});
+
+test('a read excerpt still works beside it, and the two kinds are told apart', () => {
+  assert.equal(cleanExcerpt({ kind: 'read', path: 'a.py', text: 'hi' }).kind, 'read');
+  assert.equal(cleanExcerpt(search()).kind, 'search');
+  assert.equal(cleanExcerpt({ kind: 'other', text: 'x' }), null);
+});
+
+test('the searched text is marked wherever it appears, ignoring case, and the line is returned whole', () => {
+  const parts = splitAroundTerm('const Timestamp = timestamp + 1', 'timestamp');
+  assert.deepEqual(parts.map(p => p.text).join(''), 'const Timestamp = timestamp + 1');
+  assert.deepEqual(parts.filter(p => p.hit).map(p => p.text), ['Timestamp', 'timestamp']);
+  assert.deepEqual(splitAroundTerm('nothing here', 'timestamp'), [{ text: 'nothing here', hit: false }]);
+  assert.deepEqual(splitAroundTerm('abc', ''), [{ text: 'abc', hit: false }]);
+  assert.deepEqual(splitAroundTerm('abc', '   '), [{ text: 'abc', hit: false }]);
+  assert.deepEqual(splitAroundTerm('timestamp', 'timestamp'), [{ text: 'timestamp', hit: true }]);
+  assert.equal(splitAroundTerm('<b>timestamp</b>', 'timestamp').map(p => p.text).join(''), '<b>timestamp</b>');                 // markup in a line is only ever text
+});
+
+test('the summary says how many matches in how many files, and what was left out', () => {
+  assert.equal(searchSummary(search({ total_matches: 29, total_files: 7 })), '29 matches in 7 files');
+  assert.equal(searchSummary(search({ total_matches: 1, total_files: 1 })), '1 match in 1 file');
+  assert.equal(searchSummary(search({ truncated: true, hidden: 2 })), '2 matches in 2 files (showing the first ones; 2 files that hold secrets left out)');
+  assert.equal(searchSummary(search({ hidden: 1 })), '2 matches in 2 files (1 file that holds secrets left out)');
+  assert.equal(searchSummary({ kind: 'search', term: 'x', files: [{ path: 'a.py', matches: [] }, { path: 'b.py', matches: [] }], total_files: 2, total_matches: 2, hidden: 0, truncated: false }), '2 files');          // a search that only lists files
+});
+
+test('the panel shows a search as plain text and marks the term with mark elements, never as HTML', () => {
+  const panel = readFileSync(new URL('./TracePanel.tsx', import.meta.url), 'utf8');
+  assert.match(panel, /excerpt\.kind === 'search' && <SearchResults excerpt=\{excerpt\} \/>/);
+  assert.match(panel, /<mark key=\{index\} className="trace-search-hit">\{part\.text\}<\/mark>/);
+  assert.doesNotMatch(panel, /dangerouslySetInnerHTML/);
+  assert.match(panel, /splitAroundTerm\(match\.text, excerpt\.term\)/);
 });

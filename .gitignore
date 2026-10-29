@@ -72,3 +72,7 @@ settings.toml
 .sonic/*
 !.sonic/README.md
 !.sonic/notes.example.md
+
+# Local MCP client config (holds this machine's Python path; see runner/README.md)
+.mcp.json
+*.egg-info/

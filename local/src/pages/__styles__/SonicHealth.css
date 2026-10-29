@@ -900,3 +900,54 @@
 .sh-err {
   color: color-mix(in srgb, var(--accent-danger) 78%, var(--text-main));
 }
+
+/* THE TWO-LEVEL MENU (SonicHealthMenu.tsx). Each group is a tab-looking button; the ones with several sections open a small list under them. The bar wraps instead of scrolling, so a list is never clipped. */
+.sh-tabs-menu { overflow: visible; }
+.sh-menu-group { position: relative; flex: 1 1 auto; display: flex; min-width: 0; }
+.sh-menu-group > .sh-tab { flex: 1 1 auto; }
+.sh-menu-caret { font-size: 0.7em; opacity: 0.7; transition: transform 0.15s ease; }
+.sh-tab[aria-expanded="true"] .sh-menu-caret { transform: rotate(180deg); }
+.sh-menu-pop {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 30;
+  min-width: 12.5rem;
+  margin: 0;
+  padding: 0.35rem;
+  list-style: none;
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+.sh-menu-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--text-main);
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.sh-menu-entry:hover { background-color: color-mix(in srgb, var(--text-muted) 14%, transparent); }
+.sh-menu-entry:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: -2px; }
+.sh-menu-entry-active, .sh-menu-entry-active:hover { background-color: color-mix(in srgb, var(--accent-primary) 14%, transparent); font-weight: 650; }
+/* the last groups open their list toward the left so it stays on screen */
+.sh-menu-group:nth-last-child(-n + 2) .sh-menu-pop { left: auto; right: 0; }
+
+@media (max-width: 720px) {
+  .sh-tabs.sh-tabs-menu { flex-wrap: wrap; overflow: visible; }
+  .sh-tabs-menu .sh-menu-group { flex: 1 1 33%; }
+  .sh-tabs-menu .sh-tab { padding: 0.7rem 0.5rem; font-size: 0.82rem; }
+  .sh-menu-group:nth-child(3n + 1) .sh-menu-pop { left: 0; right: auto; }
+  .sh-menu-group:nth-child(3n) .sh-menu-pop { left: auto; right: 0; }
+  .sh-menu-group:nth-child(3n + 2) .sh-menu-pop { left: 50%; right: auto; transform: translateX(-50%); }
+}

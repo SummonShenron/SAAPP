@@ -9,18 +9,81 @@ export const MAX_FACT_CHARS = 200;
 export type TraceFactsById = Record<string, string[]>;
 
 /** What a read step read: the file, a capped redacted piece of its text, and whether it was cut. The live trace only; never stored. */
-export interface TraceExcerpt { kind: 'read'; path: string; text: string; truncated: boolean; }
+export interface ReadExcerpt { kind: 'read'; path: string; text: string; truncated: boolean; }
+/** What a search found: the files with the matching lines (none for a search that only lists files), the counts, how many files were left out because they hold secrets, and whether it was cut. */
+export interface SearchMatch { line: number; text: string; }
+export interface SearchFile { path: string; matches: SearchMatch[]; }
+export interface SearchExcerpt { kind: 'search'; term: string; files: SearchFile[]; total_files: number; total_matches: number; hidden: number; truncated: boolean; }
+export type TraceExcerpt = ReadExcerpt | SearchExcerpt;
 export type TraceExcerptsById = Record<string, TraceExcerpt>;
 export const MAX_EXCERPT_CHARS = 1000;
 export const MAX_EXCERPT_PATH_CHARS = 300;
+export const MAX_SEARCH_FILES = 10;
+export const MAX_SEARCH_MATCHES = 25;
+export const MAX_SEARCH_PER_FILE = 5;
+export const MAX_SEARCH_LINE_CHARS = 160;
+export const MAX_SEARCH_TERM_CHARS = 120;
 
-/** What the server sent, kept to the same limits the server applies. Anything that is not a read excerpt with text is dropped. */
+const count = (value: unknown): number => (typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : 0);
+
+function cleanSearch(item: Record<string, unknown>): SearchExcerpt | null {
+  const files: SearchFile[] = [];
+  let kept = 0;
+  for (const entry of Array.isArray(item.files) ? item.files : []) {
+    if (!entry || typeof entry !== 'object' || files.length >= MAX_SEARCH_FILES) continue;
+    const file = entry as Record<string, unknown>;
+    if (typeof file.path !== 'string' || !file.path.trim()) continue;
+    const matches: SearchMatch[] = [];
+    for (const match of Array.isArray(file.matches) ? file.matches : []) {
+      const m = match as Record<string, unknown> | null;
+      if (m && typeof m.text === 'string' && count(m.line) > 0 && kept < MAX_SEARCH_MATCHES && matches.length < MAX_SEARCH_PER_FILE) {
+        matches.push({ line: m.line as number, text: m.text.slice(0, MAX_SEARCH_LINE_CHARS) });
+        kept += 1;
+      }
+    }
+    files.push({ path: file.path.slice(0, MAX_EXCERPT_PATH_CHARS), matches });
+  }
+  if (files.length === 0) return null;
+  return {
+    kind: 'search', term: typeof item.term === 'string' ? item.term.slice(0, MAX_SEARCH_TERM_CHARS) : '', files,
+    total_files: Math.max(count(item.total_files), files.length), total_matches: Math.max(count(item.total_matches), kept), hidden: count(item.hidden), truncated: item.truncated === true,
+  };
+}
+
+/** What the server sent, kept to the same limits the server applies. Anything that is not a read excerpt with text or a search with files is dropped. */
 export function cleanExcerpt(raw: unknown): TraceExcerpt | null {
   if (!raw || typeof raw !== 'object') return null;
   const item = raw as Record<string, unknown>;
+  if (item.kind === 'search') return cleanSearch(item);
   if (item.kind !== 'read' || typeof item.text !== 'string' || !item.text.trim()) return null;
   const path = typeof item.path === 'string' ? item.path.slice(0, MAX_EXCERPT_PATH_CHARS) : '';
   return { kind: 'read', path, text: item.text.slice(0, MAX_EXCERPT_CHARS), truncated: item.truncated === true || item.text.length > MAX_EXCERPT_CHARS };
+}
+
+/** A line split around every place the term occurs (ignoring case), so the page can mark the term without ever treating the line as HTML. A blank or missing term marks nothing. */
+export function splitAroundTerm(text: string, term: string): Array<{ text: string; hit: boolean }> {
+  const needle = term.trim().toLowerCase();
+  if (!needle) return [{ text, hit: false }];
+  const lower = text.toLowerCase();
+  const parts: Array<{ text: string; hit: boolean }> = [];
+  let from = 0;
+  for (let at = lower.indexOf(needle); at !== -1; at = lower.indexOf(needle, from)) {
+    if (at > from) parts.push({ text: text.slice(from, at), hit: false });
+    parts.push({ text: text.slice(at, at + needle.length), hit: true });
+    from = at + needle.length;
+  }
+  if (from < text.length) parts.push({ text: text.slice(from), hit: false });
+  return parts.length ? parts : [{ text, hit: false }];
+}
+
+/** The line a search excerpt leads with: "7 matches in 3 files", or "3 files" for a search that only lists files, then what was left out. */
+export function searchSummary(excerpt: SearchExcerpt): string {
+  const files = `${excerpt.total_files} ${excerpt.total_files === 1 ? 'file' : 'files'}`;
+  const head = excerpt.total_matches > 0 && excerpt.files.some(f => f.matches.length > 0) ? `${excerpt.total_matches} ${excerpt.total_matches === 1 ? 'match' : 'matches'} in ${files}` : files;
+  const notes: string[] = [];
+  if (excerpt.truncated) notes.push('showing the first ones');
+  if (excerpt.hidden > 0) notes.push(excerpt.hidden === 1 ? '1 file that holds secrets left out' : `${excerpt.hidden} files that hold secrets left out`);
+  return notes.length ? `${head} (${notes.join('; ')})` : head;
 }
 
 /** Records a step's excerpt. Returns the same map when there is nothing to record. */
