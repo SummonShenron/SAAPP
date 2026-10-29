@@ -48,6 +48,11 @@ VALID_CATEGORIES = {
                       # injected into the coding agent's own prompt, not the voice composer's.
 }
 FACT_SIMILARITY_THRESHOLD = float(os.getenv("FACT_SIMILARITY_THRESHOLD", "0.80"))
+# Domain fallback for a NEW fact the model could not place (None or "general"): the fact takes "work" or "own" only when its nearest facts in that domain are at least
+# DOMAIN_FALLBACK_MIN_SIM similar and beat the other domain by DOMAIN_FALLBACK_MARGIN. Placeholder defaults: set them from the dry-run numbers. Not FACT_SIMILARITY_THRESHOLD,
+# which is the "same fact" bar.
+DOMAIN_FALLBACK_MIN_SIM = float(os.getenv("DOMAIN_FALLBACK_MIN_SIM", "0.55"))
+DOMAIN_FALLBACK_MARGIN = float(os.getenv("DOMAIN_FALLBACK_MARGIN", "0.05"))
 FACT_REINFORCEMENT_INCREMENT = float(os.getenv("FACT_REINFORCEMENT_INCREMENT", "0.15"))
 FACT_CONFIDENCE_HALF_LIFE_DAYS = float(os.getenv("FACT_CONFIDENCE_HALF_LIFE_DAYS", "90"))
 # How long a goal/project fact can go unmentioned before it's worth a conversational check-in —
@@ -875,6 +880,41 @@ SEPARATE_LIFE_NOTE = (
     "Their job and their own projects are separate things. When they say \"work\" without saying which, go by what they were just talking about, or ask which they "
     "mean. Never describe what they do at their job as something you and they do together (no \"we\"), and never fold a job task into a project of their own or the reverse."
 )
+
+
+def _plain_cosine(a: List[float], b: List[float]) -> float:
+    """Cosine similarity of two vectors in plain Python (0.0 when either is empty or all zeros)."""
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(y * y for y in b) ** 0.5
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def infer_domain_from_neighbors(new_embedding: Optional[List[float]], facts: List["UserFact"]) -> Optional[str]:
+    """"work" or "own" for a new fact whose embedding is clearly nearest one of those domains, else None. Compares it with the active work and own facts that
+    have an embedding and are identity, career or project facts (domain_anchors is the sparse core of that set). A domain wins only if its best similarity is at
+    least DOMAIN_FALLBACK_MIN_SIM AND beats the other domain's best by at least DOMAIN_FALLBACK_MARGIN. No embedding, no candidates, or no clear winner -> None."""
+    if not new_embedding:
+        return None
+    best = {"work": None, "own": None}
+    for f in facts:
+        if not f.active or f.domain not in best or not f.embedding or f.category not in ("identity", "career", "project"):
+            continue
+        sim = _plain_cosine(new_embedding, f.embedding)
+        if best[f.domain] is None or sim > best[f.domain]:
+            best[f.domain] = sim
+    if best["work"] is None and best["own"] is None:
+        return None
+    work_sim = best["work"] if best["work"] is not None else -1.0
+    own_sim = best["own"] if best["own"] is not None else -1.0
+    winner, top, runner_up = ("work", work_sim, own_sim) if work_sim >= own_sim else ("own", own_sim, work_sim)
+    if top < DOMAIN_FALLBACK_MIN_SIM:
+        return None
+    if top - runner_up < DOMAIN_FALLBACK_MARGIN:
+        return None
+    return winner
 
 
 def format_facts_block(facts: List["UserFact"]) -> str:

@@ -371,7 +371,7 @@ FULL PROMPT GIVEN TO THE ASSISTANT:
 
 ASSISTANT'S RESPONSE:
 {response}
-
+{turn_facts}
 Judge strictly against the DATA and rules already present in the prompt above — not against
 outside knowledge. Return ONLY a JSON object, no preamble or markdown:
 {{

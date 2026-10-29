@@ -3280,8 +3280,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             await safe_emit_event("runner_check", {"job": job, "runner": {"name": runner_for_checks.get("name"), "root_name": runner_for_checks.get("root_name")}})
 
             async def _still_waiting(seconds: int, job_status: str) -> None:
-                doing = "Running it on your machine..." if job_status == runner_jobs.RUNNING else "Waiting for you to press Run..."
-                await safe_emit_event("trace_detail", {"node": "tool_agent_node", "title": doing, "detail": f"{seconds // 60}m {seconds % 60:02d}s so far. Nothing runs until you press Run."})
+                await safe_emit_event("trace_detail", {"node": "tool_agent_node", **runner_jobs.waiting_text(seconds, job_status)})
 
             finished = await runner_jobs.wait_for_result(db, username, job["id"], on_tick=_still_waiting)
             return runner_jobs.format_result(finished) if finished else "ERROR: that check is no longer there."
@@ -3311,8 +3310,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             await safe_emit_event("runner_check", {"job": job, "runner": {"name": runner_for_checks.get("name"), "root_name": runner_for_checks.get("root_name")}})
 
             async def _still_waiting(seconds: int, job_status: str) -> None:
-                doing = "Running it on your machine..." if job_status == runner_jobs.RUNNING else "Waiting for you to press Run..."
-                await safe_emit_event("trace_detail", {"node": "tool_agent_node", "title": doing, "detail": f"{seconds // 60}m {seconds % 60:02d}s so far. Nothing runs until you press Run."})
+                await safe_emit_event("trace_detail", {"node": "tool_agent_node", **runner_jobs.waiting_text(seconds, job_status)})
 
             finished = await runner_jobs.wait_for_result(db, username, job["id"], on_tick=_still_waiting)
             return runner_jobs.format_result(finished) if finished else "ERROR: that command is no longer there."

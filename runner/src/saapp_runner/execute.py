@@ -54,13 +54,21 @@ def safe_for_files(words: List[str], windows: Optional[bool] = None) -> bool:
     return True
 
 
+def no_window(windows: Optional[bool] = None) -> Dict[str, Any]:
+    """Popen/run options that keep Windows from opening a console window for a program the runner starts. The runner starts at login through `pythonw` (no console of its own), and a console program
+    started from a process with none gets a new black window of its own, which showed up for as long as a test run lasted. Nothing on other systems."""
+    if (os.name == "nt") if windows is None else windows:
+        return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)}
+    return {}
+
+
 def kill_tree(proc: "subprocess.Popen[bytes]") -> None:
     """Ends the process and everything it started. Windows needs taskkill for the tree; elsewhere the command was started in its own process group."""
     if proc.poll() is not None:
         return
     try:
         if os.name == "nt":
-            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, timeout=15)
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, timeout=15, **no_window())
         else:
             group = os.getpgid(proc.pid)
             os.killpg(group, signal.SIGTERM)
@@ -105,6 +113,7 @@ def run(argv: List[str], cwd: Any, timeout: float, max_chars: int = 6000, cancel
                               "stderr": subprocess.PIPE if separate_stderr else subprocess.STDOUT}
     if os.name != "nt":
         kwargs["start_new_session"] = True
+    kwargs.update(no_window())
     try:
         proc = subprocess.Popen([program, *argv[1:]], **kwargs)
     except FileNotFoundError:

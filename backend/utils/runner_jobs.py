@@ -660,6 +660,15 @@ def describe_checks(runner: Dict[str, Any]) -> str:
     return "; ".join(parts) or "none"
 
 
+def waiting_text(seconds: int, status: str) -> Dict[str, str]:
+    """The trace line shown every TICK_SECONDS while a turn waits on a check or command: {"title", "detail"}. It follows the job's real status, because the wait started when the card was shown, so a
+    run pressed ten seconds in used to read "Running it on your machine..." above "Nothing runs until you press Run." and look as if the press had not taken effect."""
+    clock = f"{seconds // 60}m {seconds % 60:02d}s"
+    if status == RUNNING:
+        return {"title": "Running it on your machine...", "detail": f"{clock} since the card was shown. You pressed Run; it is running now."}
+    return {"title": "Waiting for you to press Run...", "detail": f"{clock} so far. Nothing runs until you press Run."}
+
+
 async def wait_for_result(db: Any, username: str, job_id: str, timeout: Optional[float] = None, on_tick: Any = None, poll: float = 1.5) -> Optional[Dict[str, Any]]:
     """Waits, at no model cost, for the person to run the check and for it to finish, then returns the job (None if it vanished). Gives up after `timeout` (WAIT_SECONDS) and returns the job as it is,
     still open, so the caller can say it is not finished. If the turn is stopped while waiting (the person pressed Stop, or left), a check nobody is waiting for is cancelled, so it cannot run later unseen.

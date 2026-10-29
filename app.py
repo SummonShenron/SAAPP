@@ -1697,7 +1697,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # whatever comes out is what gets shown, and the failure is logged as a correction
             # either way so future similar questions get a guardrail via fetch_relevant_corrections.
             if source_type in REWARD_EVAL_SOURCE_TYPES and budget_guard.allows("answer_recheck", budget_state):
-                verdict = await evaluate_response(prompt, full_response, source_type)
+                verdict = await evaluate_response(prompt, full_response, source_type, tools=dict(llm_turn.tools))
                 tally(turn_counts, "reward_evaluated")
                 if verdict["verdict"] == "fail":
                     tally(turn_counts, "reward_failed", verdict.get("tag"))

@@ -488,6 +488,22 @@ def test_a_job_that_vanished_while_waiting_returns_none():
     assert run_async(rj.wait_for_result(db, "jack@example.com", "no-such-job", timeout=1, poll=0.05)) is None
 
 
+def test_the_waiting_line_follows_the_jobs_real_status_so_a_run_that_was_pressed_never_says_nothing_runs():
+    waiting = rj.waiting_text(20, rj.APPROVED)
+    assert waiting["title"] == "Waiting for you to press Run..." and "0m 20s so far. Nothing runs until you press Run." in waiting["detail"]
+    for status in (rj.AWAITING, rj.APPROVED):
+        assert rj.waiting_text(20, status)["title"] == "Waiting for you to press Run..."
+    running = rj.waiting_text(80, rj.RUNNING)
+    assert running["title"] == "Running it on your machine..." and "1m 20s" in running["detail"] and "Nothing runs" not in running["detail"] and "is running now" in running["detail"]
+
+
+def test_both_run_tools_use_that_line():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[2] / "backend" / "services" / "agent_workflow.py").read_text(encoding="utf-8")
+    assert source.count("**runner_jobs.waiting_text(seconds, job_status)") == 2 and "Nothing runs until you press Run" not in source
+
+
 def test_stopping_the_turn_while_waiting_cancels_the_check_so_it_cannot_run_unseen():
     import asyncio
 

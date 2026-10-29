@@ -19,6 +19,26 @@ def py(code, **kwargs):
 
 # ---- building the command --------------------------------------------------------------------------------------------------------------------
 
+def test_on_windows_a_program_the_runner_starts_gets_no_console_window_and_elsewhere_nothing_changes():
+    assert ex.no_window(windows=True) == {"creationflags": 0x08000000}          # CREATE_NO_WINDOW: the runner has no console (pythonw), so a test run opened a black one
+    assert ex.no_window(windows=False) == {}
+
+
+def test_a_run_passes_that_option_to_the_program_it_starts(monkeypatch):
+    seen = {}
+    real = ex.subprocess.Popen
+
+    def spy(*args, **kwargs):
+        seen.update(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(ex.subprocess, "Popen", spy)
+    ex.run([sys.executable, "-c", "print('hi')"], os.getcwd(), 30)
+    assert seen.get("creationflags", 0) == ex.no_window().get("creationflags", 0)
+    if os.name == "nt":
+        assert seen["creationflags"] == 0x08000000
+
+
 def test_files_replace_the_placeholder_as_separate_words_that_cannot_be_read_as_options():
     assert ex.build_argv(["pytest", "-q", "{files}"], ["a.py", "t/b.py"]) == ["pytest", "-q", "./a.py", "./t/b.py"]
     assert ex.build_argv(["pytest", "-q", "{files}"], []) == ["pytest", "-q"]

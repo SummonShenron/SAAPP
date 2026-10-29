@@ -25,6 +25,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from . import __version__
 from .config import home
+from .execute import no_window
 
 EXIT_RESTART = 75                 # EX_TEMPFAIL: "try again" to every system's start-at-login entry
 RETRY_AFTER_FAILURE_HOURS = 6.0
@@ -113,7 +114,7 @@ def failed_recently(version: Optional[str] = None, now: Optional[float] = None) 
 
 def _pip(command: List[str]) -> Tuple[int, str]:
     try:
-        done = subprocess.run(command, capture_output=True, text=True, timeout=900, errors="replace")
+        done = subprocess.run(command, capture_output=True, text=True, timeout=900, errors="replace", **no_window())
     except (OSError, subprocess.SubprocessError) as problem:
         return 127, problem.__class__.__name__
     return done.returncode, (done.stdout or "") + (done.stderr or "")
