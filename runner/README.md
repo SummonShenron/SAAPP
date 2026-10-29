@@ -151,7 +151,7 @@ and delete `~/.saapp-runner`.
 
 ## Status
 
-Version 0.1.1. The runner, the server side, SAAPP's Settings section (with a starter script that does the steps above for you) and the check card in the chat are built and tested. The design is in `docs/local-runner-plan.md`.
+Version 0.1.2. The runner, the server side, SAAPP's Settings section (with a starter script that does the steps above for you) and the check card in the chat are built and tested. The design is in `docs/local-runner-plan.md`.
 
 ## Updating
 

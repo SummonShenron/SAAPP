@@ -35,7 +35,7 @@ MIN_RUNNER_VERSION = (0, 1, 0)
 COMMANDS_SINCE = (0, 1, 1)         # the first runner version that understands a command job (kind "command"); an older one would refuse it as "no such check"
 # THE ONE PLACE THE SERVER SAYS WHICH RUNNER IT WANTS. It must equal runner/pyproject.toml and saapp_runner.__version__ (a test fails when they differ). The install address of the starter script is
 # BUILT from it, and a runner older than it is offered an update. Only this version NUMBER ever reaches a runner, never an address: the runner builds the address itself, from where it was installed.
-WANTED_RUNNER_VERSION = "0.1.1"
+WANTED_RUNNER_VERSION = "0.1.2"
 UPDATE_REQUEST_MINUTES = 60        # a click on Update stays good this long (the runner asks every few seconds, so it is picked up at once when the runner is running)
 MAX_KEYS_PER_PERSON = 5
 PAIRING_MINUTES = 10
