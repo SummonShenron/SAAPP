@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "saapp-runner"
-version = "0.1.1"
+version = "0.1.2"
 description = "Runs checks (tests, type checks, builds) you approve in SAAPP on your own machine, in your own project."
 readme = "README.md"
 license = { text = "Unlicense" }
