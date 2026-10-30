@@ -31,9 +31,10 @@ import MemorySourceDialog from '../components/MemorySourceDialog';
 import BudgetBanner from '../components/BudgetBanner';
 import UsageRing from '../components/UsageRing';
 import SessionColumn, { type FolderControls, type RepoControls } from '../components/SessionColumn';
+import SessionRail from '../components/SessionRail';
 import { scopeChoices, scopeLabel as scopeName } from '../components/sessionColumnLogic';
 import { ringView } from '../components/budgetText';
-import TracePanel, { type TraceStep } from '../components/TracePanel';
+import { type TraceStep } from '../components/TracePanel';
 import { finishedSteps, mergeExcerpts, mergeFacts, recordExcerpt, recordFacts, toolStepLabel, type TraceExcerptsById, type TraceFactsById } from '../components/traceFacts';
 import StepsDisclosure from '../components/StepsDisclosure';
 import { useMediaQuery } from '../hooks/useMediaQuery';
@@ -667,6 +668,10 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     });
   };
   const columnVisible = !isEmbedded && !isMobileView && roomForColumn && showSessionColumn;
+  // On a phone the same column is a strip of icons at the right edge (components/SessionRail.tsx), on and off with the same top-bar button. Either one carries the repo, the gauges and the scope, so the
+  // small ring, the repo button and the repo banner beside the message box (and the scope entry of the "..." menu) are left out while one of them is showing.
+  const railVisible = !isEmbedded && isMobileView && showSessionColumn;
+  const sidePanel = columnVisible || railVisible;
 
   const toggleTracePanel = () => {
     setShowTracePanel((prev: boolean) => {
@@ -1298,7 +1303,7 @@ useEffect(() => {
   const userTurnCount = useMemo(() => messages.filter(m => m.sender === 'user').length, [messages]);
   useEffect(() => {
     if (isEmbedded) return;
-    const traceOpen = isMobileView ? isMobileTraceOpen : showTracePanel;
+    const traceOpen = showTracePanel;
     shell.setTopBarActions(
       <>
         {!isGuestPrincipal(principal) && <WorkingNotesControl sessionId={sessionId} busy={loading} turns={userTurnCount} />}
@@ -1306,15 +1311,15 @@ useEffect(() => {
         <button
           type="button"
           className="topbar-btn"
-          onClick={() => (isMobileView ? setIsMobileTraceOpen(v => !v) : toggleTracePanel())}
+          onClick={toggleTracePanel}
           aria-pressed={traceOpen}
           aria-label="Toggle execution trace"
-          title={traceOpen ? 'Hide execution trace' : 'Show execution trace'}
+          title={traceOpen ? 'Hide the steps as nodes' : 'Show the steps as nodes'}
         >
           <Icon name="microscope" size={18} />
           {loading && !traceOpen && <span className="topbar-btn-dot" aria-hidden="true" />}
         </button>
-        {!isMobileView && roomForColumn && (
+        {(isMobileView || roomForColumn) && (
           <button
             type="button"
             className="topbar-btn"
@@ -1329,7 +1334,7 @@ useEffect(() => {
       </>
     );
     return () => shell.setTopBarActions(null);
-  }, [isEmbedded, showTracePanel, showSessionColumn, roomForColumn, isMobileView, isMobileTraceOpen, loading, sessionId, principal, userTurnCount]);
+  }, [isEmbedded, showTracePanel, showSessionColumn, roomForColumn, isMobileView, loading, sessionId, principal, userTurnCount]);
 
   // Prepends the page of saved messages just before the ones on screen. The smooth scroll-to-bottom
   // that normally fires when the message count changes is skipped here, and the viewport is held
@@ -1539,17 +1544,21 @@ useEffect(() => {
       return;
     }
 
+    // .chat-window has `scroll-behavior: smooth`, so assigning scrollTop would ANIMATE each follow. A running turn follows its steps and tokens many times a second, and each animated
+    // follow restarted from wherever the last one had got to (on a phone, with a long thread, it read as the screen scrolling through the conversation before the answer came). These
+    // pins are instant; only a brand-new message scrolls smoothly, once.
+    const pinToBottom = (win: HTMLElement) => win.scrollTo({ top: win.scrollHeight, behavior: 'instant' as ScrollBehavior });
     if (isNewMessage) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
     } else if (loading && chatWindowRef.current) {
-      chatWindowRef.current.scrollTop = chatWindowRef.current.scrollHeight;
+      pinToBottom(chatWindowRef.current);
     } else if (justFinishedLoading && chatWindowRef.current) {
       // The spinner/loader row between the messages and the bottom anchor unmounts the instant
       // loading flips false, and that message's follow-up/feedback controls mount at the same
       // moment — both change the container's scrollHeight right here. Without re-pinning, the
       // browser just clamps the old (now too-large) scrollTop to the new max, which looks like
       // an unwanted scroll-up right as each response finishes.
-      chatWindowRef.current.scrollTop = chatWindowRef.current.scrollHeight;
+      pinToBottom(chatWindowRef.current);
     }
   }, [messages, loading, tracePanelSteps.length]);      // a new step grows the running turn's list, so the page follows it down like it follows the reply
 
@@ -2202,8 +2211,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
         toggleConversationsBlade();
         break;
       case 'Trace':
-        if (!isEmbedded && isMobileView) setIsMobileTraceOpen(v => !v);
-        else toggleTracePanel();
+        toggleTracePanel();
         break;
       case 'Export':
         if (!loading && hasChatted) handleExportChat();
@@ -2331,8 +2339,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
     </button>
   );
   const settingsEntries: { item: OptionWheelItem; run: () => void; keepOpen?: boolean }[] = isEmbedded ? [] : [
-    // The scope lives in the session column on a wide screen (a dropdown there); this entry is for when the column is not showing (a narrow window, a phone, or switched off).
-    ...(columnVisible ? [] : [
+    // The scope lives in the session column on a wide screen (a dropdown there) and under the lock of the icon strip on a phone; this entry is for when neither is showing (switched off, or a window between).
+    ...(sidePanel ? [] : [
       {
         item: {
           label: fetchingScope ? 'Scope: loading…' : `Scope: ${scopeLabel}`,
@@ -2449,7 +2457,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           agentStatus={agentStatus}
           latestStepTitle={latestStepTitle}
           liveSteps={tracePanelSteps}
-          showSteps={!isEmbedded && !isMobileView && showTracePanel}
+          showSteps={!isEmbedded && showTracePanel}
           theme={theme}
           isEmbedded={isEmbedded}
           chatWindowRef={chatWindowRef}
@@ -2520,7 +2528,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           </>
           )}
 
-          {showRepoBanner && !columnVisible && (
+          {showRepoBanner && !sidePanel && (
             <div className="repo-banner"
               style={{
                 display: "flex",
@@ -2650,7 +2658,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                 onPointerDown={() => setInputEngaged(true)}
                 onBlur={() => setInputEngaged(false)}
                 className="chat-textarea"
-                placeholder={loading ? "Steer Sonic while it works..." : chatPlaceholder}
+                placeholder={loading ? "Steer Sonic..." : chatPlaceholder}
                 value={input}
                 onChange={(e) => {
                   setInput(e.target.value);
@@ -2673,9 +2681,10 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               <div className="chat-input-toolbar">
               {!isEmbedded && (
                 <div className="icon-row-left" ref={toolButtonsRef}>
-                  {/* The attach button is at the left of the text, always; the repo and folder buttons follow it while the session column is not showing (it carries both). */}
+                  {/* The attach button is at the left of the text, always. The repo button follows it while the column or the phone's icon strip is not showing (either carries the repo), and the
+                      folder button while the column is not (the column carries the folder; the strip does not). */}
                   {attachButton}
-                  {!columnVisible && (<>
+                  {!sidePanel && (
                   <button
                     type="button"
                     className={`circle-icon-button tool-button${targetRepo ? ' is-on' : ''}${showRepoBanner ? ' is-open' : ''}`}
@@ -2687,6 +2696,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                     <Icon name="branch" />
                     {targetRepo && <span className="tool-dot on" aria-hidden="true" />}
                   </button>
+                  )}
+                  {!columnVisible && (<>
                   {folderAvailable && (
                     <div style={{ position: 'relative' }}>
                       <button
@@ -2725,8 +2736,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               )}
 
               <div className="icon-row-overlay">
-                {/* The small ring beside the message box: left out while the session column is showing (it carries the same gauge, bigger). */}
-                {!isEmbedded && !columnVisible && <UsageRing budget={budget} />}
+                {/* The small ring beside the message box: left out while the session column or the phone's icon strip is showing (they carry the same gauge). */}
+                {!isEmbedded && !sidePanel && <UsageRing budget={budget} />}
                 <div style={{ position: "relative" }} ref={optionsMenuRef}>
                   <button
                     type="button"
@@ -3335,17 +3346,18 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
         />
       )}
 
-      {/* The execution trace. On a wide screen it is no longer a panel: the microscope draws the steps as nodes in the conversation itself (showSteps, components/StepsDisclosure.tsx), so the space beside it is free.
-          On a phone it is still a bottom sheet. */}
-      {!isEmbedded && isMobileView && isMobileTraceOpen && (
-        <>
-          <div className="trace-sheet-backdrop" onClick={() => setIsMobileTraceOpen(false)} />
-          <div className="trace-sheet" role="dialog" aria-label="Execution trace">
-            <div className="trace-sheet-grip" />
-            <TracePanel steps={tracePanelSteps} running={loading} onClose={() => setIsMobileTraceOpen(false)} />
-          </div>
-        </>
+      {/* On a phone the same column as a strip of icons at the right edge: GitHub, the gauges and the scope (components/SessionRail.tsx). */}
+      {railVisible && (
+        <SessionRail
+          usage={budget ? ringView(budget) : null}
+          context={contextUse && contextUse.sessionId === sessionId ? contextUse : null}
+          scope={allowedAffiliates.length > 0 ? { value: selectedAffiliate, choices: scopeOptions, busy: loading || fetchingScope, onChange: setSelectedAffiliate } : null}
+          repo={repoControls}
+        />
       )}
-    </div>  
+
+      {/* The execution trace is not a panel on any screen any more: the microscope draws the steps as nodes in the conversation itself (showSteps, components/StepsDisclosure.tsx), on a phone as on a
+          desktop. Only the embedded widget keeps its own drawer (above). */}
+    </div>
   );
 }

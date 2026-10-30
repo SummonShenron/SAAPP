@@ -161,3 +161,12 @@ export function scopeChoices(allowed: { id: string; display_name: string }[], gu
   const named = allowed.map(item => ({ value: item.id, label: item.display_name }));
   return guest ? named : [{ value: 'All', label: 'All' }, ...named];
 }
+
+/** "Context 40% · Usage 12%": the gauges in a few words, for a folded card's header and for the rail's rings. "" when there is no gauge to show. */
+export function gaugeSummary(context: { fraction: number } | null, usage: { fraction: number } | null): string {
+  const percent = (fraction: number) => `${Math.round(Math.min(1, Math.max(0, fraction)) * 100)}%`;
+  return [context && `Context ${percent(context.fraction)}`, usage && `Usage ${percent(usage.fraction)}`].filter(Boolean).join(' · ');
+}
+
+/** The colour of a gauge ring by its level, the same for the column's rings and the phone strip's small ones. */
+export const LEVEL_COLOR: Record<string, string> = { ok: 'var(--usage-ok, #2f7de1)', notice: '#f59e0b', throttled: '#f97316', blocked: 'var(--accent-danger)' };

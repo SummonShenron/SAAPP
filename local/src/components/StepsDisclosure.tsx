@@ -5,7 +5,7 @@ import './__styles__/TracePanel.css';
 
 interface Props {
   steps: TraceStep[];
-  /** True while the turn is running: the steps are shown as they come, the newest one is the loader, and the last node's dashed stub flows on. */
+  /** True while the turn is running: the steps are shown as they come, the newest one is the loader, and the last node's dashed stub flows on. Before the first step there is the full-size ring. */
   running: boolean;
   /** Keeps the ids of two lists that show the same steps (this one and the panel's) apart. */
   idPrefix: string;
@@ -15,7 +15,7 @@ interface Props {
 
 /** While a turn runs, only the newest steps are drawn; the rest are one press away. */
 export const LIVE_STEPS_SHOWN = 5;
-const WAITING_STEP: TraceStep = { id: 'waiting', title: 'Thinking...', detail: '', status: 'active' };
+const WAITING_TEXT = 'Thinking...';
 
 /**
  * The steps of one turn. While the turn runs there is no line to open: the steps are right there as nodes, each keeping its own words (its title and what it is doing underneath),
@@ -30,7 +30,19 @@ const StepsDisclosure: React.FC<Props> = ({ steps, running, idPrefix, latest = f
   const bodyId = `${idPrefix}-steps`;
 
   if (running) {
-    const all = steps.length > 0 ? steps : [WAITING_STEP];
+    if (steps.length === 0) {
+      // Before the first step arrives: the same full-size ring and line as the one-line loader, so the wait looks the same however steps are shown. The first real step then takes over,
+      // and the ring shrinks to the small one on its node.
+      return (
+        <div className="steps-inline steps-inline-live steps-inline-waiting" id={bodyId} role="status">
+          <div className="sonic-loader-container">
+            <div className="sonic-ring-loader" aria-hidden="true" />
+            <span className="agent-status-text">{WAITING_TEXT}</span>
+          </div>
+        </div>
+      );
+    }
+    const all = steps;
     const hidden = showAll ? 0 : Math.max(0, all.length - LIVE_STEPS_SHOWN);
     return (
       <div className="steps-inline steps-inline-live" id={bodyId}>

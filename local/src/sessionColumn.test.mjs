@@ -136,3 +136,29 @@ test('the scope reads "All" for the default, the knowledge base name when it is 
   assert.deepEqual(scopeChoices(allowed, true).map(c => c.value), ['Affiliate_A', 'kb-1']);
   assert.deepEqual(scopeChoices([], false), [{ value: 'All', label: 'All' }]);
 });
+
+test('the gauges in a few words: both, one, or none, kept between 0 and 100', async () => {
+  const { gaugeSummary, LEVEL_COLOR } = await import('./components/sessionColumnLogic.ts');
+  assert.equal(gaugeSummary({ fraction: 0.4 }, { fraction: 0.124 }), 'Context 40% · Usage 12%');
+  assert.equal(gaugeSummary(null, { fraction: 0.5 }), 'Usage 50%');
+  assert.equal(gaugeSummary({ fraction: 0.2 }, null), 'Context 20%');
+  assert.equal(gaugeSummary(null, null), '');
+  assert.equal(gaugeSummary({ fraction: 1.7 }, { fraction: -0.2 }), 'Context 100% · Usage 0%');
+  for (const level of ['ok', 'notice', 'throttled', 'blocked']) assert.ok(LEVEL_COLOR[level], level);
+});
+
+test('the phone strip is the same controls as the column, and it never carries the folder', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const rail = await readFile(new URL('./components/SessionRail.tsx', import.meta.url), 'utf8');
+  const column = await readFile(new URL('./components/SessionColumn.tsx', import.meta.url), 'utf8');
+  // one definition of each control, used by both
+  assert.match(rail, /RepoFields/); assert.match(rail, /ScopeField/); assert.match(rail, /Gauge /);
+  assert.match(column, /<RepoFields repo=\{repo\} \/>/); assert.match(column, /<ScopeField scope=\{scope\} \/>/);
+  assert.doesNotMatch(rail, /folder/i);
+  // the page hides the small ring and the repo button for either one, but the folder button only for the column
+  const chat = await readFile(new URL('./pages/Chat.tsx', import.meta.url), 'utf8');
+  assert.match(chat, /const sidePanel = columnVisible \|\| railVisible;/);
+  assert.match(chat, /\{!isEmbedded && !sidePanel && <UsageRing/);
+  assert.match(chat, /\{!sidePanel && \(\s*<button/);
+  assert.match(chat, /\{!columnVisible && \(<>\s*\{folderAvailable && \(/);
+});

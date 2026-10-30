@@ -1,4 +1,4 @@
-/* The execution trace panel (components/TracePanel.tsx): a blade on a wide screen, a bottom sheet on a phone. Theme variables, so it follows light and dark. */
+/* The execution trace panel (components/TracePanel.tsx), now only the embedded widget's drawer; the chat page draws the steps in the conversation (TraceSteps, StepsDisclosure). Theme variables, so it follows light and dark. */
 
 .trace-blade {
   flex: 0 0 auto;
@@ -12,25 +12,6 @@
 }
 .theme-shadow .trace-blade { background: var(--panel-bg); }
 .theme-shadow .trace-blade { border-left-color: var(--border-color); } /* and on the trace blade */
-
-.trace-sheet-backdrop { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); z-index: 999; }
-.trace-sheet {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  max-height: 75vh;
-  max-height: 75dvh;
-  display: flex;
-  flex-direction: column;
-  background: var(--bg-main);
-  color: var(--text-main);
-  border-top: 1px solid var(--border-color);
-  border-radius: 18px 18px 0 0;
-  z-index: 1000;
-}
-.theme-shadow .trace-sheet { background: var(--panel-bg); }
-.trace-sheet-grip { flex: 0 0 auto; width: 36px; height: 4px; border-radius: 2px; background: var(--border-color); margin: 8px auto 0; }
 
 .trace-panel-head { flex: 0 0 auto; display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 12px 14px 10px; border-bottom: 1px solid var(--border-color); }
 .trace-panel-title { margin: 0; font-size: 0.92rem; font-weight: 700; }
@@ -185,6 +166,7 @@
 /* The steps of one turn, above the reply's text (components/StepsDisclosure.tsx): the live nodes while the turn runs, a "7 steps" line that opens after. The steps inside are the trace panel's own nodes. */
 .steps-inline { margin: 2px 0 8px 0; max-width: 100%; }
 .steps-inline-live { margin: 6px 0 12px 0; } /* inside the reply, above its text */
+.steps-inline-waiting .sonic-loader-container { margin: 4px 0 4px 2px; }   /* the full-size ring before the first step: the page's own loader, sat flush in the reply */
 .steps-toggle { display: flex; align-items: center; max-width: 100%; padding: 4px 6px 4px 0; border: 0; border-radius: 6px; background: none; color: var(--text-muted); font: inherit; font-size: 0.82rem; text-align: left; cursor: pointer; }
 button.steps-toggle:hover { color: var(--text-main); }
 button.steps-toggle:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }

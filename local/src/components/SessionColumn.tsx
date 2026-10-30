@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import type { CodePlan, MemorySources, RunnerInfo } from '../api';
 import type { RingView } from './budgetText';
 import {
-  APPROVAL_OPTIONS, GIT_OPTIONS, contextGauge, folderLight, folderLine, memoryLine, parseCollapsed, planProgress, runnerLine, serializeCollapsed, toggleCollapsed,
+  APPROVAL_OPTIONS, GIT_OPTIONS, LEVEL_COLOR, contextGauge, folderLight, folderLine, gaugeSummary, memoryLine, parseCollapsed, planProgress, runnerLine, serializeCollapsed, toggleCollapsed,
   type ContextUse, type Line, type Option, type ScopeChoice,
 } from './sessionColumnLogic';
 import './__styles__/SessionColumn.css';
@@ -21,6 +21,9 @@ export interface FolderControls {
 /** The target GitHub repo, as it was in the banner above the message box. */
 export interface RepoControls { value: string; input: string; saving: boolean; onInput: (value: string) => void; onSave: () => void; onClear: () => void; }
 
+/** The scope Sonic answers from, as a dropdown. */
+export interface ScopeControls { value: string; choices: ScopeChoice[]; busy: boolean; onChange: (value: string) => void; }
+
 interface Props {
   /** The connected folder, from the page's workspace. */
   folder: { status: string; name: string | null; fileCount: number | null; branch: string | null };
@@ -34,7 +37,7 @@ interface Props {
   /** The approved plan, while there is one. */
   plan: CodePlan | null;
   /** The scope Sonic answers from, as a dropdown right in the panel (it used to open the settings menu's picker down by the message box). null when there are none to pick. */
-  scope: { value: string; choices: ScopeChoice[]; busy: boolean; onChange: (value: string) => void } | null;
+  scope: ScopeControls | null;
   /** What the last reply drew on from memory. */
   memory: MemorySources | null;
   /** The folder's actions and options; null where a folder cannot be connected (a guest). */
@@ -47,11 +50,10 @@ const RING_SIZE = 44;
 const RING_STROKE = 4;
 const RING_RADIUS = (RING_SIZE - RING_STROKE) / 2;
 const RING_LENGTH = 2 * Math.PI * RING_RADIUS;
-const LEVEL_COLOR: Record<string, string> = { ok: 'var(--usage-ok, #2f7de1)', notice: '#f59e0b', throttled: '#f97316', blocked: 'var(--accent-danger)' };
 const COLLAPSED_KEY = 'sessionColumnCollapsed';
 
 /** One ring with its name and what it says. `level` picks the colour, the same way the usage ring's does. */
-function Gauge({ name, fraction, level, text }: { name: string; fraction: number; level: string; text: string }) {
+export function Gauge({ name, fraction, level, text }: { name: string; fraction: number; level: string; text: string }) {
   return (
     <div className="sc-gauge">
       <svg width={RING_SIZE} height={RING_SIZE} viewBox={`0 0 ${RING_SIZE} ${RING_SIZE}`} role="img" aria-label={`${name}: ${text}`}>
@@ -77,6 +79,37 @@ function Options({ label, value, options, onChange, disabled }: { label: string;
         {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
       </select>
       {current && <span className="sc-option-hint">{current.hint}</span>}
+    </label>
+  );
+}
+
+/** The target repo's field and its buttons: in the column's GitHub card and in the phone rail's GitHub popover. */
+export function RepoFields({ repo }: { repo: RepoControls }) {
+  return (
+    <>
+      <label className="sc-field">
+        <span className="sc-scope-label">Target repo</span>
+        <input
+          type="text" className="sc-input" value={repo.input} disabled={repo.saving} placeholder="owner/repo (blank = auto-detect)"
+          onChange={event => repo.onInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); repo.onSave(); } }}
+        />
+      </label>
+      <div className="sc-actions">
+        <button type="button" className="sc-btn sc-btn-primary" onClick={repo.onSave} disabled={repo.saving || repo.input.trim() === repo.value}>Save</button>
+        {repo.value && <button type="button" className="sc-btn" onClick={repo.onClear} disabled={repo.saving}>Clear</button>}
+      </div>
+    </>
+  );
+}
+
+/** The scope's dropdown: in the column's "This conversation" card and in the phone rail's lock popover. */
+export function ScopeField({ scope }: { scope: ScopeControls }) {
+  return (
+    <label className="sc-scope-row" title="What Sonic answers from">
+      <span className="sc-scope-label">Scope</span>
+      <select className="sc-select" value={scope.value} disabled={scope.busy} onChange={event => scope.onChange(event.target.value)} aria-label="Scope: what Sonic answers from">
+        {scope.choices.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+      </select>
     </label>
   );
 }
@@ -147,7 +180,6 @@ const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, usage,
   const contextView = contextGauge(context);
   const memoryText = memoryLine(memory);
   const progress = plan ? planProgress(plan) : null;
-  const percent = (fraction: number) => `${Math.round(fraction * 100)}%`;
   return (
     <aside className="session-column" aria-label="Session">
       {/* One card for the connection: the runner on the person's computer and the folder they connected (the same folder for both), with the folder's actions and options below. Folded, its header keeps
@@ -188,24 +220,14 @@ const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, usage,
 
       {repo && (
         <Card id="github" label="GitHub" title="GitHub" collapsed={folded.has('github')} onToggle={toggle} summary={repo.value ? <span className="sc-summary">{repo.value}</span> : undefined}>
-          <label className="sc-field">
-            <span className="sc-scope-label">Target repo</span>
-            <input
-              type="text" className="sc-input" value={repo.input} disabled={repo.saving} placeholder="owner/repo (blank = auto-detect)"
-              onChange={event => repo.onInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); repo.onSave(); } }}
-            />
-          </label>
-          <div className="sc-actions">
-            <button type="button" className="sc-btn sc-btn-primary" onClick={repo.onSave} disabled={repo.saving || repo.input.trim() === repo.value}>Save</button>
-            {repo.value && <button type="button" className="sc-btn" onClick={repo.onClear} disabled={repo.saving}>Clear</button>}
-          </div>
+          <RepoFields repo={repo} />
         </Card>
       )}
 
       {(contextView || usage) && (
         <Card
           id="gauges" label="Gauges" title="Gauges" collapsed={folded.has('gauges')} onToggle={toggle}
-          summary={<span className="sc-summary">{[contextView && `Context ${percent(contextView.fraction)}`, usage && `Usage ${percent(usage.fraction)}`].filter(Boolean).join(' · ')}</span>}
+          summary={<span className="sc-summary">{gaugeSummary(contextView, usage)}</span>}
         >
           {contextView && <Gauge name="Context" fraction={contextView.fraction} level={contextView.level} text={contextView.text} />}
           {usage && <Gauge name="Usage" fraction={usage.fraction} level={usage.level} text={usage.text} />}
@@ -228,14 +250,7 @@ const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, usage,
 
       {(scope || memoryText) && (
         <Card id="conversation" label="This conversation" title="This conversation" collapsed={folded.has('conversation')} onToggle={toggle}>
-          {scope && (
-            <label className="sc-scope-row" title="What Sonic answers from">
-              <span className="sc-scope-label">Scope</span>
-              <select className="sc-select" value={scope.value} disabled={scope.busy} onChange={event => scope.onChange(event.target.value)} aria-label="Scope: what Sonic answers from">
-                {scope.choices.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
-              </select>
-            </label>
-          )}
+          {scope && <ScopeField scope={scope} />}
           {memoryText && <div className="sc-memory"><span className="sc-scope-label">Memory used</span><span>{memoryText}</span></div>}
         </Card>
       )}

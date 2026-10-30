@@ -13,11 +13,12 @@
   border-left: 1px solid var(--border-color);
   color: var(--text-main);
 }
-/* Dark: the column is the page itself (no edge), and its cards are plain panels, lifted a little (the theme's card colour) with no border. */
-.theme-shadow .session-column { background: var(--bg-main); border-left: none; }
+/* Dark, the same arrangement as light: the column is the lighter grey the nav uses, with no edge, and its cards are the main black sitting on it, with no border. Not --bg-alt: in the dark theme that
+   is #161718, darker than the page, so a column and cards in "alt" and "main" were both just black. */
+.theme-shadow .session-column { background: var(--panel-bg); border-left: none; }
 
 .sc-card { flex: 0 0 auto; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 12px; background: var(--bg-main); }
-.theme-shadow .sc-card { background: var(--card-bg); border-color: transparent; }
+.theme-shadow .sc-card { background: var(--bg-main); border-color: transparent; }
 .sc-card-work { border-color: var(--accent-primary); }
 .theme-shadow .sc-card-work { border-color: transparent; }
 .sc-title { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.02em; color: var(--text-muted); }
@@ -67,7 +68,7 @@
 .sc-select { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-main); color: var(--text-main); font: inherit; font-size: 0.8rem; }
 .sc-select:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 1px; }
 .sc-select:disabled { opacity: 0.6; }
-.theme-shadow .sc-select { border-color: transparent; background: var(--input-bg); }
+.theme-shadow .sc-select { border-color: transparent; background: var(--panel-bg); }      /* a field sunk into a black card reads as the lighter grey the column is */
 .sc-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .sc-btn { padding: 5px 10px; border: 1px solid var(--border-color); border-radius: 8px; background: none; color: var(--text-main); font: inherit; font-size: 0.78rem; cursor: pointer; }
 .sc-btn:hover:not(:disabled) { background: var(--bg-surface-hover); }
@@ -80,7 +81,7 @@
 .sc-field { display: flex; flex-direction: column; gap: 4px; }
 .sc-input { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--border-color); border-radius: 8px; background: transparent; color: var(--text-main); font: inherit; font-size: 0.8rem; }
 .sc-input:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 1px; }
-.theme-shadow .sc-input { border-color: transparent; background: var(--input-bg); }
+.theme-shadow .sc-input { border-color: transparent; background: var(--panel-bg); }
 
 /* On a narrower window (an upright monitor is about 1080 wide) the column gives up a little width to the conversation. */
 @media (max-width: 1099px) { .session-column { width: 236px; padding: 10px; } }

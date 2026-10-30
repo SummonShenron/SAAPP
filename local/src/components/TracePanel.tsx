@@ -7,8 +7,8 @@ export type { TraceStep } from './TraceSteps';
 import type { TraceStep } from './TraceSteps';
 
 /**
- * The execution trace, as the panel the chat page shows: a blade down the right side on a wide screen, a bottom sheet on a phone (the page decides which;
- * the content is the same). It says what Sonic is doing, step by step, while a request runs, and keeps the last request's steps after it. It follows
+ * The execution trace as a panel: now only the embedded widget's drawer (the chat page draws the same steps in the conversation, on a phone as on a desktop). It says what Sonic
+ * is doing, step by step, while a request runs, and keeps the last request's steps after it. It follows
  * the newest step as they arrive. Each step is a button: press it (or Enter / Space) to see what the step measured. The steps themselves are drawn by
  * TraceSteps, which the steps kept under each reply share.
  */

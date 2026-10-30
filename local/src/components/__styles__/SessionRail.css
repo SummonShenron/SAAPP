@@ -1,0 +1,59 @@
+/* The session column as icons, for a phone (components/SessionRail.tsx): a narrow strip at the right edge of the conversation. Theme variables, so it follows light and dark. */
+
+.session-rail {
+  position: absolute;
+  top: 10px;
+  right: 4px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.rail-item { position: relative; }
+.rail-btn {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;      /* a small box, not a circle: two rings do not fit a round button */
+  background: var(--bg-alt);
+  color: var(--text-muted);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+/* The gauges' button is taller, with its two rings stacked one above the other, so each has room. */
+.rail-rings { flex-direction: column; gap: 5px; height: 48px; }
+.rail-btn:hover, .rail-btn.is-open { color: var(--text-main); background: var(--bg-surface-hover); }
+.rail-btn:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
+.theme-shadow .rail-btn { border-color: transparent; background: var(--panel-bg); }      /* the column's grey, on the black page */
+.theme-shadow .rail-btn:hover, .theme-shadow .rail-btn.is-open { background: var(--bg-surface-hover); }
+.theme-shadow .rail-ring-track { stroke: var(--bg-surface-hover); }
+
+/* The dot on the GitHub mark: a target repo is set. */
+.rail-dot { position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent-primary); }
+
+/* The card that opens beside a button, toward the conversation. */
+.rail-pop {
+  position: absolute;
+  top: 0;
+  right: calc(100% + 8px);
+  width: min(270px, calc(100vw - 72px));
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-main);
+  color: var(--text-main);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+}
+.theme-shadow .rail-pop { background: var(--panel-bg); border-color: transparent; }
+.theme-shadow .rail-pop .sc-select, .theme-shadow .rail-pop .sc-input { background: var(--bg-main); }      /* fields in the grey card are the black page colour, the way the column's cards sit on its grey */
+
+/* The strip takes a little of the conversation's width so no text runs under it. */
+.chat-page:has(.session-rail) .chat-window { padding-right: 46px; }
