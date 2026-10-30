@@ -233,7 +233,9 @@ def cmd_install_service(args: argparse.Namespace) -> int:
     done, message = service.install()
     print(message)
     if not done:
-        print("You can still run it by hand: saapp-runner start")
+        print(f"You can still run it by hand: {service.how_to_run()} start")
+    else:
+        print(f"To check on it or start it later, from any terminal: {service.how_to_run()} status    (and: {service.how_to_run()} start-link)")
     return 0 if done else 1
 
 
@@ -254,12 +256,12 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f"saapp-runner {__version__}")
     print("paired with SAAPP:        " + ("yes" if load_credentials() else "no (run the setup file from SAAPP's settings)"))
     entry = service.state()
-    print("starts at login:          " + ("yes" if entry["installed"] else "no (saapp-runner install-service)"))
+    print("starts at login:          " + ("yes" if entry["installed"] else f"no ({service.how_to_run()} install-service)"))
     probe = InstanceLock()
     free = probe.acquire()
     if free:
         probe.release()
-    print("running right now:        " + ("no   (to start it now: saapp-runner start-link)" if free else "yes"))
+    print("running right now:        " + (f"no   (to start it now: {service.how_to_run()} start-link)" if free else "yes"))
     listed = projects.describe()
     print("projects:                 " + (str(len(listed)) if listed else "none yet (SAAPP's settings, Add a project; or: saapp-runner add-project --root <folder>)"))
     for item in listed:

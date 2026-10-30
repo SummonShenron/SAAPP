@@ -69,6 +69,16 @@ def arguments() -> List[str]:
     return ["-m", "saapp_runner", "start", "--service"]
 
 
+def how_to_run(python: Optional[str] = None) -> str:
+    """The command that runs THIS runner by hand from any terminal, wherever it is installed: this Python and the module, with the Python in quotes. A bare `saapp-runner` only works where the install's
+    Scripts folder is on the PATH, and the setup file keeps the runner in its own virtual environment, which is not (2026-10-30: the person typed `saapp-runner install-service`, nothing happened, and the runner
+    stayed down). The console Python, never the windowless one, so there is somewhere for the answer to appear."""
+    exe = Path(python or sys.executable)
+    if exe.name.lower() == "pythonw.exe":
+        exe = exe.with_name("python.exe")
+    return f'"{exe}" -m saapp_runner'
+
+
 # ---------------------------------------------------------------------------------------------------------------
 # What each system needs (pure: text and command lists)
 # ---------------------------------------------------------------------------------------------------------------
