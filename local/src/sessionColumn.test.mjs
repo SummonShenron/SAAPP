@@ -158,7 +158,11 @@ test('the phone strip is the same controls as the column, and it never carries t
   // the page hides the small ring and the repo button for either one, but the folder button only for the column
   const chat = await readFile(new URL('./pages/Chat.tsx', import.meta.url), 'utf8');
   assert.match(chat, /const sidePanel = columnVisible \|\| railVisible;/);
-  assert.match(chat, /\{!isEmbedded && !sidePanel && <UsageRing/);
-  assert.match(chat, /\{!sidePanel && \(\s*<button/);
+  // the message box never carries the repo button, the repo banner or the usage ring, on any screen: switching the column or the strip off just hides them
+  assert.match(chat, /const compactScreen = !isEmbedded && !roomForColumn;/);
+  assert.doesNotMatch(chat, /UsageRing/);
+  assert.doesNotMatch(chat, /Set a target GitHub repo/);
+  assert.doesNotMatch(chat, /showRepoBanner/);
+  assert.doesNotMatch(chat, /className="repo-banner"/);
   assert.match(chat, /\{!columnVisible && \(<>\s*\{folderAvailable && \(/);
 });

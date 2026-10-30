@@ -29,7 +29,6 @@ import PlanCard from '../components/PlanCard';
 import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type BudgetView, type CodePlan, type KnowledgeBase, type MemorySources, type RunnerJob } from '../api';
 import MemorySourceDialog from '../components/MemorySourceDialog';
 import BudgetBanner from '../components/BudgetBanner';
-import UsageRing from '../components/UsageRing';
 import SessionColumn, { type FolderControls, type RepoControls } from '../components/SessionColumn';
 import SessionRail from '../components/SessionRail';
 import { scopeChoices, scopeLabel as scopeName } from '../components/sessionColumnLogic';
@@ -668,9 +667,11 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     });
   };
   const columnVisible = !isEmbedded && !isMobileView && roomForColumn && showSessionColumn;
-  // On a phone the same column is a strip of icons at the right edge (components/SessionRail.tsx), on and off with the same top-bar button. Either one carries the repo, the gauges and the scope, so the
-  // small ring, the repo button and the repo banner beside the message box (and the scope entry of the "..." menu) are left out while one of them is showing.
-  const railVisible = !isEmbedded && isMobileView && showSessionColumn;
+  // Wherever the full column does not fit (a phone, or any window under 900px) it is a strip of icons at the right edge instead (components/SessionRail.tsx), on and off with the same top-bar button.
+  // Either one carries the repo, the gauges and the scope, so the scope entry of the "..." menu is left out while one of them is showing. The message box never carries the repo button or the usage ring:
+  // when the column or the strip is switched off they are simply hidden (the top-bar button brings it back), so the text field keeps all its room.
+  const compactScreen = !isEmbedded && !roomForColumn;
+  const railVisible = compactScreen && showSessionColumn;
   const sidePanel = columnVisible || railVisible;
 
   const toggleTracePanel = () => {
@@ -840,7 +841,6 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [showScopePicker, setShowScopePicker] = useState(false);
 
   const [targetRepo, setTargetRepo] = useState<string>("");
-  const [showRepoBanner, setShowRepoBanner] = useState(false);
   const [repoInput, setRepoInput] = useState("");
   const [repoSaving, setRepoSaving] = useState(false);
 
@@ -1176,7 +1176,6 @@ useEffect(() => {
       const saved = result.target_repo || "";
       setTargetRepo(saved);
       setRepoInput(saved);
-      setShowRepoBanner(false);
     } catch (err) {
       console.error("Failed to update target repo setting:", err);
     } finally {
@@ -1319,22 +1318,20 @@ useEffect(() => {
           <Icon name="microscope" size={18} />
           {loading && !traceOpen && <span className="topbar-btn-dot" aria-hidden="true" />}
         </button>
-        {(isMobileView || roomForColumn) && (
-          <button
-            type="button"
-            className="topbar-btn"
-            onClick={toggleSessionColumn}
-            aria-pressed={showSessionColumn}
-            aria-label="Toggle the session column"
-            title={showSessionColumn ? 'Hide the session column' : 'Show the session column'}
-          >
-            <Icon name="panelRight" size={18} />
-          </button>
-        )}
+        <button
+          type="button"
+          className="topbar-btn"
+          onClick={toggleSessionColumn}
+          aria-pressed={showSessionColumn}
+          aria-label="Toggle the session column"
+          title={showSessionColumn ? 'Hide the session column' : 'Show the session column'}
+        >
+          <Icon name="panelRight" size={18} />
+        </button>
       </>
     );
     return () => shell.setTopBarActions(null);
-  }, [isEmbedded, showTracePanel, showSessionColumn, roomForColumn, isMobileView, loading, sessionId, principal, userTurnCount]);
+  }, [isEmbedded, showTracePanel, showSessionColumn, loading, sessionId, principal, userTurnCount]);
 
   // Prepends the page of saved messages just before the ones on screen. The smooth scroll-to-bottom
   // that normally fires when the message count changes is skipped here, and the viewport is held
@@ -2528,86 +2525,6 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           </>
           )}
 
-          {showRepoBanner && !sidePanel && (
-            <div className="repo-banner"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                padding: "10px 14px",
-                marginBottom: "8px",
-                background: isEmbedded ? "#121316" : "var(--bg-surface)",
-                border: isEmbedded ? "1px solid rgba(0, 242, 254, 0.4)" : "1px solid var(--border-color)",
-                borderRadius: "12px",
-                fontSize: "13px",
-                color: "var(--text-main)",
-              }}
-            >
-              <span style={{ color: "var(--text-muted)", whiteSpace: "nowrap" }}>Target repo:</span>
-              <input
-                type="text"
-                value={repoInput}
-                onChange={(e) => setRepoInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") { e.preventDefault(); handleSaveTargetRepo(); }
-                }}
-                placeholder="owner/repo (blank = auto-detect)"
-                disabled={repoSaving}
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  background: "transparent",
-                  border: "1px solid var(--border-color)",
-                  borderRadius: "8px",
-                  padding: "6px 10px",
-                  color: "var(--text-main)",
-                  fontSize: "13px",
-                }}
-              />
-              <button
-                type="button"
-                onClick={handleSaveTargetRepo}
-                disabled={repoSaving}
-                style={{
-                  background: "var(--accent-primary)",
-                  border: "none",
-                  borderRadius: "8px",
-                  padding: "6px 12px",
-                  color: "var(--on-accent, #fff)",
-                  fontSize: "13px",
-                  cursor: repoSaving ? "not-allowed" : "pointer",
-                }}
-              >
-                Save
-              </button>
-              {targetRepo && (
-                <button
-                  type="button"
-                  onClick={handleClearTargetRepo}
-                  disabled={repoSaving}
-                  style={{
-                    background: "transparent",
-                    border: "1px solid var(--border-color)",
-                    borderRadius: "8px",
-                    padding: "6px 12px",
-                    color: "var(--text-main)",
-                    fontSize: "13px",
-                    cursor: repoSaving ? "not-allowed" : "pointer",
-                  }}
-                >
-                  Clear
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => setShowRepoBanner(false)}
-                style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: "14px" }}
-              >
-                ✕
-              </button>
-            </div>
-          )}
-
           {attachNotice && (
             <div className="attach-notice" role="alert">
               {attachNotice}
@@ -2681,22 +2598,9 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               <div className="chat-input-toolbar">
               {!isEmbedded && (
                 <div className="icon-row-left" ref={toolButtonsRef}>
-                  {/* The attach button is at the left of the text, always. The repo button follows it while the column or the phone's icon strip is not showing (either carries the repo), and the
-                      folder button while the column is not (the column carries the folder; the strip does not). */}
+                  {/* The attach button is at the left of the text, always. The folder button follows it while the column is not showing (the column carries the folder; the phone strip does not). The repo
+                      and the usage ring are never here: the column and the strip carry them. */}
                   {attachButton}
-                  {!sidePanel && (
-                  <button
-                    type="button"
-                    className={`circle-icon-button tool-button${targetRepo ? ' is-on' : ''}${showRepoBanner ? ' is-open' : ''}`}
-                    onClick={() => setShowRepoBanner(v => !v)}
-                    title={targetRepo ? `Target repo: ${targetRepo}` : 'Set a target GitHub repo'}
-                    aria-label={targetRepo ? `Target repo: ${targetRepo}` : 'Set a target GitHub repo'}
-                    aria-pressed={showRepoBanner}
-                  >
-                    <Icon name="branch" />
-                    {targetRepo && <span className="tool-dot on" aria-hidden="true" />}
-                  </button>
-                  )}
                   {!columnVisible && (<>
                   {folderAvailable && (
                     <div style={{ position: 'relative' }}>
@@ -2736,8 +2640,6 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               )}
 
               <div className="icon-row-overlay">
-                {/* The small ring beside the message box: left out while the session column or the phone's icon strip is showing (they carry the same gauge). */}
-                {!isEmbedded && !sidePanel && <UsageRing budget={budget} />}
                 <div style={{ position: "relative" }} ref={optionsMenuRef}>
                   <button
                     type="button"
