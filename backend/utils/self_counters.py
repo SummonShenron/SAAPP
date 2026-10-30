@@ -66,7 +66,9 @@ READING_KEYS = ("reading_turns", "reading_files_read", "reading_rereads", "readi
                 "reading_edit_turn_files_read", "reading_edit_turn_files_used")
 # Turns that were given the connected folder's own guidance file (backend/utils/project_guidance.py).
 GUIDANCE_KEYS = ("project_guidance_turns",)
-_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS
+# A saved plan changed because they said it moved or was cancelled (backend/utils/plan_changes.py): rewritten with the new day, removed, and turns where the model was asked and changed nothing.
+PLAN_CHANGE_KEYS = ("plan_change_updated", "plan_change_cancelled", "plan_change_unchanged")
+_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS
 KEYS = frozenset(
     list(_PLAIN_KEYS) + [f"{group}_{name}" for group, names in _GROUPS.items() for name in names]
 )

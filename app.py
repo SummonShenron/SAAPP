@@ -133,6 +133,7 @@ from backend.utils.example_questions import build_example_questions, build_welco
 from backend.components.sonic_profile import SONIC_PROFILE
 from backend.utils.time_utils import build_time_context, local_today, sent_at, stamp
 from backend.utils import open_loops as open_loops_utils
+from backend.utils import plan_changes as plan_changes_utils
 from backend.utils import working_state as working_state_utils
 from backend.utils import code_plan as code_plan_utils
 from backend.utils import server_memory
@@ -1356,7 +1357,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # (the semantic recall call, further down) would be a genuinely free duplicate
             # network round trip to the embeddings API for no behavior change.
             question_embedding = await asyncio.to_thread(embed_text, question) if question else None
-            memory_context = await asyncio.to_thread(lambda: fetch_relevant_user_facts(username, question, precomputed_embedding=question_embedding))
+            memory_context = await asyncio.to_thread(lambda: fetch_relevant_user_facts(username, question, precomputed_embedding=question_embedding, messages=chat_sessions[history_key]))
             goal_nudge_context = "" if (risk_level != RISK_NONE or open_loop_entry) else await asyncio.to_thread(fetch_goal_nudge_context, username)
 
             if guardrail_context:
@@ -1852,6 +1853,14 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 capture_task = spawn_background_task(open_loops_utils.capture_open_loops(
                     username, question, user_tz, risk_active=risk_level != RISK_NONE, previous_reply=previous_reply,
                 ))
+            # A saved plan follows them when they say it moved or was cancelled (backend/utils/plan_changes.py): a code gate first, so only a message that says so costs a model call.
+            plan_change_task = None
+            if plan_changes_utils.looks_like_change(question) and not is_guest_username(username) and get_db() is not None and budget_guard.allows("plan changes", budget_state):
+                from backend.models.models import lite_llm as plan_change_llm
+
+                plan_change_task = spawn_background_task(plan_changes_utils.apply_plan_changes(
+                    username, question, chat_sessions[history_key], user_tz, invoke=plan_change_llm.ainvoke,
+                ))
             # Getting-to-know-you questions (backend/utils/clarifications.py): what they said after being asked is the answer (saved as a fact and linked to what it
             # belongs under), and anything new about their own life is noted for one later question. Both off the response path, and only for someone who wants them.
             if clarify_utils.clarify_enabled() and not is_guest_username(username) and get_db() is not None:
@@ -1880,6 +1889,13 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 except Exception:
                     captured = {}
                 for line in (captured or {}).get("noted", []):
+                    yield f"data: {json.dumps({'event': 'noted', 'text': line})}\n\n"
+            if plan_change_task is not None:
+                try:
+                    changed = await asyncio.wait_for(asyncio.shield(plan_change_task), timeout=3.0)
+                except Exception:
+                    changed = {}
+                for line in (changed or {}).get("noted", []):
                     yield f"data: {json.dumps({'event': 'noted', 'text': line})}\n\n"
             if request.folder_expected and not folder_connected and code_summary:
                 # The browser has a folder connected but the server had none (it restarted, the copy expired, or the upload failed), so this answer about code came from GitHub.

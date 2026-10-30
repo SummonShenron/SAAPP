@@ -46,7 +46,7 @@ from backend.utils.memory_utils import save_user_fact, load_user_facts, fetch_co
 from backend.utils.emotion_utils import energy_tier, merge_emotional_state
 from backend.utils.log_hygiene import emotion_summary
 from backend.utils.safety_utils import (
-    detect_risk_language, normalize_risk, normalize_support, merge_safety_state, effective_risk, log_safety_event,
+    detect_risk_language, detect_denial, normalize_risk, normalize_support, merge_safety_state, effective_risk, log_safety_event,
     remember_support, RISK_NONE, KIND_LADDER_ANSWER, _ORDER as _RISK_ORDER,
 )
 from backend.services import local_edit_decisions
@@ -1059,7 +1059,12 @@ async def reasoner_node(state: GraphState) -> GraphState:
         # What they said about the people in their life (the support ladder), when this message said anything.
         _support_updates, _contact = normalize_support(emotion_reading)
         _prior_safety = state.get("safety_state")
-        state["safety_state"] = merge_safety_state(_prior_safety, _level, _now, _support_updates, _contact)
+        # A reading that came only from the model, at the level already in force, does not restart the watch; and "I'm fine" / "stop asking" at the lowest level ends the ladder
+        # (backend/utils/safety_utils.py merge_safety_state), unless their words held explicit risk language.
+        _declined = detect_denial(msg) and _before == "elevated" and _regex_level == "none"
+        state["safety_state"] = merge_safety_state(
+            _prior_safety, _level, _now, _support_updates, _contact, from_model=_level != _regex_level, declined=_declined,
+        )
         if _level != RISK_NONE and _RISK_ORDER[_level] >= _RISK_ORDER[_before]:
             log_safety_event(state.get("username"), _level, "language" if _level == _regex_level else "reasoner")
         if state["safety_state"]:

@@ -14,7 +14,7 @@ from backend.utils.db_utils import get_db
 from backend.utils.embedding_utils import embed_text, cosine_similarity
 from backend.components.constraints import FACT_CONFLICT_PROMPT, GOAL_STATUS_PROMPT
 from backend.models.models import lite_llm
-from backend.utils import fact_links, name_aliases
+from backend.utils import conversation_people, fact_links, name_aliases
 from backend.services.memory_search import flag_stale_chunks_for_superseded_fact
 
 logger = logging.getLogger("SASS Logger")
@@ -789,7 +789,7 @@ def fetch_goal_nudge_context(username: str) -> str:
 
 
 def fetch_relevant_user_facts(
-    username: str, question: str, limit: int = 5, precomputed_embedding: Optional[List[float]] = None
+    username: str, question: str, limit: int = 5, precomputed_embedding: Optional[List[float]] = None, messages=None,
 ) -> str:
     """
     Builds a short "known about this user" context block for passive injection into every
@@ -804,6 +804,10 @@ def fetch_relevant_user_facts(
     a turn is classified "conversational") pass it in instead of paying for a second real
     embed_text call against the same text — same model/dimensionality as embed_text uses, so the
     vectors are directly comparable.
+
+    messages: the conversation so far (backend/utils/conversation_people.py). A message with no name in it ("I'm afraid I won't see her again") used to be matched on its words
+    alone and picked facts about people who had not come up in weeks; now facts about the people the conversation has been about rank higher, and a reply to a message that names
+    nobody is told who they are.
     """
     try:
         facts = load_user_facts(username)
@@ -811,6 +815,7 @@ def fetch_relevant_user_facts(
             return ""
 
         now = datetime.now(timezone.utc)
+        people = conversation_people.people_in_conversation(messages, facts) if messages else []
         # Foundational facts (a name, pronouns, how they address the AI) are always shown, up to MAX_ALWAYS_IDENTITY of them. An identity fact that is about the person's
         # JOB, their own projects or their personal life (domain work / own / personal) is not foundational: it competes by relevance like any other. Before this, every
         # "identity" fact was always shown and took a slot from `limit`, so with twenty of them no fact about the question ever got in ("how is work going" showed no work).
@@ -829,7 +834,8 @@ def fetch_relevant_user_facts(
             scored = [
                 (
                     (cosine_similarity(question_embedding, f.embedding) if f.embedding else -1.0)
-                    * effective_confidence(f, now),
+                    * effective_confidence(f, now)
+                    * (conversation_people.boost_for(f.fact, people) if people else 1.0),
                     f,
                 )
                 for f in other_facts
@@ -856,7 +862,7 @@ def fetch_relevant_user_facts(
         if not top_facts:
             return ""
 
-        return format_facts_block(top_facts)
+        return format_facts_block(top_facts) + conversation_people.people_note(people, question)
     except Exception:
         logger.exception("[MEMORY WARNING] Could not fetch user facts for %s", username)
         return ""

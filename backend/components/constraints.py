@@ -589,6 +589,7 @@ CLASSIFICATION RULES:
    - "need": what this message seems to want from the reply, one of "venting" (wants to be heard, not fixed), "solving" (wants concrete help with a problem), "reassurance", "distraction" (wants a break from it), "celebration" (is sharing personal good news and wants it explored with them: a match, an offer, a result, a milestone, not a mundane positive remark like "had a good lunch"), or "none". Judge it from this message in context, not from the topic.
    - "gist": when the valence is not neutral, a very short (at most 12 words) plain description of WHAT they are going through, taken from their own words and this conversation (e.g. "a breakup; Tina ended things tonight", "dreading a performance review"). Use "" when neutral. If this message is only a continuation and doesn't restate the cause, still describe the cause if the recent history makes it clear.
    - "risk": "none", "elevated", "acute" or "imminent". "imminent": they describe a plan, a method or means within reach, a time ("tonight", "right now"), or something they have already done to hurt themselves or have taken. "acute": they talk about ending their life or seriously hurting themselves, with intent but without a plan, means or time. "elevated": they wish they were dead or could disappear, describe wanting to hurt themselves, or are so hopeless that it is unclear they will stay safe. Read it from the whole message in context (including things like "I just want it all to stop"). Use "none" for everything else: ordinary sadness, anger or stress, jokes about everyday annoyances ("this bug is killing me"), asking about the topic in general or as research, fiction, or someone else's situation. Never infer risk from topic alone.
+     Heavy feelings alone are "none". That includes being numb, drained, overwhelmed, angry or heartbroken, being scared of losing someone or of saying or doing something that spoils a relationship (texting too much, reaching out too soon), cravings for a smoke or a drink, waiting on a reply, a rejected or cancelled plan, and reassurance such as "I'm fine", "I promise I'm okay" or "I'll be okay tonight". The signal is dying or hurting themselves, in their words or plainly implied by them. Rate THIS message only: do not carry a level over from earlier turns (code does that), and a message that only asks you to stop asking, or says they are fine, is "none" unless it also says something new.
    - "support": ONLY when the conversation is about suicidal thoughts or self-harm and THIS message tells you something about the people in their life. For each of "immediate_family" (a parent, a partner, a sibling, someone they live with), "friends", "extended_family" (aunts, uncles, cousins, grandparents) and "professional" (a therapist, a doctor, a counselor, a faith leader): "available" if they have someone they could reach, EVEN IF they hesitate, don't want to burden them, or aren't sure they will (a person they could reach but are reluctant to is still available), "unavailable" only if they say they have no one in that group, the person has died, they are estranged, or the person is out of reach, and "unknown" if this message does not address it. "contact": when they have someone available, a short description of that person ("older sister Kayla, lives nearby"), else "". Report only what they actually said; never invent people.
    - Use "neutral" with intensity 0.0 and need "none" when there is no real emotional signal — do not guess. Never infer emotion from topic alone (asking about a layoff, a bug, or a diagnosis is not itself distress).
 
@@ -799,6 +800,34 @@ Reply with JSON only, with these keys:
 - "words": the words they want ON the picture, if they asked for any ("a Christmas card that says Merry Christmas"), copied exactly; otherwise leave this key out.
 
 Reply with JSON only, for example {{"applies": true, "refuse": null, "prompt": "...", "aspect": "4:3", "title": "snowy stadium"}}
+"""
+
+PLAN_CHANGE_PROMPT = """
+You keep a user's saved facts true when a plan changes. The user's NEW MESSAGE may say that a plan they already told you about was moved, cancelled or changed.
+
+TODAY: {today} ({weekday}).
+
+SAVED FACTS that might be about it (id: fact):
+{facts}
+
+RECENT MESSAGES FROM THE USER (context only, to tell what a short message is about):
+{recent}
+
+NEW MESSAGE:
+{message}
+
+RULES:
+- Only what the USER says counts. For each saved fact, decide whether the new message is clearly about THAT plan.
+- "update": the plan moved or changed and the message says to when. "text" is the saved fact reworded with only the day (or time) changed to what the message says.
+  Keep the saved fact's wording otherwise. Write the new day the way the user said it ("Sunday", "tomorrow"), never as a numeric date. Do not mention the old day, do not say it was
+  moved or cancelled, and add no time, place or name the message does not give.
+- "cancel": the message says the plan is off and gives no new day.
+- "keep": the message is not about that fact, or you are not sure. When unsure, "keep": a wrong change is worse than a stale fact.
+- Facts that are not about a plan or an event are always "keep".
+
+Return ONLY a JSON object, no preamble or markdown:
+{{"changes": [{{"id": "", "action": "update" | "cancel" | "keep", "text": ""}}]}}
+Use an empty array when there is nothing to change.
 """
 
 OPEN_LOOP_EXTRACTION_PROMPT = """

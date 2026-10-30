@@ -115,6 +115,20 @@ _MUNDANE_RE = re.compile(
     re.IGNORECASE,
 )
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?\n])\s+")
+# "I'm not gonna kill myself just because I got cancelled on" is the opposite of intent. The words right BEFORE a match say so: a negation (with the usual typos "ont", "dont", "wont"),
+# optionally followed by "gonna / going to / want to ...", or "would never", or "no way I'd". Only the words immediately before count, so "I can't stop, I will kill myself" and
+# "I don't know, I just want to die" are still found.
+_NEGATED_BEFORE_RE = re.compile(
+    r"(?:\b(?:not|ont|never|wont|won't|wouldn't|wouldnt|dont|don't|aint|ain't|no)\s+(?:(?:gonna|going to|about to|go and|want to|plan on|planning to|trying to)\s+)?(?:actually\s+|really\s+|just\s+)*"
+    r"|\b(?:would|will|could|can)\s+never\s+(?:actually\s+|really\s+)*"
+    r"|\bno\s+(?:way|chance)\s+(?:i(?:'m|\s+am|'d|\s+would|'ll|\s+will)\s+)?(?:actually\s+|really\s+)*)$",
+    re.IGNORECASE,
+)
+
+
+def _unnegated(pattern: "re.Pattern", sentence: str) -> bool:
+    """Whether `pattern` matches in `sentence` somewhere that is not denied by the words just before it."""
+    return any(not _NEGATED_BEFORE_RE.search(sentence[:m.start()]) for m in pattern.finditer(sentence))
 
 
 def detect_risk_language(text: Optional[str]) -> str:
@@ -129,16 +143,40 @@ def detect_risk_language(text: Optional[str]) -> str:
     for sentence in _SENTENCE_SPLIT.split(text):
         if _IMMINENT_RE.search(sentence):
             return RISK_IMMINENT
-        if _ACUTE_RE.search(sentence):
+        if _unnegated(_ACUTE_RE, sentence):
             if _TIMEFRAME_RE.search(sentence) or _MEANS_RE.search(sentence):
                 return RISK_IMMINENT
             level = RISK_ACUTE
             continue
-        if _ELEVATED_RE.search(sentence):
+        if _unnegated(_ELEVATED_RE, sentence):
             joking = _HUMOR_RE.search(sentence) and _MUNDANE_RE.search(sentence)
             if not joking and _ORDER[level] < _ORDER[RISK_ELEVATED]:
                 level = RISK_ELEVATED
     return level
+
+
+# Someone who has been asked about their safety and answers "I'm fine" or "stop asking" has answered. At the lowest level the ladder then stops (the register stays gentle) until they say
+# something new; it is never applied at acute or imminent. Narrow on purpose: a bare "no" or "ok" can answer a ladder question, so it is not enough.
+_DENIAL_RE = re.compile(
+    r"\b(?:i'?m|i am|im)\s+(?:fine|okay|ok|alright|good|safe)\b"
+    r"|\b(?:i'?ll|i will|ill)\s+be\s+(?:fine|okay|ok|alright)\b"
+    r"|\bi\s+promise\b"
+    r"|\b(?:stop|quit)\s+(?:asking|pushing|checking)\b|\bplease\s+stop\b|\bdrop\s+it\b|\bleave\s+it\b"
+    r"|\b(?:you\s+)?(?:don'?t|do\s+not|dont)\s+need\s+to\s+(?:go\s+through|walk\s+me\s+through|keep\s+asking)\b"
+    r"|\b(?:way\s+)?overblowing\b|\bover\s*reacting\b|\bnot\s+going\s+to\s+(?:hurt|harm)\s+myself\b|\bnot\s+gonna\s+(?:hurt|harm)\s+myself\b",
+    re.IGNORECASE,
+)
+_ACK_RE = re.compile(r"^\W*(?:thanks?(?:\s+(?:you|so\s+much|saapp|sonic))?|thank\s+you|thx|ty|ok(?:ay)?|k|cool|got\s+it|alright|appreciate\s+it|i\s+appreciate\s+it)\b[\W\w]{0,24}$", re.IGNORECASE)
+
+
+def detect_denial(text: Optional[str]) -> bool:
+    """Whether the message tells Sonic they are fine or to stop asking (see _DENIAL_RE)."""
+    return bool(text and _DENIAL_RE.search(text))
+
+
+def is_acknowledgement(text: Optional[str]) -> bool:
+    """A short thank-you or "ok" that is not an answer to anything: five words or fewer."""
+    return bool(text and len(text.split()) <= 5 and _ACK_RE.match(text.strip()))
 
 
 def normalize_risk(raw: Any) -> str:
@@ -242,14 +280,24 @@ def merge_safety_state(
     now: datetime.datetime,
     support_updates: Optional[Dict[str, str]] = None,
     contact: str = "",
+    from_model: bool = False,
+    declined: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Folds this message's level (and anything it said about the people in their life) into the carried
     state. A message at or above the level in force (re)starts the clock; anything lower only advances it,
     so a calm message right after a frightening one never resets the watch. The ladder answers persist
-    across re-raises, and are only ever changed by an explicit answer."""
+    across re-raises, and are only ever changed by an explicit answer.
+
+    from_model: the level came from the reasoner's reading, not from their words. Such a reading at the level
+    already in force does not restart the clock (on 2026-10-17 a string of "I promise I'm okay" messages each
+    renewed the watch, so it never relaxed); a higher level, or any explicit language, still does.
+    declined: they were asked and said they are fine or to stop asking, so the ladder stops (see plan_safety_turn); set only
+    while the level in force is the lowest, and cleared by any real raise."""
     prior_effective = effective_risk(prior, now)
     active = prior_effective != RISK_NONE
     raised = level != RISK_NONE and _ORDER[level] >= _ORDER[prior_effective]
+    if raised and from_model and active and level == prior_effective:
+        raised = False
     if not raised and not active:
         return None
 
@@ -272,6 +320,8 @@ def merge_safety_state(
         }
     else:
         state = {**prior, "turns_since": int(prior.get("turns_since", 0) or 0) + 1, "escalated": False}
+        if declined and prior_effective == RISK_ELEVATED:
+            state["declined"] = True
     if support:
         state["support"] = support
     if contacts:
@@ -459,6 +509,14 @@ _TASK_NOTE = (
     "it or say you can't. Keep the gentle register, and add at most one short, unforced line asking how they are doing now.\n"
 )
 
+# They were asked, and said they are fine or to stop asking: the ladder stops, the register stays gentle, and nothing is asked about the people in their life again unless they
+# raise it. Not a promise that nothing is wrong: if they say anything new, the watch starts again.
+_DECLINED_NOTE = (
+    "they have said they are okay or asked you to stop asking about it. Take them at their word without arguing and without repeating the question: do not ask about their "
+    "family, friends or anyone they could call, and do not mention a crisis line. Say once, briefly, that you will not push, then be with them in what they actually said, "
+    "in your normal warm voice. If they say anything new about hurting themselves, take it as seriously as the first time.\n"
+)
+
 _FOLLOW_UP_RE = re.compile(r"<<<FOLLOW_UP:", re.IGNORECASE)
 _EMOJI_RE = re.compile(r"[\U0001F300-\U0001FAFF☀-➿]")
 _BREEZY_RE = re.compile(
@@ -550,6 +608,14 @@ def plan_safety_turn(
         # (Only when there are results: a turn with none, such as someone answering which person they could lean on, stays on the ladder.)
         plan.keeps_results = True
         plan.context = _SAFETY_HEADER + _CARRIED_NOTE + _TASK_NOTE + _ABOUT_YOURSELF
+        return plan
+    if level == RISK_ELEVATED and not fresh and (safety_state or {}).get("declined"):
+        plan.line_required = asked and not given
+        plan.context = _SAFETY_HEADER + _DECLINED_NOTE + _ABOUT_YOURSELF
+        return plan
+    if level == RISK_ELEVATED and not fresh and not plan.line_required and is_acknowledgement(user_message):
+        # "thanks" is not an answer to a ladder question; asking where their people are in reply to it (2026-10-30) read as not listening.
+        plan.context = _SAFETY_HEADER + _CARRIED_NOTE + _ABOUT_YOURSELF
         return plan
     if not fresh and not info["next"] and not info["available"] and not info["exhausted"]:
         plan.context = _SAFETY_HEADER + _CARRIED_NOTE + _ABOUT_YOURSELF

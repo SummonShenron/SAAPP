@@ -155,6 +155,34 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "plans_follow_changes",
+        "requires": [
+            "backend/utils/plan_changes.py::def apply_plan_changes",
+            "app.py::plan_changes_utils.apply_plan_changes",
+        ],
+        "month": "2026-10",
+        "title": "A saved plan changes when you say it moved",
+        "line": (
+            "I can now update a plan I had saved when you tell me it moved or was called off, changing only the day or time you gave me, and I say what I changed under my reply so you can correct it."
+        ),
+        "keywords": ["date moved", "got moved", "rescheduled", "cancelled", "canceled", "pushed back", "moved to sunday", "still thinks", "wrong day", "old plan"],
+        "volunteer": [],
+    },
+    {
+        "id": "ladder_takes_your_word",
+        "requires": [
+            "backend/utils/safety_utils.py::def detect_denial",
+            "backend/services/agent_workflow.py::detect_denial(msg)",
+        ],
+        "month": "2026-10",
+        "title": "Taking you at your word when you say you're okay",
+        "line": (
+            "I can now stop asking who could be with you when you tell me you're okay or to stop asking, and I no longer read 'I'm not going to hurt myself' as a warning sign."
+        ),
+        "keywords": ["stop asking", "im fine", "i'm fine", "overreacting", "overblowing", "safety mode", "asked too many questions", "not going to hurt myself", "ladder"],
+        "volunteer": [],
+    },
+    {
         "id": "task_extra_searches",
         "requires": [
             "backend/utils/user_tasks.py::MAX_EXTRA_TOPICS",
