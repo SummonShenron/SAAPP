@@ -199,3 +199,14 @@ test('the Start runner button waits with a spinner, says so when the wait runs o
   const column = await readFile(new URL('./components/SessionColumn.tsx', import.meta.url), 'utf8');
   assert.match(column, /sc-spinner/); assert.match(column, /disabled=\{runnerStart\.phase === 'starting'\}/); assert.match(column, /aria-live="polite"/);
 });
+
+test('the install hint uses the runner\'s own Python by full path, in a PowerShell and a Command Prompt form, not a bare saapp-runner', async () => {
+  const { RUNNER_INSTALL_POWERSHELL, RUNNER_INSTALL_CMD } = await import('./components/sessionColumnLogic.ts');
+  const tail = '\\.saapp-runner\\venv\\Scripts\\python.exe" -m saapp_runner install-service';       // one backslash each, in the string the person copies
+  assert.equal(RUNNER_INSTALL_POWERSHELL, '& "$env:USERPROFILE' + tail);
+  assert.equal(RUNNER_INSTALL_CMD, '"%USERPROFILE%' + tail);
+  const { readFile } = await import('node:fs/promises');
+  const column = await readFile(new URL('./components/SessionColumn.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(column, /<code>saapp-runner install-service<\/code>/);
+  assert.match(column, /RUNNER_INSTALL_POWERSHELL/); assert.match(column, /RUNNER_INSTALL_CMD/);
+});

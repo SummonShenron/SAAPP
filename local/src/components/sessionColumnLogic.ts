@@ -34,6 +34,11 @@ export function runnerLine(runners: RunnerInfo[] | null, now: Date = new Date())
 /** The link the "Start runner" button opens. The runner registers it with Windows when it installs its start-at-login entry (runner/src/saapp_runner/service.py), and what it runs is fixed: start the runner. */
 export const RUNNER_START_LINK = 'saapp-runner://start';
 
+/** The command that sets the runner up to start by itself, with the runner's own Python: the setup file installs the runner in `~/.saapp-runner/venv`, whose Scripts folder is not on the PATH, so a bare
+ *  `saapp-runner install-service` does nothing there. One for PowerShell (the `&` and `$env:`) and one for Command Prompt. */
+export const RUNNER_INSTALL_POWERSHELL = '& "$env:USERPROFILE\\.saapp-runner\\venv\\Scripts\\python.exe" -m saapp_runner install-service';
+export const RUNNER_INSTALL_CMD = '"%USERPROFILE%\\.saapp-runner\\venv\\Scripts\\python.exe" -m saapp_runner install-service';
+
 /** How long the button waits for the runner to connect after a press before it says it did not (the page asks every few seconds for this long: hooks/useRunnerPing.ts). */
 export const RUNNER_START_WAIT_MS = 45_000;
 

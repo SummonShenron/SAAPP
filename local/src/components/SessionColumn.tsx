@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import type { CodePlan, MemorySources, RunnerInfo } from '../api';
 import type { RingView } from './budgetText';
 import {
-  APPROVAL_OPTIONS, GIT_OPTIONS, LEVEL_COLOR, contextGauge, folderLight, folderLine, gaugeSummary, memoryLine, parseCollapsed, planProgress, runnerLine, serializeCollapsed, toggleCollapsed,
+  APPROVAL_OPTIONS, GIT_OPTIONS, LEVEL_COLOR, RUNNER_INSTALL_CMD, RUNNER_INSTALL_POWERSHELL, contextGauge, folderLight, folderLine, gaugeSummary, memoryLine, parseCollapsed, planProgress, runnerLine, serializeCollapsed, toggleCollapsed,
   type ContextUse, type Line, type Option, type RunnerStartPhase, type ScopeChoice,
 } from './sessionColumnLogic';
 import './__styles__/SessionColumn.css';
@@ -206,8 +206,15 @@ const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runner
             </button>
             <span className="sc-option-hint" role="status" aria-live="polite">
               {runnerStart.phase === 'starting' && 'Asked your computer to start it. Waiting for it to connect; this usually takes a few seconds.'}
-              {runnerStart.phase === 'failed' && <>It did not connect. If nothing started on your computer, run <code>saapp-runner install-service</code> once in a terminal there, then try again.</>}
+              {runnerStart.phase === 'failed' && <>It did not connect. If nothing started on your computer, run this once in a terminal there, then try again.</>}
             </span>
+            {runnerStart.phase === 'failed' && (
+              <span className="sc-option-hint">
+                PowerShell: <code>{RUNNER_INSTALL_POWERSHELL}</code>
+                <br />
+                Command Prompt: <code>{RUNNER_INSTALL_CMD}</code>
+              </span>
+            )}
           </div>
         )}
         <Row line={folderRow} />

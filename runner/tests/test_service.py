@@ -4,13 +4,17 @@ The text of every file and every command is checked without touching the operati
 with a harmless stand-in program, because Task Scheduler is the one thing a unit test cannot imitate."""
 import argparse
 import configparser
+import os
 import plistlib
+import re
 import subprocess
 import sys
 import threading
 import time
+import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from xml.sax.saxutils import escape as xml_escape
 
 import pytest
 
@@ -178,8 +182,13 @@ def test_the_state_is_read_from_what_each_system_says():
 @needs_windows
 def test_task_scheduler_accepts_the_entry_and_it_can_be_found_and_removed(tmp_path, runner_home):
     program = str(Path(sys.executable).with_name("python.exe"))
+
+    def never_start(command):
+        # The real schtasks for everything but starting the task: a task Task Scheduler starts runs with the person's own home folder, not this test's, so starting it could start THEIR runner.
+        return (0, "") if command[:2] == ["schtasks", "/Run"] else service._run(command)
+
     try:
-        done, message = service.install(python=program)                                      # the real schtasks, with a program that starts and ends at once
+        done, message = service.install(run=never_start, python=program)                      # the real schtasks, registered but never run
         assert done, message
         assert service.state()["installed"] is True                                          # Task Scheduler knows it by the name made from this runner's home
         _, listing = service._run(["schtasks", "/Query", "/TN", service.label(), "/XML"])
@@ -191,6 +200,56 @@ def test_task_scheduler_accepts_the_entry_and_it_can_be_found_and_removed(tmp_pa
         removed, text = service.uninstall()
     assert removed, text
     assert service.state()["installed"] is False
+
+
+slow = pytest.mark.skipif(os.environ.get("SAAPP_SLOW_TESTS") != "1", reason="takes about two minutes; run with SAAPP_SLOW_TESTS=1")
+
+
+@needs_windows
+@slow
+def test_task_scheduler_really_starts_a_runner_again_after_it_is_stopped(fake, project, runner_home, monkeypatch, tmp_path):
+    """The failure of 2026-10-29: a runner that stopped (the update's exit code) was never started again, and nothing tested that it would be. This stops a REAL runner under REAL Task Scheduler and
+    waits for the repeating trigger to bring it back. The task has the real entry's triggers and settings (service.windows_task_xml, with the repeat shortened to Task Scheduler's one-minute minimum);
+    only what it runs differs: a batch file that points the runner at this test's home and fake server, so nobody's own runner or key is involved."""
+    cfg.save_credentials(fake.url, "abc.def")
+    projects.add(project)
+    fake.routes[("POST", "/api/runner/hello")] = (200, {"ok": True})
+    fake.routes[("GET", "/api/runner/next")] = (200, {"job": None})
+    monkeypatch.setattr(service, "KEEPALIVE_INTERVAL", "PT1M")
+    name = f"saapp-test-keepalive-{uuid.uuid4().hex[:8]}"
+    marker = f"keepalive-test-{uuid.uuid4().hex}"                    # in the test runner's command line, so exactly its processes can be found and stopped, and never the person's own runner
+    python = str(Path(sys.executable).with_name("python.exe"))
+    batch = tmp_path / "run-runner.cmd"
+    code = f"import sys; marker = '{marker}'; sys.argv = ['saapp-runner', 'start', '--service']; from saapp_runner.cli import main; sys.exit(main())"
+    batch.write_text(f'@echo off\nset "SAAPP_RUNNER_HOME={runner_home}"\nset "PYTHONPATH={Path(service.__file__).resolve().parents[1]}"\n"{python}" -c "{code}"\n', encoding="utf-8")
+
+    def kill_test_runner():
+        script = f"Get-CimInstance Win32_Process | Where-Object {{ $_.CommandLine -like '*{marker}*' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}"
+        subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, timeout=60)
+    xml = re.sub(r"<Exec>.*?</Exec>", lambda _: f"<Exec><Command>{xml_escape(str(batch))}</Command></Exec>", service.windows_task_xml(python, service._user()), flags=re.DOTALL)
+    assert "<Interval>PT1M</Interval>" in xml and "<LogonTrigger>" in xml and "IgnoreNew" in xml           # the entry's own triggers and settings
+    definition = tmp_path / "task.xml"
+    definition.write_text(xml, encoding="utf-16")
+
+    def hellos():
+        return sum(1 for call in fake.seen if call["path"].endswith("/hello"))
+
+    try:
+        assert service._run(["schtasks", "/Create", "/TN", name, "/XML", str(definition), "/F"])[0] == 0
+        service._run(["schtasks", "/Run", "/TN", name])
+        assert _wait_for(lambda: hellos() >= 1, 40), "the runner never started under Task Scheduler"
+        service._run(["schtasks", "/End", "/TN", name])
+        kill_test_runner()                                                                       # stopped, the way a crash stops it (Task Scheduler's own End leaves a child running)
+        time.sleep(4)
+        quiet = len(fake.seen)
+        time.sleep(4)
+        assert len(fake.seen) == quiet, "the runner was still talking after the task was ended"       # really stopped, so what follows is a restart
+        before = hellos()
+        assert _wait_for(lambda: hellos() > before, 150), "the repeating trigger did not start the runner again"
+    finally:
+        service._run(["schtasks", "/End", "/TN", name])
+        service._run(["schtasks", "/Delete", "/TN", name, "/F"])
+        kill_test_runner()
 
 
 # ---- one runner per computer ---------------------------------------------------------------------------------------------------------------------
@@ -465,6 +524,21 @@ def test_the_start_link_runs_the_entry_when_there_is_one_and_else_starts_a_copy_
     command, kwargs = spawn.calls[0]
     assert command[1:] == service.arguments() and kwargs["creationflags"] & 0x08000000                                         # the same command the entry runs, windowless
     assert service.start_now(Recorder(), Spawner(), "linux") is False
+
+
+def test_the_runner_says_how_to_run_it_from_any_terminal_with_its_own_python_not_a_bare_name(capsys, monkeypatch):
+    """2026-10-30: `saapp-runner install-service` typed in a terminal did nothing, because the setup file keeps the runner in its own virtual environment, which is not on the PATH."""
+    assert service.how_to_run("/usr/bin/python3") == f'"{Path("/usr/bin/python3")}" -m saapp_runner'
+    if sys.platform == "win32":
+        assert service.how_to_run(r"C:\Users\me\.saapp-runner\venv\Scripts\pythonw.exe") == r'"C:\Users\me\.saapp-runner\venv\Scripts\python.exe" -m saapp_runner'      # the one with a console
+    cfg.save_credentials("https://saapp.example.com", "abc.def")
+    monkeypatch.setattr(service, "install", lambda *a, **k: (True, "done"))
+    assert cli.main(["install-service"]) == 0
+    printed = capsys.readouterr().out
+    assert f"{service.how_to_run()} status" in printed and f"{service.how_to_run()} start-link" in printed
+    monkeypatch.setattr(service, "state", lambda *a, **k: {"installed": False, "running": False})
+    cli.main(["status"])
+    assert f"no ({service.how_to_run()} install-service)" in capsys.readouterr().out
 
 
 def test_the_start_link_command_starts_the_runner_and_ignores_whatever_the_link_says(monkeypatch):

@@ -60,6 +60,8 @@ Each project has its own checks, its own on/off choices and its own fake-key set
 
 On Windows it also registers the link `saapp-runner://start` (in your own registry hive), which SAAPP's **Start runner** button opens: it starts the runner with no window and does nothing else, whatever else a link says. (Since 0.1.3. Earlier, a runner that updated itself on Windows stayed stopped until the next login, because Task Scheduler does not restart a program that exits with the update's code. If yours says "not answering" after an update from 0.1.2 or older, run `saapp-runner install-service` once.)
 
+**If a bare `saapp-runner` is "not recognised":** the setup file keeps the runner in its own virtual environment (`~/.saapp-runner/venv`), whose `Scripts` folder is not on your PATH. Run it with that Python instead, for example in PowerShell: `& "$env:USERPROFILE\.saapp-runner\venv\Scripts\python.exe" -m saapp_runner status` (the runner prints this exact form in `install-service` and `status`).
+
 ```bash
 saapp-runner status             # paired? set to start at login? running now? the projects, and the end of its log
 saapp-runner start-link         # start it now, in the background (what the Start runner button does)
