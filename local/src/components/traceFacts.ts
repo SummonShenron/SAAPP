@@ -182,3 +182,18 @@ export function toolStepLabel(tool: unknown, subject?: unknown): string | null {
   if (about && tool === 'read_repo_file') return `Read ${about}`;
   return about ? `${label}: ${about}` : label;
 }
+
+/** The steps of a turn that has ended, as they are kept on its reply: every step marked complete (the last one may still be "active" when the stream just stops). The same objects when nothing needs changing. */
+export function finishedSteps(steps: TraceStep[]): TraceStep[] {
+  return steps.map(step => (step.status === 'complete' ? step : { ...step, status: 'complete' as const }));
+}
+
+/** "1 step" or "7 steps": what the line under a reply says before it is opened. */
+export function stepsLabel(count: number): string {
+  return `${count} ${count === 1 ? 'step' : 'steps'}`;
+}
+
+/** Whether the steps under a reply are open: what the person chose if they pressed it, else open only for the newest reply (the steps of the last request stay in view until the next one starts). */
+export function stepsAreOpen(chosen: boolean | null, latest: boolean): boolean {
+  return chosen ?? latest;
+}

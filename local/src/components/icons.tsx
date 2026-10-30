@@ -93,6 +93,12 @@ const SHAPES = {
       <line x1="9" y1="3" x2="9" y2="21" />
     </>
   ),
+  panelRight: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="15" y1="3" x2="15" y2="21" />
+    </>
+  ),
   moon: <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />,
   sun: (
     <>

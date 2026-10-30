@@ -1,0 +1,124 @@
+// Run with: node --test src/sessionColumn.test.mjs   (from local/; Node 22.18+ runs the TypeScript module directly)
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { folderLine, lastSeenText, memoryLine, planProgress, runnerLine } from './components/sessionColumnLogic.ts';
+
+const NOW = new Date('2026-10-29T12:00:00Z');
+const ago = seconds => new Date(NOW.getTime() - seconds * 1000).toISOString();
+const runner = (over = {}) => ({ id: 'r1', name: 'Jack PC', connected: true, last_seen: ago(2), projects: [{ id: 'p1', name: 'local-rag' }], ...over });
+
+test('how long ago is said in a few words, and nothing for no time or nonsense', () => {
+  assert.equal(lastSeenText(ago(2), NOW), 'just now');
+  assert.equal(lastSeenText(ago(12), NOW), '12s ago');
+  assert.equal(lastSeenText(ago(180), NOW), '3 min ago');
+  assert.equal(lastSeenText(ago(7200), NOW), '2 h ago');
+  assert.equal(lastSeenText(ago(3 * 86400), NOW), '3 d ago');
+  assert.equal(lastSeenText(ago(-30), NOW), 'just now');          // a clock a little ahead is not "in the future"
+  assert.equal(lastSeenText(null, NOW), '');
+  assert.equal(lastSeenText('not a time', NOW), '');
+});
+
+test('the runner line says connected with its project and last answer, not answering with when it was last seen, or not set up', () => {
+  assert.deepEqual(runnerLine([runner()], NOW), { tone: 'ok', text: 'Runner connected', detail: 'local-rag · just now' });
+  assert.deepEqual(runnerLine([runner({ connected: false, last_seen: ago(600) })], NOW), { tone: 'warn', text: 'Runner not answering', detail: 'Last seen 10 min ago' });
+  assert.equal(runnerLine([runner({ connected: false, last_seen: null })], NOW).detail, 'Start it on your computer.');
+  assert.equal(runnerLine([], NOW).text, 'No runner set up');
+  assert.equal(runnerLine(null, NOW).text, 'Checking the runner');
+  assert.equal(runnerLine([runner({ connected: false }), runner({ id: 'r2', name: 'Laptop' })], NOW).text, 'Runner connected');       // any connected runner counts
+  assert.equal(runnerLine([runner({ projects: [] })], NOW).detail, 'just now');
+});
+
+test('the folder line follows the workspace status, with the folder name and how many files', () => {
+  assert.deepEqual(folderLine('connected', 'local-rag', 1520), { tone: 'ok', text: 'Folder in sync', detail: 'local-rag · 1520 files' });
+  assert.equal(folderLine('connected', 'local-rag', null).detail, 'local-rag');
+  assert.equal(folderLine('syncing', 'x', null).tone, 'warn');
+  assert.match(folderLine('not-uploaded', 'x', null).detail, /uploads when you send a message/);
+  assert.equal(folderLine('needs-permission', 'x', null).text, 'Reconnect the folder');
+  assert.equal(folderLine('error', 'x', null).text, 'Folder sync failed');
+  assert.deepEqual(folderLine('disconnected', null, null), { tone: 'off', text: 'No folder connected', detail: '' });
+});
+
+test('plan progress counts the done steps', () => {
+  const plan = { steps: [{ status: 'done' }, { status: 'todo' }, { status: 'todo' }] };
+  assert.deepEqual(planProgress(plan), { done: 1, total: 3, label: '1 of 3 steps' });
+  assert.equal(planProgress({ steps: [{ status: 'done' }] }).label, '1 of 1 step');
+});
+
+test('the memory line counts facts and notes and says nothing when there were none', () => {
+  assert.equal(memoryLine({ facts: [{}, {}, {}, {}], notes: [{}] }), '4 facts, 1 note');
+  assert.equal(memoryLine({ facts: [{}], notes: [] }), '1 fact');
+  assert.equal(memoryLine({ facts: [], notes: [] }), '');
+  assert.equal(memoryLine(null), '');
+});
+
+test('tokens are said in a few characters', async () => {
+  const { formatTokens } = await import('./components/sessionColumnLogic.ts');
+  assert.equal(formatTokens(950), '950');
+  assert.equal(formatTokens(1500), '1.5k');
+  assert.equal(formatTokens(38_200), '38k');
+  assert.equal(formatTokens(1_048_576), '1.0M');
+  assert.equal(formatTokens(-4), '0');
+  assert.equal(formatTokens(NaN), '0');
+});
+
+test('the context ring says how full the biggest request was, changes colour as it nears the window, and draws nothing for numbers that are not real', async () => {
+  const { contextGauge } = await import('./components/sessionColumnLogic.ts');
+  const ok = contextGauge({ used: 38_200, window: 1_048_576, fraction: 0.036 });
+  assert.equal(ok.level, 'ok');
+  assert.equal(ok.text, 'Biggest request last turn: 38k of 1.0M tokens');
+  assert.ok(Math.abs(ok.fraction - 38_200 / 1_048_576) < 1e-9);
+  assert.equal(contextGauge({ used: 130_000, window: 200_000, fraction: 0.65 }).level, 'notice');
+  assert.equal(contextGauge({ used: 180_000, window: 200_000, fraction: 0.9 }).level, 'throttled');
+  assert.equal(contextGauge({ used: 250_000, window: 200_000, fraction: 1 }).fraction, 1);          // over the window is a full ring, not a broken one
+  assert.equal(contextGauge(null), null);
+  assert.equal(contextGauge({ used: 0, window: 200_000, fraction: 0 }), null);
+  assert.equal(contextGauge({ used: 5, window: 0, fraction: 0 }), null);
+  assert.equal(contextGauge({ used: NaN, window: 10, fraction: 0 }), null);
+});
+
+test('the folder has one thing to press while it is not working, and nothing while it works or syncs', async () => {
+  const { folderPrimaryLabel } = await import('./components/sessionColumnLogic.ts');
+  assert.equal(folderPrimaryLabel('disconnected'), 'Connect a folder');
+  assert.equal(folderPrimaryLabel('needs-permission'), 'Reconnect the folder');
+  assert.equal(folderPrimaryLabel('not-uploaded'), 'Upload it now');
+  assert.equal(folderPrimaryLabel('error'), 'Try again');
+  assert.equal(folderPrimaryLabel('connected'), null);
+  assert.equal(folderPrimaryLabel('syncing'), null);
+});
+
+test('the option lists cover exactly the values the app can hold, so nothing the menu offered is lost', async () => {
+  const { APPROVAL_OPTIONS, GIT_OPTIONS } = await import('./components/sessionColumnLogic.ts');
+  const { nextLevel } = await import('./editApproval.ts');
+  const { nextLocalGitMode } = await import('./localGit/commitResult.ts');
+  const cycle = (start, next) => { const seen = [start]; for (let v = next(start); v !== start; v = next(v)) seen.push(v); return seen; };
+  assert.deepEqual([...APPROVAL_OPTIONS.map(o => o.value)].sort(), cycle('ask', nextLevel).sort());
+  assert.deepEqual([...GIT_OPTIONS.map(o => o.value)].sort(), cycle('off', nextLocalGitMode).sort());
+  for (const option of [...APPROVAL_OPTIONS, ...GIT_OPTIONS]) assert.ok(option.label && option.hint, option.value);
+});
+
+test('the folded cards are read back safely, flipped one at a time without changing the set they came from, and saved as a short list', async () => {
+  const { parseCollapsed, toggleCollapsed, serializeCollapsed } = await import('./components/sessionColumnLogic.ts');
+  assert.deepEqual([...parseCollapsed('["gauges","plan"]')], ['gauges', 'plan']);
+  for (const junk of [null, undefined, '', 'not json', '{"a":1}', '"gauges"', '[1,null,{}]']) assert.equal(parseCollapsed(junk).size, 0, String(junk));
+  assert.deepEqual([...parseCollapsed('["ok", 5, "", "also"]')], ['ok', 'also']);          // only real ids are kept
+  assert.equal(parseCollapsed(JSON.stringify(Array.from({ length: 50 }, (_, i) => `card${i}`))).size, 20);
+  const start = new Set(['plan']);
+  const opened = toggleCollapsed(start, 'plan');
+  const folded = toggleCollapsed(start, 'gauges');
+  assert.deepEqual([...opened], []);
+  assert.deepEqual([...folded].sort(), ['gauges', 'plan']);
+  assert.deepEqual([...start], ['plan']);                                                    // the original is untouched
+  assert.equal(serializeCollapsed(new Set(['a', 'b'])), '["a","b"]');
+  assert.deepEqual([...parseCollapsed(serializeCollapsed(folded))].sort(), ['gauges', 'plan']);
+});
+
+test('the folder light is orange when connected and says the other states the old button did, and is off with no folder', async () => {
+  const { folderLight } = await import('./components/sessionColumnLogic.ts');
+  assert.equal(folderLight('connected'), 'on');
+  assert.equal(folderLight('syncing'), 'syncing');
+  assert.equal(folderLight('not-uploaded'), 'pending');
+  assert.equal(folderLight('needs-permission'), 'warn');
+  assert.equal(folderLight('error'), 'error');
+  assert.equal(folderLight('disconnected'), null);
+  assert.equal(folderLight('something else'), null);
+});

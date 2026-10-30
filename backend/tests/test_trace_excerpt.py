@@ -160,11 +160,18 @@ def test_the_stream_forwards_the_excerpt_to_the_requesters_browser_only():
 
 def test_the_page_records_the_excerpt_and_shows_it_as_plain_text():
     chat = (ROOT / "local" / "src" / "pages" / "Chat.tsx").read_text(encoding="utf-8")
-    panel = (ROOT / "local" / "src" / "components" / "TracePanel.tsx").read_text(encoding="utf-8")
+    components = ROOT / "local" / "src" / "components"
+    # The steps are drawn by TraceSteps (shared by the trace panel and the steps kept under each reply: StepsDisclosure); an excerpt is plain text in all three.
+    steps = (components / "TraceSteps.tsx").read_text(encoding="utf-8")
     assert "payload.event === 'trace_excerpt'" in chat and "recordExcerpt(prev, payload.step_id, payload.excerpt)" in chat and "setTraceExcerpts({})" in chat
     assert "mergeExcerpts(mergeFacts(traceSteps, traceFacts), traceExcerpts)" in chat
-    assert "dangerouslySetInnerHTML" not in panel and '<pre className="trace-excerpt-text">{excerpt.text}</pre>' in panel
-    assert "localStorage" not in panel and "setItem" not in chat.split("trace_excerpt", 1)[1][:400]       # not kept anywhere
+    assert "dangerouslySetInnerHTML" not in steps and '<pre className="trace-excerpt-text">{excerpt.text}</pre>' in steps
+    for name in ("TraceSteps.tsx", "TracePanel.tsx", "StepsDisclosure.tsx"):
+        source = (components / name).read_text(encoding="utf-8")
+        assert "localStorage" not in source and "dangerouslySetInnerHTML" not in source, name
+    assert "setItem" not in chat.split("trace_excerpt", 1)[1][:400]       # not kept anywhere
+    # the steps a reply keeps (with their excerpts) are left out of the conversation cache in the browser
+    assert "delete m.steps" in chat
 
 
 # ---- searches: the files and matching lines ------------------------------------------------------------------------------------------------------

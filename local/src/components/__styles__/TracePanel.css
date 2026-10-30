@@ -181,3 +181,23 @@
 .trace-search-number { flex: 0 0 3.2em; text-align: right; color: var(--text-muted); user-select: none; }
 .trace-search-text { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-main); }
 .trace-search-hit { background: color-mix(in srgb, var(--accent-primary) 28%, transparent); color: inherit; border-radius: 2px; padding: 0 1px; }
+
+/* The steps of one turn, above the reply's text (components/StepsDisclosure.tsx): the live nodes while the turn runs, a "7 steps" line that opens after. The steps inside are the trace panel's own nodes. */
+.steps-inline { margin: 2px 0 8px 0; max-width: 100%; }
+.steps-inline-live { margin: 6px 0 12px 0; } /* inside the reply, above its text */
+.steps-toggle { display: flex; align-items: center; max-width: 100%; padding: 4px 6px 4px 0; border: 0; border-radius: 6px; background: none; color: var(--text-muted); font: inherit; font-size: 0.82rem; text-align: left; cursor: pointer; }
+button.steps-toggle:hover { color: var(--text-main); }
+button.steps-toggle:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
+.steps-toggle { gap: 6px; }
+.steps-toggle-label { font-family: var(--font-sans); }
+.steps-toggle-chevron { flex: 0 0 auto; font-size: 0.8rem; color: var(--text-muted); transition: transform 0.15s ease; }
+.steps-toggle[aria-expanded="true"] .steps-toggle-chevron { transform: rotate(90deg); }
+.steps-inline-body { margin: 10px 0 6px 6px; max-height: 26rem; overflow-y: auto; }
+.steps-earlier { margin: 0 0 6px 0; font-size: 0.78rem; }
+
+/* The newest node of a running turn is the loader: the Sonic ring (the same one the page has always used, smaller) stands where the dot would. */
+.trace-node-spinning .trace-node-dot { left: -2px; top: 1px; width: 18px; height: 18px; border: 0; background: none; }
+.trace-node-spinning .trace-node-dot::after { display: none; }
+.trace-node-ring { width: 18px; height: 18px; box-sizing: border-box; border: 3px solid rgba(255, 204, 0, 0.18); border-top-color: #ffcc00; border-radius: 50%; animation: sonic-spin 5.4s linear infinite; }
+.theme-shadow .trace-node-ring { border-color: rgba(207, 138, 90, 0.18); border-top-color: var(--accent-primary); }
+@media (prefers-reduced-motion: reduce) { .steps-toggle-chevron { transition: none; } .trace-node-ring { animation: none; } }

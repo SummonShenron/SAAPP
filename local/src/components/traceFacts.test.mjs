@@ -151,10 +151,34 @@ test('the summary says how many matches in how many files, and what was left out
   assert.equal(searchSummary({ kind: 'search', term: 'x', files: [{ path: 'a.py', matches: [] }, { path: 'b.py', matches: [] }], total_files: 2, total_matches: 2, hidden: 0, truncated: false }), '2 files');          // a search that only lists files
 });
 
-test('the panel shows a search as plain text and marks the term with mark elements, never as HTML', () => {
-  const panel = readFileSync(new URL('./TracePanel.tsx', import.meta.url), 'utf8');
+test('the steps show a search as plain text and mark the term with mark elements, never as HTML, and the panel and the steps under a reply draw them with the same component', () => {
+  const panel = readFileSync(new URL('./TraceSteps.tsx', import.meta.url), 'utf8');
+  assert.match(readFileSync(new URL('./TracePanel.tsx', import.meta.url), 'utf8'), /<TraceSteps [^>]*steps=\{steps\} running=\{running\} \/>/);
+  assert.match(readFileSync(new URL('./StepsDisclosure.tsx', import.meta.url), 'utf8'), /<TraceSteps steps=\{steps\} running=\{false\}/);       // under a reply; a running turn draws the same component with the ring as its newest node
+  assert.match(readFileSync(new URL('./StepsDisclosure.tsx', import.meta.url), 'utf8'), /<TraceSteps [\s\S]*?running spinner/);
   assert.match(panel, /excerpt\.kind === 'search' && <SearchResults excerpt=\{excerpt\} \/>/);
   assert.match(panel, /<mark key=\{index\} className="trace-search-hit">\{part\.text\}<\/mark>/);
   assert.doesNotMatch(panel, /dangerouslySetInnerHTML/);
   assert.match(panel, /splitAroundTerm\(match\.text, excerpt\.term\)/);
+});
+
+test('a finished turn keeps its steps with every one marked complete, and the label counts them', async () => {
+  const { finishedSteps, stepsLabel } = await import('./traceFacts.ts');
+  const steps = [{ id: 'a', title: 'Read', detail: '', status: 'complete' }, { id: 'b', title: 'Writing', detail: 'x', status: 'active', facts: ['1 file'] }];
+  const done = finishedSteps(steps);
+  assert.deepEqual(done.map(s => s.status), ['complete', 'complete']);
+  assert.deepEqual(done[1].facts, ['1 file']);
+  assert.equal(done[0], steps[0]);                                   // an already finished step is not copied
+  assert.equal(steps[1].status, 'active');                           // and the live list is not changed
+  assert.deepEqual(finishedSteps([]), []);
+  assert.equal(stepsLabel(1), '1 step');
+  assert.equal(stepsLabel(7), '7 steps');
+});
+
+test('the newest reply keeps its steps open until the next request, an older one is folded, and a choice the person made always wins', async () => {
+  const { stepsAreOpen } = await import('./traceFacts.ts');
+  assert.equal(stepsAreOpen(null, true), true);
+  assert.equal(stepsAreOpen(null, false), false);          // the next request made it an older reply
+  assert.equal(stepsAreOpen(false, true), false);          // closed by hand stays closed
+  assert.equal(stepsAreOpen(true, false), true);           // opened by hand stays open
 });

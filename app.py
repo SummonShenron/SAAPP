@@ -148,7 +148,7 @@ from backend.utils import clarifications as clarify_utils
 from backend.utils import initiation as initiation_utils
 from backend.utils import reach as reach_utils
 from backend.utils import budget_guard
-from backend.utils import llm_turns, llm_usage, loop_watchdog
+from backend.utils import context_window, llm_turns, llm_usage, loop_watchdog
 from backend.utils import ops_digest as ops_digest_utils
 from backend.utils import ops_suggestions as ops_suggestions_utils
 from backend.utils import duration_utils
@@ -1740,6 +1740,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                         len(original_response), len(full_response),
                     )
 
+            context_view = context_window.view(llm_turn.peak_input, llm_turn.peak_model)      # how full the biggest request of this turn was (counts only): the session column's context ring
+            if context_view:
+                yield f"data: {json.dumps({'event': 'context', **context_view})}\n\n"
             yield f"data: {json.dumps({'event': 'final_generation', 'text': full_response})}\n\n"
             ai_message = stamp(AIMessage(content=full_response))
             if relatable_entry:
