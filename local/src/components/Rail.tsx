@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { ConversationSummary } from '../api';
 import { BRAND_NAME } from './brand';
@@ -53,6 +53,48 @@ const Rail: React.FC<RailProps> = (props) => {
   const navigate = useNavigate();
   const { pathname } = useLocation();
 
+  const [convoOpen, setConvoOpen] = useState(false);
+  const [popupPos, setPopupPos] = useState<{ left: number; top: number } | null>(null);
+  const convoBtnRef = useRef<HTMLButtonElement>(null);
+  const convoPopupRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!convoOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (convoBtnRef.current?.contains(target) || convoPopupRef.current?.contains(target)) return;
+      setConvoOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setConvoOpen(false);
+        convoBtnRef.current?.focus();
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [convoOpen]);
+
+  const toggleConvoPopup = () => {
+    if (convoOpen) {
+      setConvoOpen(false);
+      return;
+    }
+    const rect = convoBtnRef.current?.getBoundingClientRect();
+    if (rect) {
+      const maxLeft = window.innerWidth - 280 - 8;
+      setPopupPos({
+        left: Math.max(8, Math.min(rect.right + 8, maxLeft)),
+        top: Math.max(8, rect.top),
+      });
+    }
+    setConvoOpen(true);
+  };
+
   const go = (path: string) => {
     navigate(path);
     if (isMobile) onCloseDrawer();
@@ -104,8 +146,11 @@ const Rail: React.FC<RailProps> = (props) => {
             <button
               key={p.path}
               type="button"
+              ref={p.path === '/chat' ? convoBtnRef : undefined}
               className={`rail-item${pathname.startsWith(p.path) ? ' active' : ''}`}
-              onClick={() => go(p.path)}
+              onClick={() => { go(p.path); if (compact && p.path === '/chat') toggleConvoPopup(); }}
+              aria-haspopup={compact && p.path === '/chat' ? 'menu' : undefined}
+              aria-expanded={compact && p.path === '/chat' ? convoOpen : undefined}
               aria-current={pathname.startsWith(p.path) ? 'page' : undefined}
               title={compact ? p.label : undefined}
             >
@@ -144,7 +189,35 @@ const Rail: React.FC<RailProps> = (props) => {
             </div>
           </div>
         ) : (
-          <div className="rail-spacer" />
+          <>
+            <div className="rail-spacer" />
+            {convoOpen && popupPos && (
+              <div
+                ref={convoPopupRef}
+                className="rail-convo-popup"
+                role="menu"
+                aria-label="Recent conversations"
+                style={{ left: popupPos.left, top: popupPos.top }}
+              >
+                {conversations.loading && <div className="rail-empty">Loading…</div>}
+                {!conversations.loading && conversations.items.length === 0 && <div className="rail-empty">No conversations yet.</div>}
+                {conversations.items.map(c => (
+                  <button
+                    key={c.session_id}
+                    type="button"
+                    role="menuitem"
+                    className={`rail-convo-item${c.session_id === conversations.activeId ? ' active' : ''}`}
+                    onClick={() => {
+                      conversations.onSelect(c.session_id);
+                      setConvoOpen(false);
+                    }}
+                  >
+                    {c.title || 'New conversation'}
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
         )}
 
         <UserMenu

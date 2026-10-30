@@ -119,10 +119,8 @@
 .sc-scope-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; }
 .sc-scope-row .sc-select { width: auto; flex: 0 1 62%; min-width: 0; }
 
-/* Room to spare: on a wide window the column does not take width from the conversation, it sits in the empty margin at the right edge, so turning it on or off never moves the conversation. The
-   conversation is at most 960px and centred, so there is room once the chat area is wider than 960px plus the column on each side. Narrower than that, the column shares the row and the
-   conversation gives up the width (above). */
+/* The column never takes width from the conversation: it is drawn over the empty margin at the right edge, so turning it on or off does not move the conversation. The conversation is at most 960px
+   and centred; where the margin is narrower than the column the conversation's right side gets padding for the difference (AppShell.css, "the chat page"), so its text is narrowed and nothing is
+   covered. The chat page is a size container so the conversation can measure its own margins. */
 div.chat-page.chat-page { position: relative; container: chatpage / inline-size; }
-@container chatpage (min-width: 1540px) {
-  .session-column { position: absolute; top: 0; right: 0; bottom: 0; }
-}
+.chat-page > .session-column { position: absolute; top: 0; right: 0; bottom: 0; }

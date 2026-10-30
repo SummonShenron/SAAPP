@@ -3,6 +3,12 @@ import React from 'react';
 /** The small outline icons the app shell uses (24 by 24 grid, drawn with the current text colour). */
 const SHAPES = {
   chat: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
+  conversations: (
+    <>
+      <path d="M9 3h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-1v3l-3-3" />
+      <path d="M3 9a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H8l-3 3v-3H5a2 2 0 0 1-2-2z" />
+    </>
+  ),
   branch: (
     <>
       <line x1="6" y1="3" x2="6" y2="15" />
