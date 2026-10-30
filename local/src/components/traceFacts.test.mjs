@@ -182,3 +182,16 @@ test('the newest reply keeps its steps open until the next request, an older one
   assert.equal(stepsAreOpen(false, true), false);          // closed by hand stays closed
   assert.equal(stepsAreOpen(true, false), true);           // opened by hand stays open
 });
+
+test('a step with no friendly title shows what it is doing as its title, and nothing under it', async () => {
+  const { stepWords } = await import('./traceFacts.ts');
+  assert.deepEqual(stepWords({ title: 'Searching the repo', detail: 'Looking for plan_changes' }), { title: 'Searching the repo', detail: 'Looking for plan_changes' });
+  assert.deepEqual(stepWords({ title: 'Processing step: tool_agent_node', detail: 'Reading Chat.tsx' }), { title: 'Reading Chat.tsx', detail: '' });
+  assert.deepEqual(stepWords({ title: 'Processing step: x', detail: '' }), { title: 'Processing step: x', detail: '' });
+});
+
+test('the first step of a running turn is the full-size ring, and nodes begin at the second', () => {
+  const source = readFileSync(new URL('./StepsDisclosure.tsx', import.meta.url), 'utf8');
+  assert.match(source, /steps\.length === 0 \|\| \(steps\.length === 1 && steps\[0\]\.status !== 'complete'\)/);
+  assert.match(source, /sonic-ring-loader/);
+});

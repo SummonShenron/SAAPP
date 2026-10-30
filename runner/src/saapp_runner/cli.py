@@ -176,7 +176,8 @@ def cmd_start(args: argparse.Namespace, say=print, stop=None) -> int:
         say = runlog.file_say(projects.load)               # no window to print to: a cleaned log instead (runlog.py)
     lock = InstanceLock()
     if not lock.acquire():
-        say("A runner for this computer is already running (it may have started by itself when you logged in), so this one did nothing. See: saapp-runner status")
+        if not background:           # the entry tries again every few minutes (service.KEEPALIVE_INTERVAL): a copy that finds the runner already going says nothing, so the log is not one line every time
+            say("A runner for this computer is already running (it may have started by itself when you logged in), so this one did nothing. See: saapp-runner status")
         return 0
     try:
         return _serve(args, client, say, stop, background)
@@ -186,6 +187,8 @@ def cmd_start(args: argparse.Namespace, say=print, stop=None) -> int:
 
 def _serve(args: argparse.Namespace, client: Client, say, stop, background: bool) -> int:
     say(f"saapp-runner {__version__}   server {client.server}")
+    if background and service.refresh():
+        say("Brought this computer's start-at-login entry up to date (it now starts the runner again by itself if it ever stops).")
     roots = projects.load()
     for root in roots:
         checks, config_ok, problem = scan(root)
@@ -205,7 +208,7 @@ def _serve(args: argparse.Namespace, client: Client, say, stop, background: bool
     else:
         say("It runs only these, only after you press Run in SAAPP (turn any of them off in SAAPP's settings). Press Ctrl+C to stop.")
     runner = Runner(client, None, say=say, stop=stop, timeout=args.timeout, roots_provider=projects.load, launch="service" if background else "hand", updater=update.attempt,
-                    picker=picker_module.new_picker(), asker=confirm_module.new_asker())
+                    picker=picker_module.new_picker(), asker=confirm_module.new_asker(), restarter=service.restart_soon)
     if not runner.hello():
         return 1
     say("Connected. Waiting for checks you approve in SAAPP...")
@@ -240,6 +243,13 @@ def cmd_uninstall_service(args: argparse.Namespace) -> int:
     return 0 if done else 1
 
 
+def cmd_start_link(args: argparse.Namespace) -> int:
+    """What the `saapp-runner://start` link in SAAPP's "Start runner" button runs (Windows registers it: service.register_protocol), and `saapp-runner start-link` by hand. It starts the runner, and nothing
+    else: whatever text came with the link is ignored, so a web page can ask for a start and for nothing more. No output: it runs without a window."""
+    service.start_now()
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     print(f"saapp-runner {__version__}")
     print("paired with SAAPP:        " + ("yes" if load_credentials() else "no (run the setup file from SAAPP's settings)"))
@@ -249,7 +259,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     free = probe.acquire()
     if free:
         probe.release()
-    print("running right now:        " + ("no" if free else "yes"))
+    print("running right now:        " + ("no   (to start it now: saapp-runner start-link)" if free else "yes"))
     listed = projects.describe()
     print("projects:                 " + (str(len(listed)) if listed else "none yet (SAAPP's settings, Add a project; or: saapp-runner add-project --root <folder>)"))
     for item in listed:
@@ -287,12 +297,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     ask = sub.add_parser("confirm-command", help=argparse.SUPPRESS)
     ask.add_argument("--line", required=True)
     ask.add_argument("--notes", default="[]")
+    link = sub.add_parser("start-link", help="start the runner now (what SAAPP's Start runner button runs)")
+    link.add_argument("link", nargs="*", help=argparse.SUPPRESS)           # the link's text, when it comes from a browser: never read
     for name, text in (("install-service", "start the runner by itself, in the background, whenever you log in"), ("uninstall-service", "stop starting the runner by itself, and stop the background copy"),
                        ("status", "show whether this computer's runner is paired, set to start at login, running, and which projects it serves"), ("projects", "list the projects this computer serves")):
         sub.add_parser(name, help=text)
     args = parser.parse_args(argv)
     return {"pair": cmd_pair, "init": cmd_init, "start": cmd_start, "install-service": cmd_install_service, "uninstall-service": cmd_uninstall_service, "status": cmd_status, "add-project": cmd_add_project,
-            "remove-project": cmd_remove_project, "projects": cmd_projects, "pick-folder": cmd_pick_folder, "confirm-command": cmd_confirm_command, "mcp": cmd_mcp}[args.command](args)
+            "remove-project": cmd_remove_project, "projects": cmd_projects, "pick-folder": cmd_pick_folder, "confirm-command": cmd_confirm_command, "mcp": cmd_mcp, "start-link": cmd_start_link}[args.command](args)
 
 
 if __name__ == "__main__":

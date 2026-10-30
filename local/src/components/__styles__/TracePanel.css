@@ -166,7 +166,9 @@
 /* The steps of one turn, above the reply's text (components/StepsDisclosure.tsx): the live nodes while the turn runs, a "7 steps" line that opens after. The steps inside are the trace panel's own nodes. */
 .steps-inline { margin: 2px 0 8px 0; max-width: 100%; }
 .steps-inline-live { margin: 6px 0 12px 0; } /* inside the reply, above its text */
-.steps-inline-waiting .sonic-loader-container { margin: 4px 0 4px 2px; }   /* the full-size ring before the first step: the page's own loader, sat flush in the reply */
+.steps-inline-waiting .sonic-loader-container { margin: 4px 0 4px 2px; }   /* the full-size ring for the first step: the page's own loader, sat flush in the reply */
+.steps-first-title { font-size: 0.9rem; font-weight: 600; color: var(--text-main); line-height: 1.3; }
+.steps-first-detail { font-size: 0.78rem; font-weight: 400; color: var(--text-muted); line-height: 1.4; }
 .steps-toggle { display: flex; align-items: center; max-width: 100%; padding: 4px 6px 4px 0; border: 0; border-radius: 6px; background: none; color: var(--text-muted); font: inherit; font-size: 0.82rem; text-align: left; cursor: pointer; }
 button.steps-toggle:hover { color: var(--text-main); }
 button.steps-toggle:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }

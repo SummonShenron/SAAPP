@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import Icon from './icons';
-import { searchSummary, splitAroundTerm, toggleExpanded, type SearchExcerpt, type TraceExcerpt } from './traceFacts';
+import { searchSummary, splitAroundTerm, stepWords, toggleExpanded, type SearchExcerpt, type TraceExcerpt } from './traceFacts';
 import './__styles__/TracePanel.css';
 
 export interface TraceStep {
@@ -63,18 +63,16 @@ const TraceSteps: React.FC<{ steps: TraceStep[]; running: boolean; idPrefix?: st
         const hasDetails = hasFacts || hasExcerpt;
         const expanded = hasDetails && open.has(step.id);
         const panelId = `${idPrefix}-facts-${step.id}`;
-        // A step with no friendly title ("Processing step: ...") shows what it is doing as the title instead, with no separate detail line.
-        const untitled = step.title.startsWith('Processing step:') && !!step.detail;
-        const title = untitled ? step.detail : step.title;
+        const words = stepWords(step);
         const main = (
           <span className="trace-node-main">
             <span className="trace-node-title">
-              {title}
+              {words.title}
               {step.batchSize && step.batchSize > 1 && (
                 <span className="trace-batch">batched {step.batchIndex}/{step.batchSize}</span>
               )}
             </span>
-            {step.detail && !untitled && <span className="trace-node-detail">{step.detail}</span>}
+            {words.detail && <span className="trace-node-detail">{words.detail}</span>}
           </span>
         );
         // In the steps under a running reply the newest node IS the loader: the Sonic ring takes the dot's place until the next step arrives (the trace panel keeps its pulsing dot).

@@ -30,6 +30,8 @@ interface Props {
   /** False for a guest, who has no runner to ask about. */
   runnerEnabled: boolean;
   runners: RunnerInfo[] | null;
+  /** The "Start runner" button on a runner that is not answering; null where the link it opens cannot exist (not Windows). `asked` after it was pressed. */
+  runnerStart: { asked: boolean; onStart: () => void } | null;
   /** The usage ring's view (components/budgetText.ts); null when there is no limit to show. */
   usage: RingView | null;
   /** How full the model's context window got on the last turn, as the server reported it (counts only); null before the first turn. */
@@ -154,7 +156,7 @@ function Card({ id, label, title, badge, summary, className, collapsed, onToggle
  * controls, the gauges, the plan while there is one, and what this conversation is scoped to. It only shows what the page already knows; settings stay in the "..." menu (the scope row
  * opens that menu's own picker). A card with nothing to show is not drawn, and any card can be folded (remembered in this browser).
  */
-const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, usage, context, plan, scope, memory, folderControls, repo }) => {
+const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runnerStart, usage, context, plan, scope, memory, folderControls, repo }) => {
   // "2s ago" goes stale on its own: redraw the times every few seconds.
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -196,6 +198,14 @@ const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, usage,
         )}
       >
         {runner && <Row line={runner} />}
+        {runner && runner.tone === 'warn' && runnerStart && (
+          <div className="sc-runner-start">
+            <button type="button" className="sc-btn sc-btn-primary" onClick={runnerStart.onStart}>{runnerStart.asked ? 'Try again' : 'Start runner'}</button>
+            {runnerStart.asked && (
+              <span className="sc-option-hint">Asked your computer to start it; this shows connected within a minute. If nothing starts, run <code>saapp-runner install-service</code> once in a terminal on that computer.</span>
+            )}
+          </div>
+        )}
         <Row line={folderRow} />
         {folder.branch && <div className="sc-branch">On branch <code>{folder.branch}</code></div>}
         {folderControls && (

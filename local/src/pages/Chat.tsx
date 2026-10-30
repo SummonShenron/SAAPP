@@ -31,7 +31,7 @@ import MemorySourceDialog from '../components/MemorySourceDialog';
 import BudgetBanner from '../components/BudgetBanner';
 import SessionColumn, { type FolderControls, type RepoControls } from '../components/SessionColumn';
 import SessionRail from '../components/SessionRail';
-import { scopeChoices, scopeLabel as scopeName } from '../components/sessionColumnLogic';
+import { RUNNER_START_LINK, canStartRunnerFromLink, scopeChoices, scopeLabel as scopeName } from '../components/sessionColumnLogic';
 import { ringView } from '../components/budgetText';
 import { type TraceStep } from '../components/TracePanel';
 import { finishedSteps, mergeExcerpts, mergeFacts, recordExcerpt, recordFacts, toolStepLabel, type TraceExcerptsById, type TraceFactsById } from '../components/traceFacts';
@@ -713,7 +713,14 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   // guest shares one identity) or in embed mode.
   const workspace = useLocalWorkspace({ enabled: !isEmbedded && !isGuestPrincipal(principal) });
   // What the session column shows about the connection: whether the runner answers (asked every half minute while the column is showing), and the folder's branch.
-  const runnerList = useRunnerPing(columnVisible && !isGuestPrincipal(principal));
+  const { runners: runnerList, askSoon: checkRunnerSoon } = useRunnerPing(columnVisible && !isGuestPrincipal(principal));
+  // "Start runner": opens the link the runner registered with Windows (it starts the runner with no window), then watches for it to connect. Only offered where that link can exist.
+  // `askedForSeen` is when the runner was last seen at the moment of the press, so the hint under the button belongs to this outage and goes away once it has been connected and has dropped again.
+  const runnerLastSeen = runnerList?.[0]?.last_seen ?? '';
+  const [askedForSeen, setAskedForSeen] = useState<string | null>(null);
+  const runnerStart = canStartRunnerFromLink(typeof navigator === 'undefined' ? '' : navigator.userAgent)
+    ? { asked: askedForSeen !== null && askedForSeen === runnerLastSeen, onStart: () => { setAskedForSeen(runnerLastSeen); try { window.location.href = RUNNER_START_LINK; } catch { /* nothing to do: the hint under the button says what to run */ } checkRunnerSoon(); } }
+    : null;
   const [folderBranch, setFolderBranch] = useState<string | null>(null);
   const [contextUse, setContextUse] = useState<{ sessionId: string; used: number; window: number; fraction: number } | null>(null);
   const { status: workspaceStatus, currentGitBranch } = workspace;
@@ -3238,6 +3245,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           folder={{ status: workspace.status, name: workspace.folderName, fileCount: workspace.fileCount, branch: workspace.status === 'disconnected' ? null : folderBranch }}
           runnerEnabled={!isGuestPrincipal(principal)}
           runners={runnerList}
+          runnerStart={runnerStart}
           usage={budget ? ringView(budget) : null}
           context={contextUse && contextUse.sessionId === sessionId ? contextUse : null}
           plan={codePlan && workspace.canEdit ? codePlan : null}

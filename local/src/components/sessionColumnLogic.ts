@@ -31,6 +31,14 @@ export function runnerLine(runners: RunnerInfo[] | null, now: Date = new Date())
   return { tone: 'warn', text: 'Runner not answering', detail: seen ? `Last seen ${seen}` : 'Start it on your computer.' };
 }
 
+/** The link the "Start runner" button opens. The runner registers it with Windows when it installs its start-at-login entry (runner/src/saapp_runner/service.py), and what it runs is fixed: start the runner. */
+export const RUNNER_START_LINK = 'saapp-runner://start';
+
+/** Whether the "Start runner" button is offered: only where the runner can have registered the link, which is Windows (the runner's entries on macOS and Linux restart it by themselves). */
+export function canStartRunnerFromLink(userAgent: string): boolean {
+  return /Windows/i.test(userAgent || '') && !/Mobile|Android/i.test(userAgent || '');
+}
+
 /** The connected folder, as one line. */
 export function folderLine(status: string, name: string | null, fileCount: number | null): Line {
   const where = name ?? '';

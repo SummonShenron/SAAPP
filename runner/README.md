@@ -56,10 +56,13 @@ Each project has its own checks, its own on/off choices and its own fake-key set
 
 ## Running it by itself at login
 
-`install-service` makes one entry per computer in your own account, never an administrator's: a Task Scheduler task on Windows (no console window, runs on battery, restarts if it ends), a LaunchAgent on macOS, a `systemd --user` unit on Linux. The entry runs the same thing you would type (`python -m saapp_runner start --service`) and holds no key and no folder.
+`install-service` makes one entry per computer in your own account, never an administrator's: a Task Scheduler task on Windows (no console window, runs on battery, starts at login and again every five minutes whenever it is not running), a LaunchAgent on macOS, a `systemd --user` unit on Linux. The entry runs the same thing you would type (`python -m saapp_runner start --service`) and holds no key and no folder.
+
+On Windows it also registers the link `saapp-runner://start` (in your own registry hive), which SAAPP's **Start runner** button opens: it starts the runner with no window and does nothing else, whatever else a link says. (Since 0.1.3. Earlier, a runner that updated itself on Windows stayed stopped until the next login, because Task Scheduler does not restart a program that exits with the update's code. If yours says "not answering" after an update from 0.1.2 or older, run `saapp-runner install-service` once.)
 
 ```bash
 saapp-runner status             # paired? set to start at login? running now? the projects, and the end of its log
+saapp-runner start-link         # start it now, in the background (what the Start runner button does)
 saapp-runner uninstall-service  # stop starting it at login, and stop the background copy
 saapp-runner start              # run it in this window instead (Ctrl+C stops it)
 ```
@@ -151,7 +154,7 @@ and delete `~/.saapp-runner`.
 
 ## Status
 
-Version 0.1.2. The runner, the server side, SAAPP's Settings section (with a starter script that does the steps above for you) and the check card in the chat are built and tested. The design is in `docs/local-runner-plan.md`.
+Version 0.1.3. The runner, the server side, SAAPP's Settings section (with a starter script that does the steps above for you) and the check card in the chat are built and tested. The design is in `docs/local-runner-plan.md`.
 
 ## Updating
 
@@ -165,8 +168,8 @@ The version lives in three places that a test keeps equal: `runner/pyproject.tom
 2. Tag it with the same version and push the tag:
 
    ```bash
-   git tag runner-v0.1.2
-   git push origin runner-v0.1.2
+   git tag runner-v0.1.3
+   git push origin runner-v0.1.3
    ```
 
 3. Deploy the server. Its Settings page now offers the new version: the starter script installs it with `pip install --upgrade`, and a runner that is already installed (0.1.1 or newer) shows an **Update** button, or updates itself when the person has turned on automatic updates.
