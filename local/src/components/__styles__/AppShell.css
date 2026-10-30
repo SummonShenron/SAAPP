@@ -384,18 +384,23 @@ div.chat-page.chat-page { flex: 1 1 auto; min-height: 0; display: flex; flex-dir
 /* THE BOX IS THE WRAPPER, and the buttons have a row of their own under the text. The buttons used to float over the bottom of the text area, so a long message scrolled
    underneath them. Now the rounded, hairline-bordered box is the wrapper (a column: the text area, then the toolbar), and the text area scrolls only inside its own part of
    it. The hairline is an inset shadow: it takes no room, so the glow layer (the wrapper's size) still sits exactly on it. The embedded widget keeps its old layout (no .chat-page). */
-.chat-page .chat-input-wrapper { display: flex; flex-direction: column; border-radius: 25px; background: var(--chat-input-bg); box-shadow: inset 0 0 0 1px var(--border-color); }
+/* ONE LINE AGAIN (2026-10-30): the text and the buttons share one row, the way they did before the buttons got a row of their own. The text area takes the room the buttons leave and grows upward as
+   a long message is typed, with the buttons staying at the bottom right, so the text still never runs under them. The toolbar wrapper steps aside (display: contents) and its two button groups
+   become the row's ends: the folder and repo icons (when the session column is not showing) at the left, "...", "+" and Send at the right. */
+.chat-page .chat-input-wrapper { display: flex; flex-direction: row; align-items: flex-end; border-radius: 25px; background: var(--chat-input-bg); box-shadow: inset 0 0 0 1px var(--border-color); }
 .app-shell .chat-page .chat-input-wrapper .chat-textarea,
 .app-shell .chat-page .chat-input-wrapper .chat-textarea:active {
-  border: 0; background: transparent; box-shadow: none; border-radius: 25px 25px 0 0; min-height: 0; padding: 0.85rem 1.2rem 0.5rem;
+  order: 1; flex: 1 1 auto; min-width: 0;
+  border: 0; background: transparent; box-shadow: none; border-radius: 25px; min-height: 0; padding: 0.85rem 0.5rem 0.85rem 1.2rem;
   /* a long message scrolls inside the text area: its lines fade out at the top and bottom edge instead of being cut (the padding keeps a short one clear of the fade) */
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 12px, #000 calc(100% - 6px), transparent 100%);
   mask-image: linear-gradient(to bottom, transparent 0, #000 12px, #000 calc(100% - 6px), transparent 100%);
 }
-.chat-page .chat-input-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; min-height: 2.5rem; padding: 0 0.75rem 0.6rem; }
+.chat-page .chat-input-toolbar { display: contents; }
 .chat-page .chat-input-toolbar .icon-row-left,
-.chat-page .chat-input-toolbar .icon-row-overlay { position: static; }
-.chat-page .chat-input-toolbar .icon-row-overlay { margin-left: auto; align-items: center; }
+.chat-page .chat-input-toolbar .icon-row-overlay { position: static; flex: 0 0 auto; margin-bottom: 0.5rem; }
+.chat-page .chat-input-toolbar .icon-row-left { order: 0; padding-left: 0.75rem; }
+.chat-page .chat-input-toolbar .icon-row-overlay { order: 2; margin-left: 0; padding-right: 0.75rem; align-items: center; }
 
 /* The target-repo and local-folder buttons, bottom left of the message box (they used to be in the "..." menu). The icons are always quiet gray (brighter while their menu or banner is open);
    a small dot is the status: the accent orange when a repo is set or a folder is connected, pulsing while syncing, amber when it needs permission, red when it failed. No dot means off. */

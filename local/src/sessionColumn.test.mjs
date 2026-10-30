@@ -122,3 +122,17 @@ test('the folder light is orange when connected and says the other states the ol
   assert.equal(folderLight('disconnected'), null);
   assert.equal(folderLight('something else'), null);
 });
+
+test('the scope reads "All" for the default, the knowledge base name when it is one the person can use, and a guest is offered no "All"', async () => {
+  const { scopeLabel, scopeChoices } = await import('./components/sessionColumnLogic.ts');
+  const allowed = [{ id: 'Affiliate_A', display_name: 'Affiliate A' }, { id: 'kb-1', display_name: "jack_admin's Knowledge Base" }];
+  assert.equal(scopeLabel('All', allowed), 'All');
+  assert.equal(scopeLabel('All', []), 'All');
+  assert.equal(scopeLabel('kb-1', allowed), "jack_admin's Knowledge Base");
+  assert.equal(scopeLabel('Mystery', allowed), 'Mystery');
+  assert.equal(scopeLabel('', allowed), 'All');
+  assert.deepEqual(scopeChoices(allowed, false).map(c => c.value), ['All', 'Affiliate_A', 'kb-1']);
+  assert.deepEqual(scopeChoices(allowed, false)[0], { value: 'All', label: 'All' });
+  assert.deepEqual(scopeChoices(allowed, true).map(c => c.value), ['Affiliate_A', 'kb-1']);
+  assert.deepEqual(scopeChoices([], false), [{ value: 'All', label: 'All' }]);
+});

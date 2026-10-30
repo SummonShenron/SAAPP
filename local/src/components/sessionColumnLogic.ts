@@ -134,7 +134,7 @@ export function serializeCollapsed(collapsed: ReadonlySet<string>): string {
 
 export type FolderLight = 'on' | 'syncing' | 'pending' | 'warn' | 'error';
 
-/** The light the folder button beside the message box used to carry, now on the Local folder card's header when it is folded: orange when connected, pulsing while it syncs, hollow when the server has no copy yet,
+/** The light the folder button beside the message box used to carry, now on the Connection card's header when it is folded: green when connected, pulsing while it syncs, hollow when the server has no copy yet,
  *  amber when it needs to be reconnected, red when the sync failed. null (no light) when no folder is connected. */
 export function folderLight(status: string): FolderLight | null {
   switch (status) {
@@ -145,4 +145,19 @@ export function folderLight(status: string): FolderLight | null {
     case 'error': return 'error';
     default: return null;
   }
+}
+
+export interface ScopeChoice { value: string; label: string; }
+
+/** What a scope reads as: "All" for the default (every knowledge base the person may use: app.py's target_scope), the knowledge base's name when it is one they can use, else the raw id. */
+export function scopeLabel(selected: string, allowed: { id: string; display_name: string }[]): string {
+  const known = allowed.find(item => item.id === selected);
+  if (known) return known.display_name;
+  return selected || 'All';
+}
+
+/** The scopes to pick from: "All" first (the way back to the default, which the old picker never offered), then each knowledge base the person may use. A guest is pinned to their one sandbox scope: no "All". */
+export function scopeChoices(allowed: { id: string; display_name: string }[], guest: boolean): ScopeChoice[] {
+  const named = allowed.map(item => ({ value: item.id, label: item.display_name }));
+  return guest ? named : [{ value: 'All', label: 'All' }, ...named];
 }

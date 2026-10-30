@@ -96,10 +96,25 @@
 .sc-summary .sc-dot { margin-top: 0; }
 @media (prefers-reduced-motion: reduce) { .sc-chevron { transition: none; } }
 
-/* The folder's light on its folded card: the one the folder button beside the message box used to carry (orange when connected, pulsing while syncing, hollow when not uploaded yet). */
-.sc-light { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--accent-primary); }
+/* The folder's light on its folded card: the one the folder button beside the message box used to carry (green when connected, pulsing while syncing, hollow when not uploaded yet). */
+.sc-light { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #22a06b; }
 .sc-light-warn { background: #f59e0b; }
 .sc-light-error { background: var(--danger, #ef4444); }
-.sc-light-pending { box-sizing: border-box; background: transparent; border: 1.5px solid var(--accent-primary); }
+.sc-light-pending { box-sizing: border-box; background: transparent; border: 1.5px solid #22a06b; }
 .sc-light-syncing { animation: tool-dot-pulse 1.1s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .sc-light-syncing { animation: none; } }
+
+/* The folder's actions and options sit under the connection rows in the same card, set off by a hairline (none in dark, where the cards have no borders). The scope is a dropdown in its row. */
+.sc-folder-controls { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-color); }
+.theme-shadow .sc-folder-controls { border-top-color: transparent; padding-top: 4px; }
+.sc-folder-controls .sc-field:first-child, .sc-folder-controls > .sc-btn + .sc-field { margin-top: 10px; }
+.sc-scope-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; }
+.sc-scope-row .sc-select { width: auto; flex: 0 1 62%; min-width: 0; }
+
+/* Room to spare: on a wide window the column does not take width from the conversation, it sits in the empty margin at the right edge, so turning it on or off never moves the conversation. The
+   conversation is at most 960px and centred, so there is room once the chat area is wider than 960px plus the column on each side. Narrower than that, the column shares the row and the
+   conversation gives up the width (above). */
+div.chat-page.chat-page { position: relative; container: chatpage / inline-size; }
+@container chatpage (min-width: 1540px) {
+  .session-column { position: absolute; top: 0; right: 0; bottom: 0; }
+}

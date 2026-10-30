@@ -31,6 +31,7 @@ import MemorySourceDialog from '../components/MemorySourceDialog';
 import BudgetBanner from '../components/BudgetBanner';
 import UsageRing from '../components/UsageRing';
 import SessionColumn, { type FolderControls, type RepoControls } from '../components/SessionColumn';
+import { scopeChoices, scopeLabel as scopeName } from '../components/sessionColumnLogic';
 import { ringView } from '../components/budgetText';
 import TracePanel, { type TraceStep } from '../components/TracePanel';
 import { finishedSteps, mergeExcerpts, mergeFacts, recordExcerpt, recordFacts, toolStepLabel, type TraceExcerptsById, type TraceFactsById } from '../components/traceFacts';
@@ -2229,8 +2230,9 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
   const settingsLocked = loading || principal === 'guest_bty';
   // Patchy isn't offered to the BTY guest at all (no mascot, no menu toggle).
   const patchyAllowed = !isEmbedded && principal !== 'guest_bty';
-  const scopeLabel = allowedAffiliates.find(a => a.id === selectedAffiliate)?.display_name
-    || (selectedAffiliate !== 'All' ? selectedAffiliate : 'None');
+  // "All" is the default: every knowledge base the person may use (it used to read "None"). The choices include it, so a person who picked one can go back.
+  const scopeLabel = scopeName(selectedAffiliate, allowedAffiliates);
+  const scopeOptions = scopeChoices(allowedAffiliates, isGuestPrincipal(principal));
   // What the newest reply that used memory drew on (the session column says it in a few words).
   const lastMemory = [...messages].reverse().find(m => m.sender === 'ai' && m.memorySources)?.memorySources ?? null;
   const folderGlyph = settingsGlyph(<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />);
@@ -2313,21 +2315,39 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
   const repoControls: RepoControls | null = isEmbedded ? null : {
     value: targetRepo, input: repoInput, saving: repoSaving, onInput: setRepoInput, onSave: () => { void handleSaveTargetRepo(); }, onClear: () => { void handleClearTargetRepo(); },
   };
+  // The attach button. In the app it sits at the left of the text; the embedded widget keeps it with the other buttons at the right.
+  const attachButton = (
+    <button
+      type="button"
+      className="circle-icon-button"
+      onClick={() => document.getElementById("file-upload")?.click()}
+      title="Attach a file"
+      aria-label="Attach a file"
+    >
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19" />
+        <line x1="5" y1="12" x2="19" y2="12" />
+      </svg>
+    </button>
+  );
   const settingsEntries: { item: OptionWheelItem; run: () => void; keepOpen?: boolean }[] = isEmbedded ? [] : [
-    // {
-    //   item: {
-    //     label: fetchingScope ? 'Scope: loading…' : `Scope: ${scopeLabel}`,
-    //     disabled: loading || fetchingScope || allowedAffiliates.length === 0,
-    //     icon: settingsGlyph(<><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></>),
-    //   },
-    //   // Opens its own picker popup (rendered next to the overflow popover) instead of cycling
-    //   // through scopes one click at a time.
-    //   run: () => {
-    //     setShowOverflowWheel(false);
-    //     setShowScopePicker(true);
-    //   },
-    //   keepOpen: true,
-    // },
+    // The scope lives in the session column on a wide screen (a dropdown there); this entry is for when the column is not showing (a narrow window, a phone, or switched off).
+    ...(columnVisible ? [] : [
+      {
+        item: {
+          label: fetchingScope ? 'Scope: loading…' : `Scope: ${scopeLabel}`,
+          disabled: loading || fetchingScope || allowedAffiliates.length === 0,
+          icon: settingsGlyph(<><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></>),
+        },
+        // Opens its own picker popup (rendered next to the overflow popover) instead of cycling
+        // through scopes one click at a time.
+        run: () => {
+          setShowOverflowWheel(false);
+          setShowScopePicker(true);
+        },
+        keepOpen: true,
+      }
+    ]),
     {
       item: {
         label: `Open Answers: ${ragMode === 'open' ? 'On' : 'Off'}`,
@@ -2651,8 +2671,11 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               {/* The buttons sit in a row of their own under the text (in the app shell), so typed text can never run under them. In the embedded widget this wrapper has no
                   styling and its two groups keep floating over the box's bottom edge. */}
               <div className="chat-input-toolbar">
-              {!isEmbedded && !columnVisible && (
+              {!isEmbedded && (
                 <div className="icon-row-left" ref={toolButtonsRef}>
+                  {/* The attach button is at the left of the text, always; the repo and folder buttons follow it while the session column is not showing (it carries both). */}
+                  {attachButton}
+                  {!columnVisible && (<>
                   <button
                     type="button"
                     className={`circle-icon-button tool-button${targetRepo ? ' is-on' : ''}${showRepoBanner ? ' is-open' : ''}`}
@@ -2697,6 +2720,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                       )}
                     </div>
                   )}
+                  </>)}
                 </div>
               )}
 
@@ -2792,16 +2816,16 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                         Active security scope
                       </div>
                       <OptionWheel
-                        items={allowedAffiliates.map(a => ({
-                          label: `${a.id === selectedAffiliate ? "✓ " : ""}${a.display_name}`,
+                        items={scopeOptions.map(choice => ({
+                          label: `${choice.value === selectedAffiliate ? "✓ " : ""}${choice.label}`,
                         }))}
                         columnLayout
                         fontSize={0.85}
                         textColor="#94a3b8"
                         activeColor="#f8fafc"
                         onActivate={index => {
-                          const chosen = allowedAffiliates[index];
-                          if (chosen) setSelectedAffiliate(chosen.id);
+                          const chosen = scopeOptions[index];
+                          if (chosen) setSelectedAffiliate(chosen.value);
                           setShowScopePicker(false);
                         }}
                       />
@@ -2867,16 +2891,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                   )}
                 </div>
 
-                <button
-                  type="button"
-                  className="circle-icon-button"
-                  onClick={() => document.getElementById("file-upload")?.click()}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="12" y1="5" x2="12" y2="19" />
-                    <line x1="5" y1="12" x2="19" y2="12" />
-                  </svg>
-                </button>
+                {isEmbedded && attachButton}
 
                 <button
                   type={loading && !input.trim() ? "button" : "submit"}
@@ -3313,7 +3328,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           usage={budget ? ringView(budget) : null}
           context={contextUse && contextUse.sessionId === sessionId ? contextUse : null}
           plan={codePlan && workspace.canEdit ? codePlan : null}
-          scope={allowedAffiliates.length > 0 ? { label: fetchingScope ? 'Loading…' : scopeLabel, busy: loading || fetchingScope, onPick: () => setShowScopePicker(true) } : null}
+          scope={allowedAffiliates.length > 0 ? { value: selectedAffiliate, choices: scopeOptions, busy: loading || fetchingScope, onChange: setSelectedAffiliate } : null}
           memory={lastMemory}
           folderControls={folderControls}
           repo={repoControls}

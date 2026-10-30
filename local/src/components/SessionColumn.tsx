@@ -3,7 +3,7 @@ import type { CodePlan, MemorySources, RunnerInfo } from '../api';
 import type { RingView } from './budgetText';
 import {
   APPROVAL_OPTIONS, GIT_OPTIONS, contextGauge, folderLight, folderLine, memoryLine, parseCollapsed, planProgress, runnerLine, serializeCollapsed, toggleCollapsed,
-  type ContextUse, type Line, type Option,
+  type ContextUse, type Line, type Option, type ScopeChoice,
 } from './sessionColumnLogic';
 import './__styles__/SessionColumn.css';
 
@@ -33,8 +33,8 @@ interface Props {
   context: ContextUse | null;
   /** The approved plan, while there is one. */
   plan: CodePlan | null;
-  /** The scope Sonic answers from, with the button that opens the same picker as the settings menu. null when there is none to pick. */
-  scope: { label: string; busy: boolean; onPick: () => void } | null;
+  /** The scope Sonic answers from, as a dropdown right in the panel (it used to open the settings menu's picker down by the message box). null when there are none to pick. */
+  scope: { value: string; choices: ScopeChoice[]; busy: boolean; onChange: (value: string) => void } | null;
   /** What the last reply drew on from memory. */
   memory: MemorySources | null;
   /** The folder's actions and options; null where a folder cannot be connected (a guest). */
@@ -150,41 +150,41 @@ const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, usage,
   const percent = (fraction: number) => `${Math.round(fraction * 100)}%`;
   return (
     <aside className="session-column" aria-label="Session">
+      {/* One card for the connection: the runner on the person's computer and the folder they connected (the same folder for both), with the folder's actions and options below. Folded, its header keeps
+          the runner's dot and the folder's light (the one the folder button beside the message box used to carry, green when connected). */}
       <Card
         id="connection" label="Connection" title="Connection" collapsed={folded.has('connection')} onToggle={toggle}
         summary={(
           <span className="sc-summary">
             {runner && <span className={`sc-dot sc-dot-${runner.tone}`} title={runner.text} />}
-            <span className={`sc-dot sc-dot-${folderRow.tone}`} title={folderRow.text} />
+            {folderLightKind
+              ? <span className={`sc-light sc-light-${folderLightKind}`} title={folderRow.text} />
+              : <span className={`sc-dot sc-dot-${folderRow.tone}`} title={folderRow.text} />}
           </span>
         )}
       >
         {runner && <Row line={runner} />}
         <Row line={folderRow} />
         {folder.branch && <div className="sc-branch">On branch <code>{folder.branch}</code></div>}
+        {folderControls && (
+          <div className="sc-folder-controls">
+            {folderControls.primary && (
+              <button type="button" className="sc-btn sc-btn-primary" onClick={folderControls.primary.run} disabled={folderControls.busy}>{folderControls.primary.label}</button>
+            )}
+            {folderControls.options && (
+              <>
+                <Options label="When Sonic edits your files" value={folderControls.options.approval.value} options={APPROVAL_OPTIONS} onChange={folderControls.options.approval.onChange} />
+                <Options label="After Sonic commits" value={folderControls.options.git.value} options={GIT_OPTIONS} onChange={folderControls.options.git.onChange} />
+                <div className="sc-actions">
+                  {folderControls.options.actions.map(action => (
+                    <button key={action.label} type="button" className="sc-btn" onClick={action.run} disabled={folderControls.busy}>{action.label}</button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </Card>
-
-      {folderControls && (
-        <Card
-          id="folder" label="Local folder" title="Local folder" collapsed={folded.has('folder')} onToggle={toggle}
-          summary={folderLightKind ? <span className="sc-summary"><span className={`sc-light sc-light-${folderLightKind}`} title={folderRow.text} /></span> : undefined}
-        >
-          {folderControls.primary && (
-            <button type="button" className="sc-btn sc-btn-primary" onClick={folderControls.primary.run} disabled={folderControls.busy}>{folderControls.primary.label}</button>
-          )}
-          {folderControls.options && (
-            <>
-              <Options label="When Sonic edits your files" value={folderControls.options.approval.value} options={APPROVAL_OPTIONS} onChange={folderControls.options.approval.onChange} />
-              <Options label="After Sonic commits" value={folderControls.options.git.value} options={GIT_OPTIONS} onChange={folderControls.options.git.onChange} />
-              <div className="sc-actions">
-                {folderControls.options.actions.map(action => (
-                  <button key={action.label} type="button" className="sc-btn" onClick={action.run} disabled={folderControls.busy}>{action.label}</button>
-                ))}
-              </div>
-            </>
-          )}
-        </Card>
-      )}
 
       {repo && (
         <Card id="github" label="GitHub" title="GitHub" collapsed={folded.has('github')} onToggle={toggle} summary={repo.value ? <span className="sc-summary">{repo.value}</span> : undefined}>
@@ -229,10 +229,12 @@ const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, usage,
       {(scope || memoryText) && (
         <Card id="conversation" label="This conversation" title="This conversation" collapsed={folded.has('conversation')} onToggle={toggle}>
           {scope && (
-            <button type="button" className="sc-scope" onClick={scope.onPick} disabled={scope.busy} title="Change what Sonic answers from">
+            <label className="sc-scope-row" title="What Sonic answers from">
               <span className="sc-scope-label">Scope</span>
-              <span className="sc-scope-value">{scope.label}</span>
-            </button>
+              <select className="sc-select" value={scope.value} disabled={scope.busy} onChange={event => scope.onChange(event.target.value)} aria-label="Scope: what Sonic answers from">
+                {scope.choices.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+              </select>
+            </label>
           )}
           {memoryText && <div className="sc-memory"><span className="sc-scope-label">Memory used</span><span>{memoryText}</span></div>}
         </Card>
