@@ -429,7 +429,7 @@ class PlanModeUpdate(BaseModel):
     plan_mode: bool
 
 class CodePlanAction(BaseModel):
-    action: str                                  # "approve" | "cancel" | "edit_step" | "remove_step"
+    action: str                                  # "approve" | "cancel" | "edit_step" | "remove_step" | "mark_done"
     step_id: Optional[str] = None
     text: Optional[str] = None
 
@@ -2342,6 +2342,12 @@ class RunnerApproveRequest(BaseModel):
     confirmed: bool = False         # the second, stronger confirmation a command that changes things needs on its card
 
 
+class RunnerCommandRequest(BaseModel):
+    runner_id: str = Field(min_length=1, max_length=64)
+    project_id: str = Field(min_length=1, max_length=64)
+    line: str = Field(min_length=1, max_length=2000)       # one command line, typed in the Terminal card
+
+
 def _runner_db_or_503():
     db = get_db()
     if db is None:
@@ -2509,6 +2515,25 @@ async def get_runner_job(job_id: str, current_user = Depends(get_current_user)):
     job = await asyncio.to_thread(runner_jobs.get_job, _runner_db_or_503(), username, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="No such check.")
+    return job
+
+
+@app.get("/api/runner/jobs")
+async def list_runner_jobs(runner_id: str = Query(...), project_id: str = Query(...), current_user = Depends(get_current_user)):
+    """The command jobs on one of the person's runners for one project: newest first, the last 20, the last 7 days. Output tails are left out; fetch one job for its output."""
+    username = _runner_person(current_user)
+    return {"jobs": await asyncio.to_thread(runner_jobs.list_command_jobs, _runner_db_or_503(), username, runner_id, project_id)}
+
+
+@app.post("/api/runner/jobs")
+async def create_runner_command(body: RunnerCommandRequest, current_user = Depends(get_current_user)):
+    """The person types a command line in the Terminal card. It becomes the same job Sonic's commands do (backend/utils/runner_jobs.py): read and classified with the runner's own rules, a refused line
+    never becomes a job, and one that changes things still needs the stronger confirmation and the runner's own window. Only the person's own runner and project."""
+    username = _runner_person(current_user)
+    try:
+        job, _reused = await asyncio.to_thread(runner_jobs.create_or_reuse_command_job, _runner_db_or_503(), username, body.runner_id, body.line, body.project_id)
+    except runner_jobs.RunnerError as problem:
+        raise _runner_http_error(problem)
     return job
 
 
@@ -3142,7 +3167,7 @@ async def get_code_plan(session_id: str = Query(...), current_user = Depends(get
 
 @app.patch("/api/code-plan")
 async def act_on_code_plan(action: CodePlanAction, session_id: str = Query(...), current_user = Depends(get_current_user)):
-    """The person approves or cancels the plan, rewrites a step, or removes one. Nothing is edited by any of these."""
+    """The person approves or cancels the plan, rewrites a step, removes one, or marks one done. Nothing is edited by any of these."""
     username = current_user.get("sub")
     if is_guest_username(username):
         raise HTTPException(status_code=403, detail="Sign in to use plans.")
@@ -3151,14 +3176,16 @@ async def act_on_code_plan(action: CodePlanAction, session_id: str = Query(...),
         plan = await asyncio.to_thread(code_plan_utils.set_state, db, username, session_id, code_plan_utils.APPROVED if action.action == "approve" else code_plan_utils.CANCELLED)
     elif action.action in ("edit_step", "remove_step") and action.step_id:
         plan = await asyncio.to_thread(code_plan_utils.edit_step, db, username, session_id, action.step_id, action.text if action.action == "edit_step" else None)
+    elif action.action == "mark_done" and action.step_id:
+        plan = await asyncio.to_thread(code_plan_utils.mark_done, db, username, session_id, action.step_id)
     else:
         raise HTTPException(status_code=400, detail="Unknown plan action.")
     if plan is None:
         raise HTTPException(status_code=404, detail="There is no plan to change.")
-    if action.action in ("approve", "cancel"):
+    if action.action in ("approve", "cancel", "mark_done"):
         from backend.utils.self_counters import record_turn_counts
 
-        await asyncio.to_thread(record_turn_counts, {"code_plan_approved" if action.action == "approve" else "code_plan_cancelled": 1})
+        await asyncio.to_thread(record_turn_counts, {{"approve": "code_plan_approved", "cancel": "code_plan_cancelled", "mark_done": "code_plan_marked_done"}[action.action]: 1})
     return code_plan_utils.public_view(plan)
 
 

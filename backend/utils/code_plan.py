@@ -156,6 +156,48 @@ def mark_applied(plan: Dict[str, Any], applied_paths: List[str]) -> Tuple[Dict[s
     return {**plan, "steps": steps, "state": DONE if complete else plan.get("state")}, finished
 
 
+def steps_done(plan: Optional[Dict[str, Any]]) -> int:
+    return sum(1 for s in (plan or {}).get("steps") or [] if s.get("status") == "done")
+
+
+# A turn that carries out the plan can end with nothing done (it read, ran out of steps, answered in words). One such turn is normal; several in a row are money spent for nothing (2026-10-30:
+# about ten Continues after the last edit, ~1.8 cents each, because the one step left needed no edit, and a step only ticks when its files' edits are applied). `stalled` counts the turns in a
+# row that finished no step; the page offers "Mark done" from STALL_NOTICE_AT on.
+STALL_NOTICE_AT = 2
+NOT_A_STALL = ("plan_done", "declined", "no_decision")          # the person's own decision, or the plan finished, is not the model stalling
+
+
+def after_turn(plan: Dict[str, Any], reason: str) -> Tuple[Dict[str, Any], bool]:
+    """The plan after a turn carrying it out ended for `reason` (a stop_reason), and whether this turn counts as a stall. A turn that finished a step since the last one resets the count; one that
+    ended on the person's own decision, or with the plan done, leaves it alone. Pure (the plan passed in is not changed)."""
+    done_now = steps_done(plan)
+    seen = plan.get("done_seen")
+    stalled = int(plan.get("stalled") or 0)
+    stall = False
+    if reason in NOT_A_STALL:
+        pass
+    elif seen is None or done_now > int(seen):
+        stalled = 0                                              # progress (or a plan from before this was counted: start from here)
+    else:
+        stalled += 1
+        stall = True
+    return {**plan, "stalled": stalled, "done_seen": done_now}, stall
+
+
+def mark_step_done(plan: Dict[str, Any], step_id: str) -> Optional[Dict[str, Any]]:
+    """The plan after the person says one step is already done (its edits were made some other way, or it needs none). None when the plan is not approved, or the step is unknown or already done.
+    When every step is done the plan is DONE. Pure (the plan passed in is not changed)."""
+    if plan.get("state") != APPROVED:
+        return None
+    steps = [dict(s) for s in plan.get("steps") or []]
+    target = next((s for s in steps if s.get("id") == step_id), None)
+    if target is None or target.get("status") == "done":
+        return None
+    target["status"] = "done"
+    complete = all(s.get("status") == "done" for s in steps)
+    return {**plan, "steps": steps, "state": DONE if complete else APPROVED, "stalled": 0, "done_seen": steps_done({"steps": steps})}
+
+
 def file_lines(plan: Dict[str, Any]) -> List[str]:
     return [f"{f['path']}{' (new file)' if f.get('new') else ''}: {f.get('why') or 'no reason given'}" for f in plan.get("files") or []]
 
@@ -167,7 +209,10 @@ EXECUTE_RULES = (
     "KEEP GOING: carry on through the remaining steps in this one turn; steps that stay on the plan do not use up your tool steps. Do not end the turn between steps to report or to ask "
     "whether to continue. Do not ask the person anything the folder can answer: if a step's wording is cut off or unclear, read the file it names and decide from the code (a reason, name or "
     "case the plan did not list is still yours to find: search the file for it). Stop only when every step is done, when the person's own decision is needed, or when you are blocked. "
-    "Finish with a short answer on what changed and what was not checked (say plainly if no test was run)."
+    "Finish with a short answer on what changed and what was not checked (say plainly if no test was run). "
+    "Say a check passed (tests, type-check, build) only if a run_local_check, run_local_command or run_sandbox_tests result IN THIS TURN showed it; otherwise say it was not run. "
+    "If something fails that is not in the plan's files (a test that was already failing, say), say so once in one line and leave it alone: do not spend steps on it. "
+    "If the step left needs no edit because its files already hold the change, say that in one line and stop: the person can mark the step done."
 )
 
 
@@ -207,7 +252,7 @@ def public_view(plan: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         return {"plan": None}
     return {"plan": {
         "state": plan["state"], "goal": plan.get("goal", ""), "files": plan.get("files") or [], "steps": plan.get("steps") or [],
-        "tests": plan.get("tests") or [], "unknowns": plan.get("unknowns") or [], "revision": int(plan.get("revision", 1)),
+        "tests": plan.get("tests") or [], "unknowns": plan.get("unknowns") or [], "revision": int(plan.get("revision", 1)), "stalled": int(plan.get("stalled") or 0),
     }}
 
 
@@ -248,7 +293,7 @@ def save(db, username: str, session_id: str, plan: Dict[str, Any], now: Optional
     """Writes the whole plan. Blocking."""
     now = now or datetime.now(timezone.utc)
     _ensure_indexes(db)
-    fields = {key: plan.get(key) for key in ("state", "goal", "files", "steps", "tests", "unknowns", "revision")}
+    fields = {key: plan.get(key) for key in ("state", "goal", "files", "steps", "tests", "unknowns", "revision", "stalled", "done_seen")}
     created = plan.get("created_at") or now
     db[COLLECTION].update_one(
         {"username": username, "session_id": session_id},
@@ -271,6 +316,8 @@ def set_state(db, username: str, session_id: str, state: str, now: Optional[date
     if not plan or plan.get("state") not in LIVE_STATES or state not in (APPROVED, CANCELLED):
         return None
     plan["state"] = state
+    if state == APPROVED:
+        plan["stalled"], plan["done_seen"] = 0, steps_done(plan)       # progress is counted from the moment the person approved
     save(db, username, session_id, plan, now)
     return plan
 
@@ -305,8 +352,28 @@ def record_applied(db, username: str, session_id: str, applied_paths: List[str],
         return 0
     updated, finished = mark_applied(plan, applied_paths)
     if finished:
-        save(db, username, session_id, updated, now)
+        save(db, username, session_id, {**updated, "stalled": 0, "done_seen": steps_done(updated)}, now)
     return finished
+
+
+def record_turn_end(db, username: str, session_id: str, reason: str, now: Optional[datetime] = None) -> int:
+    """After a turn carrying out the plan ended: updates the stall count. Returns the count now (0 when there is no approved plan). Blocking."""
+    plan = load(db, username, session_id)
+    if not plan or plan.get("state") != APPROVED:
+        return 0
+    updated, _ = after_turn(plan, reason)
+    if updated.get("stalled") != plan.get("stalled") or updated.get("done_seen") != plan.get("done_seen"):
+        save(db, username, session_id, updated, now)
+    return int(updated.get("stalled") or 0)
+
+
+def mark_done(db, username: str, session_id: str, step_id: str, now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
+    """The person marks a step done without an edit. Returns the plan, or None (see mark_step_done). Blocking."""
+    plan = load(db, username, session_id)
+    updated = mark_step_done(plan, step_id) if plan else None
+    if updated is not None:
+        save(db, username, session_id, updated, now)
+    return updated
 
 
 def clear(db, username: str, session_id: str) -> bool:

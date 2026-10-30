@@ -1,4 +1,5 @@
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAffiliateScope } from '../hooks/useAffiliateScope';
 import { useLocalWorkspace } from '../hooks/useLocalWorkspace';
@@ -31,6 +32,8 @@ import MemorySourceDialog from '../components/MemorySourceDialog';
 import BudgetBanner from '../components/BudgetBanner';
 import SessionColumn, { type FolderControls, type RepoControls } from '../components/SessionColumn';
 import SessionRail from '../components/SessionRail';
+import TerminalBlade from '../components/TerminalBlade';
+import { terminalTarget } from '../components/terminalLogic';
 import ComposerChips from '../components/ComposerChips';
 import { answersId, answersValue, modeId, modeValue, thinkingId, thinkingValue } from '../components/composerChipsLogic';
 import { RUNNER_START_LINK, RUNNER_START_WAIT_MS, canStartRunnerFromLink, runnerStartPhase, scopeChoices } from '../components/sessionColumnLogic';
@@ -714,7 +717,11 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   // guest shares one identity) or in embed mode.
   const workspace = useLocalWorkspace({ enabled: !isEmbedded && !isGuestPrincipal(principal) });
   // What the session column shows about the connection: whether the runner answers (asked every half minute while the column is showing), and the folder's branch.
-  const { runners: runnerList, askSoon: checkRunnerSoon } = useRunnerPing(columnVisible && !isGuestPrincipal(principal));
+  const { runners: runnerList, askSoon: checkRunnerSoon } = useRunnerPing(!isEmbedded && !isGuestPrincipal(principal));
+  // The terminal (components/TerminalBlade.tsx): a button in the top bar opens it while a runner of theirs is connected to the project that is open. The runner is asked about whether or not the
+  // session column is showing, because the terminal button depends on the answer too.
+  const terminal = useMemo(() => terminalTarget(runnerList, workspace.folderName ?? ''), [runnerList, workspace.folderName]);
+  const [showTerminal, setShowTerminal] = useState(false);
   // "Start runner": opens the link the runner registered with Windows (it starts the runner with no window), then watches for it to connect. Only offered where that link can exist.
   // The button's state (components/sessionColumnLogic.ts runnerStartPhase): Starting... with a spinner while it waits for the runner to connect (the page asks every few seconds), Try again with what to run
   // if the wait runs out, and idle again as soon as the runner has reported.
@@ -1336,6 +1343,18 @@ useEffect(() => {
           <Icon name="microscope" size={18} />
           {loading && !traceOpen && <span className="topbar-btn-dot" aria-hidden="true" />}
         </button>
+        {terminal && (
+          <button
+            type="button"
+            className="topbar-btn"
+            onClick={() => setShowTerminal(open => !open)}
+            aria-pressed={showTerminal}
+            aria-label="Toggle the terminal"
+            title={showTerminal ? 'Close the terminal' : 'Open the terminal: run commands on your computer'}
+          >
+            <Icon name="terminal" size={18} />
+          </button>
+        )}
         <button
           type="button"
           className="topbar-btn"
@@ -1349,7 +1368,7 @@ useEffect(() => {
       </>
     );
     return () => shell.setTopBarActions(null);
-  }, [isEmbedded, showTracePanel, showSessionColumn, loading, sessionId, principal, userTurnCount]);
+  }, [isEmbedded, showTracePanel, showSessionColumn, loading, sessionId, principal, userTurnCount, terminal, showTerminal]);
 
   // Prepends the page of saved messages just before the ones on screen. The smooth scroll-to-bottom
   // that normally fires when the message count changes is skipped here, and the viewport is held
@@ -3186,6 +3205,13 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           folderControls={folderControls}
           repo={repoControls}
         />
+      )}
+
+      {/* The terminal blade slides over the right of the page (components/TerminalBlade.tsx). It is drawn in the app shell, not inside the chat page: the chat page is a size container, which would make
+          a fixed blade measure itself against the page instead of the window. Not drawn when the runner goes away. */}
+      {showTerminal && terminal && createPortal(
+        <TerminalBlade runnerId={terminal.runnerId} projectId={terminal.projectId} projectName={terminal.projectName} onClose={() => setShowTerminal(false)} />,
+        document.querySelector('.app-shell') ?? document.body,
       )}
 
       {/* On a phone the same column as a strip of icons at the right edge: GitHub, the gauges and the scope (components/SessionRail.tsx). */}

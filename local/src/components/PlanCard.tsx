@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { api, type CodePlan } from '../api';
+import { markDoneStepId, stallNotice } from './planCardLogic';
 import './__styles__/PlanCard.css';
 
 interface Props {
@@ -21,7 +22,7 @@ export const PlanCard: React.FC<Props> = ({ sessionId, plan, busy, onChange, onA
   const [message, setMessage] = useState('');
   const [working, setWorking] = useState(false);
 
-  const act = async (action: 'approve' | 'cancel' | 'edit_step' | 'remove_step', stepId?: string, text?: string): Promise<boolean> => {
+  const act = async (action: 'approve' | 'cancel' | 'edit_step' | 'remove_step' | 'mark_done', stepId?: string, text?: string): Promise<boolean> => {
     setMessage('');
     setWorking(true);
     try {
@@ -41,6 +42,8 @@ export const PlanCard: React.FC<Props> = ({ sessionId, plan, busy, onChange, onA
     if (await act('approve')) onApproved();
   };
 
+  const stuckNotice = stallNotice(plan);
+  const markDoneId = markDoneStepId(plan);
   const remaining = plan.steps.filter(step => step.status !== 'done').length;
   const stateLabel = plan.state === 'proposed' ? 'Waiting for your OK' : plan.state === 'approved' ? `Approved, ${remaining} step${remaining === 1 ? '' : 's'} to go` : 'Finished';
 
@@ -70,6 +73,7 @@ export const PlanCard: React.FC<Props> = ({ sessionId, plan, busy, onChange, onA
                 </span>
                 {step.status !== 'done' && plan.state !== 'done' && (
                   <span className="plan-step-actions">
+                    {step.id === markDoneId && <button type="button" className="plan-link plan-mark-done" disabled={working} onClick={() => void act('mark_done', step.id)}>Mark done</button>}
                     <button type="button" className="plan-link" onClick={() => setEditing({ id: step.id, text: step.text })}>Edit</button>
                     {plan.steps.length > 1 && <button type="button" className="plan-link" disabled={working} onClick={() => void act('remove_step', step.id)}>Remove</button>}
                   </span>
@@ -98,7 +102,8 @@ export const PlanCard: React.FC<Props> = ({ sessionId, plan, busy, onChange, onA
       )}
       {plan.state === 'approved' && (
         <div className="plan-card-actions">
-          <button type="button" className="plan-approve" disabled={working || busy} onClick={onApproved}>Continue</button>
+          {stuckNotice && <div className="plan-card-hint plan-card-stuck" role="status">{stuckNotice}</div>}
+          <button type="button" className={stuckNotice ? 'plan-link' : 'plan-approve'} disabled={working || busy} onClick={onApproved}>Continue</button>
           <button type="button" className="plan-link" disabled={working} onClick={() => void act('cancel')}>Drop the plan</button>
         </div>
       )}

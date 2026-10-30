@@ -169,6 +169,10 @@
   font-size: 0.75rem;
 }
 
+.plan-card-stuck {
+  color: var(--text-main);          /* the plan is stuck: this is the line to read, not a footnote */
+}
+
 .plan-card-error {
   margin-top: 0.5rem;
   color: var(--danger, #d14343);

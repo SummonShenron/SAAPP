@@ -861,3 +861,73 @@ def test_an_update_waits_while_a_project_is_being_added(monkeypatch):
     rj.request_project(db, "jack@example.com", record["_id"], "new-app", NOW)
     assert rj.api_next(db, record, later(seconds=1))["update"] is None                                                           # the dialog first: an update would end it
     assert rj.api_next(db, record, later(seconds=2))["update"] == "0.1.2"
+
+
+def test_list_command_jobs_keeps_this_persons_command_jobs_on_one_runner_and_project_newest_first_and_capped():
+    db = FakeDB()
+    record = two_projects(db)
+    runner_id = record["_id"]
+    jobs = db[rj.JOBS]
+    for i in range(25):
+        jobs.docs[f"mine{i}"] = {"_id": f"mine{i}", "username": "jack@example.com", "runner_id": runner_id, "project_id": PA, "kind": rj.KIND_COMMAND, "created_at": later(minutes=i), "status": "done", "command_shown": "pytest -q {files}", "exit_code": 0, "duration": 1, "output_tail": "secret output", "truncated": False}
+    jobs.docs["theirs"] = {"_id": "theirs", "username": "someone@else.com", "runner_id": runner_id, "project_id": PA, "kind": rj.KIND_COMMAND, "created_at": later(minutes=99), "status": "done", "command_shown": "pytest -q {files}", "exit_code": 0, "duration": 1, "output_tail": "", "truncated": False}
+    jobs.docs["other_project"] = {"_id": "other_project", "username": "jack@example.com", "runner_id": runner_id, "project_id": PB, "kind": rj.KIND_COMMAND, "created_at": later(minutes=98), "status": "done", "command_shown": "pytest -q {files}", "exit_code": 0, "duration": 1, "output_tail": "", "truncated": False}
+    jobs.docs["too_old"] = {"_id": "too_old", "username": "jack@example.com", "runner_id": runner_id, "project_id": PA, "kind": rj.KIND_COMMAND, "created_at": later(days=-30), "status": "done", "command_shown": "pytest -q {files}", "exit_code": 0, "duration": 1, "output_tail": "", "truncated": False}
+    rows = rj.list_command_jobs(db, "jack@example.com", runner_id, PA, later(minutes=30))
+    assert len(rows) == 20
+    assert [row["id"] for row in rows][:3] == ["mine24", "mine23", "mine22"]
+    assert all(row["id"] not in ("theirs", "other_project", "too_old") for row in rows)
+    assert all("output_tail" not in row for row in rows)
+
+
+def test_list_command_jobs_leaves_out_jobs_of_other_kinds():
+    db = FakeDB()
+    record = two_projects(db)
+    runner_id = record["_id"]
+    jobs = db[rj.JOBS]
+    jobs.docs["command"] = {"_id": "command", "username": "jack@example.com", "runner_id": runner_id, "project_id": PA, "kind": rj.KIND_COMMAND, "created_at": later(minutes=1), "status": "done", "command_shown": "pytest -q {files}", "exit_code": 0, "duration": 1, "output_tail": "", "truncated": False}
+    jobs.docs["other_kind"] = {"_id": "other_kind", "username": "jack@example.com", "runner_id": runner_id, "project_id": PA, "kind": "not_a_command", "created_at": later(minutes=2), "status": "done", "command_shown": "", "exit_code": 0, "duration": 1, "output_tail": "", "truncated": False}
+    rows = rj.list_command_jobs(db, "jack@example.com", runner_id, PA, later(minutes=30))
+    assert [row["id"] for row in rows] == ["command"]
+
+
+def test_a_listed_command_says_what_the_person_can_do_with_it():
+    db = FakeDB()
+    record = two_projects(db)
+    runner_id = record["_id"]
+    base = {"username": "jack@example.com", "runner_id": runner_id, "project_id": PA, "kind": rj.KIND_COMMAND, "command_shown": "git status", "exit_code": None, "duration": None, "output_tail": "", "truncated": False}
+    jobs = db[rj.JOBS]
+    jobs.docs["waiting"] = {**base, "_id": "waiting", "created_at": later(minutes=1), "status": rj.AWAITING, "expires_at": later(minutes=30), "command_class": "run"}
+    jobs.docs["changes"] = {**base, "_id": "changes", "created_at": later(minutes=2), "status": rj.AWAITING, "expires_at": later(minutes=30), "command_class": "change"}
+    jobs.docs["lapsed"] = {**base, "_id": "lapsed", "created_at": later(minutes=3), "status": rj.AWAITING, "expires_at": later(minutes=5)}
+    jobs.docs["queued"] = {**base, "_id": "queued", "created_at": later(minutes=4), "status": rj.APPROVED}
+    jobs.docs["finished"] = {**base, "_id": "finished", "created_at": later(minutes=5), "status": "done", "exit_code": 1, "duration": 2, "timed_out": True}
+    rows = {row["id"]: row for row in rj.list_command_jobs(db, "jack@example.com", runner_id, PA, later(minutes=20))}
+    assert rows["waiting"]["status"] == "awaiting_approval" and rows["waiting"]["needs_confirm"] is False and rows["waiting"]["command_class"] == "run"
+    assert rows["changes"]["status"] == "awaiting_approval" and rows["changes"]["needs_confirm"] is True      # Run asks the stronger question first
+    assert rows["lapsed"]["status"] == "not run"                                                             # nobody pressed Run in time
+    assert rows["queued"]["status"] == "approved"
+    assert rows["finished"]["status"] == "done" and rows["finished"]["exit_code"] == 1 and rows["finished"]["timed_out"] is True
+    assert all("output_tail" not in row for row in rows.values())
+
+
+def test_the_terminal_routes_are_wired_the_way_the_page_expects():
+    import pathlib
+
+    source = (pathlib.Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
+    assert '@app.post("/api/runner/jobs")' in source and "runner_jobs.create_or_reuse_command_job, _runner_db_or_503(), username, body.runner_id, body.line, body.project_id" in source
+    assert 'return {"jobs": await asyncio.to_thread(runner_jobs.list_command_jobs' in source              # the page reads res.jobs
+    assert "class RunnerCommandRequest(BaseModel):" in source and "max_length=2000" in source
+    assert "except runner_jobs.RunnerError as problem:\n        raise _runner_http_error(problem)\n    return job" in source.replace("\r\n", "\n")
+
+
+def test_list_command_jobs_leaves_out_jobs_run_on_another_runner_of_the_same_person():
+    db = FakeDB()
+    record = two_projects(db)
+    runner_id = record["_id"]
+    other, _ = connected(db, name="desktop", root="other")
+    jobs = db[rj.JOBS]
+    jobs.docs["here"] = {"_id": "here", "username": "jack@example.com", "runner_id": runner_id, "project_id": PA, "kind": rj.KIND_COMMAND, "created_at": later(minutes=1), "status": "done", "command_shown": "pytest -q {files}", "exit_code": 0, "duration": 1, "output_tail": "", "truncated": False}
+    jobs.docs["elsewhere"] = {"_id": "elsewhere", "username": "jack@example.com", "runner_id": other["_id"], "project_id": PA, "kind": rj.KIND_COMMAND, "created_at": later(minutes=2), "status": "done", "command_shown": "pytest -q {files}", "exit_code": 0, "duration": 1, "output_tail": "", "truncated": False}
+    rows = rj.list_command_jobs(db, "jack@example.com", runner_id, PA, later(minutes=30))
+    assert [row["id"] for row in rows] == ["here"]

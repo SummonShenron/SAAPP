@@ -1820,13 +1820,15 @@ export interface CodePlan {
   tests: string[];
   unknowns: string[];
   revision: number;
+  /** Turns in a row that carried out the plan and finished no step (0 from an older server). */
+  stalled?: number;
 }
 export const getPlanMode = (): Promise<{ plan_mode: boolean }> => taskRequest('/api/settings/plan-mode', {}, 'Failed to load the plan setting.');
 export const updatePlanMode = (planMode: boolean): Promise<{ plan_mode: boolean }> =>
   taskRequest('/api/settings/plan-mode', { method: 'PUT', body: JSON.stringify({ plan_mode: planMode }) }, 'Failed to update the plan setting.');
 export const getCodePlan = (sessionId: string): Promise<{ plan: CodePlan | null }> =>
   taskRequest(`/api/code-plan?session_id=${encodeURIComponent(sessionId)}`, {}, 'Failed to load the plan.');
-export const actOnCodePlan = (sessionId: string, action: 'approve' | 'cancel' | 'edit_step' | 'remove_step', stepId?: string, text?: string): Promise<{ plan: CodePlan | null }> =>
+export const actOnCodePlan = (sessionId: string, action: 'approve' | 'cancel' | 'edit_step' | 'remove_step' | 'mark_done', stepId?: string, text?: string): Promise<{ plan: CodePlan | null }> =>
   taskRequest(`/api/code-plan?session_id=${encodeURIComponent(sessionId)}`, { method: 'PATCH', body: JSON.stringify({ action, step_id: stepId, text }) }, 'Failed to change the plan.');
 
 /** The local runner (backend/utils/runner_jobs.py, runner/): a small program on the person's own machine that runs checks they approve on a card in the chat. */
@@ -1886,6 +1888,17 @@ export const requestRunnerUpdate = (id: string): Promise<{ update: RunnerUpdate 
 export const removeRunner = (id: string): Promise<{ status: string }> =>
   taskRequest(`/api/runner/keys/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'Failed to remove that runner.');
 export const getRunnerJob = (id: string): Promise<RunnerJob> => taskRequest(`/api/runner/jobs/${encodeURIComponent(id)}`, {}, 'Failed to load that check.');
+/** One row of the Terminal card's history: a command job for this runner and project, newest first. output_tail is not in the list; fetch it with getRunnerJob when a row is opened. */
+export interface CommandJobRow {
+  id: string; command_shown: string; status: string; exit_code: number | null; duration: number | null; started_at: string | null; truncated: boolean;
+  /** Ended by the runner's time limit; the kind of command ('read' | 'run' | 'change'); and whether Run needs the stronger confirmation. */
+  timed_out?: boolean; command_class?: string; needs_confirm?: boolean;
+}
+/** The person types a command line in the Terminal card: it becomes a job on their own runner and project, waiting for Run (a refused line is a 422 with the reason). */
+export const createRunnerCommand = (runnerId: string, projectId: string, line: string): Promise<RunnerJob> =>
+  taskRequest('/api/runner/jobs', { method: 'POST', body: JSON.stringify({ runner_id: runnerId, project_id: projectId, line }) }, 'Failed to start that command.');
+export const listCommandJobs = (runnerId: string, projectId: string): Promise<{ jobs: CommandJobRow[] }> =>
+  taskRequest(`/api/runner/jobs?runner_id=${encodeURIComponent(runnerId)}&project_id=${encodeURIComponent(projectId)}`, {}, 'Failed to load the command history.');
 /** Presses Run. A command that changes things needs `confirmed` too (the second, stronger confirmation on its card). */
 export const approveRunnerJob = (id: string, confirmed = false): Promise<RunnerJob> =>
   taskRequest(`/api/runner/jobs/${encodeURIComponent(id)}/approve`, { method: 'POST', body: JSON.stringify({ confirmed }) }, 'Failed to run that check.');
@@ -2426,6 +2439,8 @@ export const api = {
   requestRunnerUpdate,
   removeRunner,
   getRunnerJob,
+  listCommandJobs,
+  createRunnerCommand,
   approveRunnerJob,
   cancelRunnerJob,
   editSelfModelStatement,

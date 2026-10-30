@@ -257,6 +257,36 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "plan_stall_guard",
+        "requires": [
+            "backend/utils/code_plan.py::def after_turn",
+            "backend/utils/code_plan.py::def mark_step_done",
+            "app.py::code_plan_utils.mark_done",
+        ],
+        "month": "2026-10",
+        "title": "A plan that stops going anywhere",
+        "line": (
+            "I can now tell when Continue has gone two turns without finishing a step, say so on the plan card, and let you mark a step done yourself when its work is already in your files."
+        ),
+        "keywords": ["plan", "continue", "stuck", "mark done", "no progress", "ran out of steps", "plan card", "step done"],
+        "volunteer": [],
+    },
+    {
+        "id": "terminal_card",
+        "requires": [
+            "local/src/components/TerminalBlade.tsx::export const TerminalBlade",
+            "app.py::runner_jobs.list_command_jobs",
+            "app.py::runner_jobs.create_or_reuse_command_job",
+        ],
+        "month": "2026-10",
+        "title": "A terminal for your computer's commands",
+        "line": (
+            "I can now show the commands run on your connected computer for this project, with their output, in a terminal that opens from the top bar, and you can type a command there; anything that changes things still asks you twice."
+        ),
+        "keywords": ["terminal", "command history", "recent commands", "command output", "last command", "what did the command say", "run a command"],
+        "volunteer": [],
+    },
+    {
         "id": "commit_and_push",
         "requires": [
             "backend/services/commit_flow.py::def draft",

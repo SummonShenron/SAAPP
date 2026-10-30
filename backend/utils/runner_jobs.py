@@ -109,6 +109,7 @@ def ensure_indexes(db: Any) -> None:
     try:
         db[JOBS].create_index("delete_at", expireAfterSeconds=0)
         db[PAIRINGS].create_index("delete_at", expireAfterSeconds=0)
+        db[JOBS].create_index([("username", 1), ("runner_id", 1), ("project_id", 1), ("kind", 1), ("created_at", -1)])
         _indexes["ready"] = True
     except Exception:
         logger.warning("[runner] could not create its indexes.")
@@ -797,6 +798,31 @@ def public_job(doc: Dict[str, Any]) -> Dict[str, Any]:
             "truncated": bool(doc.get("truncated")), "timed_out": bool(doc.get("timed_out")), "duration": doc.get("duration"), "error": doc.get("error") or "",
             "kind": doc.get("kind") or KIND_CHECK, "command_class": doc.get("command_class") or "", "command_notes": doc.get("command_notes") or [], "auto_approved": bool(doc.get("auto_approved")),
             "needs_confirm": doc.get("command_class") == runner_commands.commands.CHANGE}
+
+
+def _listed_status(doc: Dict[str, Any], now: Optional[datetime] = None) -> str:
+    """The status a command row shows: one still waiting for the person's OK is "awaiting_approval" (the row offers Run), one approved and not yet picked up by the runner is "approved"; one that
+    was never approved in time, or expired, is "not run"; otherwise the stored status (running, done, failed, cancelled). Pure."""
+    status = doc.get("status")
+    if status == AWAITING:
+        expires = _aware(doc.get("expires_at"))
+        return "not run" if expires and expires <= (now or _now()) else "awaiting_approval"
+    if status == APPROVED:
+        return "approved"
+    return "not run" if status == EXPIRED else str(status or "")
+
+
+def list_command_jobs(db: Any, username: str, runner_id: str, project_id: str, now: Optional[datetime] = None, limit: int = 20, max_age_days: int = RETENTION_DAYS) -> List[Dict[str, Any]]:
+    """This person's recent command jobs on one runner and project, newest first: at most `limit`, none older than `max_age_days`. Output is not included (fetch one job for its output). Blocking."""
+    moment = now or _now()
+    since = moment - timedelta(days=max_age_days)
+    query = {"username": username, "runner_id": runner_id, "project_id": project_id, "kind": KIND_COMMAND, "created_at": {"$gte": since}}
+    rows: List[Dict[str, Any]] = []
+    for doc in db[JOBS].find(query).sort("created_at", -1).limit(limit):
+        job = public_job(doc)
+        rows.append({"id": job["id"], "command_shown": job["command_shown"], "status": _listed_status(doc, moment), "exit_code": job["exit_code"], "duration": job["duration"], "started_at": doc.get("started_at"),
+                     "truncated": job["truncated"], "timed_out": job["timed_out"], "command_class": job["command_class"], "needs_confirm": job["needs_confirm"]})
+    return rows
 
 
 # ---------------------------------------------------------------------------------------------------------------

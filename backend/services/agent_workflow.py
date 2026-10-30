@@ -3411,6 +3411,12 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 done = bool(plan) and (plan.get("state") == code_plan.DONE or code_plan.next_step(plan) is None)
                 reason = code_plan.stop_reason(done, getattr(turn, "plan_exit", ""), getattr(turn, "plan_blocked", ""))
                 llm_turns.note_plan_stop(reason)
+                stalled_before = int((plan or {}).get("stalled") or 0)
+                stalled = await asyncio.to_thread(code_plan.record_turn_end, get_db(), username, state.get("session_id") or "", reason)
+                if stalled > stalled_before:
+                    from backend.utils.self_counters import record_turn_counts
+
+                    await asyncio.to_thread(record_turn_counts, {"code_plan_stalled": 1})
                 steps = (plan or {}).get("steps") or []
                 left = sum(1 for step in steps if step.get("status") != "done")
                 logger.info("[code plan] a turn carrying out the plan ended: reason=%s, steps_left=%d of %d, tool_steps=%d.", reason, left, len(steps), int(getattr(turn, "loop_steps", 0) or 0))

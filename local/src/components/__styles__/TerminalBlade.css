@@ -1,0 +1,65 @@
+/* The terminal blade (components/TerminalBlade.tsx): slides over the right of the page like the conversations blade slides over the left. Dark in both themes, the way a terminal is. */
+
+.terminal-blade {
+  --tb-bg: #0e1012;
+  --tb-bar: #15181b;
+  --tb-text: #d7dce2;
+  --tb-muted: #8a929c;
+  --tb-line: #23272c;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(620px, 100vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--tb-bg);
+  color: var(--tb-text);
+  border-left: 1px solid var(--tb-line);
+  box-shadow: -4px 0 18px rgba(0, 0, 0, 0.35);
+  z-index: 900;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: 0.8rem;
+  animation: terminalSlideIn 0.22s ease-out;
+}
+@keyframes terminalSlideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@media (prefers-reduced-motion: reduce) { .terminal-blade { animation: none; } }
+
+.tb-head { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--tb-bar); border-bottom: 1px solid var(--tb-line); }
+.tb-title { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; letter-spacing: 0.02em; }
+.tb-where { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tb-muted); font-size: 0.74rem; }
+.tb-close { flex: 0 0 auto; display: inline-grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 6px; background: none; color: var(--tb-muted); cursor: pointer; }
+.tb-close:hover { background: var(--tb-line); color: var(--tb-text); }
+.tb-close:focus-visible, .tb-ask button:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 1px; }
+
+.tb-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 12px; cursor: text; }
+.tb-note { margin: 0; color: var(--tb-muted); line-height: 1.5; font-family: inherit; }
+.tb-note code { color: var(--tb-text); }
+
+.tb-entry { display: flex; flex-direction: column; gap: 4px; }
+.tb-cmd { display: flex; align-items: baseline; gap: 8px; }
+.tb-prompt { flex: 0 0 auto; color: var(--accent-primary); font-weight: 700; }
+.tb-cmd code { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; font: inherit; color: var(--tb-text); }
+.tb-status { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; font-size: 0.7rem; color: var(--tb-muted); white-space: nowrap; }
+.tb-ok .tb-status { color: #3fb97f; }
+.tb-bad .tb-status { color: #f0716b; }
+.tb-waiting .tb-status { color: #f2b13c; }
+.tb-running .tb-status { color: var(--accent-primary); }
+.tb-spin { width: 9px; height: 9px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: tbSpin 0.8s linear infinite; }
+@keyframes tbSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .tb-spin { animation: none; border-right-color: currentColor; opacity: 0.6; } }
+
+.tb-out { margin: 0; padding: 0 0 0 18px; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.45; color: var(--tb-text); max-height: 360px; overflow: auto; }
+.tb-quiet { margin: 0; padding-left: 18px; font-size: 0.72rem; color: var(--tb-muted); font-family: inherit; }
+.tb-ask { display: flex; align-items: center; gap: 8px; padding-left: 18px; font-size: 0.74rem; color: var(--tb-muted); flex-wrap: wrap; }
+.tb-ask button { padding: 3px 10px; border: 1px solid var(--tb-line); border-radius: 6px; background: var(--tb-bar); color: var(--tb-text); font: inherit; font-size: 0.74rem; cursor: pointer; }
+.tb-ask button:hover { border-color: var(--accent-primary); }
+
+.tb-error { flex: 0 0 auto; margin: 0; padding: 6px 14px; background: #2a1517; color: #f0a5a1; font-size: 0.74rem; font-family: inherit; }
+.tb-prompt-row { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--tb-bar); border-top: 1px solid var(--tb-line); }
+.tb-prompt-row input { flex: 1 1 auto; min-width: 0; padding: 4px 0; border: 0; outline: 0; background: transparent; color: var(--tb-text); font: inherit; caret-color: var(--accent-primary); }
+.tb-prompt-row input::placeholder { color: var(--tb-muted); }
+.tb-prompt-row input:disabled { opacity: 0.6; }
+.tb-foot { flex: 0 0 auto; padding: 6px 14px 10px; background: var(--tb-bar); color: var(--tb-muted); font-size: 0.68rem; line-height: 1.4; font-family: inherit; }
+
+@media (max-width: 768px) { .terminal-blade { width: 100vw; border-left: 0; } .tb-scroll { padding: 10px; } .tb-prompt-row input { font-size: 16px; } }  /* 16px stops phones zooming in on the prompt */

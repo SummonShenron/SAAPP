@@ -270,6 +270,85 @@ def test_the_person_can_reword_or_remove_a_step_but_not_a_finished_one():
     assert cp.edit_step(db, "jack", "s1", "s1", None, NOW) is None                                   # the last step cannot be removed
 
 
+# --- the stall guard: turns that finish nothing are counted, and the person can close a step that needs no edit (2026-10-30: ~10 Continues, ~1.8 cents each, after the work was done) ---
+
+def test_turns_that_finish_no_step_are_counted_and_progress_resets_the_count():
+    db = _DB()
+    stored(db, cp.APPROVED)
+    assert cp.load(db, "jack", "s1")["stalled"] == 0                                                  # counted from the moment of approval
+    assert cp.record_turn_end(db, "jack", "s1", "step_limit", NOW) == 1
+    assert cp.record_turn_end(db, "jack", "s1", "model_answered", NOW) == 2
+    assert cp.public_view(cp.load(db, "jack", "s1"))["plan"]["stalled"] == 2
+    cp.record_applied(db, "jack", "s1", ["local/src/components/NewBurst.tsx"])                        # an applied edit finished a step
+    assert cp.load(db, "jack", "s1")["stalled"] == 0
+    assert cp.record_turn_end(db, "jack", "s1", "step_limit", NOW) == 1                               # and counting starts again
+
+
+def test_a_turn_that_finished_a_step_is_not_a_stall_even_when_it_stopped_early():
+    plan = {"state": cp.APPROVED, "stalled": 3, "done_seen": 0, "steps": [{"id": "s1", "status": "done"}, {"id": "s2", "status": "todo"}]}
+    after, stalled = cp.after_turn(plan, "step_limit")
+    assert stalled is False and after["stalled"] == 0 and after["done_seen"] == 1
+
+
+def test_the_persons_own_decision_or_a_finished_plan_is_not_a_stall():
+    plan = {"state": cp.APPROVED, "stalled": 1, "done_seen": 0, "steps": [{"id": "s1", "status": "todo"}]}
+    for reason in ("declined", "no_decision", "plan_done"):
+        after, stalled = cp.after_turn(plan, reason)
+        assert stalled is False and after["stalled"] == 1
+
+
+def test_a_plan_from_before_stalls_were_counted_starts_counting_from_its_next_turn():
+    plan = {"state": cp.APPROVED, "steps": [{"id": "s1", "status": "todo"}]}                          # no done_seen stored
+    after, stalled = cp.after_turn(plan, "step_limit")
+    assert stalled is False and after["stalled"] == 0 and after["done_seen"] == 0
+    assert cp.after_turn(after, "step_limit")[1] is True
+
+
+def test_the_stall_count_only_moves_for_an_approved_plan():
+    db = _DB()
+    stored(db)                                                                                         # proposed
+    assert cp.record_turn_end(db, "jack", "s1", "step_limit", NOW) == 0
+    assert not cp.load(db, "jack", "s1").get("stalled")
+
+
+def test_the_person_can_mark_a_step_done_without_an_edit_and_the_last_one_finishes_the_plan():
+    db = _DB()
+    stored(db, cp.APPROVED)
+    cp.record_turn_end(db, "jack", "s1", "step_limit", NOW)
+    cp.record_turn_end(db, "jack", "s1", "step_limit", NOW)
+    plan = cp.mark_done(db, "jack", "s1", "s1", NOW)
+    assert plan["steps"][0]["status"] == "done" and plan["state"] == cp.APPROVED and plan["stalled"] == 0
+    assert cp.mark_done(db, "jack", "s1", "s1", NOW) is None                                          # already done
+    assert cp.mark_done(db, "jack", "s1", "nope", NOW) is None
+    assert cp.mark_done(db, "jack", "s1", "s2", NOW)["state"] == cp.DONE
+
+
+def test_a_step_can_only_be_marked_done_on_an_approved_plan():
+    db = _DB()
+    stored(db)                                                                                         # proposed
+    assert cp.mark_done(db, "jack", "s1", "s1", NOW) is None
+    assert cp.mark_step_done({"state": cp.DONE, "steps": [{"id": "s1", "status": "todo"}]}, "s1") is None
+
+
+def test_the_execute_rules_say_a_check_passed_only_with_a_result_from_this_turn():
+    text = cp.EXECUTE_RULES
+    assert "IN THIS TURN" in text and "otherwise say it was not run" in text
+    assert "not in the plan's files" in text and "leave it alone" in text
+    assert "mark the step done" in text
+
+
+def test_the_stall_wiring_is_in_the_route_the_turn_end_and_the_counters():
+    import pathlib as _p
+    from backend.utils.self_counters import KEYS
+
+    root = _p.Path(__file__).resolve().parents[2]
+    app_source = (root / "app.py").read_text(encoding="utf-8")
+    workflow = (root / "backend" / "services" / "agent_workflow.py").read_text(encoding="utf-8")
+    assert 'action.action == "mark_done"' in app_source and "code_plan_utils.mark_done" in app_source
+    assert "code_plan.record_turn_end," in workflow and '"code_plan_stalled"' in workflow
+    assert {"code_plan_stalled", "code_plan_marked_done"} <= set(KEYS)
+
+
 def test_forgetting_everything_deletes_plans():
     db = _DB()
     stored(db)

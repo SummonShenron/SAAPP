@@ -33,6 +33,19 @@ def _apply(doc: Dict[str, Any], update: Dict[str, Any]) -> None:
         doc.pop(key, None)
 
 
+class FakeCursor(list):
+    """A list that also answers the cursor calls the job queue makes: sort(field, direction) and limit(n)."""
+
+    def sort(self, key: Any, direction: int = 1) -> "FakeCursor":
+        pairs = [(key, direction)] if isinstance(key, str) else list(key)
+        for field, way in reversed(pairs):
+            list.sort(self, key=lambda d: (d.get(field) is None, d.get(field)), reverse=way < 0)
+        return self
+
+    def limit(self, n: int) -> "FakeCursor":
+        return FakeCursor(self[:n])
+
+
 class FakeCollection:
     def __init__(self) -> None:
         self.docs: Dict[Any, Dict[str, Any]] = {}
@@ -42,7 +55,7 @@ class FakeCollection:
         self.docs[doc["_id"]] = doc
 
     def find(self, flt: Optional[Dict[str, Any]] = None, projection: Any = None) -> List[Dict[str, Any]]:
-        return [copy.deepcopy(d) for d in self.docs.values() if _matches(d, flt)]
+        return FakeCursor(copy.deepcopy(d) for d in self.docs.values() if _matches(d, flt))
 
     def find_one(self, flt: Optional[Dict[str, Any]] = None, projection: Any = None) -> Optional[Dict[str, Any]]:
         found = self.find(flt)
