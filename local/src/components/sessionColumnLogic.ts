@@ -34,6 +34,20 @@ export function runnerLine(runners: RunnerInfo[] | null, now: Date = new Date())
 /** The link the "Start runner" button opens. The runner registers it with Windows when it installs its start-at-login entry (runner/src/saapp_runner/service.py), and what it runs is fixed: start the runner. */
 export const RUNNER_START_LINK = 'saapp-runner://start';
 
+/** How long the button waits for the runner to connect after a press before it says it did not (the page asks every few seconds for this long: hooks/useRunnerPing.ts). */
+export const RUNNER_START_WAIT_MS = 45_000;
+
+export type RunnerStartPhase = 'idle' | 'starting' | 'failed';
+
+/**
+ * Where the "Start runner" button is. `attempt` is the last press: `seen` is when the runner was last seen at that moment, and `failed` is set when the wait ran out. A runner that has reported since
+ * the press (its last-seen time moved on) is back, so the button is idle again and the row itself says "Runner connected"; no press, or an old one, is idle.
+ */
+export function runnerStartPhase(attempt: { seen: string; failed: boolean } | null, lastSeen: string): RunnerStartPhase {
+  if (!attempt || attempt.seen !== lastSeen) return 'idle';
+  return attempt.failed ? 'failed' : 'starting';
+}
+
 /** Whether the "Start runner" button is offered: only where the runner can have registered the link, which is Windows (the runner's entries on macOS and Linux restart it by themselves). */
 export function canStartRunnerFromLink(userAgent: string): boolean {
   return /Windows/i.test(userAgent || '') && !/Mobile|Android/i.test(userAgent || '');

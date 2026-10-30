@@ -3,7 +3,7 @@ import type { CodePlan, MemorySources, RunnerInfo } from '../api';
 import type { RingView } from './budgetText';
 import {
   APPROVAL_OPTIONS, GIT_OPTIONS, LEVEL_COLOR, contextGauge, folderLight, folderLine, gaugeSummary, memoryLine, parseCollapsed, planProgress, runnerLine, serializeCollapsed, toggleCollapsed,
-  type ContextUse, type Line, type Option, type ScopeChoice,
+  type ContextUse, type Line, type Option, type RunnerStartPhase, type ScopeChoice,
 } from './sessionColumnLogic';
 import './__styles__/SessionColumn.css';
 
@@ -31,7 +31,7 @@ interface Props {
   runnerEnabled: boolean;
   runners: RunnerInfo[] | null;
   /** The "Start runner" button on a runner that is not answering; null where the link it opens cannot exist (not Windows). `asked` after it was pressed. */
-  runnerStart: { asked: boolean; onStart: () => void } | null;
+  runnerStart: { phase: RunnerStartPhase; onStart: () => void } | null;
   /** The usage ring's view (components/budgetText.ts); null when there is no limit to show. */
   usage: RingView | null;
   /** How full the model's context window got on the last turn, as the server reported it (counts only); null before the first turn. */
@@ -200,10 +200,14 @@ const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runner
         {runner && <Row line={runner} />}
         {runner && runner.tone === 'warn' && runnerStart && (
           <div className="sc-runner-start">
-            <button type="button" className="sc-btn sc-btn-primary" onClick={runnerStart.onStart}>{runnerStart.asked ? 'Try again' : 'Start runner'}</button>
-            {runnerStart.asked && (
-              <span className="sc-option-hint">Asked your computer to start it; this shows connected within a minute. If nothing starts, run <code>saapp-runner install-service</code> once in a terminal on that computer.</span>
-            )}
+            <button type="button" className="sc-btn sc-btn-primary" onClick={runnerStart.onStart} disabled={runnerStart.phase === 'starting'} aria-busy={runnerStart.phase === 'starting'}>
+              {runnerStart.phase === 'starting' && <span className="sc-spinner" aria-hidden="true" />}
+              {runnerStart.phase === 'starting' ? 'Starting…' : runnerStart.phase === 'failed' ? 'Try again' : 'Start runner'}
+            </button>
+            <span className="sc-option-hint" role="status" aria-live="polite">
+              {runnerStart.phase === 'starting' && 'Asked your computer to start it. Waiting for it to connect; this usually takes a few seconds.'}
+              {runnerStart.phase === 'failed' && <>It did not connect. If nothing started on your computer, run <code>saapp-runner install-service</code> once in a terminal there, then try again.</>}
+            </span>
           </div>
         )}
         <Row line={folderRow} />

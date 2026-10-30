@@ -185,3 +185,17 @@ test('the runner row is wired to the button and the quick re-check after a press
   assert.match(chat, /checkRunnerSoon\(\)/);
   assert.match(hook, /QUICK_MS = 3_000/);                                                   // it asks every few seconds for a while after the press
 });
+
+test('the Start runner button waits with a spinner, says so when the wait runs out, and is idle again once the runner has reported', async () => {
+  const { runnerStartPhase, RUNNER_START_WAIT_MS } = await import('./components/sessionColumnLogic.ts');
+  const seen = '2026-10-30T12:00:00Z';
+  assert.equal(runnerStartPhase(null, seen), 'idle');                                          // never pressed
+  assert.equal(runnerStartPhase({ seen, failed: false }, seen), 'starting');                  // pressed, nothing has reported since
+  assert.equal(runnerStartPhase({ seen, failed: true }, seen), 'failed');                     // the wait ran out
+  assert.equal(runnerStartPhase({ seen, failed: false }, '2026-10-30T12:00:40Z'), 'idle');    // the runner reported: it is back (the row says Runner connected)
+  assert.equal(runnerStartPhase({ seen, failed: true }, '2026-10-30T13:00:00Z'), 'idle');     // a later outage starts clean
+  assert.ok(RUNNER_START_WAIT_MS >= 30_000 && RUNNER_START_WAIT_MS <= 120_000);
+  const { readFile } = await import('node:fs/promises');
+  const column = await readFile(new URL('./components/SessionColumn.tsx', import.meta.url), 'utf8');
+  assert.match(column, /sc-spinner/); assert.match(column, /disabled=\{runnerStart\.phase === 'starting'\}/); assert.match(column, /aria-live="polite"/);
+});

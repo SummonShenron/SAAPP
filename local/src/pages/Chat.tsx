@@ -31,7 +31,7 @@ import MemorySourceDialog from '../components/MemorySourceDialog';
 import BudgetBanner from '../components/BudgetBanner';
 import SessionColumn, { type FolderControls, type RepoControls } from '../components/SessionColumn';
 import SessionRail from '../components/SessionRail';
-import { RUNNER_START_LINK, canStartRunnerFromLink, scopeChoices, scopeLabel as scopeName } from '../components/sessionColumnLogic';
+import { RUNNER_START_LINK, RUNNER_START_WAIT_MS, canStartRunnerFromLink, runnerStartPhase, scopeChoices, scopeLabel as scopeName } from '../components/sessionColumnLogic';
 import { ringView } from '../components/budgetText';
 import { type TraceStep } from '../components/TracePanel';
 import { finishedSteps, mergeExcerpts, mergeFacts, recordExcerpt, recordFacts, toolStepLabel, type TraceExcerptsById, type TraceFactsById } from '../components/traceFacts';
@@ -715,11 +715,22 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   // What the session column shows about the connection: whether the runner answers (asked every half minute while the column is showing), and the folder's branch.
   const { runners: runnerList, askSoon: checkRunnerSoon } = useRunnerPing(columnVisible && !isGuestPrincipal(principal));
   // "Start runner": opens the link the runner registered with Windows (it starts the runner with no window), then watches for it to connect. Only offered where that link can exist.
-  // `askedForSeen` is when the runner was last seen at the moment of the press, so the hint under the button belongs to this outage and goes away once it has been connected and has dropped again.
+  // The button's state (components/sessionColumnLogic.ts runnerStartPhase): Starting... with a spinner while it waits for the runner to connect (the page asks every few seconds), Try again with what to run
+  // if the wait runs out, and idle again as soon as the runner has reported.
   const runnerLastSeen = runnerList?.[0]?.last_seen ?? '';
-  const [askedForSeen, setAskedForSeen] = useState<string | null>(null);
+  const [startAttempt, setStartAttempt] = useState<{ seen: string; failed: boolean } | null>(null);
+  const startTimer = useRef<number | null>(null);
+  useEffect(() => () => { if (startTimer.current !== null) window.clearTimeout(startTimer.current); }, []);
+  const pressStartRunner = () => {
+    const seen = runnerLastSeen;
+    setStartAttempt({ seen, failed: false });
+    try { window.location.href = RUNNER_START_LINK; } catch { /* nothing to do: the hint under the button says what to run */ }
+    checkRunnerSoon();
+    if (startTimer.current !== null) window.clearTimeout(startTimer.current);
+    startTimer.current = window.setTimeout(() => setStartAttempt(current => (current && current.seen === seen ? { seen, failed: true } : current)), RUNNER_START_WAIT_MS);
+  };
   const runnerStart = canStartRunnerFromLink(typeof navigator === 'undefined' ? '' : navigator.userAgent)
-    ? { asked: askedForSeen !== null && askedForSeen === runnerLastSeen, onStart: () => { setAskedForSeen(runnerLastSeen); try { window.location.href = RUNNER_START_LINK; } catch { /* nothing to do: the hint under the button says what to run */ } checkRunnerSoon(); } }
+    ? { phase: runnerStartPhase(startAttempt, runnerLastSeen), onStart: pressStartRunner }
     : null;
   const [folderBranch, setFolderBranch] = useState<string | null>(null);
   const [contextUse, setContextUse] = useState<{ sessionId: string; used: number; window: number; fraction: number } | null>(null);
