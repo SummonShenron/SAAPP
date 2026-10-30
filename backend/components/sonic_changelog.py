@@ -1083,12 +1083,12 @@ CHANGELOG = [
         "id": "trace_read_excerpt",
         "requires": [
             "backend/utils/agent_utils.py::def build_tool_excerpt",
-            "local/src/components/TracePanel.tsx::trace-excerpt",
+            "local/src/components/TraceSteps.tsx::trace-excerpt",
         ],
         "month": "2026-10",
         "title": "Seeing what I read and found",
-        "line": "In the trace panel, a file I read or a search I ran can now be expanded: you see the start of the file, or the matches grouped by file with line numbers. Anything that looks like a key is hidden, secrets files are left out, and it is not saved.",
-        "keywords": ["trace panel", "what did you read", "see what you read", "execution trace", "show what you read"],
+        "line": "With the microscope on, my steps show as a path above my reply. A file I read or a search I ran can be opened: the start of the file, or the matches by file with line numbers. Keys are hidden, secrets files are left out, and none of it is saved.",
+        "keywords": ["microscope", "trace panel", "what did you read", "see what you read", "execution trace", "show what you read"],
         "volunteer": [],
     },
     {

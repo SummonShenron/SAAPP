@@ -360,6 +360,29 @@ _SEARCH_LITERAL_SKIP_EXTENSIONS = (
     ".pdf", ".zip", ".gz", ".tar",
     ".lock", ".map",
 )
+# A search of the person's OWN copy of their folder (or a checkout) reads local disk: no per-file round trip to hide, so it has no file-count cap and a much larger byte budget. The caps above are for
+# the GitHub API path, where every file is a network request. WHY (real turns, 2026-10-29): `search_literal` took the first 300 files the filesystem listed (of ~720) and said "exhaustively scanned 300 of 300
+# candidate files", so a search for `UsageRing` in a file that plainly uses it came back empty, and 56 of that day's 83 searches found nothing.
+_SEARCH_LITERAL_LOCAL_MAX_TOTAL_SCAN_BYTES = int(os.getenv("SEARCH_LITERAL_LOCAL_MAX_BYTES", "40000000"))
+_SEARCH_SOURCE_EXTENSIONS = (".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".css", ".scss", ".html", ".vue", ".go", ".rs", ".java", ".cs", ".rb", ".php", ".sh", ".ps1", ".toml", ".yml", ".yaml")
+_SEARCH_TEST_OR_DOC_DIRS = ("tests", "test", "__tests__", "spec", "docs", "doc", "eval_results", "source_docs", "fixtures", "examples")
+
+
+def _search_priority(path: str) -> tuple:
+    """The order a search reads files in: the project's source first, then its tests, then everything else (docs, data), each in path order. The order is fixed (not whatever the filesystem listed) and puts the
+    code a person is most likely asking about ahead of the bulk, so a search that runs out of room runs out on tests and data, not on the application."""
+    lower = path.lower()
+    parts = lower.split("/")
+    name = parts[-1]
+    in_test_or_doc_dir = any(part in _SEARCH_TEST_OR_DOC_DIRS for part in parts[:-1])
+    is_test_file = name.startswith("test_") or ".test." in name or ".spec." in name or name.endswith("_test.py")
+    if name.endswith(_SEARCH_SOURCE_EXTENSIONS) and not in_test_or_doc_dir and not is_test_file:
+        rank = 0
+    elif name.endswith(_SEARCH_SOURCE_EXTENSIONS):
+        rank = 1
+    else:
+        rank = 2
+    return (rank, lower)
 
 
 def ensure_workflow_keys(state: GraphState) -> GraphState:
@@ -2661,10 +2684,15 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             items = await asyncio.to_thread(_fetch_repo_tree_items)
             if isinstance(items, str):
                 return items
-            extension_ok = [
-                item for item in items
-                if not item.get("path", "").lower().endswith(_SEARCH_LITERAL_SKIP_EXTENSIONS)
-            ][:_SEARCH_LITERAL_MAX_FILES_SCANNED]
+            candidates = sorted(
+                (item for item in items if not item.get("path", "").lower().endswith(_SEARCH_LITERAL_SKIP_EXTENSIONS)),
+                key=lambda item: _search_priority(item.get("path", "")),
+            )
+            # The person's own copy (or a checkout) is read from disk, so the whole of it is searched within a big byte budget; only the GitHub API path, where every file is a request, keeps the file cap.
+            on_disk = _get_checkout() is not None
+            byte_budget = _SEARCH_LITERAL_LOCAL_MAX_TOTAL_SCAN_BYTES if on_disk else _SEARCH_LITERAL_MAX_TOTAL_SCAN_BYTES
+            extension_ok = candidates if on_disk else candidates[:_SEARCH_LITERAL_MAX_FILES_SCANNED]
+            not_searched_by_count = len(candidates) - len(extension_ok)
 
             # Greedy first-fit against a TOTAL bytes budget, in the tree's own natural order —
             # not a sort by size. A file is skipped only if scanning it would push the running
@@ -2676,7 +2704,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             running_total = 0
             for item in extension_ok:
                 size = item.get("size", 0)
-                if running_total + size <= _SEARCH_LITERAL_MAX_TOTAL_SCAN_BYTES:
+                if running_total + size <= byte_budget:
                     to_scan.append(item)
                     running_total += size
                 else:
@@ -2751,11 +2779,17 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 more = f" (+{len(skipped_paths) - 10} more)" if len(skipped_paths) > 10 else ""
                 budget_note = (
                     f" WARNING: {len(skipped_over_budget)} file(s) were not reached this call "
-                    f"(the {_SEARCH_LITERAL_MAX_TOTAL_SCAN_BYTES}-byte total scan budget ran out "
+                    f"(the {byte_budget}-byte total scan budget ran out "
                     f"before reaching them — NOT a permanent exclusion, just this call's cutoff) "
                     f"and this is NOT a guaranteed-complete answer if your target could be in one "
                     f"of them: {shown}{more}. Read those directly, or re-run search_literal if "
                     f"you need them specifically covered."
+                )
+            if not_searched_by_count:
+                # Never say "exhaustively scanned" about a search that did not look at every file: the count cap used to cut files off silently.
+                budget_note += (
+                    f" WARNING: {not_searched_by_count} more candidate file(s) were not searched at all (one search here reads at most {_SEARCH_LITERAL_MAX_FILES_SCANNED} files, "
+                    f"source files first), so this is NOT a guaranteed-complete answer. Read the file you expect directly, or search again with a term that only your target would contain."
                 )
             if not matches:
                 return (

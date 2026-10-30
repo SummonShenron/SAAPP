@@ -2,6 +2,7 @@ import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState, useRe
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAffiliateScope } from '../hooks/useAffiliateScope';
 import { useLocalWorkspace } from '../hooks/useLocalWorkspace';
+import { useRunnerPing } from '../hooks/useRunnerPing';
 import LocalEditCard from '../components/LocalEditCard';
 import RunnerCheckCard from '../components/RunnerCheckCard';
 import ApprovalButtons from '../components/ApprovalButtons';
@@ -29,8 +30,11 @@ import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal,
 import MemorySourceDialog from '../components/MemorySourceDialog';
 import BudgetBanner from '../components/BudgetBanner';
 import UsageRing from '../components/UsageRing';
+import SessionColumn, { type FolderControls, type RepoControls } from '../components/SessionColumn';
+import { ringView } from '../components/budgetText';
 import TracePanel, { type TraceStep } from '../components/TracePanel';
-import { mergeExcerpts, mergeFacts, recordExcerpt, recordFacts, toolStepLabel, type TraceExcerptsById, type TraceFactsById } from '../components/traceFacts';
+import { finishedSteps, mergeExcerpts, mergeFacts, recordExcerpt, recordFacts, toolStepLabel, type TraceExcerptsById, type TraceFactsById } from '../components/traceFacts';
+import StepsDisclosure from '../components/StepsDisclosure';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import LogoMark from '../components/LogoMark';
 import InputGlow from '../components/InputGlow';
@@ -75,6 +79,9 @@ interface Message {
   noted?: string[];
   // The memory a "Source: Memory" citation in this reply opens (kept with the reply, so it still works after a reload).
   memorySources?: MemorySources;
+  // The steps this reply took (what the trace panel showed for it), kept so each reply can open them again (components/StepsDisclosure.tsx). Only in the open page: never cached or stored, because the read
+  // excerpts in them are pieces of the person's files.
+  steps?: TraceStep[];
 }
 
 const STEER_STATUS_LABEL: Record<NonNullable<Message['steer']>, string> = {
@@ -177,6 +184,10 @@ interface ChatMessageListProps {
   loading: boolean;
   agentStatus: string;
   latestStepTitle: string;
+  /** The running turn's steps so far (with their facts and excerpts), drawn as the live node graph above the reply when `showSteps` is on. */
+  liveSteps: TraceStep[];
+  /** The microscope is on: replies show their steps as nodes (live while they run, a "7 steps" line after). Off: one line saying what Sonic is doing now, and nothing after. */
+  showSteps: boolean;
   theme: "sonic" | "shadow";
   isEmbedded: boolean;
   chatWindowRef: React.RefObject<HTMLDivElement | null>;
@@ -255,7 +266,7 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
 // direct function props, so a skipped re-render here never risks calling a stale closure over
 // sessionId/principal/etc — the same class of bug fixed earlier for attachmentsRef.
 const ChatMessageList = React.memo(function ChatMessageList({
-  messages, earlierCount, loadingEarlier, loadEarlierRef, hasChatted, loading, agentStatus, latestStepTitle, theme, isEmbedded,
+  messages, earlierCount, loadingEarlier, loadEarlierRef, hasChatted, loading, agentStatus, latestStepTitle, liveSteps, showSteps, theme, isEmbedded,
   chatWindowRef, messagesEndRef, attachmentsRef, handleSendMessageRef, handleFeedbackRef, getTokenRef,
   canEditLocal, localEditActionsRef, localGitMode, planCard,
 }: ChatMessageListProps) {
@@ -263,6 +274,9 @@ const ChatMessageList = React.memo(function ChatMessageList({
   const [memoryViewer, setMemoryViewer] = useState<Message | null>(null);
   const closeMemoryViewer = useCallback(() => setMemoryViewer(null), []);
   if (!hasChatted) return null;
+  // The reply being written right now (the last message, while a turn runs) holds the live steps itself.
+  const lastMessage = messages[messages.length - 1];
+  const liveMessageId = loading && showSteps && !isEmbedded && lastMessage?.sender === 'ai' ? lastMessage.id : null;
 
   return (
     <div
@@ -298,6 +312,10 @@ const ChatMessageList = React.memo(function ChatMessageList({
           const { cleanContent, followUp } = msg.sender === 'ai'
             ? parseFollowUp(msg.text)
             : { cleanContent: msg.text, followUp: null };
+          // The steps this reply shows. The newest reply keeps its steps open until the next request starts: until they are attached to it (a moment after the turn ends) they are the live list, which still
+          // holds this turn's steps, so nothing blinks out between the two.
+          const isNewestReply = msg.id === lastMessage?.id;
+          const replySteps = msg.steps ?? (isNewestReply ? finishedSteps(liveSteps) : undefined);
 
           return (
             <div key={msg.id} className={`message-bubble ${msg.sender}`}>
@@ -307,6 +325,10 @@ const ChatMessageList = React.memo(function ChatMessageList({
               {msg.initiated && (
                 <div className="message-initiated-note">Sonic started this. You can turn that off in the settings menu.</div>
               )}
+              {/* The steps come first and the answer under them: the running reply draws the live nodes (the newest is the loader), a finished one a "7 steps" line that opens (components/StepsDisclosure.tsx). */}
+              {msg.sender === 'ai' && showSteps && !isEmbedded && (msg.id === liveMessageId
+                ? <StepsDisclosure steps={liveSteps} running idPrefix="live" />
+                : replySteps && replySteps.length > 0 && <StepsDisclosure steps={replySteps} running={false} latest={isNewestReply} idPrefix={`reply-${msg.id}`} />)}
               {msg.images && msg.images.length > 0 && (
                 <div className="message-attachment-images">
                   {msg.images.map((img, idx) =>
@@ -556,7 +578,11 @@ const ChatMessageList = React.memo(function ChatMessageList({
               {latestStepTitle || "Thinking..."}
             </div>
           </div>
+        ) : showSteps ? (
+          // Normally the running reply shows its own steps (above); this is only for a turn with no reply bubble to hold them.
+          liveMessageId === null && <StepsDisclosure steps={liveSteps} running idPrefix="live" />
         ) : (
+          // The default: the ring and one line, the step Sonic is on right now.
           <div className="sonic-loader-container">
             <div className="sonic-ring-loader"></div>
             {latestStepTitle && <span className="agent-status-text">{latestStepTitle}</span>}
@@ -622,10 +648,24 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
       const saved = localStorage.getItem('showTracePanel');
       if (saved !== null) return JSON.parse(saved);
     }
-    // The trace is a blade beside the conversation (it costs width), so with no saved choice it starts open only on a wide screen.
-    return typeof window === 'undefined' || window.innerWidth >= 1400;
+    // With no saved choice the steps stay simple: one line saying what Sonic is doing now. The microscope turns on the node graph in the conversation (see showSteps).
+    return false;
   });
   const isMobileView = useMediaQuery('(max-width: 768px)');
+  // The session column (components/SessionColumn.tsx) beside the conversation: on by default, switched with its button in the top bar, and only where there is room for it.
+  // From 900px up (a monitor turned upright is about 1080 wide); below 1100px the column is narrower (SessionColumn.css).
+  const roomForColumn = useMediaQuery('(min-width: 900px)');
+  const [showSessionColumn, setShowSessionColumn] = useState(() => {
+    try { return localStorage.getItem('showSessionColumn') !== 'false'; } catch { return true; }
+  });
+  const toggleSessionColumn = () => {
+    setShowSessionColumn((prev: boolean) => {
+      const next = !prev;
+      try { localStorage.setItem('showSessionColumn', String(next)); } catch { /* remembering the choice is a convenience */ }
+      return next;
+    });
+  };
+  const columnVisible = !isEmbedded && !isMobileView && roomForColumn && showSessionColumn;
 
   const toggleTracePanel = () => {
     setShowTracePanel((prev: boolean) => {
@@ -640,6 +680,10 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [traceFacts, setTraceFacts] = useState<TraceFactsById>({});
   const [traceExcerpts, setTraceExcerpts] = useState<TraceExcerptsById>({});
   const tracePanelSteps = useMemo(() => mergeExcerpts(mergeFacts(traceSteps, traceFacts), traceExcerpts), [traceSteps, traceFacts, traceExcerpts]);
+  // The same list, readable from the stream's closures; and the reply whose turn just ended and is waiting for its steps to be kept on it (see attachTurnSteps).
+  const tracePanelStepsRef = useRef<TraceStep[]>([]);
+  useEffect(() => { tracePanelStepsRef.current = tracePanelSteps; }, [tracePanelSteps]);
+  const endedTurnRef = useRef<string | null>(null);
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const principal = getEffectivePrincipal();
   const [selectedAffiliate, setSelectedAffiliate] = useState<string>('All');
@@ -661,6 +705,17 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   // Connected local folder: Sonic reads this instead of GitHub's copy. Not offered to guests (every
   // guest shares one identity) or in embed mode.
   const workspace = useLocalWorkspace({ enabled: !isEmbedded && !isGuestPrincipal(principal) });
+  // What the session column shows about the connection: whether the runner answers (asked every half minute while the column is showing), and the folder's branch.
+  const runnerList = useRunnerPing(columnVisible && !isGuestPrincipal(principal));
+  const [folderBranch, setFolderBranch] = useState<string | null>(null);
+  const [contextUse, setContextUse] = useState<{ sessionId: string; used: number; window: number; fraction: number } | null>(null);
+  const { status: workspaceStatus, currentGitBranch } = workspace;
+  useEffect(() => {
+    if (!columnVisible || workspaceStatus === 'disconnected') return undefined;
+    let alive = true;
+    void currentGitBranch().then(branch => { if (alive) setFolderBranch(branch); });
+    return () => { alive = false; };
+  }, [columnVisible, workspaceStatus, currentGitBranch]);
   const [agentStatus, setAgentStatus] = useState<string>('');
   const [agentPath, setAgentPath] = useState<string[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
@@ -1258,10 +1313,22 @@ useEffect(() => {
           <Icon name="microscope" size={18} />
           {loading && !traceOpen && <span className="topbar-btn-dot" aria-hidden="true" />}
         </button>
+        {!isMobileView && roomForColumn && (
+          <button
+            type="button"
+            className="topbar-btn"
+            onClick={toggleSessionColumn}
+            aria-pressed={showSessionColumn}
+            aria-label="Toggle the session column"
+            title={showSessionColumn ? 'Hide the session column' : 'Show the session column'}
+          >
+            <Icon name="panelRight" size={18} />
+          </button>
+        )}
       </>
     );
     return () => shell.setTopBarActions(null);
-  }, [isEmbedded, showTracePanel, isMobileView, isMobileTraceOpen, loading, sessionId, principal, userTurnCount]);
+  }, [isEmbedded, showTracePanel, showSessionColumn, roomForColumn, isMobileView, isMobileTraceOpen, loading, sessionId, principal, userTurnCount]);
 
   // Prepends the page of saved messages just before the ones on screen. The smooth scroll-to-bottom
   // that normally fires when the message count changes is skipped here, and the viewport is held
@@ -1313,10 +1380,9 @@ useEffect(() => {
   }, [showFolderMenu]);
 
   useEffect(() => {
-    if (!showOverflowWheel && !showScopePicker) return;   // nothing is open, so nothing listens
+    if (!showOverflowWheel) return;   // nothing is open, so nothing listens
     const close = () => {
       setShowOverflowWheel(false);
-      setShowScopePicker(false);
     };
     const onPointerDown = (e: PointerEvent) => {
       if (!optionsMenuRef.current?.contains(e.target as Node)) close();
@@ -1330,7 +1396,7 @@ useEffect(() => {
       document.removeEventListener('pointerdown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [showOverflowWheel, showScopePicker]);
+  }, [showOverflowWheel]);
 
   const addAttachmentFile = async (original: File) => {
     // Shrunk first (a phone photo is megabytes). The photo then travels once, inside the chat request: a second copy used to go to
@@ -1423,11 +1489,14 @@ useEffect(() => {
   useEffect(() => {
     const write = () => {
       try {
-        const cacheable = messages.slice(-LOCAL_CACHE_MESSAGE_CAP).map(m =>
-          m.images
+        // The steps a reply took are never cached: their read excerpts are pieces of the person's files (see Message.steps).
+        const cacheable = messages.slice(-LOCAL_CACHE_MESSAGE_CAP).map(original => {
+          const m: Message = { ...original };
+          delete m.steps;
+          return m.images
             ? { ...m, images: m.images.map(img => ({ filename: img.filename, fileId: img.fileId, generated: img.generated })) }
-            : m
-        );
+            : m;
+        });
         localStorage.setItem(chatStorageKey, JSON.stringify(cacheable));
       } catch (e) {
         console.warn("Could not cache the conversation locally:", e);
@@ -1481,7 +1550,7 @@ useEffect(() => {
       // an unwanted scroll-up right as each response finishes.
       chatWindowRef.current.scrollTop = chatWindowRef.current.scrollHeight;
     }
-  }, [messages, loading]);
+  }, [messages, loading, tracePanelSteps.length]);      // a new step grows the running turn's list, so the page follows it down like it follows the reply
 
   const addTraceStep = (payload: any) => {
     const title = payload?.title || payload?.message || "Agent step";
@@ -1502,6 +1571,17 @@ useEffect(() => {
     ]);
   };
 
+  // Keeps a finished turn's steps on its reply, so the reply can open them again. The steps are drawn one at a time with a delay, so a turn can end (the answer has streamed) before its last steps are drawn:
+  // this is called when the turn ends with what exists then, and again when the replay has caught up (`done`), which keeps the whole list and stops waiting.
+  const attachTurnSteps = (done: boolean) => {
+    const id = endedTurnRef.current;
+    if (!id) return;
+    if (done) endedTurnRef.current = null;
+    const steps = finishedSteps(tracePanelStepsRef.current);
+    if (steps.length === 0) return;
+    setMessages(prev => prev.map(m => (m.id === id ? { ...m, steps } : m)));
+  };
+
   const markTraceComplete = () => {
     setTraceSteps(prev => {
       if (!prev.length) return prev;
@@ -1514,6 +1594,7 @@ useEffect(() => {
   const processNodeQueue = () => {
     if (nodeQueueRef.current.length === 0) {
       isProcessingQueue.current = false;
+      attachTurnSteps(true);      // the replay has caught up: a turn that already ended now keeps all of its steps
       return;
     }
     isProcessingQueue.current = true;
@@ -1550,10 +1631,11 @@ useEffect(() => {
     // A retry replaces the failed message and its failure notice rather than repeating them in the thread.
     replaceIds: string[] = []
   ) => {
+    if (!textToSend.trim() || loading) return;
+    attachTurnSteps(true);        // the last turn's steps are kept on its reply before the list starts again
     setTraceSteps([]);
     setTraceFacts({});
     setTraceExcerpts({});
-    if (!textToSend.trim() || loading) return;
 
     // Instant local preview from the base64 content already in hand — no round-trip needed.
     // The durable, cross-device version comes back later via mapServerMessage's fileId path.
@@ -1629,6 +1711,10 @@ useEffect(() => {
               }
               if (payload.event === 'trace_excerpt') {
                 setTraceExcerpts(prev => recordExcerpt(prev, payload.step_id, payload.excerpt));      // live only: kept in memory for this request, never saved
+              }
+              if (payload.event === 'context') {
+                // How full the biggest request of this turn was (counts only; backend/utils/context_window.py): the session column's context ring. Kept with the conversation it belongs to.
+                setContextUse({ sessionId, used: Number(payload.used), window: Number(payload.window), fraction: Number(payload.fraction) });
               }
               if (payload.event === 'budget') {
                 setBudget(prev => ({ ...(payload as BudgetView), increase_request: (payload as BudgetView).can_request_increase ? prev?.increase_request : null }));
@@ -1873,6 +1959,9 @@ useEffect(() => {
       if (stoppedByUser) pendingResendRef.current = [];
       abortControllerRef.current = null;
       setLoading(false);
+      // This turn's steps go onto its reply (see attachTurnSteps): now with what is drawn, once the page has rendered the last of it, and again when the replay of late steps catches up.
+      endedTurnRef.current = aiMessageId;
+      window.setTimeout(() => attachTurnSteps(!isProcessingQueue.current && nodeQueueRef.current.length === 0), 80);
       if (failed) setPatchyFault(c => c + 1);
       else if (!stoppedByUser) setPatchyCheer(c => c + 1);
       setAgentStatus('');
@@ -2142,6 +2231,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
   const patchyAllowed = !isEmbedded && principal !== 'guest_bty';
   const scopeLabel = allowedAffiliates.find(a => a.id === selectedAffiliate)?.display_name
     || (selectedAffiliate !== 'All' ? selectedAffiliate : 'None');
+  // What the newest reply that used memory drew on (the session column says it in a few words).
+  const lastMemory = [...messages].reverse().find(m => m.sender === 'ai' && m.memorySources)?.memorySources ?? null;
   const folderGlyph = settingsGlyph(<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />);
   // The local folder and the target repo have their own buttons at the left of the message box (they used to sit in the "..." menu). The folder button does the one obvious thing
   // for its state; once the folder is connected, its menu offers the rest (resync, disconnect, undo the last edit).
@@ -2151,16 +2242,18 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
     if (hasLocalFolderConsent()) void workspace.connect();
     else setShowFolderConsent(true);
   };
-  const cycleApprovalLevel = () => {
-    const next = nextLevel(approvalLevel);
+  // Sets how edits to the folder are approved. Choosing "automatic this session" is always confirmed first; if it is declined the level becomes `ifDeclined` (the menu's cycle goes back to "ask", a
+  // direct pick in the session column stays where it was).
+  const applyApprovalLevel = (next: ApprovalLevel, ifDeclined: ApprovalLevel) => {
     if (next === 'session' && !window.confirm('Apply every change Sonic proposes to your folder without asking, until you close this tab?\n\nEach change is still shown on its card with an Undo button.')) {
-      setApprovalLevel('ask');
-      saveLevel('ask');
+      setApprovalLevel(ifDeclined);
+      saveLevel(ifDeclined);
       return;
     }
     setApprovalLevel(next);
     saveLevel(next);
   };
+  const cycleApprovalLevel = () => applyApprovalLevel(nextLevel(approvalLevel), 'ask');
   const folderMenuEntries: { item: OptionWheelItem; run: () => void }[] = [
     { item: { label: levelLabel(approvalLevel), icon: folderGlyph }, run: cycleApprovalLevel },
     { item: { label: localGitModeLabel(localGitMode), icon: folderGlyph }, run: () => { const next = nextLocalGitMode(localGitMode); setLocalGitMode(next); saveLocalGitMode(next); } },
@@ -2202,21 +2295,39 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           : workspace.status === 'error' ? `Folder sync failed, click to retry${workspace.message ? `: ${workspace.message}`.slice(0, 60) : ''}`
             : `Folder: ${workspace.folderName}${workspace.fileCount !== null ? ` · ${workspace.fileCount} files` : ''}`;
   const folderDot = workspace.status === 'connected' ? 'on' : workspace.status === 'syncing' ? 'syncing' : workspace.status === 'not-uploaded' ? 'pending' : workspace.status === 'needs-permission' ? 'warn' : workspace.status === 'error' ? 'error' : null;
+  // What the session column offers for the folder and the target repo (components/SessionColumn.tsx): the same actions as the buttons beside the message box, which are left out while the column is
+  // showing. The folder's options are listed to pick from there instead of cycled one at a time.
+  const folderControls: FolderControls | null = folderAvailable ? {
+    busy: loading,
+    primary: workspace.status === 'disconnected' ? { label: 'Connect a folder', run: connectFolder }
+      : workspace.status === 'needs-permission' ? { label: 'Reconnect the folder', run: () => { void workspace.reconnect(); } }
+        : workspace.status === 'not-uploaded' ? { label: 'Upload it now', run: () => { void workspace.resync(); } }
+          : workspace.status === 'error' ? { label: 'Try again', run: () => { void workspace.resync(); } }
+            : null,
+    options: workspace.status === 'connected' ? {
+      approval: { value: approvalLevel, onChange: value => applyApprovalLevel(value as ApprovalLevel, approvalLevel) },
+      git: { value: localGitMode, onChange: value => { setLocalGitMode(value as LocalGitMode); saveLocalGitMode(value as LocalGitMode); } },
+      actions: folderMenuEntries.slice(2).map(entry => ({ label: entry.item.label, run: entry.run })),       // resync, disconnect and (when there is one) undo the last edit
+    } : null,
+  } : null;
+  const repoControls: RepoControls | null = isEmbedded ? null : {
+    value: targetRepo, input: repoInput, saving: repoSaving, onInput: setRepoInput, onSave: () => { void handleSaveTargetRepo(); }, onClear: () => { void handleClearTargetRepo(); },
+  };
   const settingsEntries: { item: OptionWheelItem; run: () => void; keepOpen?: boolean }[] = isEmbedded ? [] : [
-    {
-      item: {
-        label: fetchingScope ? 'Scope: loading…' : `Scope: ${scopeLabel}`,
-        disabled: loading || fetchingScope || allowedAffiliates.length === 0,
-        icon: settingsGlyph(<><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></>),
-      },
-      // Opens its own picker popup (rendered next to the overflow popover) instead of cycling
-      // through scopes one click at a time.
-      run: () => {
-        setShowOverflowWheel(false);
-        setShowScopePicker(true);
-      },
-      keepOpen: true,
-    },
+    // {
+    //   item: {
+    //     label: fetchingScope ? 'Scope: loading…' : `Scope: ${scopeLabel}`,
+    //     disabled: loading || fetchingScope || allowedAffiliates.length === 0,
+    //     icon: settingsGlyph(<><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></>),
+    //   },
+    //   // Opens its own picker popup (rendered next to the overflow popover) instead of cycling
+    //   // through scopes one click at a time.
+    //   run: () => {
+    //     setShowOverflowWheel(false);
+    //     setShowScopePicker(true);
+    //   },
+    //   keepOpen: true,
+    // },
     {
       item: {
         label: `Open Answers: ${ragMode === 'open' ? 'On' : 'Off'}`,
@@ -2317,6 +2428,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           loading={loading}
           agentStatus={agentStatus}
           latestStepTitle={latestStepTitle}
+          liveSteps={tracePanelSteps}
+          showSteps={!isEmbedded && !isMobileView && showTracePanel}
           theme={theme}
           isEmbedded={isEmbedded}
           chatWindowRef={chatWindowRef}
@@ -2387,7 +2500,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           </>
           )}
 
-          {showRepoBanner && (
+          {showRepoBanner && !columnVisible && (
             <div className="repo-banner"
               style={{
                 display: "flex",
@@ -2538,7 +2651,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               {/* The buttons sit in a row of their own under the text (in the app shell), so typed text can never run under them. In the embedded widget this wrapper has no
                   styling and its two groups keep floating over the box's bottom edge. */}
               <div className="chat-input-toolbar">
-              {!isEmbedded && (
+              {!isEmbedded && !columnVisible && (
                 <div className="icon-row-left" ref={toolButtonsRef}>
                   <button
                     type="button"
@@ -2588,20 +2701,17 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               )}
 
               <div className="icon-row-overlay">
-                {!isEmbedded && <UsageRing budget={budget} />}
+                {/* The small ring beside the message box: left out while the session column is showing (it carries the same gauge, bigger). */}
+                {!isEmbedded && !columnVisible && <UsageRing budget={budget} />}
                 <div style={{ position: "relative" }} ref={optionsMenuRef}>
                   <button
                     type="button"
-                    className={`circle-icon-button ${showOverflowWheel || showScopePicker ? 'trace-active' : ''}`}
+                    className={`circle-icon-button ${showOverflowWheel ? 'trace-active' : ''}`}
                     onClick={() => {
-                      if (showScopePicker) {
-                        setShowScopePicker(false);
-                        return;
-                      }
                       setShowOverflowWheel(v => !v);
                     }}
                     title="More actions"
-                    style={showOverflowWheel || showScopePicker ? {
+                    style={showOverflowWheel ? {
                       background: 'var(--accent-primary)',
                       border: '1px solid var(--accent-primary)'
                     } : {}}
@@ -3194,12 +3304,24 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
         )}
       </main>
 
-      {/* The execution trace: a blade down the right side on a wide screen (it pushes the conversation over), a bottom sheet on a phone. */}
-      {!isEmbedded && !isMobileView && showTracePanel && (
-        <aside className="trace-blade" aria-label="Execution trace">
-          <TracePanel steps={tracePanelSteps} running={loading} onClose={toggleTracePanel} />
-        </aside>
+      {/* The session column: the state of this conversation and workspace, beside it (components/SessionColumn.tsx). */}
+      {columnVisible && (
+        <SessionColumn
+          folder={{ status: workspace.status, name: workspace.folderName, fileCount: workspace.fileCount, branch: workspace.status === 'disconnected' ? null : folderBranch }}
+          runnerEnabled={!isGuestPrincipal(principal)}
+          runners={runnerList}
+          usage={budget ? ringView(budget) : null}
+          context={contextUse && contextUse.sessionId === sessionId ? contextUse : null}
+          plan={codePlan && workspace.canEdit ? codePlan : null}
+          scope={allowedAffiliates.length > 0 ? { label: fetchingScope ? 'Loading…' : scopeLabel, busy: loading || fetchingScope, onPick: () => setShowScopePicker(true) } : null}
+          memory={lastMemory}
+          folderControls={folderControls}
+          repo={repoControls}
+        />
       )}
+
+      {/* The execution trace. On a wide screen it is no longer a panel: the microscope draws the steps as nodes in the conversation itself (showSteps, components/StepsDisclosure.tsx), so the space beside it is free.
+          On a phone it is still a bottom sheet. */}
       {!isEmbedded && isMobileView && isMobileTraceOpen && (
         <>
           <div className="trace-sheet-backdrop" onClick={() => setIsMobileTraceOpen(false)} />

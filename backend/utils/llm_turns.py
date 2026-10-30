@@ -81,6 +81,8 @@ class Turn:
         self.user = user  # who the turn is for, only so their own usage can be added up (backend/utils/user_usage.py)
         self.calls = 0
         self.input = 0
+        self.peak_input = 0  # the biggest request any one call sent (input tokens) and the model that answered it: the context ring (backend/utils/context_window.py), counts only
+        self.peak_model = ""
         self.output = 0
         self.reasoning = 0
         self.cost_micro = 0  # what the turn's priced calls cost, in millionths of a dollar (a model with no price in LLM_PRICES adds nothing)
@@ -157,6 +159,8 @@ def note_call(usage: Dict[str, int], model: Optional[str] = None) -> None:
         with turn._lock:
             turn.cost_micro += cost_micro
             turn.calls += 1
+            if _count(usage.get("input")) > turn.peak_input:
+                turn.peak_input, turn.peak_model = _count(usage.get("input")), str(model or "")
             turn.input += _count(usage.get("input"))
             turn.output += _count(usage.get("output"))
             turn.reasoning += _count(usage.get("reasoning"))

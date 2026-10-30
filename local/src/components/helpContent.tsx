@@ -21,7 +21,7 @@ export const EVERYDAY: Record<string, Content> = {
       <ul>
         <li>Ask it anything, including who Jack is, what he has built, and how this system works.</li>
         <li>Ask what it has been reading lately, or for a dry joke. It has a personality and a profile you can read under "About Sonic".</li>
-        <li>Press the <strong>microscope</strong> button at the top right to watch the steps it takes to answer.</li>
+        <li>Press the <strong>microscope</strong> button at the top right to see the steps it takes to answer, drawn as a path above each reply.</li>
         <li>For questions about the demo library, Sonic uses its documents first and cites the page. For anything they don't cover, it answers from general knowledge. If you'd rather it stuck to the documents, turn off <strong>Open Answers</strong> in the "…" menu.</li>
         <li>Guests share one temporary identity, so nothing here is personal and nothing is remembered about you.</li>
       </ul>
@@ -122,7 +122,7 @@ export const EVERYDAY: Record<string, Content> = {
         <li>"Tell me a joke about vibe coding."</li>
         <li>"What's the most famous bug in computing history?"</li>
       </ul>
-      <p>Press the <strong>microscope</strong> button at the top right to watch the steps Sonic takes to answer.</p>
+      <p>While Sonic works you see one line saying what it is doing. Press the <strong>microscope</strong> button at the top right to see every step instead, drawn as a path above the reply, and open a step to see what it read or found. Each reply keeps its steps for as long as the page is open.</p>
     </>
   ) : (
     <>
