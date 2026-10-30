@@ -1,0 +1,40 @@
+/* The icons under the message box (components/ComposerChips.tsx): code model, mode, thinking, answers, and Help at the far right. Theme variables, so it follows light and dark. */
+
+.composer-chips { display: flex; align-items: center; gap: 8px; margin: 0; padding: 0 0.75rem; position: relative; }
+.cc-item { position: relative; }
+.cc-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+
+.cc-btn {
+  width: 34px; height: 34px; padding: 0; display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-alt); color: var(--text-muted); cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.cc-btn:hover:not(:disabled), .cc-btn.is-open { color: var(--text-main); background: var(--bg-surface-hover); }
+.cc-btn:focus-visible, .cc-opt:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
+.cc-btn:disabled { opacity: 0.55; cursor: default; }
+.cc-btn.is-changed { color: var(--accent-primary); border-color: var(--accent-primary); background: var(--bg-surface-hover); }
+.cc-mark { display: block; }
+.theme-shadow .cc-btn { border-color: transparent; background: var(--panel-bg); }
+.theme-shadow .cc-btn.is-changed { background: var(--bg-surface-hover); }
+
+/* The popup opens upward (the message box is at the bottom of the page) and stays inside the screen. */
+.cc-pop {
+  position: absolute; bottom: 42px; left: 0; z-index: 60; width: min(264px, calc(100vw - 24px)); box-sizing: border-box; padding: 6px;
+  border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-main); color: var(--text-main); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+.theme-shadow .cc-pop { background: var(--panel-bg); border-color: transparent; }
+.cc-help .cc-pop { left: auto; right: 0; }
+.cc-pop-help { width: min(300px, calc(100vw - 24px)); padding: 12px 14px; font-size: 12px; line-height: 1.45; }
+.cc-pop-title { padding: 4px 8px 2px; font-size: 0.7rem; letter-spacing: 0.04em; color: var(--text-muted); }
+
+.cc-opt { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 8px; border: 0; border-radius: 8px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.cc-opt:hover { background: var(--bg-surface-hover); }
+.cc-opt.is-selected { background: var(--bg-surface-hover); }
+.cc-opt-icon { flex: 0 0 auto; display: flex; margin-top: 1px; color: var(--text-muted); }
+.cc-opt.is-selected .cc-opt-icon { color: var(--accent-primary); }
+.cc-opt-text { display: flex; flex-direction: column; min-width: 0; }
+.cc-opt-text b { font-size: 0.85rem; font-weight: 600; }
+.cc-opt-text span { font-size: 0.75rem; line-height: 1.4; color: var(--text-muted); }
+
+.cc-help-title { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 600; padding-right: 16px; color: var(--accent-primary); }
+.cc-help-list { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 6px; }

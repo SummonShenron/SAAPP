@@ -217,7 +217,9 @@ div.chat-page.chat-page { flex: 1 1 auto; min-height: 0; display: flex; flex-dir
 
 /* Stage 2, the conversation's own space. Everything here is scoped to .chat-page, so the embedded widget keeps its original layout.
    The scroll fades on .chat-window (index.css) and the messages' fade-in are deliberately left exactly as they are. */
-.chat-page .portal-body { flex: 1 1 auto; min-width: 0; min-height: 0; max-width: 960px; padding: 0 1.5rem 1rem; }
+.chat-page .portal-body { flex: 1 1 auto; min-width: 0; min-height: 0; max-width: 960px; padding: 0 1.5rem 0.5rem; }
+/* The icons under the message box sit close to it (the footer's own row gap of 0.75rem is more than they need), so the message box itself sits lower on the page. */
+.chat-page .composer-chips { margin-top: -0.4rem; }
 
 /* The scroll fades on .chat-window are 40px at the top and 36px at the bottom (index.css). Padding of the same length keeps the first and last
    messages fully clear when the list is at rest, while anything scrolling past the edges still fades out and in exactly as before. */
@@ -231,7 +233,7 @@ div.chat-page.chat-page { flex: 1 1 auto; min-height: 0; display: flex; flex-dir
 
 /* Phones: the gutters stacked (page, then chat window) and left the text about three quarters of the screen's width. */
 @media (max-width: 768px) {
-  .chat-page .portal-body { padding: 0 0.5rem 0.5rem; }
+  .chat-page .portal-body { padding: 0 0.5rem 0.25rem; }
   .chat-page .chat-window { padding: 2.5rem 0.5rem 2.25rem; }
   /* A reply has no visible bubble, so the bubble's own side padding was only taking width from the text. */
   .chat-page .message-bubble.ai { padding-left: 0.5rem; padding-right: 0.5rem; }

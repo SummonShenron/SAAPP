@@ -31,7 +31,9 @@ import MemorySourceDialog from '../components/MemorySourceDialog';
 import BudgetBanner from '../components/BudgetBanner';
 import SessionColumn, { type FolderControls, type RepoControls } from '../components/SessionColumn';
 import SessionRail from '../components/SessionRail';
-import { RUNNER_START_LINK, RUNNER_START_WAIT_MS, canStartRunnerFromLink, runnerStartPhase, scopeChoices, scopeLabel as scopeName } from '../components/sessionColumnLogic';
+import ComposerChips from '../components/ComposerChips';
+import { answersId, answersValue, modeId, modeValue, thinkingId, thinkingValue } from '../components/composerChipsLogic';
+import { RUNNER_START_LINK, RUNNER_START_WAIT_MS, canStartRunnerFromLink, runnerStartPhase, scopeChoices } from '../components/sessionColumnLogic';
 import { ringView } from '../components/budgetText';
 import { type TraceStep } from '../components/TracePanel';
 import { finishedSteps, mergeExcerpts, mergeFacts, recordExcerpt, recordFacts, toolStepLabel, type TraceExcerptsById, type TraceFactsById } from '../components/traceFacts';
@@ -668,11 +670,10 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   };
   const columnVisible = !isEmbedded && !isMobileView && roomForColumn && showSessionColumn;
   // Wherever the full column does not fit (a phone, or any window under 900px) it is a strip of icons at the right edge instead (components/SessionRail.tsx), on and off with the same top-bar button.
-  // Either one carries the repo, the gauges and the scope, so the scope entry of the "..." menu is left out while one of them is showing. The message box never carries the repo button or the usage ring:
+  // Either one carries the repo, the gauges and the scope. The message box never carries the repo button or the usage ring (and no longer a "..." menu with the scope in it):
   // when the column or the strip is switched off they are simply hidden (the top-bar button brings it back), so the text field keeps all its room.
   const compactScreen = !isEmbedded && !roomForColumn;
   const railVisible = compactScreen && showSessionColumn;
-  const sidePanel = columnVisible || railVisible;
 
   const toggleTracePanel = () => {
     setShowTracePanel((prev: boolean) => {
@@ -856,7 +857,6 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [showTooltip, setShowTooltip] = useState(false);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const [showOverflowWheel, setShowOverflowWheel] = useState(false);
-  const [showScopePicker, setShowScopePicker] = useState(false);
 
   const [targetRepo, setTargetRepo] = useState<string>("");
   const [repoInput, setRepoInput] = useState("");
@@ -2254,7 +2254,6 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
   // Patchy isn't offered to the BTY guest at all (no mascot, no menu toggle).
   const patchyAllowed = !isEmbedded && principal !== 'guest_bty';
   // "All" is the default: every knowledge base the person may use (it used to read "None"). The choices include it, so a person who picked one can go back.
-  const scopeLabel = scopeName(selectedAffiliate, allowedAffiliates);
   const scopeOptions = scopeChoices(allowedAffiliates, isGuestPrincipal(principal));
   // What the newest reply that used memory drew on (the session column says it in a few words).
   const lastMemory = [...messages].reverse().find(m => m.sender === 'ai' && m.memorySources)?.memorySources ?? null;
@@ -2353,77 +2352,14 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
       </svg>
     </button>
   );
-  const settingsEntries: { item: OptionWheelItem; run: () => void; keepOpen?: boolean }[] = isEmbedded ? [] : [
-    // The scope lives in the session column on a wide screen (a dropdown there) and under the lock of the icon strip on a phone; this entry is for when neither is showing (switched off, or a window between).
-    ...(sidePanel ? [] : [
-      {
-        item: {
-          label: fetchingScope ? 'Scope: loading…' : `Scope: ${scopeLabel}`,
-          disabled: loading || fetchingScope || allowedAffiliates.length === 0,
-          icon: settingsGlyph(<><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></>),
-        },
-        // Opens its own picker popup (rendered next to the overflow popover) instead of cycling
-        // through scopes one click at a time.
-        run: () => {
-          setShowOverflowWheel(false);
-          setShowScopePicker(true);
-        },
-        keepOpen: true,
-      }
-    ]),
-    {
-      item: {
-        label: `Open Answers: ${ragMode === 'open' ? 'On' : 'Off'}`,
-        disabled: settingsLocked,
-        icon: settingsGlyph(<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />),
-      },
-      run: () => handleRagModeChange(ragMode === 'open' ? 'strict' : 'open'),
-      keepOpen: true,
-    },
-    {
-      item: {
-        label: `Deep Thinking: ${deepThinking ? 'On' : 'Off'}`,
-        disabled: settingsLocked,
-        icon: settingsGlyph(<><circle cx="12" cy="12" r="9" /><path d="M12 8v4l2.5 2.5" /></>),
-      },
-      run: () => handleDeepThinkingChange(!deepThinking),
-      keepOpen: true,
-    },
-    // Plan first: with a folder connected, a change request starts with a plan to approve (backend/utils/code_plan.py). Costs an extra reading pass, so it is the person's choice.
-    ...(!workspace.canEdit ? [] : [{
-      item: {
-        label: `Plan first: ${planMode ? 'On' : 'Off'}`,
-        disabled: settingsLocked,
-        icon: settingsGlyph(<><path d="M9 11l3 3 8-8" /><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h9" /></>),
-      },
-      run: () => handlePlanModeChange(!planMode),
-      keepOpen: true,
-    }]),
-    // Which model does the tool agent's reasoning and code-writing steps. The reply you read is still written by Gemini, so Claude here is the hybrid.
-    // Not offered when Claude isn't set up on the server, or to guests.
-    ...(!toolModelAvailable ? [] : [{
-      item: {
-        label: `Code model: ${toolModel === 'claude' ? 'Claude' : 'Gemini'}`,
-        disabled: settingsLocked,
-        icon: settingsGlyph(<><polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" /></>),
-      },
-      run: () => handleToolModelChange(toolModel === 'claude' ? 'gemini' : 'claude'),
-      keepOpen: true,
-    }]),
-  ];
-
+  // The toggles that used to be the top of this menu (scope, open answers, deep thinking, plan first, code model) are the icons under the message box now (components/ComposerChips.tsx), and the
+  // scope is in the session column. What is left of the "..." menu is only the embedded widget's, which has no rail, no top bar and no chips: its Help, Conversations, Trace, Export and Delete.
   // The conversations list lives in the rail now, and the trace has its microscope button in the top bar; the embedded widget has neither, so only it keeps those two menu entries.
   const baseOverflowEntries = baseOverflowItems.map((item, index) => ({ item, index })).filter(e => isEmbedded || (e.item.label !== 'Conversations' && e.item.label !== 'Trace'));
-  const overflowItems: OptionWheelItem[] = [...settingsEntries.map(e => e.item), ...baseOverflowEntries.map(e => e.item)];
+  const overflowItems: OptionWheelItem[] = baseOverflowEntries.map(e => e.item);
 
   const runOverflowAction = (index: number) => {
-    const entry = settingsEntries[index];
-    if (!entry) {
-      runBaseOverflowAction(baseOverflowEntries[index - settingsEntries.length]?.index ?? -1);
-      return;
-    }
-    entry.run();
-    if (!entry.keepOpen) setShowOverflowWheel(false);
+    runBaseOverflowAction(baseOverflowEntries[index]?.index ?? -1);
   };
 
   return (
@@ -2658,6 +2594,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               )}
 
               <div className="icon-row-overlay">
+              {isEmbedded && (
                 <div style={{ position: "relative" }} ref={optionsMenuRef}>
                   <button
                     type="button"
@@ -2724,45 +2661,6 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                     </div>
                   )}
 
-                  {showScopePicker && (
-                    <div
-                      className="chat-scope-picker-popover"
-                      style={{
-                        position: "absolute",
-                        bottom: "45px",
-                        right: "0",
-                        width: "220px",
-                        maxWidth: "calc(100vw - 24px)",
-                        maxHeight: "min(320px, calc(100vh - 160px))",
-                        overflowY: "auto",
-                        background: isEmbedded ? "#121316" : "#121824",
-                        border: isEmbedded ? "1px solid rgba(0, 242, 254, 0.4)" : "1px solid #334155",
-                        borderRadius: "12px",
-                        boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.5)",
-                        zIndex: 100,
-                        padding: "6px",
-                      }}
-                    >
-                      <div style={{ padding: "4px 8px 6px", fontSize: "0.7rem", letterSpacing: "0.05em", textTransform: "uppercase", color: "#64748b" }}>
-                        Active security scope
-                      </div>
-                      <OptionWheel
-                        items={scopeOptions.map(choice => ({
-                          label: `${choice.value === selectedAffiliate ? "✓ " : ""}${choice.label}`,
-                        }))}
-                        columnLayout
-                        fontSize={0.85}
-                        textColor="#94a3b8"
-                        activeColor="#f8fafc"
-                        onActivate={index => {
-                          const chosen = scopeOptions[index];
-                          if (chosen) setSelectedAffiliate(chosen.value);
-                          setShowScopePicker(false);
-                        }}
-                      />
-                    </div>
-                  )}
-
                   {showTooltip && (
                     <div
                       className="chat-tooltip-popover"
@@ -2821,6 +2719,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                     </div>
                   )}
                 </div>
+              )}
 
                 {isEmbedded && attachButton}
 
@@ -2846,6 +2745,28 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               </div>
             </div>
           </form>
+          {/* The settings that were toggles in the "..." menu, as four icons under the message box, and Help at the far right (components/ComposerChips.tsx). Not in the embedded widget. */}
+          {!isEmbedded && (
+            <ComposerChips
+              model={toolModelAvailable ? { value: toolModel, onChange: id => { void handleToolModelChange(id as 'gemini' | 'claude'); } } : null}
+              mode={workspace.canEdit ? { value: modeId(planMode), onChange: id => { void handlePlanModeChange(modeValue(id)); } } : null}
+              thinking={{ value: thinkingId(deepThinking), onChange: id => { void handleDeepThinkingChange(thinkingValue(id)); } }}
+              answers={{ value: answersId(ragMode), onChange: id => { void handleRagModeChange(answersValue(id)); } }}
+              disabled={settingsLocked}
+              onExport={handleExportChat}
+              exportDisabled={loading || !hasChatted}
+              help={(
+                <>
+                  <strong className="cc-help-title">Secure Index Tip:</strong>
+                  <ul className="cc-help-list">
+                    <li>Please be as specific as possible when asking questions to get the most accurate responses.</li>
+                    <li>Due to operating on cost-sensitive infrastructure, response times may vary or be unavailable due to model demand.</li>
+                    <li>If you encounter any bugs, issues, or would like request access , please reach out to <a href="mailto:jackharper0517@outlook.com">jackharper0517@outlook.com</a>.</li>
+                  </ul>
+                </>
+              )}
+            />
+          )}
         </footer>
 
         {/* --- CONVERSATIONS BLADE (Root Level, mirrors Help panel's slide-in) --- */}

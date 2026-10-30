@@ -37,8 +37,10 @@ test("the three entries are gone from the chat's menu and the trace entry is kep
   assert.match(chat, /filter\(e => isEmbedded \|\| \(e\.item\.label !== 'Conversations' && e\.item\.label !== 'Trace'\)\)/);
   assert.match(chat, /useState<boolean>\(\(\) => loadShowPatchy\(\)\)/);
   assert.match(chat, /addEventListener\(SHOW_PATCHY_EVENT, reread\)/);
-  // what stays: the controls that act on the conversation you are in
-  for (const kept of ["label: 'Help'", "label: 'Export'", "label: 'Delete'", 'Open Answers:', 'Deep Thinking:', 'Scope:']) assert.ok(chat.includes(kept), kept);
+  // what stays in the embedded widget's menu: Help, Export and Delete. The toggles that were above them (scope, open answers, deep thinking, plan first, code model) are the icons under the message box now
+  // (components/ComposerChips.tsx) and the scope is in the session column, so they are no longer menu entries.
+  for (const kept of ["label: 'Help'", "label: 'Export'", "label: 'Delete'"]) assert.ok(chat.includes(kept), kept);
+  for (const moved of ['Open Answers:', 'Deep Thinking:', 'Plan first:', 'Code model:', 'Scope:']) assert.ok(!chat.includes(moved), `${moved} is a chip or the column's now`);
 });
 
 test('the Account page holds them: the robot for everyone with a mascot, the digest for admins only, and message first was already there', () => {
