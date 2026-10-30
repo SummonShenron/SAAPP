@@ -2,7 +2,8 @@
 
 ONE ENTRY PER COMPUTER (one runner serves all of the computer's projects), IN THE PERSON'S OWN ACCOUNT, NEVER AN ADMINISTRATOR'S:
 - Windows: a Task Scheduler task that runs at logon as the current user (no administrator needed), started with `pythonw` so there is no console window. It is made from an XML file so that it keeps
-  running on battery, is not stopped after a time limit, and is restarted if it ends (a task made by plain `schtasks /Create` flags are the opposite: it would not start on battery).
+  running on battery, is not stopped after a time limit, and is started again every few minutes whenever it is not running (a task made by plain `schtasks /Create` flags are the opposite: it would
+  not start on battery). It also registers the `saapp-runner://start` link, which SAAPP's "Start runner" button opens.
 - macOS: a LaunchAgent in `~/Library/LaunchAgents` (loaded for the logged-in user, started at load, kept alive).
 - Linux: a `systemd --user` unit in `~/.config/systemd/user` (enabled and started now).
 
@@ -72,8 +73,16 @@ def arguments() -> List[str]:
 # What each system needs (pure: text and command lists)
 # ---------------------------------------------------------------------------------------------------------------
 
+ENTRY_VERSION = 2                 # bumped whenever what the entry registers changes, so a newer runner brings an older entry up to date (see `refresh`)
+KEEPALIVE_INTERVAL = "PT5M"       # Windows: Task Scheduler starts the runner again this often whenever it is not running (a second copy is never started while it runs)
+
+URL_SCHEME = "saapp-runner"       # Windows: `saapp-runner://start` in a link opens the start-link handler below, which is how SAAPP's "Start runner" button can start it
+
+
 def windows_task_xml(python: str, user: str) -> str:
-    """The Task Scheduler definition: at this user's logon, as this user without elevation, no time limit, allowed on battery, restarted when it ends."""
+    """The Task Scheduler definition: at this user's logon and every few minutes after (so a runner that ended for ANY reason is back within minutes), as this user without elevation, no time limit,
+    allowed on battery. "Restart on failure" is not enough: Task Scheduler does not count the exit code the runner uses after an update (75) as a failure, so on 2026-10-29 the runner updated itself,
+    exited, and stayed stopped for 16 hours. A copy is never started while one runs (MultipleInstancesPolicy IgnoreNew, and the runner's own lock)."""
     args = " ".join(f'"{part}"' if re.search(r"\s", part) else part for part in arguments())
     return f"""<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -85,6 +94,14 @@ def windows_task_xml(python: str, user: str) -> str:
       <Enabled>true</Enabled>
       <UserId>{escape(user)}</UserId>
     </LogonTrigger>
+    <TimeTrigger>
+      <Repetition>
+        <Interval>{KEEPALIVE_INTERVAL}</Interval>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+      <StartBoundary>2026-01-01T00:00:00</StartBoundary>
+      <Enabled>true</Enabled>
+    </TimeTrigger>
   </Triggers>
   <Principals>
     <Principal id="Author">
@@ -166,6 +183,118 @@ def _user() -> str:
 # Doing it
 # ---------------------------------------------------------------------------------------------------------------
 
+def _register_windows(run: Runner, name: str, path: Path, python: str, user: str) -> Tuple[bool, str]:
+    """Hands Task Scheduler the entry's definition (replacing an earlier one; a copy that is running right now keeps running)."""
+    path.write_text(windows_task_xml(python, user), encoding="utf-16")
+    code, output = run(["schtasks", "/Create", "/TN", name, "/XML", str(path), "/F"])
+    path.unlink(missing_ok=True)                           # Task Scheduler keeps its own copy; the file was only a way in
+    if code != 0:
+        return False, f"Task Scheduler would not accept the entry (exit code {code}). {_last_line(output)}"
+    return True, ""
+
+
+def protocol_commands(python: str) -> List[List[str]]:
+    """The registry entries that make `saapp-runner://...` a link this computer knows: in the person's own hive (no administrator), and what it runs is fixed: `start-link`, which starts the runner and
+    nothing else. The link's text is passed along only so the browser has somewhere to send it; the handler never reads it."""
+    base = rf"HKCU\Software\Classes\{URL_SCHEME}"
+    return [
+        ["reg", "add", base, "/ve", "/d", "URL:SAAPP runner", "/f"],
+        ["reg", "add", base, "/v", "URL Protocol", "/d", "", "/f"],
+        ["reg", "add", base + r"\shell\open\command", "/ve", "/d", f'"{python}" -m saapp_runner start-link "%1"', "/f"],
+    ]
+
+
+def _own_home() -> bool:
+    """True for the person's own runner (the default home), False when SAAPP_RUNNER_HOME points somewhere else: another account's runner, or a test. The `saapp-runner://` link is one per Windows user, so
+    only the person's own runner registers or removes it (a test, or a second runner kept in a folder of its own, must never take the link over)."""
+    return not os.environ.get("SAAPP_RUNNER_HOME")
+
+
+def register_protocol(run: Runner = _run, python: Optional[str] = None, kind: Optional[str] = None) -> bool:
+    """Windows only: registers the `saapp-runner://` link. True when every entry was written. Never raises."""
+    if (kind or platform_kind()) != "windows" or not _own_home():
+        return False
+    try:
+        return all(run(command)[0] == 0 for command in protocol_commands(python or python_for_service(windows=True)))
+    except Exception:
+        return False
+
+
+def unregister_protocol(run: Runner = _run, kind: Optional[str] = None) -> None:
+    if (kind or platform_kind()) == "windows" and _own_home():
+        run(["reg", "delete", rf"HKCU\Software\Classes\{URL_SCHEME}", "/f"])
+
+
+def _stamp() -> Path:
+    return home() / "entry-version"
+
+
+def _write_stamp() -> None:
+    try:
+        _stamp().write_text(str(ENTRY_VERSION), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def refresh(run: Runner = _run, kind: Optional[str] = None, python: Optional[str] = None, user: Optional[str] = None) -> bool:
+    """Brings this computer's start-at-login entry up to date when this version of the runner needs something in it that an older one did not (ENTRY_VERSION). Called once when the runner starts by
+    itself. Windows only: macOS and Linux already restart a runner that ends. Re-registering does not stop the copy that is running (checked on this machine). True when it changed the entry. Never raises."""
+    if (kind or platform_kind()) != "windows":
+        return False
+    try:
+        if _stamp().read_text(encoding="utf-8").strip() == str(ENTRY_VERSION):
+            return False
+    except OSError:
+        pass
+    try:
+        if not state(run, "windows")["installed"]:           # only an entry that is already there is brought up to date; a runner started by hand never makes one
+            return False
+        home().mkdir(parents=True, exist_ok=True)
+        py = python or python_for_service(windows=True)
+        done, _ = _register_windows(run, label(), entry_path("windows"), py, user if user is not None else _user())
+        if done:
+            register_protocol(run, py)
+            _write_stamp()
+        return done
+    except Exception:
+        return False
+
+
+def _detached(popen: Callable[..., Any], command: List[str]) -> bool:
+    """Starts a program that outlives this one, with no window and no connection to it. False when it could not be started."""
+    flags = 0x00000008 | 0x08000000 | 0x00000200            # DETACHED_PROCESS | CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+    try:
+        popen(command, creationflags=flags, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def restart_soon(kind: Optional[str] = None, popen: Callable[..., Any] = subprocess.Popen, run: Runner = _run) -> bool:
+    """Windows: asks Task Scheduler to start the runner again a few seconds from now, from a helper that outlives it. Used right after an update, when the runner exits so the new version can start:
+    the repeating trigger would bring it back within minutes anyway, this makes it seconds. Another system's entry restarts it by itself, and with no entry there is nothing to ask. Never raises."""
+    if (kind or platform_kind()) != "windows":
+        return False
+    try:
+        if not state(run, "windows")["installed"]:
+            return False
+    except Exception:
+        return False
+    return _detached(popen, ["cmd", "/c", f"ping -n 4 127.0.0.1 >nul & schtasks /Run /TN {label()}"])
+
+
+def start_now(run: Runner = _run, popen: Callable[..., Any] = subprocess.Popen, kind: Optional[str] = None) -> bool:
+    """What the "Start runner" link does (Windows): starts the runner now, through its entry when there is one, else directly with no window. True when something was started. Never raises."""
+    if (kind or platform_kind()) != "windows":
+        return False
+    try:
+        if state(run, "windows")["installed"]:
+            return run(["schtasks", "/Run", "/TN", label()])[0] == 0
+        return _detached(popen, [python_for_service(windows=True), *arguments()])
+    except Exception:
+        return False
+
+
 def install(run: Runner = _run, kind: Optional[str] = None, python: Optional[str] = None, user: Optional[str] = None) -> Tuple[bool, str]:
     """Registers the entry and starts it now. Returns (done, a sentence for the person). Replaces an earlier entry. Never raises."""
     kind = kind or platform_kind()
@@ -174,11 +303,11 @@ def install(run: Runner = _run, kind: Optional[str] = None, python: Optional[str
         home().mkdir(parents=True, exist_ok=True)
         py = python or python_for_service(windows=(kind == "windows"))
         if kind == "windows":
-            path.write_text(windows_task_xml(py, user if user is not None else _user()), encoding="utf-16")
-            code, output = run(["schtasks", "/Create", "/TN", name, "/XML", str(path), "/F"])
-            path.unlink(missing_ok=True)                       # Task Scheduler keeps its own copy; the file was only a way in
-            if code != 0:
-                return False, f"Task Scheduler would not accept the entry (exit code {code}). {_last_line(output)}"
+            done, why = _register_windows(run, name, path, py, user if user is not None else _user())
+            if not done:
+                return False, why
+            register_protocol(run, py)                         # the "Start runner" link in SAAPP; a failure here never stops the entry itself
+            _write_stamp()
             run(["schtasks", "/Run", "/TN", name])
         elif kind == "mac":
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -207,6 +336,8 @@ def uninstall(run: Runner = _run, kind: Optional[str] = None) -> Tuple[bool, str
     try:
         if kind == "windows":
             run(["schtasks", "/End", "/TN", name])
+            unregister_protocol(run, kind)
+            _stamp().unlink(missing_ok=True)
             code, output = run(["schtasks", "/Delete", "/TN", name, "/F"])
             if code != 0 and "cannot find" not in output.lower() and "does not exist" not in output.lower():
                 return False, f"Task Scheduler would not remove the entry (exit code {code}). {_last_line(output)}"

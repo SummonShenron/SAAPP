@@ -170,6 +170,22 @@ def test_an_update_offered_while_idle_is_installed_and_a_runner_started_at_login
     assert any("Restarting to use the new version" in line for line in said)
 
 
+def test_a_runner_started_at_login_also_asks_the_system_to_start_it_again_soon_after_an_update(project):
+    asked = []
+    runner, _ = make(project, Client2([(None, newer())]), lambda version: (True, "Updated."), launch="service")
+    runner.restarter = lambda: asked.append(1)
+    runner.serve()
+    assert asked == [1] and runner.exit_code == update.EXIT_RESTART
+    hand, _ = make(project, Client2([(None, newer())]), lambda version: (True, "Updated."), launch="hand")
+    hand.restarter = lambda: asked.append(2)
+    hand.serve()
+    assert asked == [1]                                                                      # a runner started by hand is not restarted behind the person's back
+    broken, _ = make(project, Client2([(None, newer())]), lambda version: (True, "Updated."), launch="service")
+    broken.restarter = lambda: 1 / 0
+    broken.serve()
+    assert broken.exit_code == update.EXIT_RESTART and broken.stop.is_set()                  # a failing helper never stops the exit
+
+
 def test_a_runner_started_by_hand_stops_cleanly_and_says_to_start_it_again(project):
     runner, said = make(project, Client2([(None, newer())]), lambda version: (True, "Updated."), launch="hand")
     runner.serve()

@@ -185,6 +185,7 @@ def test_task_scheduler_accepts_the_entry_and_it_can_be_found_and_removed(tmp_pa
         _, listing = service._run(["schtasks", "/Query", "/TN", service.label(), "/XML"])
         # what Task Scheduler stored, read back: at logon, no time limit, allowed on battery, restarted, and not elevated (it omits the least-privilege default and would print HighestAvailable otherwise)
         assert "<LogonTrigger>" in listing and "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>" in listing and "<DisallowStartIfOnBatteries>false" in listing and "<Count>999</Count>" in listing
+        assert "<TimeTrigger>" in listing and "<Interval>PT5M</Interval>" in listing         # and the repeating start that brings back a runner that ended
         assert "HighestAvailable" not in listing and "--service" in listing
     finally:
         removed, text = service.uninstall()
@@ -359,8 +360,128 @@ def test_the_runner_really_starts_in_the_background_with_no_console_and_reports_
         assert _wait_for(lambda: runlog.log_path().exists() and "Connected." in runlog.log_path().read_text(encoding="utf-8"))
         assert child.poll() is None                                                          # still running: it did not crash for want of a console
         second = subprocess.run([python, *service.arguments()], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
-        assert second.returncode == 0 and _wait_for(lambda: "already running" in runlog.log_path().read_text(encoding="utf-8"))      # a second copy steps aside
+        assert second.returncode == 0                                                        # a second copy steps aside, and quietly: the entry tries again every few minutes
+        assert "already running" not in runlog.log_path().read_text(encoding="utf-8")
         assert str(project.resolve()) not in runlog.log_path().read_text(encoding="utf-8")                                            # and the log holds no path
     finally:
         child.kill()
         child.wait(timeout=10)
+
+
+# ---- keeping it running, and the start link (2026-10-30: an update left the runner stopped for 16 hours) -------------------------------------------
+
+def test_the_windows_task_also_starts_the_runner_every_few_minutes_whatever_ended_it():
+    root = ET.fromstring(service.windows_task_xml("pythonw.exe", r"PC\me").replace('encoding="UTF-16"', ""))
+    repeat = root.find("t:Triggers/t:TimeTrigger", NS)
+    assert repeat.find("t:Repetition/t:Interval", NS).text == "PT5M" and repeat.find("t:Repetition/t:StopAtDurationEnd", NS).text == "false" and repeat.find("t:Enabled", NS).text == "true"
+    assert root.find("t:Triggers/t:LogonTrigger", NS) is not None                           # still at logon too
+    assert root.find("t:Settings/t:MultipleInstancesPolicy", NS).text == "IgnoreNew"        # and never a second copy while one runs
+
+
+def test_the_start_link_entries_run_one_fixed_command_in_the_persons_own_registry_hive():
+    commands = service.protocol_commands(r"C:\py\pythonw.exe")
+    assert all(command[:2] == ["reg", "add"] for command in commands)
+    assert all(command[2].startswith(r"HKCU\Software\Classes\saapp-runner") for command in commands)           # never machine-wide
+    assert ["reg", "add", r"HKCU\Software\Classes\saapp-runner", "/v", "URL Protocol", "/d", "", "/f"] in commands
+    assert commands[-1][-2] == r'"C:\py\pythonw.exe" -m saapp_runner start-link "%1"'                          # what it runs: start-link, and the link's text only as a spare argument
+
+
+def test_only_the_persons_own_runner_on_windows_takes_or_gives_up_the_link(runner_home, monkeypatch):
+    run = Recorder()
+    assert service.register_protocol(run, "pythonw.exe", kind="windows") is False and run.commands == []      # SAAPP_RUNNER_HOME is set: a test, or a second runner in a folder of its own
+    service.unregister_protocol(run, "windows")
+    assert run.commands == []
+    monkeypatch.setattr(service, "_own_home", lambda: True)
+    run = Recorder()
+    assert service.register_protocol(run, "pythonw.exe", kind="windows") is True and len(run.commands) == 3
+    assert service.register_protocol(Recorder(), "p", kind="linux") is False and service.register_protocol(Recorder(), "p", kind="mac") is False
+    assert service.register_protocol(Recorder({("reg", "add"): (1, "Access is denied")}), "p", kind="windows") is False
+    gone = Recorder()
+    service.unregister_protocol(gone, "windows")
+    assert gone.commands == [["reg", "delete", r"HKCU\Software\Classes\saapp-runner", "/f"]]
+
+
+def test_installing_registers_the_link_and_stamps_the_entry_and_uninstalling_removes_both(runner_home, monkeypatch):
+    monkeypatch.setattr(service, "_own_home", lambda: True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: Path(runner_home) / "fakehome"))
+    run = Recorder()
+    assert service.install(run=run, kind="windows", python="pythonw.exe", user="PC\\me")[0]
+    assert sum(1 for command in run.commands if command[:2] == ["reg", "add"]) == 3
+    assert (Path(runner_home) / "entry-version").read_text(encoding="utf-8") == str(service.ENTRY_VERSION)
+    gone = Recorder()
+    assert service.uninstall(run=gone, kind="windows")[0]
+    assert ["reg", "delete", r"HKCU\Software\Classes\saapp-runner", "/f"] in gone.commands and not (Path(runner_home) / "entry-version").exists()
+
+
+def test_an_older_entry_is_brought_up_to_date_once_without_starting_a_second_copy(runner_home, monkeypatch):
+    monkeypatch.setattr(service, "_own_home", lambda: True)
+    there = {("schtasks", "/Query"): (0, "Status: Running\n")}
+    run = Recorder(there)
+    assert service.refresh(run, kind="windows", python="pythonw.exe", user="PC\\me") is True
+    assert sum(1 for command in run.commands if command[:2] == ["schtasks", "/Create"]) == 1
+    assert not any(command[:2] == ["schtasks", "/Run"] for command in run.commands)          # the runner doing this is the one that is running: nothing is started
+    assert sum(1 for command in run.commands if command[:2] == ["reg", "add"]) == 3
+    again = Recorder(there)
+    assert service.refresh(again, kind="windows", python="pythonw.exe", user="PC\\me") is False and again.commands == []       # stamped: nothing is asked of the system
+
+
+def test_refresh_leaves_alone_a_computer_with_no_entry_another_system_and_a_refusal(runner_home, monkeypatch):
+    monkeypatch.setattr(service, "_own_home", lambda: True)
+    none = Recorder({("schtasks", "/Query"): (1, "ERROR: The system cannot find the file specified.")})
+    assert service.refresh(none, kind="windows") is False and not any(command[:2] == ["schtasks", "/Create"] for command in none.commands)
+    assert service.refresh(Recorder(), kind="linux") is False and service.refresh(Recorder(), kind="mac") is False
+    refused = Recorder({("schtasks", "/Query"): (0, ""), ("schtasks", "/Create"): (1, "ERROR: Access is denied.")})
+    assert service.refresh(refused, kind="windows", python="pythonw.exe", user="PC\\me") is False
+    assert not (Path(runner_home) / "entry-version").exists()                                 # not stamped, so it is tried again next time
+
+
+class Spawner:
+    def __init__(self, fail=False):
+        self.calls, self.fail = [], fail
+
+    def __call__(self, command, **kwargs):
+        if self.fail:
+            raise OSError("no")
+        self.calls.append((list(command), kwargs))
+
+
+def test_after_an_update_a_detached_helper_asks_task_scheduler_to_start_the_runner_again(runner_home):
+    spawn, there = Spawner(), Recorder({("schtasks", "/Query"): (0, "")})
+    assert service.restart_soon("windows", popen=spawn, run=there) is True
+    command, kwargs = spawn.calls[0]
+    assert command[:2] == ["cmd", "/c"] and f"schtasks /Run /TN {service.label()}" in command[2] and "ping -n" in command[2]      # a few seconds' wait, then the task is run
+    assert kwargs["creationflags"] & 0x00000008 and kwargs["creationflags"] & 0x08000000                                           # detached, and no window
+    assert service.restart_soon("linux", popen=Spawner(), run=there) is False and service.restart_soon("mac", popen=Spawner(), run=there) is False
+    assert service.restart_soon("windows", popen=Spawner(), run=Recorder({("schtasks", "/Query"): (1, "ERROR")})) is False        # no entry: nothing to ask
+    assert service.restart_soon("windows", popen=Spawner(fail=True), run=there) is False
+
+
+def test_the_start_link_runs_the_entry_when_there_is_one_and_else_starts_a_copy_with_no_window(runner_home):
+    run = Recorder({("schtasks", "/Query"): (0, "")})
+    spawn = Spawner()
+    assert service.start_now(run, spawn, "windows") is True and run.commands[-1] == ["schtasks", "/Run", "/TN", service.label()] and spawn.calls == []
+    bare = Recorder({("schtasks", "/Query"): (1, "ERROR")})
+    assert service.start_now(bare, spawn, "windows") is True
+    command, kwargs = spawn.calls[0]
+    assert command[1:] == service.arguments() and kwargs["creationflags"] & 0x08000000                                         # the same command the entry runs, windowless
+    assert service.start_now(Recorder(), Spawner(), "linux") is False
+
+
+def test_the_start_link_command_starts_the_runner_and_ignores_whatever_the_link_says(monkeypatch):
+    asked = []
+    monkeypatch.setattr(service, "start_now", lambda *a, **k: asked.append(1) or True)
+    assert cli.main(["start-link", "saapp-runner://start/?run=anything&extra=%22--evil%22"]) == 0 and asked == [1]
+    assert cli.main(["start-link"]) == 0 and asked == [1, 1]
+
+
+def test_a_background_copy_that_finds_the_runner_going_steps_aside_and_says_nothing(fake, project, runner_home):
+    cfg.save_credentials(fake.url, "abc.def")
+    projects.add(project)
+    holder = lock.InstanceLock()
+    assert holder.acquire()
+    try:
+        assert cli.cmd_start(argparse.Namespace(root=None, timeout=5, service=True), stop=threading.Event()) == 0
+        log = runlog.log_path()
+        assert not fake.seen and (not log.exists() or "already running" not in log.read_text(encoding="utf-8"))
+    finally:
+        holder.release()

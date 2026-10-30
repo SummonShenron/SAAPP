@@ -188,6 +188,12 @@ export function finishedSteps(steps: TraceStep[]): TraceStep[] {
   return steps.map(step => (step.status === 'complete' ? step : { ...step, status: 'complete' as const }));
 }
 
+/** What a step says about itself: its title and the line under it. A step with no friendly title ("Processing step: ...") shows what it is doing as the title instead, with no separate line. */
+export function stepWords(step: { title: string; detail: string }): { title: string; detail: string } {
+  const untitled = step.title.startsWith('Processing step:') && !!step.detail;
+  return untitled ? { title: step.detail, detail: '' } : { title: step.title, detail: step.detail };
+}
+
 /** "1 step" or "7 steps": what the line under a reply says before it is opened. */
 export function stepsLabel(count: number): string {
   return `${count} ${count === 1 ? 'step' : 'steps'}`;

@@ -166,3 +166,22 @@ test('the phone strip is the same controls as the column, and it never carries t
   assert.doesNotMatch(chat, /className="repo-banner"/);
   assert.match(chat, /\{!columnVisible && \(<>\s*\{folderAvailable && \(/);
 });
+
+test('the Start runner button is offered only on Windows desktops, and opens one fixed link', async () => {
+  const { canStartRunnerFromLink, RUNNER_START_LINK, runnerLine } = await import('./components/sessionColumnLogic.ts');
+  assert.equal(RUNNER_START_LINK, 'saapp-runner://start');
+  assert.ok(canStartRunnerFromLink('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36'));
+  for (const other of ['Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'Mozilla/5.0 (X11; Linux x86_64)', 'Mozilla/5.0 (Linux; Android 14; Pixel) Mobile', 'Mozilla/5.0 (Windows Phone 10.0; Android 4.2.1) Mobile', '']) assert.equal(canStartRunnerFromLink(other), false, other);
+  assert.equal(runnerLine([{ id: 'r', name: 'PC', connected: false, last_seen: '2026-10-30T00:00:00Z', projects: [] }], new Date('2026-10-30T16:00:00Z')).tone, 'warn');
+});
+
+test('the runner row is wired to the button and the quick re-check after a press', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const column = await readFile(new URL('./components/SessionColumn.tsx', import.meta.url), 'utf8');
+  const chat = await readFile(new URL('./pages/Chat.tsx', import.meta.url), 'utf8');
+  const hook = await readFile(new URL('./hooks/useRunnerPing.ts', import.meta.url), 'utf8');
+  assert.match(column, /runner\.tone === 'warn' && runnerStart/);                          // only a runner that is set up but not answering
+  assert.match(chat, /window\.location\.href = RUNNER_START_LINK/);
+  assert.match(chat, /checkRunnerSoon\(\)/);
+  assert.match(hook, /QUICK_MS = 3_000/);                                                   // it asks every few seconds for a while after the press
+});

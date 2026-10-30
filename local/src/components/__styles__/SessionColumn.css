@@ -34,6 +34,8 @@
 .sc-row-text { display: flex; flex-direction: column; min-width: 0; }
 .sc-row-title { font-size: 0.85rem; line-height: 1.3; }
 .sc-row-detail { font-size: 0.74rem; line-height: 1.4; color: var(--text-muted); overflow-wrap: anywhere; }
+.sc-runner-start { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin: 8px 0 4px 16px; }
+.sc-runner-start code { font-size: 0.72rem; color: var(--text-main); overflow-wrap: anywhere; }
 .sc-branch { margin-top: 8px; font-size: 0.74rem; color: var(--text-muted); }
 .sc-branch code { font-size: 0.74rem; color: var(--text-main); overflow-wrap: anywhere; }
 

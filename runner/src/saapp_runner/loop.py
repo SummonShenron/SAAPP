@@ -39,8 +39,10 @@ class Runner:
                  scanner: Optional[Callable[[Path], Tuple[Dict[str, List[str]], bool, str]]] = None, roots_provider: Optional[Callable[[], List[Path]]] = None, scan_every: float = 60.0,
                  launch: str = "hand", updater: Optional[Callable[[str], Any]] = None, picker: Optional[Callable[[str], Any]] = None,
                  add_project: Optional[Callable[[Path], Tuple[bool, str]]] = None, remove_project: Optional[Callable[[str], bool]] = None,
-                 asker: Optional[Callable[[str, List[str]], Any]] = None, rules_provider: Optional[Callable[[], "confirm.Rules"]] = None) -> None:
+                 asker: Optional[Callable[[str, List[str]], Any]] = None, rules_provider: Optional[Callable[[], "confirm.Rules"]] = None,
+                 restarter: Optional[Callable[[], Any]] = None) -> None:
         self.client, self.say = client, say
+        self.restarter = restarter          # asks the operating system to start the runner again soon, right after an update (service.restart_soon); none for a test or a hand-started runner
         self.stop = stop or threading.Event()
         self.timeout, self.poll_wait, self.heartbeat_every, self.max_chars, self.idle_wait = timeout, poll_wait, heartbeat_every, max_chars, idle_wait
         self.scan_every, self.launch = scan_every, launch
@@ -244,6 +246,11 @@ class Runner:
         if done:
             self.say("Restarting to use the new version..." if self.launch == "service" else "Start the runner again to use the new version.")
             self.exit_code = update.EXIT_RESTART if self.launch == "service" else 0
+            if self.launch == "service" and self.restarter:
+                try:
+                    self.restarter()               # Task Scheduler does not restart a runner that exits with the update's code, so a helper starts it again in a few seconds
+                except Exception:
+                    pass                           # the entry's repeating trigger brings it back within minutes anyway
             self.stop.set()
         elif message:
             self.hello()                                                         # the status now says the update failed, so SAAPP can tell the person
