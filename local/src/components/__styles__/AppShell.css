@@ -439,6 +439,11 @@ div.chat-page.chat-page { flex: 1 1 auto; min-height: 0; display: flex; flex-dir
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 12px, #000 calc(100% - 6px), transparent 100%);
   mask-image: linear-gradient(to bottom, transparent 0, #000 12px, #000 calc(100% - 6px), transparent 100%);
 }
+/* No scrollbar on the message box. Its height is set to the measured scrollHeight, a whole number, so on a device where the text's real height has a fraction (font, zoom, pixel ratio) a one-line box
+   overflowed by a fraction of a pixel and drew a 6px scrollbar thumb at its right end (orange while hovered), which read as a lip beside the Send button. A long message still scrolls, by wheel or
+   touch, and the fade at the top and bottom edge says there is more. */
+.chat-page .chat-input-wrapper .chat-textarea { scrollbar-width: none; }
+.chat-page .chat-input-wrapper .chat-textarea::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .chat-page .chat-input-toolbar { display: contents; }
 .chat-page .chat-input-toolbar .icon-row-left,
 .chat-page .chat-input-toolbar .icon-row-overlay { position: static; flex: 0 0 auto; margin-bottom: 0.5rem; }

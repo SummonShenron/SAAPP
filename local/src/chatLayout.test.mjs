@@ -40,3 +40,10 @@ test('the session column is always drawn over the page, never one of the row\'s 
   assert.ok(widths.includes(272), 'the column is 272px wide, the figure the conversation pads for');
   assert.match(column, /@media \(max-width: 1099px\) \{ \.session-column \{ width: 236px;/);                  // and 236px on a narrower window
 });
+
+test('the message box draws no scrollbar: a one-line box overflowing by a fraction of a pixel showed a 6px thumb (orange on hover) beside the Send button', () => {
+  assert.match(shell, /\.chat-page \.chat-input-wrapper \.chat-textarea \{ scrollbar-width: none; \}/);
+  assert.match(shell, /\.chat-page \.chat-input-wrapper \.chat-textarea::-webkit-scrollbar \{ display: none; width: 0; height: 0; \}/);
+  assert.doesNotMatch(shell, /\.chat-textarea[^{]*\{[^}]*overflow-y: hidden/);        // it still scrolls (index.css keeps overflow-y: auto); only the bar is hidden
+  assert.doesNotMatch(shell, /\.chat-input-wrapper \{[^}]*overflow: hidden/);        // and the wrapper is never clipped: Patchy stands on its top edge
+});
