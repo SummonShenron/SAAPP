@@ -15,10 +15,10 @@
 }
 /* Dark, the same arrangement as light: the column is the lighter grey the nav uses, with no edge, and its cards are the main black sitting on it, with no border. Not --bg-alt: in the dark theme that
    is #161718, darker than the page, so a column and cards in "alt" and "main" were both just black. */
-.theme-shadow .session-column { background: var(--panel-bg); border-left: none; }
+.theme-shadow .session-column { background: var(--bg-main); border-left: none; }
 
 .sc-card { flex: 0 0 auto; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 12px; background: var(--bg-main); }
-.theme-shadow .sc-card { background: var(--bg-main); border-color: transparent; }
+.theme-shadow .sc-card { background: var(--bg-main); border-color: var(--border-color); }
 .sc-card-work { border-color: var(--accent-primary); }
 .theme-shadow .sc-card-work { border-color: transparent; }
 .sc-title { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.02em; color: var(--text-muted); }
