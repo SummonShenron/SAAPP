@@ -50,11 +50,13 @@ test('the chips map to the settings the page already keeps, both ways, with the 
 test('the message box has the four chips with Export and Help at the far right, and no "..." menu outside the embedded widget', () => {
   const chat = readFileSync(new URL('../pages/Chat.tsx', import.meta.url), 'utf8');
   assert.match(chat, /<ComposerChips/);
-  assert.match(chat, /\{!isEmbedded && !columnVisible && composerChips\('bar'\)\}/);            // under the box, not in the embedded widget, and only when the session column is not showing
+  assert.match(chat, /\{!isEmbedded && !columnVisible && !railVisible && composerChips\('bar'\)\}/);            // under the box, not in the embedded widget, and only when the session column is not showing
   assert.match(chat, /controls=\{composerChips\('panel'\)\}/);                                 // otherwise they are the column's "Chat settings" card (never both)
-  assert.match(chat, /const composerChips = \(layout: 'bar' \| 'panel'\) => \(\s*<ComposerChips\s*layout=\{layout\}/);   // built once for both places
+  assert.match(chat, /const chatSettings: ChatSettings = \{/);                                  // the settings are built once ...
+  assert.match(chat, /const composerChips = \(layout: 'bar' \| 'panel'\) => <ComposerChips \{\.\.\.chatSettings\} layout=\{layout\} \/>;/);   // ... for the bar and the column's card
+  assert.match(chat, /<SessionRail[^>]*settings=\{chatSettings\}|settings=\{chatSettings\}\s*\/>/);       // ... and the phone strip
   assert.match(chat, /\{isEmbedded && \(\s*<div style=\{\{ position: "relative" \}\} ref=\{optionsMenuRef\}>/);   // the "..." button and its menu are the embedded widget's only
-  assert.match(chat, /onExport=\{handleExportChat\}/);
+  assert.match(chat, /onExport: handleExportChat,/);
   assert.doesNotMatch(chat, /Export this conversation/);                                        // no longer a button in the message box row itself
   assert.doesNotMatch(chat, /showScopePicker/);                                                 // the scope lives in the column and the phone strip's lock
   assert.doesNotMatch(chat, /Open Answers:|Deep Thinking:|Plan first:|Code model:/);            // those toggles are the chips now
@@ -76,4 +78,25 @@ test('in the session column the chips are a card below "This conversation", thei
   assert.match(chips, /\{open && open !== 'help' && openControl && choices\(open, openControl\)\}/);  // the panel: it is listed under the row
   const css = readFileSync(new URL('./__styles__/ComposerChips.css', import.meta.url), 'utf8');
   assert.match(css, /\.composer-chips-panel \.cc-pop, \.composer-chips-panel \.cc-pop-help \{ position: static; width: auto;/);
+});
+
+test('on a phone the settings are buttons one under another down the strip, below the information buttons, and one card is open at a time', () => {
+  const rail = readFileSync(new URL('./SessionRail.tsx', import.meta.url), 'utf8');
+  assert.match(rail, /settings\?: ChatSettings \| null;/);
+  assert.match(rail, /const CHIP_ORDER: ChipKey\[\] = \['model', 'mode', 'thinking', 'answers'\];/);
+  assert.ok(rail.indexOf("open === 'scope'") < rail.indexOf('{settings && ('), 'the chat settings come after GitHub, the rings and the lock');
+  assert.match(rail, /<ChipChoices chipKey=\{key\} control=\{control\} onDone=\{\(\) => setOpen\(null\)\} className="rail-pop rail-choices" \/>/);
+  assert.match(rail, /aria-label="Export this conversation"/);
+  assert.match(rail, /className="rail-pop rail-help" role="dialog" aria-label="Help"/);
+  assert.match(rail, /if \(!repo && !hasGauges && !scope && !settings\) return null;/);       // a guest has none of the information buttons but still has the settings
+  assert.match(rail, /type Panel = 'repo' \| 'gauges' \| 'scope' \| ChipKey \| 'help';/);        // one state, so one card at a time
+  const css = readFileSync(new URL('./__styles__/SessionRail.css', import.meta.url), 'utf8');
+  assert.match(css, /\.rail-btn\.is-changed \{[^}]*accent-primary/);
+});
+
+test('in the column the settings are three across in two rows, with Export and Help as cells of the same grid', () => {
+  const css = readFileSync(new URL('./__styles__/ComposerChips.css', import.meta.url), 'utf8');
+  assert.match(css, /\.composer-chips-panel \.cc-row \{ display: grid; grid-template-columns: repeat\(3, minmax\(0, 1fr\)\); gap: 8px; \}/);
+  assert.match(css, /\.composer-chips-panel \.cc-right \{ display: contents; \}/);              // the group at the bar's right end steps aside
+  assert.match(css, /\.composer-chips-panel \.cc-btn \{ width: 100%; \}/);
 });
