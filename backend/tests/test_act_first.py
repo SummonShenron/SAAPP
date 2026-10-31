@@ -199,3 +199,29 @@ def test_the_edit_turn_ending_and_the_general_one_are_different_texts():
 
     assert "fenced code block" in nl.STEP_LIMIT_NOTICE and "fenced code block" not in nl.EDIT_TURN_LIMIT_NOTICE
     assert "Do not write the code, pseudocode or a list of changes" in nl.EDIT_TURN_LIMIT_NOTICE
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# A redesign request is a change request (2026-10-31: the first turn wrote the whole new layout into its answer)
+# ---------------------------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text", [
+    "redesign the integrations page",
+    "can you redesign the layout of the integrations page so its less cluttered",
+    "the integrations page is too long, make it a grid and collapse the privacy text",
+    "restructure the settings tab",
+    "simplify the session card",
+])
+def test_a_design_request_is_an_edit_request(text):
+    from langchain_core.messages import HumanMessage
+    from backend.utils.agent_utils import looks_like_edit_request
+
+    assert looks_like_edit_request([HumanMessage(content=text)])
+
+
+@pytest.mark.parametrize("text", ["simplify my week", "what does the settings page do", "redesign my life"])
+def test_a_design_word_without_something_in_the_app_is_not(text):
+    from langchain_core.messages import HumanMessage
+    from backend.utils.agent_utils import looks_like_edit_request
+
+    assert not looks_like_edit_request([HumanMessage(content=text)])

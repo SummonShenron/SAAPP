@@ -1,0 +1,95 @@
+/* --- INTEGRATIONS PAGE: two fixed equal columns, no gap --- */
+.integrations-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  align-items: stretch;
+  margin-bottom: 2.5rem;
+}
+
+.integration-card {
+  margin: 0;
+}
+
+/* --- INTEGRATIONS SIDEBAR: tabs on the left, one section shown at a time --- */
+.integrations-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 1.5rem;
+}
+
+.integrations-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: 11rem;
+  flex-shrink: 0;
+}
+
+.integrations-tab {
+  text-align: left;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+}
+
+.integrations-tab.active {
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+.integrations-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.integration-card-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  padding-right: 7.5rem; /* keeps the title clear of the absolute card-badge */
+  margin-bottom: 0.75rem;
+}
+
+.integration-card-head h2 {
+  margin: 0;
+}
+
+.status-pill {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.2rem 0.65rem;
+  border-radius: 9999px;
+  border: 1px solid var(--line-strong);
+  white-space: nowrap;
+}
+
+.status-pill.ok {
+  color: var(--accent-success);
+  border-color: var(--accent-success);
+}
+
+.status-pill.warn {
+  color: #ffb347;
+  border-color: #ffb347;
+}
+
+.status-pill.muted {
+  color: var(--text-muted);
+}
+
+.integration-details {
+  margin: 0 0 1rem;
+}
+
+.integration-details summary {
+  cursor: pointer;
+  color: var(--accent-primary);
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+}

@@ -302,6 +302,20 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "starts_where_to_look",
+        "requires": [
+            "backend/utils/orientation.py::def where_to_look",
+            "backend/services/agent_workflow.py::orientation.where_to_look",
+        ],
+        "month": "2026-10",
+        "title": "Starting at the right file",
+        "line": (
+            "I can now start a coding task knowing which files your request points at: I search your folder for its key words before my first step, so I go straight to the right place."
+        ),
+        "keywords": ["which file", "where to look", "find the file", "right file", "get lost", "wander"],
+        "volunteer": [],
+    },
+    {
         "id": "claims_held_to_runs",
         "requires": [
             "backend/utils/claim_check.py::def unproven",

@@ -53,7 +53,7 @@ from backend.services import local_edit_decisions
 from backend.services import sandbox_tests
 from backend.services import commit_flow, git_commit
 from backend.utils import sonic_notes
-from backend.services.local_workspace import apply_sync as apply_workspace_sync, get_workspace_handle, is_guest_username, workspace_status
+from backend.services.local_workspace import apply_sync as apply_workspace_sync, get_workspace_handle, is_guest_username, snapshot_paths, workspace_status
 from backend.services.local_edits import validate_edit_proposal
 from backend.services.memory_search import embed_and_store_memory_chunk, recall_explicit
 from backend.services.tool_agent_memory import MemoryTurnGuard, build_user_memory_block
@@ -98,7 +98,7 @@ from backend.utils.agent_utils import (
     _FILE_EXTENSION_RE, _PATH_TOKEN_SPLIT_RE, _CAMEL_BOUNDARY_RE,
     _FUZZY_MATCH_CUTOFF, _FUZZY_MATCH_LIMIT, _tokenize_for_fuzzy_match, _fuzzy_path_score,
     fuzzy_query_tokens,
-    looks_like_edit_request, looks_like_plan_request, recent_user_text,
+    looks_like_edit_request, looks_like_plan_request, previous_human_texts, recent_user_text,
     _classify_symbol_line,
     _VISUAL_INSPECTION_RE, _mentions_visual_inspection,
     _AUDIT_TASK_RE, _is_audit_style_task, _AUDIT_TASK_SEARCH_NUDGE,
@@ -118,7 +118,7 @@ from backend.services import native_tools as native_tools_module
 from backend.utils import loop_rhythm
 from backend.utils import place_questions, project_guidance
 from backend.services import maps_tools
-from backend.utils import code_plan, budget_guard, date_resolve, llm_turns, memory_grounding, progress_notes, reading_shelf, routines, runner_commands, runner_jobs, self_report, targeted_read
+from backend.utils import code_plan, budget_guard, date_resolve, llm_turns, memory_grounding, progress_notes, orientation, reading_shelf, routines, runner_commands, runner_jobs, self_report, targeted_read
 from backend.services.repo_checkout import (
     RepoCheckoutError, fetch_and_extract_checkout, cleanup_checkout, find_declarations_in_checkout,
 )
@@ -2157,7 +2157,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         # "why won't you just make the change" after an earlier request or refusal): the only way
         # to satisfy it is propose_local_edits, so the loop is told so mechanically — see
         # run_react_loop's required_action.
-        edit_turn = local_workspace_handle is not None and looks_like_edit_request(state.get("messages", []))
+        edit_turn = local_workspace_handle is not None and looks_like_edit_request(state.get("messages", [])) and not commit_flow.is_commit_only_request(latest_message_content)
         # Plan mode (backend/utils/code_plan.py). A PLAN turn is read-only and ends in submit_plan; it needs the native engine, which has that tool. An EXECUTE turn carries an approved plan
         # out: "continue" or "go ahead" counts as the edit request it is, with a fresh step budget.
         plan_phase = state.get("code_plan_phase") if local_workspace_handle is not None and code_plan.enabled() else None
@@ -2226,6 +2226,10 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             schema_parts.append(await asyncio.to_thread(sonic_notes.build_context, username))
             # The branch their folder is on and the applied files waiting to be committed (backend/services/commit_flow.py): what lets "commit this" work.
             schema_parts.append(await asyncio.to_thread(commit_flow.pending_line, username, state.get("git_branch")))
+            # Where the request's words land in the folder, found by code before the first step (backend/utils/orientation.py): the model goes to the best match instead of searching its way there. A carried-out
+            # plan already lists its files, so it is not repeated.
+            if plan_phase != code_plan.EXECUTE_PHASE:
+                schema_parts.append(await asyncio.to_thread(orientation.where_to_look, local_workspace_handle.root, snapshot_paths(username), [latest_message_content, *previous_human_texts(state.get("messages", []))]))
         if state.get("working_notes"):
             # What this conversation has already decided, ruled out and left open (backend/utils/working_state.py): data, kept so a long session does not lose its thread.
             schema_parts.append(state["working_notes"])

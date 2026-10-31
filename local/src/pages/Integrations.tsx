@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import CalendarHeadsUps from '../components/CalendarHeadsUps';
 import { api, getEffectivePrincipal, isGuestPrincipal, type CalendarConnectionStatus, type GitHubTokenStatus } from '../api';
 import '../pages/__styles__/SelfService.css';
+import '../pages/__styles__/Integrations.css';
 
 // Reads query params off the hash fragment (HashRouter — see local/src/main.tsx — puts the route
 // after '#', so a post-redirect '?connected=google' lands in location.hash, not location.search).
@@ -38,6 +39,7 @@ export const IntegrationsPage: React.FC = () => {
   const [githubStatus, setGithubStatus] = useState<GitHubTokenStatus>({ configured: false, last4: null, github_login: null });
   const [savingToken, setSavingToken] = useState(false);
   const [tokenSaveMessage, setTokenSaveMessage] = useState<{ success: boolean; message: string } | null>(null);
+  const [activeTab, setActiveTab] = useState<'google' | 'outlook' | 'github' | 'settings'>('google');
 
   const [targetDocInput, setTargetDocInput] = useState('');
   const [savingDoc, setSavingDoc] = useState(false);
@@ -225,30 +227,66 @@ export const IntegrationsPage: React.FC = () => {
     ? EXPANDED_SCOPES.filter(scope => !(status.scopes || []).includes(scope))
     : [];
 
+  const googlePill = isGuest
+    ? { label: 'Unavailable', tone: 'muted' }
+    : status?.connected
+      ? missingExpandedScopes.length > 0
+        ? { label: 'Needs reconnect', tone: 'warn' }
+        : { label: 'Connected', tone: 'ok' }
+      : { label: 'Not connected', tone: 'muted' };
+
+  const microsoftPill = isGuest
+    ? { label: 'Unavailable', tone: 'muted' }
+    : msStatus?.connected
+      ? { label: 'Connected', tone: 'ok' }
+      : { label: 'Not connected', tone: 'muted' };
+
   return (
     <div className="self-service-container">
       <header className="self-service-header">
         <h1>Integrations</h1>
       </header>
 
-      <div className="vertical-card-stack">
-        <section className="service-card">
+      <div className="integrations-layout">
+        <nav className="integrations-sidebar" aria-label="Integrations sections">
+          {(['google', 'outlook', 'github', 'settings'] as const).map(tab => (
+            <button
+              key={tab}
+              type="button"
+              className={`integrations-tab ${activeTab === tab ? 'active' : ''}`}
+              onClick={() => setActiveTab(tab)}
+            >
+              {tab === 'google' ? 'Google' : tab === 'outlook' ? 'Outlook' : tab === 'github' ? 'GitHub' : 'Settings'}
+            </button>
+          ))}
+        </nav>
+        <div className="integrations-main">
+      <h2 className="integrations-group" style={{ margin: '0 0 1rem' }}>Accounts</h2>
+      <div className="integrations-grid">
+        {activeTab === 'google' && (
+        <section className="service-card integration-card">
           <div className="card-badge">GOOGLE</div>
-          <h2>Google (Calendar, Gmail, Drive, Docs)</h2>
+          <div className="integration-card-head">
+            <h2>Google (Calendar, Gmail, Drive, Docs)</h2>
+            <span className={`status-pill ${googlePill.tone}`}>{googlePill.label}</span>
+          </div>
           <p className="card-description">
             Connect your Google account and Sonic can look things up for you when you ask:
           </p>
-          <ul className="card-description" style={{ margin: '0 0 0.75rem', paddingLeft: '1.2rem' }}>
-            <li>Your calendar: what's coming up and when you're free.</li>
-            <li>Your email: find and summarize messages.</li>
-            <li>Your Drive and Docs: find and read your files.</li>
-          </ul>
-          <p className="card-description">
-            Sonic only sends an email, adds an event, or changes a document after you approve
-            that exact action. It doesn't keep a copy of your mailbox, and the connection is private
-            to your account. Disconnect any time and it stops right away.{' '}
-            <a href="#/privacy">Read the details</a>.
-          </p>
+          <details className="integration-details">
+            <summary>What Sonic can use, and privacy</summary>
+            <ul className="card-description" style={{ margin: '0 0 0.75rem', paddingLeft: '1.2rem' }}>
+              <li>Your calendar: what's coming up and when you're free.</li>
+              <li>Your email: find and summarize messages.</li>
+              <li>Your Drive and Docs: find and read your files.</li>
+            </ul>
+            <p className="card-description">
+              Sonic only sends an email, adds an event, or changes a document after you approve
+              that exact action. It doesn't keep a copy of your mailbox, and the connection is private
+              to your account. Disconnect any time and it stops right away.{' '}
+              <a href="#/privacy">Read the details</a>.
+            </p>
+          </details>
           {!isGuest && !status?.connected && (
             <p className="card-description">
               Google may show a notice that this app isn't verified yet. That's expected while
@@ -292,16 +330,24 @@ export const IntegrationsPage: React.FC = () => {
             </div>
           )}
         </section>
-        {!isGuest && status?.connected && <CalendarHeadsUps />}
+        )}
+        {!isGuest && status?.connected && activeTab === 'settings' && <CalendarHeadsUps />}
 
-        <section className="service-card">
+        {activeTab === 'outlook' && (
+        <section className="service-card integration-card">
           <div className="card-badge">MICROSOFT</div>
-          <h2>Microsoft (Outlook, Calendar, OneDrive)</h2>
-          <p className="card-description">
-            Connect a personal Microsoft account (Outlook.com, Hotmail, Live) and Sonic can search
-            and read your mail, check your calendar, and find files in OneDrive. It only sends an
-            email or changes your calendar after you approve that exact action. Disconnect any time.
-          </p>
+          <div className="integration-card-head">
+            <h2>Microsoft (Outlook, Calendar, OneDrive)</h2>
+            <span className={`status-pill ${microsoftPill.tone}`}>{microsoftPill.label}</span>
+          </div>
+          <details className="integration-details">
+            <summary>About this connection</summary>
+            <p className="card-description">
+              Connect a personal Microsoft account (Outlook.com, Hotmail, Live) and Sonic can search
+              and read your mail, check your calendar, and find files in OneDrive. It only sends an
+              email or changes your calendar after you approve that exact action. Disconnect any time.
+            </p>
+          </details>
           {isGuest ? (
             <div className="security-warning-lockout">
               Microsoft isn't available for guest sessions — sign in with a real account to connect one.
@@ -324,10 +370,13 @@ export const IntegrationsPage: React.FC = () => {
             <div className={`status-banner ${msBanner.success ? 'success' : 'error'}`}>{msBanner.message}</div>
           )}
         </section>
+        )}
+      </div>
 
-        {!isGuest && <h2 className="integrations-group" style={{ margin: '1.5rem 0 0' }}>Advanced</h2>}
-        {!isGuest && (
-          <section className="service-card">
+      {!isGuest && <h2 className="integrations-group" style={{ margin: '1.5rem 0 0' }}>Advanced</h2>}
+      <div className="integrations-grid">
+        {!isGuest && activeTab === 'google' && (
+          <section className="service-card integration-card">
             <div className="card-badge">TARGET DOCUMENT</div>
             <h2>Target Document</h2>
             <p className="card-description">
@@ -359,8 +408,8 @@ export const IntegrationsPage: React.FC = () => {
             )}
           </section>
         )}
-        {!isGuest && (
-          <section className="service-card">
+        {!isGuest && activeTab === 'github' && (
+          <section className="service-card integration-card">
             <div className="card-badge">GITHUB TOKEN</div>
             <h2>GitHub Token</h2>
             <p className="card-description">
@@ -414,6 +463,8 @@ export const IntegrationsPage: React.FC = () => {
           </section>
         )}
         
+      </div>
+        </div>
       </div>
     </div>
   );

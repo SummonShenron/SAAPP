@@ -67,6 +67,19 @@ def wants_commit(text: Any) -> bool:
     return False
 
 
+_FIRST_CLAUSE_END = re.compile(r"(?<=[.!?])\s|\n|:")
+
+
+def is_commit_only_request(text: Any) -> bool:
+    """True when the message's opening clause asks to commit, push, branch or merge and does not itself ask for a file change. Such a turn is not an edit turn: the rest of the message is usually the
+    commit message ("...acts first (edits and checks don't use up its steps)"), and words in it read as an edit request made the loop demand propose_local_edits, so a commit that ran fine was
+    reported as never run (2026-10-31). A message like "fix the header in Chat.tsx and commit it" opens with the edit, so it stays an edit turn. Pure."""
+    from backend.utils.agent_utils import _is_explicit_edit
+
+    opening = _FIRST_CLAUSE_END.split(str(text or "").strip(), maxsplit=1)[0]
+    return (wants_commit(opening) or wants_merge(opening)) and not _is_explicit_edit(opening)
+
+
 _MERGE_REQUEST = re.compile(r"^\W*(?:(?:please|can you|could you|go ahead and)\s+)?merge\b", re.IGNORECASE)
 
 

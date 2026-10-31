@@ -1269,7 +1269,9 @@ _EDIT_VERB_RE = re.compile(
     r"create|adjust|apply|tweak)|\b(?:edit|fix|add|move|swap|make|write)\b|"
     # "can you try making --bg-main a bit lighter", "changing", "bumping": the -ing forms are how people ask politely
     r"\b(?:chang|updat|replac|renam|remov|delet|insert|refactor|rewrit|implement|creat|adjust|tweak|edit|fix|add|mov|swapp|mak|writ|bump|lighten|darken|brighten|dim|shift|nudg)ing\b|"
-    r"\b(?:bump|lighten|darken|brighten|dim|nudge|shift)\b",
+    r"\b(?:bump|lighten|darken|brighten|dim|nudge|shift)\b|"
+    # design verbs: "redesign the integrations page" was not read as a change, so the turn wrote the new layout into its answer instead of proposing it (2026-10-31)
+    r"\b(?:redesign|restyle|restructure|reorgani[sz]e|declutter|simplify|collapse)(?:s|d|ing)?\b",
     re.IGNORECASE,
 )
 # Something code-shaped to act on. A bare verb ("make your replies shorter", "update my memory")
@@ -1280,7 +1282,7 @@ _CODE_TARGET_RE = re.compile(
     r"menu|navbar|banner|endpoint|route|test|tests|variable|import|prop|style|color|colour|label|"
     r"icon|tooltip|modal|loader|spinner|readme|hero|"
     # things people name when they describe a screen change in words ("add a timestamp to the user message bubbles"), with no file name in the message
-    r"bubbles?|timestamps?|badges?|dropdowns?|checkbox(?:es)?|textarea|scrollbars?|avatars?|mascot|hearts?|animations?|layout|hover|"
+    r"bubbles?|timestamps?|badges?|dropdowns?|checkbox(?:es)?|textarea|scrollbars?|avatars?|mascot|hearts?|animations?|layout|hover|pages?|screens?|tabs?|cards?|"
     # design values: a css custom property ("--bg-main"), tokens, a theme, and the things a stylesheet sets
     r"tokens?|theme|font|padding|margin|background|border|radius|shadow|opacity|contrast|spacing|gray|grey)\b|"
     r"(?<![\w-])--[a-z][\w-]*",
@@ -1378,6 +1380,12 @@ def recent_user_text(latest_message: str, messages) -> str:
     about which words they looked at."""
     earlier = [str(getattr(m, "content", "")) for m in [m for m in (messages or [])[:-1] if _is_human(m)][-1:]]
     return "\n".join([latest_message] + earlier)
+
+
+def previous_human_texts(messages) -> list:
+    """The human message before the latest one, as a one-item list (or []): what a short follow-up ("MAKE THE CHANGE") is about. Orientation searches the words of both (backend/utils/orientation.py)."""
+    earlier = [_message_text(m) for m in [m for m in (messages or [])[:-1] if _is_human(m)][-1:]]
+    return [text for text in earlier if text.strip()]
 
 
 def looks_like_edit_request(messages) -> bool:

@@ -808,3 +808,30 @@ def test_a_message_written_from_the_change_is_never_logged_and_the_plan_keeps_wh
     assert "say hello in the greeting" not in caplog.text and "return 'hello '" not in caplog.text
     plan = gc.build_plan(world, REPO, "feat/x", {"src/app.py": APP_NEW})
     assert plan["files"][0]["base_text"] == APP and plan["files"][0]["text"] == APP_NEW
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# A commit request is not an edit request (2026-10-31)
+# ---------------------------------------------------------------------------------------------------------------
+
+JACKS_COMMIT_REQUEST = (
+    "Commit everything in my working tree to a new branch called feat/act-first-terminal-git and push it. The message: Sonic acts first (edits and checks don't use up its steps, reads are targeted), "
+    "commits through the terminal with real git, the plan card sits above the running reply, and settings live in the side panel."
+)
+
+
+def test_a_commit_request_whose_message_mentions_edits_is_not_an_edit_turn():
+    assert cf.is_commit_only_request(JACKS_COMMIT_REQUEST)
+    assert cf.is_commit_only_request("push it")
+    assert cf.is_commit_only_request("merge feat/x into main")
+
+
+def test_a_request_that_opens_with_a_file_change_stays_an_edit_turn():
+    assert not cf.is_commit_only_request("Fix the header text in Chat.tsx and commit it.")
+    assert not cf.is_commit_only_request("change the header in Chat.tsx, then commit")
+    assert not cf.is_commit_only_request("What does the commit in agent_workflow.py do?")
+
+
+def test_the_tool_agent_does_not_demand_an_edit_for_a_commit_request():
+    source = open(pathlib.Path(__file__).resolve().parents[2] / "backend" / "services" / "agent_workflow.py", encoding="utf-8").read()
+    assert "looks_like_edit_request(state.get(\"messages\", [])) and not commit_flow.is_commit_only_request(latest_message_content)" in source
