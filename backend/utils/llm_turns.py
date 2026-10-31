@@ -101,6 +101,9 @@ class Turn:
         self.plan_stop = ""  # the final reason such a turn ended, once the plan's own state is known (code_plan.stop_reason)
         self.reading: Optional[Dict[str, int]] = None  # what the coding loop read and whether it was the material that mattered (backend/utils/reading_waste.py), counts only
         self.rhythm: Optional[Dict[str, Any]] = None  # the coding loop's rhythm: reads before the first act, edits applied and checked, notices (backend/utils/loop_rhythm.py), counts only
+        self.checks: Dict[str, str] = {}  # the checks the coding loop really ran this turn, {kind: "passed" | "failed"} (backend/utils/claim_check.py): what a "tests pass" in the reply is held to
+        self.checks_noted = False  # the native loop recorded its checks (the older loop does not, so a reply from it cannot be held to them)
+        self.claim_sent_back = False  # the loop sent its own answer back once because it claimed a pass no run backed
         self.loop_exit = ""  # how the loop's last run ended: "early", "late", "cap_draft" or "cap_no_draft" (see exit_kind)
         self.nudged = False  # the halfway nudge was shown to the model this turn
         self.nudge_drafted = False  # ... and a draft existed by the end
@@ -320,6 +323,20 @@ def note_reading(summary: Dict[str, Any]) -> None:
         if turn is None or turn.done or not isinstance(summary, dict):
             return
         turn.reading = {key: value for key, value in summary.items() if isinstance(value, int) and not isinstance(value, bool)}
+    except Exception:
+        pass
+
+
+def note_checks(status: Dict[str, str], sent_back: bool = False) -> None:
+    """The coding loop ended: which checks it really ran and how each ended (backend/utils/claim_check.evidence: kinds and outcomes only, no text). A turn that resumes the loop keeps the union, the
+    later run winning. Never raises."""
+    try:
+        turn = _current.get()
+        if turn is None or turn.done or not isinstance(status, dict):
+            return
+        turn.checks_noted = True
+        turn.checks.update({str(kind): str(outcome) for kind, outcome in status.items()})
+        turn.claim_sent_back = turn.claim_sent_back or bool(sent_back)
     except Exception:
         pass
 

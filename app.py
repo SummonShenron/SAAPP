@@ -134,6 +134,8 @@ from backend.components.sonic_profile import SONIC_PROFILE
 from backend.utils.time_utils import build_time_context, local_today, sent_at, stamp
 from backend.utils import open_loops as open_loops_utils
 from backend.utils import plan_changes as plan_changes_utils
+from backend.utils import claim_check
+from backend.utils import stream_keepalive
 from backend.utils import working_state as working_state_utils
 from backend.utils import code_plan as code_plan_utils
 from backend.utils import server_memory
@@ -1741,6 +1743,14 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                         len(original_response), len(full_response),
                     )
 
+            if getattr(llm_turn, "checks_noted", False):
+                # A pass claimed with no passing run behind it in this turn gets one plain line under the reply (backend/utils/claim_check.py); said after the reply is composed, so no rewording can drop it.
+                unbacked = claim_check.unproven(full_response, llm_turn.checks)
+                if unbacked:
+                    full_response = f"{full_response}\n\n{claim_check.note_for(unbacked, llm_turn.checks)}"
+                    tally(turn_counts, "claim_unproven")
+                if llm_turn.claim_sent_back:
+                    tally(turn_counts, "claim_sent_back")
             context_view = context_window.view(llm_turn.peak_input, llm_turn.peak_model)      # how full the biggest request of this turn was (counts only): the session column's context ring
             if context_view:
                 yield f"data: {json.dumps({'event': 'context', **context_view})}\n\n"
@@ -1928,7 +1938,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         # Registered for the whole turn so POST /api/chat/steer has somewhere to deliver messages.
         run = steering.open_run(history_key, chat_sessions[history_key])
         try:
-            async for chunk in token_streamer():
+            # The stream says it is alive (backend/utils/stream_keepalive.py), so the page can tell a quiet turn from a dead connection and does not stay busy until a reload.
+            async for chunk in stream_keepalive.with_keepalive(token_streamer()):
                 yield chunk
         finally:
             leftover = steering.close_run(history_key, run)

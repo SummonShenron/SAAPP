@@ -1,5 +1,6 @@
 // src/api.ts
 import type { SessionCheck } from './utils/authReady';
+import { IDLE_LIMIT_MS, isKeepaliveLine, readOrGiveUp } from './streamWatchdog';
 import { ChatSendError, kindForStatus, safeDetail, toChatSendError } from './chatErrors';
 import { SyncRequestError } from './localWorkspaceCore';
 
@@ -2180,17 +2181,23 @@ export async function steerChat(sessionId: string, message: string): Promise<{ s
   return res.json();
 }
 
-/** Tells the waiting turn what the person decided on a proposed folder change. Best effort: nothing breaks if no turn is waiting any more. */
-export async function reportEditDecision(proposalId: string, outcome: 'applied' | 'declined' | 'undone', reason = ''): Promise<void> {
+/** What the server did with a report of the person's decision: 'recorded' (a turn was waiting and has it), 'no_waiter' (nobody is waiting any more: the turn ended, timed out or was lost when the server restarted), or 'error' (it could not be asked). */
+export type EditDecisionResult = 'recorded' | 'no_waiter' | 'error';
+
+/** Tells the waiting turn what the person decided on a proposed folder change. The folder change itself does not depend on this; the answer tells the page whether the turn it is waiting on is still there. */
+export async function reportEditDecision(proposalId: string, outcome: 'applied' | 'declined' | 'undone', reason = ''): Promise<EditDecisionResult> {
   try {
     const authHeaders = await getAuthHeaders();
-    await fetch(`${BASE_URL}/api/local-edits/${encodeURIComponent(proposalId)}/decision`, {
+    const res = await fetch(`${BASE_URL}/api/local-edits/${encodeURIComponent(proposalId)}/decision`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders },
       body: JSON.stringify({ outcome, reason }),
     });
+    if (!res.ok) return 'error';
+    const body = await res.json().catch(() => null);
+    return body && body.status === 'no_waiter' ? 'no_waiter' : 'recorded';
   } catch {
-    // The folder change itself does not depend on this; Sonic's wait simply times out.
+    return 'error';
   }
 }
 
@@ -2255,11 +2262,13 @@ export async function sendChatMessage(
   }
 
   let buffer = "";
+  // The server says `: ready` when it keeps its promise to send `: keepalive` through any silence (backend/utils/stream_keepalive.py). Only then is a quiet stream treated as dead (streamWatchdog.ts).
+  let keepalive = false;
 
   while (true) {
     let chunk: ReadableStreamReadResult<Uint8Array>;
     try {
-      chunk = await reader.read();
+      chunk = await readOrGiveUp(reader.read(), keepalive ? IDLE_LIMIT_MS : null, () => { void reader.cancel().catch(() => { /* already gone */ }); });
     } catch (err) {
       throw isStop(err) ? err : new ChatSendError('interrupted');
     }
@@ -2272,6 +2281,7 @@ export async function sendChatMessage(
 
     for (const line of lines) {
       const trimmed = line.trim();
+      if (isKeepaliveLine(trimmed)) keepalive = true;
       if (trimmed.startsWith("data: ")) {
         try {
           const payload = JSON.parse(trimmed.substring(6));

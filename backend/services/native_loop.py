@@ -38,7 +38,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
-from backend.utils import draft_checkpoint, loop_rhythm, reading_waste
+from backend.utils import claim_check, draft_checkpoint, loop_rhythm, reading_waste
 from backend.utils.prompt_meter import PromptMeter
 from backend.utils.agent_utils import _UnsafeActionRequested, build_tool_facts, build_trace_subject, new_trace_step_id
 
@@ -113,6 +113,7 @@ SAVE_DRAFT_TOOL = {
     "parameters": {"type": "object", "properties": {"text": {"type": "string", "description": "the whole draft"}}, "required": ["text"]},
 }
 _REPO_TOOLS = frozenset({"read_repo_file", "search_code", "search_literal", "find_file", "trace_symbol"})
+_CHECK_TOOLS = frozenset({"run_local_check", "run_local_command"})     # what the model can run a check with on the person's computer (a claim that a check passed is held to a run: backend/utils/claim_check.py)
 
 # Added to the system prompt only when propose_local_edits is among the tools (a local folder is connected): the person's own files can be changed, by proposal.
 EDIT_PROMPT = """
@@ -429,6 +430,8 @@ async def run(
         return result
 
     required_rejections = 0
+    claim_rejections = 0                                      # an answer that claimed a pass no run backed is sent back once (backend/utils/claim_check.py)
+    claim_checking = can_edit or bool(offered & _REPO_TOOLS)  # a coding turn
 
     async def execute_calls(step_number: int, calls: List[Dict[str, Any]]) -> List[str]:
         """Runs one step's tool calls together and puts each result into the conversation, the receipt and the held results. Returns the results in order."""
@@ -561,7 +564,16 @@ async def run(
                 messages.append(HumanMessage(content=required_action["final_notice"]))
                 logger.info("[native_loop] step %s: an answer without %s on a turn that requires it was sent back (%d/%d).", step, required_action["tool_action"], required_rejections, required_action.get("max_final_rejections", 2))
                 continue
-            final_text = _text(getattr(reply, "content", ""))
+            answer = _text(getattr(reply, "content", ""))
+            if claim_checking and claim_rejections < 1 and step < budget:
+                # "The tests pass" with no passing run this turn: back it goes once, to run the check (when it can) or to say it did not (2026-10-30: "tsc passes cleanly", never run, and it failed).
+                unbacked = claim_check.unproven(answer, claim_check.evidence(attempts))
+                if unbacked:
+                    claim_rejections += 1
+                    messages.append(HumanMessage(content=claim_check.send_back_notice(unbacked, bool(offered & _CHECK_TOOLS))))
+                    logger.info("[native_loop] step %s: an answer claiming a passing check that no run backed was sent back (%s).", step, ",".join(unbacked))
+                    continue
+            final_text = answer
             stop_reason = "model_answered"
             break
         results = await execute_calls(step, calls)
@@ -635,6 +647,7 @@ async def run(
     if rhythm is not None:
         llm_turns.note_rhythm(rhythm.summary())
     llm_turns.note_reading(reading.summary())
+    llm_turns.note_checks(claim_check.evidence(attempts), sent_back=claim_rejections > 0)
     if plan_budget is not None:
         llm_turns.note_plan_exit(stop_reason or "model_answered")
     try:

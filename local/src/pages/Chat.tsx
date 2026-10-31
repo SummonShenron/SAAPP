@@ -210,6 +210,7 @@ interface ChatMessageListProps {
     apply: (proposal: EditProposal) => Promise<ApplyResult>;
     undo: (proposalId: string) => Promise<UndoResult>;
     getFolderHandle: () => FsDirectoryHandle | null;
+    decide: (proposalId: string, outcome: 'applied' | 'declined' | 'undone', reason: string) => void;
   }>;
 }
 
@@ -485,7 +486,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
                   canApply={canEditLocal}
                   onApply={proposal => localEditActionsRef.current.apply(proposal)}
                   onUndo={proposalId => localEditActionsRef.current.undo(proposalId)}
-                  onDecision={(proposalId, outcome, reason) => { void api.reportEditDecision(proposalId, outcome, reason); }}
+                  onDecision={(proposalId, outcome, reason) => localEditActionsRef.current.decide(proposalId, outcome, reason)}
                 />
               )}
 
@@ -836,6 +837,10 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   // as an ordinary message so a steer is never lost.
   const steerLogRef = useRef<{ id: string; text: string; applied: boolean }[]>([]);
   const pendingResendRef = useRef<{ id: string; text: string }[]>([]);
+  // The server holds a turn open while a proposed change waits for Apply or Decline. If the person's report finds nobody waiting (the server restarted under the turn, for one), the turn is dead and the
+  // page must not stay busy until a reload: `awaitedProposalRef` is the proposal this turn waits on, `lostTurnRef` says the turn was ended for that reason.
+  const awaitedProposalRef = useRef<string | null>(null);
+  const lostTurnRef = useRef(false);
   const [resendTick, setResendTick] = useState(0);
   // Bumped each time a turn finishes normally, so the pixel Patchy by the input can hop.
   const [patchyCheer, setPatchyCheer] = useState(0);
@@ -1807,6 +1812,7 @@ useEffect(() => {
                   edits: payload.edits,
                   awaiting: payload.awaiting_decision === true,
                 };
+                if (proposal.awaiting) awaitedProposalRef.current = proposal.proposal_id;
                 // The person's approval level may apply this one without a click (never a Word document, a large proposal, or a burst of them).
                 const decision = decideAutoApply(approvalLevelRef.current, proposal, autoAppliedAtRef.current, Date.now());
                 proposal.auto = decision.auto;
@@ -1961,7 +1967,9 @@ useEffect(() => {
           const lastIndex = updated.length - 1;
           if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
             const existingText = updated[lastIndex].text || '';
-            updated[lastIndex] = { ...updated[lastIndex], text: existingText ? `${existingText}\n\n_[Stopped]_` : '_[Stopped before responding]_' };
+            const lost = lostTurnRef.current;
+            const notice = lost ? '_[The server stopped waiting for this answer, so the turn ended. Your change was applied. Press Continue to carry on.]_' : '_[Stopped]_';
+            updated[lastIndex] = { ...updated[lastIndex], text: existingText ? `${existingText}\n\n${notice}` : (lost ? notice : '_[Stopped before responding]_') };
           }
           return updated;
         });
@@ -2002,6 +2010,8 @@ useEffect(() => {
       }
       if (stoppedByUser) pendingResendRef.current = [];
       abortControllerRef.current = null;
+      awaitedProposalRef.current = null;
+      lostTurnRef.current = false;
       setLoading(false);
       // This turn's steps go onto its reply (see attachTurnSteps): now with what is drawn, once the page has rendered the last of it, and again when the replay of late steps catches up.
       endedTurnRef.current = aiMessageId;
@@ -2089,14 +2099,26 @@ useEffect(() => {
 const handleSendMessageRef = useRef(handleSendMessage);
 const handleFeedbackRef = useRef(handleFeedback);
 const getTokenRef = useRef(getToken);
-const localEditActionsRef = useRef({ apply: workspace.applyEdits, undo: workspace.undoEdits, getFolderHandle: workspace.getFolderHandle });
+// The person's Apply or Decline, reported to the turn that waits on it. Only the FIRST report for the proposal this turn waits on can say the turn is gone: the server answers "no_waiter" when nobody is
+// waiting any more (the server restarted under the turn, or the wait timed out), and then the page ends the turn instead of staying busy until a reload. Undo is never a reason to end a turn.
+const decideOnProposal = (proposalId: string, outcome: 'applied' | 'declined' | 'undone', reason: string) => {
+  const awaited = outcome !== 'undone' && awaitedProposalRef.current === proposalId;
+  if (awaited) awaitedProposalRef.current = null;
+  void api.reportEditDecision(proposalId, outcome, reason).then(result => {
+    if (awaited && result === 'no_waiter') {
+      lostTurnRef.current = true;
+      abortControllerRef.current?.abort();
+    }
+  });
+};
+const localEditActionsRef = useRef({ apply: workspace.applyEdits, undo: workspace.undoEdits, getFolderHandle: workspace.getFolderHandle, decide: decideOnProposal });
 useEffect(() => {
   // Pressing Start office hours is the person saying "let's begin": the first line goes in for them, and Sonic opens the meeting.
   meetingStartedRef.current = (name: string) => { void handleSendMessageRef.current(`Let's start our ${name}.`, []); };
   handleSendMessageRef.current = handleSendMessage;
   handleFeedbackRef.current = handleFeedback;
   getTokenRef.current = getToken;
-  localEditActionsRef.current = { apply: workspace.applyEdits, undo: workspace.undoEdits, getFolderHandle: workspace.getFolderHandle };
+  localEditActionsRef.current = { apply: workspace.applyEdits, undo: workspace.undoEdits, getFolderHandle: workspace.getFolderHandle, decide: decideOnProposal };
 });
 
 // Re-sends deferred steers one at a time, only once the previous turn has fully finished. Declared

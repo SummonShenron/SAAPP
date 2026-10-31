@@ -272,6 +272,21 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "claims_held_to_runs",
+        "requires": [
+            "backend/utils/claim_check.py::def unproven",
+            "backend/services/native_loop.py::claim_check.unproven",
+            "app.py::claim_check.note_for",
+        ],
+        "month": "2026-10",
+        "title": "No passing claims without a run",
+        "line": (
+            "I can now catch myself saying a type-check, the tests, lint or a build passed when I did not run it in that reply: I go back and run it, or I add a plain \"Not checked\" line under my answer."
+        ),
+        "keywords": ["tests pass", "tsc passes", "type-check", "not checked", "verified", "did you run", "claimed", "hallucinat", "ran the tests"],
+        "volunteer": [],
+    },
+    {
         "id": "terminal_card",
         "requires": [
             "local/src/components/TerminalBlade.tsx::export const TerminalBlade",
