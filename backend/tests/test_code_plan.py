@@ -347,6 +347,7 @@ def test_the_stall_wiring_is_in_the_route_the_turn_end_and_the_counters():
     assert 'action.action == "mark_done"' in app_source and "code_plan_utils.mark_done" in app_source
     assert "code_plan.record_turn_end," in workflow and '"code_plan_stalled"' in workflow
     assert {"code_plan_stalled", "code_plan_marked_done"} <= set(KEYS)
+    assert {"claim_unproven", "claim_sent_back"} <= set(KEYS)
 
 
 def test_forgetting_everything_deletes_plans():

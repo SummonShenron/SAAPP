@@ -270,7 +270,7 @@ def test_the_branch_travels_from_the_browser_to_the_agent_and_every_apply_is_rep
     api_source = (ROOT / "local" / "src" / "api.ts").read_text(encoding="utf-8")
     assert "git_branch: gitBranch" in api_source
     chat = (ROOT / "local" / "src" / "pages" / "Chat.tsx").read_text(encoding="utf-8")
-    assert "await workspace.currentGitBranch()" in chat
+    assert "waitAtMost(workspace.currentGitBranch(), PRE_SEND_BRANCH_MS)" in chat
     card = (ROOT / "local" / "src" / "components" / "LocalEditCard.tsx").read_text(encoding="utf-8")
     assert "onDecision?.(proposal.proposal_id, 'applied', '');" in card and "if (proposal.awaiting) onDecision?.(proposal.proposal_id, 'applied'" not in card
 

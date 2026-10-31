@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Icon from './icons';
 import type { RingView } from './budgetText';
-import { Gauge, RepoFields, ScopeField, type RepoControls, type ScopeControls } from './SessionColumn';
+import { ConnectionPanel, Gauge, RepoFields, ScopeField, type ConnectionProps, type RepoControls, type ScopeControls } from './SessionColumn';
 import { ChipChoices, glyph, type ChatSettings, type ChipControl } from './ComposerChips';
 import { chipLabel, isChanged, type ChipKey } from './composerChipsLogic';
-import { LEVEL_COLOR, contextGauge, gaugeSummary, type ContextUse } from './sessionColumnLogic';
+import { LEVEL_COLOR, contextGauge, folderLine, gaugeSummary, runnerLine, type ContextUse } from './sessionColumnLogic';
 import './__styles__/SessionRail.css';
 
 interface Props {
@@ -16,11 +16,13 @@ interface Props {
   scope: ScopeControls | null;
   /** The target GitHub repo; null where it is not offered. */
   repo: RepoControls | null;
+  /** The runner on the person's computer and the folder: the column's Connection card, as the first button of the strip (a phone has the same account-level runner the desktop does). */
+  connection?: ConnectionProps | null;
   /** The chat settings, one button each down the strip below the others (they are under the message box only where this strip is not showing). */
   settings?: ChatSettings | null;
 }
 
-type Panel = 'repo' | 'gauges' | 'scope' | ChipKey | 'help';
+type Panel = 'connection' | 'repo' | 'gauges' | 'scope' | ChipKey | 'help';
 
 const CHIP_ORDER: ChipKey[] = ['model', 'mode', 'thinking', 'answers'];
 
@@ -47,7 +49,7 @@ function MiniRing({ fraction, level }: { fraction: number; level: string }) {
  * edge. Pressing one opens a small card beside it with the same controls the column has (components/SessionColumn.tsx); pressing outside it, or Escape, closes it. The page's top-bar button hides
  * the whole strip. Nothing here is state of its own beyond which card is open.
  */
-const SessionRail: React.FC<Props> = ({ usage, context, scope, repo, settings }) => {
+const SessionRail: React.FC<Props> = ({ usage, context, scope, repo, settings, connection }) => {
   const [open, setOpen] = useState<Panel | null>(null);
   const rail = useRef<HTMLElement>(null);
   const contextView = contextGauge(context);
@@ -62,15 +64,33 @@ const SessionRail: React.FC<Props> = ({ usage, context, scope, repo, settings })
     return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
   }, [open]);
 
-  if (!repo && !hasGauges && !scope && !settings) return null;
+  if (!repo && !hasGauges && !scope && !settings && !connection) return null;
   const toggle = (panel: Panel) => setOpen(current => (current === panel ? null : panel));
   const scopeName = scope ? (scope.choices.find(choice => choice.value === scope.value)?.label ?? scope.value) : '';
   const summary = gaugeSummary(contextView, usage);
 
+  // The Connection button's dot: amber when the runner is not answering or the folder needs attention, green when either is connected and none is not, none when there is nothing connected.
+  const connectionTone = (() => {
+    if (!connection) return null;
+    const tones = [connection.runnerEnabled ? runnerLine(connection.runners).tone : 'off', folderLine(connection.folder.status, connection.folder.name, connection.folder.fileCount).tone];
+    return tones.includes('warn') ? 'warn' : tones.includes('ok') ? 'ok' : null;
+  })();
   const controlOf = (key: ChipKey): ChipControl | null => (settings ? settings[key] : null);
 
   return (
     <aside className="session-rail" aria-label="Session" ref={rail}>
+      {connection && (
+        <div className="rail-item">
+          <button
+            type="button" className={`rail-btn${open === 'connection' ? ' is-open' : ''}`} aria-expanded={open === 'connection'}
+            aria-label="Connection: your computer and folder" title="Your computer and folder" onClick={() => toggle('connection')}
+          >
+            <Icon name="monitor" size={18} />
+            {connectionTone && <span className={`rail-dot rail-dot-${connectionTone}`} aria-hidden="true" />}
+          </button>
+          {open === 'connection' && <div className="rail-pop" role="dialog" aria-label="Connection"><ConnectionPanel {...connection} /></div>}
+        </div>
+      )}
       {repo && (
         <div className="rail-item">
           <button

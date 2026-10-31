@@ -272,6 +272,36 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "git_in_the_terminal",
+        "requires": [
+            "backend/utils/git_terminal.py::def build_commit_line",
+            "backend/services/agent_workflow.py::async def _propose_git_commit",
+            "backend/services/native_tools.py::propose_git_commit",
+        ],
+        "month": "2026-10",
+        "title": "Committing with real git on your computer",
+        "line": (
+            "I can now commit and push with real git on your computer when your runner is connected: one card shows the exact command, and it runs with your own git identity, hooks and credentials."
+        ),
+        "keywords": ["commit", "push", "git", "terminal", "runner", "branch", "real git", "co-authored"],
+        "volunteer": [],
+    },
+    {
+        "id": "act_first",
+        "requires": [
+            "backend/utils/act_not_suggest.py::def wrote_code_instead_of_editing",
+            "backend/utils/targeted_read.py::def redirect_text",
+            "backend/services/native_loop.py::ACTION_TOOLS",
+        ],
+        "month": "2026-10",
+        "title": "Acting first, reading where the work is",
+        "line": (
+            "I can now make edits and run checks without spending my step allowance, read a file where a keyword matches instead of from line 1, and change your file directly instead of writing the code into my answer."
+        ),
+        "keywords": ["edit", "pseudocode", "suggest", "just make the change", "step budget", "read the whole file", "line 1", "act", "propose", "keyword"],
+        "volunteer": [],
+    },
+    {
         "id": "claims_held_to_runs",
         "requires": [
             "backend/utils/claim_check.py::def unproven",

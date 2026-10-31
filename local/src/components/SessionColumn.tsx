@@ -154,6 +154,73 @@ function Card({ id, label, title, badge, summary, className, collapsed, onToggle
   );
 }
 
+/** What the Connection shows and does: the runner on the person's computer and the folder (with its actions and options). The column's Connection card and the phone strip's Connection card both draw it. */
+export interface ConnectionProps {
+  folder: { status: string; name: string | null; fileCount: number | null; branch: string | null };
+  /** False for a guest, who has no runner to ask about. */
+  runnerEnabled: boolean;
+  runners: RunnerInfo[] | null;
+  /** The "Start runner" button on a runner that is not answering; null where the link it opens cannot exist (not Windows). */
+  runnerStart: { phase: RunnerStartPhase; onStart: () => void } | null;
+  /** The folder's actions and options; null where a folder cannot be connected (a guest, or a browser with no folder picker). */
+  folderControls: FolderControls | null;
+}
+
+export function ConnectionPanel({ folder, runnerEnabled, runners, runnerStart, folderControls }: ConnectionProps) {
+  // "2s ago" goes stale on its own: redraw the times every few seconds.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 15_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const runner = runnerEnabled ? runnerLine(runners, now) : null;
+  const folderRow = folderLine(folder.status, folder.name, folder.fileCount);
+  return (
+    <>
+    {runner && <Row line={runner} />}
+    {runner && runner.tone === 'warn' && runnerStart && (
+      <div className="sc-runner-start">
+        <button type="button" className="sc-btn sc-btn-primary" onClick={runnerStart.onStart} disabled={runnerStart.phase === 'starting'} aria-busy={runnerStart.phase === 'starting'}>
+          {runnerStart.phase === 'starting' && <span className="sc-spinner" aria-hidden="true" />}
+          {runnerStart.phase === 'starting' ? 'Starting…' : runnerStart.phase === 'failed' ? 'Try again' : 'Start runner'}
+        </button>
+        <span className="sc-option-hint" role="status" aria-live="polite">
+          {runnerStart.phase === 'starting' && 'Asked your computer to start it. Waiting for it to connect; this usually takes a few seconds.'}
+          {runnerStart.phase === 'failed' && <>It did not connect. If nothing started on your computer, run this once in a terminal there, then try again.</>}
+        </span>
+        {runnerStart.phase === 'failed' && (
+          <span className="sc-option-hint">
+            PowerShell: <code>{RUNNER_INSTALL_POWERSHELL}</code>
+            <br />
+            Command Prompt: <code>{RUNNER_INSTALL_CMD}</code>
+          </span>
+        )}
+      </div>
+    )}
+    <Row line={folderRow} />
+    {folder.branch && <div className="sc-branch">On branch <code>{folder.branch}</code></div>}
+    {folderControls && (
+      <div className="sc-folder-controls">
+        {folderControls.primary && (
+          <button type="button" className="sc-btn sc-btn-primary" onClick={folderControls.primary.run} disabled={folderControls.busy}>{folderControls.primary.label}</button>
+        )}
+        {folderControls.options && (
+          <>
+            <Options label="When Sonic edits your files" value={folderControls.options.approval.value} options={APPROVAL_OPTIONS} onChange={folderControls.options.approval.onChange} />
+            <Options label="After Sonic commits" value={folderControls.options.git.value} options={GIT_OPTIONS} onChange={folderControls.options.git.onChange} />
+            <div className="sc-actions">
+              {folderControls.options.actions.map(action => (
+                <button key={action.label} type="button" className="sc-btn" onClick={action.run} disabled={folderControls.busy}>{action.label}</button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    )}
+    </>
+  );
+}
+
 /**
  * The column beside a conversation: the state of this conversation and workspace, at a glance. Connection (the runner on the person's computer and the folder), the folder's and the repo's
  * controls, the gauges, the plan while there is one, and what this conversation is scoped to. It only shows what the page already knows; settings stay in the "..." menu (the scope row
@@ -200,46 +267,7 @@ const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runner
           </span>
         )}
       >
-        {runner && <Row line={runner} />}
-        {runner && runner.tone === 'warn' && runnerStart && (
-          <div className="sc-runner-start">
-            <button type="button" className="sc-btn sc-btn-primary" onClick={runnerStart.onStart} disabled={runnerStart.phase === 'starting'} aria-busy={runnerStart.phase === 'starting'}>
-              {runnerStart.phase === 'starting' && <span className="sc-spinner" aria-hidden="true" />}
-              {runnerStart.phase === 'starting' ? 'Starting…' : runnerStart.phase === 'failed' ? 'Try again' : 'Start runner'}
-            </button>
-            <span className="sc-option-hint" role="status" aria-live="polite">
-              {runnerStart.phase === 'starting' && 'Asked your computer to start it. Waiting for it to connect; this usually takes a few seconds.'}
-              {runnerStart.phase === 'failed' && <>It did not connect. If nothing started on your computer, run this once in a terminal there, then try again.</>}
-            </span>
-            {runnerStart.phase === 'failed' && (
-              <span className="sc-option-hint">
-                PowerShell: <code>{RUNNER_INSTALL_POWERSHELL}</code>
-                <br />
-                Command Prompt: <code>{RUNNER_INSTALL_CMD}</code>
-              </span>
-            )}
-          </div>
-        )}
-        <Row line={folderRow} />
-        {folder.branch && <div className="sc-branch">On branch <code>{folder.branch}</code></div>}
-        {folderControls && (
-          <div className="sc-folder-controls">
-            {folderControls.primary && (
-              <button type="button" className="sc-btn sc-btn-primary" onClick={folderControls.primary.run} disabled={folderControls.busy}>{folderControls.primary.label}</button>
-            )}
-            {folderControls.options && (
-              <>
-                <Options label="When Sonic edits your files" value={folderControls.options.approval.value} options={APPROVAL_OPTIONS} onChange={folderControls.options.approval.onChange} />
-                <Options label="After Sonic commits" value={folderControls.options.git.value} options={GIT_OPTIONS} onChange={folderControls.options.git.onChange} />
-                <div className="sc-actions">
-                  {folderControls.options.actions.map(action => (
-                    <button key={action.label} type="button" className="sc-btn" onClick={action.run} disabled={folderControls.busy}>{action.label}</button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        )}
+        <ConnectionPanel folder={folder} runnerEnabled={runnerEnabled} runners={runners} runnerStart={runnerStart} folderControls={folderControls} />
       </Card>
 
       {repo && (

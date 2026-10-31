@@ -11,9 +11,13 @@ import {
   formatDuration,
   rowOutcome,
   scrollbackOrder,
+  sendToSonicBlock,
   stepHistory,
   stoppableJob,
+  readStoredPick,
   trimOutputTail,
+  writeStoredPick,
+  type TerminalChoice,
 } from './terminalLogic';
 import './__styles__/TerminalBlade.css';
 
@@ -23,6 +27,12 @@ interface Props {
   /** The project's name, for the header. */
   projectName: string;
   onClose: () => void;
+  /** Puts text into the chat message box (focused, not sent). Optional: without it no Send to Sonic button is shown. */
+  onSendToChat?: (text: string) => void;
+  /** Projects to pick from, passed only when the open folder matched no project. Optional: without it the header shows the project name. */
+  choices?: TerminalChoice[];
+  /** Called when the person picks a project (and once on open, with the remembered one). The parent switches runnerId and projectId. */
+  onPick?: (choice: TerminalChoice) => void;
 }
 
 /**
@@ -31,7 +41,7 @@ interface Props {
  * runner's own rules, a refused line says why, and one that changes things still asks twice (here, then in the runner's own window). It runs one command at a time and shows the output when the
  * command finishes; it is not a shell, so there is no `cd` or running program to type into. Up and down walk the earlier commands; Ctrl+C stops the one running; Escape closes the blade.
  */
-export const TerminalBlade: React.FC<Props> = ({ runnerId, projectId, projectName, onClose }) => {
+export const TerminalBlade: React.FC<Props> = ({ runnerId, projectId, projectName, onClose, onSendToChat, choices, onPick }) => {
   const { jobs, outputs, loading, error, setError, refresh } = useTerminalJobs(runnerId, projectId, true);
   const [line, setLine] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -46,6 +56,24 @@ export const TerminalBlade: React.FC<Props> = ({ runnerId, projectId, projectNam
   const running = stoppableJob(jobs);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
+
+  // Project picker. Storage may be missing or throw (privacy settings); then the choice is simply not remembered.
+  const storage = (() => { try { return window.localStorage; } catch { return null; } })();
+  const pickKey = (choice: TerminalChoice) => `${choice.runnerId}|${choice.projectId}`;
+  const currentKey = `${runnerId}|${projectId}`;
+  useEffect(() => {
+    if (!choices || !onPick) return;
+    const remembered = choices.find((choice) => pickKey(choice) === readStoredPick(storage));
+    if (remembered && pickKey(remembered) !== currentKey) onPick(remembered);
+    // Only on open: the remembered choice is applied once, not on every change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const onPickChange = (value: string) => {
+    const choice = choices?.find((c) => pickKey(c) === value);
+    if (!choice || !onPick) return;
+    writeStoredPick(storage, value);
+    onPick(choice);
+  };
 
   // Escape closes the blade from anywhere on the page while it is open.
   useEffect(() => {
@@ -125,7 +153,13 @@ export const TerminalBlade: React.FC<Props> = ({ runnerId, projectId, projectNam
     <aside className="terminal-blade" role="dialog" aria-label="Terminal">
       <header className="tb-head">
         <span className="tb-title"><Icon name="terminal" size={15} /> Terminal</span>
-        <span className="tb-where" title="The project on your computer the commands run in">{projectName}</span>
+        {choices && choices.length > 0 && onPick ? (
+          <select className="tb-where tb-pick" value={currentKey} onChange={(e) => onPickChange(e.target.value)} aria-label="Project the commands run in" title="The project on your computer the commands run in">
+            {choices.map((choice) => <option key={pickKey(choice)} value={pickKey(choice)}>{choice.label}</option>)}
+          </select>
+        ) : (
+          <span className="tb-where" title="The project on your computer the commands run in">{projectName}</span>
+        )}
         <button type="button" className="tb-close" onClick={onClose} aria-label="Close the terminal" title="Close (Esc)"><Icon name="close" size={16} /></button>
       </header>
 
@@ -155,6 +189,11 @@ export const TerminalBlade: React.FC<Props> = ({ runnerId, projectId, projectNam
               {canStop(job) && !canRun(job) && <div className="tb-ask"><button type="button" onClick={() => void stop(job.id)}>Stop (Ctrl+C)</button></div>}
               {output ? <pre className="tb-out">{output}</pre> : stored && !canStop(job) && !canRun(job) && job.status === 'done' ? <p className="tb-quiet">No output.</p> : null}
               {job.truncated && <p className="tb-quiet">Only the end of the output is kept.</p>}
+              {onSendToChat && !canStop(job) && (
+                <div className="tb-ask">
+                  <button type="button" className="tb-send" onClick={() => onSendToChat(sendToSonicBlock(job.command_shown, job.exit_code, stored?.output_tail ?? ''))}>Send to Sonic</button>
+                </div>
+              )}
             </section>
           );
         })}

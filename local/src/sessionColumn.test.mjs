@@ -147,15 +147,18 @@ test('the gauges in a few words: both, one, or none, kept between 0 and 100', as
   for (const level of ['ok', 'notice', 'throttled', 'blocked']) assert.ok(LEVEL_COLOR[level], level);
 });
 
-test('the phone strip is the same controls as the column, and it never carries the folder', async () => {
+test('the phone strip is the same controls as the column, including the Connection (the runner and the folder); the message box has no folder button', async () => {
   const { readFile } = await import('node:fs/promises');
   const rail = await readFile(new URL('./components/SessionRail.tsx', import.meta.url), 'utf8');
   const column = await readFile(new URL('./components/SessionColumn.tsx', import.meta.url), 'utf8');
   // one definition of each control, used by both
   assert.match(rail, /RepoFields/); assert.match(rail, /ScopeField/); assert.match(rail, /Gauge /);
   assert.match(column, /<RepoFields repo=\{repo\} \/>/); assert.match(column, /<ScopeField scope=\{scope\} \/>/);
-  assert.doesNotMatch(rail, /folder/i);
-  // the page hides the small ring and the repo button for either one, but the folder button only for the column
+  // the Connection is the column's own card body: the runner is tied to the account, so a phone sees it as a desktop does
+  assert.match(rail, /<ConnectionPanel \{\.\.\.connection\} \/>/);
+  assert.match(column, /export function ConnectionPanel\(/);
+  assert.match(column, /<ConnectionPanel folder=\{folder\} runnerEnabled=\{runnerEnabled\} runners=\{runners\} runnerStart=\{runnerStart\} folderControls=\{folderControls\} \/>/);
+  // the page hands the strip the same connection, and the message box has no folder button on any screen (the column and the strip carry it)
   const chat = await readFile(new URL('./pages/Chat.tsx', import.meta.url), 'utf8');
   assert.match(chat, /const railVisible = compactScreen && showSessionColumn;/);
   // the message box never carries the repo button, the repo banner or the usage ring, on any screen: switching the column or the strip off just hides them
@@ -164,7 +167,8 @@ test('the phone strip is the same controls as the column, and it never carries t
   assert.doesNotMatch(chat, /Set a target GitHub repo/);
   assert.doesNotMatch(chat, /showRepoBanner/);
   assert.doesNotMatch(chat, /className="repo-banner"/);
-  assert.match(chat, /\{!columnVisible && \(<>\s*\{folderAvailable && \(/);
+  assert.match(chat, /connection=\{connection\}/);
+  assert.doesNotMatch(chat, /onFolderClick|folderButtonTitle|showFolderMenu|Connect a local folder/);
 });
 
 test('the Start runner button is offered only on Windows desktops, and opens one fixed link', async () => {

@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import {
+  SEND_MAX_CHARS,
+  SEND_TAIL_LINES,
+  TERMINAL_PICK_KEY,
   DEFAULT_TAIL_LINES,
   POLL_INTERVAL_MS,
   IDLE_POLL_MS,
@@ -13,6 +16,10 @@ import {
   formatDuration,
   isActiveStatus,
   pollDelay,
+  readStoredPick,
+  sendToSonicBlock,
+  terminalChoices,
+  writeStoredPick,
   rowOutcome,
   scrollbackOrder,
   shouldPoll,
@@ -133,7 +140,10 @@ test('the card talks to the project named like the open folder, else the only pr
 
 test('the terminal is a blade opened from the top bar, drawn in the app shell, and the column no longer carries a card for it', () => {
   const chat = read('../pages/Chat.tsx');
-  assert.match(chat, /const terminal = useMemo\(\(\) => terminalTarget\(runnerList, workspace\.folderName \?\? ''\), \[runnerList, workspace\.folderName\]\);/);
+  assert.match(chat, /const target = terminalTarget\(runnerList, workspace\.folderName \?\? ''\);\s*if \(target\) return \{ \.\.\.target, choices: undefined/);   // the open folder names a project: it wins
+  assert.match(chat, /const choices = terminalChoices\(runnerList\);\s*if \(choices\.length === 0\) return null;/);                            // no connected project at all: no button
+  assert.match(chat, /return \{ \.\.\.\(picked \?\? choices\[0\]\), choices \};/);                                                                  // the dropdown is still there after a pick
+  assert.match(chat, /import \{ terminalChoices, terminalTarget, type TerminalChoice \} from '\.\.\/components\/terminalLogic';/);
   assert.match(chat, /\{terminal && \(\s*<button[^>]*onClick=\{\(\) => setShowTerminal\(open => !open\)\}/);   // the top-bar button, only while a runner is connected
   assert.match(chat, /<Icon name="terminal" size=\{18\} \/>/);
   assert.match(chat, /showTerminal && terminal && createPortal\(/);
@@ -180,4 +190,50 @@ test('the scrollback reads oldest first, the arrows walk the earlier commands wi
   assert.equal(pollDelay([{ status: 'done' }, { status: 'running' }]), LIVE_POLL_MS);
   assert.equal(stoppableJob([{ status: 'done' }, { status: 'approved' }])?.status, 'approved');
   assert.equal(stoppableJob([{ status: 'done' }]), undefined);
+});
+
+test('the dropdown lists every project of every connected runner that can run commands, labelled "runner: project"', () => {
+  const runners = [
+    { id: 'r1', name: 'laptop', connected: true, projects: [{ id: 'p1', name: 'saapp' }, { id: 'p2', name: 'notes' }] },
+    { id: 'r2', name: 'desktop', connected: true, commands: false, projects: [{ id: 'p3', name: 'old' }] },       // too old to run commands
+    { id: 'r3', name: 'tablet', connected: false, projects: [{ id: 'p4', name: 'away' }] },                          // not connected
+    { id: 'r4', connected: true, projects: [{ id: 'p5', name: 'unnamed-runner-project' }] },
+  ];
+  assert.deepEqual(terminalChoices(runners).map((c) => [c.runnerId, c.projectId, c.label]), [['r1', 'p1', 'laptop: saapp'], ['r1', 'p2', 'laptop: notes'], ['r4', 'p5', 'r4: unnamed-runner-project']]);
+  assert.deepEqual(terminalChoices(null), []);
+});
+
+test('the remembered project works without storage, and a storage that throws never breaks the blade', () => {
+  assert.equal(TERMINAL_PICK_KEY, 'saapp.terminal.project');
+  const memory = new Map();
+  const storage = { getItem: (k) => memory.get(k) ?? null, setItem: (k, v) => memory.set(k, v) };
+  assert.equal(readStoredPick(storage), null);
+  writeStoredPick(storage, 'r1|p2');
+  assert.equal(readStoredPick(storage), 'r1|p2');
+  const broken = { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); } };
+  assert.equal(readStoredPick(broken), null);
+  assert.doesNotThrow(() => writeStoredPick(broken, 'x'));
+  assert.equal(readStoredPick(null), null);
+  assert.doesNotThrow(() => writeStoredPick(undefined, 'x'));
+});
+
+test('Send to Sonic builds an editable block with the command, its exit code and only the end of the output', () => {
+  assert.equal(sendToSonicBlock('pytest -q', 1, 'one\ntwo\nthree'), 'Command: pytest -q\nExit code: 1\n```\none\ntwo\nthree\n```');
+  assert.match(sendToSonicBlock('git status', null, 'x'), /Exit code: none/);
+  const many = Array.from({ length: 300 }, (_, i) => `line ${i}`).join('\n');
+  const tail = sendToSonicBlock('x', 0, many);
+  assert.equal(SEND_TAIL_LINES, 200);
+  assert.ok(tail.includes('line 299') && tail.includes('line 100') && !tail.includes('line 99\n'), 'the last 200 lines');
+  const long = sendToSonicBlock('x', 0, 'a'.repeat(SEND_MAX_CHARS + 500));
+  assert.equal(long.split('\n')[3].length, SEND_MAX_CHARS, 'at most 4,000 characters of output');
+  const fenced = sendToSonicBlock('x', 0, 'before\n```\nsneaky\n```\nafter');
+  assert.ok(fenced.includes('````'), 'a fence longer than any run of backticks in the output, so it cannot close the block early');
+});
+
+test('Send to Sonic only puts text in the message box: it never sends', () => {
+  const chat = read('../pages/Chat.tsx');
+  assert.match(chat, /const putInComposer = useCallback\(\(text: string\) => \{\s*setInput\(prev => \(prev\.trim\(\) \?/);
+  assert.match(chat, /setInput\(prev => \(prev\.trim\(\) \? `\$\{prev\}[^`]*\$\{text\}` : text\)\);\s*inputRef\.current\?\.focus\(\);/);
+  assert.match(chat, /onSendToChat=\{putInComposer\}/);
+  assert.doesNotMatch(read('./TerminalBlade.tsx'), /handleSendMessage|sendChatMessage/);
 });

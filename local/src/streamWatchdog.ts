@@ -37,3 +37,21 @@ export function readOrGiveUp<T>(read: Promise<T>, limitMs: number | null, onIdle
     );
   });
 }
+
+/**
+ * The work, unless it takes longer than `limitMs` or fails: then `undefined` (and `onLate` runs once if it was too slow), so a step that must never block the page cannot. The work itself is not
+ * cancelled; it finishes in the background. Used for what happens BEFORE a message is sent (the folder sync, the git branch): the page is already "busy" then, and a sync that hangs (the server is
+ * restarting under an applied backend edit, a stalled upload) used to leave Send and Continue off until a reload.
+ */
+export function waitAtMost<T>(work: Promise<T>, limitMs: number, onLate?: () => void): Promise<T | undefined> {
+  return new Promise<T | undefined>((resolve) => {
+    const timer = setTimeout(() => {
+      try { onLate?.(); } catch { /* reporting must not matter */ }
+      resolve(undefined);
+    }, limitMs);
+    work.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      () => { clearTimeout(timer); resolve(undefined); },
+    );
+  });
+}

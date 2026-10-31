@@ -206,6 +206,8 @@ EXECUTE_RULES = (
     "The person approved this plan, so do not plan again and do not explore. Work on the first step not marked done. Its files may already be included below: if so, go straight to "
     "propose_local_edits. Otherwise read only the files it names, together in one step, then call propose_local_edits for that step; you may include later steps in the same proposal when you have read their files. If a file differs from what the "
     "plan expects, say in one line what is different and stop, instead of improvising a different plan. A step is marked done only when its edits are applied. "
+    "ACT, DO NOT DESCRIBE: the change is made by calling propose_local_edits, never by writing it as code or prose in your answer, and an edit, a check or a commit proposal does not use up your tool steps (reading does). "
+    "Read where the work is (search for a word from the step, then read a window around the match), never a file from line 1, and do not read a file again that you read this turn. "
     "KEEP GOING: carry on through the remaining steps in this one turn; steps that stay on the plan do not use up your tool steps. Do not end the turn between steps to report or to ask "
     "whether to continue. Do not ask the person anything the folder can answer: if a step's wording is cut off or unclear, read the file it names and decide from the code (a reason, name or "
     "case the plan did not list is still yours to find: search the file for it). Stop only when every step is done, when the person's own decision is needed, or when you are blocked. "

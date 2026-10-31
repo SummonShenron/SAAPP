@@ -160,6 +160,14 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
     "run_local_command": _object({
         "line": {"type": "string", "description": "one command line in the small language described by this tool"},
     }, ["line"]),
+    # a commit (and optionally a push) with real git on the person's OWN machine, built as one safe command line (backend/utils/git_terminal.py) and run through the same card as run_local_command.
+    "propose_git_commit": _object({
+        "message": {"type": "string", "description": "what the change DOES, as a short subject line, optionally a blank line and a sentence more; no $, backticks or trailers (a Co-authored-by trailer is added)"},
+        "paths": {"type": "array", "items": {"type": "string"}, "description": "the files to commit, one by one (new files must be listed here); omit to commit only files git already tracks"},
+        "everything": {"type": "boolean", "description": "true: also commit new untracked files (git add -A). Only after you looked at git status --short and nothing secret or unwanted is in it"},
+        "new_branch": {"type": "string", "description": "optional: create this branch first and commit to it, for example sonic/fix-clamp"},
+        "push": {"type": "boolean", "description": "optional: also push the branch to origin afterwards"},
+    }, ["message"]),
     # plan mode (backend/utils/code_plan.py), offered only on a plan turn: the plan the person approves before anything is edited. Nothing is written to their folder.
     "submit_plan": _object({
         "goal": {"type": "string", "description": "one sentence: what the change is"},
@@ -245,6 +253,14 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
 # Descriptions that replace the menu line's text for the native engine. The old menu line describes the OLD engine's way of calling a tool ("as a query step ... never a field
 # inside a final answer"), which would mislead a model that makes real function calls.
 NATIVE_DESCRIPTIONS: Dict[str, str] = {
+    "propose_git_commit": (
+        "Commit the person's work with REAL git on THEIR OWN computer, and optionally push it: one command line you do not write, built from your message, the files to include (paths), a new branch "
+        "(new_branch) and push=true. They see a card with the exact line and press Run; because it changes things, it needs the stronger confirmation and their computer asks again. It uses their own git "
+        "identity, hooks and credentials, can commit files the GitHub route refuses (dependency manifests, lockfiles, CI workflows) and never forces or resets anything. Look first with "
+        "run_local_command (git status --short, git diff --stat) when you are not sure what changed, then list the files in `paths`; use everything=true only after you saw nothing secret or unwanted is "
+        "untracked. The message says what the change DOES. It waits for them and for the run, then returns the real exit code and output: say what happened, and never that it was committed unless the exit code is 0. "
+        "Use this INSTEAD of propose_commit whenever it is among your tools; propose_commit is for when no runner is connected, or to open a pull request."
+    ),
     "propose_merge": (
         "Show the person a card for merging an OPEN pull request, built from the pull request as GitHub has it right now, using THEIR token. Pass the number (pr_number) or the branch it comes from "
         "(head, for example feat/checkouts), and base if they named the target. Nothing is merged until they approve the card. Use it whenever they ask you to merge a pull request or a branch into "
@@ -255,7 +271,7 @@ NATIVE_DESCRIPTIONS: Dict[str, str] = {
         "Commit their work to GitHub, with THEIR token, the way a person commits after a piece of work: the files you changed and they applied (scope applied), or all their working changes, meaning every file in their folder that differs from the branch on GitHub (scope working: use it for \"commit our working changes\" or \"commit everything\"). A short message, onto the branch their folder is on, or onto a "
         "new branch you name (new_branch), optionally opening a pull request (open_pull_request, pr_title, pr_base, pr_draft). It changes nothing by itself: they see a card with the repo, branch, files with line counts and the "
         "message, and nothing is committed until they approve. Use it when they ask you to commit, push, or open a pull request for the work. The message says what the change DOES, as a pull request title and a line or two "
-        "(never \"commit the working changes\"); leave it out if you do not know what changed, and one is written from the diff; do not add trailers. Call it once and then stop: say that the card is waiting for their approval, never that it was committed. It is refused in a turn where you read a web "
+        "(never \"commit the working changes\"); leave it out if you do not know what changed, and one is written from the diff; do not add trailers. If propose_git_commit is among your tools, use that instead for committing and pushing (real git on their computer); use this one when it is not, or to open a pull request. Call it once and then stop: say that the card is waiting for their approval, never that it was committed. It is refused in a turn where you read a web "
         "page, email, shared document or logs."
     ),
     "run_sandbox_tests": (

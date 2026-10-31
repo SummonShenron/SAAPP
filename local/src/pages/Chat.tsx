@@ -30,10 +30,12 @@ import PlanCard from '../components/PlanCard';
 import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type BudgetView, type CodePlan, type KnowledgeBase, type MemorySources, type RunnerJob } from '../api';
 import MemorySourceDialog from '../components/MemorySourceDialog';
 import BudgetBanner from '../components/BudgetBanner';
-import SessionColumn, { type FolderControls, type RepoControls } from '../components/SessionColumn';
+import SessionColumn, { type ConnectionProps, type FolderControls, type RepoControls } from '../components/SessionColumn';
 import SessionRail from '../components/SessionRail';
 import TerminalBlade from '../components/TerminalBlade';
-import { terminalTarget } from '../components/terminalLogic';
+import { terminalChoices, terminalTarget, type TerminalChoice } from '../components/terminalLogic';
+import { planAnchorId } from '../components/planPlacement';
+import { waitAtMost } from '../streamWatchdog';
 import ComposerChips, { type ChatSettings } from '../components/ComposerChips';
 import { answersId, answersValue, modeId, modeValue, thinkingId, thinkingValue } from '../components/composerChipsLogic';
 import { RUNNER_START_LINK, RUNNER_START_WAIT_MS, canStartRunnerFromLink, runnerStartPhase, scopeChoices } from '../components/sessionColumnLogic';
@@ -55,6 +57,10 @@ import { CODE_BOX_STYLE } from '../components/codeBoxStyle';
 import { useAuth } from '@clerk/clerk-react';
 import { describeChatError, toChatSendError } from '../chatErrors';
 import { formatMessageTime, fullMessageTime } from '../messageTime';
+
+/** How long a message waits for the folder sync and the git branch before it is sent anyway. */
+const PRE_SEND_SYNC_MS = 20_000;
+const PRE_SEND_BRANCH_MS = 5_000;
 
 interface MessageImage {
   filename: string;
@@ -205,6 +211,8 @@ interface ChatMessageListProps {
   canEditLocal: boolean;
   /** The plan card (plan mode), shown after the last message while there is a plan. */
   planCard?: React.ReactNode;
+  /** The message the plan card is drawn above (components/planPlacement.ts); null draws it after the last message. */
+  planAnchorId?: string | null;
   localGitMode: Exclude<LocalGitMode, 'off'> | 'off';
   localEditActionsRef: React.MutableRefObject<{
     apply: (proposal: EditProposal) => Promise<ApplyResult>;
@@ -275,7 +283,7 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
 const ChatMessageList = React.memo(function ChatMessageList({
   messages, earlierCount, loadingEarlier, loadEarlierRef, hasChatted, loading, agentStatus, latestStepTitle, liveSteps, showSteps, theme, isEmbedded,
   chatWindowRef, messagesEndRef, attachmentsRef, handleSendMessageRef, handleFeedbackRef, getTokenRef,
-  canEditLocal, localEditActionsRef, localGitMode, planCard,
+  canEditLocal, localEditActionsRef, localGitMode, planCard, planAnchorId = null,
 }: ChatMessageListProps) {
   // The reply whose "Source: Memory" citation was clicked: its viewer is open while this is set.
   const [memoryViewer, setMemoryViewer] = useState<Message | null>(null);
@@ -324,8 +332,8 @@ const ChatMessageList = React.memo(function ChatMessageList({
           const isNewestReply = msg.id === lastMessage?.id;
           const replySteps = msg.steps ?? (isNewestReply ? finishedSteps(liveSteps) : undefined);
 
-          return (
-            <div key={msg.id} className={`message-bubble ${msg.sender}`}>
+          const bubble = (
+            <div className={`message-bubble ${msg.sender}`}>
               <div className="message-sender">
                 {msg.steer ? `STEERING · ${STEER_STATUS_LABEL[msg.steer]}` : msg.sender.toUpperCase()}
               </div>
@@ -570,6 +578,13 @@ const ChatMessageList = React.memo(function ChatMessageList({
               )}
             </div>
           );
+          // While a plan is carried out the card sits above the newest reply, so its steps, edits and answer are drawn underneath it (components/planPlacement.ts).
+          return (
+            <React.Fragment key={msg.id}>
+              {planCard && msg.id === planAnchorId && planCard}
+              {bubble}
+            </React.Fragment>
+          );
         })}
 
       {/* Live Node Steps & Spinning Animation Container */}
@@ -596,7 +611,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
           </div>
         )
       )}
-      {planCard}
+      {planCard && !(planAnchorId && messages.some(m => m.id === planAnchorId)) && planCard}
       <div ref={messagesEndRef} />
       {memoryViewer &&<MemorySourceDialog sources={memoryViewer.memorySources} onClose={closeMemoryViewer} />}
     </div>
@@ -721,7 +736,17 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const { runners: runnerList, askSoon: checkRunnerSoon } = useRunnerPing(!isEmbedded && !isGuestPrincipal(principal));
   // The terminal (components/TerminalBlade.tsx): a button in the top bar opens it while a runner of theirs is connected to the project that is open. The runner is asked about whether or not the
   // session column is showing, because the terminal button depends on the answer too.
-  const terminal = useMemo(() => terminalTarget(runnerList, workspace.folderName ?? ''), [runnerList, workspace.folderName]);
+  // The project picked from the blade's dropdown, used only when the open folder names none of the connected projects.
+  const [pickedChoice, setPickedChoice] = useState<TerminalChoice | null>(null);
+  const terminal = useMemo(() => {
+    const target = terminalTarget(runnerList, workspace.folderName ?? '');
+    if (target) return { ...target, choices: undefined as TerminalChoice[] | undefined };             // the open folder names a project: nothing to choose
+    const choices = terminalChoices(runnerList);
+    if (choices.length === 0) return null;
+    // The dropdown stays available after a pick (the blade is always handed the choices), and a pick whose runner or project has gone is ignored.
+    const picked = pickedChoice ? choices.find(choice => choice.runnerId === pickedChoice.runnerId && choice.projectId === pickedChoice.projectId) : undefined;
+    return { ...(picked ?? choices[0]), choices };
+  }, [pickedChoice, runnerList, workspace.folderName]);
   const [showTerminal, setShowTerminal] = useState(false);
   // "Start runner": opens the link the runner registered with Windows (it starts the runner with no window), then watches for it to connect. Only offered where that link can exist.
   // The button's state (components/sessionColumnLogic.ts runnerStartPhase): Starting... with a spinner while it waits for the runner to connect (the page asks every few seconds), Try again with what to run
@@ -1409,21 +1434,6 @@ useEffect(() => {
   // as inside on purpose: its own click toggles the menu, and closing it here first would have that same click open it again.
   const optionsMenuRef = useRef<HTMLDivElement>(null);
 
-  // The folder button's own menu (only while a folder is connected) closes the same way: a press anywhere else, or Escape.
-  const [showFolderMenu, setShowFolderMenu] = useState(false);
-  const toolButtonsRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!showFolderMenu) return;
-    const onPointerDown = (e: PointerEvent) => { if (!toolButtonsRef.current?.contains(e.target as Node)) setShowFolderMenu(false); };
-    const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowFolderMenu(false); };
-    document.addEventListener('pointerdown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [showFolderMenu]);
-
   useEffect(() => {
     if (!showOverflowWheel) return;   // nothing is open, so nothing listens
     const close = () => {
@@ -1521,6 +1531,11 @@ useEffect(() => {
     if (inputRef.current) {
       inputRef.current.focus();
     }
+  }, []);
+  // "Send to Sonic" (components/TerminalBlade.tsx): puts the block in the message box, after any text already there, ready to edit. Never sends.
+  const putInComposer = useCallback((text: string) => {
+    setInput(prev => (prev.trim() ? `${prev}\n\n${text}` : text));
+    inputRef.current?.focus();
   }, []);
   // This effect runs on every streamed token, and serializing a whole long thread each time is
   // what made replies stutter. Write only the newest window, at most once per debounce interval,
@@ -1721,10 +1736,11 @@ useEffect(() => {
     let failed = false;
 
     try {
-      // Pushes only what changed in the connected folder since the last message (a no-op when none
-      // is connected). Never throws, so a sync problem can't block the message itself.
-      await workspace.ensureSynced();
-      const gitBranch = await workspace.currentGitBranch();
+      // Pushes only what changed in the connected folder since the last message (a no-op when none is connected). A sync problem must not block the message itself, so this neither throws nor waits
+      // longer than PRE_SEND_SYNC_MS: a sync that hangs (the server restarting under an applied backend edit, a stalled upload) used to leave the page busy, with Send and Continue off, until a reload.
+      // The sync carries on in the background; the answer falls back to what the server already holds (or GitHub), and says so when the folder was not there.
+      await waitAtMost(workspace.ensureSynced(), PRE_SEND_SYNC_MS, () => console.warn(`[chat] the folder sync took longer than ${PRE_SEND_SYNC_MS / 1000} s, so the message was sent without waiting for it.`));
+      const gitBranch = (await waitAtMost(workspace.currentGitBranch(), PRE_SEND_BRANCH_MS)) ?? null;
       await api.sendChatMessage(
         principal,
         textToSend,
@@ -2292,8 +2308,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
     </svg>
   );
   const settingsLocked = loading || principal === 'guest_bty';
-  // The chat settings, built once for the three places they can live: a row under the message box ('bar'), the content of the session column's "Chat settings" card ('panel'), and one button each
-  // down the phone strip (SessionRail). Only one of those is drawn at a time.
+  // The chat settings, built once for the two places they live: the content of the session column's "Chat settings" card, and one button each down the phone strip (SessionRail). Never under the
+  // message box, on any screen.
   const chatSettings: ChatSettings = {
     model: toolModelAvailable ? { value: toolModel, onChange: id => { void handleToolModelChange(id as 'gemini' | 'claude'); } } : null,
     mode: workspace.canEdit ? { value: modeId(planMode), onChange: id => { void handlePlanModeChange(modeValue(id)); } } : null,
@@ -2313,7 +2329,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
       </>
     ),
   };
-  const composerChips = (layout: 'bar' | 'panel') => <ComposerChips {...chatSettings} layout={layout} />;
+  const settingsPanel = <ComposerChips {...chatSettings} layout="panel" />;
   // Patchy isn't offered to the BTY guest at all (no mascot, no menu toggle).
   const patchyAllowed = !isEmbedded && principal !== 'guest_bty';
   // "All" is the default: every knowledge base the person may use (it used to read "None"). The choices include it, so a person who picked one can go back.
@@ -2321,8 +2337,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
   // What the newest reply that used memory drew on (the session column says it in a few words).
   const lastMemory = [...messages].reverse().find(m => m.sender === 'ai' && m.memorySources)?.memorySources ?? null;
   const folderGlyph = settingsGlyph(<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />);
-  // The local folder and the target repo have their own buttons at the left of the message box (they used to sit in the "..." menu). The folder button does the one obvious thing
-  // for its state; once the folder is connected, its menu offers the rest (resync, disconnect, undo the last edit).
+  // The local folder and the target repo are controlled from the session column (they used to be buttons at the left of the message box, and before that entries in the "..." menu).
   const folderAvailable = !isEmbedded && workspace.supported;
   const connectFolder = () => {
     // First time in this browser: say what gets uploaded before opening the picker.
@@ -2363,27 +2378,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
       },
     }] : []),
   ];
-  const onFolderClick = () => {
-    if (loading) return;
-    switch (workspace.status) {
-      case 'disconnected': connectFolder(); break;
-      case 'needs-permission': void workspace.reconnect(); break;
-      case 'error':
-      case 'not-uploaded': void workspace.resync(); break;
-      case 'syncing': break;
-      default: setShowFolderMenu(v => !v);
-    }
-  };
-  const folderButtonTitle =
-    workspace.status === 'disconnected' ? 'Connect a local folder'
-      : workspace.status === 'needs-permission' ? `Reconnect folder: ${workspace.folderName}`
-        : workspace.status === 'syncing' ? 'Syncing folder…'
-        : workspace.status === 'not-uploaded' ? `Folder: ${workspace.folderName} · not on the server right now, click to upload (it also uploads when you send a message)`
-          : workspace.status === 'error' ? `Folder sync failed, click to retry${workspace.message ? `: ${workspace.message}`.slice(0, 60) : ''}`
-            : `Folder: ${workspace.folderName}${workspace.fileCount !== null ? ` · ${workspace.fileCount} files` : ''}`;
-  const folderDot = workspace.status === 'connected' ? 'on' : workspace.status === 'syncing' ? 'syncing' : workspace.status === 'not-uploaded' ? 'pending' : workspace.status === 'needs-permission' ? 'warn' : workspace.status === 'error' ? 'error' : null;
-  // What the session column offers for the folder and the target repo (components/SessionColumn.tsx): the same actions as the buttons beside the message box, which are left out while the column is
-  // showing. The folder's options are listed to pick from there instead of cycled one at a time.
+  // What the session column offers for the folder and the target repo (components/SessionColumn.tsx): connecting, reconnecting and uploading the folder, and its options, listed to pick from.
   const folderControls: FolderControls | null = folderAvailable ? {
     busy: loading,
     primary: workspace.status === 'disconnected' ? { label: 'Connect a folder', run: connectFolder }
@@ -2399,6 +2394,15 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
   } : null;
   const repoControls: RepoControls | null = isEmbedded ? null : {
     value: targetRepo, input: repoInput, saving: repoSaving, onInput: setRepoInput, onSave: () => { void handleSaveTargetRepo(); }, onClear: () => { void handleClearTargetRepo(); },
+  };
+  // The runner on the person's computer and the folder, for the phone strip's Connection button (the column draws the same through its own props). A runner is tied to the account, so it shows on a
+  // phone as on a desktop; the folder's controls are null where there is no folder picker (a phone browser).
+  const connection: ConnectionProps = {
+    folder: { status: workspace.status, name: workspace.folderName, fileCount: workspace.fileCount, branch: workspace.status === 'disconnected' ? null : folderBranch },
+    runnerEnabled: !isGuestPrincipal(principal),
+    runners: runnerList,
+    runnerStart,
+    folderControls,
   };
   // The attach button. In the app it sits at the left of the text; the embedded widget keeps it with the other buttons at the right.
   const attachButton = (
@@ -2483,6 +2487,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           canEditLocal={workspace.canEdit}
           localGitMode={localGitMode}
           localEditActionsRef={localEditActionsRef}
+          planAnchorId={codePlan && workspace.canEdit ? planAnchorId(messages, codePlan.state) : null}
           planCard={codePlan && workspace.canEdit ? (
             <PlanCard
               sessionId={sessionId}
@@ -2614,45 +2619,9 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                   styling and its two groups keep floating over the box's bottom edge. */}
               <div className="chat-input-toolbar">
               {!isEmbedded && (
-                <div className="icon-row-left" ref={toolButtonsRef}>
-                  {/* The attach button is at the left of the text, always. The folder button follows it while the column is not showing (the column carries the folder; the phone strip does not). The repo
-                      and the usage ring are never here: the column and the strip carry them. */}
+                <div className="icon-row-left">
+                  {/* Only the attach button is here, at the left of the text. The folder lives in the session column (its Connection card); the repo and the usage ring in the column and the phone strip. */}
                   {attachButton}
-                  {!columnVisible && (<>
-                  {folderAvailable && (
-                    <div style={{ position: 'relative' }}>
-                      <button
-                        type="button"
-                        className={`circle-icon-button tool-button${workspace.status === 'connected' || workspace.status === 'syncing' ? ' is-on' : ''}${showFolderMenu ? ' is-open' : ''}`}
-                        onClick={onFolderClick}
-                        disabled={loading}
-                        title={folderButtonTitle}
-                        aria-label={folderButtonTitle}
-                        aria-haspopup={workspace.status === 'connected' ? 'menu' : undefined}
-                        aria-expanded={workspace.status === 'connected' ? showFolderMenu : undefined}
-                      >
-                        <Icon name="folder" />
-                        {folderDot && <span className={`tool-dot ${folderDot}`} aria-hidden="true" />}
-                      </button>
-                      {showFolderMenu && workspace.status === 'connected' && (
-                        <div className="chat-folder-popover" role="menu">
-                          <div className="chat-folder-status">
-                            <span className="tool-dot on" aria-hidden="true" />
-                            <span>Connected{workspace.folderName ? ` · ${workspace.folderName}` : ''}</span>
-                          </div>
-                          <OptionWheel
-                            items={folderMenuEntries.map(e => e.item)}
-                            columnLayout
-                            fontSize={0.85}
-                            textColor="#94a3b8"
-                            activeColor="#f8fafc"
-                            onActivate={index => { folderMenuEntries[index]?.run(); setShowFolderMenu(false); }}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  </>)}
                 </div>
               )}
 
@@ -2808,9 +2777,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               </div>
             </div>
           </form>
-          {/* The settings that were toggles in the "..." menu, as four icons under the message box, and Help at the far right (components/ComposerChips.tsx). On a phone they are buttons down the strip at the right edge; when the session column is showing they are its
-              "Chat settings" card instead, so they are not drawn twice. Not in the embedded widget. */}
-          {!isEmbedded && !columnVisible && !railVisible && composerChips('bar')}
+          {/* No settings here: the model, mode, thinking, answers, export and help are in the side panel (the session column's "Chat settings" card, or the buttons down the phone strip), on every screen. */}
         </footer>
 
         {/* --- CONVERSATIONS BLADE (Root Level, mirrors Help panel's slide-in) --- */}
@@ -3229,14 +3196,14 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           memory={lastMemory}
           folderControls={folderControls}
           repo={repoControls}
-          controls={composerChips('panel')}
+          controls={settingsPanel}
         />
       )}
 
       {/* The terminal blade slides over the right of the page (components/TerminalBlade.tsx). It is drawn in the app shell, not inside the chat page: the chat page is a size container, which would make
           a fixed blade measure itself against the page instead of the window. Not drawn when the runner goes away. */}
       {showTerminal && terminal && createPortal(
-        <TerminalBlade runnerId={terminal.runnerId} projectId={terminal.projectId} projectName={terminal.projectName} onClose={() => setShowTerminal(false)} />,
+        <TerminalBlade runnerId={terminal.runnerId} projectId={terminal.projectId} projectName={terminal.projectName} choices={terminal.choices} onPick={setPickedChoice} onClose={() => setShowTerminal(false)} onSendToChat={putInComposer} />,
         document.querySelector('.app-shell') ?? document.body,
       )}
 
@@ -3248,6 +3215,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           scope={allowedAffiliates.length > 0 ? { value: selectedAffiliate, choices: scopeOptions, busy: loading || fetchingScope, onChange: setSelectedAffiliate } : null}
           repo={repoControls}
           settings={chatSettings}
+          connection={connection}
         />
       )}
 
