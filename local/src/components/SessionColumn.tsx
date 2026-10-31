@@ -46,6 +46,9 @@ interface Props {
   folderControls: FolderControls | null;
   /** The target repo; null where it is not offered. */
   repo: RepoControls | null;
+  /** The chat settings (model, mode, thinking, answers, export, help: components/ComposerChips.tsx in its panel layout), drawn as a card below "This conversation". They sit under the message box
+   *  when this column is not showing. */
+  controls?: React.ReactNode;
 }
 
 const RING_SIZE = 44;
@@ -156,7 +159,7 @@ function Card({ id, label, title, badge, summary, className, collapsed, onToggle
  * controls, the gauges, the plan while there is one, and what this conversation is scoped to. It only shows what the page already knows; settings stay in the "..." menu (the scope row
  * opens that menu's own picker). A card with nothing to show is not drawn, and any card can be folded (remembered in this browser).
  */
-const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runnerStart, usage, context, plan, scope, memory, folderControls, repo }) => {
+const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runnerStart, usage, context, plan, scope, memory, folderControls, repo, controls }) => {
   // "2s ago" goes stale on its own: redraw the times every few seconds.
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -273,6 +276,12 @@ const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runner
         <Card id="conversation" label="This conversation" title="This conversation" collapsed={folded.has('conversation')} onToggle={toggle}>
           {scope && <ScopeField scope={scope} />}
           {memoryText && <div className="sc-memory"><span className="sc-scope-label">Memory used</span><span>{memoryText}</span></div>}
+        </Card>
+      )}
+
+      {controls && (
+        <Card id="controls" label="Chat settings" title="Chat settings" collapsed={folded.has('controls')} onToggle={toggle}>
+          {controls}
         </Card>
       )}
     </aside>

@@ -5,7 +5,8 @@ import './__styles__/ComposerChips.css';
 
 export interface ChipControl { value: string; onChange: (id: string) => void; }
 
-interface Props {
+/** What the chat settings need, in the three places they can live: under the message box, in the column's "Chat settings" card, and down the phone strip (SessionRail). */
+export interface ChatSettings {
   /** The code model; null where it is not offered (Claude is not set up on the server, or a guest). */
   model: ChipControl | null;
   /** Plan or Agent; null without a connected folder that can be edited (it only matters there). */
@@ -19,6 +20,12 @@ interface Props {
   exportDisabled: boolean;
   /** What the Help button opens: the tips, as the card's content. */
   help: React.ReactNode;
+}
+
+interface Props extends ChatSettings {
+  /** 'bar' (the default): a row under the message box whose popups float upward. 'panel': the same icons as the content of a card in the session column, where an open choice is listed under the row instead
+   *  of floating, because the column scrolls and is narrower than a popup. */
+  layout?: 'bar' | 'panel';
 }
 
 /** Gemini's mark: the four-pointed star, in its blue. Drawn here as a small SVG; swap in the official file if you prefer it exact. */
@@ -62,11 +69,31 @@ function RobotMark() {
 const ICON_NAMES: Record<string, IconName> = { plan: 'checklist', swift: 'bolt', deep: 'brain', grounded: 'book', open: 'globe' };
 
 /** The icon for one state of one chip. */
-function glyph(id: string): React.ReactNode {
+export function glyph(id: string): React.ReactNode {
   if (id === 'gemini') return <GeminiMark />;
   if (id === 'claude') return <ClaudeMark />;
   if (id === 'agent') return <RobotMark />;
   return <Icon name={ICON_NAMES[id] ?? 'checklist'} size={18} />;
+}
+
+/** The two choices of one chip, each with its icon, name and what it does; the one in force is marked. `className` is the popup's own (the bar's floats, the phone strip's opens beside its button). */
+export function ChipChoices({ chipKey, control, onDone, className }: { chipKey: ChipKey; control: ChipControl; onDone: () => void; className: string }) {
+  const spec = CHIPS[chipKey];
+  return (
+    <div className={className} role="menu" aria-label={spec.title}>
+      <div className="cc-pop-title">{spec.title}</div>
+      {spec.options.map(option => (
+        <button
+          key={option.id} type="button" role="menuitemradio" aria-checked={option.id === control.value}
+          className={`cc-opt${option.id === control.value ? ' is-selected' : ''}`}
+          onClick={() => { if (option.id !== control.value) control.onChange(option.id); onDone(); }}
+        >
+          <span className="cc-opt-icon">{glyph(option.id)}</span>
+          <span className="cc-opt-text"><b>{optionOf(chipKey, option.id).name}</b><span>{option.hint}</span></span>
+        </button>
+      ))}
+    </div>
+  );
 }
 
 type Open = ChipKey | 'help' | null;
@@ -75,7 +102,8 @@ type Open = ChipKey | 'help' | null;
  * The settings that used to be toggles in the "..." menu, as four icons under the message box, and the Help button at the far right. Each icon shows which of its two states is on (and is
  * highlighted when that is not the ordinary one); pressing it opens a small popup that names both states and says what each does. One popup is open at a time; a press anywhere else, or Escape, closes it.
  */
-const ComposerChips: React.FC<Props> = ({ model, mode, thinking, answers, disabled, onExport, exportDisabled, help }) => {
+const ComposerChips: React.FC<Props> = ({ model, mode, thinking, answers, disabled, onExport, exportDisabled, help, layout = 'bar' }) => {
+  const inline = layout === 'panel';
   const [open, setOpen] = useState<Open>(null);
   const root = useRef<HTMLDivElement>(null);
 
@@ -90,9 +118,13 @@ const ComposerChips: React.FC<Props> = ({ model, mode, thinking, answers, disabl
 
   const toggle = (which: Open) => setOpen(current => (current === which ? null : which));
 
+  /** The popup of one chip: its title and both choices. */
+  const choices = (key: ChipKey, control: ChipControl) => <ChipChoices chipKey={key} control={control} onDone={() => setOpen(null)} className="cc-pop" />;
+
+  const controlOf = (key: ChipKey): ChipControl | null => (key === 'model' ? model : key === 'mode' ? mode : key === 'thinking' ? thinking : answers);
+
   const chip = (key: ChipKey, control: ChipControl | null) => {
     if (!control) return null;
-    const spec = CHIPS[key];
     const label = chipLabel(key, control.value);
     return (
       <div className="cc-item" key={key}>
@@ -103,27 +135,13 @@ const ComposerChips: React.FC<Props> = ({ model, mode, thinking, answers, disabl
         >
           {glyph(control.value)}
         </button>
-        {open === key && (
-          <div className="cc-pop" role="menu" aria-label={spec.title}>
-            <div className="cc-pop-title">{spec.title}</div>
-            {spec.options.map(option => (
-              <button
-                key={option.id} type="button" role="menuitemradio" aria-checked={option.id === control.value}
-                className={`cc-opt${option.id === control.value ? ' is-selected' : ''}`}
-                onClick={() => { if (option.id !== control.value) control.onChange(option.id); setOpen(null); }}
-              >
-                <span className="cc-opt-icon">{glyph(option.id)}</span>
-                <span className="cc-opt-text"><b>{optionOf(key, option.id).name}</b><span>{option.hint}</span></span>
-              </button>
-            ))}
-          </div>
-        )}
+        {!inline && open === key && choices(key, control)}
       </div>
     );
   };
 
-  return (
-    <div className="composer-chips" ref={root}>
+  const row = (
+    <>
       {chip('model', model)}
       {chip('mode', mode)}
       {chip('thinking', thinking)}
@@ -136,9 +154,20 @@ const ComposerChips: React.FC<Props> = ({ model, mode, thinking, answers, disabl
           <button type="button" className={`cc-btn${open === 'help' ? ' is-open' : ''}`} aria-haspopup="dialog" aria-expanded={open === 'help'} aria-label="Help" title="Help" onClick={() => toggle('help')}>
             <Icon name="help" size={18} />
           </button>
-          {open === 'help' && <div className="cc-pop cc-pop-help" role="dialog" aria-label="Help">{help}</div>}
+          {!inline && open === 'help' && <div className="cc-pop cc-pop-help" role="dialog" aria-label="Help">{help}</div>}
         </div>
       </div>
+    </>
+  );
+
+  if (!inline) return <div className="composer-chips" ref={root}>{row}</div>;
+  // In the column's card the open choice is listed under the row, at the card's width.
+  const openControl = open && open !== 'help' ? controlOf(open) : null;
+  return (
+    <div className="composer-chips composer-chips-panel" ref={root}>
+      <div className="cc-row">{row}</div>
+      {open === 'help' && <div className="cc-pop cc-pop-help" role="dialog" aria-label="Help">{help}</div>}
+      {open && open !== 'help' && openControl && choices(open, openControl)}
     </div>
   );
 };

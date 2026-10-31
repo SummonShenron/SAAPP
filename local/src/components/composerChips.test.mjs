@@ -50,7 +50,9 @@ test('the chips map to the settings the page already keeps, both ways, with the 
 test('the message box has the four chips with Export and Help at the far right, and no "..." menu outside the embedded widget', () => {
   const chat = readFileSync(new URL('../pages/Chat.tsx', import.meta.url), 'utf8');
   assert.match(chat, /<ComposerChips/);
-  assert.match(chat, /\{!isEmbedded && \(\s*<ComposerChips/);                                  // not in the embedded widget
+  assert.match(chat, /\{!isEmbedded && !columnVisible && composerChips\('bar'\)\}/);            // under the box, not in the embedded widget, and only when the session column is not showing
+  assert.match(chat, /controls=\{composerChips\('panel'\)\}/);                                 // otherwise they are the column's "Chat settings" card (never both)
+  assert.match(chat, /const composerChips = \(layout: 'bar' \| 'panel'\) => \(\s*<ComposerChips\s*layout=\{layout\}/);   // built once for both places
   assert.match(chat, /\{isEmbedded && \(\s*<div style=\{\{ position: "relative" \}\} ref=\{optionsMenuRef\}>/);   // the "..." button and its menu are the embedded widget's only
   assert.match(chat, /onExport=\{handleExportChat\}/);
   assert.doesNotMatch(chat, /Export this conversation/);                                        // no longer a button in the message box row itself
@@ -60,4 +62,18 @@ test('the message box has the four chips with Export and Help at the far right, 
   assert.match(chips, /aria-label="Help"/);                                                      // Help at the far right
   assert.match(chips, /<div className="cc-right">\s*<button[^>]*aria-label="Export this conversation"[\s\S]*?aria-label="Help"/);      // with Export just before it, in the same group
   assert.match(chips, /ClaudeMark/); assert.match(chips, /GeminiMark/); assert.match(chips, /RobotMark/);
+});
+
+test('in the session column the chips are a card below "This conversation", their choices open inline (the column scrolls and is narrower than a popup), and the bar keeps its floating popups', () => {
+  const column = readFileSync(new URL('./SessionColumn.tsx', import.meta.url), 'utf8');
+  const conversation = column.indexOf('<Card id="conversation"');
+  const controls = column.indexOf('<Card id="controls" label="Chat settings" title="Chat settings"');
+  assert.ok(conversation > 0 && controls > conversation, 'Chat settings comes after the scope card');
+  assert.match(column, /controls\?: React\.ReactNode;/);
+  const chips = readFileSync(new URL('./ComposerChips.tsx', import.meta.url), 'utf8');
+  assert.match(chips, /layout\?: 'bar' \| 'panel';/);
+  assert.match(chips, /\{!inline && open === key && choices\(key, control\)\}/);                  // the bar: the popup floats inside its chip
+  assert.match(chips, /\{open && open !== 'help' && openControl && choices\(open, openControl\)\}/);  // the panel: it is listed under the row
+  const css = readFileSync(new URL('./__styles__/ComposerChips.css', import.meta.url), 'utf8');
+  assert.match(css, /\.composer-chips-panel \.cc-pop, \.composer-chips-panel \.cc-pop-help \{ position: static; width: auto;/);
 });

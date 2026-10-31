@@ -55,5 +55,13 @@
 .theme-shadow .rail-pop { background: var(--panel-bg); border-color: transparent; }
 .theme-shadow .rail-pop .sc-select, .theme-shadow .rail-pop .sc-input { background: var(--bg-main); }      /* fields in the grey card are the black page colour, the way the column's cards sit on its grey */
 
+/* The chat settings, one button each below the information buttons, set off by a short line. A setting that is not the ordinary one is in the accent colour, as under the message box. */
+.rail-sep { align-self: center; width: 18px; height: 1px; margin: 2px 0; background: var(--border-color); }
+.rail-btn:disabled { opacity: 0.55; cursor: default; }
+.rail-btn.is-changed { color: var(--accent-primary); border-color: var(--accent-primary); background: var(--bg-surface-hover); }
+.theme-shadow .rail-btn.is-changed { border-color: transparent; }
+.rail-choices { padding: 6px; }
+.rail-help { font-size: 12px; line-height: 1.45; }
+
 /* The strip takes a little of the conversation's width so no text runs under it. */
 .chat-page:has(.session-rail) .chat-window { padding-right: 46px; }

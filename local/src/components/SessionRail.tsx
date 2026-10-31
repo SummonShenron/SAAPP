@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import Icon from './icons';
 import type { RingView } from './budgetText';
 import { Gauge, RepoFields, ScopeField, type RepoControls, type ScopeControls } from './SessionColumn';
+import { ChipChoices, glyph, type ChatSettings, type ChipControl } from './ComposerChips';
+import { chipLabel, isChanged, type ChipKey } from './composerChipsLogic';
 import { LEVEL_COLOR, contextGauge, gaugeSummary, type ContextUse } from './sessionColumnLogic';
 import './__styles__/SessionRail.css';
 
@@ -14,9 +16,13 @@ interface Props {
   scope: ScopeControls | null;
   /** The target GitHub repo; null where it is not offered. */
   repo: RepoControls | null;
+  /** The chat settings, one button each down the strip below the others (they are under the message box only where this strip is not showing). */
+  settings?: ChatSettings | null;
 }
 
-type Panel = 'repo' | 'gauges' | 'scope';
+type Panel = 'repo' | 'gauges' | 'scope' | ChipKey | 'help';
+
+const CHIP_ORDER: ChipKey[] = ['model', 'mode', 'thinking', 'answers'];
 
 const MINI = 14;
 const MINI_STROKE = 3;
@@ -41,7 +47,7 @@ function MiniRing({ fraction, level }: { fraction: number; level: string }) {
  * edge. Pressing one opens a small card beside it with the same controls the column has (components/SessionColumn.tsx); pressing outside it, or Escape, closes it. The page's top-bar button hides
  * the whole strip. Nothing here is state of its own beyond which card is open.
  */
-const SessionRail: React.FC<Props> = ({ usage, context, scope, repo }) => {
+const SessionRail: React.FC<Props> = ({ usage, context, scope, repo, settings }) => {
   const [open, setOpen] = useState<Panel | null>(null);
   const rail = useRef<HTMLElement>(null);
   const contextView = contextGauge(context);
@@ -56,10 +62,12 @@ const SessionRail: React.FC<Props> = ({ usage, context, scope, repo }) => {
     return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
   }, [open]);
 
-  if (!repo && !hasGauges && !scope) return null;
+  if (!repo && !hasGauges && !scope && !settings) return null;
   const toggle = (panel: Panel) => setOpen(current => (current === panel ? null : panel));
   const scopeName = scope ? (scope.choices.find(choice => choice.value === scope.value)?.label ?? scope.value) : '';
   const summary = gaugeSummary(contextView, usage);
+
+  const controlOf = (key: ChipKey): ChipControl | null => (settings ? settings[key] : null);
 
   return (
     <aside className="session-rail" aria-label="Session" ref={rail}>
@@ -103,6 +111,38 @@ const SessionRail: React.FC<Props> = ({ usage, context, scope, repo }) => {
           </button>
           {open === 'scope' && <div className="rail-pop" role="dialog" aria-label="Scope"><ScopeField scope={scope} /></div>}
         </div>
+      )}
+      {settings && (
+        <>
+          <span className="rail-sep" aria-hidden="true" />
+          {CHIP_ORDER.map(key => {
+            const control = controlOf(key);
+            if (!control) return null;
+            const label = chipLabel(key, control.value);
+            return (
+              <div className="rail-item" key={key}>
+                <button
+                  type="button" className={`rail-btn${isChanged(key, control.value) ? ' is-changed' : ''}${open === key ? ' is-open' : ''}`} aria-haspopup="menu" aria-expanded={open === key}
+                  aria-label={label} title={settings.disabled ? `${label} (locked while Sonic is working)` : label} disabled={settings.disabled} onClick={() => toggle(key)}
+                >
+                  {glyph(control.value)}
+                </button>
+                {open === key && <ChipChoices chipKey={key} control={control} onDone={() => setOpen(null)} className="rail-pop rail-choices" />}
+              </div>
+            );
+          })}
+          <div className="rail-item">
+            <button type="button" className="rail-btn" aria-label="Export this conversation" title="Export this conversation" disabled={settings.exportDisabled} onClick={settings.onExport}>
+              <Icon name="download" size={18} />
+            </button>
+          </div>
+          <div className="rail-item">
+            <button type="button" className={`rail-btn${open === 'help' ? ' is-open' : ''}`} aria-haspopup="dialog" aria-expanded={open === 'help'} aria-label="Help" title="Help" onClick={() => toggle('help')}>
+              <Icon name="help" size={18} />
+            </button>
+            {open === 'help' && <div className="rail-pop rail-help" role="dialog" aria-label="Help">{settings.help}</div>}
+          </div>
+        </>
       )}
     </aside>
   );

@@ -34,7 +34,7 @@ import SessionColumn, { type FolderControls, type RepoControls } from '../compon
 import SessionRail from '../components/SessionRail';
 import TerminalBlade from '../components/TerminalBlade';
 import { terminalTarget } from '../components/terminalLogic';
-import ComposerChips from '../components/ComposerChips';
+import ComposerChips, { type ChatSettings } from '../components/ComposerChips';
 import { answersId, answersValue, modeId, modeValue, thinkingId, thinkingValue } from '../components/composerChipsLogic';
 import { RUNNER_START_LINK, RUNNER_START_WAIT_MS, canStartRunnerFromLink, runnerStartPhase, scopeChoices } from '../components/sessionColumnLogic';
 import { ringView } from '../components/budgetText';
@@ -2292,6 +2292,28 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
     </svg>
   );
   const settingsLocked = loading || principal === 'guest_bty';
+  // The chat settings, built once for the three places they can live: a row under the message box ('bar'), the content of the session column's "Chat settings" card ('panel'), and one button each
+  // down the phone strip (SessionRail). Only one of those is drawn at a time.
+  const chatSettings: ChatSettings = {
+    model: toolModelAvailable ? { value: toolModel, onChange: id => { void handleToolModelChange(id as 'gemini' | 'claude'); } } : null,
+    mode: workspace.canEdit ? { value: modeId(planMode), onChange: id => { void handlePlanModeChange(modeValue(id)); } } : null,
+    thinking: { value: thinkingId(deepThinking), onChange: id => { void handleDeepThinkingChange(thinkingValue(id)); } },
+    answers: { value: answersId(ragMode), onChange: id => { void handleRagModeChange(answersValue(id)); } },
+    disabled: settingsLocked,
+    onExport: handleExportChat,
+    exportDisabled: loading || !hasChatted,
+    help: (
+      <>
+        <strong className="cc-help-title">Secure Index Tip:</strong>
+        <ul className="cc-help-list">
+          <li>Please be as specific as possible when asking questions to get the most accurate responses.</li>
+          <li>Due to operating on cost-sensitive infrastructure, response times may vary or be unavailable due to model demand.</li>
+          <li>If you encounter any bugs, issues, or would like request access , please reach out to <a href="mailto:jackharper0517@outlook.com">jackharper0517@outlook.com</a>.</li>
+        </ul>
+      </>
+    ),
+  };
+  const composerChips = (layout: 'bar' | 'panel') => <ComposerChips {...chatSettings} layout={layout} />;
   // Patchy isn't offered to the BTY guest at all (no mascot, no menu toggle).
   const patchyAllowed = !isEmbedded && principal !== 'guest_bty';
   // "All" is the default: every knowledge base the person may use (it used to read "None"). The choices include it, so a person who picked one can go back.
@@ -2786,28 +2808,9 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               </div>
             </div>
           </form>
-          {/* The settings that were toggles in the "..." menu, as four icons under the message box, and Help at the far right (components/ComposerChips.tsx). Not in the embedded widget. */}
-          {!isEmbedded && (
-            <ComposerChips
-              model={toolModelAvailable ? { value: toolModel, onChange: id => { void handleToolModelChange(id as 'gemini' | 'claude'); } } : null}
-              mode={workspace.canEdit ? { value: modeId(planMode), onChange: id => { void handlePlanModeChange(modeValue(id)); } } : null}
-              thinking={{ value: thinkingId(deepThinking), onChange: id => { void handleDeepThinkingChange(thinkingValue(id)); } }}
-              answers={{ value: answersId(ragMode), onChange: id => { void handleRagModeChange(answersValue(id)); } }}
-              disabled={settingsLocked}
-              onExport={handleExportChat}
-              exportDisabled={loading || !hasChatted}
-              help={(
-                <>
-                  <strong className="cc-help-title">Secure Index Tip:</strong>
-                  <ul className="cc-help-list">
-                    <li>Please be as specific as possible when asking questions to get the most accurate responses.</li>
-                    <li>Due to operating on cost-sensitive infrastructure, response times may vary or be unavailable due to model demand.</li>
-                    <li>If you encounter any bugs, issues, or would like request access , please reach out to <a href="mailto:jackharper0517@outlook.com">jackharper0517@outlook.com</a>.</li>
-                  </ul>
-                </>
-              )}
-            />
-          )}
+          {/* The settings that were toggles in the "..." menu, as four icons under the message box, and Help at the far right (components/ComposerChips.tsx). On a phone they are buttons down the strip at the right edge; when the session column is showing they are its
+              "Chat settings" card instead, so they are not drawn twice. Not in the embedded widget. */}
+          {!isEmbedded && !columnVisible && !railVisible && composerChips('bar')}
         </footer>
 
         {/* --- CONVERSATIONS BLADE (Root Level, mirrors Help panel's slide-in) --- */}
@@ -3226,6 +3229,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           memory={lastMemory}
           folderControls={folderControls}
           repo={repoControls}
+          controls={composerChips('panel')}
         />
       )}
 
@@ -3243,6 +3247,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           context={contextUse && contextUse.sessionId === sessionId ? contextUse : null}
           scope={allowedAffiliates.length > 0 ? { value: selectedAffiliate, choices: scopeOptions, busy: loading || fetchingScope, onChange: setSelectedAffiliate } : null}
           repo={repoControls}
+          settings={chatSettings}
         />
       )}
 

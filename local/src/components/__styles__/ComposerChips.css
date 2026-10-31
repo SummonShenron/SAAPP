@@ -38,3 +38,14 @@
 
 .cc-help-title { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 600; padding-right: 16px; color: var(--accent-primary); }
 .cc-help-list { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 6px; }
+
+/* In the session column's "Chat settings" card (layout="panel"): the same icons three across, in two rows, and the open choice listed under the row at the card's width, in the flow, so the scrolling column
+   neither clips it nor has to be wider than it. */
+.composer-chips-panel { display: block; padding: 0; position: static; }
+/* Three across, two rows: model, mode, thinking, then answers, export, help. Export and Help sit in a group at the bar's right end; here that group steps aside so each is a cell of the grid. With fewer
+   settings on offer (no model or mode for a guest) the cells simply fill from the left. */
+.composer-chips-panel .cc-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.composer-chips-panel .cc-right { display: contents; }
+.composer-chips-panel .cc-btn { width: 100%; }
+.composer-chips-panel .cc-pop, .composer-chips-panel .cc-pop-help { position: static; width: auto; margin-top: 10px; box-shadow: none; background: var(--bg-alt); border-color: var(--border-color); }
+.theme-shadow .composer-chips-panel .cc-pop, .theme-shadow .composer-chips-panel .cc-pop-help { background: var(--panel-bg); border-color: transparent; }
