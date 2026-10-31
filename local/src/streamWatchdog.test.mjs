@@ -97,6 +97,16 @@ test('work that fails gives undefined and never throws, because a sync problem m
   assert.equal(await waitAtMost(Promise.reject(new Error('network')), 200, () => assert.fail('a failure is not lateness')), undefined);
 });
 
+test('Apply tells the waiting turn as soon as the files are written: the undo bookkeeping after the write is bounded and cannot fail the apply', () => {
+  const edits = read('./localEdits.ts');
+  assert.match(edits, /const UNDO_SAVE_MS = 5_000;/);
+  assert.match(edits, /await waitAtMost\(\s*saveUndoBatch\(/);
+  assert.doesNotMatch(edits, /\n  await saveUndoBatch\(/);                      // never a bare wait on browser storage after the write
+  const workspace = read('./hooks/useLocalWorkspace.ts');
+  assert.match(workspace, /await waitAtMost\(refreshLastEdit\(\), REFRESH_UNDO_MS\);/);
+  assert.match(read('./components/LocalEditCard.tsx'), /await onApply\(proposal\)\.catch\(/);          // a throw puts the card back instead of leaving it applying
+});
+
 test('the page sends the message without waiting longer than 20 s for the folder sync or 5 s for the git branch', () => {
   const chat = read('./pages/Chat.tsx');
   assert.match(chat, /const PRE_SEND_SYNC_MS = 20_000;/);

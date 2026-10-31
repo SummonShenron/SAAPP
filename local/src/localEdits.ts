@@ -4,6 +4,7 @@
 // original contents of every touched file are saved before anything is written so one click can
 // put it all back.
 import { keyValueStore } from './idb';
+import { waitAtMost } from './streamWatchdog';
 import { editLocalDocx, renderLocalDocx } from './api';
 import { bytesToBase64, hasPermission, type FsDirectoryHandle } from './localWorkspace';
 import { changesMovedSince, forUndo, planEdits, type EditProposal, type FileChange } from './localEditsCore';
@@ -18,6 +19,7 @@ export interface UndoBatch {
 
 const undoStore = keyValueStore('saapp-local-edits', 'undo');
 const MAX_UNDO_BATCHES = 20;
+const UNDO_SAVE_MS = 5_000;
 
 export async function saveUndoBatch(batch: UndoBatch): Promise<void> {
   await undoStore.put(batch.id, batch);
@@ -182,13 +184,18 @@ export async function applyProposal(root: FsDirectoryHandle, proposal: EditPropo
     return { ok: false, errors: [`Writing failed (${error instanceof Error ? error.message : String(error)}); the files were put back as they were.`] };
   }
 
-  await saveUndoBatch({
-    id: proposal.proposal_id,
-    folder: proposal.folder,
-    summary: proposal.summary,
-    appliedAt: Date.now(),
-    files: written.map(forUndo),
-  });
+  // The files are on disk now, so this is bookkeeping: if the browser's storage hangs or fails, the apply still counts (and the waiting turn is still told). Only Undo is lost for this one.
+  await waitAtMost(
+    saveUndoBatch({
+      id: proposal.proposal_id,
+      folder: proposal.folder,
+      summary: proposal.summary,
+      appliedAt: Date.now(),
+      files: written.map(forUndo),
+    }),
+    UNDO_SAVE_MS,
+    () => console.warn(`[edits] saving the undo record took longer than ${UNDO_SAVE_MS / 1000} s, so the apply was reported without it.`),
+  );
   return { ok: true, filesChanged: plan.changes.length };
 }
 

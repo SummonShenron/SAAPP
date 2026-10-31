@@ -40,7 +40,8 @@ export default function LocalEditCard({ proposal, canApply, onApply, onUndo, onD
   const apply = async () => {
     setPhase('applying');
     setErrors([]);
-    const result = await onApply(proposal);
+    // A throw before anything is written must put the card back, not leave it "applying" with the turn still waiting.
+    const result = await onApply(proposal).catch((error: unknown) => ({ ok: false as const, errors: [`Could not apply: ${error instanceof Error ? error.message : String(error)}`] }));
     if (result.ok) {
       setPhase('applied');
       onDecision?.(proposal.proposal_id, 'applied', '');      // always: the server notes the files as work waiting to be committed, whether or not a turn is waiting

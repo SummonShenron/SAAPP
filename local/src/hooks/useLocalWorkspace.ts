@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { disconnectLocalWorkspace, getLocalWorkspaceStatus } from '../api';
 import { applyProposal, latestUndoBatch, undoBatch, type ApplyResult, type UndoResult } from '../localEdits';
 import type { EditProposal } from '../localEditsCore';
+import { waitAtMost } from '../streamWatchdog';
 import { restorableStamps, SyncRequestError } from '../localWorkspaceCore';
 import {
   clearFolderHandle,
@@ -23,6 +24,7 @@ import {
 export type LocalWorkspaceStatus = 'disconnected' | 'needs-permission' | 'not-uploaded' | 'connected' | 'syncing' | 'error';
 
 // A message sent within this window of the last sync reuses it instead of re-scanning the folder.
+const REFRESH_UNDO_MS = 3_000;      // the longest an Apply waits on browser storage after the files are written
 const SYNC_REUSE_MS = 15_000;
 // Coming back to the tab re-checks that the server still holds the copy, at most this often.
 const VERIFY_EVERY_MS = 30_000;
@@ -238,7 +240,8 @@ export function useLocalWorkspace({ enabled }: UseLocalWorkspaceOptions) {
     const result = await applyProposal(handle, proposal);
     // Force the next message to re-scan the folder so Sonic sees what was just written.
     lastSyncAtRef.current = 0;
-    await refreshLastEdit();
+    // Only the Undo button's label: it must never hold up telling the waiting turn that the files are written.
+    await waitAtMost(refreshLastEdit(), REFRESH_UNDO_MS);
     return result;
   }, [refreshLastEdit]);
 
