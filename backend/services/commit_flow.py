@@ -88,13 +88,13 @@ def pending_line(username: Optional[str], current_branch: Optional[str]) -> str:
     branch = f"The person's folder is on git branch {current_branch!r} (reported by their browser). " if current_branch else "The person's git branch is not known; ask which branch if they want a commit. "
     if not pending:
         return (
-            f"COMMITS: {branch}Nothing you changed and they applied is waiting, but when they ask you to commit, push, open a new branch, or open a pull request for their working changes, call propose_commit "
+            f"COMMITS: {branch}Nothing you changed and they applied is waiting, but when they ask you to commit, push, open a new branch, or open a pull request for their working changes, call propose_git_commit when it is among your tools (real git on their computer), otherwise propose_commit "
             "with a one or two sentence message: it compares their whole folder with GitHub's copy of the branch and lists every file that differs. For a new branch pass new_branch, and for a pull request pass open_pull_request."
         )
     names = ", ".join(sorted(pending)[:8]) + (f" and {len(pending) - 8} more" if len(pending) > 8 else "")
     return (
         f"COMMITS: {branch}{len(pending)} file(s) you changed and they applied are waiting to be committed: {names}. When they ask you to commit, push, or open a pull request for this work, call "
-        "propose_commit with a one or two sentence message (what the change does, like a pull request summary); it shows them a card and commits nothing until they approve. For a new branch pass "
+        "propose_git_commit when it is among your tools (real git on their computer), otherwise propose_commit, with a one or two sentence message (what the change does, like a pull request summary); it shows them a card and commits nothing until they approve. For a new branch pass "
         "new_branch, and for a pull request pass open_pull_request."
     )
 

@@ -248,3 +248,22 @@ def test_a_declined_opening_is_counted_without_a_person_or_text(monkeypatch):
     asyncio.run(initiation.count_refusal("too_soon"))
     asyncio.run(initiation.count_refusal("something with someone's own words"))
     assert recorded[0] == {"initiation_refused_too_soon": 1} and recorded[1] == {}
+
+
+def test_the_stall_guard_and_claim_counters_reach_the_health_summary_with_rates_and_a_change():
+    this_week = {"day": "2026-10-14", "counts": {"code_turns": 20, "code_plan_exec_turns": 10, "code_plan_stalled": 4, "code_plan_marked_done": 2, "claim_unproven": 3, "claim_sent_back": 1}}
+    last_week = {"day": "2026-10-04", "counts": {"code_turns": 10, "code_plan_exec_turns": 10, "code_plan_stalled": 2, "claim_unproven": 5, "claim_sent_back": 0}}
+    summary = sc.summarize_counters([this_week, last_week], NOW, 7)
+    # what the Sonic Health rows show: the counts (this period and the one before) ...
+    assert {k: summary["totals"].get(k) for k in ("code_plan_stalled", "code_plan_marked_done", "claim_unproven", "claim_sent_back")} == {"code_plan_stalled": 4, "code_plan_marked_done": 2, "claim_unproven": 3, "claim_sent_back": 1}
+    assert summary["previous_totals"]["code_plan_stalled"] == 2 and summary["previous_totals"]["claim_unproven"] == 5
+    # ... the rates (against turns that carried out a plan, and against coding turns) ...
+    assert summary["rates"]["code_plan_stalled"] == 0.4 and summary["rates"]["claim_unproven"] == 0.15 and summary["rates"]["claim_sent_back"] == 0.05
+    assert summary["previous_rates"]["code_plan_stalled"] == 0.2 and summary["previous_rates"]["claim_unproven"] == 0.5
+    # ... and the change in each rate
+    assert summary["change"]["code_plan_stalled"] == 0.2 and summary["change"]["claim_unproven"] == -0.35
+
+
+def test_those_rates_are_not_a_number_when_there_was_nothing_to_divide_by():
+    summary = sc.summarize_counters([{"day": "2026-10-14", "counts": {"turns_total": 5}}], NOW, 7)
+    assert summary["rates"]["code_plan_stalled"] is None and summary["rates"]["claim_unproven"] is None and summary["rates"]["claim_sent_back"] is None

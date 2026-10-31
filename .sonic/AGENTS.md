@@ -22,7 +22,7 @@ SAAPP is a FastAPI backend (`app.py`, `backend/`) with a React frontend (`local/
 - `app.py` holds endpoints and request classes only. Helpers go in `backend/utils/` or `backend/services/`.
 - Add or edit an entry in `sonic_changelog.py` in the same change as any user-visible Sonic feature ("I can now..."; true; at most 260 characters).
 - Modules that log use `logging.getLogger("SASS Logger")`. No user content in logs: no messages, paths from users, queries, or tool output.
-- Run backend tests with `GOOGLE_API_KEY=test-not-real` (`python -m pytest backend runner -q`). Frontend, from `local/`: `npx tsc -b` and `node --test src/*.test.mjs`.
+- Run backend tests with `GOOGLE_API_KEY=test-not-real` (`python -m pytest backend runner -q`). Frontend, from `local/`: `npx tsc -b` and `npm test` (its script adds `--experimental-test-module-mocks`, which one test file needs; a bare `node --test` fails that file).
 - Real model calls cost money: do not run evals or live model calls unless asked.
 - A script that reads the database: run it from the project folder and use `from backend.utils.db_utils import get_db` (it reads `.env` itself: `MONGO_URI`, database `saapp_database`, needs `USE_DB=true`). Do not use `MONGODB_URI` or ask for credentials. Read only unless asked to write; do not print user text.
 - Tests never touch the real database, embeddings or model: stub `get_db` (`monkeypatch.setattr(module, 'get_db', lambda: fake)`) or use `FakeDB` from `backend/tests/fake_runner_db.py`. Only scripts use the real `get_db()`.

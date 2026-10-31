@@ -76,9 +76,11 @@ test('a 5-hour window with no use in it has no end to say, and a missing or brok
 });
 
 test('the ring says when the figure it follows resets, for an admin and for everyone else', () => {
-  const when = clock(new Date(at(22, 15, 40)));
-  const admin = ringView({ level: 'throttled', fraction: 0.97, scope: 'five', resets_at: at(22, 15, 40), own_fraction: 0.3, own_scope: 'my_five', own_level: 'ok', own_resets_at: at(22, 16, 5) });
+  // ringView() reads the real current date, so these resets are later today: the words then give the time only.
+  const today = (h, m) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.toISOString(); };
+  const when = clock(new Date(today(15, 40)));
+  const admin = ringView({ level: 'throttled', fraction: 0.97, scope: 'five', resets_at: today(15, 40), own_fraction: 0.3, own_scope: 'my_five', own_level: 'ok', own_resets_at: today(16, 5) });
   assert.ok(admin.text.startsWith(`Budget 97% of 5 hours, resets ${when} · Your usage: 30% of your 5 hours, resets `));
-  const person = ringView({ level: 'ok', own_fraction: 0.54, own_scope: 'my_five', own_level: 'ok', own_resets_at: at(22, 16, 5) });
-  assert.equal(person.text, `Your usage: 54% of your 5 hours, resets ${clock(new Date(at(22, 16, 5)))}`);
+  const person = ringView({ level: 'ok', own_fraction: 0.54, own_scope: 'my_five', own_level: 'ok', own_resets_at: today(16, 5) });
+  assert.equal(person.text, `Your usage: 54% of your 5 hours, resets ${clock(new Date(today(16, 5)))}`);
 });

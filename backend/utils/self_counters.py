@@ -198,6 +198,11 @@ def _rates(totals: Dict[str, int]) -> Dict[str, Optional[float]]:
     rates["code_plan_approved"] = _rate(totals.get("code_plan_approved", 0), totals.get("code_plan_submitted", 0))
     rates["code_plan_exec_cap_hit"] = _rate(totals.get("code_plan_exec_cap_hit", 0), totals.get("code_plan_exec_turns", 0))
     rates["code_plan_turn_cap_hit"] = _rate(totals.get("code_plan_turn_cap_hit", 0), totals.get("code_plan_turns", 0))
+    # The stall guard and the claim check (backend/utils/code_plan.py after_turn, backend/utils/claim_check.py): plan turns that finished no step against turns that carried out a plan, and replies that
+    # claimed a passing check no run backed (and answers sent back once to run it) against coding turns.
+    rates["code_plan_stalled"] = _rate(totals.get("code_plan_stalled", 0), totals.get("code_plan_exec_turns", 0))
+    rates["claim_unproven"] = _rate(totals.get("claim_unproven", 0), totals.get("code_turns", 0))
+    rates["claim_sent_back"] = _rate(totals.get("claim_sent_back", 0), totals.get("code_turns", 0))
     # Working notes for coding conversations (backend/utils/working_state.py): how often the notes were updated, how often a coding turn was given them, and the share of what the
     # model proposed that the checks threw out (a quote that was not word for word, a detail nobody said).
     rates["working_notes_updated"] = _rate(totals.get("working_notes_updated", 0), turns)

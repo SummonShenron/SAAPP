@@ -5,6 +5,45 @@ export const POLL_INTERVAL_MS = 10000;
 
 export const DEFAULT_TAIL_LINES = 200;
 
+// Send to Sonic: how much of a command's output goes into the chat box (the newest lines, at most this many characters).
+export const SEND_TAIL_LINES = 200;
+export const SEND_MAX_CHARS = 4000;
+
+// The localStorage key that remembers which connected project the terminal blade opened last.
+export const TERMINAL_PICK_KEY = 'saapp.terminal.project';
+
+// Reads the remembered project choice. Returns null when there is no storage, nothing stored, or the read fails.
+export function readStoredPick(storage: Pick<Storage, 'getItem'> | null | undefined): string | null {
+  try {
+    const value = storage ? storage.getItem(TERMINAL_PICK_KEY) : null;
+    return typeof value === 'string' && value !== '' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+// Remembers the project choice. Silently does nothing when there is no storage or the write fails.
+export function writeStoredPick(storage: Pick<Storage, 'setItem'> | null | undefined, value: string): void {
+  try {
+    if (storage) storage.setItem(TERMINAL_PICK_KEY, value);
+  } catch {
+    /* no storage: the choice simply is not remembered */
+  }
+}
+
+// The text put in the chat box for one command: its command line, its exit code, and the end of its output, in a fenced block the person can edit before sending.
+// Never sent by itself.
+export function sendToSonicBlock(command: string, exitCode: number | null | undefined, output: string): string {
+  const lines = output.replace(/\r\n/g, '\n').split('\n');
+  let tail = lines.slice(-SEND_TAIL_LINES).join('\n').replace(/\n+$/, '');
+  if (tail.length > SEND_MAX_CHARS) tail = tail.slice(tail.length - SEND_MAX_CHARS);
+  // A fence longer than any run of backticks in the output, so the output cannot close the block early.
+  const longest = Math.max(2, ...(tail.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = '`'.repeat(longest + 1);
+  const code = typeof exitCode === 'number' ? String(exitCode) : 'none';
+  return ['Command: ' + command, 'Exit code: ' + code, fence, tail, fence].join('\n');
+}
+
 // Statuses the runner reports for a command job, plus "not run" for jobs
 // that were never approved or never started.
 export type TerminalJobStatus =
@@ -93,7 +132,7 @@ export function canStop(row: { status: string }): boolean {
 
 // Which runner and project the card talks to: the connected runner's project named like the open folder; failing that, the only project of the only connected runner. null when there is no
 // such runner (the card is then not drawn). The same rule the server uses for Sonic's own commands (runner_jobs.connected_runner).
-export interface TerminalRunner { id: string; connected: boolean; commands?: boolean; projects: { id: string; name: string }[]; }
+export interface TerminalRunner { id: string; name?: string; connected: boolean; commands?: boolean; projects: { id: string; name: string }[]; }
 export function terminalTarget(runners: ReadonlyArray<TerminalRunner> | null | undefined, folderName: string): { runnerId: string; projectId: string; projectName: string } | null {
   const live = (runners ?? []).filter((runner) => runner.connected && runner.commands !== false && runner.projects.length > 0);
   const wanted = folderName.trim().toLowerCase();
@@ -105,6 +144,19 @@ export function terminalTarget(runners: ReadonlyArray<TerminalRunner> | null | u
   }
   if (live.length === 1 && live[0].projects.length === 1) return { runnerId: live[0].id, projectId: live[0].projects[0].id, projectName: live[0].projects[0].name };
   return null;
+}
+
+// Every project of every connected runner that can run commands, as choices for the terminal blade's header dropdown ("runner name: project"). Used when terminalTarget finds no single match.
+export interface TerminalChoice { runnerId: string; projectId: string; projectName: string; label: string; }
+export function terminalChoices(runners: ReadonlyArray<TerminalRunner> | null | undefined): TerminalChoice[] {
+  const out: TerminalChoice[] = [];
+  for (const runner of runners ?? []) {
+    if (!runner.connected || runner.commands === false) continue;
+    for (const project of runner.projects) {
+      out.push({ runnerId: runner.id, projectId: project.id, projectName: project.name, label: `${runner.name || runner.id}: ${project.name}` });
+    }
+  }
+  return out;
 }
 
 // Keep only the last `maxLines` lines of output. Returns the text unchanged

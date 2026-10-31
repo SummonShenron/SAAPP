@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "test": "node --test --experimental-test-module-mocks src/*.test.mjs src/components/*.test.mjs src/pages/*.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

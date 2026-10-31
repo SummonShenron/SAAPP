@@ -38,7 +38,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
-from backend.utils import claim_check, draft_checkpoint, loop_rhythm, reading_waste
+from backend.utils import act_not_suggest, claim_check, draft_checkpoint, loop_rhythm, reading_waste
 from backend.utils.prompt_meter import PromptMeter
 from backend.utils.agent_utils import _UnsafeActionRequested, build_tool_facts, build_trace_subject, new_trace_step_id
 
@@ -104,6 +104,7 @@ SYSTEM_PROMPT = """You are Sonic Assistant's research agent. You answer by calli
 - You can only use the tools you were given. If the request needs something none of them can do (an email inbox, a calendar, a drive, a database, a browser), say plainly that you can't do that from here. Never claim to have made a call you did not make, and never invent an outage, a timeout or a stuck process to explain it.
 - When asked to write or change code, call save_draft with your draft (the code, in full) as soon as you know roughly what to change, together with any reads you still need: it costs no step. Check the draft against what you read, save a corrected whole draft if anything is wrong, and start your answer from it.
 - What Sonic said earlier in the conversation about its own jobs, schedule, reading or status came from their own records, which you cannot check with these tools; it stands. Never retract, correct or comment on an earlier reply unless the person asks about it or what you read this turn directly contradicts it.
+- Read where the work is. Never read a file from line 1 (it is imports and setup): search_literal for a word from the task, then read_repo_file with start_line a little before the match and line_count about 60. A read from the top of a big file is refused with a map of the file. Do not read a file you already read this turn: its result is in the conversation above.
 - Answer in plain, concise prose. Cite the file paths and line numbers you actually read. If the request is genuinely ambiguous, ask one specific question as your reply."""
 
 # Offered next to the repository tools only: the model keeps a draft of a change inside the loop (backend/utils/draft_checkpoint.py). Nothing runs: the text is kept for later steps.
@@ -113,12 +114,17 @@ SAVE_DRAFT_TOOL = {
     "parameters": {"type": "object", "properties": {"text": {"type": "string", "description": "the whole draft"}}, "required": ["text"]},
 }
 _REPO_TOOLS = frozenset({"read_repo_file", "search_code", "search_literal", "find_file", "trace_symbol"})
+# Acting is not looking: an edit, a check or a commit proposal does not use up the step budget (Jack, 2026-10-31: "action steps dont count against the budget"). Reads still count, so a turn cannot read
+# forever; the refunds are capped per turn so one turn cannot run away with the person's money.
+ACTION_TOOLS = frozenset({"propose_local_edits", "run_local_check", "run_local_command", "run_sandbox_tests", "propose_commit", "propose_git_commit", "propose_merge"})
+ACTION_REFUND_CAP = int(os.getenv("TOOL_AGENT_ACTION_REFUND_CAP", "30"))
 _CHECK_TOOLS = frozenset({"run_local_check", "run_local_command"})     # what the model can run a check with on the person's computer (a claim that a check passed is held to a run: backend/utils/claim_check.py)
 
 # Added to the system prompt only when propose_local_edits is among the tools (a local folder is connected): the person's own files can be changed, by proposal.
 EDIT_PROMPT = """
 
-- A local folder is connected, so you CAN change the person's files, by proposal: when they ask you to make, apply, add, fix or change something in it, read what you need, then call propose_local_edits. They see a diff with Apply and Decline buttons, which is their confirmation, and the call returns what they decided: APPLIED (the files now contain the change: you can read them to check it, propose a follow-up, or finish), DECLINED (nothing changed: adjust to their reason or ask what they would prefer, and do not propose the same change again), or NO DECISION (nothing changed: say so and stop). On an older page it returns only that the diff was shown. Never paste code for them to apply themselves, never ask "would you like me to apply this?" in chat, and say a change was applied only when a result says APPLIED. This replaces the earlier line saying you cannot change anything, and the one about giving code in your answer."""
+- A local folder is connected, so you CAN change the person's files, by proposal: when they ask you to make, apply, add, fix or change something in it, read what you need, then call propose_local_edits. They see a diff with Apply and Decline buttons, which is their confirmation, and the call returns what they decided: APPLIED (the files now contain the change: you can read them to check it, propose a follow-up, or finish), DECLINED (nothing changed: adjust to their reason or ask what they would prefer, and do not propose the same change again), or NO DECISION (nothing changed: say so and stop). On an older page it returns only that the diff was shown. Never paste code for them to apply themselves, never ask "would you like me to apply this?" in chat, and say a change was applied only when a result says APPLIED. This replaces the earlier line saying you cannot change anything, and the one about giving code in your answer.
+- ACT, DO NOT DESCRIBE. When you know the change, call propose_local_edits: never write pseudocode, a list of changes or the code itself into your answer, and never end a turn with "I would change...". Making an edit, running a check and proposing a commit do NOT use up your tool steps; reading does. So read only what the edit needs, then edit; do not take one more look first, and do not re-read what you already read. After an edit is applied, run the check."""
 
 STEERING_NOTICE = (
     "USER STEERING: the user sent the following while you were already working on this. It updates the task. Where it conflicts with "
@@ -130,6 +136,13 @@ STEP_LIMIT_NOTICE = (
     "The step limit has been reached. Answer now using what you have already found. If you were asked to write code, write it now, in full, in a fenced code block, "
     "following the conventions of the files you read; put anything you could not verify in one short line after it, instead of leaving the code out. "
     "Otherwise say plainly what you could not verify."
+)
+
+# The ending of a turn that was about making a change and ran out of steps without one (or was stopped): say what happened. The general notice above asks for the code in a fenced block, which is
+# right for a question with no folder to edit and wrong here, where the code in the answer is exactly what cannot be applied.
+EDIT_TURN_LIMIT_NOTICE = (
+    "The step limit has been reached. Say plainly what you did, what is still left and why, in a few sentences. Do not write the code, pseudocode or a list of changes in your answer: "
+    "the change is made by a tool call, and the person will continue from what you say here."
 )
 
 
@@ -430,6 +443,8 @@ async def run(
         return result
 
     required_rejections = 0
+    act_rejections = 0                                        # an answer that wrote code out instead of editing is sent back (backend/utils/act_not_suggest.py), at most twice
+    action_refunded = 0                                       # steps handed back so far because the step was an action (ACTION_TOOLS), up to ACTION_REFUND_CAP
     claim_rejections = 0                                      # an answer that claimed a pass no run backed is sent back once (backend/utils/claim_check.py)
     claim_checking = can_edit or bool(offered & _REPO_TOOLS)  # a coding turn
 
@@ -505,6 +520,10 @@ async def run(
                 logger.debug("[native_loop] could not emit a checkpoint step.", exc_info=True)
         return "continue"
 
+    def edited_this_turn() -> bool:
+        """An edit was proposed this turn and did not come back as an error."""
+        return any(str(a.get("action_desc", "")).startswith("propose_local_edits(") and not str(a.get("observation", "")).startswith("ERROR") for a in attempts)
+
     def required_done() -> bool:
         """The required tool (propose_local_edits on a change request) has been called and did not come back as an error."""
         tool = (required_action or {}).get("tool_action") or ""
@@ -565,6 +584,11 @@ async def run(
                 logger.info("[native_loop] step %s: an answer without %s on a turn that requires it was sent back (%d/%d).", step, required_action["tool_action"], required_rejections, required_action.get("max_final_rejections", 2))
                 continue
             answer = _text(getattr(reply, "content", ""))
+            if can_edit and (required_action is not None or plan_budget is not None) and act_rejections < 2 and step < budget and not edited_this_turn() and act_not_suggest.wrote_code_instead_of_editing(answer):
+                act_rejections += 1
+                messages.append(HumanMessage(content=act_not_suggest.SEND_BACK_NOTICE))
+                logger.info("[native_loop] step %s: an answer that wrote code instead of editing was sent back (%d/2).", step, act_rejections)
+                continue
             if claim_checking and claim_rejections < 1 and step < budget:
                 # "The tests pass" with no passing run this turn: back it goes once, to run the check (when it can) or to say it did not (2026-10-30: "tsc passes cleanly", never run, and it failed).
                 unbacked = claim_check.unproven(answer, claim_check.evidence(attempts))
@@ -577,6 +601,13 @@ async def run(
             stop_reason = "model_answered"
             break
         results = await execute_calls(step, calls)
+        if plan_budget is None:
+            acted_now = sum(1 for call in calls if call.get("name") in ACTION_TOOLS)
+            grant = min(acted_now, ACTION_REFUND_CAP - action_refunded)
+            if grant > 0:
+                budget += grant
+                action_refunded += grant
+                logger.info("[native_loop] step %s: %d action step(s) handed back (%d of at most %d this turn), budget now %d.", step, grant, action_refunded, ACTION_REFUND_CAP, budget)
         applied_now = any(call.get("name") == "propose_local_edits" and " APPLIED:" in str(result) for call, result in zip(calls, results))
         if rhythm is not None:
             rhythm.after_step([(str(call.get("name") or ""), result) for call, result in zip(calls, results)])
@@ -630,12 +661,34 @@ async def run(
             stop_reason = "repeats"
             break
 
+    if final_text is None and can_edit and (required_action is not None or plan_budget is not None) and stop_reason in ("", "step_limit") and not edited_this_turn():
+        # The reading budget ran out before the change was made. The old ending asked for the code "in a fenced code block", which is how a turn ended in pseudocode. Now the last call can ONLY be the edit.
+        edit_tool = next((tool for tool in tools if tool.get("name") == "propose_local_edits"), None)
+        if edit_tool is not None:
+            forced = True
+            stop_reason = stop_reason or "step_limit"
+            await absorb_steering(step)
+            shorten_old_results(step + 1)
+            messages.append(HumanMessage(content=act_not_suggest.ACT_NOW_NOTICE))
+            meter.note_call(messages, [edit_tool])
+            acting = await llm.ainvoke_tools(messages, [edit_tool])
+            messages.append(acting)
+            act_calls = [call for call in (getattr(acting, "tool_calls", None) or []) if call.get("name") == "propose_local_edits"]
+            if act_calls:
+                step += 1
+                await execute_calls(step, act_calls)
+                messages.append(HumanMessage(content="Say in one or two sentences what happened and what is left. Do not write code in your answer."))
+                meter.note_call(messages, [])
+                final_text = _text(getattr(await llm.ainvoke_tools(messages, []), "content", "")) or "I made the edit above."
+            else:
+                final_text = _text(getattr(acting, "content", "")) or None          # no edit and no words: the ending below answers
     if final_text is None:
         forced = True
         stop_reason = stop_reason or "step_limit"
         await absorb_steering(step)
         shorten_old_results(step + 1)
-        messages.append(HumanMessage(content=STEP_LIMIT_NOTICE + draft_checkpoint.draft_block(latest_draft, how="fix it in your answer") + draft_checkpoint.forced_final_addition(latest_draft)))
+        ending = EDIT_TURN_LIMIT_NOTICE if can_edit and (required_action is not None or plan_budget is not None) else STEP_LIMIT_NOTICE
+        messages.append(HumanMessage(content=ending + draft_checkpoint.draft_block(latest_draft, how="fix it in your answer") + draft_checkpoint.forced_final_addition(latest_draft)))
         meter.note_call(messages, [])
         final_text = _text(getattr(await llm.ainvoke_tools(messages, []), "content", "")) or draft_checkpoint.fallback_answer(latest_draft)
 

@@ -50,11 +50,11 @@ test('the chips map to the settings the page already keeps, both ways, with the 
 test('the message box has the four chips with Export and Help at the far right, and no "..." menu outside the embedded widget', () => {
   const chat = readFileSync(new URL('../pages/Chat.tsx', import.meta.url), 'utf8');
   assert.match(chat, /<ComposerChips/);
-  assert.match(chat, /\{!isEmbedded && !columnVisible && !railVisible && composerChips\('bar'\)\}/);            // under the box, not in the embedded widget, and only when the session column is not showing
-  assert.match(chat, /controls=\{composerChips\('panel'\)\}/);                                 // otherwise they are the column's "Chat settings" card (never both)
+  assert.doesNotMatch(chat, /composerChips\(/);                                              // no builder with a 'bar' layout any more: nothing is drawn under the message box
+  assert.match(chat, /controls=\{settingsPanel\}/);                                           // the column's "Chat settings" card
   assert.match(chat, /const chatSettings: ChatSettings = \{/);                                  // the settings are built once ...
-  assert.match(chat, /const composerChips = \(layout: 'bar' \| 'panel'\) => <ComposerChips \{\.\.\.chatSettings\} layout=\{layout\} \/>;/);   // ... for the bar and the column's card
-  assert.match(chat, /<SessionRail[^>]*settings=\{chatSettings\}|settings=\{chatSettings\}\s*\/>/);       // ... and the phone strip
+  assert.match(chat, /const settingsPanel = <ComposerChips \{\.\.\.chatSettings\} layout="panel" \/>;/);   // ... for the column's card
+  assert.match(chat, /<SessionRail[\s\S]*?settings=\{chatSettings\}/);       // ... and the phone strip
   assert.match(chat, /\{isEmbedded && \(\s*<div style=\{\{ position: "relative" \}\} ref=\{optionsMenuRef\}>/);   // the "..." button and its menu are the embedded widget's only
   assert.match(chat, /onExport: handleExportChat,/);
   assert.doesNotMatch(chat, /Export this conversation/);                                        // no longer a button in the message box row itself
@@ -88,8 +88,8 @@ test('on a phone the settings are buttons one under another down the strip, belo
   assert.match(rail, /<ChipChoices chipKey=\{key\} control=\{control\} onDone=\{\(\) => setOpen\(null\)\} className="rail-pop rail-choices" \/>/);
   assert.match(rail, /aria-label="Export this conversation"/);
   assert.match(rail, /className="rail-pop rail-help" role="dialog" aria-label="Help"/);
-  assert.match(rail, /if \(!repo && !hasGauges && !scope && !settings\) return null;/);       // a guest has none of the information buttons but still has the settings
-  assert.match(rail, /type Panel = 'repo' \| 'gauges' \| 'scope' \| ChipKey \| 'help';/);        // one state, so one card at a time
+  assert.match(rail, /if \(!repo && !hasGauges && !scope && !settings && !connection\) return null;/);       // a guest has none of the information buttons but still has the settings
+  assert.match(rail, /type Panel = 'connection' \| 'repo' \| 'gauges' \| 'scope' \| ChipKey \| 'help';/);        // one state, so one card at a time
   const css = readFileSync(new URL('./__styles__/SessionRail.css', import.meta.url), 'utf8');
   assert.match(css, /\.rail-btn\.is-changed \{[^}]*accent-primary/);
 });
@@ -99,4 +99,12 @@ test('in the column the settings are three across in two rows, with Export and H
   assert.match(css, /\.composer-chips-panel \.cc-row \{ display: grid; grid-template-columns: repeat\(3, minmax\(0, 1fr\)\); gap: 8px; \}/);
   assert.match(css, /\.composer-chips-panel \.cc-right \{ display: contents; \}/);              // the group at the bar's right end steps aside
   assert.match(css, /\.composer-chips-panel \.cc-btn \{ width: 100%; \}/);
+});
+
+test('the settings are only in the side panel, on every screen: never under the message box, hidden with the strip on a phone and with the column on a wide screen', () => {
+  const chat = readFileSync(new URL('../pages/Chat.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(chat, /layout="bar"|layout=\{layout\}|composerChips\(/);               // no way to draw them under the box
+  assert.equal((chat.match(/<ComposerChips /g) ?? []).length, 1);                              // built once, for the column card ...
+  assert.match(chat, /settings=\{chatSettings\}/);                                             // ... and the same object feeds the phone strip
+  assert.match(chat, /const railVisible = compactScreen && showSessionColumn;/);              // the strip is what the top-bar button shows and hides on a narrow screen
 });

@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { IDLE_LIMIT_MS, StreamIdleError, isKeepaliveLine, readOrGiveUp } from './streamWatchdog.ts';
+import { IDLE_LIMIT_MS, StreamIdleError, isKeepaliveLine, readOrGiveUp, waitAtMost } from './streamWatchdog.ts';
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const never = () => new Promise(() => {});
@@ -71,4 +71,37 @@ test('a turn ended this way says why and that the change was applied, and both f
   const chat = read('./pages/Chat.tsx');
   assert.match(chat, /The server stopped waiting for this answer, so the turn ended\. Your change was applied\. Press Continue to carry on\./);
   assert.match(chat, /abortControllerRef\.current = null;\s*awaitedProposalRef\.current = null;\s*lostTurnRef\.current = false;\s*setLoading\(false\);/);
+});
+
+test('work that finishes in time gives its value, and nothing is reported late', async () => {
+  let late = 0;
+  const value = await waitAtMost(new Promise((resolve) => setTimeout(() => resolve('synced'), 5)), 200, () => { late += 1; });
+  assert.equal(value, 'synced');
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(late, 0);
+});
+
+test('work that hangs gives undefined after the limit, says so once, and is left to finish in the background', async () => {
+  let late = 0;
+  let finished = false;
+  const slow = new Promise((resolve) => setTimeout(() => { finished = true; resolve('late'); }, 80));
+  assert.equal(await waitAtMost(slow, 20, () => { late += 1; }), undefined);
+  assert.equal(late, 1);
+  assert.equal(finished, false);                                  // the caller moved on while the work was still running
+  await slow;
+  assert.equal(finished, true);                                   // and the work was not cancelled
+});
+
+test('work that fails gives undefined and never throws, because a sync problem must not block the message', async () => {
+  assert.equal(await waitAtMost(Promise.reject(new Error('network')), 200), undefined);
+  assert.equal(await waitAtMost(Promise.reject(new Error('network')), 200, () => assert.fail('a failure is not lateness')), undefined);
+});
+
+test('the page sends the message without waiting longer than 20 s for the folder sync or 5 s for the git branch', () => {
+  const chat = read('./pages/Chat.tsx');
+  assert.match(chat, /const PRE_SEND_SYNC_MS = 20_000;/);
+  assert.match(chat, /const PRE_SEND_BRANCH_MS = 5_000;/);
+  assert.match(chat, /await waitAtMost\(workspace\.ensureSynced\(\), PRE_SEND_SYNC_MS,/);
+  assert.match(chat, /const gitBranch = \(await waitAtMost\(workspace\.currentGitBranch\(\), PRE_SEND_BRANCH_MS\)\) \?\? null;/);
+  assert.doesNotMatch(chat, /await workspace\.ensureSynced\(\);/);            // never a bare wait again
 });

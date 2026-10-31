@@ -37,6 +37,8 @@
 
 /* The dot on the GitHub mark: a target repo is set. */
 .rail-dot { position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent-primary); }
+.rail-dot-ok { background: #22a06b; }
+.rail-dot-warn { background: #f59e0b; }
 
 /* The card that opens beside a button, toward the conversation. */
 .rail-pop {
