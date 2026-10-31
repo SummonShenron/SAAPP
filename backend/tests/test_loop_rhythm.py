@@ -27,7 +27,7 @@ def test_reads_before_the_first_act_are_counted_and_an_edit_or_check_is_the_firs
     step(r, ("read_repo_file", "text"))
     step(r, ("search_literal", "hits"), ("read_repo_file", "text"))
     step(r, ("propose_local_edits", APPLIED))
-    assert r.summary() == {"reads_before_first_act": 2, "applies": 1, "applies_checked": 0, "notices": 0}
+    assert r.summary() == {"reads_before_first_act": 2, "first_edit_step": None, "applies": 1, "applies_checked": 0, "notices": 0}
     c = LoopRhythm()
     step(c, ("read_repo_file", "x"))
     step(c, ("run_local_check", "PASSED"))
@@ -200,8 +200,8 @@ def test_the_rhythm_is_kept_on_the_turn_and_becomes_counters_for_a_coding_turn()
     llm_turns.note_tool_loop(6, False, tool_steps=12)
     for name in ("read_repo_file", "read_repo_file", "propose_local_edits"):
         llm_turns.note_tool_call(name, True)
-    llm_turns.note_rhythm({"reads_before_first_act": 2, "applies": 1, "applies_checked": 1, "notices": 0, "text": "must not be kept"})
-    assert turn.rhythm == {"reads_before_first_act": 2, "applies": 1, "applies_checked": 1, "notices": 0}
+    llm_turns.note_rhythm({"reads_before_first_act": 2, "first_edit_step": 3, "applies": 1, "applies_checked": 1, "notices": 0, "text": "must not be kept"})
+    assert turn.rhythm == {"reads_before_first_act": 2, "first_edit_step": 3, "applies": 1, "applies_checked": 1, "notices": 0}
     summary = code_outcomes.summarize_turn(turn)
     assert summary["rhythm"] == turn.rhythm
     counts = {}

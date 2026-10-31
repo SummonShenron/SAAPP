@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { BudgetView } from '../api';
-import { ringView } from './budgetText';
+import { ringTone, ringView, type RingTone } from './budgetText';
 import './__styles__/UsageRing.css';
 
 const SIZE = 20; // smaller than the 28px round icon buttons it sits beside, so it reads as a gauge and not another button
@@ -9,8 +9,8 @@ const RADIUS = (SIZE - STROKE) / 2;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 const TIP_MS = 2500; // how long a tapped tooltip stays (a touch screen has no hover)
 
-/** The ring's colour follows the guard's level, so it reads the same way the old chip's colour did. */
-const LEVEL_COLOR: Record<string, string> = { ok: 'var(--usage-ok, #2f7de1)', notice: '#f59e0b', throttled: '#f97316', blocked: 'var(--accent-danger)' };
+/** The ring's colour follows how full it is (ringTone in budgetText.ts): blue, yellow from 75%, red from 90%. */
+const TONE_COLOR: Record<RingTone, string> = { ok: 'var(--usage-ok, #2f7de1)', warn: '#eab308', danger: 'var(--accent-danger)' };
 
 /**
  * A small ring that fills as the usage budget is used (backend/utils/budget_guard.py; which figure it follows is `ringView` in budgetText.ts). Everyone sees how far
@@ -28,7 +28,7 @@ const UsageRing: React.FC<{ budget: BudgetView | null }> = ({ budget }) => {
   if (!view) return null;
   const fraction = Math.max(0, Math.min(view.fraction, 1)); // over 100% is a full ring; the colour and the words carry the rest
   const text = view.text;
-  const color = LEVEL_COLOR[view.level] ?? LEVEL_COLOR.ok;
+  const color = TONE_COLOR[ringTone(view)];
 
   const tap = () => {
     setTapped(true);

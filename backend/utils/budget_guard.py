@@ -179,7 +179,7 @@ def month_already_spent(now: datetime) -> float:
 def thresholds() -> Tuple[float, float]:
     """(notice_at, block_at) as fractions of a budget, kept in a sane order whatever was typed. The block line may be as low as 1.0: a budget that is
     a hard cap, not a soft one (set LLM_BUDGET_BLOCK_AT=1 and, to keep a low-power step before it, LLM_BUDGET_THROTTLE_AT=0.8)."""
-    notice = _positive("LLM_BUDGET_NOTICE_AT") or 0.75
+    notice = _positive("LLM_BUDGET_NOTICE_AT") or 0.8
     block = _positive("LLM_BUDGET_BLOCK_AT") or 1.25
     return min(notice, 0.99), max(block, 1.0)
 

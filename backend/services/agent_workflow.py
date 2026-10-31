@@ -2229,7 +2229,9 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             # Where the request's words land in the folder, found by code before the first step (backend/utils/orientation.py): the model goes to the best match instead of searching its way there. A carried-out
             # plan already lists its files, so it is not repeated.
             if plan_phase != code_plan.EXECUTE_PHASE:
-                schema_parts.append(await asyncio.to_thread(orientation.where_to_look, local_workspace_handle.root, snapshot_paths(username), [latest_message_content, *previous_human_texts(state.get("messages", []))]))
+                where_block = await asyncio.to_thread(orientation.where_to_look, local_workspace_handle.root, snapshot_paths(username), [latest_message_content, *previous_human_texts(state.get("messages", []))])
+                schema_parts.append(where_block)
+                llm_turns.note_orientation(orientation.block_paths(where_block))      # kept on the turn, in memory, so the loop can say whether the file it edited was one the block listed
         if state.get("working_notes"):
             # What this conversation has already decided, ruled out and left open (backend/utils/working_state.py): data, kept so a long session does not lose its thread.
             schema_parts.append(state["working_notes"])

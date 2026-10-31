@@ -1,0 +1,56 @@
+/* The coding-loop charts on Sonic Health (components/CounterCharts.tsx). Colours are the app's own theme tokens, so the light and dark themes carry through; the gaps between filled shapes are the card's surface. */
+.counter-charts {
+  --cc-orange: var(--accent-primary);
+  --cc-blue: var(--usage-ok, #2f7de1);
+  --cc-gray: var(--line-strong);
+  --cc-danger: var(--accent-danger);
+  --cc-surface: var(--bg-secondary, var(--bg-main));
+  --cc-ramp-1: var(--accent-primary);
+  --cc-ramp-2: color-mix(in srgb, var(--accent-primary) 68%, var(--cc-surface));
+  --cc-ramp-3: color-mix(in srgb, var(--accent-primary) 45%, var(--cc-surface));
+  --cc-ramp-4: color-mix(in srgb, var(--accent-primary) 26%, var(--cc-surface));
+}
+
+.counter-charts .cc-grid-layout { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 1.25rem 1.5rem; margin-top: 0.75rem; }
+.cc-fig { margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.cc-fig figcaption { display: flex; flex-direction: column; gap: 0.1rem; }
+.cc-fig figcaption strong { font-size: 0.95rem; color: var(--text-main); }
+.cc-fig figcaption span { font-size: 0.78rem; color: var(--text-muted); }
+
+.cc-svg { width: 100%; height: auto; display: block; overflow: visible; }
+.cc-grid { stroke: var(--line-strong); stroke-opacity: 0.35; stroke-width: 1; }
+.cc-cross { stroke: var(--text-muted); stroke-opacity: 0.5; stroke-width: 1; stroke-dasharray: 3 3; }
+.cc-tick { fill: var(--text-muted); font-size: 10px; }
+.cc-seg { stroke: var(--cc-surface); stroke-width: 1; }
+.cc-col rect[tabindex] { outline: none; }
+.cc-col-on .cc-seg { stroke: var(--text-main); stroke-opacity: 0.55; }
+.cc-col rect[tabindex]:focus-visible { stroke: var(--accent-primary); stroke-width: 2; }
+
+.cc-caption { min-height: 2.4em; font-size: 0.8rem; color: var(--text-soft, var(--text-muted)); }
+.cc-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.25rem 0.9rem; font-size: 0.78rem; color: var(--text-soft, var(--text-muted)); }
+.cc-legend li { display: inline-flex; align-items: center; gap: 0.35rem; }
+.cc-swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex: none; }
+.cc-empty { padding: 1.2rem 0.5rem; font-size: 0.82rem; color: var(--text-muted); border: 1px dashed var(--line-strong); border-radius: 8px; text-align: center; }
+
+.cc-bars { display: flex; flex-direction: column; gap: 0.6rem; padding-top: 0.3rem; }
+.cc-bar-row { display: grid; grid-template-columns: 6.5rem 1fr; align-items: center; gap: 0.6rem; }
+.cc-bar-label { font-size: 0.8rem; color: var(--text-main); display: flex; flex-direction: column; line-height: 1.2; }
+.cc-bar-label small { font-size: 0.7rem; color: var(--text-muted); }
+.cc-bar-track { display: flex; gap: 2px; height: 26px; border-radius: 6px; overflow: hidden; background: color-mix(in srgb, var(--line-strong) 18%, transparent); }
+.cc-bar-seg { display: inline-flex; align-items: center; justify-content: center; font-size: 0.7rem; color: #fff; min-width: 0; text-shadow: 0 0 2px rgba(0, 0, 0, 0.45); }
+.cc-bar-none { font-size: 0.72rem; color: var(--text-muted); align-self: center; padding-left: 0.5rem; }
+
+.cc-table summary { cursor: pointer; font-size: 0.78rem; color: var(--accent-primary); }
+.cc-table table { width: 100%; border-collapse: collapse; margin-top: 0.4rem; font-size: 0.76rem; }
+.cc-table th, .cc-table td { text-align: left; padding: 0.2rem 0.4rem; border-bottom: 1px solid color-mix(in srgb, var(--line-strong) 35%, transparent); color: var(--text-soft, var(--text-main)); }
+.cc-table th { font-weight: 600; color: var(--text-main); }
+
+@media (max-width: 640px) {
+  .cc-bar-row { grid-template-columns: 1fr; gap: 0.2rem; }
+  .cc-bar-label { flex-direction: row; gap: 0.5rem; align-items: baseline; }
+}
+
+/* The badge is pinned to the card's top right (SelfService.css); on a phone it would sit on top of the title, so it goes above it. */
+@media (max-width: 640px) {
+  .counter-charts .card-badge { position: static; display: inline-block; margin-bottom: 0.6rem; }
+}

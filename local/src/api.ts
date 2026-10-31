@@ -681,6 +681,8 @@ export interface CountersSummary {
   rates: Record<string, number | null>;
   previous_rates: Record<string, number | null>;
   change: Record<string, number | null>;
+  /** The per-day counters the coding-loop charts draw (only those; days with none are left out). */
+  daily?: Array<{ day: string; counts: Record<string, number> }>;
 }
 
 export interface SafetySummary {

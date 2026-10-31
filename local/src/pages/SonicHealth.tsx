@@ -29,6 +29,8 @@ import { BudgetRequestsPanel } from './SonicHealthBudgetRequests';
 import { WhoSpentTable } from './SonicHealthWhoSpent';
 import { BarRow, BudgetBars, StatTile } from './sonicHealthParts';
 import { budgetAmount, pct, shortDate, tokens, usd } from './sonicHealthFormat';
+import { loopTraceRows } from './sonicHealthLoopTrace';
+import CounterCharts from '../components/CounterCharts';
 import './__styles__/SelfService.css';
 import './__styles__/SonicHealth.css';
 
@@ -396,7 +398,7 @@ export const SonicHealthPage: React.FC = () => {
         ) : noData('model usage'))}
         {tab === 'turns' && <>{health.usage?.turns && health.usage.turns.turns > 0 ? <TurnsCard turns={health.usage.turns} /> : noData('chat turns')}{health.counters && <PromptCard totals={health.counters.totals} />}{health.counters && <LeaningsCard totals={health.counters.totals} />}<ServerMemoryCard /></>}
         {tab === 'budget' && (health.budget ? <><BudgetCard budget={health.budget} /><BudgetRequestsPanel /></> : noData('budget'))}
-        {tab === 'behavior' && <CountersCard counters={health.counters} />}
+        {tab === 'behavior' && <><CounterCharts counters={health.counters} /><CountersCard counters={health.counters} /></>}
         {tab === 'goals' && <GoalsTab goals={health.goals} busyId={busyKey} onApprove={handleGoalApproval} />}
         {tab === 'feedback' && <FeedbackTab feedback={health.feedback} />}
         {tab === 'knowledge' && <KnowledgeTab graph={health.graph} />}
@@ -991,6 +993,11 @@ const CountersCard: React.FC<{ counters: CountersSummary }> = ({ counters }) => 
           <tr><td>Applied edits that were checked in the very next step ({totals.code_rhythm_applies ?? 0} applied edits), and reading-streak notices shown</td><td>{pctOf(totals.code_rhythm_applies_checked ?? 0, totals.code_rhythm_applies ?? 0)} / {totals.code_rhythm_streak_notices ?? 0}</td><td>{pctOf(previousTotals.code_rhythm_applies_checked ?? 0, previousTotals.code_rhythm_applies ?? 0)} / {previousTotals.code_rhythm_streak_notices ?? 0}</td><td><span className="sh-flat">share / notices</span></td></tr>
           <tr><td>In turns that applied an edit: how many of the files it read were the ones it edited, and files read per turn ({totals.reading_edit_turns ?? 0} such turns)</td><td>{pctOf(totals.reading_edit_turn_files_used ?? 0, totals.reading_edit_turn_files_read ?? 0)} / {totals.reading_edit_turns ? ((totals.reading_edit_turn_files_read ?? 0) / totals.reading_edit_turns).toFixed(1) : '-'}</td><td>{pctOf(previousTotals.reading_edit_turn_files_used ?? 0, previousTotals.reading_edit_turn_files_read ?? 0)} / {previousTotals.reading_edit_turns ? ((previousTotals.reading_edit_turn_files_read ?? 0) / previousTotals.reading_edit_turns).toFixed(1) : '-'}</td><td><span className="sh-flat">edited share / files read</span></td></tr>
           <tr><td>Per turn that read the repo: files read again, searches that found nothing, and whole-tree listings ({totals.reading_turns ?? 0} such turns)</td><td>{totals.reading_turns ? `${((totals.reading_rereads ?? 0) / totals.reading_turns).toFixed(1)} / ${((totals.reading_empty_searches ?? 0) / totals.reading_turns).toFixed(1)} / ${((totals.reading_tree_listings ?? 0) / totals.reading_turns).toFixed(1)}` : '-'}</td><td>{previousTotals.reading_turns ? `${((previousTotals.reading_rereads ?? 0) / previousTotals.reading_turns).toFixed(1)} / ${((previousTotals.reading_empty_searches ?? 0) / previousTotals.reading_turns).toFixed(1)} / ${((previousTotals.reading_tree_listings ?? 0) / previousTotals.reading_turns).toFixed(1)}` : '-'}</td><td><span className="sh-flat">re-reads / empty / listings</span></td></tr>
+          {loopTraceRows(totals, previousTotals).map(row => (
+            <tr key={`loop-trace-${row.id}`}>
+              <td>{row.label}</td><td>{row.current}</td><td>{row.previous}</td><td><span className="sh-flat">{row.note}</span></td>
+            </tr>
+          ))}
           {PLAN_STOP_ROWS.map(([key, label]) => (
             <tr key={`plan-stop-${key}`}>
               <td>Plan turn ended because {label}</td>

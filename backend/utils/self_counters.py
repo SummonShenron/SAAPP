@@ -33,6 +33,7 @@ FAILURE_KINDS = ("quota", "overloaded", "other")
 from backend.components.sonic_leanings import LEANINGS  # noqa: E402  (plain data)
 from backend.utils.feeling_questions import KINDS as FEELING_KINDS  # noqa: E402  (a plain tuple of names; that module imports nothing from here)
 from backend.utils.code_plan import PLAN_STOP_REASONS  # noqa: E402  (a plain tuple of names)
+from backend.utils.reading_waste import OPENING_KINDS, ORIENT_RANKS  # noqa: E402  (plain tuples of names)
 
 _GROUPS: Dict[str, tuple] = {
     "route": ROUTES,
@@ -52,6 +53,13 @@ _GROUPS: Dict[str, tuple] = {
     # Why maybe_open_conversation (backend/utils/initiation.py) declined to open a conversation: one count per reason, and no_anchor for nothing to follow up on.
     # Why a turn carrying out an approved plan ended (backend/utils/code_plan.py PLAN_STOP_REASONS): one count per reason, "plan_done" being the only good one.
     "code_plan_stop": PLAN_STOP_REASONS,
+    # How a coding turn's loop began, and the same for turns that were given the "where to look" block; where the best edited file ranked in that block (backend/utils/reading_waste.py).
+    "loop_open": OPENING_KINDS,
+    "loop_open_block": OPENING_KINDS,
+    "orient_rank": ORIENT_RANKS,
+    # The loop step the first edit proposal was made at (backend/utils/loop_rhythm.py), and how big a coding turn's biggest prompt was (backend/utils/code_outcomes.py).
+    "code_first_edit_at": ("very_early", "early", "late", "very_late"),
+    "code_ctx_peak": ("small", "medium", "large", "huge"),
     "initiation_refused": ("guest", "disabled", "recent_risk", "ignored", "too_soon", "new_thread", "already_waiting", "recent_activity", "unknown_gap", "no_anchor", "opener_off", "reach_none", "low_power"),
 }
 _PLAIN_KEYS = ("turns_total", "self_model_used", "experience_captured", "experience_capture_merged", "experience_capture_invalid", "experience_offered", "experience_cited", "native_runs", "native_calls", "native_chars_sent", "native_chars_results", "native_chars_instructions", "native_chars_tools", "native_chars_preferences", "native_chars_architecture", "native_chars_memory", "native_chars_history", "native_chars_leanings", "leaning_turns", "native_chars_environment", "native_chars_request", "code_plan_turns", "code_plan_exec_tool_steps", "code_plan_exec_early", "code_plan_fed_next", "code_plan_turn_cap_hit", "code_plan_submitted", "code_plan_invalid", "code_plan_approved", "code_plan_cancelled", "code_plan_stalled", "code_plan_marked_done", "claim_unproven", "claim_sent_back", "code_plan_exec_turns", "code_plan_exec_cap_hit", "code_plan_exec_edited", "code_plan_steps_done", "code_plan_prefetched", "code_plan_deviation", "code_pushback", "code_frustrated", "code_proposals", "code_proposal_rework", "code_edit_calls", "code_edit_errors", "code_test_runs", "code_edit_applied", "code_edit_declined", "code_edit_undone", "code_edit_applied_small", "code_edit_applied_large", "code_edit_declined_small", "code_edit_declined_large", "code_edit_undone_small", "code_edit_undone_large", "working_notes_updated", "working_notes_item_added", "working_notes_item_dropped", "working_notes_injected", "working_notes_chat_read", "reply_fit_checked", "reward_evaluated", "relatable_offered", "self_mention", "observations_injected", "encouragement_offered", "open_loop_captured", "open_loop_offered", "open_loop_resolved", "callback_offered", "self_history_offered", "initiation_offered", "initiation_fallback", "initiation_answered", "initiation_interest_offered", "initiation_interest_answered", "duration_offered", "curiosity_offered", "curiosity_taken", "shelf_offered", "shelf_taken", "shelf_listed", "finding_selected", "lean_offered", "guardrail_applied", "routines_offered", "followups_offered", "task_results_offered", "meeting_turns", "headsup_offered", "clarify_noted", "clarify_asked", "clarify_answered", "memory_note_dropped", "memory_note_trimmed", "status_offered", "offer_made", "offer_taken", "offer_passed", "offer_held_back", "code_turns", "code_cap_hit", "code_edited", "code_verified", "code_followed", "code_redo")
@@ -63,7 +71,11 @@ MAPS_KEYS = ("maps_turns", "maps_find_places", "maps_travel_times", "maps_errors
 # How much of a coding turn's reading was the right material (backend/utils/reading_waste.py): turns that read, distinct files read, re-reads, searches and empty ones, whole-tree listings, find_file calls, and
 # in turns where an edit was applied: how many files were read and how many of those were the ones edited. Counts only.
 READING_KEYS = ("reading_turns", "reading_files_read", "reading_rereads", "reading_searches", "reading_empty_searches", "reading_tree_listings", "reading_find_files", "reading_edit_turns",
-                "reading_edit_turn_files_read", "reading_edit_turn_files_used")
+                "reading_edit_turn_files_read", "reading_edit_turn_files_used", "reading_top_reads", "reading_window_reads",
+                # Turns given the "where to look" block (backend/utils/orientation.py): how many, how many read, whether the first read was one of its files, edit turns, and reads / the step of the first
+                # edit for those turns (to set against all turns). Prompt size of coding turns: turns, input and cached tokens, calls over 100K.
+                "orient_turns", "orient_read_turns", "orient_first_read_in_block", "orient_edit_turns", "orient_acted_turns", "orient_reads_before_first_act", "orient_first_edit_turns", "orient_first_edit_steps",
+                "code_first_edit_turns", "code_first_edit_steps", "code_ctx_turns", "code_ctx_input", "code_ctx_cached", "code_ctx_calls_huge")
 # Turns that were given the connected folder's own guidance file (backend/utils/project_guidance.py).
 GUIDANCE_KEYS = ("project_guidance_turns",)
 # A saved plan changed because they said it moved or was cancelled (backend/utils/plan_changes.py): rewritten with the new day, removed, and turns where the model was asked and changed nothing.
@@ -220,6 +232,26 @@ def _rates(totals: Dict[str, int]) -> Dict[str, Optional[float]]:
     return rates
 
 
+# The counters the Sonic Health charts draw per day (local/src/components/counterCharts.ts): the coding loop's opening move, when it first edits, how the "where to look" block did, how big its prompts got, and
+# how often a coding turn ran out of steps. Counts only, like everything here; the page is sent just these, not every key of every day.
+CHART_PREFIXES = ("loop_open_", "orient_", "code_first_edit_", "code_ctx_")
+CHART_EXACT = ("code_turns", "code_cap_hit")
+
+
+def _daily(docs: Iterable[Dict[str, Any]], start: str, end: str) -> list:
+    """The chart counters of each day in [start, end), oldest first: [{"day": "2026-10-30", "counts": {...}}]. Days with none of them are left out. Pure."""
+    rows = []
+    for doc in docs:
+        day = str(doc.get("day") or "")
+        if not (start <= day < end):
+            continue
+        counts = {key: int(value) for key, value in (doc.get("counts") or {}).items()
+                  if (key in CHART_EXACT or key.startswith(CHART_PREFIXES)) and isinstance(value, (int, float)) and not isinstance(value, bool) and value}
+        if counts:
+            rows.append({"day": day, "counts": counts})
+    return sorted(rows, key=lambda row: row["day"])
+
+
 def summarize_counters(
     docs: Iterable[Dict[str, Any]], now: Optional[datetime.datetime] = None, days: int = 7
 ) -> Dict[str, Any]:
@@ -244,6 +276,7 @@ def summarize_counters(
         "rates": current_rates,
         "previous_rates": previous_rates,
         "change": change,
+        "daily": _daily(docs, mid, end),
     }
 
 

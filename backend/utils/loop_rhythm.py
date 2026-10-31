@@ -19,6 +19,7 @@ READ_TOOLS = frozenset({"read_repo_file", "search_code", "search_literal", "find
 EDIT_TOOLS = frozenset({"propose_local_edits"})
 CHECK_TOOLS = frozenset({"run_local_check", "run_local_command", "run_sandbox_tests", "run_repo_tests", "run_snippet"})
 ACT_TOOLS = EDIT_TOOLS | CHECK_TOOLS
+FIRST_EDIT_BUCKETS = (("very_early", 2), ("early", 4), ("late", 6), ("very_late", None))     # the loop step the first edit proposal was made at, for the "how long until it acts" histogram
 
 STREAK_NOTICE = (
     "READING STREAK: you have read {streak} times in a row since your last edit or check. Act on what you know now: make the next edit (a test for what you changed counts), or run a check that can "
@@ -47,6 +48,7 @@ class LoopRhythm:
         self.reads_in_a_row = reads_in_a_row or READS_IN_A_ROW
         self.streak = 0
         self.reads_before_first_act: Optional[int] = None
+        self.first_edit_step: Optional[int] = None
         self._reads = 0
         self.applies = 0
         self.applies_checked = 0
@@ -54,10 +56,12 @@ class LoopRhythm:
         self._awaiting_check = False
         self._noticed_at: set = set()
 
-    def after_step(self, calls: Sequence[Tuple[str, Any]]) -> None:
+    def after_step(self, calls: Sequence[Tuple[str, Any]], step: Optional[int] = None) -> None:
         """`calls` is [(tool name, result text)] for one step. A step with any edit or check is an act (it ends the reading streak, even when it failed: it was an attempt); a step with only reads
         adds to the streak; a step with neither (a draft, a note) changes nothing."""
         names = [str(name or "") for name, _ in calls]
+        if self.first_edit_step is None and step and any(name in EDIT_TOOLS for name in names):
+            self.first_edit_step = int(step)       # the first proposal, whether or not it was applied: the step at which the model stopped reading and acted
         acted = any(name in ACT_TOOLS for name in names)
         if self._awaiting_check:
             self._awaiting_check = False
@@ -85,7 +89,7 @@ class LoopRhythm:
 
     def summary(self) -> Dict[str, Any]:
         """Counts only: reads before the first act (None when it never acted), edits applied, applied edits checked in the next step, and notices shown."""
-        return {"reads_before_first_act": self.reads_before_first_act, "applies": self.applies, "applies_checked": self.applies_checked, "notices": self.notices}
+        return {"reads_before_first_act": self.reads_before_first_act, "first_edit_step": self.first_edit_step, "applies": self.applies, "applies_checked": self.applies_checked, "notices": self.notices}
 
 
 def counts_from(summary: Optional[Dict[str, Any]]) -> Dict[str, int]:
@@ -98,6 +102,11 @@ def counts_from(summary: Optional[Dict[str, Any]]) -> Dict[str, int]:
         counts["code_rhythm_acted_turns"] = 1
         if first:
             counts["code_rhythm_reads_before_first_act"] = first
+    step = summary.get("first_edit_step")
+    if isinstance(step, int) and not isinstance(step, bool) and step >= 1:
+        counts["code_first_edit_turns"] = 1
+        counts["code_first_edit_steps"] = step
+        counts["code_first_edit_at_" + next(name for name, limit in FIRST_EDIT_BUCKETS if limit is None or step <= limit)] = 1
     for source, key in (("applies", "code_rhythm_applies"), ("applies_checked", "code_rhythm_applies_checked"), ("notices", "code_rhythm_streak_notices")):
         value = summary.get(source)
         if isinstance(value, int) and not isinstance(value, bool) and value > 0:

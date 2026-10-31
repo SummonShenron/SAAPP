@@ -343,6 +343,9 @@ async def run(
     # is told once, in code, to run the check (`after_apply_hint`) and, after a streak of reads, to act. No model call.
     rhythm = loop_rhythm.LoopRhythm() if can_edit else None
     reading = reading_waste.ReadingLog()          # what this turn read and whether it was what it ended up editing: counts only, kept for the turn (backend/utils/reading_waste.py)
+    from backend.utils import llm_turns as _lt    # aliased: `llm_turns` is imported further down in this function
+
+    reading.set_orientation(_lt.orientation_paths())
 
     async def absorb_steering(step_number: int) -> bool:
         """Folds newly arrived steering into the conversation as a user message and widens the budget. True when there was any."""
@@ -610,7 +613,7 @@ async def run(
                 logger.info("[native_loop] step %s: %d action step(s) handed back (%d of at most %d this turn), budget now %d.", step, grant, action_refunded, ACTION_REFUND_CAP, budget)
         applied_now = any(call.get("name") == "propose_local_edits" and " APPLIED:" in str(result) for call, result in zip(calls, results))
         if rhythm is not None:
-            rhythm.after_step([(str(call.get("name") or ""), result) for call, result in zip(calls, results)])
+            rhythm.after_step([(str(call.get("name") or ""), result) for call, result in zip(calls, results)], step)
         more_plan_steps = False
         if plan_feed is not None and any(call.get("name") == "propose_local_edits" and " APPLIED:" in str(result) for call, result in zip(calls, results)):
             # Carrying out an approved plan and a step's edit was just applied: hand over the next step's files now, from the server, so the model's next call is the edit and not a read (one model

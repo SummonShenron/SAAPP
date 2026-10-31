@@ -201,6 +201,17 @@ def render(ranked: Sequence[Tuple[float, str]], found: Dict[str, Dict[str, Any]]
     return "\n".join(lines)[:MAX_BLOCK_CHARS]
 
 
+def block_paths(block: str) -> List[str]:
+    """The file paths a "where to look" block lists, best first. Parses the block render() wrote, so it is the one reader of that format. Pure."""
+    paths: List[str] = []
+    for line in str(block or "").splitlines():
+        if line.startswith("- "):
+            path = line[2:].split(" (", 1)[0].strip()
+            if path:
+                paths.append(path)
+    return paths
+
+
 def where_to_look(root: Any, paths: Sequence[str], texts: Iterable[Any]) -> str:
     """The "where to look" block for a request in a synced folder, or "" (no specific words, nothing found, or a folder that cannot be read). Blocking disk reads, bounded by DEADLINE_SECONDS; call it off the
     event loop. Never raises: a failure here must cost the turn nothing."""

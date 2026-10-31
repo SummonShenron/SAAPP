@@ -49,6 +49,18 @@ export function ringView(budget: BudgetView): RingView | null {
   return { fraction: budget.fraction!, level: sharedLevel, text: `${sharedText} · ${ownText()}` };
 }
 
+/** The ring turns yellow from this share of its limit and red from the next one (Jack, 2026-10-31). It follows how full the ring is, not the guard's own lines, so the guard's behaviour (low-power mode, the block) is not tied to a colour. */
+export const RING_WARN_AT = 0.75;
+export const RING_DANGER_AT = 0.9;
+
+export type RingTone = 'ok' | 'warn' | 'danger';
+
+/** The colour family of the usage ring: blue below RING_WARN_AT, yellow from there, red from RING_DANGER_AT, and red whenever the guard has blocked. */
+export function ringTone(view: Pick<RingView, 'fraction' | 'level'>): RingTone {
+  if (view.level === 'blocked' || view.fraction >= RING_DANGER_AT) return 'danger';
+  return view.fraction >= RING_WARN_AT ? 'warn' : 'ok';
+}
+
 /** "Budget 54% of month": the share of the budget that is furthest along (admins only: the server sends no percentage to anyone else). */
 export function budgetChipText(budget: BudgetView): string {
   const percent = Math.round((budget.fraction ?? 0) * 100);

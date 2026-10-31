@@ -55,13 +55,14 @@ def test_an_edit_that_changes_a_file_read_in_an_earlier_step_still_counts_as_use
 
 def test_the_summary_keeps_only_counts_never_a_path_or_a_term():
     summary = log_of(("read_repo_file", {"path": "secret/plan.py"}, "t"), ("search_literal", {"term": "SECRET_TERM"}, "No occurrences")).summary()
-    assert all(isinstance(value, int) for value in summary.values()) and "secret" not in str(summary) and "SECRET_TERM" not in str(summary)
+    assert all(isinstance(value, int) for key, value in summary.items() if key != "opening") and summary["opening"] in reading_waste.OPENING_KINDS     # the opening move is one of a fixed list of words
+    assert "secret" not in str(summary) and "SECRET_TERM" not in str(summary)
 
 
 def test_the_counters_for_a_turn_that_read_nothing_are_empty_and_edit_turn_ones_need_an_applied_edit():
     assert counts_from(None) == {} and counts_from("x") == {} and counts_from(ReadingLog().summary()) == {}
     read_only = counts_from(log_of(("read_repo_file", {"path": "a.py"}, "t"), ("search_literal", {"term": "x"}, "No occurrences")).summary())
-    assert read_only == {"reading_turns": 1, "reading_files_read": 1, "reading_searches": 1, "reading_empty_searches": 1}
+    assert read_only == {"reading_turns": 1, "reading_files_read": 1, "reading_searches": 1, "reading_empty_searches": 1, "reading_top_reads": 1, "loop_open_read_top": 1}
     edited = counts_from(log_of(("read_repo_file", {"path": "a.py"}, "t"), ("read_repo_file", {"path": "b.py"}, "t"), ("list_repo_tree", {}, "x"), ("propose_local_edits", {"edits": [{"path": "a.py"}]}, APPLIED)).summary())
     assert edited["reading_edit_turns"] == 1 and edited["reading_edit_turn_files_read"] == 2 and edited["reading_edit_turn_files_used"] == 1 and edited["reading_tree_listings"] == 1
     assert set(edited) <= set(self_counters.KEYS) and set(self_counters.READING_KEYS) <= self_counters.KEYS
@@ -95,7 +96,8 @@ def test_the_native_loop_records_what_it_read_and_it_becomes_counters_for_the_tu
 
     turn = llm_turns.begin("jack")
     asyncio.run(native_loop.run(llm=ScriptedLLM(replies), tools=[{"name": n} for n in ("list_repo_tree", "find_file", "search_literal", "read_repo_file", "propose_local_edits")], act=act, question="fix it", max_steps=12))
-    assert turn.reading == {"files_read": 2, "edited_and_read": 1, "files_edited": 1, "rereads": 0, "searches": 1, "empty_searches": 1, "tree_listings": 1, "find_files": 1, "applied": 1}
+    assert turn.reading == {"files_read": 2, "edited_and_read": 1, "files_edited": 1, "rereads": 0, "searches": 1, "empty_searches": 1, "tree_listings": 1, "find_files": 1, "applied": 1,
+                            "top_reads": 2, "window_reads": 0, "orient_shown": 0, "orient_first_read_in_block": 0, "orient_rank": 0, "opening": "tree"}
     for name in ("list_repo_tree", "search_literal", "find_file", "read_repo_file", "read_repo_file", "propose_local_edits"):
         llm_turns.note_tool_call(name, True)                       # the tool agent's dispatcher counts each call by name; the loop itself does not
     counts = {}

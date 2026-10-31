@@ -71,6 +71,7 @@ _pending_max: Dict[str, int] = {}
 # WHICH tools the tool agent called, by day and tool name: {day: {tool: {"calls", "turns", "errors"}}}. Names only: no arguments, no results.
 _pending_tools: Dict[str, Dict[str, Dict[str, int]]] = {}
 MAX_TOOL_NAME = 40
+OVER_100K = 100_000
 _current: ContextVar[Optional["Turn"]] = ContextVar("llm_turn", default=None)
 
 
@@ -99,6 +100,9 @@ class Turn:
         self.plan_exit = ""  # how the loop ended while carrying out an approved plan (backend/utils/code_plan.py PLAN_STOP_REASONS), as the loop saw it
         self.plan_blocked = ""  # a decision the person made on a proposal this turn that can end it: "declined" or "no_decision"
         self.plan_stop = ""  # the final reason such a turn ended, once the plan's own state is known (code_plan.stop_reason)
+        self.cached = 0  # input tokens served from the prompt cache, of `input`
+        self.calls_over_100k = 0  # calls whose prompt was over 100K tokens: Haiku's input price is five times higher above that
+        self.orientation_paths: list = []  # the files the turn's "where to look" block listed, best first (backend/utils/orientation.py): kept for the turn only, to judge the block
         self.reading: Optional[Dict[str, int]] = None  # what the coding loop read and whether it was the material that mattered (backend/utils/reading_waste.py), counts only
         self.rhythm: Optional[Dict[str, Any]] = None  # the coding loop's rhythm: reads before the first act, edits applied and checked, notices (backend/utils/loop_rhythm.py), counts only
         self.checks: Dict[str, str] = {}  # the checks the coding loop really ran this turn, {kind: "passed" | "failed"} (backend/utils/claim_check.py): what a "tests pass" in the reply is held to
@@ -165,6 +169,9 @@ def note_call(usage: Dict[str, int], model: Optional[str] = None) -> None:
             if _count(usage.get("input")) > turn.peak_input:
                 turn.peak_input, turn.peak_model = _count(usage.get("input")), str(model or "")
             turn.input += _count(usage.get("input"))
+            turn.cached += min(_count(usage.get("cached")), _count(usage.get("input")))
+            if _count(usage.get("input")) > OVER_100K:
+                turn.calls_over_100k += 1
             turn.output += _count(usage.get("output"))
             turn.reasoning += _count(usage.get("reasoning"))
     except Exception:
@@ -322,9 +329,29 @@ def note_reading(summary: Dict[str, Any]) -> None:
         turn = _current.get()
         if turn is None or turn.done or not isinstance(summary, dict):
             return
-        turn.reading = {key: value for key, value in summary.items() if isinstance(value, int) and not isinstance(value, bool)}
+        turn.reading = {key: value for key, value in summary.items() if (isinstance(value, int) and not isinstance(value, bool)) or (key == "opening" and isinstance(value, str))}
     except Exception:
         pass
+
+
+def note_orientation(paths: Any) -> None:
+    """The files the turn's "where to look" block listed, best first. Kept on the turn (in memory) so the loop can say whether what it ended up editing was among them. Never raises."""
+    try:
+        turn = _current.get()
+        if turn is None or turn.done:
+            return
+        turn.orientation_paths = [str(path) for path in list(paths or [])[:8] if path and str(path).strip()]
+    except Exception:
+        pass
+
+
+def orientation_paths() -> list:
+    """The paths noted by note_orientation for the turn running in this context, or []."""
+    try:
+        turn = _current.get()
+        return list(turn.orientation_paths) if turn is not None and not turn.done else []
+    except Exception:
+        return []
 
 
 def note_checks(status: Dict[str, str], sent_back: bool = False) -> None:
@@ -347,7 +374,7 @@ def note_rhythm(summary: Dict[str, Any]) -> None:
         turn = _current.get()
         if turn is None or turn.done or not isinstance(summary, dict):
             return
-        turn.rhythm = {key: summary.get(key) for key in ("reads_before_first_act", "applies", "applies_checked", "notices")}
+        turn.rhythm = {key: summary.get(key) for key in ("reads_before_first_act", "first_edit_step", "applies", "applies_checked", "notices")}
     except Exception:
         pass
 

@@ -85,6 +85,7 @@ def summarize_turn(turn: Any) -> Optional[Dict[str, Any]]:
         "edit_calls": _count(tools, EDIT_TOOLS, "calls"), "edit_errors": _count(tools, EDIT_TOOLS, "errors"), "test_runs": _count(tools, TEST_TOOLS, "calls"),
         "plan_stop": str(getattr(turn, "plan_stop", "") or ""), "tool_steps": int(getattr(turn, "loop_steps", 0) or 0),
         "rhythm": getattr(turn, "rhythm", None), "reading": getattr(turn, "reading", None),
+        "context": {"peak": int(getattr(turn, "peak_input", 0) or 0), "over_100k": int(getattr(turn, "calls_over_100k", 0) or 0), "input": int(getattr(turn, "input", 0) or 0), "cached": int(getattr(turn, "cached", 0) or 0)},
     }
 
 
@@ -106,6 +107,37 @@ def outcome_counts(outcome: str, changes: Dict[str, Any]) -> Dict[str, int]:
     if outcome not in OUTCOMES:
         return {}
     return {f"code_edit_{outcome}": 1, f"code_edit_{outcome}_{size_bucket(changes)}": 1}
+
+
+PEAK_BUCKETS = (("small", 25_000), ("medium", 50_000), ("large", 100_000), ("huge", None))     # "huge": over 100K tokens, where Haiku costs five times as much
+
+
+def _tally_context(counts: Dict[str, int], context: Any) -> None:
+    """How big the coding turn's prompts got: its biggest call (bucketed), calls over 100K tokens, and input tokens with how many were cache reads. Counts only."""
+    if not isinstance(context, dict) or not int(context.get("input") or 0):
+        return
+    peak = int(context.get("peak") or 0)
+    _add(counts, "code_ctx_turns", 1)
+    _add(counts, "code_ctx_input", int(context.get("input") or 0))
+    _add(counts, "code_ctx_cached", int(context.get("cached") or 0))
+    _add(counts, "code_ctx_calls_huge", int(context.get("over_100k") or 0))
+    _add(counts, "code_ctx_peak_" + next(name for name, limit in PEAK_BUCKETS if limit is None or peak <= limit), 1)
+
+
+def _tally_orientation_slice(counts: Dict[str, int], summary: Dict[str, Any]) -> None:
+    """The time-to-act numbers for the turns that were given the "where to look" block, so they can be read against all turns (backend/utils/orientation.py)."""
+    reading = summary.get("reading") if isinstance(summary.get("reading"), dict) else {}
+    rhythm = summary.get("rhythm") if isinstance(summary.get("rhythm"), dict) else {}
+    if not reading.get("orient_shown"):
+        return
+    first = rhythm.get("reads_before_first_act")
+    if isinstance(first, int) and not isinstance(first, bool) and first >= 0:
+        _add(counts, "orient_acted_turns", 1)
+        _add(counts, "orient_reads_before_first_act", first)
+    step = rhythm.get("first_edit_step")
+    if isinstance(step, int) and not isinstance(step, bool) and step >= 1:
+        _add(counts, "orient_first_edit_turns", 1)
+        _add(counts, "orient_first_edit_steps", step)
 
 
 def tally_turn(counts: Dict[str, int], summary: Optional[Dict[str, Any]], plan_phase: Optional[str] = None) -> None:
@@ -135,6 +167,8 @@ def tally_turn(counts: Dict[str, int], summary: Optional[Dict[str, Any]], plan_p
         _add(counts, key, amount)
     for key, amount in reading_waste.counts_from(summary.get("reading")).items():
         _add(counts, key, amount)
+    _tally_context(counts, summary.get("context"))
+    _tally_orientation_slice(counts, summary)
     _add(counts, "code_edit_calls", summary.get("edit_calls", 0))
     _add(counts, "code_edit_errors", summary.get("edit_errors", 0))
     _add(counts, "code_test_runs", summary.get("test_runs", 0))

@@ -1,7 +1,7 @@
 // Run with: node --test src/components/budgetText.test.mjs   (from local/; Node 22.18+ runs the TypeScript module directly)
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { budgetChipText, ownUsageText, resetText, ringView } from './budgetText.ts';
+import { budgetChipText, ownUsageText, resetText, ringTone, ringView, RING_DANGER_AT, RING_WARN_AT } from './budgetText.ts';
 
 test('a person is told how far along their own limit is, in their own words and with no amount', () => {
   assert.equal(ownUsageText({ level: 'ok', own_fraction: 0.54, own_scope: 'my_day' }), 'Your usage: 54% of your day');
@@ -83,4 +83,26 @@ test('the ring says when the figure it follows resets, for an admin and for ever
   assert.ok(admin.text.startsWith(`Budget 97% of 5 hours, resets ${when} · Your usage: 30% of your 5 hours, resets `));
   const person = ringView({ level: 'ok', own_fraction: 0.54, own_scope: 'my_five', own_level: 'ok', own_resets_at: today(16, 5) });
   assert.equal(person.text, `Your usage: 54% of your 5 hours, resets ${clock(new Date(today(16, 5)))}`);
+});
+
+test('the ring is blue below 75%, yellow from 75% and red from 90%, whatever the guard\'s own lines are', () => {
+  assert.equal(RING_WARN_AT, 0.75);
+  assert.equal(RING_DANGER_AT, 0.9);
+  for (const [fraction, tone] of [[0, 'ok'], [0.5, 'ok'], [0.74, 'ok'], [0.75, 'warn'], [0.8, 'warn'], [0.89, 'warn'], [0.9, 'danger'], [1, 'danger'], [1.4, 'danger']]) {
+    assert.equal(ringTone({ fraction, level: 'ok' }), tone, String(fraction));
+  }
+  // the guard's level does not move the colour before the fraction does: a "notice" at 80% of a stricter budget is still just yellow
+  assert.equal(ringTone({ fraction: 0.8, level: 'throttled' }), 'warn');
+  assert.equal(ringTone({ fraction: 0.2, level: 'notice' }), 'ok');
+});
+
+test('a blocked guard is red even if the ring is not full', () => {
+  assert.equal(ringTone({ fraction: 0.3, level: 'blocked' }), 'danger');
+});
+
+test('the usage ring paints itself from the tone and no longer from the guard\'s level', async () => {
+  const { readFileSync } = await import('node:fs');
+  const ring = readFileSync(new URL('./UsageRing.tsx', import.meta.url), 'utf8');
+  assert.match(ring, /const color = TONE_COLOR\[ringTone\(view\)\];/);
+  assert.ok(!ring.includes('LEVEL_COLOR'));
 });
