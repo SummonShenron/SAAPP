@@ -4,9 +4,9 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { CHIPS, answersId, answersValue, chipLabel, isChanged, modeId, modeValue, optionOf, thinkingId, thinkingValue } from './composerChipsLogic.ts';
 
-test('each setting is one icon with exactly two states, and the quiet one is the ordinary state', () => {
+test('each setting is one icon with its states (two, and three for the code model), and the quiet one is the ordinary state', () => {
   for (const spec of Object.values(CHIPS)) {
-    assert.equal(spec.options.length, 2, spec.key);
+    assert.equal(spec.options.length, spec.key === 'model' ? 3 : 2, spec.key);          // Gemini, Claude, and Claude Sonnet (offered only where the server has its price)
     assert.ok(spec.options.some(option => option.id === spec.ordinary), `${spec.key} has its ordinary state among its options`);
     for (const option of spec.options) assert.ok(option.name && option.hint, `${spec.key}/${option.id} says what it is and what it does`);
   }
@@ -17,9 +17,10 @@ test('the names the person sees', () => {
   assert.deepEqual(CHIPS.mode.options.map(option => option.name), ['Plan', 'Agent']);
   assert.deepEqual(CHIPS.thinking.options.map(option => option.name), ['Swift', 'Deep']);
   assert.deepEqual(CHIPS.answers.options.map(option => option.name), ['Grounded', 'Open']);
-  assert.deepEqual(CHIPS.model.options.map(option => option.name), ['Gemini', 'Claude']);
+  assert.deepEqual(CHIPS.model.options.map(option => option.name), ['Gemini', 'Claude', 'Claude Sonnet']);
   assert.equal(chipLabel('thinking', 'swift'), 'Thinking: Swift');
   assert.equal(chipLabel('model', 'claude'), 'Code model: Claude');
+  assert.equal(chipLabel('model', 'sonnet'), 'Code model: Claude Sonnet');
 });
 
 test('an unknown value reads as the ordinary state, and only the other state is "changed"', () => {
@@ -32,6 +33,17 @@ test('an unknown value reads as the ordinary state, and only the other state is 
   assert.equal(isChanged('answers', 'open'), true);
   assert.equal(isChanged('model', 'gemini'), false);
   assert.equal(isChanged('model', 'claude'), true);
+  assert.equal(isChanged('model', 'sonnet'), true);
+});
+
+test('Sonnet is left out of the popup unless the server offers it, says what it costs, and draws the Claude mark', () => {
+  const chips = readFileSync(new URL('./ComposerChips.tsx', import.meta.url), 'utf8');
+  assert.match(chips, /spec\.options\.filter\(option => !control\.hide\?\.includes\(option\.id\)\)/);
+  assert.match(chips, /id === 'claude' \|\| id === 'sonnet'\) return <ClaudeMark \/>/);
+  const chat = readFileSync(new URL('../pages/Chat.tsx', import.meta.url), 'utf8');
+  assert.match(chat, /hide: sonnetAvailable \? \[\] : \['sonnet'\]/);
+  assert.match(chat, /setSonnetAvailable\(data\.sonnet_available === true\)/);
+  assert.match(optionOf('model', 'sonnet').hint, /about 20 times the cost of Claude/);
 });
 
 test('the chips map to the settings the page already keeps, both ways, with the old defaults unchanged', () => {

@@ -70,7 +70,7 @@ def test_guests_and_the_embed_are_always_gemini_and_cannot_change_it(who):
 # ---------------------------------------------------------------------------------------------------------------
 
 def test_with_nothing_set_it_shows_gemini_offered_when_claude_is_configured():
-    assert usu.tool_model_view("jack", claude_ready=True) == {"tool_model": "gemini", "choice": None, "default": "gemini", "available": True}
+    assert usu.tool_model_view("jack", claude_ready=True) == {"tool_model": "gemini", "choice": None, "default": "gemini", "available": True, "sonnet_available": False}
 
 
 def test_a_choice_is_shown_as_chosen():
@@ -157,9 +157,9 @@ def test_a_guest_cannot_switch_it_for_everyone():
 
 def test_the_endpoints_use_those_rules():
     source = open(os.path.join(REPO, "app.py"), encoding="utf-8").read()
-    assert 'view, problem = save_tool_model_choice(username, payload.tool_model, claude_available())' in source
+    assert 'view, problem = save_tool_model_choice(username, payload.tool_model, claude_available(), sonnet_available())' in source
     assert 'raise HTTPException(status_code=problem[0], detail=problem[1])' in source
-    assert 'return tool_model_view(username, claude_available())' in source
+    assert 'return tool_model_view(username, claude_available(), sonnet_available())' in source
 
 
 def test_the_chat_turn_hands_the_choice_to_the_agent():
@@ -174,4 +174,4 @@ def test_the_model_chip_is_offered_only_when_available_and_changes_the_tool_mode
     chat = open(os.path.join(REPO, "local", "src", "pages", "Chat.tsx"), encoding="utf-8").read()
     start = chat.index("model: toolModelAvailable ?")        # the chip is one entry of the shared chatSettings object (the bar, the column card and the phone strip all read it)
     chip = chat[start:chat.index(": null,", start)]
-    assert "handleToolModelChange" in chip and "value: toolModel" in chip and "'gemini' | 'claude'" in chip
+    assert "handleToolModelChange" in chip and "value: toolModel" in chip and "id as ToolModel" in chip and "hide: sonnetAvailable ? [] : ['sonnet']" in chip

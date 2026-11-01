@@ -25,12 +25,13 @@ DEFAULT_RAG_MODE = RAG_MODE_OPEN
 DEFAULT_DEEP_THINKING = False
 DEFAULT_PLAN_MODE = False       # "Plan first": a change to the person's folder starts with a plan they approve (backend/utils/code_plan.py)
 
-# Which model does the tool agent's reasoning steps (reading code, searching, writing the code in its answer): "gemini" or "claude". The reply the person reads is
-# still written by Gemini either way, so "claude" is the hybrid. A person who never chose has no stored value and gets the server's default (TOOL_AGENT_PROVIDER,
-# which is Gemini unless the operator set it): see backend/models/models.py tool_agent_llm.
+# Which model does the tool agent's reasoning steps (reading code, searching, writing the code in its answer): "gemini", "claude" (Haiku) or "sonnet" (Claude Sonnet, the
+# stronger and 20 times dearer option, offered only when its price is configured). The reply the person reads is still written by Gemini either way, so "claude" and "sonnet" are
+# the hybrid. A person who never chose has no stored value and gets the server's default (TOOL_AGENT_PROVIDER, which is Gemini unless the operator set it): see backend/models/models.py tool_agent_llm.
 TOOL_MODEL_GEMINI = "gemini"
 TOOL_MODEL_CLAUDE = "claude"
-VALID_TOOL_MODELS = {TOOL_MODEL_GEMINI, TOOL_MODEL_CLAUDE}
+TOOL_MODEL_SONNET = "sonnet"
+VALID_TOOL_MODELS = {TOOL_MODEL_GEMINI, TOOL_MODEL_CLAUDE, TOOL_MODEL_SONNET}
 
 
 # PAAPP's legacy calendar tool hardcoded every event to 'America/Chicago' for a single operator —
@@ -248,24 +249,30 @@ def server_default_tool_model() -> str:
     return TOOL_MODEL_CLAUDE if os.getenv("TOOL_AGENT_PROVIDER", "").strip().lower() == "anthropic" else TOOL_MODEL_GEMINI
 
 
-def tool_model_view(username: str, claude_ready: bool) -> dict:
-    """What the settings menu shows: the model in effect, whether the person chose it, the server's default, and whether Claude can be offered to them at all
-    (a key is configured and they are not a guest). With no key, the effective model is Gemini whatever was stored."""
+def tool_model_view(username: str, claude_ready: bool, sonnet_ready: bool = False) -> dict:
+    """What the settings menu shows: the model in effect, whether the person chose it, the server's default, whether Claude can be offered to them at all
+    (a key is configured and they are not a guest), and whether Sonnet can (also needs its price configured). With no key, the effective model is Gemini whatever was stored;
+    a stored Sonnet that can no longer be offered shows as Claude (it is served by Haiku, see models.tool_agent_llm)."""
     stored = get_user_tool_model(username)
     offered = bool(claude_ready) and username not in TOOL_MODEL_LOCKED_USERS
+    sonnet_offered = offered and bool(sonnet_ready)
     effective = (stored or server_default_tool_model()) if offered else TOOL_MODEL_GEMINI
-    return {"tool_model": effective, "choice": stored, "default": server_default_tool_model(), "available": offered}
+    if effective == TOOL_MODEL_SONNET and not sonnet_offered:
+        effective = TOOL_MODEL_CLAUDE
+    return {"tool_model": effective, "choice": stored, "default": server_default_tool_model(), "available": offered, "sonnet_available": sonnet_offered}
 
 
-def save_tool_model_choice(username: str, mode: str, claude_ready: bool):
+def save_tool_model_choice(username: str, mode: str, claude_ready: bool, sonnet_ready: bool = False):
     """What the settings endpoint does with a request: (the view to return, None) when saved, or (None, (status code, message)) when it is refused. An unknown
-    model is a 400; Claude when no key is configured is a 409 (it cannot be offered, so it cannot be chosen)."""
+    model is a 400; Claude when no key is configured is a 409 (it cannot be offered, so it cannot be chosen), and so is Sonnet without a key or without its price."""
     if mode not in VALID_TOOL_MODELS:
-        return None, (400, "tool_model must be 'gemini' or 'claude'")
-    if mode == TOOL_MODEL_CLAUDE and not claude_ready:
+        return None, (400, "tool_model must be 'gemini', 'claude' or 'sonnet'")
+    if mode in (TOOL_MODEL_CLAUDE, TOOL_MODEL_SONNET) and not claude_ready:
         return None, (409, "Claude isn't set up on this server.")
+    if mode == TOOL_MODEL_SONNET and not sonnet_ready:
+        return None, (409, "Claude Sonnet isn't priced on this server, so it can't be used yet.")
     set_user_tool_model(username, mode)
-    return tool_model_view(username, claude_ready), None
+    return tool_model_view(username, claude_ready, sonnet_ready), None
 
 
 def get_user_target_repo(username: str) -> Optional[str]:

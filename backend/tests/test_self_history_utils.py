@@ -147,7 +147,10 @@ def test_an_old_entry_is_not_volunteered():
 
 def test_the_asked_block_lists_the_entries_with_their_month_and_forbids_embellishment_and_a_claimed_past():
     block = sh.build_self_history_block(pick("what's new with you?"))
-    assert "ABOUT YOUR OWN RECENT CHANGES" in block and "(October 2026)" in block
+    newest = max(e["month"] for e in CHANGELOG)                                          # not a fixed month: every new entry moves what is newest
+    year, month = newest.split("-")
+    month_name = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][int(month) - 1]
+    assert "ABOUT YOUR OWN RECENT CHANGES" in block and f"({month_name} {year})" in block
     assert "Don't add abilities, dates or reasons that aren't listed" in block
     assert "never as something you remember going through or felt" in block
     assert "you don't exist between conversations the way a person does" in block.lower() and "a few jobs do run on their own" in block

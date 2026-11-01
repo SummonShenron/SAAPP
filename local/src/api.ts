@@ -435,15 +435,17 @@ export async function updateDeepThinking(deepThinking: boolean): Promise<{ deep_
 
 /**
  * Which model does the tool agent's reasoning steps (reading code, searching, writing the code in its answer). The reply itself is written by Gemini either way,
- * so "claude" is the hybrid. `available` is false when Claude isn't set up on the server or for guests, and then the setting isn't offered.
+ * so "claude" (Haiku) and "sonnet" are the hybrid. `available` is false when Claude isn't set up on the server or for guests, and then the setting isn't offered.
+ * `sonnet_available` is whether Sonnet is offered too: it needs its price configured on the server (it costs about 20 times as much).
  */
-export type ToolModel = 'gemini' | 'claude';
+export type ToolModel = 'gemini' | 'claude' | 'sonnet';
 export interface ToolModelSetting {
   tool_model: ToolModel;
   /** The person's own choice, or null when they never chose (the server's default applies). */
   choice: ToolModel | null;
   default: ToolModel;
   available: boolean;
+  sonnet_available: boolean;
 }
 
 export async function getToolModel(): Promise<ToolModelSetting> {

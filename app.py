@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
-from backend.models.models import llm, get_stream_llm, claude_available
+from backend.models.models import llm, get_stream_llm, claude_available, sonnet_available
 from backend.models.attachment import Attachment
 from backend.services.github_service import (
     process_pr_summary, verify_and_store_github_token, GitHubTokenRejected, GitHubUnreachable,
@@ -761,7 +761,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     _settings = get_user_settings_bundle(username)
     effective_rag_mode = _settings["rag_mode"]
     effective_deep_thinking = _settings["deep_thinking"]
-    effective_tool_model = _settings.get("tool_model")      # "claude" | "gemini" | None (never chose: the server's default)
+    effective_tool_model = _settings.get("tool_model")      # "claude" | "sonnet" | "gemini" | None (never chose: the server's default)
     effective_target_repo = _settings["target_repo"]
     user_profile = _settings.get("profile") or profile_utils.stored_profile({})  # what they set on the Account page (backend/utils/profile_utils.py)
     reach_level = reach_utils.reach_of(user_profile)  # how often Sonic may bring something up by itself (backend/utils/reach.py)
@@ -3206,13 +3206,13 @@ async def get_tool_model_setting(current_user = Depends(get_current_user)):
     """Which model does the tool agent's reasoning steps for this person: their own choice, else the server's default. `available` is whether Claude can be
     offered at all (a key is configured); guests and the embed are always Gemini."""
     username = current_user.get("sub")
-    return tool_model_view(username, claude_available())
+    return tool_model_view(username, claude_available(), sonnet_available())
 
 
 @app.put("/api/settings/tool-model")
 async def update_tool_model_setting(payload: ToolModelUpdate, current_user = Depends(get_current_user)):
     username = current_user.get("sub")
-    view, problem = save_tool_model_choice(username, payload.tool_model, claude_available())
+    view, problem = save_tool_model_choice(username, payload.tool_model, claude_available(), sonnet_available())
     if problem:
         raise HTTPException(status_code=problem[0], detail=problem[1])
     return view

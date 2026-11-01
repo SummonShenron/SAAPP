@@ -3,7 +3,12 @@ import Icon, { type IconName } from './icons';
 import { CHIPS, chipLabel, isChanged, optionOf, type ChipKey } from './composerChipsLogic';
 import './__styles__/ComposerChips.css';
 
-export interface ChipControl { value: string; onChange: (id: string) => void; }
+export interface ChipControl {
+  value: string;
+  onChange: (id: string) => void;
+  /** Options this person is not offered (for example Sonnet where the server has no price for it); they are left out of the popup. */
+  hide?: string[];
+}
 
 /** What the chat settings need, in the three places they can live: under the message box, in the column's "Chat settings" card, and down the phone strip (SessionRail). */
 export interface ChatSettings {
@@ -66,7 +71,7 @@ const ICON_NAMES: Record<string, IconName> = { plan: 'checklist', swift: 'bolt',
 /** The icon for one state of one chip. */
 export function glyph(id: string): React.ReactNode {
   if (id === 'gemini') return <GeminiMark />;
-  if (id === 'claude') return <ClaudeMark />;
+  if (id === 'claude' || id === 'sonnet') return <ClaudeMark />;
   if (id === 'agent') return <RobotMark />;
   return <Icon name={ICON_NAMES[id] ?? 'checklist'} size={18} />;
 }
@@ -77,7 +82,7 @@ export function ChipChoices({ chipKey, control, onDone, className }: { chipKey: 
   return (
     <div className={className} role="menu" aria-label={spec.title}>
       <div className="cc-pop-title">{spec.title}</div>
-      {spec.options.map(option => (
+      {spec.options.filter(option => !control.hide?.includes(option.id)).map(option => (
         <button
           key={option.id} type="button" role="menuitemradio" aria-checked={option.id === control.value}
           className={`cc-opt${option.id === control.value ? ' is-selected' : ''}`}

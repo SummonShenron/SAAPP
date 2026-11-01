@@ -10,7 +10,8 @@ from langchain_core.messages import AIMessage, HumanMessage
 from backend.utils import working_state as ws
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-NOW = datetime(2026, 10, 25, 15, 0, tzinfo=timezone.utc)
+# Yesterday at 15:00 (not a fixed date): the code under test also reads the real clock, and a fixed date eventually falls outside the note's seven-day life (these tests began to fail on 2026-11-01).
+NOW = (datetime.now(timezone.utc) - timedelta(days=1)).replace(hour=15, minute=0, second=0, microsecond=0)
 
 
 def run(coro):

@@ -27,3 +27,10 @@ SAAPP is a FastAPI backend (`app.py`, `backend/`) with a React frontend (`local/
 - A script that reads the database: run it from the project folder and use `from backend.utils.db_utils import get_db` (it reads `.env` itself: `MONGO_URI`, database `saapp_database`, needs `USE_DB=true`). Do not use `MONGODB_URI` or ask for credentials. Read only unless asked to write; do not print user text.
 - Tests never touch the real database, embeddings or model: stub `get_db` (`monkeypatch.setattr(module, 'get_db', lambda: fake)`) or use `FakeDB` from `backend/tests/fake_runner_db.py`. Only scripts use the real `get_db()`.
 - Never claim a test passed, or a change was applied, unless a result says so.
+
+## Check your work against the real thing (each of these was a real mistake)
+- **Test inputs come from the real code, never from imagination.** Read the code that produces the data and copy its exact shape, including what it returns when nothing is found or it fails. (An invented web search result passed; the real one is one line of JSON.)
+- **A change has two ends.** If you add a field or kind sent across a boundary (backend to frontend, server to runner), find what receives it (`search_literal` a sibling value) and change it too, or say you did not.
+- **Count by the real format** (numbered lines, JSON rows), and treat "nothing found" text as zero.
+- **No fixed dates in tests** when the code also reads the clock: use `datetime.now(timezone.utc) - timedelta(days=1)`.
+- **End by saying what you checked and what you did not.**

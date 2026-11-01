@@ -212,6 +212,20 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "sonnet_code_model",
+        "requires": [
+            "backend/models/models.py::def sonnet_available",
+            "backend/models/claude_llm.py::SONNET_MODEL",
+        ],
+        "month": "2026-11",
+        "title": "Claude Sonnet for the code steps",
+        "line": (
+            "I can now use Claude Sonnet for the reasoning and code-writing steps when you pick it in the Code model setting, which costs about 20 times more per step than Claude Haiku."
+        ),
+        "keywords": ["sonnet", "code model", "stronger model", "better model", "bigger model", "which model"],
+        "volunteer": [],
+    },
+    {
         "id": "task_extra_searches",
         "requires": [
             "backend/utils/user_tasks.py::MAX_EXTRA_TOPICS",

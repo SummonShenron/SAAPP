@@ -15,7 +15,8 @@ from backend.services import user_task_scheduler as scheduler
 from backend.utils import user_tasks as ut
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-NOW = datetime(2026, 10, 19, 14, 0, tzinfo=timezone.utc)
+# Yesterday at 14:00 (not a fixed date): the code under test also reads the real clock, and a fixed date eventually falls outside its windows (these tests began to fail on 2026-11-01).
+NOW = (datetime.now(timezone.utc) - timedelta(days=1)).replace(hour=14, minute=0, second=0, microsecond=0)
 SHA = "a" * 40
 
 

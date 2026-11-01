@@ -28,6 +28,11 @@ from backend.utils import llm_usage
 logger = logging.getLogger("SASS Logger")
 
 DEFAULT_MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-5-5")
+# The stronger option in the Code model chip (2026-11-01): Claude Sonnet 5.5 lists at $2.00 / $10.00 per million input / output tokens (cached input $0.20), 20 times Haiku's $0.10 / $0.50. It is offered
+# only when LLM_PRICES lists it (models.sonnet_available), so its spend is always visible to the budget guard. Its effort defaults to "medium" here (the model's own default is "high", which spends
+# more thinking on every step of a loop that already re-sends the whole conversation).
+SONNET_MODEL = os.getenv("CLAUDE_SONNET_MODEL", "claude-sonnet-5-5")
+SONNET_EFFORT = os.getenv("CLAUDE_SONNET_EFFORT", "medium").strip().lower() or None
 DEFAULT_EFFORT = os.getenv("CLAUDE_EFFORT", "").strip().lower() or None          # "low" | "medium" | "high"; unset leaves the model's own default
 THINKING_OFF = os.getenv("CLAUDE_THINKING", "").strip().lower() in ("0", "off", "false", "disabled")
 CACHE_DEFAULT = os.getenv("CLAUDE_CACHE", "on").strip().lower() not in ("0", "off", "false", "no")      # automatic prompt caching (see the class)
@@ -75,7 +80,8 @@ class ClaudeLLM:
             if self.effort:
                 kwargs["effort"] = self.effort
             if self.thinking_off:
-                kwargs["thinking"] = {"type": "disabled"}
+                # Sonnet 5.5 answers `disabled` with a 400; "between_tools" is how it is told not to think (accepted at effort high or below).
+                kwargs["thinking"] = {"type": "between_tools"} if "sonnet" in self.model_name else {"type": "disabled"}
             if self.cache:
                 # Automatic caching: one top-level field, and the API keeps the cache breakpoint at the end of the conversation as it grows.
                 kwargs["model_kwargs"] = {"cache_control": {"type": "ephemeral"}}

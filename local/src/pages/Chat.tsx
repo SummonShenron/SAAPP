@@ -27,7 +27,7 @@ import { HEIC_NOTICE, isUnreadableHeic, shrinkImageFile } from '../utils/imageSh
 import MeetingControl from '../components/MeetingControl';
 import WorkingNotesControl from '../components/WorkingNotesControl';
 import PlanCard from '../components/PlanCard';
-import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type BudgetView, type CodePlan, type KnowledgeBase, type MemorySources, type RunnerJob } from '../api';
+import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type BudgetView, type CodePlan, type KnowledgeBase, type MemorySources, type RunnerJob, type ToolModel } from '../api';
 import MemorySourceDialog from '../components/MemorySourceDialog';
 import BudgetBanner from '../components/BudgetBanner';
 import SessionColumn, { type ConnectionProps, type FolderControls, type RepoControls } from '../components/SessionColumn';
@@ -718,8 +718,9 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [deepThinking, setDeepThinking] = useState<boolean>(false);
   const [planMode, setPlanMode] = useState<boolean>(false);
   const [codePlan, setCodePlan] = useState<CodePlan | null>(null);
-  const [toolModel, setToolModel] = useState<'gemini' | 'claude'>('gemini');
+  const [toolModel, setToolModel] = useState<ToolModel>('gemini');
   const [toolModelAvailable, setToolModelAvailable] = useState<boolean>(false);
+  const [sonnetAvailable, setSonnetAvailable] = useState<boolean>(false);       // Sonnet is offered only where the server has its price (it costs about 20 times Haiku)
   const [budget, setBudget] = useState<BudgetView | null>(null);
   const openingRequestedRef = useRef<string | null>(null);
   const [allowedAffiliates, setAllowedAffiliates] = useState<KnowledgeBase[]>([]);
@@ -1162,7 +1163,7 @@ useEffect(() => {
   useEffect(() => {
     if (!principal) return;
     api.getToolModel()
-      .then(data => { setToolModel(data.tool_model); setToolModelAvailable(data.available); })
+      .then(data => { setToolModel(data.tool_model); setToolModelAvailable(data.available); setSonnetAvailable(data.sonnet_available === true); })
       .catch(() => { /* guests and embeds have no such setting */ });
   }, [principal]);
 
@@ -1181,7 +1182,7 @@ useEffect(() => {
     if (!loading) refreshBudget();
   }, [loading, refreshBudget]);
 
-  const handleToolModelChange = async (next: 'gemini' | 'claude') => {
+  const handleToolModelChange = async (next: ToolModel) => {
     const before = toolModel;
     setToolModel(next);
     try {
@@ -2311,7 +2312,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
   // The chat settings, built once for the two places they live: the content of the session column's "Chat settings" card, and one button each down the phone strip (SessionRail). Never under the
   // message box, on any screen.
   const chatSettings: ChatSettings = {
-    model: toolModelAvailable ? { value: toolModel, onChange: id => { void handleToolModelChange(id as 'gemini' | 'claude'); } } : null,
+    model: toolModelAvailable ? { value: toolModel, onChange: id => { void handleToolModelChange(id as ToolModel); }, hide: sonnetAvailable ? [] : ['sonnet'] } : null,
     mode: workspace.canEdit ? { value: modeId(planMode), onChange: id => { void handlePlanModeChange(modeValue(id)); } } : null,
     thinking: { value: thinkingId(deepThinking), onChange: id => { void handleDeepThinkingChange(thinkingValue(id)); } },
     answers: { value: answersId(ragMode), onChange: id => { void handleRagModeChange(answersValue(id)); } },

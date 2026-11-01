@@ -70,6 +70,7 @@ EVAL_PRICES = {
     "gemini-3.1-flash-lite": {"input": 0.25, "output": 1.50, "cached_input": 0.025},
     "gemini-3.6-flash": {"input": 0.75, "output": 3.75, "cached_input": 0.075},
     "claude-haiku-5-5": {"input": 0.10, "output": 0.50, "cached_input": 0.01},
+    "claude-sonnet-5-5": {"input": 2.00, "output": 10.00, "cached_input": 0.20},
 }
 
 

@@ -19,7 +19,9 @@ export const CHIPS: Record<ChipKey, ChipSpec> = {
     key: 'model', title: 'Code model', ordinary: 'gemini',
     options: [
       { id: 'gemini', name: 'Gemini', hint: 'The default.' },
-      { id: 'claude', name: 'Claude', hint: 'Does the reasoning and code-writing steps. The reply is still written by Gemini.' },
+      { id: 'claude', name: 'Claude', hint: 'Claude Haiku does the reasoning and code-writing steps. The reply is still written by Gemini.' },
+      // Offered only where the server has Sonnet's price (ChipControl.hide): it costs about 20 times Haiku per step, so the hint says so.
+      { id: 'sonnet', name: 'Claude Sonnet', hint: 'The strongest for hard code changes, and about 20 times the cost of Claude per step. The reply is still written by Gemini.' },
     ],
   },
   mode: {
