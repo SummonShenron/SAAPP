@@ -205,6 +205,8 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
                     "new_string": {"type": "string", "description": "what replaces old_string"},
                     "replace_all": {"type": "boolean", "description": "true when the same text should change in EVERY place it appears"},
                     "content": {"type": "string", "description": "the whole text of a NEW file (instead of old_string/new_string)"},
+                    "delete": {"type": "boolean", "description": "true to DELETE this existing text file (give nothing else in this edit)"},
+                    "rename_to": {"type": "string", "description": "a new path to MOVE this existing text file to (give nothing else in this edit)"},
                     "document": {
                         "type": "object",
                         "description": "a NEW Word document (path ends in .docx)",
@@ -295,7 +297,9 @@ NATIVE_DESCRIPTIONS: Dict[str, str] = {
         "Make a change to the person's connected local folder. It changes nothing by itself: the person sees a diff with an Apply button, which is their confirmation, and can undo it. "
         "Use it INSTEAD of pasting code in your answer whenever they ask you to make, apply or implement a change to files in their folder. Read the file first, then copy old_string "
         "EXACTLY as you read it this turn, with its indentation, and include enough surrounding lines that it matches exactly once (or set replace_all for every occurrence). "
-        "Forms of edit: {path, old_string, new_string} changes an existing text file; {path, content} creates a NEW text file; {path 'Name.docx', document} creates a NEW Word "
+        "Forms of edit: {path, old_string, new_string} changes an existing text file; {path, content} creates a NEW text file; {path, delete: true} DELETES an existing text file and "
+        "{path, rename_to} MOVES one to a new path (each stands alone in its edit; the person sees the file's lines listed as removed, or the move, and can undo it; only text files, never a "
+        "Word document; before you delete or move a file, search for what refers to it and propose the edits that fix those references in the same call, never one of the two without the other); {path 'Name.docx', document} creates a NEW Word "
         "document (headings, paragraphs, bullets, numbered lists, tables; pick a name that does not exist); {path 'Existing.docx', word_edits, save_as} changes an existing Word "
         "document by the paragraph numbers read_repo_file showed, saved as a NEW copy beside the original, which is never changed (paragraphs marked * cannot be edited, ~ cannot be "
         "deleted, ! cannot have one inserted after). Propose every edit for the request in ONE call. If it returns an error, fix the edits it names and call it again with the complete "

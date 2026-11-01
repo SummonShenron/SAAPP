@@ -43,6 +43,23 @@ test('the session level applies anything, except what always asks', () => {
   assert.match(decideAutoApply('session', many, [], 0).reason, /more than 8 files/);
 });
 
+test('deleting or moving a file always asks, even inside .sonic/ and at the session level', () => {
+  const removal = proposal(['.sonic/old.md'], { files: [file('.sonic/old.md', { kind: 'delete' })], edits: [{ type: 'delete', path: '.sonic/old.md' }] });
+  const move = proposal(['src/b.py'], { files: [file('src/b.py', { kind: 'rename', source: 'src/a.py' })], edits: [{ type: 'rename', path: 'src/a.py', to: 'src/b.py' }] });
+  for (const level of ['sonic', 'session']) {
+    assert.match(decideAutoApply(level, removal, [], 0).reason, /deleting or moving a file always asks/);
+    assert.match(decideAutoApply(level, move, [], 0).reason, /deleting or moving a file always asks/);
+  }
+  assert.equal(decideAutoApply('ask', removal, [], 0).auto, false);
+});
+
+test("Sonic's own guidance file always asks, at every level, because it shapes every coding turn", () => {
+  const rule = proposal(['.sonic/AGENTS.md']);
+  for (const level of ['sonic', 'session']) assert.match(decideAutoApply(level, rule, [], 0).reason, /guidance file always asks/);
+  assert.equal(decideAutoApply('sonic', proposal(['.sonic/notes.md']), [], 0).auto, true);              // the rest of .sonic/ is unchanged
+  assert.equal(decideAutoApply('session', proposal(['AGENTS.md']), [], 0).auto, true);                  // another tool's file is a normal file
+});
+
 test('a burst of automatic changes makes it ask, and old ones stop counting', () => {
   const now = 1_000_000;
   const burst = Array.from({ length: AUTO_BURST_LIMIT }, (_, n) => now - n * 1000);

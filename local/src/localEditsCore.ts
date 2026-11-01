@@ -13,13 +13,17 @@ export interface DocxDocument {
 export type EditOp =
   | { type: 'replace'; path: string; old_string: string; new_string: string; replace_all?: boolean }
   | { type: 'create'; path: string; content: string }
+  /** Delete an existing text file (its text is kept for Undo). */
+  | { type: 'delete'; path: string }
+  /** Move an existing text file to a new path (`to` must not exist). */
+  | { type: 'rename'; path: string; to: string }
   | { type: 'create_docx'; path: string; document: DocxDocument }
   /** An edited COPY of an existing Word document: `path` is the original (only ever read), `save_as` the new file. */
   | { type: 'edit_docx'; path: string; save_as: string; word_edits: unknown[] };
 
 export interface EditProposalFile {
   path: string;
-  kind: 'edit' | 'create';
+  kind: 'edit' | 'create' | 'delete' | 'rename';
   /** 'docx' for a new Word document, whose diff is a readable preview rather than the file's bytes. */
   format?: 'text' | 'docx' | 'docx_edit';
   /** For an edited copy of a Word document: the original it was made from. */
@@ -56,6 +60,8 @@ export interface FileChange {
   docxEdit?: { source: string; word_edits: unknown[] };
   /** "size:lastModified" of the file right after it was written, so undo can tell whether it was touched since (its bytes can't be compared as text). */
   stamp?: string;
+  /** The file is removed (deleted, or the old path of a move): `before` is its text, kept so Undo can put it back, and `after` is empty and never written. */
+  deleted?: true;
 }
 
 const NEVER_WRITE_DIRS = new Set([
@@ -125,6 +131,7 @@ export async function planEdits(
   const errors: string[] = [];
   const before = new Map<string, string | null>();
   const working = new Map<string, string | null>();
+  const removed = new Set<string>();                     // files this proposal deletes or moves away (their `working` entry is null)
   const documents = new Map<string, DocxDocument>();   // new Word documents in this proposal, by path
   const editedCopies = new Map<string, { source: string; word_edits: unknown[] }>();   // edited copies of existing Word documents, by the copy's path
 
@@ -171,6 +178,36 @@ export async function planEdits(
       else working.set(op.path, op.content);
       continue;
     }
+    if (op.type === 'delete') {
+      if (op.path.toLowerCase().endsWith('.docx')) errors.push(`${label}: a Word document is never deleted by Sonic`);
+      else if (current === null) errors.push(`${label}: the file no longer exists, so there is nothing to delete`);
+      else {
+        working.set(op.path, null);
+        removed.add(op.path);
+      }
+      continue;
+    }
+    if (op.type === 'rename') {
+      const blockedTarget = writeBlockReason(op.to);
+      if (blockedTarget) errors.push(`${label}: moving it to ${op.to} is not allowed — ${blockedTarget}`);
+      else if (op.path.toLowerCase().endsWith('.docx') || op.to.toLowerCase().endsWith('.docx')) errors.push(`${label}: a Word document is never moved by Sonic`);
+      else if (op.to === op.path) errors.push(`${label}: it is already there`);
+      else if (current === null) errors.push(`${label}: the file no longer exists, so it can't be moved`);
+      else {
+        if (!working.has(op.to)) {
+          const existing = await readCurrent(op.to);
+          before.set(op.to, existing);
+          working.set(op.to, existing);
+        }
+        if (working.get(op.to) !== null || documents.has(op.to) || editedCopies.has(op.to)) errors.push(`${label}: ${op.to} already exists, and Sonic never overwrites a file by moving another onto it`);
+        else {
+          working.set(op.to, current);
+          working.set(op.path, null);
+          removed.add(op.path);
+        }
+      }
+      continue;
+    }
     if (current === null) {
       errors.push(`${label}: the file no longer exists`);
       continue;
@@ -186,6 +223,9 @@ export async function planEdits(
     const document = documents.get(path);
     if (document) {
       changes.push({ path, before: null, after: '', binary: 'docx', document });
+    } else if (after === null && removed.has(path)) {
+      const text = before.get(path);
+      if (typeof text === 'string') changes.push({ path, before: text, after: '', deleted: true });
     } else if (after !== null && after !== before.get(path)) {
       changes.push({ path, before: before.get(path) ?? null, after });
     }
@@ -207,7 +247,9 @@ export async function changesMovedSince(
 ): Promise<string[]> {
   const moved: string[] = [];
   for (const change of changes) {
-    if (change.binary) {
+    if (change.deleted) {
+      if ((await readText(change.path)) !== null) moved.push(change.path);               // something has been put back where the file was: undoing would overwrite it
+    } else if (change.binary) {
       if (!change.stamp || (await readStamp(change.path)) !== change.stamp) moved.push(change.path);
     } else if ((await readText(change.path)) !== change.after) {
       moved.push(change.path);

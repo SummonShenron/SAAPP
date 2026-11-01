@@ -38,7 +38,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
-from backend.utils import act_not_suggest, claim_check, combo as combo_rules, draft_checkpoint, loop_rhythm, reading_waste
+from backend.utils import act_not_suggest, claim_check, combo as combo_rules, diff_review, draft_checkpoint, loop_rhythm, reading_waste
 from backend.utils.prompt_meter import PromptMeter
 from backend.utils.agent_utils import _UnsafeActionRequested, build_tool_facts, build_trace_subject, new_trace_step_id
 
@@ -296,6 +296,7 @@ async def run(
     leanings: str = "",
     plan_feed: Optional[Callable[[], Awaitable[str]]] = None,
     after_apply_hint: str = "",
+    reviewer: Optional[Callable[[], Awaitable[Optional[Any]]]] = None,
 ) -> Dict[str, Any]:
     """Runs the loop and returns what the old loop returns: `{"final_answer", "attempts", "show_work"}`, where each attempt is
     `{"purpose", "action_desc", "observation"}`. `llm` must offer `ainvoke_tools(messages, tools)`. `act(decision)` is the turn's
@@ -450,6 +451,7 @@ async def run(
     combo = combo_rules.Combo(ACTION_TOOLS, ACTION_REFUND_CAP)   # what the actions of this turn earn back (backend/utils/combo.py): a landed action earns reading room, up to ACTION_REFUND_CAP steps
     claim_rejections = 0                                      # an answer that claimed a pass no run backed is sent back once (backend/utils/claim_check.py)
     claim_checking = can_edit or bool(offered & _REPO_TOOLS)  # a coding turn
+    review_rounds = 0                                         # second readings of an applied change run this turn, at most diff_review.MAX_ROUNDS
 
     async def execute_calls(step_number: int, calls: List[Dict[str, Any]]) -> List[str]:
         """Runs one step's tool calls together and puts each result into the conversation, the receipt and the held results. Returns the results in order."""
@@ -640,6 +642,27 @@ async def run(
             messages.append(hint)
             logger.info("[native_loop] step %s: an edit was applied; the check hint was added.", step)
             held.append({"message": hint, "step": step, "text": after_apply_hint, "done": False, "key": f"after_apply|{step}"})
+        if reviewer is not None and applied_now and not more_plan_steps and review_rounds < diff_review.MAX_ROUNDS:
+            # A second reading of what was just applied (backend/utils/diff_review.py): one cheap call. A finding that blocks goes back to the model as a message and hands steps back (the combo's counter-hit),
+            # so it can fix it instead of running out of steps; a review that finds nothing blocking ends there, and a failed one (None) is no review at all.
+            review_rounds += 1
+            try:
+                outcome = await reviewer()
+            except Exception:
+                logger.debug("[native_loop] the review failed.", exc_info=True)
+                outcome = None
+            if outcome is not None:
+                findings, advisories = outcome
+                blocked = bool(diff_review.blocking(findings))
+                grant = combo.after_review(blocked)
+                if findings or advisories:
+                    messages.append(HumanMessage(content=diff_review.note(findings, advisories)))
+                if blocked:
+                    if plan_budget is None:
+                        budget += grant
+                    elif combo.may_widen_plan():
+                        plan_budget.deviation_steps += combo_rules.PLAN_FAIL_DEVIATIONS       # the finding is the new task on a plan turn too
+                    logger.info("[native_loop] step %s: the review found %d blocking problem(s); %d step(s) handed back, budget now %d.", step, len(diff_review.blocking(findings)), grant, budget)
         if library_allowance is not None:
             # A listing of a long library adds the read steps it needs, once (backend/utils/library_allowance.py): the tool steps left AFTER this one (this loop's answer is an extra call, so none is kept back).
             for call, result in zip(calls, results):

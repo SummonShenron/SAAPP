@@ -74,6 +74,8 @@ class Combo:
         self.ceiling_hit = False
         self._seen: Dict[Tuple[str, str], int] = {}
         self.plan_grants = 0
+        self.reviews = 0               # second readings that ran this turn
+        self.blocked_reviews = 0       # of those, the ones that found something blocking
 
     def after_step(self, calls: List[Dict[str, Any]], results: List[Any]) -> Dict[str, Any]:
         """What one step's calls earn: {"grant": steps to hand back (within the ceiling), "hit": a call landed, "failed_new": a check failed in a way it has not before this turn}."""
@@ -118,6 +120,20 @@ class Combo:
         self.refunded += grant
         return {"grant": grant, "hit": hit_here, "failed_new": failed_new}
 
+    def after_review(self, blocked: bool) -> int:
+        """A second reading of an applied change (backend/utils/diff_review.py) just finished. One that found a BLOCKING problem is a counter-hit, like a new failed check: the first earns the full
+        refund, the second half (the same scaling as a repeated result), within the turn's ceiling, so the turn has room to read and fix what was found. One that found nothing blocking earns nothing.
+        Returns the steps to hand back."""
+        self.reviews += 1
+        if not blocked:
+            return 0
+        grant = max(min(steps_for(self.blocked_reviews), self.cap - self.refunded), 0)
+        self.blocked_reviews += 1
+        if grant == 0:
+            self.ceiling_hit = True
+        self.refunded += grant
+        return grant
+
     def may_widen_plan(self) -> bool:
         """Whether a failed check may widen a plan turn's allowance now (twice a turn at most). Calling it uses one."""
         if self.plan_grants >= PLAN_FAIL_GRANTS:
@@ -127,9 +143,10 @@ class Combo:
 
     def counts(self) -> Dict[str, int]:
         """The turn's counts for the day's tally (backend/utils/self_counters.COMBO_KEYS): only whole numbers, nothing about what was done."""
-        if not (self.hits or self.refunded):
+        if not (self.hits or self.refunded or self.reviews):
             return {}
-        counts = {"combo_turns": 1, "combo_hits": self.hits, "combo_steps_granted": self.refunded, "combo_failed_checks": self.failed_new, "combo_drops": self.drops}
+        counts = {"combo_turns": 1, "combo_hits": self.hits, "combo_steps_granted": self.refunded, "combo_failed_checks": self.failed_new, "combo_drops": self.drops,
+                  "review_runs": self.reviews, "review_blocked": self.blocked_reviews}
         if self.ceiling_hit:
             counts["combo_ceiling_hit"] = 1
         if self.longest >= 3:

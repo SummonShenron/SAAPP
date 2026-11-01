@@ -75,7 +75,7 @@ from backend.utils.app_utils import (
     index_conversation_turn,
     collect_kb_images
 )
-from backend.utils.attachment_utils import delete_session_attachments, process_chat_attachments
+from backend.utils.attachment_utils import attachments_earlier_in, delete_session_attachments, earlier_attachments_block, process_chat_attachments
 from backend.utils import progress_notes as progress_notes_utils
 from backend.utils.stored_file_access import can_read_stored_file, first_readable
 from backend.utils.docx_writer import DOCX_MIME, render_docx, validate_document
@@ -839,6 +839,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         "deep_thinking": effective_deep_thinking,
         "tool_model": effective_tool_model,
         "edit_decisions": bool(request.edit_decisions),
+        "code_followup": code_followup,
         "runner_cards": bool(request.runner_cards),
         "git_branch": (request.git_branch or "").strip()[:100] or None,
         "budget_level": budget_state.get("level"),
@@ -864,6 +865,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
 
     if attachment_refs:
         chat_sessions[history_key][-1].additional_kwargs["attachments"] = attachment_refs
+    if request.attachments:
+        chat_sessions[history_key][-1].additional_kwargs["attachment_names"] = [a.filename for a in request.attachments][:10]      # so a later turn knows to look this file's text up (attachment_utils)
 
     initial_state["attachment_summaries"] = attachment_summaries
     initial_state["image_refs"] = attachment_refs      # the photos attached to THIS message, for putting words on one (backend/services/photo_cards.py)
@@ -1392,6 +1395,14 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 )
                 prompt = prompt + attachment_context
                 yield f"data: {json.dumps({'event': 'node_progress', 'node': 'attachment_context', 'title': 'Applying attached file content', 'detail': 'Injected description of the attached file into context prompt.'})}\n\n"
+
+            # What an attachment from EARLIER in this conversation showed (backend/utils/attachment_utils.py): without it a follow-up said it could not remember the picture. Looked up only when an earlier
+            # message carried a file, never for a guest, and not when the knowledge-base route already put the session's documents in.
+            if not is_guest_username(username) and attachments_earlier_in(chat_sessions[history_key]) and not any(d.metadata.get("source") == "session_vector_store" for d in documents):
+                earlier_attachment_context = await asyncio.to_thread(earlier_attachments_block, username, session_id, [a.filename for a in (request.attachments or [])])
+                if earlier_attachment_context:
+                    prompt = prompt + earlier_attachment_context
+                    yield f"data: {json.dumps({'event': 'node_progress', 'node': 'earlier_attachments', 'title': 'Remembering what you attached earlier', 'detail': 'Added what an earlier attachment in this conversation showed.'})}\n\n"
 
             prompt = prompt + paperwork_utils.build_paperwork_block(question, bool(attachment_docs), [d.page_content for d in attachment_docs])
 

@@ -167,6 +167,9 @@ export async function applyProposal(root: FsDirectoryHandle, proposal: EditPropo
         const entry: FileChange = { ...change };
         written.push(entry);                       // recorded before anything else can fail, so a rollback removes this file too
         entry.stamp = (await fileStamp(root, change.path)) ?? undefined;
+      } else if (change.deleted) {
+        await removeFile(root, change.path);
+        written.push(change);                      // `restore` writes its text back, for a rollback and for Undo
       } else {
         await writeFileText(root, change.path, change.after);
         written.push(change);

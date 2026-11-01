@@ -1,7 +1,7 @@
 """Plan mode: a plan the person approves before edits, kept across turns (backend/utils/code_plan.py)."""
 import copy
 import pathlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -9,8 +9,9 @@ from backend.utils import code_outcomes
 from backend.utils import code_plan as cp
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-NOW = datetime(2026, 10, 25, 15, 0, tzinfo=timezone.utc)
-FILES = {"local/src/pages/Chat.tsx", "local/src/chatPreferences.ts", "local/src/components/ChatSettingsCard.tsx"}
+# Yesterday at 15:00 (not a fixed date): the code under test also reads the real clock, and a fixed date eventually falls outside a plan's seven-day life (these tests began to fail on 2026-11-01).
+NOW = (datetime.now(timezone.utc) - timedelta(days=1)).replace(hour=15, minute=0, second=0, microsecond=0)
+FILES ={"local/src/pages/Chat.tsx", "local/src/chatPreferences.ts", "local/src/components/ChatSettingsCard.tsx"}
 
 
 def exists(path):

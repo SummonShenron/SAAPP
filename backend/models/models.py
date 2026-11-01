@@ -289,6 +289,21 @@ def sonnet_available() -> bool:
     return claude_llm.api_key() is not None and claude_llm.SONNET_MODEL in llm_usage.cached_prices()
 
 
+_review_llm: dict = {}
+
+
+def review_llm():
+    """The model that reads a finished change a second time (backend/utils/diff_review.py): Claude Haiku at low effort with thinking off, so a review is about a tenth of a cent. None when no Claude key
+    is configured: then there is simply no review. It has no Gemini fallback on purpose (a failed review is no review; it must never quietly cost more)."""
+    from backend.models import claude_llm
+
+    if not claude_llm.api_key():
+        return None
+    if "haiku" not in _review_llm:
+        _review_llm["haiku"] = claude_llm.ClaudeLLM(model_name=os.getenv("DIFF_REVIEW_MODEL", claude_llm.DEFAULT_MODEL), fallback=None, effort="low", thinking_off=True, max_tokens=600)
+    return _review_llm["haiku"]
+
+
 def tool_agent_llm(deep: bool, choice=None):
     """The model behind the tool agent's reasoning steps (the reply the person reads is written by Gemini either way). `choice` is the person's own setting,
     "claude" (Haiku), "sonnet" (Claude Sonnet, when it is offered: see sonnet_available) or "gemini"; with none, the server's default applies: Gemini unless

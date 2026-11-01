@@ -23,7 +23,7 @@ from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langchain_core.documents import Document
 from backend.services.search import get_secure_retriever
 from backend.models.claude_llm import ClaudeLLM
-from backend.models.models import get_chat_llm, lite_llm, lite_llm_deep, tool_agent_llm
+from backend.models.models import get_chat_llm, lite_llm, lite_llm_deep, review_llm, tool_agent_llm
 from backend.state import graph_db
 from backend.utils.attachment_utils import retrieve_from_session
 from backend.utils.isolation_kb_utils import load_directory, load_user_directory_groups
@@ -116,7 +116,7 @@ from backend.services import steering
 from backend.services import image_gen, library_search, native_loop, ops_incidents, photo_cards
 from backend.services import native_tools as native_tools_module
 from backend.utils import loop_rhythm
-from backend.utils import place_questions, project_guidance
+from backend.utils import diff_review, lesson_proposals, place_questions, project_guidance
 from backend.services import maps_tools
 from backend.utils import code_plan, budget_guard, date_resolve, llm_turns, memory_grounding, progress_notes, orientation, reading_shelf, routines, runner_commands, runner_jobs, self_report, targeted_read
 from backend.services.repo_checkout import (
@@ -2278,6 +2278,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         # across turns, so this can't go stale the way a session- or process-level cache could.
         _turn_tree_cache: dict = {}
         _turn_file_cache: dict = {}
+        _applied_cards: list = []      # the diff cards of changes the person applied this turn that have not been reviewed yet (backend/utils/diff_review.py)
 
         # Local repo checkout (backend/services/repo_checkout.py) — turn-scoped, same lifetime
         # and cleanup pattern as browser_session_holder above. "attempted" guards against
@@ -3227,6 +3228,11 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 from backend.utils.self_counters import record_turn_counts
 
                 await asyncio.to_thread(record_turn_counts, {"project_guidance_turns": 1})
+                # A message that follows a coding reply: the note asks for ONE proposed rule if it was a correction a rule would have prevented (backend/utils/lesson_proposals.py). It comes after the stable
+                # guidance, and only on such turns, so the cached prefix is untouched on every other one.
+                if lesson_proposals.should_offer(state.get("code_followup"), guidance):
+                    coding_preferences = coding_preferences + lesson_proposals.note(guidance)
+                    await asyncio.to_thread(record_turn_counts, {"lesson_offered": 1})
         prompt_template = prompt_template.replace(
             "{coding_preferences}", coding_preferences.replace("{", "{{").replace("}", "}}")
         )
@@ -3292,9 +3298,13 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 )
             proposal_id = uuid.uuid4().hex
             # Which paths this proposal changes and by how much, so an Apply reported later is noted as work waiting to be committed (backend/utils/applied_changes.py).
-            proposed = {f["path"]: (f.get("additions", 0), f.get("deletions", 0)) for f in result["files"] if f["path"] in (result.get("texts") or {})}
+            proposed = {f["path"]: (f.get("additions", 0), f.get("deletions", 0)) for f in result["files"] if f["path"] in (result.get("texts") or {}) or f.get("kind") == "delete"}
             local_edit_decisions.remember_proposal(username, proposal_id, proposed)
             await _count_proposal(username, proposed)
+            if lesson_proposals.GUIDANCE_PATH in {f["path"] for f in result["files"]}:
+                from backend.utils.self_counters import record_turn_counts
+
+                await asyncio.to_thread(record_turn_counts, {"guidance_edit_proposed": 1})      # a rule (or any change) for the project's guidance file was put in front of the person
             # The native loop waits here for the person's decision and carries on with it; the page says it can report one (edit_decisions). Anything else ends the turn with the
             # card, as it always did.
             waiting = bool(state.get("edit_decisions")) and use_native and local_edit_decisions.enabled()
@@ -3526,26 +3536,30 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             # Applied: the browser has written the files. Bring the server's copy of those files up to date now, so a read after this sees them (the next full sync agrees with it).
             note = ""
             texts = result.get("texts") or {}
+            removed = result.get("removed") or []          # files deleted, or the old path of a move: gone from the folder now
+            _applied_cards.extend(result.get("files") or [])
+            for path in removed:
+                _turn_file_cache.pop(path, None)
             for path, text in texts.items():
                 # The turn keeps every file it has read (_turn_file_cache), and nothing refreshed that copy after an Apply: a plan's next step that touched the same file read the OLD text, and an
                 # edit written against it was checked against the old text too, then failed to apply in the browser. The new text is known exactly, so it replaces the cached one.
                 _turn_file_cache[path] = text
-            if texts:
+            if texts or removed:
                 try:
                     await asyncio.to_thread(
                         apply_workspace_sync, username, workspace_status(username).get("name") or "local folder",
-                        [{"path": path, "content": text} for path, text in texts.items()], [],
+                        [{"path": path, "content": text} for path, text in texts.items()], list(removed),
                     )
                 except Exception:
                     logger.warning("[tool_agent_node] could not refresh the server's copy of an applied change.", exc_info=True)
                     note = " (The server's copy of the folder could not be refreshed, so reading these files again may still show the old text.)"
             if any(f.get("format") in ("docx", "docx_edit") for f in result.get("files", [])):
                 note += " (Word documents are written to the folder but are not re-read until the next sync.)"
-            if plan_phase == code_plan.EXECUTE_PHASE and texts:
+            if plan_phase == code_plan.EXECUTE_PHASE and (texts or removed):
                 try:
                     from backend.utils.self_counters import record_turn_counts
 
-                    finished = await asyncio.to_thread(code_plan.record_applied, get_db(), username, state.get("session_id") or "", list(texts))
+                    finished = await asyncio.to_thread(code_plan.record_applied, get_db(), username, state.get("session_id") or "", [*texts, *removed])
                     if finished:
                         await asyncio.to_thread(record_turn_counts, {"code_plan_steps_done": finished})
                     note += code_plan.progress_note(await asyncio.to_thread(code_plan.load, get_db(), username, state.get("session_id") or ""))
@@ -3880,6 +3894,19 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             llm_turns.note_tool_call(name, not str(result).startswith("ERROR"))
             return result
 
+        async def _review_applied():
+            """A second reading of what the person applied since the last one (backend/utils/diff_review.py): (findings, advisories), or None when there is nothing worth reviewing, no Haiku, or the call failed.
+            The free date check runs even without a model."""
+            files = list(_applied_cards)
+            _applied_cards.clear()
+            if not diff_review.ENABLED or diff_review.trivial(files):
+                return None
+            advisories = diff_review.fixed_date_notes(files)
+            findings = await diff_review.review(review_llm(), latest_message_content, files)
+            if findings is None:
+                return ([], advisories) if advisories else None
+            return findings, advisories
+
         async def _native_engine(**kwargs):
             async def _announce(title, detail):
                 await safe_emit_event("trace_detail", {"node": "tool_agent_node", "title": title, "detail": detail})
@@ -3897,6 +3924,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 emit_step=_announce_step, emit_facts=emit_trace_facts, emit_excerpt=emit_trace_excerpt,
                 after_apply_hint=loop_rhythm.check_hint([t.get("name") for t in native_tools], [c.get("name") for c in runner_jobs.runnable_checks(runner_for_checks)] if runner_for_checks else []),
                 plan_feed=_next_step_files_after_apply if plan_phase == code_plan.EXECUTE_PHASE else None,
+                reviewer=_review_applied if local_workspace_handle is not None else None,
                 steering_source=kwargs.get("steering_source"), on_steering_applied=kwargs.get("on_steering_applied"),
                 library_allowance=kwargs.get("library_allowance"), is_unsafe=kwargs.get("is_unsafe"),
                 leanings=await _leanings_block(),

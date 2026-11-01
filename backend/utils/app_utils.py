@@ -61,6 +61,8 @@ def _serialize_messages(messages: list) -> list:
             attachments = additional_kwargs.get("attachments")
             if attachments:
                 entry["attachments"] = attachments
+            if additional_kwargs.get("attachment_names"):
+                entry["attachment_names"] = additional_kwargs["attachment_names"]      # which files this message carried, so a later turn knows to look them up (backend/utils/attachment_utils.py)
             kb_images = additional_kwargs.get("kb_images")
             if kb_images:
                 entry["kb_images"] = kb_images
@@ -200,6 +202,10 @@ def _deserialize_messages(raw_messages: list) -> list:
             extra["kb_images"] = msg["kb_images"]       # so a card made earlier is still known as one after a restart (backend/services/photo_cards.py)
         if msg.get("memory_sources"):
             extra["memory_sources"] = msg["memory_sources"]
+        # The files this message carried. Messages saved before names were kept have only their photos' references, which carry the file name too.
+        names = msg.get("attachment_names") or [a.get("filename") for a in (msg.get("attachments") or []) if isinstance(a, dict) and a.get("filename")]
+        if names:
+            extra["attachment_names"] = [str(name) for name in names][:10]
         if m_type == "human": messages.append(HumanMessage(content=content, additional_kwargs=extra))
         elif m_type == "ai": messages.append(AIMessage(content=content, additional_kwargs=extra))
         elif m_type == "system": messages.append(SystemMessage(content=content, additional_kwargs=extra))
