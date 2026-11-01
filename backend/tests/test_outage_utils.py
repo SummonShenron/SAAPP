@@ -66,6 +66,25 @@ def test_in_crisis_uses_pattern_detection_over_recent_messages():
     assert not ou.in_crisis([None, ""])
 
 
+def test_the_number_is_only_for_stated_intent_not_for_wishing_to_be_gone_or_exhaustion():
+    """Jack, 2026-11-01: no number unless the person says they intend to hurt themselves. That holds with the model down too."""
+    for message in ("i dont want to be here anymore", "i can't do this anymore", "i wish i could just disappear", "i just want it all to stop"):
+        assert not ou.in_crisis([message]), message
+    assert ou.in_crisis(["i'm going to kill myself"]) and ou.in_crisis(["i have the pills here with me right now"])
+
+
+def test_a_failed_turn_at_the_lowest_level_gets_the_plain_reply_and_a_stated_intent_gets_the_line():
+    import datetime
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    low = {"level": "elevated", "updated_at": now.isoformat(), "turns_since": 0}
+    acute = {"level": "acute", "updated_at": now.isoformat(), "turns_since": 0}
+    plain = ou.handle_failed_turn(RuntimeError("boom"), "jack", ["i dont want to be here anymore"], low)
+    assert not plain.crisis and "988" not in plain.reply
+    assert ou.handle_failed_turn(RuntimeError("boom"), "jack", ["hi"], acute).crisis
+    assert "988" in ou.handle_failed_turn(RuntimeError("boom"), "jack", ["i'm going to kill myself"], None).reply
+
+
 def test_log_model_outage_reports_kind_without_message_text(caplog):
     with caplog.at_level(logging.ERROR, logger=ou.logger.name):
         ou.log_model_outage(ou.KIND_QUOTA, "jack", True, RuntimeError("429 secret-key-123 my private message"))

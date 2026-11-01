@@ -198,6 +198,20 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "action_combos",
+        "requires": [
+            "backend/utils/combo.py::class Combo",
+            "backend/services/native_loop.py::combo.after_step(calls, results)",
+        ],
+        "month": "2026-11",
+        "title": "Keeping going after a failed check",
+        "line": (
+            "I can now keep working after a check fails: an edit that lands or a check that runs earns me extra steps to read what the fix needs, so I can fix it and run it again, and I stop when I'm only repeating myself."
+        ),
+        "keywords": ["failed check", "failing test", "keep going", "run out of steps", "ran out of steps", "chain", "combo", "step budget", "continue working"],
+        "volunteer": [],
+    },
+    {
         "id": "task_extra_searches",
         "requires": [
             "backend/utils/user_tasks.py::MAX_EXTRA_TOPICS",

@@ -59,7 +59,7 @@ const TraceSteps: React.FC<{ steps: TraceStep[]; running: boolean; idPrefix?: st
         const last = i === steps.length - 1;
         const hasFacts = !!step.facts && step.facts.length > 0;
         const excerpt = step.excerpt;
-        const hasExcerpt = !!excerpt && (excerpt.kind === 'search' ? excerpt.files.length > 0 : excerpt.text.length > 0);
+        const hasExcerpt = !!excerpt && (excerpt.kind === 'search' ? excerpt.files.length > 0 : excerpt.kind === 'list' ? excerpt.lines.length > 0 : excerpt.kind === 'count' ? excerpt.count > 0 : excerpt.text.length > 0);
         const hasDetails = hasFacts || hasExcerpt;
         const expanded = hasDetails && open.has(step.id);
         const panelId = `${idPrefix}-facts-${step.id}`;
@@ -117,6 +117,19 @@ const TraceSteps: React.FC<{ steps: TraceStep[]; running: boolean; idPrefix?: st
                     </div>
                   )}
                   {hasExcerpt && excerpt && excerpt.kind === 'search' && <SearchResults excerpt={excerpt} />}
+                  {hasExcerpt && excerpt && excerpt.kind === 'list' && (
+                    <div className="trace-excerpt" aria-label="What this step found">
+                      <div className="trace-excerpt-summary">{excerpt.total_lines} {excerpt.total_lines === 1 ? 'result' : 'results'}{excerpt.truncated ? ' (showing the first ones)' : ''}</div>
+                      <div className="trace-search-list">
+                        {excerpt.lines.map((line, index) => <div className="trace-search-line" key={index}><span className="trace-search-text">{line}</span></div>)}
+                      </div>
+                    </div>
+                  )}
+                  {hasExcerpt && excerpt && excerpt.kind === 'count' && (
+                    <div className="trace-excerpt" aria-label="What this step found">
+                      <div className="trace-excerpt-summary">{excerpt.count} remembered {excerpt.count === 1 ? 'item' : 'items'} found</div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

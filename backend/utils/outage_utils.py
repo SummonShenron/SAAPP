@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
 from backend.utils.safety_utils import (
-    CRISIS_RESOURCE_LINE, KIND_OUTAGE_FALLBACK, RISK_NONE, detect_risk_language, effective_risk, log_safety_event,
+    CRISIS_RESOURCE_LINE, KIND_OUTAGE_FALLBACK, RISK_ACUTE, RISK_IMMINENT, detect_risk_language, effective_risk, log_safety_event,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,10 +58,14 @@ def classify_llm_failure(exc: Optional[BaseException]) -> str:
     return KIND_OTHER
 
 
+_NUMBER_LEVELS = (RISK_ACUTE, RISK_IMMINENT)
+
+
 def in_crisis(recent_user_messages: Iterable[Any]) -> bool:
-    """Whether any of these recent user messages signals risk. Pattern detection only (no model), since the
-    point is to work while the model is unavailable."""
-    return any(detect_risk_language(str(m or "")) != RISK_NONE for m in recent_user_messages)
+    """Whether any of these recent user messages states an intent to end their life or hurt themselves (the acute level and above), the only time the fixed reply gives a human line. Lower
+    levels (wishing to be gone, hopelessness, "can't do this anymore") get the plain reply: Jack's rule, 2026-11-01, that the number is not offered unless they say they intend to
+    self-harm. Pattern detection only (no model), since the point is to work while the model is unavailable."""
+    return any(detect_risk_language(str(m or "")) in _NUMBER_LEVELS for m in recent_user_messages)
 
 
 def failure_reply(kind: str, crisis: bool = False) -> str:
@@ -90,7 +94,7 @@ def handle_failed_turn(
     reasoner had already run), tell the operator, and return the reply to show. Never raises."""
     try:
         kind = classify_llm_failure(exc)
-        crisis = in_crisis(recent_user_messages) or effective_risk(safety_state, datetime.now(timezone.utc)) != RISK_NONE
+        crisis = in_crisis(recent_user_messages) or effective_risk(safety_state, datetime.now(timezone.utc)) in _NUMBER_LEVELS
         log_model_outage(kind, username, crisis, exc)
         if crisis:
             # So the operator's safety counts include the turns where the model was down and the fixed reply stood in.

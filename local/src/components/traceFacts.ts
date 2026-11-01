@@ -14,7 +14,13 @@ export interface ReadExcerpt { kind: 'read'; path: string; text: string; truncat
 export interface SearchMatch { line: number; text: string; }
 export interface SearchFile { path: string; matches: SearchMatch[]; }
 export interface SearchExcerpt { kind: 'search'; term: string; files: SearchFile[]; total_files: number; total_matches: number; hidden: number; truncated: boolean; }
-export type TraceExcerpt = ReadExcerpt | SearchExcerpt;
+/** What a web or library step found, one line per result (a web result as "title - address", a library hit as "[n] (file, ...)"): the first few, and how many there were in all. */
+export interface ListExcerpt { kind: 'list'; tool: string; lines: string[]; total_lines: number; truncated: boolean; }
+/** How many remembered items a memory lookup returned. A number only: what was remembered never reaches the trace. */
+export interface CountExcerpt { kind: 'count'; tool: string; count: number; }
+export type TraceExcerpt = ReadExcerpt | SearchExcerpt | ListExcerpt | CountExcerpt;
+export const MAX_LIST_LINES = 25;
+export const MAX_LIST_LINE_CHARS = 160;
 export type TraceExcerptsById = Record<string, TraceExcerpt>;
 export const MAX_EXCERPT_CHARS = 1000;
 export const MAX_EXCERPT_PATH_CHARS = 300;
@@ -55,6 +61,15 @@ export function cleanExcerpt(raw: unknown): TraceExcerpt | null {
   if (!raw || typeof raw !== 'object') return null;
   const item = raw as Record<string, unknown>;
   if (item.kind === 'search') return cleanSearch(item);
+  if (item.kind === 'list') {
+    const lines = (Array.isArray(item.lines) ? item.lines : []).filter((line): line is string => typeof line === 'string' && line.trim().length > 0).slice(0, MAX_LIST_LINES).map(line => line.slice(0, MAX_LIST_LINE_CHARS));
+    if (lines.length === 0) return null;
+    return { kind: 'list', tool: typeof item.tool === 'string' ? item.tool.slice(0, 40) : '', lines, total_lines: Math.max(count(item.total_lines), lines.length), truncated: item.truncated === true };
+  }
+  if (item.kind === 'count') {
+    const found = count(item.count);
+    return found > 0 ? { kind: 'count', tool: typeof item.tool === 'string' ? item.tool.slice(0, 40) : '', count: found } : null;
+  }
   if (item.kind !== 'read' || typeof item.text !== 'string' || !item.text.trim()) return null;
   const path = typeof item.path === 'string' ? item.path.slice(0, MAX_EXCERPT_PATH_CHARS) : '';
   return { kind: 'read', path, text: item.text.slice(0, MAX_EXCERPT_CHARS), truncated: item.truncated === true || item.text.length > MAX_EXCERPT_CHARS };

@@ -190,6 +190,29 @@ test('a step with no friendly title shows what it is doing as its title, and not
   assert.deepEqual(stepWords({ title: 'Processing step: x', detail: '' }), { title: 'Processing step: x', detail: '' });
 });
 
+test('a list excerpt (web results, library hits) is kept to its limits and a count excerpt is a number only', () => {
+  const lines = Array.from({ length: 40 }, (_, n) => `Result ${n} - https://example.com/${'x'.repeat(300)}`);
+  const list = cleanExcerpt({ kind: 'list', tool: 'web_search', lines, total_lines: 40, truncated: true });
+  assert.equal(list.kind, 'list');
+  assert.equal(list.lines.length, 25);
+  assert.ok(list.lines.every(line => line.length <= 160));
+  assert.equal(list.total_lines, 40);
+  assert.deepEqual(cleanExcerpt({ kind: 'count', tool: 'search_memory', count: 3, text: 'SECRET' }), { kind: 'count', tool: 'search_memory', count: 3 });
+});
+
+test('empty or malformed list and count excerpts are dropped', () => {
+  for (const bad of [{ kind: 'list', lines: [] }, { kind: 'list', lines: ['  ', 3] }, { kind: 'list' }, { kind: 'count', count: 0 }, { kind: 'count', count: 'many' }, { kind: 'count' }]) {
+    assert.equal(cleanExcerpt(bad), null, JSON.stringify(bad));
+  }
+});
+
+test('the steps draw list and count excerpts', () => {
+  const source = readFileSync(new URL('./TraceSteps.tsx', import.meta.url), 'utf8');
+  assert.match(source, /excerpt\.kind === 'list'/);
+  assert.match(source, /excerpt\.kind === 'count'/);
+  assert.match(source, /remembered \{excerpt\.count === 1 \? 'item' : 'items'\} found/);
+});
+
 test('the first step of a running turn is the full-size ring, and nodes begin at the second', () => {
   const source = readFileSync(new URL('./StepsDisclosure.tsx', import.meta.url), 'utf8');
   assert.match(source, /steps\.length === 0 \|\| \(steps\.length === 1 && steps\[0\]\.status !== 'complete'\)/);

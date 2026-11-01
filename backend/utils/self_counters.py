@@ -80,7 +80,10 @@ READING_KEYS = ("reading_turns", "reading_files_read", "reading_rereads", "readi
 GUIDANCE_KEYS = ("project_guidance_turns",)
 # A saved plan changed because they said it moved or was cancelled (backend/utils/plan_changes.py): rewritten with the new day, removed, and turns where the model was asked and changed nothing.
 PLAN_CHANGE_KEYS = ("plan_change_updated", "plan_change_cancelled", "plan_change_unchanged")
-_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS
+# Combos in a coding turn (backend/utils/combo.py): turns where an action landed, actions that landed, steps handed back for them, checks that failed in a new way, times the chain dropped (a step with no
+# landed action), turns that hit the per-turn ceiling, and turns that chained three or more steps. Counts only.
+COMBO_KEYS = ("combo_turns", "combo_hits", "combo_steps_granted", "combo_failed_checks", "combo_drops", "combo_ceiling_hit", "combo_long")
+_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS
 KEYS = frozenset(
     list(_PLAIN_KEYS) + [f"{group}_{name}" for group, names in _GROUPS.items() for name in names]
 )

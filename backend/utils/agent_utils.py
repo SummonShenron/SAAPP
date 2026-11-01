@@ -128,6 +128,63 @@ def _search_excerpt(tool_name: str, args: dict, observation: str) -> dict | None
     return {"kind": "search", "term": term, "files": files, "total_files": len(by_file), "total_matches": total_matches or len(by_file), "hidden": len(hidden), "truncated": cut}
 
 
+TRACE_EXCERPT_MAX_WEB_RESULTS = 5
+
+
+def _text_excerpt(args: dict, observation: str) -> dict | None:
+    """The start of a fetched page or a library file, redacted and capped to the same size as a file read. It is a "read" excerpt (the trace already draws those), labelled with the address or file name."""
+    label = " ".join(str(args.get("url") or args.get("name") or "").split())[:300]
+    redacted = "\n".join(_redact_line(line) for line in observation.splitlines())
+    if not redacted.strip():
+        return None
+    truncated = len(observation) > TRACE_EXCERPT_MAX_CHARS or len(redacted) > TRACE_EXCERPT_MAX_CHARS
+    return {"kind": "read", "path": label, "text": redacted[:TRACE_EXCERPT_MAX_CHARS], "truncated": truncated}
+
+
+def _list_excerpt(tool_name: str, lines: list, max_lines: int) -> dict | None:
+    """One result or file name per line, redacted and capped; the first max_lines only."""
+    lines = [_redact_line(line.strip())[:TRACE_EXCERPT_MAX_LINE_CHARS] for line in lines if line and line.strip()]
+    if not lines:
+        return None
+    shown = lines[:max_lines]
+    return {"kind": "list", "tool": tool_name, "lines": shown, "total_lines": len(lines), "truncated": len(lines) > len(shown)}
+
+
+def _web_search_excerpt(observation: str) -> dict | None:
+    """A web search result reaches the loop as JSON, [{"title", "snippet", "link"}, ...], on one line: one "title - address" line per result, the first few only."""
+    try:
+        rows = json.loads(observation)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(rows, list):
+        return None
+    lines = []
+    for row in rows:
+        if isinstance(row, dict) and row.get("link"):
+            title = " ".join(str(row.get("title") or "").split())
+            lines.append(f"{title} - {row['link']}" if title else str(row["link"]))
+    return _list_excerpt("web_search", lines, TRACE_EXCERPT_MAX_WEB_RESULTS)
+
+
+_LIBRARY_HIT_RE = re.compile(r"^\[\d+\] \(")                         # search_library prints "[n] (file, library, page)" above each passage
+
+
+def _library_search_excerpt(observation: str) -> dict | None:
+    """Where a library search found passages: the "[n] (file, ...)" line of each hit, not the passages themselves."""
+    return _list_excerpt("search_library", [line for line in observation.splitlines() if _LIBRARY_HIT_RE.match(line.strip())], TRACE_EXCERPT_MAX_MATCHES)
+
+
+_NUMBERED_RE = re.compile(r"^\d+\. ")                                  # search_memory numbers each remembered item: "1. ..."
+
+
+def _memory_excerpt(observation: str) -> dict | None:
+    """Counts only: how many remembered items came back (the numbered lines). Never any remembered text, and nothing when memory had nothing."""
+    count = sum(1 for line in observation.splitlines() if _NUMBERED_RE.match(line.strip()))
+    if count == 0:
+        return None
+    return {"kind": "count", "tool": "search_memory", "count": count}
+
+
 def build_tool_excerpt(tool_name: str, args: dict | None, observation) -> dict | None:
     """A capped, redacted excerpt of what a step found or read, for the requester's trace panel only. Never logged or saved. Reads (read_repo_file) give a piece of the file; searches (search_literal,
     search_code) give the files and matching lines. Any other tool, an error, or nothing found gives None."""
@@ -137,6 +194,16 @@ def build_tool_excerpt(tool_name: str, args: dict | None, observation) -> dict |
         return _read_excerpt(args, observation)
     if tool_name in ("search_literal", "search_code"):
         return _search_excerpt(tool_name, args, observation)
+    if tool_name in ("read_url", "read_library_file"):
+        return _text_excerpt(args, observation)
+    if tool_name == "web_search":
+        return _web_search_excerpt(observation)
+    if tool_name == "search_library":
+        return _library_search_excerpt(observation)
+    if tool_name == "list_library_files":
+        return _list_excerpt(tool_name, [line for line in observation.splitlines() if line.startswith("- ")], TRACE_EXCERPT_MAX_MATCHES)
+    if tool_name == "search_memory":
+        return _memory_excerpt(observation)
     return None
 
 

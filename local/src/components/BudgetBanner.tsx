@@ -6,8 +6,8 @@ import './__styles__/BudgetBanner.css';
  * The usage budget guard's status line (backend/utils/budget_guard.py), shown above the chat box.
  *
  * - Low-power mode and a paused chat are shown to everyone, because they explain a change in how Sonic behaves.
- * - The early "notice" step is for admins only (the server only sends it amounts and percentages). The percentage itself is the ring beside the
- *   "..." button (components/UsageRing.tsx), not part of this line.
+ * - The early "notice" step is for admins only (the server only sends it amounts and percentages). The percentage itself is shown beside the
+ *   "..." button, not part of this line.
  * - Nothing at all is shown when no budget is configured or the budget is comfortable.
  * - When the shared budget has paused chat, an admin also gets a button that raises the block line by 25% (`onExtend`).
  */

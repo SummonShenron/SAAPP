@@ -99,10 +99,3 @@ test('the ring is blue below 75%, yellow from 75% and red from 90%, whatever the
 test('a blocked guard is red even if the ring is not full', () => {
   assert.equal(ringTone({ fraction: 0.3, level: 'blocked' }), 'danger');
 });
-
-test('the usage ring paints itself from the tone and no longer from the guard\'s level', async () => {
-  const { readFileSync } = await import('node:fs');
-  const ring = readFileSync(new URL('./UsageRing.tsx', import.meta.url), 'utf8');
-  assert.match(ring, /const color = TONE_COLOR\[ringTone\(view\)\];/);
-  assert.ok(!ring.includes('LEVEL_COLOR'));
-});

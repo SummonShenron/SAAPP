@@ -38,7 +38,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
-from backend.utils import act_not_suggest, claim_check, draft_checkpoint, loop_rhythm, reading_waste
+from backend.utils import act_not_suggest, claim_check, combo as combo_rules, draft_checkpoint, loop_rhythm, reading_waste
 from backend.utils.prompt_meter import PromptMeter
 from backend.utils.agent_utils import _UnsafeActionRequested, build_tool_facts, build_trace_subject, new_trace_step_id
 
@@ -124,7 +124,7 @@ _CHECK_TOOLS = frozenset({"run_local_check", "run_local_command"})     # what th
 EDIT_PROMPT = """
 
 - A local folder is connected, so you CAN change the person's files, by proposal: when they ask you to make, apply, add, fix or change something in it, read what you need, then call propose_local_edits. They see a diff with Apply and Decline buttons, which is their confirmation, and the call returns what they decided: APPLIED (the files now contain the change: you can read them to check it, propose a follow-up, or finish), DECLINED (nothing changed: adjust to their reason or ask what they would prefer, and do not propose the same change again), or NO DECISION (nothing changed: say so and stop). On an older page it returns only that the diff was shown. Never paste code for them to apply themselves, never ask "would you like me to apply this?" in chat, and say a change was applied only when a result says APPLIED. This replaces the earlier line saying you cannot change anything, and the one about giving code in your answer.
-- ACT, DO NOT DESCRIBE. When you know the change, call propose_local_edits: never write pseudocode, a list of changes or the code itself into your answer, and never end a turn with "I would change...". Making an edit, running a check and proposing a commit do NOT use up your tool steps; reading does. So read only what the edit needs, then edit; do not take one more look first, and do not re-read what you already read. After an edit is applied, run the check."""
+- ACT, DO NOT DESCRIBE. When you know the change, call propose_local_edits: never write pseudocode, a list of changes or the code itself into your answer, and never end a turn with "I would change...". Making an edit, running a check and proposing a commit do NOT use up your tool steps; reading does. So read only what the edit needs, then edit; do not take one more look first, and do not re-read what you already read. After an edit is applied, run the check. An edit that is applied or a check that runs also earns you extra reading steps, so after a failed check you can read what the fix needs; a call that errors or repeats the same result earns almost nothing."""
 
 STEERING_NOTICE = (
     "USER STEERING: the user sent the following while you were already working on this. It updates the task. Where it conflicts with "
@@ -447,7 +447,7 @@ async def run(
 
     required_rejections = 0
     act_rejections = 0                                        # an answer that wrote code out instead of editing is sent back (backend/utils/act_not_suggest.py), at most twice
-    action_refunded = 0                                       # steps handed back so far because the step was an action (ACTION_TOOLS), up to ACTION_REFUND_CAP
+    combo = combo_rules.Combo(ACTION_TOOLS, ACTION_REFUND_CAP)   # what the actions of this turn earn back (backend/utils/combo.py): a landed action earns reading room, up to ACTION_REFUND_CAP steps
     claim_rejections = 0                                      # an answer that claimed a pass no run backed is sent back once (backend/utils/claim_check.py)
     claim_checking = can_edit or bool(offered & _REPO_TOOLS)  # a coding turn
 
@@ -604,13 +604,18 @@ async def run(
             stop_reason = "model_answered"
             break
         results = await execute_calls(step, calls)
+        earned = combo.after_step(calls, results)
         if plan_budget is None:
-            acted_now = sum(1 for call in calls if call.get("name") in ACTION_TOOLS)
-            grant = min(acted_now, ACTION_REFUND_CAP - action_refunded)
-            if grant > 0:
-                budget += grant
-                action_refunded += grant
-                logger.info("[native_loop] step %s: %d action step(s) handed back (%d of at most %d this turn), budget now %d.", step, grant, action_refunded, ACTION_REFUND_CAP, budget)
+            if earned["grant"] > 0:
+                budget += earned["grant"]
+                logger.info("[native_loop] step %s: %d step(s) handed back for acting (%d of at most %d this turn, combo %d), budget now %d.", step, earned["grant"], combo.refunded, ACTION_REFUND_CAP, combo.streak, budget)
+            if earned["failed_new"]:
+                messages.append(HumanMessage(content=combo_rules.FAILED_CHECK_NOTE))
+        elif earned["failed_new"] and combo.may_widen_plan():
+            # A check failed in a new way while carrying out a plan: the failure is the new task, so the reads it needs are not a deviation (the allowance grows, twice a turn at most).
+            plan_budget.deviation_steps += combo_rules.PLAN_FAIL_DEVIATIONS
+            messages.append(HumanMessage(content=combo_rules.FAILED_CHECK_NOTE))
+            logger.info("[native_loop] step %s: a check failed on a plan turn; the plan's allowance grew by %d.", step, combo_rules.PLAN_FAIL_DEVIATIONS)
         applied_now = any(call.get("name") == "propose_local_edits" and " APPLIED:" in str(result) for call, result in zip(calls, results))
         if rhythm is not None:
             rhythm.after_step([(str(call.get("name") or ""), result) for call, result in zip(calls, results)], step)
@@ -709,7 +714,7 @@ async def run(
     try:
         from backend.utils.self_counters import record_turn_counts
 
-        await asyncio.to_thread(record_turn_counts, meter.counts(sum(len(item["text"]) for item in held)))
+        await asyncio.to_thread(record_turn_counts, {**meter.counts(sum(len(item["text"]) for item in held)), **combo.counts()})
     except Exception:
         logger.debug("[native_loop] could not record the prompt sizes.", exc_info=True)
     return {
