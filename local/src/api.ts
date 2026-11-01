@@ -1823,6 +1823,31 @@ export const editWorkingNote = (sessionId: string, itemId: string, text: string 
 export const clearWorkingNotes = (sessionId: string): Promise<{ status: string }> =>
   taskRequest(`/api/working-notes?session_id=${encodeURIComponent(sessionId)}`, { method: 'DELETE' }, 'Failed to clear the working notes.');
 
+/** One line of a conversation's summary (backend/utils/conversation_summary.py). `by` says who wrote it; what the person wrote or edited is never changed by Sonic. */
+export interface ConversationSummaryItem { id: string; text: string; evidence: string; by: 'model' | 'person'; }
+export interface ConversationSummary {
+  sections: { kind: string; label: string; items: ConversationSummaryItem[] }[];
+  empty: boolean;
+  folds: number;
+  max_items: number;
+  unfolded: number;
+  fold_at: number;
+  keep: number;
+  /** Only on the answer to a compact request: whether anything was folded. */
+  compacted?: boolean;
+}
+
+export const getConversationSummary = (sessionId: string): Promise<ConversationSummary> =>
+  taskRequest(`/api/conversation-summary?session_id=${encodeURIComponent(sessionId)}`, {}, 'Failed to load the conversation summary.');
+/** Edit one item (text), delete it (text null), or add one (itemId "new" with a kind). Returns the summary as it is now. */
+export const editConversationSummary = (sessionId: string, itemId: string, text: string | null, kind?: string): Promise<ConversationSummary> =>
+  taskRequest(`/api/conversation-summary?session_id=${encodeURIComponent(sessionId)}`, { method: 'PATCH', body: JSON.stringify({ item_id: itemId, text, kind }) }, 'Failed to change that item.');
+export const clearConversationSummary = (sessionId: string): Promise<{ status: string }> =>
+  taskRequest(`/api/conversation-summary?session_id=${encodeURIComponent(sessionId)}`, { method: 'DELETE' }, 'Failed to clear the summary.');
+/** Folds the older part of the conversation into the summary now, whatever its size. */
+export const compactConversationSummary = (sessionId: string): Promise<ConversationSummary> =>
+  taskRequest(`/api/conversation-summary/compact?session_id=${encodeURIComponent(sessionId)}`, { method: 'POST' }, 'Failed to fold the conversation into a summary.');
+
 /** Plan mode (backend/utils/code_plan.py): a plan the person approves before Sonic edits their folder. */
 export interface CodePlanStep { id: string; text: string; files: string[]; status: 'todo' | 'done'; }
 export interface CodePlan {
@@ -2401,6 +2426,10 @@ export const api = {
   getLocalGitBundle,
   editWorkingNote,
   clearWorkingNotes,
+  getConversationSummary,
+  editConversationSummary,
+  clearConversationSummary,
+  compactConversationSummary,
   createMeeting,
   updateMeeting,
   deleteMeeting,

@@ -282,6 +282,20 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "conversation_summary",
+        "requires": [
+            "backend/utils/conversation_summary.py::async def capture",
+            "backend/utils/conversation_summary.py::def apply_patch",
+        ],
+        "month": "2026-11",
+        "title": "Remembering the start of a long conversation",
+        "line": (
+            "I can now keep a short summary of the older part of a long conversation, so I don't lose what you told me earlier. You can read it, edit it or fold it on request from the conversation button."
+        ),
+        "keywords": ["summary", "long conversation", "forget", "forgot", "already told you", "earlier in the conversation", "compact", "fold", "lose track", "remember what i said"],
+        "volunteer": [],
+    },
+    {
         "id": "task_extra_searches",
         "requires": [
             "backend/utils/user_tasks.py::MAX_EXTRA_TOPICS",

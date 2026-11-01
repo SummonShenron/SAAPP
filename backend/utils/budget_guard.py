@@ -83,6 +83,7 @@ PAUSED_FEATURES = [
     "summarising conversations into memory",
     "noting upcoming things",
     "keeping working notes",
+    "folding long conversations into a summary",
     "re-checking grounded answers",
     "conversation openers",
     "scheduled tasks",

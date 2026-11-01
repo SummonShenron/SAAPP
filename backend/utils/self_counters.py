@@ -87,7 +87,11 @@ COMBO_KEYS = ("combo_turns", "combo_hits", "combo_steps_granted", "combo_failed_
               "review_runs", "review_blocked")
 # Lessons for the project's guidance file (backend/utils/lesson_proposals.py): turns that were told they could propose one, and proposals that touched the guidance file. Counts only.
 LESSON_KEYS = ("lesson_offered", "guidance_edit_proposed")
-_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS + LESSON_KEYS
+# The conversation summary (backend/utils/conversation_summary.py): messages that said Sonic should already know something ("I already told you"), and the same inside a conversation that had a
+# summary in force; turns that had one and the characters it added to their prompts; folds (and the ones the person asked for), items kept and thrown out by the checks, and edits by the person. Counts only.
+CONVSUM_KEYS = ("convsum_forgot", "convsum_forgot_summarized", "convsum_summarized_turns", "convsum_chars_injected", "convsum_folds", "convsum_manual_folds", "convsum_item_added", "convsum_item_dropped",
+                "convsum_person_edits")
+_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS + LESSON_KEYS + CONVSUM_KEYS
 KEYS = frozenset(
     list(_PLAIN_KEYS) + [f"{group}_{name}" for group, names in _GROUPS.items() for name in names]
 )
@@ -228,6 +232,13 @@ def _rates(totals: Dict[str, int]) -> Dict[str, Optional[float]]:
     rates["working_notes_injected"] = _rate(totals.get("working_notes_injected", 0), totals.get("code_turns", 0))
     rates["working_notes_chat_read"] = _rate(totals.get("working_notes_chat_read", 0), turns)
     rates["working_notes_dropped"] = _rate(totals.get("working_notes_item_dropped", 0), totals.get("working_notes_item_added", 0) + totals.get("working_notes_item_dropped", 0))
+    # The conversation summary (backend/utils/conversation_summary.py): how often a message said Sonic should already know something, in conversations without a summary and with one (the before and
+    # after of the feature), how many turns had one, and the share of what the model proposed that the checks threw out.
+    summarized = totals.get("convsum_summarized_turns", 0)
+    rates["convsum_forgot_without"] = _rate(totals.get("convsum_forgot", 0) - totals.get("convsum_forgot_summarized", 0), turns - summarized)
+    rates["convsum_forgot_with"] = _rate(totals.get("convsum_forgot_summarized", 0), summarized)
+    rates["convsum_summarized_turns"] = _rate(summarized, turns)
+    rates["convsum_dropped"] = _rate(totals.get("convsum_item_dropped", 0), totals.get("convsum_item_added", 0) + totals.get("convsum_item_dropped", 0))
     # Questions about its own feelings: how many turns asked each kind, and the share of them whose reply the identity check sent back.
     for kind in FEELING_KINDS:
         rates[f"feeling_asked_{kind}"] = _rate(totals.get(f"feeling_asked_{kind}", 0), turns)

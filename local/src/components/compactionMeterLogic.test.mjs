@@ -95,13 +95,13 @@ test('the meter replaced the context ring in the column and the phone strip, kee
   const column = readFileSync(new URL('./SessionColumn.tsx', import.meta.url), 'utf8');
   const rail = readFileSync(new URL('./SessionRail.tsx', import.meta.url), 'utf8');
   // the memory ring sits beside its words in the same layout the usage ring uses (.sc-gauge: the picture, then the name and the text)
-  assert.match(column, /<div className="sc-gauge">\s*<CompactionMeter view=\{compaction\} contextText=\{contextView\?\.text\} \/>\s*<div className="sc-gauge-body"><span className="sc-gauge-name">Memory<\/span>/);
+  assert.match(column, /<div className="sc-gauge">\s*<CompactionMeter view=\{compaction\} contextText=\{contextView\?\.text\} \/>\s*<div className="sc-gauge-body">\s*\{onSwitchMeter\s*\?[^]*?: <span className="sc-gauge-name">\{meterName\(compaction\)\}<\/span>\}/);
   assert.match(column, /meterCaption\(compaction\)/);
   assert.doesNotMatch(column, /name="Context"/);
   assert.match(column, /\{usage && <Gauge name="Usage"/);
   assert.match(column, /<Ring fraction=\{fraction\} level=\{level\} label=\{`\$\{name\}: \$\{text\}`\} trackClass="sc-gauge-track" numberClass="sc-gauge-number" \/>/);
   assert.match(rail, /<CompactionMeter view=\{compaction\} contextText=\{contextView\?\.text\} mini \/>/);
-  assert.match(rail, /<span className="sc-gauge-name">Memory<\/span>/);
+  assert.match(rail, /: <span className="sc-gauge-name">\{meterName\(compaction\)\}<\/span>\}/);
   assert.match(rail, /\{usage && <MiniRing fraction=\{usage\.fraction\} level=\{usage\.level\} \/>\}/);
   assert.match(rail, /<Ring fraction=\{fraction\} level=\{level\} size=\{14\} stroke=\{3\} percent=\{false\} trackClass="rail-ring-track" \/>/);
   assert.doesNotMatch(rail, /name="Context"|MiniRing fraction=\{contextView/);
@@ -116,6 +116,82 @@ test('the page reads the meter on load, after each reply and once more a few sec
   assert.match(chat, /api\.getCompactionMeter\(\)\.then\(raw => setCompactionMeter\(cleanMeter\(raw\)\)\)/);
   assert.match(chat, /window\.setTimeout\(refreshCompactionMeter, COMPACTION_RECHECK_MS\)/);
   assert.doesNotMatch(chat, /setInterval\(refreshCompactionMeter/);
-  assert.equal((chat.match(/compaction=\{compactionMeter\}/g) || []).length, 2);                 // the column and the phone strip
+  assert.equal((chat.match(/compaction=\{shownMeter\}/g) || []).length, 2);                      // the column and the phone strip: the chosen reading
+  assert.equal((chat.match(/onSwitchMeter=\{switchMeter\}/g) || []).length, 2);
   assert.match(chat, /if \(payload\.event === 'context'\)/);                                       // the context event is still handled: it feeds the tooltip
+});
+
+// ---- the one ring, switched between Sonic's memory and this conversation --------------------------------------------------------------------------------------------
+
+import { canSwitchMeter, conversationMeter, meterName, otherMeterMode, pickMeter, readMeterMode, writeMeterMode } from './compactionMeterLogic.ts';
+
+const convo = (uncompacted, threshold = 14) => ({ uncompacted, threshold, kind: 'conversation' });
+const memory = (uncompacted, threshold = 100) => ({ uncompacted, threshold });
+
+test('the conversation reading comes from the summary endpoint and is refused when it is not two real counts', () => {
+  assert.deepEqual(conversationMeter({ unfolded: 9, fold_at: 14, keep: 6, sections: [] }), convo(9));
+  assert.equal(conversationMeter({ unfolded: 9, fold_at: 0 }), null);
+  assert.equal(conversationMeter({ unfolded: -1, fold_at: 14 }), null);
+  assert.equal(conversationMeter({ fold_at: 14 }), null);
+  assert.equal(conversationMeter(null), null);
+});
+
+test('the words say notes for memory and messages for the conversation, and name the ring', () => {
+  assert.equal(meterText(convo(9)), '9 of 14 messages');
+  assert.equal(meterText(convo(16)), '16 messages: they are folded into the summary after the next reply');
+  assert.equal(meterCaption(convo(16)), 'Overloaded: folding into the summary');
+  assert.equal(meterCaption(memory(120)), 'Overloaded: folding notes together');
+  assert.equal(meterText(memory(37)), '37 of 100 notes');
+  assert.equal(meterName(convo(1)), 'Chat');
+  assert.equal(meterName(memory(1)), 'Memory');
+  assert.equal(meterSummary(convo(9)), 'Chat 9/14');
+  assert.equal(meterSummary(memory(37)), 'Memory 37/100');
+  assert.match(meterTitle(convo(9)), /^Messages waiting to be folded into this conversation's summary: 9 of 14 messages/);
+  assert.match(meterTitle(memory(37)), /^Memory notes waiting to be folded together/);
+  assert.equal(markerFraction(convo(7)), 0.5);
+});
+
+test('a fold traces the conversation ring back, but switching readings never looks like a fold', () => {
+  assert.equal(didCompact(convo(14), convo(7)), true);
+  assert.equal(didCompact(convo(7), convo(8)), false);
+  assert.equal(didCompact(memory(100), convo(7)), false, 'a hundred notes to seven messages is a different ring, not a compaction');
+  assert.equal(didCompact(convo(7), memory(3)), false);
+  assert.equal(didCompact(memory(100), memory(2)), true);
+});
+
+test('the chosen reading is drawn, falling back to whichever exists, and the ring switches only when both do', () => {
+  assert.equal(pickMeter('memory', memory(3), convo(5)).kind, undefined);
+  assert.equal(pickMeter('conversation', memory(3), convo(5)).kind, 'conversation');
+  assert.deepEqual(pickMeter('conversation', memory(3), null), memory(3));
+  assert.deepEqual(pickMeter('memory', null, convo(5)), convo(5));
+  assert.equal(pickMeter('memory', null, null), null);
+  assert.equal(canSwitchMeter(memory(3), convo(5)), true);
+  assert.equal(canSwitchMeter(memory(3), null), false);
+  assert.equal(canSwitchMeter(null, convo(5)), false);
+  assert.equal(otherMeterMode('memory'), 'conversation');
+  assert.equal(otherMeterMode('conversation'), 'memory');
+});
+
+test('the choice is remembered in the browser if it can be, and a blocked or missing store just means memory', () => {
+  const store = new Map();
+  const storage = { getItem: key => store.get(key) ?? null, setItem: (key, value) => store.set(key, value) };
+  assert.equal(readMeterMode(storage), 'memory');
+  writeMeterMode('conversation', storage);
+  assert.equal(readMeterMode(storage), 'conversation');
+  writeMeterMode('memory', storage);
+  assert.equal(readMeterMode(storage), 'memory');
+  const blocked = { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); } };
+  assert.equal(readMeterMode(blocked), 'memory');
+  assert.doesNotThrow(() => writeMeterMode('conversation', blocked));
+  assert.equal(readMeterMode(null), 'memory');
+});
+
+test('the page reads the conversation count with the memory count, ignores an answer for another conversation, and the choice is a per-viewer convenience', () => {
+  const chat = readFileSync(new URL('../pages/Chat.tsx', import.meta.url), 'utf8');
+  assert.match(chat, /api\.getConversationSummary\(sessionId\)\.then\(raw => \{ if \(sessionIdRef\.current === sessionId\) setConversationMeterView\(conversationMeter\(raw\)\); \}\)/);
+  assert.match(chat, /useEffect\(\(\) => \{ setConversationMeterView\(null\); \}, \[sessionId\]\);/);
+  assert.match(chat, /const \[meterMode, setMeterMode\] = useState<MeterKind>\(\(\) => readMeterMode\(\)\);/);
+  assert.match(chat, /writeMeterMode\(next\);/);
+  const column = readFileSync(new URL('./SessionColumn.tsx', import.meta.url), 'utf8');
+  assert.match(column, /className="sc-gauge-name sc-gauge-switch" onClick=\{onSwitchMeter\}/);
 });
