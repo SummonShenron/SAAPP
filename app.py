@@ -1061,6 +1061,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                         await asyncio.sleep(0.01)
 
                     # A check Sonic asks to run on the person's own machine (backend/utils/runner_jobs.py): the page shows a card with the exact command and Run / Cancel buttons.
+                    if kind == "on_custom_event" and event.get("name") == "command_steps":
+                        yield f"data: {json.dumps({'event': 'command_steps', **event.get('data', {})})}\n\n"
                     if kind == "on_custom_event" and event.get("name") == "runner_check":
                         yield f"data: {json.dumps({'event': 'runner_check', **event.get('data', {})})}\n\n"
                         await asyncio.sleep(0.01)

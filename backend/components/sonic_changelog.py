@@ -282,6 +282,20 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "steps_to_run",
+        "requires": [
+            "backend/utils/command_steps.py::def clean_steps",
+            "backend/services/agent_workflow.py::async def _propose_steps",
+        ],
+        "month": "2026-11",
+        "title": "Steps you run with a click",
+        "line": (
+            "I can now lay a job out as a short list of steps on one card, such as stage, commit and push, so you can run each one with a click on your own machine."
+        ),
+        "keywords": ["steps", "commit and push", "run the commands", "list of commands", "run button", "step by step", "git steps", "show me the commands"],
+        "volunteer": [],
+    },
+    {
         "id": "look_at_local_pages",
         "requires": [
             "backend/utils/runner_jobs.py::def look_job",

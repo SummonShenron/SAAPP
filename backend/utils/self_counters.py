@@ -94,7 +94,9 @@ CONVSUM_KEYS = ("convsum_forgot", "convsum_forgot_summarized", "convsum_summariz
 # Looking at the person's own pages through their runner (backend/utils/runner_jobs.py, runner/): servers started and ones that did not come up, looks made, looks inside a preview session (no click),
 # looks where a problem showed (horizontal overflow or console errors), and looks that failed. Counts only: no address, page or picture.
 LOOK_KEYS = ("server_started", "server_failed", "look_done", "look_in_preview", "look_problem_seen", "look_failed")
-_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS + LESSON_KEYS + CONVSUM_KEYS + LOOK_KEYS
+# Step lists Sonic put on a card for the person to run themselves (backend/utils/command_steps.py): lists shown, steps in them, and lists refused because a step was not allowed. Counts only.
+STEPS_KEYS = ("steps_proposed", "steps_in_lists", "steps_refused")
+_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS + LESSON_KEYS + CONVSUM_KEYS + LOOK_KEYS + STEPS_KEYS
 KEYS = frozenset(
     list(_PLAIN_KEYS) + [f"{group}_{name}" for group, names in _GROUPS.items() for name in names]
 )
