@@ -7,9 +7,12 @@ import { gaugeSummary } from './sessionColumnLogic.ts';      // with the extensi
 export type MeterKind = 'memory' | 'conversation';
 
 /** `uncompacted` and `threshold` are notes (memory) or messages (conversation). No `kind` means memory, the first reading the ring ever had. */
-export interface CompactionView { uncompacted: number; threshold: number; kind?: MeterKind; }
+export interface CompactionView { uncompacted: number; threshold: number; kind?: MeterKind; /** Conversation reading only: a fold would have something to do (enough messages beyond the newest ones kept word for word), so the ring offers "Fold now". */ foldable?: boolean; }
 
 const kindOf = (view: CompactionView): MeterKind => view.kind ?? 'memory';
+
+/** A fold needs at least this many messages besides the newest ones it leaves alone (the server's MIN_FOLD_MESSAGES). */
+const MIN_FOLD_MESSAGES = 2;
 
 /** How long the ring takes to fill (components/__styles__/Ring.css: 0.7 s) and to trace back after a compaction (1.8 s: slower, so the person can see it happen). */
 export const FORWARD_MS = 700;
@@ -35,7 +38,8 @@ export function conversationMeter(raw: unknown): CompactionView | null {
   const unfolded = whole(item.unfolded);
   const foldAt = whole(item.fold_at);
   if (unfolded === null || foldAt === null || foldAt === 0) return null;
-  return { uncompacted: unfolded, threshold: foldAt, kind: 'conversation' };
+  const keep = whole(item.keep);
+  return { uncompacted: unfolded, threshold: foldAt, kind: 'conversation', foldable: keep !== null && unfolded - keep >= MIN_FOLD_MESSAGES };
 }
 
 /** How far along the line is, from 0 (just compacted) to 1 (the next note triggers a compaction). */

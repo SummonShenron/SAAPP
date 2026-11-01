@@ -526,11 +526,11 @@ def test_the_waiting_line_follows_the_jobs_real_status_so_a_run_that_was_pressed
     assert running["title"] == "Running it on your machine..." and "1m 20s" in running["detail"] and "Nothing runs" not in running["detail"] and "is running now" in running["detail"]
 
 
-def test_both_run_tools_use_that_line():
+def test_every_run_tool_uses_that_line():
     from pathlib import Path
 
     source = (Path(__file__).resolve().parents[2] / "backend" / "services" / "agent_workflow.py").read_text(encoding="utf-8")
-    assert source.count("**runner_jobs.waiting_text(seconds, job_status)") == 2 and "Nothing runs until you press Run" not in source
+    assert source.count("**runner_jobs.waiting_text(seconds, job_status)") == 3 and "Nothing runs until you press Run" not in source      # the check, the command, and the shared card wait used by servers and looks
 
 
 def test_stopping_the_turn_while_waiting_cancels_the_check_so_it_cannot_run_unseen():

@@ -282,6 +282,20 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "look_at_local_pages",
+        "requires": [
+            "backend/utils/runner_jobs.py::def look_job",
+            "backend/services/agent_workflow.py::async def _look_at_local_page",
+        ],
+        "month": "2026-11",
+        "title": "Looking at the pages you're building",
+        "line": (
+            "I can now start your project's dev server on your computer and look at its pages in a hidden browser at phone, tablet or desktop size, with one approval for a session of looks, and tell you what's broken in the layout."
+        ),
+        "keywords": ["look at my page", "localhost", "dev server", "npm run dev", "screenshot", "mobile layout", "phone layout", "responsive", "preview", "check my app visually", "see my app"],
+        "volunteer": [],
+    },
+    {
         "id": "conversation_summary",
         "requires": [
             "backend/utils/conversation_summary.py::async def capture",

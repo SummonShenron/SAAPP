@@ -91,7 +91,10 @@ LESSON_KEYS = ("lesson_offered", "guidance_edit_proposed")
 # summary in force; turns that had one and the characters it added to their prompts; folds (and the ones the person asked for), items kept and thrown out by the checks, and edits by the person. Counts only.
 CONVSUM_KEYS = ("convsum_forgot", "convsum_forgot_summarized", "convsum_summarized_turns", "convsum_chars_injected", "convsum_folds", "convsum_manual_folds", "convsum_item_added", "convsum_item_dropped",
                 "convsum_person_edits")
-_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS + LESSON_KEYS + CONVSUM_KEYS
+# Looking at the person's own pages through their runner (backend/utils/runner_jobs.py, runner/): servers started and ones that did not come up, looks made, looks inside a preview session (no click),
+# looks where a problem showed (horizontal overflow or console errors), and looks that failed. Counts only: no address, page or picture.
+LOOK_KEYS = ("server_started", "server_failed", "look_done", "look_in_preview", "look_problem_seen", "look_failed")
+_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS + LESSON_KEYS + CONVSUM_KEYS + LOOK_KEYS
 KEYS = frozenset(
     list(_PLAIN_KEYS) + [f"{group}_{name}" for group, names in _GROUPS.items() for name in names]
 )

@@ -67,10 +67,14 @@ class Client:
     def pair(self, code: str) -> Dict[str, Any]:
         return self._call("POST", "/api/runner/pair", {"code": code})
 
-    def hello(self, projects: List[Dict[str, Any]], status: str = "", launch: str = "", request_results: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
-        """Introduces the runner: the PROJECTS it serves (each with an id, a name, a status code and its checks, which say whether their program can be found on this computer), its own status (a code,
-        never free text), how it was started ("service" at login, "hand"), and what became of the projects SAAPP asked for."""
-        return self._call("POST", "/api/runner/hello", {"version": __version__, "projects": projects, "status": status, "launch": launch, "request_results": request_results or []})
+    def hello(self, projects: List[Dict[str, Any]], status: str = "", launch: str = "", request_results: Optional[List[Dict[str, str]]] = None, browser: str = "") -> Dict[str, Any]:
+        """Introduces the runner: the PROJECTS it serves (each with an id, a name, a status code and its checks, which say whether their program can be found on this computer, and the servers it
+        can keep running), its own status (a code, never free text), how it was started ("service" at login, "hand"), what became of the projects SAAPP asked for, and which browser it found for
+        looking at pages ("chrome", "edge", "chromium" or "custom"; only the name, never a path)."""
+        body: Dict[str, Any] = {"version": __version__, "projects": projects, "status": status, "launch": launch, "request_results": request_results or []}
+        if browser:
+            body["browser"] = browser
+        return self._call("POST", "/api/runner/hello", body)
 
     def next_job(self, wait: int = 25) -> Optional[Dict[str, Any]]:
         answer = self._call("GET", f"/api/runner/next?wait={int(wait)}", timeout=wait + 15)

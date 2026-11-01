@@ -116,7 +116,7 @@ SAVE_DRAFT_TOOL = {
 _REPO_TOOLS = frozenset({"read_repo_file", "search_code", "search_literal", "find_file", "trace_symbol"})
 # Acting is not looking: an edit, a check or a commit proposal does not use up the step budget (Jack, 2026-10-31: "action steps dont count against the budget"). Reads still count, so a turn cannot read
 # forever; the refunds are capped per turn so one turn cannot run away with the person's money.
-ACTION_TOOLS = frozenset({"propose_local_edits", "run_local_check", "run_local_command", "run_sandbox_tests", "propose_commit", "propose_git_commit", "propose_merge"})
+ACTION_TOOLS = frozenset({"propose_local_edits", "run_local_check", "run_local_command", "run_sandbox_tests", "propose_commit", "propose_git_commit", "propose_merge", "start_local_server", "look_at_local_page", "stop_local_server"})
 ACTION_REFUND_CAP = int(os.getenv("TOOL_AGENT_ACTION_REFUND_CAP", "30"))
 _CHECK_TOOLS = frozenset({"run_local_check", "run_local_command"})     # what the model can run a check with on the person's computer (a claim that a check passed is held to a run: backend/utils/claim_check.py)
 
@@ -186,20 +186,26 @@ _TEST_RUN_RE = re.compile(r"\b(?:pytest|unit\s+tests?|run\s+(?:the\s+)?tests?)\b
 _OLD_ENGINE_ONLY_FLAGS = ("needs_send_email",)
 
 
-def old_engine_reason(text: str = "", flags: Optional[Dict[str, Any]] = None, test_runs_native: bool = False) -> str:
+# When the native engine is offering look_at_local_page (a runner and a browser on the person's own machine), "browser" and "screenshot" no longer mean the cloud browser only the old engine has; "navigate" and
+# "click" still do (the local look reads a page, it does not drive one).
+_LOOK_WORDS_RE = re.compile(r"\b(?:browser|screenshots?)\b", re.IGNORECASE)
+
+
+def old_engine_reason(text: str = "", flags: Optional[Dict[str, Any]] = None, test_runs_native: bool = False, looks_native: bool = False) -> str:
     """The word or phrase that sent a turn to the old engine ("browser", "database", "run the tests"), or the router's flag, or "" when nothing did. For telling the person why a mode was skipped."""
     for name in _OLD_ENGINE_ONLY_FLAGS:
         if (flags or {}).get(name):
             return name
+    text = _LOOK_WORDS_RE.sub(" ", text or "") if looks_native else text
     found = _OLD_ENGINE_ONLY_RE.search(text or "") or (None if test_runs_native else _TEST_RUN_RE.search(text or ""))
     return " ".join(found.group(0).split()).lower() if found else ""
 
 
-def needs_old_engine(text: str = "", flags: Optional[Dict[str, Any]] = None, test_runs_native: bool = False) -> bool:
+def needs_old_engine(text: str = "", flags: Optional[Dict[str, Any]] = None, test_runs_native: bool = False, looks_native: bool = False) -> bool:
     """Whether the request, or the router's reading of it, points at a tool only the old engine has. `test_runs_native`: this turn's native tools include one that runs the person's tests."""
     if any((flags or {}).get(name) for name in _OLD_ENGINE_ONLY_FLAGS):
         return True
-    if _OLD_ENGINE_ONLY_RE.search(text or ""):
+    if _OLD_ENGINE_ONLY_RE.search(_LOOK_WORDS_RE.sub(" ", text or "") if looks_native else (text or "")):
         return True
     return (not test_runs_native) and bool(_TEST_RUN_RE.search(text or ""))
 
@@ -209,7 +215,8 @@ def eligible(*, edit_turn: bool, resumed: bool, tools: List[Dict[str, Any]], tex
     the kinds only the old engine handles (an edit request when the edit tool is not offered here, a resumed clarification), and nothing in `text`
     (the request and the recent conversation) or `flags` (the router's reading of it) calls for a tool the native engine lacks."""
     test_runs_native = any(tool.get("name") == "run_local_check" for tool in tools)
-    return enabled() and bool(tools) and not edit_turn and not resumed and not needs_old_engine(text, flags, test_runs_native)
+    looks_native = any(tool.get("name") == "look_at_local_page" for tool in tools)
+    return enabled() and bool(tools) and not edit_turn and not resumed and not needs_old_engine(text, flags, test_runs_native, looks_native)
 
 
 def _text(content: Any) -> str:

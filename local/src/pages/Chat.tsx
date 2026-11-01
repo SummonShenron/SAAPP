@@ -777,6 +777,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   // The same ring can show this conversation's messages waiting to be folded into its summary (backend/utils/conversation_summary.py); which one it shows is the viewer's own choice, kept in the browser.
   const [conversationMeterView, setConversationMeterView] = useState<CompactionView | null>(null);
   const [meterMode, setMeterMode] = useState<MeterKind>(() => readMeterMode());
+  const [foldingFromRing, setFoldingFromRing] = useState(false);
   const { status: workspaceStatus, currentGitBranch } = workspace;
   useEffect(() => {
     if (!columnVisible || workspaceStatus === 'disconnected') return undefined;
@@ -1201,6 +1202,14 @@ useEffect(() => {
   useEffect(() => { refreshCompactionMeter(); }, [refreshCompactionMeter]);
 
   const shownMeter = pickMeter(meterMode, compactionMeter, conversationMeterView);
+  // "Fold now" beside the Chat reading of the ring: the same request as the header's "Conversation so far" panel makes (the server folds all but the newest messages into the summary).
+  const foldFromRing = shownMeter?.kind === 'conversation' && shownMeter.foldable ? () => {
+    setFoldingFromRing(true);
+    api.compactConversationSummary(sessionId)
+      .then(raw => { if (sessionIdRef.current === sessionId) setConversationMeterView(conversationMeter(raw)); })
+      .catch(() => { /* the header panel shows the error message; here the ring simply stays as it was */ })
+      .finally(() => setFoldingFromRing(false));
+  } : null;
   const switchMeter = canSwitchMeter(compactionMeter, conversationMeterView) ? () => {
     const next = otherMeterMode(meterMode);
     setMeterMode(next);
@@ -3227,6 +3236,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           context={contextUse && contextUse.sessionId === sessionId ? contextUse : null}
           compaction={shownMeter}
           onSwitchMeter={switchMeter}
+          onFold={foldFromRing}
+          folding={foldingFromRing}
           plan={codePlan && workspace.canEdit ? codePlan : null}
           scope={allowedAffiliates.length > 0 ? { value: selectedAffiliate, choices: scopeOptions, busy: loading || fetchingScope, onChange: setSelectedAffiliate } : null}
           memory={lastMemory}
@@ -3250,6 +3261,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           context={contextUse && contextUse.sessionId === sessionId ? contextUse : null}
           compaction={shownMeter}
           onSwitchMeter={switchMeter}
+          onFold={foldFromRing}
+          folding={foldingFromRing}
           scope={allowedAffiliates.length > 0 ? { value: selectedAffiliate, choices: scopeOptions, busy: loading || fetchingScope, onChange: setSelectedAffiliate } : null}
           repo={repoControls}
           settings={chatSettings}

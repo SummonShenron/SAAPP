@@ -156,6 +156,16 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
         "check": {"type": "string", "description": "the name of one of the person's checks, as listed in this tool's description"},
         "files": {"type": "array", "items": {"type": "string"}, "description": "optional: paths of files in their project, only for a check that takes files"},
     }, ["check"]),
+    # a project's own dev server on the person's OWN machine, kept running for a preview session, and a look at one of its pages in a hidden browser there (runner/src/saapp_runner/servers.py, browser.py).
+    "start_local_server": _object({
+        "server": {"type": "string", "description": "the name of one of the project's servers, as listed in this tool's description"},
+    }, ["server"]),
+    "look_at_local_page": _object({
+        "path": {"type": "string", "description": "a path on the running server, for example /pricing or /settings?tab=billing (needs start_local_server first)"},
+        "url": {"type": "string", "description": "instead of a path: a full http://localhost:PORT/... address of a page the person already runs themselves"},
+        "device": {"type": "string", "enum": ["phone", "tablet", "desktop"], "description": "the window size: phone is 390 x 844, tablet 820 x 1180, desktop 1280 x 800 (default desktop)"},
+    }),
+    "stop_local_server": _object({}),
     # a command line on the person's OWN machine (runner/src/saapp_runner/commands.py rules): shown word for word on a card, approved there, decided on again by their runner. Offered only when one is connected.
     "run_local_command": _object({
         "line": {"type": "string", "description": "one command line in the small language described by this tool"},

@@ -43,6 +43,9 @@ interface Props {
   compaction: CompactionView | null;
   /** Switches the one ring between the memory reading and this conversation's; only given when both exist. */
   onSwitchMeter?: (() => void) | null;
+  /** "Fold now" beside the Chat reading of the ring: folds this conversation's older messages into its summary; `folding` while it runs. Only given for a conversation that has something to fold. */
+  onFold?: (() => void) | null;
+  folding?: boolean;
   /** The approved plan, while there is one. */
   plan: CodePlan | null;
   /** The scope Sonic answers from, as a dropdown right in the panel (it used to open the settings menu's picker down by the message box). null when there are none to pick. */
@@ -222,7 +225,7 @@ export function ConnectionPanel({ folder, runnerEnabled, runners, runnerStart, f
  * controls, the gauges, the plan while there is one, and what this conversation is scoped to. It only shows what the page already knows; settings stay in the "..." menu (the scope row
  * opens that menu's own picker). A card with nothing to show is not drawn, and any card can be folded (remembered in this browser).
  */
-const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runnerStart, usage, context, compaction, onSwitchMeter, plan, scope, memory, folderControls, repo, controls }) => {
+const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runnerStart, usage, context, compaction, onSwitchMeter, onFold, folding, plan, scope, memory, folderControls, repo, controls }) => {
   // "2s ago" goes stale on its own: redraw the times every few seconds.
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -286,6 +289,7 @@ const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runner
                   ? <button type="button" className="sc-gauge-name sc-gauge-switch" onClick={onSwitchMeter} title="Switch between Sonic's memory and this conversation">{meterName(compaction)} ⇄</button>
                   : <span className="sc-gauge-name">{meterName(compaction)}</span>}
                 <span className={`sc-gauge-text${isOverloaded(compaction) ? ' ring-caption-overloaded' : ''}`}>{meterCaption(compaction)}</span>
+                {onFold && compaction.foldable && <button type="button" className="sc-gauge-fold" disabled={folding} onClick={onFold}>{folding ? 'Folding…' : 'Fold now'}</button>}
               </div>
             </div>
           )}

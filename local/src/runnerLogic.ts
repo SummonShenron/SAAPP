@@ -50,6 +50,7 @@ export function needsSecondStep(job: Pick<RunnerJob, 'kind' | 'command_class' | 
 
 /** The one line a card leads with. */
 export function headline(job: RunnerJob): string {
+  if (isServe(job) || isLook(job)) return pageHeadline(job);
   if (isCommand(job)) return commandHeadline(job);
   switch (verdict(job)) {
     case 'waiting': return 'Waiting for you to press Run';
@@ -252,3 +253,104 @@ export function minutesLeft(expiresAt: string, now: number): number {
   const ms = Date.parse(expiresAt) - now;
   return Number.isFinite(ms) ? Math.max(0, Math.ceil(ms / 60000)) : 0;
 }
+
+// ---- a project's server, and looking at a page (backend/utils/runner_jobs.py, runner/src/saapp_runner/servers.py and browser.py) ----------------------------------------------------------------------------
+
+/** What one approval of a server card covers (the server's SESSION_MAX_LOOKS and SESSION_IDLE_MINUTES). */
+export const SESSION_LOOKS = 10;
+export const SESSION_IDLE_MINUTES = 30;
+
+export function isServe(job: Pick<RunnerJob, 'kind'>): boolean {
+  return job.kind === 'serve';
+}
+
+export function isLook(job: Pick<RunnerJob, 'kind'>): boolean {
+  return job.kind === 'look';
+}
+
+/** The window sizes a look can use, as the card says them (the runner's DEVICES). */
+export function deviceLabel(device: string | undefined): string {
+  switch (device) {
+    case 'phone': return 'phone (390 × 844)';
+    case 'tablet': return 'tablet (820 × 1180)';
+    case 'desktop': return 'desktop (1280 × 800)';
+    default: return 'desktop';
+  }
+}
+
+/** What approving a server card means: the one sentence the person reads before pressing Run. */
+export function serveNote(job: Pick<RunnerJob, 'session_looks_left'>): string {
+  return `This starts your project's own server on your computer and keeps it running. That one approval also lets Sonic look at its pages up to ${SESSION_LOOKS} times without asking again, until it has gone ${SESSION_IDLE_MINUTES} minutes unused or you stop it. It runs with your own privileges: read the command above first.`;
+}
+
+/** What a look will do, said before it runs: where it goes, and where the picture and text go. */
+export function lookNote(job: Pick<RunnerJob, 'session' | 'device'>): string {
+  const sent = "A hidden browser on your computer opens only this address (every request to anywhere else is blocked). The screenshot and the page's text are sent to Sonic and its AI model.";
+  return job.session ? `Part of the preview session you approved. ${sent}` : sent;
+}
+
+/** The card's lead line for a server or a look; "" for anything else (the caller uses `headline`). */
+export function pageHeadline(job: RunnerJob): string {
+  if (isServe(job)) {
+    switch (verdict(job)) {
+      case 'waiting': return 'Waiting for you to press Run';
+      case 'running': return job.status === 'approved' ? 'Approved. Waiting for your runner to pick it up...' : 'Starting the server...';
+      case 'passed': return job.server?.port ? `Running on port ${job.server.port}` : 'Running';
+      case 'cancelled': return 'Cancelled';
+      case 'not_run': return `Not started: ${job.error || 'it expired'}`;
+      default: return `Did not start: ${job.error || 'the runner reported a problem'}`;
+    }
+  }
+  switch (verdict(job)) {
+    case 'waiting': return 'Waiting for you to press Run';
+    case 'running': return job.status === 'approved' ? (job.auto_approved ? 'Part of your preview session, so it started by itself. Waiting for your runner...' : 'Approved. Waiting for your runner to pick it up...') : 'Looking at the page...';
+    case 'passed': return `Looked${job.duration != null ? ` (${job.duration} s)` : ''}`;
+    case 'cancelled': return 'Cancelled';
+    case 'not_run': return `Not looked at: ${job.error || 'it expired'}`;
+    default: return `Could not look: ${job.error || 'the runner reported a problem'}`;
+  }
+}
+
+/** What the runner read from the page, as short plain lines for the card (problems first). Empty when there is nothing to say. */
+export function lookLines(job: Pick<RunnerJob, 'look' | 'device'>): string[] {
+  const look = job.look;
+  if (!look) return [];
+  const lines: string[] = [];
+  const width = look.viewport?.[0] ?? 0;
+  if (look.overflow_x) {
+    const wide = (look.wide_elements ?? []).slice(0, 3).map(item => `${item.el} reaches ${item.right} px`).join('; ');
+    lines.push(`Wider than the window: the content is ${look.scroll_width} px wide in a ${width} px window${wide ? ` (${wide})` : ''}.`);
+  } else if (width) {
+    lines.push(`Fits the width of the window (${width} px).`);
+  }
+  if ((job.device === 'phone' || job.device === 'tablet') && look.viewport_meta === false) lines.push('No viewport tag: a phone shows this page zoomed out, laid out at about 980 px.');
+  for (const item of look.console ?? []) lines.push(`Console: ${item}`);
+  for (const item of look.failed ?? []) lines.push(`Request: ${item}`);
+  if ((look.blocked ?? []).length > 0) lines.push(`Blocked (outside addresses, by design): ${(look.blocked ?? []).join(', ')}`);
+  return lines;
+}
+
+/** Whether to warn that the server can be reached from other computers on the person's network. */
+export function serverExposed(job: Pick<RunnerJob, 'server'>): boolean {
+  return job.server?.exposed === true;
+}
+
+/** Whether the server card is for a server that is up now and can be stopped. */
+export function canStopServer(job: Pick<RunnerJob, 'kind' | 'status' | 'server' | 'session_stopped'>): boolean {
+  return isServe(job) && job.status === 'done' && job.server?.status === 'running' && job.session_stopped !== true;
+}
+
+/** What Settings says about looking at pages: which browser the runner found, or what is missing. "" for a runner that has no news (an older one that cannot look is told to update by `updateNote`). */
+export function browserLine(runner: { browser?: string; looks?: boolean; version: string; connected?: boolean }): string {
+  if (runner.looks && runner.browser) {
+    const name = ({ chrome: 'Chrome', edge: 'Edge', chromium: 'Chromium', custom: 'your own browser' } as Record<string, string>)[runner.browser] ?? 'a browser';
+    return `Sonic can look at your pages and start your project's server here (using ${name}).`;
+  }
+  if (parseVersion(runner.version) !== null && !isOlderVersion(runner.version, LOOK_FROM) && !runner.browser) {
+    return 'No Chrome or Edge was found on this computer, so Sonic cannot look at your pages. Install one and restart the runner.';
+  }
+  return '';
+}
+
+/** The first runner version that can keep a server running and look at a page. */
+export const LOOK_FROM = '0.2.0';

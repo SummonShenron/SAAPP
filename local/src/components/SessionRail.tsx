@@ -19,6 +19,9 @@ interface Props {
   compaction: CompactionView | null;
   /** Switches the one ring between the memory reading and this conversation's; only given when both exist. */
   onSwitchMeter?: (() => void) | null;
+  /** "Fold now" beside the Chat reading of the ring (see SessionColumn). */
+  onFold?: (() => void) | null;
+  folding?: boolean;
   /** The scope Sonic answers from; null when there are none to pick. */
   scope: ScopeControls | null;
   /** The target GitHub repo; null where it is not offered. */
@@ -43,7 +46,7 @@ function MiniRing({ fraction, level }: { fraction: number; level: string }) {
  * edge. Pressing one opens a small card beside it with the same controls the column has (components/SessionColumn.tsx); pressing outside it, or Escape, closes it. The page's top-bar button hides
  * the whole strip. Nothing here is state of its own beyond which card is open.
  */
-const SessionRail: React.FC<Props> = ({ usage, context, compaction, onSwitchMeter, scope, repo, settings, connection }) => {
+const SessionRail: React.FC<Props> = ({ usage, context, compaction, onSwitchMeter, onFold, folding, scope, repo, settings, connection }) => {
   const [open, setOpen] = useState<Panel | null>(null);
   const rail = useRef<HTMLElement>(null);
   const contextView = contextGauge(context);
@@ -117,6 +120,7 @@ const SessionRail: React.FC<Props> = ({ usage, context, compaction, onSwitchMete
                       ? <button type="button" className="sc-gauge-name sc-gauge-switch" onClick={onSwitchMeter} title="Switch between Sonic's memory and this conversation">{meterName(compaction)} ⇄</button>
                       : <span className="sc-gauge-name">{meterName(compaction)}</span>}
                     <span className={`sc-gauge-text${isOverloaded(compaction) ? ' ring-caption-overloaded' : ''}`}>{meterCaption(compaction)}</span>
+                    {onFold && compaction.foldable && <button type="button" className="sc-gauge-fold" disabled={folding} onClick={onFold}>{folding ? 'Folding…' : 'Fold now'}</button>}
                   </div>
                 </div>
               )}

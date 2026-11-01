@@ -1876,7 +1876,7 @@ export interface ProjectSettings { disabled: string[]; fake_keys: boolean; }
 /** What the person chose for the runner (the computer) itself: whether it updates itself without a click (off until turned on). */
 export interface RunnerSettings { auto_update: boolean; /** run command lines that only look around (git status, ls...) without a click on a card; off until turned on */ read_only_auto: boolean; }
 /** One project folder a runner serves: chosen on that computer, reported by the runner with its checks and a status code. */
-export interface RunnerProject { id: string; name: string; status: string; checks: RunnerCheck[]; settings: ProjectSettings; }
+export interface RunnerProject { id: string; name: string; status: string; checks: RunnerCheck[]; /** the servers this project can keep running, by name (npm run dev as dev) */ servers?: { name: string; command: string }[]; settings: ProjectSettings; }
 /** A request to add a project: the page sends only the folder NAME, and the person chooses the folder in a window on their own computer. */
 export type RunnerRequestState = 'waiting' | 'asked' | 'added' | 'declined' | 'no_picker' | 'error' | 'expired';
 export interface RunnerRequest { id: string; name: string; state: RunnerRequestState; }
@@ -1888,6 +1888,10 @@ export interface RunnerInfo {
   projects: RunnerProject[]; requests: RunnerRequest[];
   /** Whether this runner is new enough to run command lines. */
   commands?: boolean;
+  /** The browser the runner found for looking at pages ('chrome', 'edge', 'chromium', 'custom'), or '' when it found none (or is too old to look). */
+  browser?: string;
+  /** Whether this runner can keep a server running and look at a page: new enough and a browser found. */
+  looks?: boolean;
   /** One code from a fixed list the runner reports about itself ('' from an older runner), and when it was last seen. */
   status: string; last_seen: string | null;
   /** 'service' when the runner started by itself at login, 'hand' when a person ran it, '' from an older runner. */
@@ -1900,9 +1904,17 @@ export interface RunnerJob {
   created_at: string | null; expires_at: string | null; finished_at: string | null;
   exit_code: number | null; output_tail: string; truncated: boolean; timed_out: boolean; duration: number | null; error: string;
   /** 'command' for a command line Sonic asked to run (shown word for word in `command_shown`); a named check otherwise. */
-  kind?: 'check' | 'command';
+  kind?: 'check' | 'command' | 'serve' | 'stop' | 'look';
   /** For a command: read (only looks), run (runs a program) or change (changes files, the project or uses the network), and why. */
   command_class?: 'read' | 'run' | 'change' | ''; command_notes?: string[]; auto_approved?: boolean; needs_confirm?: boolean;
+  /** A server job (kind 'serve' or 'stop'): what the runner said about it. `session_looks_left` is how many looks the preview session still allows without a click (serve jobs only). */
+  server?: { status?: string; name?: string; port?: number | null; exposed?: boolean }; session_looks_left?: number | null; /** true once the server of this session was stopped */ session_stopped?: boolean;
+  /** A look (kind 'look'): the address, the window size, whether it rides on a preview session (no click), and what the runner read (the picture is fetched separately: see `getLookPicture`). */
+  url?: string; device?: 'phone' | 'tablet' | 'desktop' | ''; session?: boolean; has_screenshot?: boolean; look?: LookFacts;
+}
+export interface LookFacts {
+  title?: string; final_url?: string; text?: string; text_cut?: boolean; console?: string[]; failed?: string[]; blocked?: string[]; viewport?: number[]; layout_width?: number; scroll_width?: number;
+  scroll_height?: number; overflow_x?: boolean; wide_elements?: { el: string; right: number; width: number }[]; viewport_meta?: boolean; device?: string; browser?: string;
 }
 export interface RunnerScript { filename: string; text: string; }
 export interface RunnerPairing {
@@ -1940,6 +1952,16 @@ export const listCommandJobs = (runnerId: string, projectId: string): Promise<{ 
 /** Presses Run. A command that changes things needs `confirmed` too (the second, stronger confirmation on its card). */
 export const approveRunnerJob = (id: string, confirmed = false): Promise<RunnerJob> =>
   taskRequest(`/api/runner/jobs/${encodeURIComponent(id)}/approve`, { method: 'POST', body: JSON.stringify({ confirmed }) }, 'Failed to run that check.');
+/** The picture a look made, as a local address an <img> can show (the endpoint needs the login, which an <img> cannot send). Call URL.revokeObjectURL on it when done. */
+export const getLookPicture = async (jobId: string): Promise<string> => {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/runner/jobs/${encodeURIComponent(jobId)}/screenshot`, { headers });
+  if (!res.ok) throw new Error('The picture is not available.');
+  return URL.createObjectURL(await res.blob());
+};
+/** Stops the project's server (and ends the preview session). No card is needed to end something the person started. */
+export const stopRunnerServer = (runnerId: string, projectId?: string): Promise<RunnerJob> =>
+  taskRequest(`/api/runner/runners/${encodeURIComponent(runnerId)}/stop-server`, { method: 'POST', body: JSON.stringify({ project_id: projectId ?? null }) }, 'Failed to stop the server.');
 export const cancelRunnerJob = (id: string): Promise<RunnerJob> =>
   taskRequest(`/api/runner/jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }, 'Failed to cancel that check.');
 
@@ -2495,6 +2517,8 @@ export const api = {
   createRunnerCommand,
   approveRunnerJob,
   cancelRunnerJob,
+  getLookPicture,
+  stopRunnerServer,
   editSelfModelStatement,
   retireSelfModelStatement,
   getExperiences,

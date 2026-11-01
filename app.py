@@ -2394,6 +2394,10 @@ class RunnerCommandRequest(BaseModel):
     line: str = Field(min_length=1, max_length=2000)       # one command line, typed in the Terminal card
 
 
+class RunnerStopServerRequest(BaseModel):
+    project_id: Optional[str] = Field(default=None, max_length=64)
+
+
 def _runner_db_or_503():
     db = get_db()
     if db is None:
@@ -2603,6 +2607,26 @@ async def cancel_runner_job(job_id: str, current_user = Depends(get_current_user
     if job is None:
         raise HTTPException(status_code=409, detail="That check is already finished or does not exist.")
     return job
+
+
+@app.get("/api/runner/jobs/{job_id}/screenshot")
+async def get_runner_job_screenshot(job_id: str, current_user = Depends(get_current_user)):
+    """The picture a look made, for the person whose job it is (backend/utils/runner_jobs.py get_screenshot). A JPEG the server checked, sent as an image and never cached."""
+    username = _runner_person(current_user)
+    data = await asyncio.to_thread(runner_jobs.get_screenshot, _runner_db_or_503(), username, job_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="No picture for that look.")
+    return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
+
+
+@app.post("/api/runner/runners/{runner_id}/stop-server")
+async def stop_runner_server(runner_id: str, body: RunnerStopServerRequest = Body(...), current_user = Depends(get_current_user)):
+    """The person presses Stop on a running preview session: the runner stops the project's server and everything it started. No card is needed to end something the person started."""
+    username = _runner_person(current_user)
+    try:
+        return await asyncio.to_thread(runner_jobs.stop_server_job, _runner_db_or_503(), username, runner_id, body.project_id)
+    except runner_jobs.RunnerError as problem:
+        raise _runner_http_error(problem)
 
 
 @app.get("/api/memory")
