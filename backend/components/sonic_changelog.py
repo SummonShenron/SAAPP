@@ -226,6 +226,62 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "attachments_remembered",
+        "requires": [
+            "backend/utils/attachment_utils.py::def earlier_attachments_block",
+            "app.py::earlier_attachments_block",
+        ],
+        "month": "2026-11",
+        "title": "Remembering what you attached earlier",
+        "line": (
+            "I can now remember what was in a photo, screenshot or file you attached earlier in the conversation, so you don't have to explain it again on every message."
+        ),
+        "keywords": ["remember the image", "remember the screenshot", "attached earlier", "forgot the picture", "the photo i sent", "what was in the image", "image history", "attachment"],
+        "volunteer": [],
+    },
+    {
+        "id": "delete_and_move_files",
+        "requires": [
+            "backend/services/local_edits.py::def _delete_card",
+            "local/src/localEditsCore.ts::type: 'delete'",
+        ],
+        "month": "2026-11",
+        "title": "Deleting and moving files",
+        "line": (
+            "I can now delete or move a text file in your connected folder when you ask: you see what will go first, it never happens without your Apply, and you can undo it."
+        ),
+        "keywords": ["delete a file", "remove a file", "move a file", "rename a file", "delete the file", "can't delete", "cannot delete", "unused file", "dead code"],
+        "volunteer": [],
+    },
+    {
+        "id": "lessons_for_the_project",
+        "requires": [
+            "backend/utils/lesson_proposals.py::def note",
+            "backend/services/agent_workflow.py::lesson_proposals.should_offer",
+        ],
+        "month": "2026-11",
+        "title": "Learning from corrections",
+        "line": (
+            "I can now suggest a new rule for your project's guidance file when you correct a mistake of mine, so it doesn't come back; you approve or decline it like any edit."
+        ),
+        "keywords": ["learn from corrections", "same mistake", "keep making mistakes", "remember the lesson", "guidance file", "agents.md", "add a rule", "lesson"],
+        "volunteer": [],
+    },
+    {
+        "id": "second_reading_of_changes",
+        "requires": [
+            "backend/utils/diff_review.py::def review",
+            "backend/services/native_loop.py::reviewer is not None",
+        ],
+        "month": "2026-11",
+        "title": "A second look at my own changes",
+        "line": (
+            "I can now read over a change a second time after you apply it, against your project's rules, and fix anything that is wrong before I say I'm done."
+        ),
+        "keywords": ["review the change", "second look", "check your work", "double check", "reviewer", "review my own", "catch mistakes", "self review"],
+        "volunteer": [],
+    },
+    {
         "id": "task_extra_searches",
         "requires": [
             "backend/utils/user_tasks.py::MAX_EXTRA_TOPICS",

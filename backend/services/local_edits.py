@@ -16,6 +16,7 @@ import json
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from backend.services.local_workspace import MAX_FILE_BYTES, path_rejection, safe_relative_path
+from backend.utils import project_guidance
 from backend.utils.docx_edit import DocxEditError, edited_texts, original_texts, parse_outline, plan_edits
 from backend.utils.docx_writer import preview_text, validate_document
 
@@ -105,12 +106,35 @@ def _diff_for(path: str, before: Optional[str], after: str) -> Dict[str, Any]:
     }
 
 
+def _delete_card(path: str, before: str) -> Dict[str, Any]:
+    """The card for a deleted file: every line of it as removed, so what is about to go is in front of the person."""
+    lines = _to_lf(before)[0].split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()                                       # the empty piece after a final newline is not a line of the file
+    shown = [f"-{line}" for line in lines[:_MAX_DIFF_LINES_PER_FILE]]
+    if len(lines) > _MAX_DIFF_LINES_PER_FILE:
+        shown.append(f"... ({len(lines) - _MAX_DIFF_LINES_PER_FILE} more lines not shown)")
+    return {"path": path, "kind": "delete", "format": "text", "diff": "\n".join([f"--- a/{path}", "+++ /dev/null", *shown]), "additions": 0, "deletions": len(lines)}
+
+
+def _rename_card(source: str, target: str, before: str, after: str) -> Dict[str, Any]:
+    """The card for a moved file: where from and to, and the changes too when the same proposal also edited it."""
+    card = {"path": target, "kind": "rename", "source": source, "format": "text", "additions": 0, "deletions": 0}
+    header = f"rename from {source}\nrename to {target}"
+    if before != after:
+        changed = _diff_for(target, before, after)
+        card.update({"additions": changed["additions"], "deletions": changed["deletions"], "diff": header + "\n" + changed["diff"]})
+    else:
+        card["diff"] = header
+    return card
+
+
 def validate_edit_proposal(edits: Any, read_file: Callable[[str], Optional[str]]) -> Dict[str, Any]:
     """Simulates `edits` in order against the snapshot (`read_file(path)` returns a file's text, or
     None if it doesn't exist) and returns {"ok": True, "edits": [...normalized...], "files": [diff
     cards]} or {"ok": False, "errors": [...]}. Each edit is either
     {"path","old_string","new_string"} (replace the one exact occurrence) or {"path","content"}
-    (create a new file that doesn't exist yet), or {"path": "Existing.docx", "word_edits": [...], "save_as": "Existing (edited).docx"} (an edited COPY of a Word
+    (create a new file that doesn't exist yet), or {"path","delete": true} (delete an existing text file), or {"path","rename_to"} (move an existing text file to a new path), or {"path": "Existing.docx", "word_edits": [...], "save_as": "Existing (edited).docx"} (an edited COPY of a Word
     document that was read from the folder; see backend/utils/docx_edit.py for the edit forms and the guarantees), or {"path": "Name.docx", "document": {...}} (create a new Word document from a structured description: see
     backend/utils/docx_writer.py; the diff shows a readable preview and the real file is rendered only when the user applies it)."""
     if not isinstance(edits, list) or not edits:
@@ -124,6 +148,7 @@ def validate_edit_proposal(edits: Any, read_file: Callable[[str], Optional[str]]
     normalized: List[Dict[str, Any]] = []
     docx_cards: List[Dict[str, Any]] = []     # the diff cards for edited copies of Word documents (their "before" is the outline Sonic read, not a file)
     word_documents: set = set()       # paths of Word documents created by this proposal: their "text" is only a preview, so nothing else may edit them
+    renames: Dict[str, str] = {}      # old path -> new path, for the files this proposal moves (a moved file is one card, not a delete and a create)
 
     for index, op in enumerate(edits, start=1):
         if not isinstance(op, dict):
@@ -145,6 +170,52 @@ def validate_edit_proposal(edits: Any, read_file: Callable[[str], Optional[str]]
         if path in word_documents:
             errors.append(f"{label}: this Word document is created by this same proposal; put everything in its one {{path, document}} edit")
             continue
+        # Deleting or moving a file (2026-11-01: Sonic could not remove an unused component, and could not move code between files). Text files only: the snapshot holds a file's text, and
+        # Undo puts back exactly that, so a file whose bytes are not in it (a Word document, an image) is refused rather than deleted beyond recovery.
+        if op.get("delete") is True or "rename_to" in op:
+            others = ("old_string", "new_string", "content", "document", "word_edits", "replace_all")
+            if any(key in op for key in others) or (op.get("delete") is True and "rename_to" in op):
+                errors.append(f"{label}: a delete or a rename stands alone: give only {{path, delete: true}} or {{path, rename_to}}, and make any other change in a separate edit")
+                continue
+            if path.lower().endswith(".docx"):
+                errors.append(f"{label}: Word documents can't be deleted or moved by Sonic (it never changes the original of a document)")
+                continue
+            if original[path] is None:
+                errors.append(
+                    f"{label}: no such file in the connected folder, so there is nothing to " + ("delete" if op.get("delete") is True else "move")
+                    + ". Only text files in the folder can be; check the path with find_file first"
+                )
+                continue
+            if working[path] is None:
+                errors.append(f"{label}: this proposal already removes or moves that file")
+                continue
+            if op.get("delete") is True:
+                working[path] = None
+                normalized.append({"type": "delete", "path": path})
+                continue
+            target = safe_relative_path(op.get("rename_to"))
+            if target is None:
+                errors.append(f"{label}: invalid rename_to {op.get('rename_to')!r} (use a path relative to the folder root)")
+                continue
+            reason = path_rejection(target)
+            if reason:
+                errors.append(f"{label}: {target} is not allowed — {reason}")
+                continue
+            if target == path or target.lower().endswith(".docx"):
+                errors.append(f"{label}: rename_to must be a different path, and not a Word document")
+                continue
+            if target not in working:
+                original[target] = read_file(target)
+                working[target] = original[target]
+            if working[target] is not None or target in word_documents:
+                errors.append(f"{label}: {target} already exists; Sonic never overwrites a file by moving another onto it")
+                continue
+            working[target] = working[path]
+            working[path] = None
+            renames[path] = target
+            normalized.append({"type": "rename", "path": path, "to": target})
+            continue
+
         if "document" in op and "old_string" not in op and "content" not in op:
             if not path.lower().endswith(".docx"):
                 errors.append(f"{label}: a document can only be written to a path ending in .docx")
@@ -232,10 +303,24 @@ def validate_edit_proposal(edits: Any, read_file: Callable[[str], Optional[str]]
     touched = [path for path in working if working[path] != original[path]]
     if len(touched) > MAX_EDIT_FILES:
         errors.append(f"these edits touch {len(touched)} files; propose at most {MAX_EDIT_FILES} at once")
+    moved_to = {target: source for source, target in renames.items()}
     if not errors:
+        # The guidance file Sonic reads at the start of every coding turn is read only up to MAX_CHARS: a change that makes it longer than that would have its end cut off (a lesson added at the
+        # bottom would never be seen). A file already over the limit may still be shortened.
+        guidance_path = project_guidance.FILES[0]
+        after_guidance, before_guidance = working.get(guidance_path), original.get(guidance_path)
+        if after_guidance is not None and not project_guidance.fits(after_guidance) and (before_guidance is None or project_guidance.fits(before_guidance) or len(after_guidance) >= len(before_guidance)):
+            errors.append(
+                f"{guidance_path}: the result would be {len(project_guidance._clean(after_guidance))} characters, and only the first {project_guidance.MAX_CHARS} are ever read, so the end would be cut off. "
+                "Shorten it: replace the least useful line instead of adding one"
+            )
         for path in touched:
             after = working[path]
             before = original[path]
+            if after is None:
+                continue                                  # a file that is gone has no syntax to check
+            if path in moved_to and after == original[moved_to[path]]:
+                continue                                  # a file moved unchanged is as valid as it was (a broken one is not this proposal's fault)
             error = _syntax_error(path, after)
             # A file that was already broken before the edit isn't this proposal's fault.
             if error and (before is None or _syntax_error(path, before) is None):
@@ -243,10 +328,18 @@ def validate_edit_proposal(edits: Any, read_file: Callable[[str], Optional[str]]
 
     if errors:
         return {"ok": False, "errors": errors[:_MAX_ERRORS_REPORTED]}
+    cards = []
+    for path in touched:
+        if path in renames or path in moved_to:
+            continue                                      # a moved file is drawn once, below
+        cards.append(_delete_card(path, original[path] or "") if working[path] is None else _diff_for(path, original[path], working[path]))
+    cards += [_rename_card(source, target, original[source] or "", working[target] or "") for source, target in renames.items()]
     return {
         "ok": True,
         "edits": normalized,
-        "files": [_diff_for(path, original[path], working[path]) for path in touched] + docx_cards,
+        "files": cards + docx_cards,
         # What each plain-text file will contain once applied (a Word document's "text" is only a preview, so it is not here): used to refresh the server's copy of the folder.
         "texts": {path: working[path] for path in touched if path not in word_documents and working[path] is not None},
+        # Files that will be gone once applied (deleted, or the old path of a move): the server's copy of the folder drops them too.
+        "removed": [path for path in touched if working[path] is None],
     }

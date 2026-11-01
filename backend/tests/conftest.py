@@ -90,6 +90,13 @@ def block_real_llm_calls(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_real_diff_reviews(monkeypatch):
+    """The second reading of an applied change (backend/utils/diff_review.py) is a real Haiku call whenever a Claude key is configured, and a dev machine has one in its .env. The block above covers
+    Gemini only, so this keeps every test from billing a review by accident: reviews are off, and the tests of the reviewer turn them on with a fake model of their own."""
+    monkeypatch.setattr("backend.utils.diff_review.ENABLED", False)
+
+
+@pytest.fixture(autouse=True)
 def isolate_local_workspace_dir(monkeypatch, tmp_path):
     """Points the local-folder snapshot store at a per-test temp directory, so no test can ever
     read (or leave behind) a real snapshot in the system temp dir."""

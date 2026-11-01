@@ -82,8 +82,12 @@ GUIDANCE_KEYS = ("project_guidance_turns",)
 PLAN_CHANGE_KEYS = ("plan_change_updated", "plan_change_cancelled", "plan_change_unchanged")
 # Combos in a coding turn (backend/utils/combo.py): turns where an action landed, actions that landed, steps handed back for them, checks that failed in a new way, times the chain dropped (a step with no
 # landed action), turns that hit the per-turn ceiling, and turns that chained three or more steps. Counts only.
-COMBO_KEYS = ("combo_turns", "combo_hits", "combo_steps_granted", "combo_failed_checks", "combo_drops", "combo_ceiling_hit", "combo_long")
-_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS
+COMBO_KEYS = ("combo_turns", "combo_hits", "combo_steps_granted", "combo_failed_checks", "combo_drops", "combo_ceiling_hit", "combo_long",
+              # Second readings of an applied change (backend/utils/diff_review.py): how many ran, and how many found something blocking (and so gave steps back).
+              "review_runs", "review_blocked")
+# Lessons for the project's guidance file (backend/utils/lesson_proposals.py): turns that were told they could propose one, and proposals that touched the guidance file. Counts only.
+LESSON_KEYS = ("lesson_offered", "guidance_edit_proposed")
+_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS + LESSON_KEYS
 KEYS = frozenset(
     list(_PLAIN_KEYS) + [f"{group}_{name}" for group, names in _GROUPS.items() for name in names]
 )

@@ -109,3 +109,73 @@ test('undo keeps nothing of how the copy was made', () => {
   const kept = forUndo({ path: 'C.docx', before: null, after: '', binary: 'docx', docxEdit: { source: 'A.docx', word_edits: [] }, stamp: '1:2' });
   assert.deepEqual(kept, { path: 'C.docx', before: null, after: '', binary: 'docx', stamp: '1:2' });
 });
+
+// ---- deleting and moving files (2026-11-01) ----
+
+test('a delete plans as a removed file that keeps its text for Undo and writes nothing', async () => {
+  const plan = await planEdits([{ type: 'delete', path: 'src/old.ts' }], files({ 'src/old.ts': 'export const old = 1;\n' }));
+  assert.equal(plan.ok, true);
+  assert.deepEqual(plan.changes, [{ path: 'src/old.ts', before: 'export const old = 1;\n', after: '', deleted: true }]);
+});
+
+test('a delete of a file that is gone, or of a Word document, is refused', async () => {
+  const gone = await planEdits([{ type: 'delete', path: 'src/old.ts' }], files({}));
+  assert.match(gone.errors[0], /no longer exists, so there is nothing to delete/);
+  const word = await planEdits([{ type: 'delete', path: 'Letter.docx' }], files({ 'Letter.docx': 'x' }));
+  assert.match(word.errors[0], /never deleted/);
+  const secret = await planEdits([{ type: 'delete', path: '.env' }], files({ '.env': 'KEY=1' }));
+  assert.match(secret.errors[0], /not allowed/);
+});
+
+test('a move plans as the old path removed and the new path created with the same text', async () => {
+  const plan = await planEdits([{ type: 'rename', path: 'a/old.ts', to: 'b/new.ts' }], files({ 'a/old.ts': 'let x = 1;\n' }));
+  assert.equal(plan.ok, true);
+  assert.deepEqual(plan.changes, [
+    { path: 'a/old.ts', before: 'let x = 1;\n', after: '', deleted: true },
+    { path: 'b/new.ts', before: null, after: 'let x = 1;\n' },
+  ]);
+});
+
+test('a move onto an existing file, a missing file, itself, a Word document or a protected path is refused', async () => {
+  const onto = await planEdits([{ type: 'rename', path: 'a.ts', to: 'b.ts' }], files({ 'a.ts': '1', 'b.ts': '2' }));
+  assert.match(onto.errors[0], /already exists.*never overwrites/);
+  const missing = await planEdits([{ type: 'rename', path: 'a.ts', to: 'b.ts' }], files({}));
+  assert.match(missing.errors[0], /no longer exists, so it can't be moved/);
+  const itself = await planEdits([{ type: 'rename', path: 'a.ts', to: 'a.ts' }], files({ 'a.ts': '1' }));
+  assert.match(itself.errors[0], /already there/);
+  const word = await planEdits([{ type: 'rename', path: 'a.docx', to: 'b.docx' }], files({ 'a.docx': '1' }));
+  assert.match(word.errors[0], /never moved/);
+  const protectedPath = await planEdits([{ type: 'rename', path: 'a.ts', to: 'node_modules/b.ts' }], files({ 'a.ts': '1' }));
+  assert.match(protectedPath.errors[0], /protected directory/);
+});
+
+test('edits after a move apply to the file at its new path, and a file can be deleted and made again', async () => {
+  const moved = await planEdits(
+    [{ type: 'rename', path: 'a.ts', to: 'b.ts' }, { type: 'replace', path: 'b.ts', old_string: 'one', new_string: 'two' }],
+    files({ 'a.ts': 'one\n' }),
+  );
+  assert.equal(moved.ok, true);
+  assert.deepEqual(moved.changes.map(c => [c.path, c.after, c.deleted === true]), [['a.ts', '', true], ['b.ts', 'two\n', false]]);
+  const again = await planEdits([{ type: 'delete', path: 'a.ts' }, { type: 'create', path: 'a.ts', content: 'fresh\n' }], files({ 'a.ts': 'old\n' }));
+  assert.equal(again.ok, true);
+  assert.deepEqual(again.changes, [{ path: 'a.ts', before: 'old\n', after: 'fresh\n' }]);
+});
+
+test('undo of a delete is blocked when something has been put back where the file was, and allowed when it is still gone', async () => {
+  const change = { path: 'a.ts', before: 'old\n', after: '', deleted: true };
+  const gone = await changesMovedSince([change], async () => null, async () => null);
+  assert.deepEqual(gone, []);
+  const back = await changesMovedSince([change], async () => 'new work\n', async () => null);
+  assert.deepEqual(back, ['a.ts']);
+});
+
+test('undo keeps the deleted flag so it knows to write the text back', () => {
+  assert.deepEqual(forUndo({ path: 'a.ts', before: 'old\n', after: '', deleted: true }), { path: 'a.ts', before: 'old\n', after: '', deleted: true });
+});
+
+test('applying a delete removes the file, and a rollback or Undo writes its text back', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('./localEdits.ts', import.meta.url), 'utf8');
+  assert.match(source, /else if \(change\.deleted\) \{\s*await removeFile\(root, change\.path\);/);
+  assert.match(source, /if \(change\.before === null\) await removeFile\(root, change\.path\);\s*else await writeFileText\(root, change\.path, change\.before\);/);
+});

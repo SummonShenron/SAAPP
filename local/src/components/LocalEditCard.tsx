@@ -110,7 +110,11 @@ export default function LocalEditCard({ proposal, canApply, onApply, onUndo, onD
             <span className="led-file-kind">
               {file.format === 'docx_edit'
                 ? `+${file.additions} −${file.deletions} · edited copy`
-                : file.format === 'docx' ? 'new Word document' : file.kind === 'create' ? 'new file' : `+${file.additions} −${file.deletions}`}
+                : file.format === 'docx' ? 'new Word document'
+                : file.kind === 'create' ? 'new file'
+                : file.kind === 'delete' ? 'delete file'
+                : file.kind === 'rename' ? `moved from ${file.source ?? 'its old path'}`
+                : `+${file.additions} −${file.deletions}`}
             </span>
           </button>
           {openFiles.has(file.path) && file.format === 'docx_edit' && (

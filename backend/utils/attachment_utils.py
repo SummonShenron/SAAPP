@@ -293,6 +293,74 @@ def delete_session_attachments(username: str, session_id: str) -> Dict[str, int]
     return removed
 
 
+# ---------------------------------------------------------------------------------------------------------------------------------------------
+# Remembering an attachment after the turn it came with
+#
+# What a photo or file shows is read out once, when it is attached (a photo through the vision model, which transcribes any text in it word for word), and kept in session_documents.
+# It reached the reply on THAT turn only: the history the model is given is the messages' words, and the stored text was looked up on one route (the knowledge-base one). So on the
+# next message in an ordinary conversation, Sonic had the person's words about the picture and nothing of the picture, and said it did not remember what was in it (2026-11-01: the same
+# screenshot had to be explained four times). Now a later turn gets the text of the conversation's earlier attachments, newest first, within a size cap. It lives in session_documents,
+# so it goes when the conversation is deleted and after ATTACHMENT_RETENTION_DAYS, like the photo itself.
+# ---------------------------------------------------------------------------------------------------------------------------------------------
+ATTACHMENT_MEMORY_DOCS = int(os.getenv("ATTACHMENT_MEMORY_DOCS", "3"))
+ATTACHMENT_MEMORY_DOC_CHARS = int(os.getenv("ATTACHMENT_MEMORY_DOC_CHARS", "2500"))
+ATTACHMENT_MEMORY_TOTAL_CHARS = int(os.getenv("ATTACHMENT_MEMORY_TOTAL_CHARS", "6000"))
+EARLIER_ATTACHMENTS_HEADER = (
+    "\n\nATTACHMENTS EARLIER IN THIS CONVERSATION (the person sent these before this message and you read them then; what each one showed is written out below, in full where it fits. "
+    "Use it whenever they refer back to it, such as \"the screenshot\", \"what she said\" or \"that picture\". Never say you can't see it or don't remember it. If something they ask "
+    "about is not in the text below, say it was not in what you noted from it, and ask them to send it again):\n"
+)
+
+
+def attachments_earlier_in(messages) -> bool:
+    """Whether any earlier message of this conversation (not the newest) carried an attachment. In memory only: it decides whether the database is worth asking."""
+    earlier = list(messages or [])[:-1]
+    return any(
+        isinstance(getattr(m, "additional_kwargs", None), dict) and (m.additional_kwargs.get("attachment_names") or m.additional_kwargs.get("attachments"))
+        for m in earlier if isinstance(m, HumanMessage)
+    )
+
+
+def earlier_attachments(username: str, session_id: str, exclude_names=()) -> List[tuple]:
+    """[(file name, text read from it)] for this conversation's attachments, newest first, leaving out the ones arriving with this message. Empty on any problem or without a database."""
+    db = get_db()
+    if db is None or not username or not session_id:
+        return []
+    skip = set(exclude_names or ())
+    try:
+        rows = db["session_documents"].find({"username": username, "session_id": session_id}, {"_id": 0, "filename": 1, "text": 1}).sort("_id", -1).limit(ATTACHMENT_MEMORY_DOCS + len(skip) + 2)
+        found = [(str(row.get("filename") or "attachment"), str(row.get("text") or "")) for row in rows]
+    except Exception:
+        logger.warning("[attachment memory] could not read this conversation's attachments.", exc_info=True)
+        return []
+    return [(name, text) for name, text in found if name not in skip and text.strip()][:ATTACHMENT_MEMORY_DOCS]
+
+
+def build_earlier_attachments_block(items) -> str:
+    """The prompt block for earlier attachments: each one's text, cut at ATTACHMENT_MEMORY_DOC_CHARS (and the whole block at ATTACHMENT_MEMORY_TOTAL_CHARS), with a note where it was cut. "" when there are none."""
+    parts, used = [], 0
+    for name, text in items:
+        room = ATTACHMENT_MEMORY_TOTAL_CHARS - used
+        if room <= 0:
+            break
+        body = str(text).strip()
+        limit = min(ATTACHMENT_MEMORY_DOC_CHARS, room)
+        cut = len(body) > limit
+        shown = body[:limit].rstrip() + (" [cut: the rest of this one is not shown]" if cut else "")
+        parts.append(f"[{name}]\n{shown}")
+        used += len(shown)
+    return EARLIER_ATTACHMENTS_HEADER + "\n\n".join(parts) + "\n" if parts else ""
+
+
+def earlier_attachments_block(username: str, session_id: str, exclude_names=()) -> str:
+    """The block for this turn's prompt (see the section above). Blocking (a database read): call it off the event loop. Never raises."""
+    try:
+        return build_earlier_attachments_block(earlier_attachments(username, session_id, exclude_names))
+    except Exception:
+        logger.warning("[attachment memory] could not build the earlier-attachments block.", exc_info=True)
+        return ""
+
+
 def retrieve_from_session(username: str, session_id: str, query: str, top_k: int = 5) -> List[Dict]:
     """
     Queries MongoDB for attachments matching this specific session.

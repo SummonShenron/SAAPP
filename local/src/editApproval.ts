@@ -4,7 +4,7 @@
 //   sonic    a proposal that only touches Sonic's own folder (.sonic/: its notes and tests) is applied at once, with the diff shown and Undo; anything else still asks.
 //   session  every proposal is applied at once, with the diff shown and Undo, until this tab is closed. Never remembered across a restart.
 //
-// Whatever the level, these always ask: a Word document (created or edited), a proposal touching more than MAX_AUTO_FILES files, and a burst (more than AUTO_BURST_LIMIT automatic
+// Whatever the level, these always ask: a Word document (created or edited), deleting or moving a file, a change to Sonic's guidance file (.sonic/AGENTS.md), a proposal touching more than MAX_AUTO_FILES files, and a burst (more than AUTO_BURST_LIMIT automatic
 // applies in AUTO_BURST_WINDOW_MS), which is what a loop gone wrong or a hostile instruction inside a page Sonic read would look like. An automatic apply is reported to the waiting
 // turn exactly like a click on Apply, and can be undone from the card or the folder menu.
 import type { EditProposal } from './localEditsCore';
@@ -12,6 +12,8 @@ import type { EditProposal } from './localEditsCore';
 export type ApprovalLevel = 'ask' | 'sonic' | 'session';
 
 export const SONIC_DIR = '.sonic/';
+/** The project's guidance for Sonic, read at the start of every coding turn: a change to it (a rule Sonic proposes after a correction) is never applied without a click, whatever the level. */
+export const GUIDANCE_FILE = '.sonic/AGENTS.md';
 export const MAX_AUTO_FILES = 8;
 export const AUTO_BURST_LIMIT = 6;
 export const AUTO_BURST_WINDOW_MS = 60_000;
@@ -82,6 +84,12 @@ export function decideAutoApply(level: ApprovalLevel, proposal: EditProposal, re
   if (level === 'ask') return { auto: false };
   if (proposal.files.some(f => f.format === 'docx' || f.format === 'docx_edit') || proposal.edits.some(e => e.type === 'create_docx' || e.type === 'edit_docx')) {
     return { auto: false, reason: 'a Word document always asks' };
+  }
+  if ([...proposal.files.map(f => f.path), ...proposal.edits.map(e => e.path)].includes(GUIDANCE_FILE)) {
+    return { auto: false, reason: "Sonic's own guidance file always asks (it shapes every coding turn)" };
+  }
+  if (proposal.files.some(f => f.kind === 'delete' || f.kind === 'rename') || proposal.edits.some(e => e.type === 'delete' || e.type === 'rename')) {
+    return { auto: false, reason: 'deleting or moving a file always asks' };
   }
   if (proposal.files.length > MAX_AUTO_FILES) return { auto: false, reason: `more than ${MAX_AUTO_FILES} files always asks` };
   if (recent.filter(t => now - t < AUTO_BURST_WINDOW_MS).length >= AUTO_BURST_LIMIT) return { auto: false, reason: 'too many automatic changes in a minute, so it asks' };

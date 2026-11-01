@@ -22,6 +22,11 @@ def _clean(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
+def fits(text: str) -> bool:
+    """Whether a guidance file with this text is read whole (nothing past MAX_CHARS is shown, so a rule added at the end of a longer one would be cut off)."""
+    return len(_clean(text or "")) <= MAX_CHARS
+
+
 def read(root: Any) -> Optional[Dict[str, Any]]:
     """The first guidance file the folder has, as {"path", "text", "cut"}, or None. A file that is not a plain file inside the folder (a link out of it, a directory), is empty or is unreadable is skipped. Never raises."""
     if not root or not str(root).strip():
