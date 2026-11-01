@@ -998,7 +998,7 @@ async def reasoner_node(state: GraphState) -> GraphState:
         # Only a recent window. app.py sends the last 10 messages each turn, but state["messages"] uses the add_messages reducer under a
         # checkpointer, so it holds the WHOLE thread (measured: 59 messages on turn 30 after the app sent 10 a turn). Formatting all of
         # it made this prompt grow for the life of the conversation: one local reasoner call used ~250K input tokens.
-        history = state.get("messages", [])[-REASONER_HISTORY_MAX_MESSAGES:]
+        history = state.get("messages", [])[-max(state.get("history_max") or REASONER_HISTORY_MAX_MESSAGES, REASONER_HISTORY_MAX_MESSAGES):]      # a conversation with a summary sends more or fewer word for word (backend/utils/conversation_summary.py)
 
         # Format message history into a clean string for the LLM
         formatted_history = format_history(history[:-1])
@@ -1990,7 +1990,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         # See TOOL_AGENT_HISTORY_MAX_MESSAGES's comment: a multi-turn task's real instruction, or
         # what a short reply like "yes"/"go ahead" is actually confirming, often lives a few
         # turns back — {question} alone (just this turn's message) can't recover that.
-        prior_messages = state.get("messages", [])[:-1][-TOOL_AGENT_HISTORY_MAX_MESSAGES:]
+        prior_messages = state.get("messages", [])[:-1][-max((state.get("history_max") or 0) - 1, TOOL_AGENT_HISTORY_MAX_MESSAGES):]      # never fewer than before; more when this turn sent more word for word
         formatted_history = format_history(prior_messages) or "(no prior messages this conversation)"
         # The whole earlier conversation, uncompacted, for the after-answer checks (react_loop.py): code the user showed in an earlier message is not in the
         # repo, so those checks need it to tell "discussing what you showed me" from "inventing". Not the compacted prompt history above, which cuts long
@@ -2242,6 +2242,9 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 where_block = await asyncio.to_thread(orientation.where_to_look, local_workspace_handle.root, snapshot_paths(username), [latest_message_content, *previous_human_texts(state.get("messages", []))])
                 schema_parts.append(where_block)
                 llm_turns.note_orientation(orientation.block_paths(where_block))      # kept on the turn, in memory, so the loop can say whether the file it edited was one the block listed
+        if state.get("conversation_summary"):
+            # The older part of this conversation, folded into a few quoted items (backend/utils/conversation_summary.py): data, so the agent still knows what was said before its recent messages.
+            schema_parts.append(state["conversation_summary"])
         if state.get("working_notes"):
             # What this conversation has already decided, ruled out and left open (backend/utils/working_state.py): data, kept so a long session does not lose its thread.
             schema_parts.append(state["working_notes"])

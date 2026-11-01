@@ -271,6 +271,7 @@ def build_voice_prompt(
     meeting_context: str = "",
     headsup_context: str = "",
     working_notes_context: str = "",
+    conversation_summary_context: str = "",
 ) -> str:
     """Composes the single unified final-answer prompt used by every response path (RAG,
     conversational, web search, code interpreter, GitHub search, PR summary) — one persona,
@@ -316,6 +317,8 @@ def build_voice_prompt(
         sections.append("\n" + working_notes_context + "\n")
     if emotional_context:
         sections.append(emotional_context)
+    if conversation_summary_context:
+        sections.append("\n" + conversation_summary_context + "\n")      # read at every safety level too, as data below the safety and emotional blocks: it never changes them
     sections.append(f"\nCONVERSATION HISTORY:\n{history}\n\nCURRENT USER INPUT:\n{question}\n\nASSISTANT RESPONSE:\n")
     sections.append(FOLLOW_UP_CONSTRAINT)
     return "\n".join(sections)

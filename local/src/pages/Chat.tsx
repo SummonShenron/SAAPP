@@ -26,13 +26,14 @@ import type { WelcomeCard } from '../welcomeCards';
 import { HEIC_NOTICE, isUnreadableHeic, shrinkImageFile } from '../utils/imageShrink';
 import MeetingControl from '../components/MeetingControl';
 import WorkingNotesControl from '../components/WorkingNotesControl';
+import ConversationSummaryControl from '../components/ConversationSummaryControl';
 import PlanCard from '../components/PlanCard';
 import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type BudgetView, type CodePlan, type KnowledgeBase, type MemorySources, type RunnerJob, type ToolModel } from '../api';
 import MemorySourceDialog from '../components/MemorySourceDialog';
 import BudgetBanner from '../components/BudgetBanner';
 import SessionColumn, { type ConnectionProps, type FolderControls, type RepoControls } from '../components/SessionColumn';
 import SessionRail from '../components/SessionRail';
-import { cleanMeter, type CompactionView } from '../components/compactionMeterLogic';
+import { canSwitchMeter, cleanMeter, conversationMeter, otherMeterMode, pickMeter, readMeterMode, writeMeterMode, type CompactionView, type MeterKind } from '../components/compactionMeterLogic';
 import TerminalBlade from '../components/TerminalBlade';
 import { terminalChoices, terminalTarget, type TerminalChoice } from '../components/terminalLogic';
 import { planAnchorId } from '../components/planPlacement';
@@ -773,6 +774,9 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [contextUse, setContextUse] = useState<{ sessionId: string; used: number; window: number; fraction: number } | null>(null);
   /** The memory compaction meter (it replaced the context ring): notes waiting to be folded together, against the number at which they are. null until the first reading, or where there is none (a guest). */
   const [compactionMeter, setCompactionMeter] = useState<CompactionView | null>(null);
+  // The same ring can show this conversation's messages waiting to be folded into its summary (backend/utils/conversation_summary.py); which one it shows is the viewer's own choice, kept in the browser.
+  const [conversationMeterView, setConversationMeterView] = useState<CompactionView | null>(null);
+  const [meterMode, setMeterMode] = useState<MeterKind>(() => readMeterMode());
   const { status: workspaceStatus, currentGitBranch } = workspace;
   useEffect(() => {
     if (!columnVisible || workspaceStatus === 'disconnected') return undefined;
@@ -1190,9 +1194,18 @@ useEffect(() => {
   const refreshCompactionMeter = React.useCallback(() => {
     if (!principal || isEmbedded || isGuestPrincipal(principal)) return;
     api.getCompactionMeter().then(raw => setCompactionMeter(cleanMeter(raw))).catch(() => { /* no meter endpoint here, or signed out: nothing to show */ });
-  }, [principal, isEmbedded]);
+    api.getConversationSummary(sessionId).then(raw => { if (sessionIdRef.current === sessionId) setConversationMeterView(conversationMeter(raw)); }).catch(() => { /* an older server has no summary endpoint: the ring just stays on memory */ });
+  }, [principal, isEmbedded, sessionId]);
 
+  useEffect(() => { setConversationMeterView(null); }, [sessionId]);      // another conversation's count must never be shown (or mistaken for a fold) in this one
   useEffect(() => { refreshCompactionMeter(); }, [refreshCompactionMeter]);
+
+  const shownMeter = pickMeter(meterMode, compactionMeter, conversationMeterView);
+  const switchMeter = canSwitchMeter(compactionMeter, conversationMeterView) ? () => {
+    const next = otherMeterMode(meterMode);
+    setMeterMode(next);
+    writeMeterMode(next);
+  } : null;
 
   useEffect(() => {
     if (loading) return undefined;
@@ -1380,6 +1393,7 @@ useEffect(() => {
     const traceOpen = showTracePanel;
     shell.setTopBarActions(
       <>
+        {!isGuestPrincipal(principal) && <ConversationSummaryControl sessionId={sessionId} busy={loading} turns={userTurnCount} />}
         {!isGuestPrincipal(principal) && <WorkingNotesControl sessionId={sessionId} busy={loading} turns={userTurnCount} />}
         {!isGuestPrincipal(principal) && <MeetingControl sessionId={sessionId} onStarted={(name) => meetingStartedRef.current(name)} />}
         <button
@@ -3211,7 +3225,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           runnerStart={runnerStart}
           usage={budget ? ringView(budget) : null}
           context={contextUse && contextUse.sessionId === sessionId ? contextUse : null}
-          compaction={compactionMeter}
+          compaction={shownMeter}
+          onSwitchMeter={switchMeter}
           plan={codePlan && workspace.canEdit ? codePlan : null}
           scope={allowedAffiliates.length > 0 ? { value: selectedAffiliate, choices: scopeOptions, busy: loading || fetchingScope, onChange: setSelectedAffiliate } : null}
           memory={lastMemory}
@@ -3233,7 +3248,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
         <SessionRail
           usage={budget ? ringView(budget) : null}
           context={contextUse && contextUse.sessionId === sessionId ? contextUse : null}
-          compaction={compactionMeter}
+          compaction={shownMeter}
+          onSwitchMeter={switchMeter}
           scope={allowedAffiliates.length > 0 ? { value: selectedAffiliate, choices: scopeOptions, busy: loading || fetchingScope, onChange: setSelectedAffiliate } : null}
           repo={repoControls}
           settings={chatSettings}

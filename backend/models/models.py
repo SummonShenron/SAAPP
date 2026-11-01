@@ -304,6 +304,21 @@ def review_llm():
     return _review_llm["haiku"]
 
 
+_summary_llm: dict = {}
+
+
+def summary_llm():
+    """The model that folds the older part of a conversation into its summary (backend/utils/conversation_summary.py): Claude Haiku at low effort with thinking off, with room for a patch of up to six
+    items (the reviewer's 600 tokens could cut one off). CONVERSATION_SUMMARY_MODEL overrides the model. None when no Claude key is configured, and the caller uses the lite model."""
+    from backend.models import claude_llm
+
+    if not claude_llm.api_key():
+        return None
+    if "haiku" not in _summary_llm:
+        _summary_llm["haiku"] = claude_llm.ClaudeLLM(model_name=os.getenv("CONVERSATION_SUMMARY_MODEL", claude_llm.DEFAULT_MODEL), fallback=None, effort="low", thinking_off=True, max_tokens=1200)
+    return _summary_llm["haiku"]
+
+
 def tool_agent_llm(deep: bool, choice=None):
     """The model behind the tool agent's reasoning steps (the reply the person reads is written by Gemini either way). `choice` is the person's own setting,
     "claude" (Haiku), "sonnet" (Claude Sonnet, when it is offered: see sonnet_available) or "gemini"; with none, the server's default applies: Gemini unless

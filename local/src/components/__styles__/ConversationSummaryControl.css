@@ -1,0 +1,195 @@
+.convo-summary {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* The top bar's .topbar-btn is a fixed 34px icon square that loads after this file; the count badge sits on its corner. */
+.topbar-btn.convo-summary-btn {
+  position: relative;
+}
+
+.convo-summary-count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background-color: var(--accent-primary);
+  color: var(--on-accent);
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+.convo-summary-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  width: min(380px, calc(100vw - 32px));
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  background-color: var(--card-bg, var(--input-bg));
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 0.75rem 0.85rem;
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.convo-summary-intro {
+  margin: 0 0 0.6rem;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.convo-summary-panel section {
+  margin-bottom: 0.7rem;
+}
+
+.convo-summary-panel h4 {
+  margin: 0 0 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.convo-summary-panel ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.convo-summary-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.25rem;
+  padding: 0.1rem 0;
+}
+
+.convo-summary-text {
+  flex: 1;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  line-height: 1.35;
+  padding: 0.2rem 0.3rem;
+  border-radius: 6px;
+  cursor: text;
+}
+
+.convo-summary-text:hover {
+  background-color: color-mix(in srgb, var(--text-muted) 12%, transparent);
+}
+
+.convo-summary-yours {
+  margin-left: 0.4rem;
+  padding: 0 0.35rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  white-space: nowrap;
+}
+
+.convo-summary-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.convo-summary-icon:hover {
+  color: var(--text);
+  background-color: color-mix(in srgb, var(--text-muted) 14%, transparent);
+}
+
+.convo-summary-edit {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.convo-summary-edit input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background-color: var(--input-bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.convo-summary-add,
+.convo-summary-clear {
+  background: none;
+  border: none;
+  padding: 0.15rem 0.3rem;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.convo-summary-add:hover,
+.convo-summary-clear:hover {
+  color: var(--text);
+}
+
+.convo-summary-progress {
+  margin: 0.2rem 0 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.convo-summary-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.convo-summary-fold {
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background-color: var(--input-bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.convo-summary-fold:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--text-muted) 14%, var(--input-bg));
+}
+
+.convo-summary-fold:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.convo-summary-msg {
+  margin: 0.4rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}

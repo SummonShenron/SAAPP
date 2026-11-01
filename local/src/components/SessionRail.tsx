@@ -7,7 +7,7 @@ import { ChipChoices, glyph, type ChatSettings, type ChipControl } from './Compo
 import { chipLabel, isChanged, type ChipKey } from './composerChipsLogic';
 import { contextGauge, folderLine, gaugeSummary, runnerLine, type ContextUse } from './sessionColumnLogic';
 import CompactionMeter from './CompactionMeter';
-import { gaugesSummary, isOverloaded, meterCaption, meterTitle, type CompactionView } from './compactionMeterLogic';
+import { gaugesSummary, isOverloaded, meterCaption, meterName, meterTitle, type CompactionView } from './compactionMeterLogic';
 import './__styles__/SessionRail.css';
 
 interface Props {
@@ -17,6 +17,8 @@ interface Props {
   context: ContextUse | null;
   /** The memory compaction meter's reading (notes waiting to be folded together, and the number at which they are); null before the first reading. */
   compaction: CompactionView | null;
+  /** Switches the one ring between the memory reading and this conversation's; only given when both exist. */
+  onSwitchMeter?: (() => void) | null;
   /** The scope Sonic answers from; null when there are none to pick. */
   scope: ScopeControls | null;
   /** The target GitHub repo; null where it is not offered. */
@@ -41,7 +43,7 @@ function MiniRing({ fraction, level }: { fraction: number; level: string }) {
  * edge. Pressing one opens a small card beside it with the same controls the column has (components/SessionColumn.tsx); pressing outside it, or Escape, closes it. The page's top-bar button hides
  * the whole strip. Nothing here is state of its own beyond which card is open.
  */
-const SessionRail: React.FC<Props> = ({ usage, context, compaction, scope, repo, settings, connection }) => {
+const SessionRail: React.FC<Props> = ({ usage, context, compaction, onSwitchMeter, scope, repo, settings, connection }) => {
   const [open, setOpen] = useState<Panel | null>(null);
   const rail = useRef<HTMLElement>(null);
   const contextView = contextGauge(context);
@@ -110,7 +112,12 @@ const SessionRail: React.FC<Props> = ({ usage, context, compaction, scope, repo,
               {compaction && (
                 <div className="sc-gauge">
                   <CompactionMeter view={compaction} contextText={contextView?.text} />
-                  <div className="sc-gauge-body"><span className="sc-gauge-name">Memory</span><span className={`sc-gauge-text${isOverloaded(compaction) ? ' ring-caption-overloaded' : ''}`}>{meterCaption(compaction)}</span></div>
+                  <div className="sc-gauge-body">
+                    {onSwitchMeter
+                      ? <button type="button" className="sc-gauge-name sc-gauge-switch" onClick={onSwitchMeter} title="Switch between Sonic's memory and this conversation">{meterName(compaction)} ⇄</button>
+                      : <span className="sc-gauge-name">{meterName(compaction)}</span>}
+                    <span className={`sc-gauge-text${isOverloaded(compaction) ? ' ring-caption-overloaded' : ''}`}>{meterCaption(compaction)}</span>
+                  </div>
                 </div>
               )}
               {usage && <Gauge name="Usage" fraction={usage.fraction} level={usage.level} text={usage.text} />}

@@ -7,7 +7,7 @@ import {
   type ContextUse, type Line, type Option, type RunnerStartPhase, type ScopeChoice,
 } from './sessionColumnLogic';
 import CompactionMeter from './CompactionMeter';
-import { gaugesSummary, isOverloaded, meterCaption, type CompactionView } from './compactionMeterLogic';
+import { gaugesSummary, isOverloaded, meterCaption, meterName, type CompactionView } from './compactionMeterLogic';
 import './__styles__/SessionColumn.css';
 
 /** What the person can do with the connected folder (moved here from the small folder button beside the message box, where the options had to be cycled one at a time). `options` only while it is connected. */
@@ -41,6 +41,8 @@ interface Props {
   context: ContextUse | null;
   /** The memory compaction meter's reading (notes waiting to be folded together, and the number at which they are); null before the first reading. */
   compaction: CompactionView | null;
+  /** Switches the one ring between the memory reading and this conversation's; only given when both exist. */
+  onSwitchMeter?: (() => void) | null;
   /** The approved plan, while there is one. */
   plan: CodePlan | null;
   /** The scope Sonic answers from, as a dropdown right in the panel (it used to open the settings menu's picker down by the message box). null when there are none to pick. */
@@ -220,7 +222,7 @@ export function ConnectionPanel({ folder, runnerEnabled, runners, runnerStart, f
  * controls, the gauges, the plan while there is one, and what this conversation is scoped to. It only shows what the page already knows; settings stay in the "..." menu (the scope row
  * opens that menu's own picker). A card with nothing to show is not drawn, and any card can be folded (remembered in this browser).
  */
-const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runnerStart, usage, context, compaction, plan, scope, memory, folderControls, repo, controls }) => {
+const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runnerStart, usage, context, compaction, onSwitchMeter, plan, scope, memory, folderControls, repo, controls }) => {
   // "2s ago" goes stale on its own: redraw the times every few seconds.
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -279,7 +281,12 @@ const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runner
           {compaction && (
             <div className="sc-gauge">
               <CompactionMeter view={compaction} contextText={contextView?.text} />
-              <div className="sc-gauge-body"><span className="sc-gauge-name">Memory</span><span className={`sc-gauge-text${isOverloaded(compaction) ? ' ring-caption-overloaded' : ''}`}>{meterCaption(compaction)}</span></div>
+              <div className="sc-gauge-body">
+                {onSwitchMeter
+                  ? <button type="button" className="sc-gauge-name sc-gauge-switch" onClick={onSwitchMeter} title="Switch between Sonic's memory and this conversation">{meterName(compaction)} ⇄</button>
+                  : <span className="sc-gauge-name">{meterName(compaction)}</span>}
+                <span className={`sc-gauge-text${isOverloaded(compaction) ? ' ring-caption-overloaded' : ''}`}>{meterCaption(compaction)}</span>
+              </div>
             </div>
           )}
           {usage && <Gauge name="Usage" fraction={usage.fraction} level={usage.level} text={usage.text} />}

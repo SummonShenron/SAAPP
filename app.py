@@ -138,6 +138,7 @@ from backend.utils import plan_changes as plan_changes_utils
 from backend.utils import claim_check
 from backend.utils import stream_keepalive
 from backend.utils import working_state as working_state_utils
+from backend.utils import conversation_summary as conversation_summary_utils
 from backend.utils import code_plan as code_plan_utils
 from backend.utils import server_memory
 from backend.utils import leanings as leanings_utils
@@ -810,7 +811,14 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     previous_reply = open_loops_utils.previous_reply(chat_sessions[history_key])  # so "Friday at 2" can be tied to what Sonic just asked about
     chat_sessions[history_key].append(stamp(HumanMessage(content=question)))
 
-    messages_state = chat_sessions[history_key][-10:]
+    # The messages this turn sends word for word, and the summary of the older ones (backend/utils/conversation_summary.py): every message the summary does not cover, or the old last 10 for a
+    # guest or in low-power mode.
+    convo_turn = await asyncio.to_thread(
+        conversation_summary_utils.prepare_turn, username, session_id, chat_sessions[history_key],
+        guest=is_guest_username(username), low_power=budget_guard.low_power(budget_state),
+    )
+    messages_state = convo_turn["window"]
+    conversation_summary = convo_turn["context"]
     # With a local folder connected, earlier "I can't write files" replies are false — and a thread
     # full of them teaches the model to keep saying it. Only what the model sees is changed; the
     # saved transcript is untouched.
@@ -830,6 +838,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         )
     initial_state: GraphState = {
         "messages": messages_state,
+        "conversation_summary": conversation_summary or None,
+        "history_max": convo_turn["history_max"],
         "working_notes": working_notes or None,
         "code_plan_phase": plan_turn["phase"],
         "code_plan_context": plan_turn["context"] or None,
@@ -900,6 +910,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         if offer_outcome:
             tally(turn_counts, "offer_taken" if offer_outcome == "taken" else "offer_passed")
         code_outcomes.tally_followup(turn_counts, code_followup)
+        conversation_summary_utils.tally_turn(turn_counts, question, conversation_summary)      # "I already told you" messages, with and without a summary in force; counts only
         feeling_kind = feeling_questions.kind_of(question)  # which kind of question about Sonic's own feelings this is, if any (backend/utils/feeling_questions.py)
         if feeling_kind:
             tally(turn_counts, "feeling_asked", feeling_kind)
@@ -1319,6 +1330,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 open_loop_context=open_loops_utils.build_open_loop_block(open_loop_entry, today_local) + events_context,
                 headsup_context=headsups_utils.build_headsup_block(headsup_entry, bool(headsup_entry and headsup_entry.get("discreet"))),
                 working_notes_context=working_notes_for_reply,
+                conversation_summary_context=conversation_summary,
                 self_history_context=build_self_history_block(self_history),
                 routines_context=routines_context,
                 followups_context=followups_context,
@@ -1851,6 +1863,11 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # later prompts as if it were a fact (a real memory chunk did exactly that).
             if budget_guard.allows("memory_summaries", budget_state) and not (folder_connected and is_stale_capability_denial(full_response)):
                 spawn_background_task(index_conversation_turn(services.get("user_memory_vector_store"), username, question, full_response, session_id, previous_reply))
+            # Once enough unfolded messages have piled up, the older ones are folded into the conversation's summary (one small model call, off the response path:
+            # backend/utils/conversation_summary.py). The size test is plain code on what is already in memory, so an ordinary turn costs nothing here.
+            if (not is_guest_username(username) and budget_guard.allows("folding long conversations into a summary", budget_state) and conversation_summary_utils.enabled()
+                    and conversation_summary_utils.due(convo_turn["summary"], chat_sessions[history_key])):
+                spawn_background_task(conversation_summary_utils.capture(username, session_id, chat_sessions[history_key], risk_active=risk_level != RISK_NONE))
             # After a coding turn, the conversation's working notes are brought up to date when enough has passed (one small model call, off the response path: backend/utils/working_state.py).
             if code_summary and working_notes:
                 tally(turn_counts, "working_notes_injected")      # a coding turn that was given the conversation's notes
@@ -2022,6 +2039,7 @@ async def clear_chat(request: Request, user = Depends(get_current_user)):
         await asyncio.to_thread(save_conversation_turn, username, session_id, [])
         await _delete_checkpoint_thread(username, session_id)
         await asyncio.to_thread(delete_session_attachments, username, session_id)
+        await asyncio.to_thread(conversation_summary_utils.clear, get_db(), username, session_id)
         return {"status": "cleared", "count": 1}
 
     # No specific conversation given: wipe every conversation this user has.
@@ -2030,6 +2048,7 @@ async def clear_chat(request: Request, user = Depends(get_current_user)):
         await asyncio.to_thread(delete_user_conversation, username, convo["session_id"])
         await _delete_checkpoint_thread(username, convo["session_id"])
         await asyncio.to_thread(delete_session_attachments, username, convo["session_id"])
+    await asyncio.to_thread(conversation_summary_utils.clear_all, get_db(), username)
     return {"status": "cleared", "count": len(conversations)}
 
 @app.post("/api/upload-attachment")
@@ -2314,6 +2333,7 @@ async def remove_conversation(session_id: str, current_user = Depends(get_curren
         raise HTTPException(status_code=404, detail="Conversation not found")
     await _delete_checkpoint_thread(username, session_id)
     await asyncio.to_thread(delete_session_attachments, username, session_id)
+    await asyncio.to_thread(conversation_summary_utils.clear, get_db(), username, session_id)
     return {"status": "deleted", "session_id": session_id}
 
 @app.post("/api/chat/feedback")
@@ -2726,6 +2746,7 @@ async def clear_memory(current_user = Depends(get_current_user)):
     await asyncio.to_thread(headsups_utils.forget_all, username)
     await asyncio.to_thread(clarify_utils.forget_all, username)
     await asyncio.to_thread(working_state_utils.clear_all, get_db(), username)
+    await asyncio.to_thread(conversation_summary_utils.clear_all, get_db(), username)
     await asyncio.to_thread(code_plan_utils.clear_all, get_db(), username)
     if result["failed"]:
         # Never report a partial wipe as success: the page says it permanently deletes everything.
@@ -3997,6 +4018,52 @@ async def clear_working_notes(session_id: str = Query(...), current_user = Depen
     username = current_user.get("sub")
     await asyncio.to_thread(working_state_utils.clear, get_db(), username, session_id.strip())
     return {"status": "cleared"}
+
+
+class ConversationSummaryEdit(BaseModel):
+    item_id: str                        # an item's id, or "new" to add one
+    text: str | None = None             # the new wording; none deletes the item
+    kind: str | None = None             # for a new item: told, decided, open or shared
+
+
+@app.get("/api/conversation-summary")
+async def get_conversation_summary(session_id: str = Query(...), current_user = Depends(get_current_user)):
+    """This conversation's summary of its older messages: what the person can read, edit, compact or clear."""
+    return await asyncio.to_thread(conversation_summary_utils.page_view, get_db(), current_user.get("sub"), session_id.strip())
+
+
+@app.patch("/api/conversation-summary")
+async def edit_conversation_summary(edit: ConversationSummaryEdit, session_id: str = Query(...), current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    view = await asyncio.to_thread(
+        conversation_summary_utils.edit_item, get_db(), username, session_id.strip(), edit.item_id.strip(), edit.text, datetime.now(timezone.utc), kind=(edit.kind or "").strip() or None,
+    )
+    if view is None:
+        raise HTTPException(status_code=404, detail="That item was not found, or the text was empty.")
+    await asyncio.to_thread(record_turn_counts, {"convsum_person_edits": 1})
+    return await asyncio.to_thread(conversation_summary_utils.page_view, get_db(), username, session_id.strip())
+
+
+@app.delete("/api/conversation-summary")
+async def clear_conversation_summary(session_id: str = Query(...), current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    await asyncio.to_thread(conversation_summary_utils.clear, get_db(), username, session_id.strip())
+    return {"status": "cleared"}
+
+
+@app.post("/api/conversation-summary/compact")
+async def compact_conversation_summary(session_id: str = Query(...), current_user = Depends(get_current_user)):
+    """Folds the older part of this conversation into its summary now, whatever the size (the person's own request, like /compact)."""
+    username, session_id = current_user.get("sub"), session_id.strip()
+    if is_guest_username(username):
+        raise HTTPException(status_code=403, detail="Summaries are kept for signed-in accounts.")
+    history_key = f"{username}::{session_id}"
+    if history_key not in chat_sessions:
+        chat_sessions[history_key] = await asyncio.to_thread(load_session_messages, username, session_id)
+    else:
+        await asyncio.to_thread(sync_session_messages, username, session_id, chat_sessions[history_key])
+    outcome = await conversation_summary_utils.capture(username, session_id, chat_sessions[history_key], force=True)
+    return {**(await asyncio.to_thread(conversation_summary_utils.page_view, get_db(), username, session_id)), "compacted": bool(outcome["ran"] or outcome["folded"])}
 
 
 @app.get("/api/reading-shelf")
