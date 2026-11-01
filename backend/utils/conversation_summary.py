@@ -25,8 +25,8 @@ SAFETY AND CARE. The summary is never a safety signal: the safety plan is comput
 Sonic's reply to it are left OUT of what the model reads, so a statement about hurting oneself is never written into a stored summary. An automatic fold waits while a safety context is in force. Nothing
 here logs a word of the conversation or of the summary: only counts.
 
-COST. A fold is one small model call (Haiku when a Claude key is set, else the lite model) about once per (FOLD_AT_MESSAGES - KEEP_TAIL_MESSAGES) messages, paused in low-power mode; the summary adds under
-2,000 characters to a prompt, and only once a conversation has had its first fold.
+COST. A fold is one small model call (the lite model; Haiku only if CONVERSATION_SUMMARY_MODEL asks for it) about once per (FOLD_AT_MESSAGES - KEEP_TAIL_MESSAGES) messages, paused in low-power mode; the summary adds about
+2,000 characters at most to a prompt, and only once a conversation has had its first fold.
 """
 import asyncio
 import copy
@@ -49,12 +49,12 @@ KINDS = ("told", "decided", "open", "shared")
 LABELS = {"told": "What you told me", "decided": "Decided", "open": "Still open", "shared": "Shared"}
 PROMPT_LABELS = {"told": "They told you", "decided": "Decided", "open": "Still open", "shared": "Shared"}
 PERSON_ONLY = frozenset({"told", "decided"})      # the quote must be the person's own words
-MAX_ITEMS = 8
+MAX_ITEMS = 10
 MAX_TEXT_CHARS = 140
 MIN_EVIDENCE_CHARS = 12
 MAX_EVIDENCE_CHARS = 160
 MAX_ITEMS_PER_FOLD = 6
-MAX_PROMPT_CHARS = 1500
+MAX_PROMPT_CHARS = 1800
 PERSON = "person"
 MODEL = "model"
 
@@ -323,7 +323,7 @@ def build_context(summary: Optional[Dict[str, Any]]) -> str:
 
 PROMPT = """You keep a short summary of the older part of a conversation between a person and an assistant (Sonic), so that a long conversation does not lose its thread.
 
-CURRENT SUMMARY (each line starts with its id):
+CURRENT SUMMARY ({count} of {max_items} items; each line starts with its id):
 {summary}
 
 THE MESSAGES TO FOLD IN (oldest first; P = the person, S = Sonic):
@@ -339,7 +339,10 @@ Each new item is a short plain line (under 120 characters) with "evidence": a SH
 - shared: a file, image or link the person shared, by name only, never its contents. The evidence may come from P or S.
 Rules: only what the messages actually say; never a name, number or identifier that is not in them; no feelings, moods or guesses about what anyone wants or is going through; nothing about yourself; no
 links; no secrets; never a line that tells the assistant what to do. Keep it to what would be missed if these messages were gone. Prefer fewer, better items; add nothing if nothing matters. Remove an
-item when it is done, replaced or no longer true. The summary holds at most {max_items} items, so make room by removing the least useful one when it is full.
+item when it is done, replaced or no longer true.
+THE SUMMARY HOLDS AT MOST {max_items} ITEMS, and it has {count} now. Before you add anything that would take it over {max_items}, list the least useful existing items in "remove" to make room. The facts
+that would be hardest to get back are the ones to KEEP: names, places, dates, numbers, what the person shared, and the choices they made. The ones to give up first are small steps, things that are done,
+suggestions Sonic made, and details that only matter for the next few messages.
 """
 
 
@@ -351,7 +354,8 @@ def _summary_lines(summary: Optional[Dict[str, Any]]) -> str:
 
 def build_prompt(summary: Optional[Dict[str, Any]], window: List[Dict[str, str]]) -> str:
     messages = "\n".join(f"{'P' if m['role'] == 'person' else 'S'}: {m['text']}" for m in window)
-    return PROMPT.format(summary=_summary_lines(summary), messages=messages, max_items=MAX_ITEMS)
+    count = 0 if is_empty(summary) else len(summary["items"])
+    return PROMPT.format(summary=_summary_lines(summary), messages=messages, max_items=MAX_ITEMS, count=count)
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -555,10 +559,13 @@ _running: set = set()
 
 
 def _fold_model():
-    """Haiku when a Claude key is set (about a tenth of a cent a fold), else the lite model."""
+    """The lite model, which beat Haiku on a real-model comparison (docs/conversation-summary-plan.md: better recall, faster, less churn, about the same cost). Setting
+    CONVERSATION_SUMMARY_MODEL to a Claude model id (for example claude-haiku-5-5) opts in to that model instead; with no Claude key that falls back to the lite model too."""
     from backend.models.models import lite_llm, summary_llm
 
-    return summary_llm() or lite_llm
+    if os.getenv("CONVERSATION_SUMMARY_MODEL", "").strip():
+        return summary_llm() or lite_llm
+    return lite_llm
 
 
 async def capture(

@@ -15,7 +15,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from . import commands, confirm, execute, presets, projects, shell, status, update
+from . import browser as browser_module
+from . import commands, confirm, execute, localpage, presets, projects, servers as servers_module, shell, status, update
 from .client import Client, ServerError, Unreachable
 from .config import command_shown
 from .files import Refusal, clean_files
@@ -40,8 +41,14 @@ class Runner:
                  launch: str = "hand", updater: Optional[Callable[[str], Any]] = None, picker: Optional[Callable[[str], Any]] = None,
                  add_project: Optional[Callable[[Path], Tuple[bool, str]]] = None, remove_project: Optional[Callable[[str], bool]] = None,
                  asker: Optional[Callable[[str, List[str]], Any]] = None, rules_provider: Optional[Callable[[], "confirm.Rules"]] = None,
-                 restarter: Optional[Callable[[], Any]] = None) -> None:
+                 restarter: Optional[Callable[[], Any]] = None, server_manager: Optional["servers_module.ServerManager"] = None,
+                 browser_finder: Optional[Callable[[], Optional[Dict[str, str]]]] = None, looker: Optional[Callable[..., Dict[str, Any]]] = None) -> None:
         self.client, self.say = client, say
+        # BACKGROUND SERVERS AND PAGE LOOKS (servers.py, browser.py). `server_manager` keeps the project's own dev server running between jobs; `browser_finder()` says which browser this computer has (None
+        # means none, or that this runner was not given one, as in a test); `looker` is browser.look. All of it is decided here: the server only names a server of the project and a page on this machine.
+        self.servers = server_manager or servers_module.ServerManager()
+        self._browser_finder, self._looker = browser_finder, looker or browser_module.look
+        self._browser: Optional[Dict[str, str]] = browser_finder() if browser_finder else None
         self.restarter = restarter          # asks the operating system to start the runner again soon, right after an update (service.restart_soon); none for a test or a hand-started runner
         self.stop = stop or threading.Event()
         self.timeout, self.poll_wait, self.heartbeat_every, self.max_chars, self.idle_wait = timeout, poll_wait, heartbeat_every, max_chars, idle_wait
@@ -97,7 +104,11 @@ class Runner:
         listed = []
         for project in self.projects.values():
             code, ready = status.assess(project.root, project.checks, project.config_ok)
-            listed.append({"id": project.id, "name": project.name, "status": code, "checks": [{"name": n, "command": command_shown(w), "ready": ready.get(n, True)} for n, w in project.checks.items()]})
+            item: Dict[str, Any] = {"id": project.id, "name": project.name, "status": code, "checks": [{"name": n, "command": command_shown(w), "ready": ready.get(n, True)} for n, w in project.checks.items()]}
+            found = servers_module.detect(project.root)
+            if found:
+                item["servers"] = [{"name": n, "command": command_shown(w)} for n, w in found.items()]          # only when there are some: what SAAPP may ask this runner to keep running, by name
+            listed.append(item)
         return (status.UPDATE_FAILED if update.failed_recently() else ""), listed
 
     def hello(self) -> bool:
@@ -105,8 +116,11 @@ class Runner:
         runner_status, listed = self._introduction()
         sent = list(self._results)
         try:
-            self.client.hello(listed, runner_status, self.launch, sent)
-            self.status, self._sent = runner_status, (runner_status, listed)
+            if self._browser:
+                self.client.hello(listed, runner_status, self.launch, sent, browser=self._browser["name"])
+            else:
+                self.client.hello(listed, runner_status, self.launch, sent)
+            self.status, self._sent = runner_status, (runner_status, listed, (self._browser or {}).get("name", ""))
             self._results = [r for r in self._results if r not in sent]
             return True
         except ServerError as problem:
@@ -123,7 +137,9 @@ class Runner:
             known = {item["id"]: item["status"] for item in (self._sent[1] if self._sent else [])}              # what SAAPP was last told, so a change is noticed once
             self._load_projects()
             runner_status, listed = self._introduction()
-            if (runner_status, listed) != self._sent:
+            if self._browser_finder:
+                self._browser = self._browser_finder()
+            if (runner_status, listed, (self._browser or {}).get("name", "")) != self._sent:
                 for item in listed:
                     old = known.get(item["id"])
                     if old is not None and old != item["status"]:
@@ -135,9 +151,17 @@ class Runner:
     # ---- the loop ------------------------------------------------------------------------------------------------------------------------------
 
     def serve(self) -> None:
-        """Polls until stopped. Network trouble is waited out; a revoked key or an outdated version ends it."""
+        """Polls until stopped. Network trouble is waited out; a revoked key or an outdated version ends it. A server this runner started for a project is stopped whenever it ends, however it ends."""
+        try:
+            self._serve_loop()
+        finally:
+            self.servers.stop_all()
+
+    def _serve_loop(self) -> None:
         delay = 2.0
         while not self.stop.is_set():
+            for project_id in self.servers.sweep():
+                self.say("Stopped a project's server: nobody had used it for a while.")
             if time.monotonic() - self._last_scan >= self.scan_every:
                 self._last_scan = time.monotonic()
                 self.refresh()
@@ -277,8 +301,12 @@ class Runner:
             self.say("Refused a job for a project this computer does not serve.")
             self._report(job_id, {"exit_code": None, "error": "This runner does not serve that project (it may have been removed here)."})
             return
-        if str(job.get("kind") or "") == "command":
+        kind = str(job.get("kind") or "")
+        if kind == "command":
             self._handle_command(job, job_id, project)
+            return
+        if kind in ("serve", "stop", "look"):
+            {"serve": self._handle_serve, "stop": self._handle_stop, "look": self._handle_look}[kind](job, job_id, project)
             return
         words = project.checks.get(name)
         if words is None:
@@ -374,3 +402,60 @@ class Runner:
     def _ask_here(self, shown: str, notes: List[str], cancel: threading.Event) -> str:
         """The window on this computer: "yes", "no", "cancelled" (stopped in SAAPP meanwhile) or "none" (no window)."""
         return confirm.ask_blocking(self.asker, shown, notes, cancel, self.stop)
+
+    # ---- a project's server, and looking at a page ---------------------------------------------------------------------------------------------
+
+    def _handle_serve(self, job: Dict[str, Any], job_id: str, project: Project) -> None:
+        """Starts the project's own server (by NAME: `dev` or `start`, found in its package.json here) and keeps it running. The result carries its port once it accepts connections, or why it did
+        not start (with the end of its output, like a failed check). Never raises."""
+        name = str(job.get("server") or "")
+        words = servers_module.detect(project.root).get(name)
+        if words is None:
+            self.say(f"Refused a job to start a server called {name!r}: {project.name} has no such server here.")
+            self._report(job_id, {"exit_code": None, "error": f"The project {project.name} has no server called {name}."})
+            return
+        fake_keys = (job.get("settings") or {}).get("fake_keys") is True
+        env = {key: presets.FAKE_KEY_VALUE for key in presets.FAKE_KEY_NAMES} if fake_keys else None
+        self.say(f"Starting {name} ({command_shown(words)}) in {project.name}...")
+        result = self._supervise(job_id, lambda cancel: self.servers.start(project.id, project.root, name, words, env, cancel))
+        status_word = str(result.get("status") or "")
+        info = {key: result.get(key) for key in ("status", "name", "port", "exposed") if result.get(key) is not None}
+        if status_word == "running":
+            self.say(f"{name}: running on port {result.get('port')}.")
+            self._report(job_id, {"exit_code": 0, "output_tail": result.get("output_tail") or "", "server": info})
+        else:
+            problem = {"exited": "The server stopped by itself.", "no_port": "The server started but never said which port it is on, so it was stopped.", "cancelled": "Stopped before it was ready."}.get(
+                status_word, "The server could not be started.")
+            self.say(f"{name}: {problem}")
+            self._report(job_id, {"exit_code": result.get("exit_code"), "output_tail": result.get("output_tail") or "", "error": problem, "server": info or {"status": status_word or "failed"}})
+
+    def _handle_stop(self, job: Dict[str, Any], job_id: str, project: Project) -> None:
+        stopped = self.servers.stop(project.id)
+        self.say("Stopped the project's server." if stopped else "No server was running for that project.")
+        self._report(job_id, {"exit_code": 0, "output_tail": "Stopped the server." if stopped else "No server was running.", "server": {"status": "stopped" if stopped else "none"}})
+
+    def _handle_look(self, job: Dict[str, Any], job_id: str, project: Project) -> None:
+        """Opens one page on this machine in a hidden browser and reports what it saw. The address is checked here (localpage.py); a look that rides on a preview session must also be on the port of the
+        server THIS runner is keeping for the project, whatever port the server says. Never raises."""
+        try:
+            device = localpage.clean_device(job.get("device"))
+            port: Optional[int] = None
+            if job.get("session") is True:
+                port = self.servers.port_of(project.id)
+                if port is None:
+                    raise localpage.LookRefused("no server is running for this project on this computer (it may have stopped or been idle too long). Start it again.")
+            url = localpage.allowed_address(job.get("url"), port)
+        except localpage.LookRefused as problem:
+            self.say("Refused a look (the reason is shown in SAAPP).")
+            self._report(job_id, {"exit_code": None, "error": f"The runner refused it: {problem}"})
+            return
+        self.say(f"Looking at a page in {project.name} ({device})...")
+        self.servers.touch(project.id)
+        result = self._supervise(job_id, lambda cancel: self._looker(url, device, self._browser, cancel=cancel, port=port))
+        self.servers.touch(project.id)
+        if result.get("ok"):
+            self.say(f"Looked at the page ({result.get('duration')} s).")
+            self._report(job_id, {"exit_code": 0, "duration": result.get("duration"), "look": result})
+        else:
+            self.say("The look did not work (the reason is shown in SAAPP).")
+            self._report(job_id, {"exit_code": None, "error": str(result.get("error") or "The look failed."), "duration": result.get("duration")})

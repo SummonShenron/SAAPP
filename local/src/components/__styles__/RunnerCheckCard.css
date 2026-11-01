@@ -73,3 +73,10 @@
 .rcc-notes { margin: 0.25rem 0 0.35rem 1.1rem; padding: 0; color: var(--text-muted); font-size: 0.8rem; }
 .rcc-strong { margin: 0.5rem 0; padding: 0.5rem 0.65rem; border-left: 3px solid var(--accent-danger); background: var(--bg-secondary, transparent); font-size: 0.85rem; }
 .rcc-btn-danger { background: var(--accent-danger); border-color: transparent; color: var(--on-accent); }
+
+/* A look's screenshot (RunnerCheckCard.tsx): shown at its own size and never wider than the card; a phone-size one sits in a narrow frame so it reads as a phone. */
+.rcc-shot { margin: 0.6rem 0 0; display: flex; justify-content: center; }
+.rcc-shot img { display: block; max-width: 100%; height: auto; max-height: 34rem; border: 1px solid color-mix(in srgb, var(--text-muted) 35%, transparent); border-radius: 6px; background: #fff; }
+.rcc-shot-phone img { max-width: min(100%, 15rem); border-radius: 18px; border-width: 3px; }
+.rcc-shot-tablet img { max-width: min(100%, 22rem); border-radius: 12px; border-width: 2px; }
+.rcc-facts { margin: 0.5rem 0 0 1.1rem; padding: 0; font-size: 0.8rem; color: var(--text-muted); overflow-wrap: anywhere; }

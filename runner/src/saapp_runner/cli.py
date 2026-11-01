@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from . import __version__
+from . import browser as browser_module
 from . import confirm as confirm_module
 from . import picker as picker_module
 from . import projects, runlog, service, update
@@ -208,7 +209,7 @@ def _serve(args: argparse.Namespace, client: Client, say, stop, background: bool
     else:
         say("It runs only these, only after you press Run in SAAPP (turn any of them off in SAAPP's settings). Press Ctrl+C to stop.")
     runner = Runner(client, None, say=say, stop=stop, timeout=args.timeout, roots_provider=projects.load, launch="service" if background else "hand", updater=update.attempt,
-                    picker=picker_module.new_picker(), asker=confirm_module.new_asker(), restarter=service.restart_soon)
+                    picker=picker_module.new_picker(), asker=confirm_module.new_asker(), restarter=service.restart_soon, browser_finder=browser_module.find_browser)
     if not runner.hello():
         return 1
     say("Connected. Waiting for checks you approve in SAAPP...")

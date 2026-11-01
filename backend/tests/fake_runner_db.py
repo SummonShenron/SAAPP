@@ -29,6 +29,8 @@ def _matches(doc: Dict[str, Any], flt: Optional[Dict[str, Any]]) -> bool:
 def _apply(doc: Dict[str, Any], update: Dict[str, Any]) -> None:
     for key, value in (update.get("$set") or {}).items():
         doc[key] = copy.deepcopy(value)
+    for key, value in (update.get("$inc") or {}).items():
+        doc[key] = (doc.get(key) or 0) + value
     for key in (update.get("$unset") or {}):
         doc.pop(key, None)
 

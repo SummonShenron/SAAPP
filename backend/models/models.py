@@ -308,8 +308,9 @@ _summary_llm: dict = {}
 
 
 def summary_llm():
-    """The model that folds the older part of a conversation into its summary (backend/utils/conversation_summary.py): Claude Haiku at low effort with thinking off, with room for a patch of up to six
-    items (the reviewer's 600 tokens could cut one off). CONVERSATION_SUMMARY_MODEL overrides the model. None when no Claude key is configured, and the caller uses the lite model."""
+    """The OPT-IN Claude model for folding the older part of a conversation into its summary (backend/utils/conversation_summary.py _fold_model uses it only when CONVERSATION_SUMMARY_MODEL is set;
+    the default is the lite model): Claude at low effort with thinking off, with room for a patch of up to six items (the reviewer's 600 tokens could cut one off). CONVERSATION_SUMMARY_MODEL names the
+    model (the default model when it is empty). None when no Claude key is configured, and the caller uses the lite model."""
     from backend.models import claude_llm
 
     if not claude_llm.api_key():

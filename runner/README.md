@@ -98,6 +98,17 @@ refuse = ["git push", "npm install"]   # line beginnings that are always refused
 
 A file the runner cannot read falls back to the safe defaults (ask, allow nothing extra) and says so in the log. The log never contains a command line, a path or a refusal's reason.
 
+## Your project's server, and looking at a page (0.2.0 and newer)
+
+SAAPP's assistant can start your project's own dev server and look at its pages in a **hidden browser on this computer**, so it can check what a change looks like (a phone layout that overflows, a page that throws an error).
+
+- **A server is started by name, from your own project.** `saapp-runner` offers `npm run dev` (as `dev`), or `npm start` when there is no `dev` script, found in the folder's `package.json`. SAAPP can ask for that name and nothing else. You see the exact command on a card and press **Run**. That one approval covers a *preview session*: up to 10 looks at that server's pages without asking again, until the server has gone 30 minutes unused or you press Stop. The runner keeps the server running between jobs, one per project, and stops it (with everything it started) on Stop, after the idle time, and whenever the runner itself stops.
+- **A look opens one page, in your own Chrome or Edge.** It needs one installed (Edge comes with Windows); nothing is downloaded. The runner starts it **hidden**, with a **fresh empty profile** (none of your logins, cookies, extensions or history) in a temporary folder that is deleted afterwards, and kills it when the look ends or takes longer than 30 seconds. Set `SAAPP_RUNNER_BROWSER` to the path of another Chromium-based browser if you want it used.
+- **Only pages on this computer.** The runner opens `http://localhost`, `http://127.0.0.1` or `http://[::1]` addresses only, and checks that itself even if SAAPP asks for something else. While the page loads, **every request to anywhere else is blocked**: images, scripts, fonts, redirects, and connections to other computers on your network. The page cannot phone out. As a second wall the browser is also started with a proxy that goes nowhere.
+- **It only reads.** It does not click, type or submit anything. What comes back is a screenshot (a JPEG), the page's title and visible text, a few console errors, local requests that failed, and whether the content is wider than the window. A page's text is shown to the assistant as data, never as instructions.
+- **Where the picture goes.** The screenshot and text are sent to SAAPP and to the AI model that describes the picture. The card says so before you press Run.
+- **Your server's own settings are yours.** If its output shows it is reachable from other computers on your network (a `Network:` address, or `0.0.0.0`), the card says so. The runner does not change that, and it still listens on nothing itself.
+
 ## Use it from other AI tools (MCP)
 
 The runner can also serve its projects, checks and the command language to any [MCP](https://modelcontextprotocol.io) client (Claude Desktop, Claude Code, an editor), over stdio. It needs no SAAPP account, no pairing and no key: it only uses the projects this computer allowed (`saapp-runner add-project --root <folder>`).

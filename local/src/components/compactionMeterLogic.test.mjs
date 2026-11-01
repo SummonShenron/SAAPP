@@ -129,7 +129,10 @@ const convo = (uncompacted, threshold = 14) => ({ uncompacted, threshold, kind: 
 const memory = (uncompacted, threshold = 100) => ({ uncompacted, threshold });
 
 test('the conversation reading comes from the summary endpoint and is refused when it is not two real counts', () => {
-  assert.deepEqual(conversationMeter({ unfolded: 9, fold_at: 14, keep: 6, sections: [] }), convo(9));
+  assert.deepEqual(conversationMeter({ unfolded: 9, fold_at: 14, keep: 6, sections: [] }), { ...convo(9), foldable: true });
+  assert.equal(conversationMeter({ unfolded: 7, fold_at: 14, keep: 6 }).foldable, false, 'one message beyond the newest six is not worth a fold');
+  assert.equal(conversationMeter({ unfolded: 8, fold_at: 14, keep: 6 }).foldable, true);
+  assert.equal(conversationMeter({ unfolded: 300, fold_at: 14 }).foldable, false, 'no keep count from the server: no button');
   assert.equal(conversationMeter({ unfolded: 9, fold_at: 0 }), null);
   assert.equal(conversationMeter({ unfolded: -1, fold_at: 14 }), null);
   assert.equal(conversationMeter({ fold_at: 14 }), null);
@@ -194,4 +197,14 @@ test('the page reads the conversation count with the memory count, ignores an an
   assert.match(chat, /writeMeterMode\(next\);/);
   const column = readFileSync(new URL('./SessionColumn.tsx', import.meta.url), 'utf8');
   assert.match(column, /className="sc-gauge-name sc-gauge-switch" onClick=\{onSwitchMeter\}/);
+});
+
+test('Fold now sits beside the Chat reading of the ring, in the column and the phone strip, and only when a fold has something to do', () => {
+  const column = readFileSync(new URL('./SessionColumn.tsx', import.meta.url), 'utf8');
+  const rail = readFileSync(new URL('./SessionRail.tsx', import.meta.url), 'utf8');
+  const chat = readFileSync(new URL('../pages/Chat.tsx', import.meta.url), 'utf8');
+  for (const source of [column, rail]) assert.match(source, /\{onFold && compaction\.foldable && <button type="button" className="sc-gauge-fold" disabled=\{folding\} onClick=\{onFold\}>\{folding \? 'Folding…' : 'Fold now'\}<\/button>\}/);
+  assert.match(chat, /const foldFromRing = shownMeter\?\.kind === 'conversation' && shownMeter\.foldable \? \(\) => \{/);
+  assert.match(chat, /api\.compactConversationSummary\(sessionId\)/);
+  assert.equal((chat.match(/onFold=\{foldFromRing\}/g) || []).length, 2);
 });

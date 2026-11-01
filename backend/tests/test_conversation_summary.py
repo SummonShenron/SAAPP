@@ -341,15 +341,15 @@ def test_the_block_lists_the_items_by_kind_without_their_quotes_and_says_it_is_d
 def test_a_full_summary_stays_well_under_the_cost_ceiling():
     summary = cs.empty_summary()
     summary["items"] = [{"id": f"i{n}", "kind": cs.KINDS[n % 4], "text": "x" * cs.MAX_TEXT_CHARS, "by": "model"} for n in range(cs.MAX_ITEMS)]
-    assert len(cs.build_context(summary)) < 2000
-    assert cs.MAX_ITEMS == 8 and cs.FOLD_AT_MESSAGES == 14 and cs.KEEP_TAIL_MESSAGES == 6 and cs.FOLD_AT_CHARS == 8000
+    assert len(cs.build_context(summary)) < 2300
+    assert cs.MAX_ITEMS == 10 and cs.FOLD_AT_MESSAGES == 14 and cs.KEEP_TAIL_MESSAGES == 6 and cs.FOLD_AT_CHARS == 8000
 
 
 def test_the_prompt_for_the_model_lists_the_ids_the_messages_and_the_rules():
     summary, _ = cs.apply_patch(None, PATCH, WINDOW)
     prompt = cs.build_prompt(summary, WINDOW)
     assert "i1 (told): Sister's wedding is on June 14 in Lisbon" in prompt and "P: My sister's wedding is on June 14" in prompt and "S: Lovely!" in prompt
-    assert "feelings" in prompt and "word for word" in prompt and "at most 8 items" in prompt and cs.build_prompt(None, WINDOW).count("(empty)") == 1
+    assert "feelings" in prompt and "word for word" in prompt and "AT MOST 10 ITEMS" in prompt and "(4 of 10 items" in prompt and "(0 of 10 items" in cs.build_prompt(None, WINDOW) and cs.build_prompt(None, WINDOW).count("(empty)") == 1
 
 
 # ---- the fold, as a background task ------------------------------------------------------------------------------------------------------------
@@ -548,7 +548,7 @@ def test_the_page_view_has_sections_and_how_far_the_next_fold_is():
     summary, _ = cs.apply_patch(None, PATCH, WINDOW)
     summary.update(folded_upto=10, folds=1)
     view = cs.public_view(summary)
-    assert [s["kind"] for s in view["sections"]] == list(cs.KINDS) and view["folds"] == 1 and view["max_items"] == 8 and not view["empty"]
+    assert [s["kind"] for s in view["sections"]] == list(cs.KINDS) and view["folds"] == 1 and view["max_items"] == 10 and not view["empty"]
     assert view["sections"][0] == {"kind": "told", "label": "What you told me", "items": [{"id": "i1", "text": "Sister's wedding is on June 14 in Lisbon", "evidence": "sister's wedding is on June 14 in Lisbon", "by": "model"}]}
     assert cs.public_view(None)["empty"] is True
     assert cs.progress(summary, 17) == {"unfolded": 7, "fold_at": 14, "keep": 6} and cs.progress(None, 5)["unfolded"] == 5 and cs.progress(summary, 3)["unfolded"] == 0
@@ -662,3 +662,18 @@ def test_the_module_logs_no_text_and_keeps_no_feelings():
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("info", "warning", "error", "exception", "debug"):
             assert not any(isinstance(a, ast.JoinedStr) for a in node.args[:1]) and len(node.args) <= 1
     assert "feelings" in cs.PROMPT.lower() and "moods" in cs.PROMPT.lower()
+
+
+def test_the_fold_uses_the_lite_model_unless_a_claude_model_is_asked_for(monkeypatch):
+    from backend.models import models
+
+    sentinel = object()
+    monkeypatch.setattr(models, 'summary_llm', lambda: sentinel)
+    monkeypatch.delenv('CONVERSATION_SUMMARY_MODEL', raising=False)
+    assert cs._fold_model() is models.lite_llm, 'the default: lite beat Haiku in the real-model comparison'
+    monkeypatch.setenv('CONVERSATION_SUMMARY_MODEL', '  ')
+    assert cs._fold_model() is models.lite_llm
+    monkeypatch.setenv('CONVERSATION_SUMMARY_MODEL', 'claude-haiku-5-5')
+    assert cs._fold_model() is sentinel, 'opting in'
+    monkeypatch.setattr(models, 'summary_llm', lambda: None)
+    assert cs._fold_model() is models.lite_llm, 'no Claude key: lite again'

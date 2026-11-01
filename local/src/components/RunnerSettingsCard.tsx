@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type ProjectSettings, type RunnerInfo, type RunnerList, type RunnerPairing, type RunnerProject, type RunnerScript } from '../api';
-import { OS_LABEL, checkIsOn, detectOs, launchHint, minutesLeft, noChecksLine, notConnectedReason, requestSentence, requestsOpen, requestsToShow, runHint, statusSentence, updateNote, withAutoUpdate, withCheck, withFakeKeys, withReadOnlyAuto, type OsKind } from '../runnerLogic';
+import { OS_LABEL, browserLine, checkIsOn, detectOs, launchHint, minutesLeft, noChecksLine, notConnectedReason, requestSentence, requestsOpen, requestsToShow, runHint, statusSentence, updateNote, withAutoUpdate, withCheck, withFakeKeys, withReadOnlyAuto, type OsKind } from '../runnerLogic';
 import './__styles__/RunnerSettingsCard.css';
 
 const POLL_WHILE_PAIRING_MS = 4000;
@@ -220,6 +220,7 @@ export default function RunnerSettingsCard() {
                 </div>
                 {runner.connected && statusSentence(runner.status) && <div className="account-hint runner-warning" role="status">{statusSentence(runner.status)}</div>}
                 {runner.connected && launchHint(runner.launch) && <div className="account-hint">{launchHint(runner.launch)}</div>}
+                {runner.connected && browserLine(runner) && <div className="account-hint">{browserLine(runner)}</div>}
                 {!runner.connected && <div className="account-hint">{notConnectedReason(runner.last_seen, now)}</div>}
                 {updateNote(runner) && (
                   <div className="account-hint runner-update">
