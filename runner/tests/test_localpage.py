@@ -92,3 +92,19 @@ def test_the_script_is_measured_against_the_devices_width_not_the_pages_grown_la
 def test_the_script_the_runner_runs_in_the_page_only_reads_it():
     for forbidden in ("fetch(", "XMLHttpRequest", "WebSocket", "eval(", "localStorage", "document.cookie", ".click(", ".submit(", "innerHTML =", "location.href =", "window.open"):
         assert forbidden not in lp.FACTS_SCRIPT
+
+
+@pytest.mark.parametrize("code, must, must_not", [
+    ("net::ERR_CONNECTION_REFUSED", "nothing answered on that port", "fault in the look"),
+    ("net::ERR_CONNECTION_RESET", "nothing answered on that port", "fault in the look"),
+    ("net::ERR_NAME_NOT_RESOLVED", "fault in the look, not in the person's setup", "Is the server running"),
+    ("net::ERR_BLOCKED_BY_CLIENT", "outside this computer", "Is the server running"),
+    ("net::ERR_UNSAFE_PORT", "choose another port", "Is the server running"),
+    ("net::ERR_CONNECTION_TIMED_OUT", "did not answer in time", "fault in the look"),
+    ("net::ERR_SOMETHING_NEW", "may not be running on that port", "fault in the look"),
+    (None, "may not be running on that port", "fault in the look"),
+])
+def test_each_way_a_page_fails_to_open_is_said_for_what_it_is_and_a_lookup_failure_is_not_blamed_on_the_persons_setup(code, must, must_not):
+    message = lp.open_error(code)
+    assert must in message and must_not not in message and message.startswith("The page could not be opened")
+    assert len(message) < 400

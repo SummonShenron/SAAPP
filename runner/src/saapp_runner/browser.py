@@ -151,7 +151,7 @@ def _launch(path: str, profile: Path) -> "subprocess.Popen[bytes]":
     flags = [
         "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", "--disable-extensions", "--disable-sync", "--disable-background-networking", "--disable-component-update",
         "--disable-default-apps", "--mute-audio", "--hide-scrollbars", "--disable-breakpad", f"--user-data-dir={profile}", "--remote-debugging-port=0",
-        "--proxy-server=socks5://127.0.0.1:9", "--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost",      # a second wall: nothing but this machine can be reached, by any protocol
+        "--proxy-server=socks5://127.0.0.1:9", "--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost , EXCLUDE 127.0.0.1 , EXCLUDE [::1] , EXCLUDE ::1",      # a second wall: nothing but this machine can be reached, by any protocol. The rule also catches IP literals, so each loopback spelling must be excluded by name (a first version excluded only `localhost` and every http://127.0.0.1 look failed with ERR_NAME_NOT_RESOLVED)
         "about:blank",
     ]
     env = execute.clean_env()
@@ -229,7 +229,7 @@ def look(address: str, device: str = "desktop", browser: Optional[Dict[str, str]
             page.call("Emulation.setTouchEmulationEnabled", {"enabled": True}, 10, cancel)
         navigated = page.call("Page.navigate", {"url": url}, 15, cancel)
         if navigated.get("errorText"):
-            result["error"] = f"The page could not be opened ({localpage.one_line(navigated['errorText'], 60)}). Is the server running on that port?"
+            result["error"] = localpage.open_error(navigated["errorText"])
             return result
         page.pump(max(min(deadline - time.monotonic(), 15.0), 1.0), cancel, until=lambda: page.loaded)
         page.pump(max(min(wait_ms / 1000.0, 5.0), 0.2), cancel)

@@ -75,7 +75,7 @@ def test_a_runner_can_look_only_when_it_is_new_enough_and_found_a_browser():
         _, runner_id, _ = setup_runner(db, version=version, browser=browser)
         runner = rj.runners_for(db, USER, NOW)[0]
         assert runner["looks"] is expected and runner["browser"] == browser
-    assert rj.WANTED_RUNNER_VERSION == "0.2.0" and rj.LOOK_SINCE == (0, 2, 0)
+    assert rj.LOOK_SINCE == (0, 2, 0) and rj.parse_version(rj.WANTED_RUNNER_VERSION) >= rj.LOOK_SINCE, "the version wanted can look (the version where it began is fixed; later releases keep it)"
 
 
 # ---- starting a server: one card, by name ---------------------------------------------------------------------------------------------------------
