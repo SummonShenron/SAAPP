@@ -263,7 +263,7 @@ def refresh(run: Runner = _run, kind: Optional[str] = None, python: Optional[str
         py = python or python_for_service(windows=True)
         done, _ = _register_windows(run, label(), entry_path("windows"), py, user if user is not None else _user())
         if done:
-            register_protocol(run, py)
+            register_protocol(run, py, "windows")
             _write_stamp()
         return done
     except Exception:
@@ -316,7 +316,7 @@ def install(run: Runner = _run, kind: Optional[str] = None, python: Optional[str
             done, why = _register_windows(run, name, path, py, user if user is not None else _user())
             if not done:
                 return False, why
-            register_protocol(run, py)                         # the "Start runner" link in SAAPP; a failure here never stops the entry itself
+            register_protocol(run, py, kind)                   # the "Start runner" link in SAAPP; a failure here never stops the entry itself
             _write_stamp()
             run(["schtasks", "/Run", "/TN", name])
         elif kind == "mac":

@@ -203,10 +203,18 @@ def test_the_server_process_never_loads_the_interpreter():
     assert "run_worker(" in source
 
 
+def _stand_in_interpreter(tmp_path):
+    """A file where the interpreter would be, for the tests that stop the run before it would be opened (the real one is a download, absent from a fresh checkout and from CI)."""
+    path = tmp_path / "python-3.12.0.wasm"
+    path.write_bytes(b"")
+    return path
+
+
 @run_async
-async def test_a_server_short_of_memory_refuses_in_words_and_does_not_start_anything(monkeypatch):
+async def test_a_server_short_of_memory_refuses_in_words_and_does_not_start_anything(monkeypatch, tmp_path):
     from backend.services import sandbox_tests as st
 
+    monkeypatch.setattr(sandbox, "SANDBOX_WASM_PATH", _stand_in_interpreter(tmp_path))            # the downloaded interpreter is not needed: nothing is started
     monkeypatch.setattr(st, "headroom_mb", lambda count_cache=False: 10.0)
     started = []
     monkeypatch.setattr("subprocess.run", lambda *a, **k: started.append(a))
@@ -215,11 +223,12 @@ async def test_a_server_short_of_memory_refuses_in_words_and_does_not_start_anyt
 
 
 @run_async
-async def test_a_worker_that_dies_or_overruns_comes_back_as_an_error_not_an_exception(monkeypatch):
+async def test_a_worker_that_dies_or_overruns_comes_back_as_an_error_not_an_exception(monkeypatch, tmp_path):
     import subprocess
 
     from backend.services import sandbox_tests as st
 
+    monkeypatch.setattr(sandbox, "SANDBOX_WASM_PATH", _stand_in_interpreter(tmp_path))
     monkeypatch.setattr(st, "headroom_mb", lambda count_cache=False: None)
 
     def overrun(*args, **kwargs):

@@ -265,9 +265,10 @@ def check_path(root: Path, cwd: Path, text: str, *, reading: bool) -> Path:
     """A path argument, resolved against the folder the command runs in. Raises CommandError unless it stays inside the project, and (for reading) unless it is not a secret."""
     if "://" in text:
         raise CommandError("Web addresses are not allowed in a command.")
-    if text.startswith("~") or re.match(r"^\\\\", text):
-        raise CommandError(f"{text} is outside the project. Only paths inside the project folder are allowed.")
     path = Path(text)
+    # A drive letter on a system that does not read it as an absolute path (Linux and macOS would take "C:/Windows/win.ini" for a folder called "C:") is refused, not guessed at.
+    if text.startswith("~") or re.match(r"^\\\\", text) or (re.match(r"^[A-Za-z]:", text) and not path.is_absolute()):
+        raise CommandError(f"{text} is outside the project. Only paths inside the project folder are allowed.")
     target = path if path.is_absolute() else cwd / path
     if not _inside(root, target):
         raise CommandError(f"{text} is outside the project. Only paths inside the project folder are allowed.")

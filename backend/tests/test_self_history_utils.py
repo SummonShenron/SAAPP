@@ -98,7 +98,8 @@ def test_an_ask_returns_at_most_three_entries_with_the_ones_it_points_at_first()
 
 def test_a_general_ask_returns_the_newest_entries():
     out = pick("what's new with you?")
-    assert [e["month"] for e in out["entries"]] == ["2026-10"] * 3
+    newest = sorted((e["month"] for e in CHANGELOG), reverse=True)[:3]            # not a fixed month: every new entry moves what "newest" is
+    assert sorted((e["month"] for e in out["entries"]), reverse=True) == newest
 
 
 def test_an_ask_is_answered_even_when_a_proactive_item_took_the_turn_or_after_a_recent_mention():
