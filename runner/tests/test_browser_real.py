@@ -135,7 +135,7 @@ def test_a_port_with_nothing_on_it_says_so_in_words():
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
     result = browser.look(f"http://localhost:{port}/", "phone")
-    assert result["ok"] is False and "Is the server running on that port?" in result["error"] and "screenshot_b64" not in result
+    assert result["ok"] is False and "nothing answered on that port" in result["error"] and "Is the server running there?" in result["error"] and "screenshot_b64" not in result
 
 
 def test_an_address_off_the_machine_never_starts_a_browser():
@@ -173,3 +173,60 @@ def test_no_browser_gives_a_plain_instruction(monkeypatch, site):
     monkeypatch.setattr(browser, "find_browser", lambda *a, **k: None)
     result = browser.look(f"http://localhost:{site['port']}/", "phone")
     assert result["ok"] is False and "No Chrome or Edge was found" in result["error"]
+
+
+# ---- every way of writing "this computer" must open (a first version only excluded the name `localhost` from the browser's name lookup rule, so http://127.0.0.1 failed with ERR_NAME_NOT_RESOLVED) ----
+
+class _V6Server(http.server.ThreadingHTTPServer):
+    address_family = socket.AF_INET6
+
+
+def _simple_page_server(server_class, host):
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(b"<!doctype html><title>Loopback ok</title><body><h1>reached</h1></body>")
+
+        def log_message(self, *args):
+            pass
+
+    server = server_class((host, 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+@pytest.mark.parametrize("spelling", ["127.0.0.1", "localhost"])
+def test_the_ipv4_address_and_the_name_both_open(spelling):
+    server = _simple_page_server(http.server.ThreadingHTTPServer, "127.0.0.1")
+    try:
+        result = browser.look(f"http://{spelling}:{server.server_address[1]}/", "desktop")
+        assert result["ok"] is True, result.get("error")
+        assert result["title"] == "Loopback ok" and "reached" in result["text"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_the_ipv6_loopback_address_opens_too():
+    try:
+        server = _simple_page_server(_V6Server, "::1")
+    except OSError:
+        pytest.skip("this computer has no IPv6 loopback")
+    try:
+        result = browser.look(f"http://[::1]:{server.server_address[1]}/", "desktop")
+        assert result["ok"] is True, result.get("error")
+        assert result["title"] == "Loopback ok"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_the_launch_flags_exclude_exactly_the_loopback_spellings_and_nothing_else_from_name_lookup():
+    import inspect
+
+    source = inspect.getsource(browser._launch)
+    rule = source[source.index("--host-resolver-rules="):].split('"')[0]
+    assert rule == "--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost , EXCLUDE 127.0.0.1 , EXCLUDE [::1] , EXCLUDE ::1"
+    assert "--proxy-server=socks5://127.0.0.1:9" in source

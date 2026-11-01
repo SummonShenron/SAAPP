@@ -160,3 +160,20 @@ def shape_facts(raw: Any, device_size: Optional[Tuple[int, int]] = None) -> Dict
         "scroll_height": int(data.get("scrollHeight") or 0) if isinstance(data.get("scrollHeight"), (int, float)) else 0,
         "overflow_x": bool(width and scroll_width > width + 1), "wide_elements": wide[:WIDE_ELEMENTS], "viewport_meta": data.get("viewportMeta") is True,
     }
+
+
+def open_error(error_text: Any) -> str:
+    """What to tell the person (and the model) when the browser could not open the page, by the browser's own error code. Each reason is said as what it is: a closed port is the person's server, but a failed name
+    lookup or a blocked redirect is the look's own doing and must not be blamed on their setup (an early version told everyone "is the server running?" even for a lookup failure the runner itself caused). Pure."""
+    code = one_line(error_text, 60)
+    if "ERR_CONNECTION_REFUSED" in code or "ERR_CONNECTION_RESET" in code or "ERR_EMPTY_RESPONSE" in code:
+        return f"The page could not be opened: nothing answered on that port ({code}). Is the server running there?"
+    if "ERR_NAME_NOT_RESOLVED" in code or "ERR_ADDRESS_INVALID" in code:
+        return f"The page could not be opened: the look's own browser could not look the address up ({code}). That is a fault in the look, not in the person's setup; do not blame their machine, and say so plainly."
+    if "ERR_BLOCKED_BY_CLIENT" in code:
+        return f"The page could not be opened ({code}): it sent the browser somewhere outside this computer, which a look never follows."
+    if "ERR_UNSAFE_PORT" in code:
+        return f"The page could not be opened ({code}): browsers refuse that port number outright, so choose another port for the server."
+    if "ERR_TIMED_OUT" in code or "ERR_CONNECTION_TIMED_OUT" in code:
+        return f"The page could not be opened ({code}): the server did not answer in time."
+    return f"The page could not be opened ({code}). The server may not be running on that port, or the address may be wrong."
