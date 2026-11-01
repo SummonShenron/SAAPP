@@ -3221,8 +3221,8 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
         />
       )}
 
-      {/* The terminal blade slides over the right of the page (components/TerminalBlade.tsx). It is drawn in the app shell, not inside the chat page: the chat page is a size container, which would make
-          a fixed blade measure itself against the page instead of the window. Not drawn when the runner goes away. */}
+      {/* The terminal blade sits at the right edge of the page as a flex item (components/TerminalBlade.tsx), and covers the page on a phone. It is drawn in the app shell, not inside the chat page: the chat page is a size container, which would make
+          a blade measure itself against the page instead of the window, and it must sit beside the page as a flex item. Not drawn when the runner goes away. */}
       {showTerminal && terminal && createPortal(
         <TerminalBlade runnerId={terminal.runnerId} projectId={terminal.projectId} projectName={terminal.projectName} choices={terminal.choices} onPick={setPickedChoice} onClose={() => setShowTerminal(false)} onSendToChat={putInComposer} />,
         document.querySelector('.app-shell') ?? document.body,

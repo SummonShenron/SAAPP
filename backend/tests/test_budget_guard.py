@@ -558,20 +558,40 @@ def test_the_blocked_message_names_the_time_for_a_five_hour_window_and_the_day_f
 
 # -- extending a block
 
-def test_an_extension_raises_the_block_line_of_its_own_scope_only(monkeypatch):
+def test_an_extension_raises_the_budget_of_its_own_scope_only_so_every_line_moves_with_it(monkeypatch):
+    """2026-11-01: an approved increase used to raise only the block line, so chat was unpaused but low-power mode stayed on (a coding turn got 4 tool steps). It is now a bigger budget."""
     limits = {"five_tokens": 1000.0, "day_tokens": 1000.0}
     totals = {"five_tokens": 1_400, "day_tokens": 100, "five_reset": NOW}
-    assert bg.evaluate(totals, limits, NOW)["level"] == bg.BLOCKED
-    extended = bg.evaluate(totals, limits, NOW, {"five": 0.25})                  # 125% + 25%: the block line is now 150%
+    assert bg.evaluate(totals, limits, NOW)["level"] == bg.BLOCKED                # 140% of 1000, with the block line at 125%
+    extended = bg.evaluate(totals, limits, NOW, {"five": 0.25})                  # the budget is now 1250: 140% of 1000 is 112% of it
     assert extended["level"] == bg.THROTTLED and extended["paused"] and extended["extended_by"] == 0.25
-    assert bg.evaluate({**totals, "five_tokens": 1_550}, limits, NOW, {"five": 0.25})["level"] == bg.BLOCKED
+    assert extended["fraction"] == 1.12 and extended["limit"] == 1250.0 and extended["blocked_scopes"] == []
+    assert bg.evaluate({**totals, "five_tokens": 1_550}, limits, NOW, {"five": 0.25})["level"] == bg.THROTTLED       # 124% of the raised budget: not yet blocked
+    assert bg.evaluate({**totals, "five_tokens": 1_600}, limits, NOW, {"five": 0.25})["level"] == bg.BLOCKED          # 128%: blocked again, so it can be extended again
     other = bg.evaluate(totals, limits, NOW, {"day": 0.25})                      # extending the day does nothing for the window
     assert other["level"] == bg.BLOCKED and other["blocked_scopes"] == ["five"]
 
 
-def test_an_extension_never_lowers_the_throttle_line_so_low_power_stays_on(monkeypatch):
-    state = bg.evaluate({"day_tokens": 1_100}, {"day_tokens": 1000.0}, NOW, {"day": 0.25})
-    assert state["level"] == bg.THROTTLED and bg.low_power(state)
+def test_an_approved_increase_that_covers_the_overspend_makes_everything_work_as_normal_with_no_low_power(monkeypatch):
+    """Jack, 2026-11-01: he approved the increase and Sonic was still limited to 4 tool steps. A hard cap (block line 1.0) at 111%, then +25%: 89% of the raised budget is normal operation."""
+    monkeypatch.setenv("LLM_BUDGET_BLOCK_AT", "1")
+    limits = {"five_usd": 1.0}
+    totals = {"five_usd": 1.11, "five_reset": NOW}
+    blocked = bg.evaluate(totals, limits, NOW)
+    assert blocked["level"] == bg.BLOCKED and bg.low_power(blocked) and bg.extendable_scopes(blocked) == ["five"]
+    raised = bg.evaluate(totals, limits, NOW, {"five": 0.25})
+    assert raised["level"] == bg.NOTICE and not bg.low_power(raised) and raised["paused"] == []
+    assert raised["fraction"] == 0.888 and raised["limit"] == 1.25 and raised["extended_by"] == 0.25
+    assert bg.tool_steps(12, raised) == 12 and bg.tool_steps(12, blocked) == bg.THROTTLED_TOOL_STEPS               # a coding turn has its normal steps again
+
+
+def test_the_throttle_line_of_the_raised_budget_still_applies_and_a_second_grant_raises_it_again(monkeypatch):
+    monkeypatch.setenv("LLM_BUDGET_BLOCK_AT", "1")
+    monkeypatch.setenv("LLM_BUDGET_THROTTLE_AT", "0.8")                            # the documented hard-cap setup: low power from 80%, blocked at 100%
+    limits = {"day_tokens": 1000.0}
+    assert bg.evaluate({"day_tokens": 1_100}, limits, NOW, {"day": 0.25})["level"] == bg.THROTTLED     # 88% of the raised budget is past ITS 80% line
+    assert bg.evaluate({"day_tokens": 1_100}, limits, NOW, {"day": 0.5})["level"] == bg.OK             # a second grant (+50%): 73%, under the 80% notice line too
+    assert bg.evaluate({"day_tokens": 1_100}, limits, NOW, {"day": 0.0})["level"] == bg.BLOCKED
 
 
 def test_a_running_extension_saved_by_an_admin_is_honoured_and_an_expired_one_is_not(monkeypatch):
@@ -581,8 +601,8 @@ def test_a_running_extension_saved_by_an_admin_is_honoured_and_an_expired_one_is
     extensions = [{"scope": "day", "extra": 0.25, "until": soon}, {"scope": "five", "extra": 0.5, "until": past}]
     db = _DB([row("m", "2026-10-10", 1_300, 0)], minutes=[minute_row(at(14), 1_300)], extensions=extensions)
     state = bg.current_state(db, NOW)
-    assert dict((d["scope"], d["fraction"]) for d in state["detail"]) == {"day": 1.3, "five": 1.3}
-    assert state["blocked_scopes"] == ["five"]  # the day's block line moved to 150%; the five-hour one expired, so it is back at 125%
+    assert dict((d["scope"], d["fraction"]) for d in state["detail"]) == {"day": 1.04, "five": 1.3}       # the day's budget is 1250 now (1300 / 1250); the five-hour extension expired
+    assert state["blocked_scopes"] == ["five"]  # the day is only throttled at 104% of its raised budget; the five-hour one expired, so it is back at 125% and blocked
 
 
 def test_granting_an_extension_adds_a_step_records_who_and_when_and_ends_with_the_scope(monkeypatch):

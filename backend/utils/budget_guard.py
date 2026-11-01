@@ -39,9 +39,11 @@ cannot use up the shared budget other people's meters are drawn from; set LLM_US
 Evals are not part of any of this: they are counted on the usage page but never against a budget (llm_usage.mark_as_eval).
 
 EXTENDING A BLOCK: when the global budget has blocked chat, a global admin can grant +25% (EXTENSION_STEP) once per click, as many times as
-they like. A grant raises the block line of the scope that is blocking, from 125% to 150%, then 175% and so on, and ends when that scope
-resets (a day, a month, or the end of the current five-hour window). Low-power mode stays on throughout. Each grant is saved with
-who and when. A per-person block is not extended by this.
+they like. A grant raises the BUDGET of the scope that is blocking by 25% (then 50% and so on): its limit is scaled, so the notice, low-power and block
+lines all move with it and everything works as normal until the raised budget is reached (as a person's own limit is raised when an increase is approved
+for them). It ends when that scope resets (a day, a month, or the end of the current five-hour window). Each grant is saved with who and when. A per-person
+block is not extended by this. (Until 2026-11-01 a grant raised only the block line and low-power mode stayed on throughout, so an approved increase left a
+coding turn with 4 tool steps.)
 
 THE METER ONLY COUNTS FROM THE DAY IT WAS DEPLOYED, so in that first month the monthly dollar figure would leave out everything spent
 before then. LLM_BUDGET_MONTH_ALREADY_USD="2026-10:50.02" adds that amount to that month's dollars (and only that month's: it does
@@ -401,7 +403,9 @@ def _next_reset(scope: str, now: datetime, totals: Optional[Dict[str, Any]] = No
 
 def evaluate(totals: Dict[str, Any], limits: Dict[str, float], now: datetime, extensions: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
     """The guard's state from what has been spent and the limits that are set. Pure. `extensions` is {scope: extra fraction} an admin has
-    granted: it raises only that global scope's block line (the throttle line stays at 100%)."""
+    granted: it raises that global scope's BUDGET by that much (its limit is scaled, as a person's own limit is when an increase is approved for them), so the notice,
+    low-power and block lines all move with it and everything works as normal until the raised budget is reached. (Before 2026-11-01 it raised only the block line,
+    so an approved increase unpaused chat but left low-power mode on: a coding turn got 4 tool steps.)"""
     notice_at, block_at = thresholds()
     throttle = throttle_at()
     notice_at = min(notice_at, max(throttle - 0.01, 0.01))
@@ -411,9 +415,9 @@ def evaluate(totals: Dict[str, Any], limits: Dict[str, float], now: datetime, ex
     for key, limit in limits.items():
         scope, unit = _KEYS.get(key) or tuple(key.split("_", 1))
         used = float(totals.get(key, 0) or 0)
+        limit = limit * (1 + (float(extensions.get(scope, 0) or 0) if scope in GLOBAL_SCOPES else 0.0))      # an approved increase is a bigger budget: every line moves with it
         fraction = round(used / limit, 4)
-        line = block_at + (float(extensions.get(scope, 0) or 0) if scope in GLOBAL_SCOPES else 0.0)
-        levels.append(BLOCKED if fraction >= line else THROTTLED if fraction >= throttle else NOTICE if fraction >= notice_at else OK)
+        levels.append(BLOCKED if fraction >= block_at else THROTTLED if fraction >= throttle else NOTICE if fraction >= notice_at else OK)
         detail.append({"scope": scope, "unit": unit, "spent": round(used, 4), "limit": limit, "fraction": fraction})
     if not detail:
         return {"level": OFF, "detail": [], "paused": []}

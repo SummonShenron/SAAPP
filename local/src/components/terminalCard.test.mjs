@@ -171,7 +171,8 @@ test('the blade closes on Escape, stops the running command on Ctrl+C only when 
   assert.match(blade, /event\.ctrlKey && event\.key\.toLowerCase\(\) === 'c' && running/);
   assert.match(blade, /selectionStart !== inputRef\.current\.selectionEnd/);        // with text selected, Ctrl+C still copies
   assert.match(blade, /'ArrowUp' \|\| event\.key === 'ArrowDown'/);
-  assert.match(read('./__styles__/TerminalBlade.css'), /\.terminal-blade \{[^}]*position: fixed;[^}]*right: 0;/);
+  assert.match(read('./__styles__/TerminalBlade.css'), /@media \(max-width: 768px\) \{ \.terminal-blade \{[^}]*position: fixed;[^}]*right: 0;/);
+  assert.match(read('./__styles__/TerminalBlade.css'), /--tb-w: clamp\(380px, 40vw, 620px\);/);
 });
 
 test('the scrollback reads oldest first, the arrows walk the earlier commands without repeats, and the poll pace follows what is running', () => {

@@ -6,21 +6,16 @@
   --tb-text: #d7dce2;
   --tb-muted: #8a929c;
   --tb-line: #23272c;
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: min(620px, 100vw);
+  --tb-w: clamp(380px, 40vw, 620px);
+  flex: 0 0 auto;
+  width: var(--tb-w);
   display: flex;
   flex-direction: column;
   background: var(--tb-bg);
   color: var(--tb-text);
   border-left: 1px solid var(--tb-line);
-  box-shadow: -4px 0 18px rgba(0, 0, 0, 0.35);
-  z-index: 900;
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
   font-size: 0.8rem;
-  animation: terminalSlideIn 0.22s ease-out;
 }
 @keyframes terminalSlideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
 @media (prefers-reduced-motion: reduce) { .terminal-blade { animation: none; } }
@@ -66,4 +61,4 @@
 .tb-prompt-row input:disabled { opacity: 0.6; }
 .tb-foot { flex: 0 0 auto; padding: 6px 14px 10px; background: var(--tb-bar); color: var(--tb-muted); font-size: 0.68rem; line-height: 1.4; font-family: inherit; }
 
-@media (max-width: 768px) { .terminal-blade { width: 100vw; border-left: 0; } .tb-scroll { padding: 10px; } .tb-prompt-row input { font-size: 16px; } }  /* 16px stops phones zooming in on the prompt */
+@media (max-width: 768px) { .terminal-blade { position: fixed; top: 0; right: 0; bottom: 0; z-index: 900; box-shadow: -4px 0 18px rgba(0, 0, 0, 0.35); animation: terminalSlideIn 0.22s ease-out; width: 100vw; border-left: 0; } .tb-scroll { padding: 10px; } .tb-prompt-row input { font-size: 16px; } }  /* 16px stops phones zooming in on the prompt */
