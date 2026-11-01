@@ -53,7 +53,7 @@ test('the message box has the four chips with Export and Help at the far right, 
   assert.doesNotMatch(chat, /composerChips\(/);                                              // no builder with a 'bar' layout any more: nothing is drawn under the message box
   assert.match(chat, /controls=\{settingsPanel\}/);                                           // the column's "Chat settings" card
   assert.match(chat, /const chatSettings: ChatSettings = \{/);                                  // the settings are built once ...
-  assert.match(chat, /const settingsPanel = <ComposerChips \{\.\.\.chatSettings\} layout="panel" \/>;/);   // ... for the column's card
+  assert.match(chat, /const settingsPanel = <ComposerChips \{\.\.\.chatSettings\} \/>;/);   // ... for the column's card
   assert.match(chat, /<SessionRail[\s\S]*?settings=\{chatSettings\}/);       // ... and the phone strip
   assert.match(chat, /\{isEmbedded && \(\s*<div style=\{\{ position: "relative" \}\} ref=\{optionsMenuRef\}>/);   // the "..." button and its menu are the embedded widget's only
   assert.match(chat, /onExport: handleExportChat,/);
@@ -66,16 +66,16 @@ test('the message box has the four chips with Export and Help at the far right, 
   assert.match(chips, /ClaudeMark/); assert.match(chips, /GeminiMark/); assert.match(chips, /RobotMark/);
 });
 
-test('in the session column the chips are a card below "This conversation", their choices open inline (the column scrolls and is narrower than a popup), and the bar keeps its floating popups', () => {
+test('in the session column the chips are a card below "This conversation", their choices open inline (the column scrolls and is narrower than a popup), and there is no floating-popup bar any more', () => {
   const column = readFileSync(new URL('./SessionColumn.tsx', import.meta.url), 'utf8');
   const conversation = column.indexOf('<Card id="conversation"');
   const controls = column.indexOf('<Card id="controls" label="Chat settings" title="Chat settings"');
   assert.ok(conversation > 0 && controls > conversation, 'Chat settings comes after the scope card');
   assert.match(column, /controls\?: React\.ReactNode;/);
   const chips = readFileSync(new URL('./ComposerChips.tsx', import.meta.url), 'utf8');
-  assert.match(chips, /layout\?: 'bar' \| 'panel';/);
-  assert.match(chips, /\{!inline && open === key && choices\(key, control\)\}/);                  // the bar: the popup floats inside its chip
-  assert.match(chips, /\{open && open !== 'help' && openControl && choices\(open, openControl\)\}/);  // the panel: it is listed under the row
+  assert.doesNotMatch(chips, /layout|inline/);                                                    // the 'bar' layout is gone: nothing is drawn under the message box
+  assert.match(chips, /const ComposerChips: React\.FC<ChatSettings> = /);
+  assert.match(chips, /\{open && open !== 'help' && openControl && choices\(open, openControl\)\}/);  // the open choice is listed under the row
   const css = readFileSync(new URL('./__styles__/ComposerChips.css', import.meta.url), 'utf8');
   assert.match(css, /\.composer-chips-panel \.cc-pop, \.composer-chips-panel \.cc-pop-help \{ position: static; width: auto;/);
 });

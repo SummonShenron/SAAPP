@@ -93,7 +93,7 @@ class FakeClient:
             raise self.next_errors.pop(0)
         return self.jobs.pop(0) if self.jobs else None
 
-    def heartbeat(self, job_id):
+    def heartbeat(self, job_id, output=""):
         self.heartbeats += 1
         return {"cancel": self.cancel_after is not None and self.heartbeats >= self.cancel_after}
 

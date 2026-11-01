@@ -60,7 +60,8 @@ def test_the_block_is_small_enough_to_ride_every_prompt():
     # deny what Sonic really does (read on a schedule, search, read attachments), and the blocks that normally say so are silent in a safety context.
     # Grew by about 650 characters (160 tokens) for CARE_AND_CONCERN (docs/feelings-policy.md): how care, concern, pride and its own numbers are said.
     # Grew by about 250 characters for the jobs sentence in SELF_TRUTHS ("what were you up to last night" means its jobs, not a disclaimer).
-    assert len(profile_prompt_block()) < 4950
+    # Grew by about 190 characters for the casual "are you excited too?" line in CARE_AND_CONCERN (2026-11-01; the limit was not re-run when it was added).
+    assert len(profile_prompt_block()) < 5050
 
 
 def test_the_profile_commits_to_honest_pushback_once_and_never_to_unanchored_hope():

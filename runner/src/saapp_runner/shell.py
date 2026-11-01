@@ -343,12 +343,13 @@ def _program_argv(command: commands.Command, env: Dict[str, str]) -> Tuple[List[
     return [program, *args], env, ""
 
 
-def _external(command: commands.Command, cwd: Path, env: Dict[str, str], stdin: Optional[str], deadline: float, limit: int, cancel: Optional[threading.Event], root: Path) -> _Stage:
+def _external(command: commands.Command, cwd: Path, env: Dict[str, str], stdin: Optional[str], deadline: float, limit: int, cancel: Optional[threading.Event], root: Path,
+              live: Optional[execute.Live] = None) -> _Stage:
     argv, env, refusal = _program_argv(command, env)
     if refusal:
         return _Stage(126, "", refusal + "\n")
     remaining = max(1.0, deadline - time.monotonic())
-    done = execute.run(argv, cwd, remaining, limit, cancel, env, stdin_data=None if stdin is None else stdin.encode("utf-8"), separate_stderr=True)
+    done = execute.run(argv, cwd, remaining, limit, cancel, env, stdin_data=None if stdin is None else stdin.encode("utf-8"), separate_stderr=True, live=live)
     stage = _Stage(done["exit_code"] if done["exit_code"] is not None else 1, done["output_tail"], done.get("stderr_tail", ""))
     stage.truncated, stage.timed_out, stage.cancelled, stage.error = done["truncated"], done["timed_out"], done["cancelled"], done["error"]
     return stage
@@ -369,7 +370,8 @@ def _write_redirect(root: Path, cwd: Path, redirect: Tuple[str, str], text: str)
     return ""
 
 
-def _pipeline(pipeline: List[commands.Command], root: Path, cwd: Path, env: Dict[str, str], deadline: float, max_chars: int, cancel: Optional[threading.Event]) -> _Stage:
+def _pipeline(pipeline: List[commands.Command], root: Path, cwd: Path, env: Dict[str, str], deadline: float, max_chars: int, cancel: Optional[threading.Event],
+              live: Optional[execute.Live] = None) -> _Stage:
     """The stages of one pipe, each one's output handed to the next. The result is the last stage's exit code and output, with every stage's error output after it."""
     data: Optional[str] = None
     errors: List[str] = []
@@ -383,7 +385,9 @@ def _pipeline(pipeline: List[commands.Command], root: Path, cwd: Path, env: Dict
         if command.argv[0].lower() in commands.BUILTINS:
             stage = _builtin(command, root, cwd, data or "", deadline)
         else:
-            stage = _external(command, cwd, env, data, deadline, max_chars if last and not command.redirect else PIPE_CHARS, cancel, root)
+            # Shown while it runs only when what it prints is what the person will see: a lone command, not a stage that feeds a pipe or a file.
+            stage = _external(command, cwd, env, data, deadline, max_chars if last and not command.redirect else PIPE_CHARS, cancel, root,
+                              live if len(pipeline) == 1 and not command.redirect else None)
         truncated = truncated or stage.truncated
         if stage.err:
             errors.append(stage.err)
@@ -404,7 +408,7 @@ def _pipeline(pipeline: List[commands.Command], root: Path, cwd: Path, env: Dict
 # ---- the whole line -------------------------------------------------------------------------------------------------------------------------------
 
 def run_line(text: str, root: Any, timeout: float = 900, max_chars: int = 6000, cancel: Optional[threading.Event] = None, env: Optional[Dict[str, str]] = None,
-             extra_programs: FrozenSet[str] = frozenset()) -> Dict[str, Any]:
+             extra_programs: FrozenSet[str] = frozenset(), live: Optional[execute.Live] = None) -> Dict[str, Any]:
     """Classifies the line again and runs it. Returns the same shape as execute.run: {"exit_code", "output_tail", "truncated", "duration", "timed_out", "cancelled", "error"} (+ "class").
     A refused line returns an "error" saying why and has run nothing. `env` is added to the clean environment (the fake AI keys)."""
     started = time.monotonic()
@@ -438,7 +442,7 @@ def run_line(text: str, root: Any, timeout: float = 900, max_chars: int = 6000, 
                 out.add(f"cd: {pipeline[0].argv[1]}: no such folder\n")
                 code = 1
             continue
-        stage = _pipeline(pipeline, root, cwd, base_env, deadline, max_chars, cancel)
+        stage = _pipeline(pipeline, root, cwd, base_env, deadline, max_chars, cancel, live)
         piece = stage.out + (("" if not stage.out or stage.out.endswith("\n") or not stage.err else "\n") + stage.err)
         out.add(piece)
         result["truncated"] = result["truncated"] or stage.truncated

@@ -183,6 +183,21 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "ladder_listening_mode",
+        "requires": [
+            "backend/utils/safety_utils.py::def _listening_block",
+            "backend/utils/safety_utils.py::def remembered_interests",
+            "backend/services/agent_workflow.py::quiet=is_acknowledgement(msg)",
+        ],
+        "month": "2026-11",
+        "title": "Just listening when you have no one to reach",
+        "line": (
+            "I can now stop asking who could be with you when you have no one or don't want to go through it, and just listen to where you are without trying to fix it, offering something from what you're into only once you've been heard."
+        ),
+        "keywords": ["listening", "just listen", "no one", "nobody", "skip the questions", "stop asking who", "ladder", "deep listening"],
+        "volunteer": [],
+    },
+    {
         "id": "task_extra_searches",
         "requires": [
             "backend/utils/user_tasks.py::MAX_EXTRA_TOPICS",
@@ -262,11 +277,12 @@ CHANGELOG = [
             "backend/utils/code_plan.py::def after_turn",
             "backend/utils/code_plan.py::def mark_step_done",
             "app.py::code_plan_utils.mark_done",
+            "backend/utils/code_plan.py::def halted",
         ],
         "month": "2026-10",
         "title": "A plan that stops going anywhere",
         "line": (
-            "I can now tell when Continue has gone two turns without finishing a step, say so on the plan card, and let you mark a step done yourself when its work is already in your files."
+            "I can now tell when a plan has stopped making progress, let you mark a step done yourself, and after three such turns stop and explain instead of trying again."
         ),
         "keywords": ["plan", "continue", "stuck", "mark done", "no progress", "ran out of steps", "plan card", "step done"],
         "volunteer": [],

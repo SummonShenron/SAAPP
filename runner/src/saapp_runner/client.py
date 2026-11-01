@@ -80,8 +80,9 @@ class Client:
         self.remove_project = forget if isinstance(forget, str) else None
         return answer.get("job")
 
-    def heartbeat(self, job_id: str) -> Dict[str, Any]:
-        return self._call("POST", f"/api/runner/jobs/{urllib.parse.quote(job_id)}/heartbeat", {})
+    def heartbeat(self, job_id: str, output: str = "") -> Dict[str, Any]:
+        """Says the job is still running. `output` is the end of what it has printed so far, shown in the Terminal before it finishes (a server from before this ignores it)."""
+        return self._call("POST", f"/api/runner/jobs/{urllib.parse.quote(job_id)}/heartbeat", {"output_tail": output} if output else {})
 
     def result(self, job_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         return self._call("POST", f"/api/runner/jobs/{urllib.parse.quote(job_id)}/result", payload)

@@ -36,6 +36,14 @@ PROMPT_MAX_CHARS = 2600
 
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]+")
 _URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
+# A step that only looks, or only maybe changes something, never ticks: a step is done when edits to ALL its files were applied (2026-10-30: ~10 Continue presses, 37.6 cents, for one such step).
+# Narrow on purpose: it starts with a condition, or with a looking verb and has no edit verb ("Check the flag and replace it" is an edit), or says the change depends on need.
+_NOT_AN_EDIT_RE = re.compile(
+    r"^(?:if|when|decide|consider|see (?:if|whether))\b"
+    r"|^(?:check|verify|confirm|review|inspect|investigate|read|look|ensure|make sure)\b(?!.*\b(?:add|change|update|replace|remove|fix|create|rename|move|implement|write|edit|wire|extend|delete|set|use|pass|call|import|export|show|hide)\b)"
+    r"|\b(?:if (?:needed|necessary|required|any)|as needed|optionally)\b",
+    re.IGNORECASE,
+)
 
 
 def enabled() -> bool:
@@ -110,12 +118,17 @@ def clean_plan(raw: Any, exists: Callable[[str], bool]) -> Tuple[Optional[Dict[s
             errors.append(f"steps: step {number} needs a short description")
             continue
         step_files = []
-        for path in item.get("files") if isinstance(item.get("files"), list) else []:
+        listed = item.get("files") if isinstance(item.get("files"), list) else []
+        for path in listed:
             cleaned = clean_path(path)
             if cleaned and cleaned in seen:
                 step_files.append(cleaned)
             else:
                 errors.append(f"steps: step {number} names {_flat(path, 60)}, which is not in the plan's files")
+        if not listed:
+            errors.append(f"steps: step {number} names no file. A step is a change to named files (a step with no file can never be ticked off); put checks and things to look at in tests or unknowns")
+        elif _NOT_AN_EDIT_RE.search(text):
+            errors.append(f"steps: step {number} reads as '{_flat(text, 60)}', which may need no edit, and a step only ticks when its files are changed. Make it a change you will make, or move it to tests or unknowns")
         steps.append({"id": f"s{number}", "text": text, "files": step_files, "status": "todo"})
     if len(raw_steps) > MAX_STEPS:
         errors.append(f"steps: at most {MAX_STEPS}")
@@ -418,6 +431,26 @@ def reads_as_continue(message: str) -> bool:
     """Whether a short message carries an approved plan on ("continue", "next step", "go ahead")."""
     text = str(message or "")
     return len(text.split()) <= SHORT_REPLY_WORDS * 2 and bool(_CONTINUE_RE.search(text) or _APPROVE_RE.search(text))
+
+
+# After this many turns in a row that finished no step, a bare "continue" is not run again: another try costs the same and ends the same way (2026-10-30: ~10 of them, 37.6 cents). The person is told
+# why and what would help instead, with no tool loop. A message with words of its own (something blocking, a change of plan) still goes through.
+STALL_STOP_AT = 3
+
+
+def halted(plan: Optional[Dict[str, Any]], message: str) -> bool:
+    """Whether this turn should not carry the plan on: an approved plan whose last STALL_STOP_AT turns finished no step, and a message that is only "continue". Pure."""
+    return bool(plan) and plan.get("state") == APPROVED and int(plan.get("stalled") or 0) >= STALL_STOP_AT and reads_as_continue(message)
+
+
+def halt_facts(plan: Dict[str, Any]) -> str:
+    """What the reply to a halted turn must say, for the formatter. Step wording is the plan's own (approved by the person). Pure."""
+    left = [f"{s.get('id')}: {s.get('text', '')}" for s in plan.get("steps") or [] if s.get("status") != "done"]
+    return (
+        f"The approved plan has gone {int(plan.get('stalled') or 0)} turns in a row without finishing a step, so this time nothing was run: trying again would cost the same and most likely end the same way. "
+        f"Steps still open: {'; '.join(left) or 'none listed'}. Say that plainly and briefly, without blaming anyone. Then give the ways forward: press Mark done on the plan card if a step is already in the files "
+        "or needs no edit; tell Sonic in a message what is blocking a step, or what to do differently; or cancel the plan. Do not claim any work was done this turn."
+    )
 
 
 def prepare(db, username: str, session_id: str, message: str, *, plan_mode: bool, now: Optional[datetime] = None) -> Dict[str, Any]:

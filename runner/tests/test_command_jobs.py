@@ -9,7 +9,7 @@ from saapp_runner.loop import Runner
 
 class FakeClient:
     def __init__(self, cancel_after=None):
-        self.reported, self.heartbeats, self.cancel_after = [], 0, cancel_after
+        self.reported, self.heartbeats, self.cancel_after, self.outputs = [], 0, cancel_after, []
 
     def hello(self, projects, status="", launch="", request_results=None):
         return {"ok": True}
@@ -17,8 +17,10 @@ class FakeClient:
     def next_job(self, wait=25):
         return None
 
-    def heartbeat(self, job_id):
+    def heartbeat(self, job_id, output=""):
         self.heartbeats += 1
+        if output:
+            self.outputs.append(output)
         return {"cancel": self.cancel_after is not None and self.heartbeats >= self.cancel_after}
 
     def result(self, job_id, payload):
@@ -252,3 +254,76 @@ def test_the_window_asker_starts_a_separate_process_and_times_out_in_five_minute
         assert slow.poll(now=time.monotonic() + confirm.TIMEOUT_SECONDS + 1) == {"result": "declined"}
     finally:
         slow.cancel()
+
+
+
+# ---- output while it runs -----------------------------------------------------------------------------------------------------------------------------
+
+def test_a_running_command_sends_what_it_has_printed_with_its_heartbeats(root):
+    import sys
+
+    from saapp_runner import execute
+
+    code = "import time\nprint('first line', flush=True)\ntime.sleep(1.2)\nprint('second line', flush=True)\n"
+    runner, client, said = make(root)
+    live = execute.Live()
+    result = runner._supervise("j1", lambda cancel: execute.run([sys.executable, "-c", code], root, 30, 6000, cancel, None, live=live), live)
+    assert result["output_tail"].splitlines() == ["first line", "second line"]
+    assert client.outputs and "first line" in client.outputs[0]                       # shown before the command ended
+    assert not any("first line" in line for line in said)                              # the log names no output
+
+
+def test_a_quiet_command_sends_plain_heartbeats(root):
+    import sys
+
+    from saapp_runner import execute
+
+    runner, client, _ = make(root)
+    live = execute.Live()
+    runner._supervise("j1", lambda cancel: execute.run([sys.executable, "-c", "import time; time.sleep(0.7)"], root, 30, 6000, cancel, None, live=live), live)
+    assert client.heartbeats >= 1 and client.outputs == []
+
+
+def test_live_output_is_the_end_of_what_was_printed_and_is_sent_once_per_change():
+    from saapp_runner import execute
+
+    live = execute.Live(limit=10)
+    assert live.news() == ""                                                          # nothing yet: nothing to send
+    live.add("hello ")
+    assert live.news() == "hello "
+    assert live.news() == ""                                                          # unchanged since the last heartbeat
+    live.add("a long line of output")
+    assert live.news() == " of output"                                                # only the last 10 characters are kept
+
+
+def test_execute_run_feeds_both_streams_to_live_as_they_arrive(tmp_path):
+    import sys
+
+    from saapp_runner import execute
+
+    live = execute.Live()
+    done = execute.run([sys.executable, "-c", "import sys; print('out'); sys.stderr.write('err')"], tmp_path, 30, live=live)
+    assert done["exit_code"] == 0
+    text = live.news()
+    assert "out" in text and "err" in text
+
+
+def test_a_command_line_shows_its_output_live_only_when_it_is_one_lone_command(root):
+    from saapp_runner import execute, shell
+
+    lone, piped = execute.Live(), execute.Live()
+    shell.run_line("git --version", root, live=lone)                                  # an outside program (cat and head are built in and finish at once)
+    shell.run_line("git --version | head -1", root, live=piped)
+    assert "git version" in lone.news()
+    assert piped.news() == ""                                                         # a stage that feeds a pipe is not what the person will see
+
+
+def test_the_client_sends_output_only_when_there_is_some():
+    from saapp_runner.client import Client
+
+    sent = []
+    client = Client("https://example.test", "key")
+    client._call = lambda method, path, body=None, timeout=40: sent.append((method, path, body)) or {}
+    client.heartbeat("j1")
+    client.heartbeat("j1", "so far")
+    assert sent[0][2] == {} and sent[1][2] == {"output_tail": "so far"}

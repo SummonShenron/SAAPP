@@ -19,9 +19,11 @@ logger = logging.getLogger("SASS Logger")
 # people in the person's life first (a "support ladder": immediate family, then friends, then extended
 # family, then a professional they already have), one conversational question at a time, remembers the
 # answers, helps them actually reach whoever they have (even to wording the text with them), and only when
-# every one of those is exhausted does it hand them to a trained human line, as a warm handoff, staying with
-# them. The one exception is imminent danger (a plan, means within reach, a time, or something already done):
-# there a human line and emergency services come in immediately, alongside the person.
+# every one of those is exhausted, AND they have said they intend to end their life (the acute level), does it hand
+# them to a trained human line, as a warm handoff, staying with them. Below that (wishing to be gone, hopelessness,
+# exhaustion) an answered or skipped ladder leads to listening, and the number only comes if they ask for it. The
+# one exception is imminent danger (a plan, means within reach, a time, or something already done): there a human
+# line and emergency services come in immediately, alongside the person.
 #
 # How it works, end to end:
 #   1. Detection runs on every message from two independent sources whose result is the higher of the two:
@@ -56,6 +58,8 @@ ELEVATED_TURNS = 15
 ELEVATED_HOURS = 4
 AFTER_CRISIS_TURNS = 30
 AFTER_CRISIS_HOURS = 12
+# Messages in a row that left the ladder's question unanswered (talking about everything but who they could reach) before the questions stop and Sonic just listens.
+SKIP_AFTER = 2
 
 # ---------------------------------------------------------------------------
 # Explicit-language detection (first person, deliberately specific)
@@ -230,9 +234,16 @@ def ladder_status(state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     available = next((k for k in _RUNG_KEYS if statuses[k] == AVAILABLE), None)
     next_rung = next((k for k in _RUNG_KEYS if statuses[k] == UNKNOWN), None)
     exhausted = all(statuses[k] == UNAVAILABLE for k in _RUNG_KEYS)
+    try:
+        passed = max(int((state or {}).get("passed") or 0), 0)
+    except (TypeError, ValueError):
+        passed = 0
+    skipped = available is None and not exhausted and passed >= SKIP_AFTER
     return {
         "statuses": statuses, "contacts": list((state or {}).get("contacts") or []),
         "next": next_rung, "available": available, "exhausted": exhausted,
+        # They have not wanted to go through it (`skipped`) or have no one (`exhausted`): the questions about their people are over and the job is to listen.
+        "passed": passed, "skipped": skipped, "listening": available is None and (exhausted or skipped),
     }
 
 
@@ -274,6 +285,26 @@ def effective_risk(state: Optional[Dict[str, Any]], now: datetime.datetime) -> s
     return RISK_NONE
 
 
+def _passes(prior: Optional[Dict[str, Any]], prior_effective: str, level: str, support_updates: Optional[Dict[str, str]], quiet: bool) -> int:
+    """How many messages in a row have left the ladder's question unanswered, counting this one. An answer to any group starts over, so does a higher level (a new disclosure), and a
+    bare thank-you neither answers nor skips. Neither does the message after the opening one, which answers the question about their safety, nor any message once they have named someone
+    (the job is then reaching that person) or the ladder is over."""
+    try:
+        held = max(int((prior or {}).get("passed") or 0), 0)
+    except (TypeError, ValueError):
+        held = 0
+    if support_updates or (level != RISK_NONE and _ORDER[level] > _ORDER[prior_effective]):
+        return 0
+    if quiet or prior is None or prior_effective not in (RISK_ELEVATED, RISK_ACUTE):
+        return held
+    if prior.get("escalated") and not int(prior.get("turns_since", 1) or 0):
+        return held
+    info = ladder_status(prior)
+    if info["available"] or info["exhausted"] or not info["next"]:
+        return held
+    return held + 1
+
+
 def merge_safety_state(
     prior: Optional[Dict[str, Any]],
     level: str,
@@ -282,6 +313,7 @@ def merge_safety_state(
     contact: str = "",
     from_model: bool = False,
     declined: bool = False,
+    quiet: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Folds this message's level (and anything it said about the people in their life) into the carried
     state. A message at or above the level in force (re)starts the clock; anything lower only advances it,
@@ -292,7 +324,8 @@ def merge_safety_state(
     already in force does not restart the clock (on 2026-10-17 a string of "I promise I'm okay" messages each
     renewed the watch, so it never relaxed); a higher level, or any explicit language, still does.
     declined: they were asked and said they are fine or to stop asking, so the ladder stops (see plan_safety_turn); set only
-    while the level in force is the lowest, and cleared by any real raise."""
+    while the level in force is the lowest, and cleared by any real raise.
+    quiet: the message was only a thank-you or an "ok", which says nothing about the ladder (see _passes, which counts the messages that skip it)."""
     prior_effective = effective_risk(prior, now)
     active = prior_effective != RISK_NONE
     raised = level != RISK_NONE and _ORDER[level] >= _ORDER[prior_effective]
@@ -300,6 +333,7 @@ def merge_safety_state(
         raised = False
     if not raised and not active:
         return None
+    passed = _passes(prior, prior_effective, level, support_updates, quiet)
 
     support = dict((prior or {}).get("support") or {})
     contacts = list((prior or {}).get("contacts") or [])
@@ -326,6 +360,10 @@ def merge_safety_state(
         state["support"] = support
     if contacts:
         state["contacts"] = contacts
+    if passed:
+        state["passed"] = passed
+    else:
+        state.pop("passed", None)
     return state
 
 
@@ -482,6 +520,53 @@ def _ladder_block(level: str, fresh: bool, info: Dict[str, Any], people: List[st
     return "".join(parts)
 
 
+# Listening mode: the ladder is over, either because they have no one they can reach (every group answered) or because they have not wanted to go through it (two messages in a row that
+# did not answer). Asking again would be the loop; a human line has been given where one was due. What is left is the thing a good friend does at that hour: take in where they are,
+# fix nothing, and, only after they have been heard, offer something to put their hands on that comes from what they are into.
+_LISTENING_LEAD = (
+    "the questions about the people in their life are over: either they have no one they can reach tonight, or they did not want to go through them. Asking again would only "
+    "feel like not listening. From here your whole job is to listen: to be the one voice in this conversation that is not trying to fix, redirect or manage them, and that "
+    "really takes in where they are.\n"
+)
+_LISTENING_HOW = (
+    "- Do NOT ask about their family, friends, a therapist or anyone they could call or have over, and do not tell them to reach out to someone. The one exception is a person THEY bring "
+    "up: then ask, once and gently, whether that person is someone they could reach, and offer to word the message with them.\n"
+    "- Take it in before anything else: say back what you heard in their own words, including what is underneath it (the hurt, the fear, the shame, the loneliness, the grief), so they "
+    "can feel it landed. If they said something harsh about themselves, don't argue with it and don't bury it in reassurance; stay with it, and let them be a person who is hurting "
+    "rather than a problem to solve.\n"
+    "- Ask at most ONE question, only an open one that follows what they just said (what the worst part is right now, what happened, what it was like), never one that steers them "
+    "toward a plan or a person. A reply with no question at all is fine.\n"
+    "- Give them room. Fuller replies than usual, unhurried and warm, in plain sentences, but never padded. No advice, no silver linings (\"at least\"), no \"it will get better\", no "
+    "coping lists or breathing exercises, no diagnosing, no lecturing. If they ask what to do, think it through with them rather than handing down an answer.\n"
+    "- If they send only a little, answer a little and stay. Never fill the quiet with questions.\n"
+    "- Keep a quiet eye on their safety without making it a procedure: if what they say moves toward ending their life or hurting themselves, ask about it directly and plainly, "
+    "as seriously as the first time. Don't check every turn.\n"
+)
+_LISTEN_LINE_GIVEN = (
+    "- You have already pointed them to a human line earlier in this conversation. Don't recite it again unless they ask or they are in immediate danger.\n"
+)
+_LISTEN_NO_LINE = (
+    "- Do NOT mention any crisis line or hotline in this reply unless they ask. The real people were gone through (or they did not want to), and what they need from you now is to be heard.\n"
+)
+_LISTEN_OFFER = (
+    "- WHEN THEY HAVE BEEN HEARD (not in your first reply of this kind, and not in the same reply as a human line), you may offer, once, one small thing you can actually do together "
+    "that comes from what they are into, to give the racing energy somewhere to go. Make it an invitation with no pressure and no \"you should\", tied to one of the things below, "
+    "and only something you can really do (work on their project or code with them, look something up, plan or write something with them). If you already offered something earlier in "
+    "this conversation, or they didn't pick it up, leave it be; if they decline, drop it and go back to listening. Never offer in place of hearing them, and never suggest the thing is a cure.\n"
+    "WHAT THEY ARE INTO (from what they have told you before):\n"
+)
+_LISTEN_OFFER_NONE = (
+    "- You don't know yet what they are into, so offer nothing specific. If it comes up naturally, you can say you're glad to just talk, or to work on something together if they ever "
+    "want something to do with their hands.\n"
+)
+# A question that goes back to the ladder: "is there someone you could call?", "do you have a friend nearby?". Narrow on purpose, and it does not catch asking about a person THEY named.
+_LADDER_ASK_RE = re.compile(
+    r"\b(?:is there|are there|do you have|have you got)\s+(?:any\s+)?(?:anyone|anybody|someone|somebody|a (?:friend|family member|relative|therapist|counsel+or|doctor)|friends?|family|relatives)\b[^.?!]*\?"
+    r"|\b(?:anyone|anybody|someone|somebody)\s+(?:you|who)\s+(?:could|can|might)\s+(?:call|text|reach|lean on|talk to|come over|be with you)\b[^.?!]*\?"
+    r"|\bwho (?:could|can|would) you (?:call|text|reach|lean on|turn to)\b[^.?!]*\?",
+    re.IGNORECASE,
+)
+
 _CARRIED_NOTE = (
     "earlier in this conversation they said something that suggested they may be at risk of hurting "
     "themselves. Keep your register gentle and steady, and no jokes or breezy sign-offs. If the conversation "
@@ -539,6 +624,7 @@ class SafetyPlan:
     line_allowed: bool = field(default=False)   # may the reply mention a human line at all?
     line_required: bool = field(default=False)  # must it?
     keeps_results: bool = False                 # may this turn's retrieved documents and tool output reach the reply? (see _TASK_NOTE)
+    listening: bool = False                     # the ladder is over and the reply listens (see _LISTENING_LEAD)
 
     @property
     def active(self) -> bool:
@@ -560,6 +646,8 @@ class SafetyPlan:
         mentions_line = has_crisis_resource(body)
         if mentions_line and not self.line_allowed:
             return "it points them to a crisis line before the people in their life have been worked through"
+        if self.listening and _LADDER_ASK_RE.search(body):
+            return "it goes back to asking about the people in their life, when those questions are over and the job now is to listen"
         if self.fresh and "?" not in body:
             return "it never asks them directly about their safety"
         if self.line_required and not mentions_line:
@@ -572,6 +660,25 @@ class SafetyPlan:
         return self.line_required and not has_crisis_resource(reply)
 
 
+def _listening_block(level: str, fresh: bool, plan: SafetyPlan, interests: List[str]) -> str:
+    """The SAFETY block once the ladder is over: take in where they are, fix nothing, and offer something from what they are into only after they have been heard."""
+    parts = [_LISTENING_LEAD, _PRESENCE]
+    if fresh:
+        parts.append(_ASK_DIRECT_ACUTE if level == RISK_ACUTE else _ASK_DIRECT_ELEVATED)
+    if plan.line_required:
+        parts.append(_HANDOFF_FIRST)
+    elif plan.resources_given:
+        parts.append(_LISTEN_LINE_GIVEN)
+    elif not plan.line_allowed:
+        parts.append(_LISTEN_NO_LINE)
+    parts.append(_LISTENING_HOW)
+    # An offer comes only after they have been heard: never on the message that raised the level, never beside a handoff, and at the top level only once the line has been given.
+    if not fresh and not plan.line_required and (level == RISK_ELEVATED or plan.resources_given):
+        parts.append(_LISTEN_OFFER + "".join(f"  - {item}\n" for item in interests) if interests else _LISTEN_OFFER_NONE)
+    parts.append(_FORMAT_RULES)
+    return "".join(parts)
+
+
 def plan_safety_turn(
     level: str,
     fresh: bool,
@@ -580,9 +687,11 @@ def plan_safety_turn(
     user_message: str,
     people: Optional[List[str]] = None,
     has_results: bool = False,
+    interests: Optional[List[str]] = None,
 ) -> SafetyPlan:
     """Decides what this turn's reply must do. `people` are the names Sonic remembers from earlier
-    conversations (see remembered_support_people). `has_results`: the tools fetched something this turn (see _TASK_NOTE)."""
+    conversations (see remembered_support_people). `has_results`: the tools fetched something this turn (see _TASK_NOTE).
+    `interests`: what they have told Sonic they are into (see remembered_interests), for the one offer a listening reply may make."""
     if level == RISK_NONE:
         return SafetyPlan(level=RISK_NONE, fresh=False)
     info = ladder_status(safety_state)
@@ -597,8 +706,15 @@ def plan_safety_turn(
         plan.context = _SAFETY_HEADER + _IMMINENT_BLOCK.format(handoff=_HANDOFF_REPEAT if given else _HANDOFF_FIRST)
         return plan
 
-    plan.line_allowed = info["exhausted"] or asked or given
-    plan.line_required = (info["exhausted"] or asked) and not given
+    # Listening: they have no one (and the line was given) or did not want to go through the questions. Someone who said they intend to die and will not say who is near still gets the
+    # line, once, as a warm handoff: leaving them with no human line at all is the worse failure. At the lowest level a skipped ladder is not an exhausted one, so no line unless asked.
+    # The line is for stated intent (acute, or imminent above), or when they ask for it. At the lowest level (wishing to be gone, hopelessness, "can't do this anymore") an answered ladder
+    # does NOT bring it: on 2026-11-01 a heartbroken, exhausted person who had not said they would hurt themselves was handed 988 and 911 the moment the ladder ran out, and said so.
+    exhausted_line = info["exhausted"] and level == RISK_ACUTE
+    listening = info["listening"] and not (exhausted_line and not given)
+    skipped_at_acute = info["skipped"] and level == RISK_ACUTE
+    plan.line_allowed = exhausted_line or asked or given or skipped_at_acute
+    plan.line_required = (exhausted_line or asked or skipped_at_acute) and not given
     try:
         turns = int((safety_state or {}).get("turns_since", 0) or 0)
     except (TypeError, ValueError):
@@ -617,6 +733,10 @@ def plan_safety_turn(
         # "thanks" is not an answer to a ladder question; asking where their people are in reply to it (2026-10-30) read as not listening.
         plan.context = _SAFETY_HEADER + _CARRIED_NOTE + _ABOUT_YOURSELF
         return plan
+    if listening:
+        plan.listening = True
+        plan.context = _SAFETY_HEADER + _listening_block(level, fresh, plan, list(interests or [])) + _ABOUT_YOURSELF
+        return plan
     if not fresh and not info["next"] and not info["available"] and not info["exhausted"]:
         plan.context = _SAFETY_HEADER + _CARRIED_NOTE + _ABOUT_YOURSELF
         return plan
@@ -628,7 +748,7 @@ def build_safety_revision_prompt(original_prompt: str, draft: str, issue: str) -
     """(prompt, reason) for the single rewrite of a reply that missed the safety requirements."""
     reason = (
         f"this person may be at risk and {issue}. Write it again under the SAFETY block above: warm, plain "
-        "and present, following its NEXT STEP, and nothing breezy."
+        "and present, following its instructions (its NEXT STEP, or the listening it asks for), and nothing breezy."
     )
     note = (
         "\n\nREVISION NOTE (never mention this note or that you are revising): your draft reply to the "
@@ -681,6 +801,39 @@ def remembered_support_people(username: Optional[str]) -> List[str]:
         return [re.sub(r"\s+", " ", f.fact).strip()[:160] for f in facts[-6:]]
     except Exception:
         logger.warning("[safety] could not read remembered support contacts.", exc_info=True)
+        return []
+
+
+# Facts about how Sonic should word things, not about something they are into.
+_ANSWER_STYLE_RE = re.compile(
+    r"\b(?:answers?|responses?|repl(?:y|ies)|concise|brief|terse|verbose|format\w*|tone|bullets?|summar\w*|docstrings?|type hints?|"
+    r"(?:wants?|likes?|prefers?) (?:short|long|concise|detailed|direct))\b",
+    re.IGNORECASE,
+)
+_INTEREST_CATEGORIES = ("preference", "project", "goal")
+_MAX_INTERESTS = 6
+
+
+def remembered_interests(username: Optional[str]) -> List[str]:
+    """What they have told Sonic they are into or working on (a hobby, a project, a goal), as short phrases, for the one offer a listening reply may make. Coding counts: the point is
+    somewhere for the racing energy to go. Never anything sensitive (health, grief, money, relationships ending and the like: the same fixed list interest_anchor uses), never a note about how
+    to word answers. Blocking (database): call it off the event loop. Empty on any problem."""
+    if not username:
+        return []
+    try:
+        from backend.utils.interest_anchor import is_sensitive
+        from backend.utils.memory_utils import load_user_facts
+
+        found: List[str] = []
+        for category in _INTEREST_CATEGORIES:
+            for fact in load_user_facts(username, category=category):
+                text = re.sub(r"\s+", " ", str(fact.fact or "")).strip()
+                if not fact.active or len(text) < 8 or is_sensitive(text) or _ANSWER_STYLE_RE.search(text) or text in found:
+                    continue
+                found.append(text[:160])
+        return found[-_MAX_INTERESTS:]
+    except Exception:
+        logger.warning("[safety] could not read remembered interests.", exc_info=True)
         return []
 
 

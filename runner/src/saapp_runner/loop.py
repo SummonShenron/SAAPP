@@ -297,11 +297,13 @@ class Runner:
         fake_keys = (job.get("settings") or {}).get("fake_keys") is True             # the one thing the page can ask for besides a name: a yes or a no, never a value
         env = execute.clean_env({key: presets.FAKE_KEY_VALUE for key in presets.FAKE_KEY_NAMES} if fake_keys else None)
         self.say(f"Running {name} in {project.name}" + (f" on {len(files)} file(s)" if files else "") + (" with fake AI keys" if fake_keys else "") + "...")
-        result = self._supervise(job_id, lambda cancel: execute.run(argv, project.root, self.timeout, self.max_chars, cancel, env))
+        live = execute.Live()
+        result = self._supervise(job_id, lambda cancel: execute.run(argv, project.root, self.timeout, self.max_chars, cancel, env, live=live), live)
         self._finish_job(job_id, name, result)
 
-    def _supervise(self, job_id: str, work: Callable[[threading.Event], Dict[str, Any]]) -> Dict[str, Any]:
-        """Runs `work(cancel)` in a thread while telling SAAPP it is alive; a cancel from SAAPP sets `cancel`."""
+    def _supervise(self, job_id: str, work: Callable[[threading.Event], Dict[str, Any]], live: Optional[execute.Live] = None) -> Dict[str, Any]:
+        """Runs `work(cancel)` in a thread while telling SAAPP it is alive; a cancel from SAAPP sets `cancel`. With `live`, each heartbeat also carries the output so far when it has changed,
+        so the Terminal can show it before the command ends."""
         cancel, holder = threading.Event(), {}
         worker = threading.Thread(target=lambda: holder.update(work(cancel)), daemon=True)
         worker.start()
@@ -310,7 +312,8 @@ class Runner:
             if not worker.is_alive():
                 break
             try:
-                if self.client.heartbeat(job_id).get("cancel"):
+                news = live.news() if live is not None else ""
+                if (self.client.heartbeat(job_id, news) if news else self.client.heartbeat(job_id)).get("cancel"):
                     cancel.set()
                     self.say("Stopping it: you cancelled it in SAAPP.")
             except (Unreachable, ServerError):
@@ -363,9 +366,10 @@ class Runner:
                 if answer != "yes":
                     return {"exit_code": None, "error": {"no": "You said no in the window on your computer, so nothing was run.", "cancelled": "Stopped before anything was run.",
                                                           "none": "The runner could not ask you here (no window could be shown), so nothing was run."}[answer]}
-            return shell.run_line(line, project.root, self.timeout, self.max_chars, cancel, env, rules.allow)
+            return shell.run_line(line, project.root, self.timeout, self.max_chars, cancel, env, rules.allow, live=live)
 
-        self._finish_job(job_id, "command", self._supervise(job_id, work))
+        live = execute.Live()
+        self._finish_job(job_id, "command", self._supervise(job_id, work, live))
 
     def _ask_here(self, shown: str, notes: List[str], cancel: threading.Event) -> str:
         """The window on this computer: "yes", "no", "cancelled" (stopped in SAAPP meanwhile) or "none" (no window)."""

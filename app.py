@@ -118,7 +118,7 @@ from backend.utils.wrapup_utils import is_closing_message, CLOSING_DIRECTIVE, cl
 from backend.utils.identity_checks import identity_reply_issue, build_identity_revision_prompt
 from backend.utils.self_counters import new_turn_counts, record_turn_counts, revision_kind, tally
 from backend.utils.safety_utils import (
-    effective_risk, plan_safety_turn, build_safety_revision_prompt, remembered_support_people, CRISIS_RESOURCE_LINE, RISK_NONE,
+    effective_risk, plan_safety_turn, build_safety_revision_prompt, remembered_support_people, remembered_interests, CRISIS_RESOURCE_LINE, RISK_NONE,
     has_crisis_resource, record_safety_turn,
 )
 from backend.utils.outage_utils import handle_failed_turn, in_crisis
@@ -1122,6 +1122,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 risk_level, risk_fresh, safety_state, format_history_as_text(messages_state), final_state.get("original_question", question),
                 people=await asyncio.to_thread(remembered_support_people, username) if risk_level != RISK_NONE else [],
                 has_results=bool(payload.get("data") or documents),
+                interests=await asyncio.to_thread(remembered_interests, username) if risk_level != RISK_NONE else [],
             )
             drops_results = risk_level != RISK_NONE and not safety_plan.keeps_results     # a practical request below the top level keeps what the tools fetched
             if drops_results:
@@ -2417,9 +2418,9 @@ async def runner_next(wait: int = Query(runner_jobs.POLL_SECONDS, ge=0, le=30), 
 
 
 @app.post("/api/runner/jobs/{job_id}/heartbeat")
-async def runner_heartbeat(job_id: str, key = Depends(get_runner_key)):
+async def runner_heartbeat(job_id: str, body: Optional[Dict[str, Any]] = Body(default=None), key = Depends(get_runner_key)):
     try:
-        return await asyncio.to_thread(runner_jobs.api_heartbeat, _runner_db_or_503(), key, job_id)
+        return await asyncio.to_thread(runner_jobs.api_heartbeat, _runner_db_or_503(), key, job_id, None, body)
     except runner_jobs.RunnerError as problem:
         raise _runner_http_error(problem)
 

@@ -747,13 +747,17 @@ def claim_next(db: Any, key: Dict[str, Any], now: Optional[datetime] = None) -> 
     return job
 
 
-def heartbeat(db: Any, key: Dict[str, Any], job_id: str, now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
-    """A running job's runner says it is still going. Returns {"cancel": bool}, or None when the job is not this runner's running job. Blocking."""
+def heartbeat(db: Any, key: Dict[str, Any], job_id: str, now: Optional[datetime] = None, live_output: Any = None) -> Optional[Dict[str, Any]]:
+    """A running job's runner says it is still going. Returns {"cancel": bool}, or None when the job is not this runner's running job. `live_output` is the end of what the command has printed
+    so far, when the runner sends it: kept (cleaned like the final output) only while the job runs, and shown in its place until the result arrives. Blocking."""
     now = now or _now()
     job = db[JOBS].find_one({"_id": job_id, "runner_id": key["_id"], "status": RUNNING})
     if not job:
         return None
-    db[JOBS].update_one({"_id": job_id, "status": RUNNING}, {"$set": {"last_heartbeat": now}})
+    fields: Dict[str, Any] = {"last_heartbeat": now}
+    if isinstance(live_output, str) and live_output:
+        fields["live_output"] = sanitize_output(live_output)[0]
+    db[JOBS].update_one({"_id": job_id, "status": RUNNING}, {"$set": fields})
     return {"cancel": bool(job.get("cancel_requested"))}
 
 
@@ -794,7 +798,8 @@ def public_job(doc: Dict[str, Any]) -> Dict[str, Any]:
         return value.isoformat() if value else None
 
     return {"id": doc["_id"], "runner_id": doc.get("runner_id"), "project_id": doc.get("project_id") or "", "project_name": doc.get("project_name") or "", "check": doc.get("check"), "command_shown": doc.get("command_shown"), "files": doc.get("files") or [], "status": doc.get("status"),
-            "created_at": stamp("created_at"), "expires_at": stamp("expires_at"), "finished_at": stamp("finished_at"), "exit_code": doc.get("exit_code"), "output_tail": doc.get("output_tail") or "",
+            "created_at": stamp("created_at"), "expires_at": stamp("expires_at"), "finished_at": stamp("finished_at"), "exit_code": doc.get("exit_code"),
+            "output_tail": doc.get("output_tail") or (doc.get("live_output") or "" if doc.get("status") == RUNNING else ""),      # a running command shows what it has printed so far
             "truncated": bool(doc.get("truncated")), "timed_out": bool(doc.get("timed_out")), "duration": doc.get("duration"), "error": doc.get("error") or "",
             "kind": doc.get("kind") or KIND_CHECK, "command_class": doc.get("command_class") or "", "command_notes": doc.get("command_notes") or [], "auto_approved": bool(doc.get("auto_approved")),
             "needs_confirm": doc.get("command_class") == runner_commands.commands.CHANGE}
@@ -855,8 +860,8 @@ def api_next(db: Any, key: Dict[str, Any], now: Optional[datetime] = None) -> Di
     return {"job": None, "update": None if busy else wanted_update(db, key, now), **asked}
 
 
-def api_heartbeat(db: Any, key: Dict[str, Any], job_id: str, now: Optional[datetime] = None) -> Dict[str, Any]:
-    answer = heartbeat(db, key, job_id, now)
+def api_heartbeat(db: Any, key: Dict[str, Any], job_id: str, now: Optional[datetime] = None, body: Any = None) -> Dict[str, Any]:
+    answer = heartbeat(db, key, job_id, now, (body or {}).get("output_tail") if isinstance(body, dict) else None)
     if answer is None:
         raise RunnerError("not_running", "That job is not running on this runner (it may have been cancelled or closed).")
     return answer

@@ -13,6 +13,7 @@ ALLOWED = [
     # apology, sympathy and ordinary idioms
     "I'm sorry, I got that wrong.", "I'm sorry to hear that.", "Sorry to bother you, but I need the file name.", "I'm happy to help.", "Congratulations, that's a real win.",
     "I'm curious what you'll pick.", "I'm curious how the migration works under the hood.",   # a way of asking, like "I'd love to hear"
+    "I'm curious to see how it comes together.", "I'd be glad to see it land.",                # the answer to a casual "are you excited too?": what it leans toward, no disclaimer first
     "I'm afraid I can't verify that.", "I hate to say it, but that plan has a flaw.", "I feel for you.", "I feel bad that happened to you.", "That sounds really hard.",
     "Thanks for telling me.", "I'd be glad to look at that.", "Glad we got that sorted.",
     # concern and care about a THING or the WORK
@@ -101,6 +102,15 @@ def test_the_prompt_carries_the_care_rules_the_check_enforces():
     for phrase in ("concerned about a concrete thing in the work", "never that you care about them", "can't verify a feeling", "lead with the specific thing they did",
                    "When you can just answer, just answer; if they ask what you are or press, say it plainly", "your own numbers or any reward"):
         assert phrase in CARE_AND_CONCERN, phrase
+
+
+def test_a_casual_are_you_excited_too_is_answered_with_a_lean_not_a_disclaimer():
+    """Jack, 2026-10-28: "its almost time, im getting excited, are you?" got "I can't experience anticipation the way you do, but...". The prompt now says what to do instead, in
+    words the identity check itself allows (it does not name the disclaimer: see the test below), and keeps the plain account for a direct question about what Sonic is."""
+    assert 'ask if you share it ("are you excited too?")' in CARE_AND_CONCERN
+    assert "The plain account of what you are is for when they ask about you directly" in CARE_AND_CONCERN
+    for line in ("I'm curious to see how it comes together", "I'd be glad to see it land"):
+        assert line in CARE_AND_CONCERN and identity_reply_issue(line + ".") is None
 
 
 def test_the_prompts_own_example_passes_the_check():

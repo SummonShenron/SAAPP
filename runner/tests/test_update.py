@@ -214,7 +214,7 @@ def test_nothing_happens_when_the_runner_has_no_updater_and_a_waiting_job_is_run
     seen = []
     ran = []
     client = Client2([({"job_id": "j1", "check": "tests", "files": []}, newer()), (None, None)])
-    client.heartbeat = lambda job_id: {}
+    client.heartbeat = lambda job_id, output="": {}
     client.result = lambda job_id, payload: ran.append(job_id) or {}
     runner, _ = make(project, client, lambda version: (seen.append(version), (False, ""))[1])
     runner.serve()

@@ -47,7 +47,7 @@ from backend.utils.emotion_utils import energy_tier, merge_emotional_state
 from backend.utils.log_hygiene import emotion_summary
 from backend.utils.safety_utils import (
     detect_risk_language, detect_denial, normalize_risk, normalize_support, merge_safety_state, effective_risk, log_safety_event,
-    remember_support, RISK_NONE, KIND_LADDER_ANSWER, _ORDER as _RISK_ORDER,
+    remember_support, is_acknowledgement, RISK_NONE, KIND_LADDER_ANSWER, _ORDER as _RISK_ORDER,
 )
 from backend.services import local_edit_decisions
 from backend.services import sandbox_tests
@@ -1064,6 +1064,7 @@ async def reasoner_node(state: GraphState) -> GraphState:
         _declined = detect_denial(msg) and _before == "elevated" and _regex_level == "none"
         state["safety_state"] = merge_safety_state(
             _prior_safety, _level, _now, _support_updates, _contact, from_model=_level != _regex_level, declined=_declined,
+            quiet=is_acknowledgement(msg),      # a bare thank-you neither answers the ladder nor skips it (the messages that skip it end the questions)
         )
         if _level != RISK_NONE and _RISK_ORDER[_level] >= _RISK_ORDER[_before]:
             log_safety_event(state.get("username"), _level, "language" if _level == _regex_level else "reasoner")
@@ -2184,6 +2185,15 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             edit_turn = True
         if plan_phase == code_plan.EXECUTE_PHASE and not edit_turn:
             plan_phase = None
+        if plan_phase == code_plan.EXECUTE_PHASE:
+            # Several turns in a row finished no step and this message is only "continue": say why and what helps, with no tool loop (backend/utils/code_plan.py STALL_STOP_AT).
+            stuck_plan = await asyncio.to_thread(code_plan.load, get_db(), username, state.get("session_id") or "")
+            if code_plan.halted(stuck_plan, latest_message_content):
+                from backend.utils.self_counters import record_turn_counts
+
+                await asyncio.to_thread(record_turn_counts, {"code_plan_halted": 1})
+                logger.info("[code plan] a bare continue was not run: %d turns in a row finished no step.", int(stuck_plan.get("stalled") or 0))
+                return {**state, "relevance_grade": "tool_agent", "content_to_format": code_plan.halt_facts(stuck_plan)}
         if edit_turn:
             logger.info("[tool_agent_node] edit request with a connected local folder — propose_local_edits is required this turn.")
         else:

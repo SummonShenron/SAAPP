@@ -274,6 +274,35 @@ def test_only_the_runner_that_is_running_a_job_can_report_on_it():
     assert rj.heartbeat(db, first, job["id"], later(seconds=5)) == {"cancel": False}
 
 
+def test_a_running_command_shows_what_it_has_printed_so_far_and_the_final_output_replaces_it():
+    db = FakeDB()
+    record, _ = connected(db)
+
+    def shown(job, seconds):
+        return rj.get_job(db, "jack@example.com", job["id"], later(seconds=seconds))["output_tail"]
+
+    job = rj.create_job(db, "jack@example.com", record["_id"], "tests", None, NOW)
+    rj.approve_job(db, "jack@example.com", job["id"], later(seconds=1))
+    rj.claim_next(db, record, later(seconds=2))
+    assert shown(job, 3) == ""                                                                      # nothing printed yet
+    assert rj.heartbeat(db, record, job["id"], later(seconds=5), "collecting...\x1b[0m\x00") == {"cancel": False}
+    assert shown(job, 6) == "collecting...[0m"                                                     # control characters removed, like the final output (the rest of the escape is plain text)
+    assert rj.heartbeat(db, record, job["id"], later(seconds=7)) == {"cancel": False}              # a heartbeat with nothing new keeps what is shown
+    assert shown(job, 8) == "collecting...[0m"
+    assert rj.api_heartbeat(db, record, job["id"], later(seconds=9), {"output_tail": "collected 3 items"}) == {"cancel": False}
+    assert shown(job, 10) == "collected 3 items"
+    assert rj.api_heartbeat(db, record, job["id"], later(seconds=11), "not an object") == {"cancel": False}     # a body of the wrong kind is ignored
+    rj.complete_job(db, record, job["id"], {"exit_code": 0, "output_tail": "3 passed"}, later(seconds=12))
+    assert shown(job, 13) == "3 passed"                                                             # the final output wins ...
+
+    quiet = rj.create_job(db, "jack@example.com", record["_id"], "tests", None, later(seconds=14))
+    rj.approve_job(db, "jack@example.com", quiet["id"], later(seconds=15))
+    rj.claim_next(db, record, later(seconds=16))
+    rj.heartbeat(db, record, quiet["id"], later(seconds=17), "half way")
+    rj.complete_job(db, record, quiet["id"], {"exit_code": 0, "output_tail": ""}, later(seconds=18))
+    assert shown(quiet, 19) == ""                                                                   # ... and a finished job never shows the stale live copy
+
+
 def test_a_command_that_could_not_start_or_ran_out_of_time_is_reported_as_what_it_was():
     db = FakeDB()
     record, _ = connected(db)

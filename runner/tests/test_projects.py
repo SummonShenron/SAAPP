@@ -200,7 +200,7 @@ class Client3:
         self.update_to, self.add_project, self.remove_project = poll.get("update"), poll.get("add"), poll.get("remove")
         return poll.get("job")
 
-    def heartbeat(self, job_id):
+    def heartbeat(self, job_id, output=""):
         return {}
 
     def result(self, job_id, payload):

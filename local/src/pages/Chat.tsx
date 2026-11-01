@@ -2329,7 +2329,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
       </>
     ),
   };
-  const settingsPanel = <ComposerChips {...chatSettings} layout="panel" />;
+  const settingsPanel = <ComposerChips {...chatSettings} />;
   // Patchy isn't offered to the BTY guest at all (no mascot, no menu toggle).
   const patchyAllowed = !isEmbedded && principal !== 'guest_bty';
   // "All" is the default: every knowledge base the person may use (it used to read "None"). The choices include it, so a person who picked one can go back.

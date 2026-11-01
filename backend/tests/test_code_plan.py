@@ -113,6 +113,67 @@ def test_every_file_needs_a_step_and_every_step_file_must_be_in_the_plan():
     assert plan is None and any("not in the plan's files" in e for e in errors)
 
 
+def _plan_with_step(text, files=("local/src/pages/Chat.tsx",)):
+    return cp.clean_plan(good_plan(files=[{"path": "local/src/pages/Chat.tsx", "why": "x"}], steps=[{"text": text, "files": list(files)}]), exists)
+
+
+def test_a_step_with_no_file_is_refused_because_it_could_never_be_ticked_off():
+    plan, errors = _plan_with_step("Run the tests and look at the result", files=())
+    assert plan is None and any("names no file" in e and "tests or unknowns" in e for e in errors)
+
+
+@pytest.mark.parametrize("text", [
+    "Verify the trace panel still renders",
+    "Check whether the button needs a new class",
+    "If the type is missing, extend it",
+    "Review the other callers",
+    "Update the label if needed",
+    "Optionally rename the helper",
+])
+def test_a_step_that_only_looks_or_only_maybe_changes_something_is_refused(text):
+    plan, errors = _plan_with_step(text)
+    assert plan is None and any("may need no edit" in e for e in errors)
+
+
+@pytest.mark.parametrize("text", [
+    "Add the excerpt to the trace event",
+    "Check the flag and replace it with the new one",
+    "Verify the prop is passed, and pass it if it is not",
+    "Rename the helper and update its callers",
+    "Play it from Chat",
+])
+def test_a_step_that_changes_files_is_accepted(text):
+    plan, errors = _plan_with_step(text)
+    assert errors == [] and plan["steps"][0]["text"] == text
+
+
+def _stalled_plan(stalled, **extra):
+    return {"state": cp.APPROVED, "stalled": stalled, "steps": [{"id": "s1", "text": "Do a thing", "status": "done"}, {"id": "s2", "text": "Wire the rest", "status": "todo"}], **extra}
+
+
+def test_a_bare_continue_is_not_run_again_after_three_turns_that_finished_nothing():
+    assert cp.STALL_STOP_AT == 3
+    assert cp.halted(_stalled_plan(3), "continue") and cp.halted(_stalled_plan(5), "next step please")
+    assert not cp.halted(_stalled_plan(2), "continue")                                              # two is a notice, not a stop
+    assert not cp.halted(_stalled_plan(3), "the step needs the config file, which is in src/settings, please use that one for it")      # words of its own go through
+    assert not cp.halted({**_stalled_plan(3), "state": cp.DONE}, "continue") and not cp.halted(None, "continue")
+
+
+def test_the_stop_tells_the_person_what_is_left_and_what_helps():
+    facts = cp.halt_facts(_stalled_plan(3))
+    assert "3 turns in a row" in facts and "s2: Wire the rest" in facts and "s1:" not in facts
+    assert "Mark done" in facts and "cancel" in facts and "nothing was run" in facts
+
+
+def test_the_tool_agent_stops_a_stalled_plan_before_any_model_call_and_counts_it():
+    source = (ROOT / "backend" / "services" / "agent_workflow.py").read_text(encoding="utf-8")
+    gate = source.index("code_plan.halted(stuck_plan, latest_message_content)")
+    assert gate < source.index("if edit_turn:\n            logger.info(\"[tool_agent_node] edit request")        # before the loop is set up
+    assert '"code_plan_halted": 1' in source and "code_plan.halt_facts(stuck_plan)" in source
+    from backend.utils.self_counters import KEYS
+    assert "code_plan_halted" in set(KEYS)
+
+
 def test_empty_or_oversized_plans_are_refused():
     assert cp.clean_plan({}, exists)[0] is None and cp.clean_plan("nope", exists)[0] is None
     many = [{"path": f"f{i}.ts", "why": "x", "new": True} for i in range(cp.MAX_FILES + 1)]

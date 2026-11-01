@@ -1,0 +1,68 @@
+name: CI
+
+# The fast suites on every push to main and every pull request, so a change that breaks a test is seen before it deploys (Render deploys from main).
+# No secrets and no real services: GOOGLE_API_KEY is a placeholder, and the test fixtures (backend/tests/conftest.py) block real model, database and embedding calls.
+# Evals are not run here: they call real models and cost money.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend and runner tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GOOGLE_API_KEY: test-not-real
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install "fastapi<0.118" "starlette<0.48" httpx
+          pip install -e runner
+
+      - name: Run the backend and runner tests
+        run: python -m pytest backend runner -q -p no:cacheprovider
+
+  frontend:
+    name: Frontend type check and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: local
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: local/package-lock.json
+
+      - run: npm ci
+
+      - name: Type check
+        run: npx tsc -b
+
+      - name: Tests
+        run: npm test

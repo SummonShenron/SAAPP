@@ -22,11 +22,6 @@ export interface ChatSettings {
   help: React.ReactNode;
 }
 
-interface Props extends ChatSettings {
-  /** 'bar' (the default): a row under the message box whose popups float upward. 'panel': the same icons as the content of a card in the session column, where an open choice is listed under the row instead
-   *  of floating, because the column scrolls and is narrower than a popup. */
-  layout?: 'bar' | 'panel';
-}
 
 /** Gemini's mark: the four-pointed star, in its blue. Drawn here as a small SVG; swap in the official file if you prefer it exact. */
 function GeminiMark() {
@@ -99,11 +94,11 @@ export function ChipChoices({ chipKey, control, onDone, className }: { chipKey: 
 type Open = ChipKey | 'help' | null;
 
 /**
- * The settings that used to be toggles in the "..." menu, as four icons under the message box, and the Help button at the far right. Each icon shows which of its two states is on (and is
- * highlighted when that is not the ordinary one); pressing it opens a small popup that names both states and says what each does. One popup is open at a time; a press anywhere else, or Escape, closes it.
+ * The settings that used to be toggles in the "..." menu, as icons in the session column's "Chat settings" card (nothing is drawn under the message box), with Export and Help in the same grid. Each icon
+ * shows which of its two states is on (and is highlighted when that is not the ordinary one); pressing it lists both states under the row and says what each does. In the column the open choice is
+ * listed under the row at the card's width instead of floating, because the column scrolls and is narrower than a popup. One is open at a time; a press anywhere else, or Escape, closes it.
  */
-const ComposerChips: React.FC<Props> = ({ model, mode, thinking, answers, disabled, onExport, exportDisabled, help, layout = 'bar' }) => {
-  const inline = layout === 'panel';
+const ComposerChips: React.FC<ChatSettings> = ({ model, mode, thinking, answers, disabled, onExport, exportDisabled, help }) => {
   const [open, setOpen] = useState<Open>(null);
   const root = useRef<HTMLDivElement>(null);
 
@@ -135,7 +130,6 @@ const ComposerChips: React.FC<Props> = ({ model, mode, thinking, answers, disabl
         >
           {glyph(control.value)}
         </button>
-        {!inline && open === key && choices(key, control)}
       </div>
     );
   };
@@ -154,14 +148,12 @@ const ComposerChips: React.FC<Props> = ({ model, mode, thinking, answers, disabl
           <button type="button" className={`cc-btn${open === 'help' ? ' is-open' : ''}`} aria-haspopup="dialog" aria-expanded={open === 'help'} aria-label="Help" title="Help" onClick={() => toggle('help')}>
             <Icon name="help" size={18} />
           </button>
-          {!inline && open === 'help' && <div className="cc-pop cc-pop-help" role="dialog" aria-label="Help">{help}</div>}
         </div>
       </div>
     </>
   );
 
-  if (!inline) return <div className="composer-chips" ref={root}>{row}</div>;
-  // In the column's card the open choice is listed under the row, at the card's width.
+  // The open choice is listed under the row, at the card's width.
   const openControl = open && open !== 'help' ? controlOf(open) : null;
   return (
     <div className="composer-chips composer-chips-panel" ref={root}>

@@ -85,6 +85,29 @@ def kill_tree(proc: "subprocess.Popen[bytes]") -> None:
             pass
 
 
+LIVE_CHARS = 4000
+
+
+class Live:
+    """The end of a running command's output so far, for the heartbeat to carry to SAAPP while it runs (the Terminal shows it before the command finishes). Filled by the threads that read
+    the command's output and read by the one that sends the heartbeat, hence the lock. It is only for showing progress: the result of the run is still `output_tail`."""
+
+    def __init__(self, limit: int = LIVE_CHARS) -> None:
+        self.limit, self._text, self._sent, self._lock = limit, "", "", threading.Lock()
+
+    def add(self, piece: str) -> None:
+        with self._lock:
+            self._text = (self._text + piece)[-self.limit:]
+
+    def news(self) -> str:
+        """The output so far when it has changed since the last time this was asked, else "" (a quiet command sends nothing extra)."""
+        with self._lock:
+            if self._text == self._sent:
+                return ""
+            self._sent = self._text
+            return self._text
+
+
 class _Tail:
     """The end of a stream, kept up to `limit` characters, with whether anything before it was dropped."""
 
@@ -103,9 +126,10 @@ class _Tail:
 
 
 def run(argv: List[str], cwd: Any, timeout: float, max_chars: int = 6000, cancel: Optional[threading.Event] = None, env: Optional[Dict[str, str]] = None,
-        stdin_data: Optional[bytes] = None, separate_stderr: bool = False) -> Dict[str, Any]:
+        stdin_data: Optional[bytes] = None, separate_stderr: bool = False, live: Optional["Live"] = None) -> Dict[str, Any]:
     """Runs `argv` in `cwd` and returns {"exit_code", "output_tail", "truncated", "duration", "timed_out", "cancelled", "error"}. `exit_code` is None when it could not start, was killed for time, or was cancelled.
-    `stdin_data` is fed to the program's input (a command line's pipe); with `separate_stderr` the program's error output is kept apart in "stderr_tail" instead of being mixed into the output."""
+    `stdin_data` is fed to the program's input (a command line's pipe); with `separate_stderr` the program's error output is kept apart in "stderr_tail" instead of being mixed into the output.
+    `live`, when given, also receives everything the program prints (both streams) as it arrives, so progress can be shown while it runs."""
     started = time.monotonic()
     result: Dict[str, Any] = {"exit_code": None, "output_tail": "", "stderr_tail": "", "truncated": False, "duration": 0.0, "timed_out": False, "cancelled": False, "error": ""}
     program = shutil.which(argv[0], path=(env or clean_env()).get("PATH")) or argv[0]       # finds npm.cmd and the like the way a shell would
@@ -130,8 +154,14 @@ def run(argv: List[str], cwd: Any, timeout: float, max_chars: int = 6000, cancel
             chunk = stream.read1(4096)               # whatever has arrived, so a quiet command does not wait on a full buffer
             if not chunk:
                 break
-            into.add(decoder.decode(chunk))
-        into.add(decoder.decode(b"", final=True))
+            piece = decoder.decode(chunk)
+            into.add(piece)
+            if live is not None:
+                live.add(piece)
+        piece = decoder.decode(b"", final=True)
+        into.add(piece)
+        if live is not None:
+            live.add(piece)
 
     def feed() -> None:
         try:
