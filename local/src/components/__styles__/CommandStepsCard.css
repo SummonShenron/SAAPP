@@ -1,0 +1,56 @@
+/* The card for a list of steps Sonic proposes (CommandStepsCard.tsx). Same family as the single-check card (RunnerCheckCard.css). */
+.csc-card {
+  margin: 0.5rem 0;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 25%, transparent);
+  border-left: 4px solid var(--accent-primary);
+  border-radius: 10px;
+  padding: 0.65rem 0.8rem;
+  background: color-mix(in srgb, var(--card-bg) 96%, transparent);
+  color: var(--text-main);
+  font-size: 0.85rem;
+}
+
+.csc-title { font-size: 0.9rem; font-weight: 600; }
+.csc-where { color: var(--text-muted); font-weight: 400; }
+
+.csc-steps { list-style: none; margin: 0.5rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.7rem; }
+.csc-step { padding-top: 0.55rem; border-top: 1px solid color-mix(in srgb, var(--text-muted) 18%, transparent); }
+.csc-step:first-child { padding-top: 0; border-top: none; }
+.csc-step[data-state="done"] .csc-num { background: var(--accent-success); color: var(--on-accent); }
+.csc-step[data-state="failed"] .csc-num, .csc-step[data-state="error"] .csc-num { background: var(--accent-danger); color: var(--on-accent); }
+
+.csc-step-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.csc-num {
+  flex: 0 0 auto; width: 1.4rem; height: 1.4rem; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--text-muted) 22%, transparent); font-size: 0.75rem; font-weight: 700;
+}
+.csc-step-title { font-weight: 600; }
+.csc-class { margin-left: auto; font-size: 0.7rem; padding: 0.1rem 0.5rem; border-radius: 999px; border: 1px solid var(--border-color, currentColor); color: var(--text-muted); white-space: nowrap; }
+.csc-class-change { color: var(--accent-danger); border-color: var(--accent-danger); }
+
+.csc-line {
+  margin: 0.4rem 0 0.2rem; padding: 0.4rem 0.6rem; border-radius: 6px; background: color-mix(in srgb, var(--text-muted) 10%, transparent);
+  font: 0.82rem ui-monospace, "Cascadia Code", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.csc-notes { color: var(--text-muted); font-size: 0.78rem; margin-bottom: 0.2rem; }
+.csc-actions, .csc-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 0.4rem; }
+.csc-footer { margin-top: 0.7rem; }
+.csc-status { font-weight: 600; }
+.csc-ok { color: var(--accent-success); }
+.csc-bad { color: var(--accent-danger); }
+
+.csc-btn {
+  padding: 0.35rem 0.85rem; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--text-muted) 40%, transparent);
+  background: transparent; color: var(--text-main); font: inherit; cursor: pointer;
+}
+.csc-btn:disabled { opacity: 0.55; cursor: default; }
+.csc-btn-primary { background: var(--accent-primary); border-color: transparent; color: var(--on-accent); }
+.csc-btn-danger { background: var(--accent-danger); border-color: transparent; color: var(--on-accent); }
+
+.csc-strong { margin: 0.5rem 0; padding: 0.5rem 0.65rem; border-left: 3px solid var(--accent-danger); background: var(--bg-secondary, transparent); }
+.csc-output {
+  margin: 0.4rem 0 0; padding: 0.5rem 0.6rem; max-height: 14rem; overflow: auto; border-radius: 6px; background: color-mix(in srgb, var(--text-muted) 10%, transparent);
+  font: 0.78rem ui-monospace, "Cascadia Code", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.csc-more summary { cursor: pointer; color: var(--text-muted); margin-top: 0.3rem; }
+.csc-error { margin-top: 0.5rem; color: var(--accent-danger); }

@@ -170,6 +170,13 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
     "run_local_command": _object({
         "line": {"type": "string", "description": "one command line in the small language described by this tool"},
     }, ["line"]),
+    # a list of steps for the person to run themselves from ONE card, a click each (backend/utils/command_steps.py): every line is checked with the runner's own rules first, nothing runs until they press Run.
+    "propose_steps": _object({
+        "steps": {"type": "array", "description": "the steps in order, at most 8", "items": {"type": "object", "properties": {
+            "title": {"type": "string", "description": "a few words saying what the step does, for example Stage the changes"},
+            "line": {"type": "string", "description": "ONE command line in the small language described by this tool"},
+        }, "required": ["title", "line"]}},
+    }, ["steps"]),
     # a commit (and optionally a push) with real git on the person's OWN machine, built as one safe command line (backend/utils/git_terminal.py) and run through the same card as run_local_command.
     "propose_git_commit": _object({
         "message": {"type": "string", "description": "what the change DOES, as a short subject line, optionally a blank line and a sentence more; no $, backticks or trailers (a Co-authored-by trailer is added)"},
@@ -271,13 +278,15 @@ NATIVE_DESCRIPTIONS: Dict[str, str] = {
         "identity, hooks and credentials, can commit files the GitHub route refuses (dependency manifests, lockfiles, CI workflows) and never forces or resets anything. Look first with "
         "run_local_command (git status --short, git diff --stat) when you are not sure what changed, then list the files in `paths`; use everything=true only after you saw nothing secret or unwanted is "
         "untracked. The message says what the change DOES. It waits for them and for the run, then returns the real exit code and output: say what happened, and never that it was committed unless the exit code is 0. "
-        "Use this INSTEAD of propose_commit whenever it is among your tools; propose_commit is for when no runner is connected, or to open a pull request."
+        "Use this INSTEAD of propose_commit whenever it is among your tools; propose_commit is for when no runner is connected, or to open a pull request. It is ONE click for a plain commit (and push) on the "
+        "current branch or one new branch, and nothing else: if they ask for the steps or the commands, or the job also needs a branch to be checked out or switched, a pull, or a merge, use propose_steps instead. It cannot merge, pull or switch to another branch."
     ),
     "propose_merge": (
         "Show the person a card for merging an OPEN pull request, built from the pull request as GitHub has it right now, using THEIR token. Pass the number (pr_number) or the branch it comes from "
         "(head, for example feat/checkouts), and base if they named the target. Nothing is merged until they approve the card. Use it whenever they ask you to merge a pull request or a branch into "
-        "another: you CAN do this, never say you cannot. Call it once and then stop: say the card is waiting for their approval, never that it was merged. It is refused in a turn where you read a web "
-        "page, email, shared document or logs."
+        "another: you CAN do this, never say you cannot. When they name the branch or the number, call it as your FIRST tool call (head = the branch, or pr_number): the card is built from GitHub itself, so do "
+        "not look for the pull request with git or gh first (gh is never run here). Call it once and then stop: say the card is waiting for their approval, never that it was merged. It is refused in a turn "
+        "where you read a web page, email, shared document or logs."
     ),
     "propose_commit": (
         "Commit their work to GitHub, with THEIR token, the way a person commits after a piece of work: the files you changed and they applied (scope applied), or all their working changes, meaning every file in their folder that differs from the branch on GitHub (scope working: use it for \"commit our working changes\" or \"commit everything\"). A short message, onto the branch their folder is on, or onto a "

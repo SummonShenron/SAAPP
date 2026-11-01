@@ -3194,10 +3194,23 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 "not ask again unless they do."
             )
             menu_lines.append(
+                "- propose_steps — args: steps (a list of at most 8 {title, line}: title is a few words for what the step does, line is ONE command line in the same small language as run_local_command). Puts the "
+                "steps on ONE card for the person to run themselves, a click each (or all in order), on THEIR OWN MACHINE: every line is checked with their runner's rules first (a refused step is told to you and "
+                "nothing is shown until the whole list is acceptable), and nothing runs until they press Run. It does NOT wait: NOTHING HAS RUN when it returns, so never say a step ran or worked. USE IT WHENEVER "
+                "they ask for the steps, the commands, or \"step by step\" (do not write command lines in your answer instead), and WHENEVER a git job has more than one action: checking out or creating a branch, "
+                "adding, committing, pushing, pulling, merging locally. Look first if you need to (git status, git branch) so the steps name real files and branches, then call it. Example for \"new branch, commit "
+                "and push\": [{\"title\": \"Create the branch\", \"line\": \"git switch -c feat/x\"}, {\"title\": \"Stage the changes\", \"line\": \"git add -A\"}, {\"title\": \"Commit\", \"line\": \"git commit -m 'feat: ...'\"}, "
+                "{\"title\": \"Push the branch\", \"line\": \"git push -u origin feat/x\"}]. A local merge is steps too (git switch main, git pull, git merge feat/x, git push origin main). Deleting a branch is refused "
+                "by the runner, so leave it out. Merging a pull request ON GITHUB is not a command step: use propose_merge for that. When a pull request is part of what they asked for AND they want the steps, give the git steps "
+                "(branch, stage, commit, push) with propose_steps and say the pull request is opened afterwards with its own card (propose_commit with open_pull_request). Finish with a short answer on what the steps do and "
+                "in what order."
+            )
+            menu_lines.append(
                 "- propose_git_commit — args: message (what the change DOES, a short subject line), paths (the files to commit, one by one; new files must be listed; omit to commit only files git already tracks), "
                 "everything (optional: true to also commit new untracked files, only after looking at git status --short), new_branch (optional), push (optional: true to push afterwards). Commits with REAL git on "
                 "THEIR OWN machine as one command line built for you: they see a card with the exact line and press Run, and it needs the stronger confirmation. Use it INSTEAD of propose_commit whenever it is "
-                "listed; propose_commit is for when no runner is connected, or to open a pull request. It waits for them and for the run and returns the real exit code and output."
+                "listed; propose_commit is for when no runner is connected, or to open a pull request. It is ONE click for a plain commit (and push) on the current branch or one new branch, and nothing else: if "
+                "they ask for the steps or the commands, or the job also needs a branch to be checked out or switched, a pull, or a merge, use propose_steps instead. It waits for them and for the run and returns the real exit code and output."
             )
         # A hidden browser on the person's own machine (runner/, backend/utils/runner_jobs.py): the project's own server kept running for a preview session, and a look at one of its pages. Offered only
         # when a connected runner is new enough and found a Chrome or Edge. The menu names the servers the runner reported, so the model asks for one by name and never supplies a command.
@@ -3226,7 +3239,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             menu_lines.append(
                 "- propose_merge — args: pr_number (the pull request's number), or head (the branch it comes from, for example feat/checkouts) and optionally base, method (squash, merge or rebase; default squash). "
                 "Shows the person a card for merging an OPEN pull request, built from the pull request as GitHub has it right now, with THEIR token; nothing is merged until they approve it. Use it whenever they ask "
-                "you to merge a pull request or a branch into another: you CAN do this, never say you cannot. Call it as a \"query\" step and then stop: the card is your answer, so do not say it was merged."
+                "you to merge a pull request or a branch into another on GitHub: you CAN do this, never say you cannot. When they name the branch or the number, call it as your FIRST tool call (head = the branch, or pr_number): the card is built from GitHub itself, so do not "
+                "look for the pull request with git or gh first (gh is never run here). Call it as a \"query\" step and then stop: the card is your answer, so do not say it was merged."
             )
         if plan_phase == code_plan.PLAN_PHASE:
             menu_lines = [line for line in menu_lines if not line.startswith("- propose_code_plan")]
@@ -3496,6 +3510,23 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             finished = await runner_jobs.wait_for_result(get_db(), username, job["id"], timeout=60)
             return runner_jobs.format_result(finished) if finished else "ERROR: that stop is no longer there."
 
+        async def _propose_steps(args: dict) -> str:
+            """Shows a list of steps on a card for the person to run themselves (backend/utils/command_steps.py). Every line is checked with the runner's own rules here; the list is shown only when every step
+            is acceptable; nothing runs and Sonic does not wait."""
+            from backend.utils import command_steps
+            from backend.utils.self_counters import record_turn_counts
+
+            if runner_for_checks is None or not runner_jobs.commands_supported(runner_for_checks) or not runner_commands.AVAILABLE:
+                return "ERROR: no runner of theirs that can run commands is connected right now, so there is no card to put the steps on. Write the steps in your answer as plain command lines instead."
+            steps, problems = command_steps.clean_steps(args.get("steps"))
+            if problems:
+                await asyncio.to_thread(record_turn_counts, {"steps_refused": 1})
+                return "ERROR: the steps were not shown:\n- " + "\n- ".join(problems) + "\nFix these and call propose_steps again with the complete list."
+            await safe_emit_event("command_steps", {"steps": steps, "runner": {"id": runner_for_checks["id"], "name": runner_for_checks.get("name"), "root_name": runner_for_checks.get("root_name"),
+                                                                                 "project_id": runner_for_checks.get("project_id")}})
+            await asyncio.to_thread(record_turn_counts, {"steps_proposed": 1, "steps_in_lists": len(steps)})
+            return command_steps.summary_for_model(steps)
+
         async def _propose_git_commit(args: dict) -> str:
             """A commit (and optionally a push) with real git on the person's machine, as the ONE command line backend/utils/git_terminal.py builds, run through the same card and the same checks as
             run_local_command. A request that cannot be made safe is told to the model in words, and nothing is shown to the person."""
@@ -3741,6 +3772,11 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 if plan_phase == code_plan.PLAN_PHASE:
                     return "ERROR: this turn is for the plan only; call submit_plan. Servers and looks can be used once the plan is approved."
                 return await {"start_local_server": _start_local_server, "look_at_local_page": _look_at_local_page, "stop_local_server": _stop_local_server}[tool_action](args)
+
+            if tool_action == "propose_steps":
+                if plan_phase == code_plan.PLAN_PHASE:
+                    return "ERROR: this turn is for the plan only; call submit_plan. Steps can be proposed once the plan is approved."
+                return await _propose_steps(args)
 
             if tool_action == "propose_git_commit":
                 if plan_phase == code_plan.PLAN_PHASE:

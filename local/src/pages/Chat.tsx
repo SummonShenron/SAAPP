@@ -6,6 +6,8 @@ import { useLocalWorkspace } from '../hooks/useLocalWorkspace';
 import { useRunnerPing } from '../hooks/useRunnerPing';
 import LocalEditCard from '../components/LocalEditCard';
 import RunnerCheckCard from '../components/RunnerCheckCard';
+import CommandStepsCard from '../components/CommandStepsCard';
+import type { CommandStep } from '../stepsLogic';
 import ApprovalButtons from '../components/ApprovalButtons';
 import { showsApprovalButtons } from '../approvalCard';
 import LocalGitUpdate from '../components/LocalGitUpdate';
@@ -82,6 +84,7 @@ interface Message {
   liveBrowserUrl?: string; // view-only browserless.io LiveURL — see browser_live_view handling
   editProposal?: EditProposal; // diff card for edits proposed to the connected local folder
   runnerCheck?: { job: RunnerJob; runner?: { name?: string | null; root_name?: string | null } }; // a check Sonic asked to run on the person's own machine (Run / Cancel card)
+  commandSteps?: { steps: CommandStep[]; runner: { id: string; name?: string | null; root_name?: string | null; project_id?: string | null } }; // a list of steps Sonic proposed, run one click at a time (components/CommandStepsCard.tsx)
   // A message sent while Sonic was already working, meant to change what it does next.
   steer?: 'queued' | 'applied' | 'deferred' | 'dropped';
   // Sonic wrote this on its own when the conversation was opened (the "message first" setting), not in reply to anything.
@@ -192,6 +195,8 @@ const LOCAL_CACHE_WRITE_DEBOUNCE_MS = 400;
 
 interface ChatMessageListProps {
   messages: Message[];
+  /** Puts text in the message box without sending it (a stable callback): the steps card uses it to tell Sonic how the steps went. */
+  putInComposer: (text: string) => void;
   earlierCount: number;
   loadingEarlier: boolean;
   loadEarlierRef: React.MutableRefObject<() => void>;
@@ -286,7 +291,7 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
 const ChatMessageList = React.memo(function ChatMessageList({
   messages, earlierCount, loadingEarlier, loadEarlierRef, hasChatted, loading, agentStatus, latestStepTitle, liveSteps, showSteps, theme, isEmbedded,
   chatWindowRef, messagesEndRef, attachmentsRef, handleSendMessageRef, handleFeedbackRef, getTokenRef,
-  canEditLocal, localEditActionsRef, localGitMode, planCard, planAnchorId = null,
+  canEditLocal, localEditActionsRef, localGitMode, planCard, planAnchorId = null, putInComposer,
 }: ChatMessageListProps) {
   // The reply whose "Source: Memory" citation was clicked: its viewer is open while this is set.
   const [memoryViewer, setMemoryViewer] = useState<Message | null>(null);
@@ -502,6 +507,8 @@ const ChatMessageList = React.memo(function ChatMessageList({
               )}
 
               {msg.runnerCheck && <RunnerCheckCard key={msg.runnerCheck.job.id} job={msg.runnerCheck.job} runner={msg.runnerCheck.runner} />}
+
+              {msg.commandSteps && <CommandStepsCard key={msg.commandSteps.steps.map(s => s.id).join('-') + msg.id} steps={msg.commandSteps.steps} runner={msg.commandSteps.runner} onTell={putInComposer} />}
 
               {msg.sender === 'ai' && !loading && canEditLocal && localGitMode !== 'off' && (() => {
                 const committed = parseGitReply(msg.text);
@@ -1886,6 +1893,17 @@ useEffect(() => {
                   return updated;
                 });
               }
+              if (payload.event === 'command_steps' && Array.isArray(payload.steps) && payload.runner?.id) {
+                // Sonic proposed a short list of steps: one card, a Run button each. Nothing runs until the person presses one.
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const lastIndex = updated.length - 1;
+                  if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
+                    updated[lastIndex] = { ...updated[lastIndex], commandSteps: { steps: payload.steps as CommandStep[], runner: payload.runner } };
+                  }
+                  return updated;
+                });
+              }
               if (payload.event === 'runner_check' && payload.job) {
                 // Sonic asked to run one of the person's own checks on their machine: a card with the exact command and Run / Cancel. Nothing runs until Run is pressed.
                 setMessages(prev => {
@@ -2510,6 +2528,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
         {/* 2. CHAT MESSAGES WINDOW */}
         <ChatMessageList
           messages={messages}
+          putInComposer={putInComposer}
           earlierCount={historyStart}
           loadingEarlier={loadingEarlier}
           loadEarlierRef={loadEarlierRef}

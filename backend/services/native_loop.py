@@ -116,7 +116,7 @@ SAVE_DRAFT_TOOL = {
 _REPO_TOOLS = frozenset({"read_repo_file", "search_code", "search_literal", "find_file", "trace_symbol"})
 # Acting is not looking: an edit, a check or a commit proposal does not use up the step budget (Jack, 2026-10-31: "action steps dont count against the budget"). Reads still count, so a turn cannot read
 # forever; the refunds are capped per turn so one turn cannot run away with the person's money.
-ACTION_TOOLS = frozenset({"propose_local_edits", "run_local_check", "run_local_command", "run_sandbox_tests", "propose_commit", "propose_git_commit", "propose_merge", "start_local_server", "look_at_local_page", "stop_local_server"})
+ACTION_TOOLS = frozenset({"propose_local_edits", "run_local_check", "run_local_command", "run_sandbox_tests", "propose_commit", "propose_git_commit", "propose_merge", "start_local_server", "look_at_local_page", "stop_local_server", "propose_steps"})
 ACTION_REFUND_CAP = int(os.getenv("TOOL_AGENT_ACTION_REFUND_CAP", "30"))
 _CHECK_TOOLS = frozenset({"run_local_check", "run_local_command"})     # what the model can run a check with on the person's computer (a claim that a check passed is held to a run: backend/utils/claim_check.py)
 
