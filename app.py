@@ -132,6 +132,7 @@ from backend.utils.self_observations import (
 from backend.utils.example_questions import build_example_questions, build_welcome_cards, gather_example_inputs
 from backend.components.sonic_profile import SONIC_PROFILE
 from backend.utils.time_utils import build_time_context, local_today, sent_at, stamp
+from backend.utils import compaction_meter
 from backend.utils import open_loops as open_loops_utils
 from backend.utils import plan_changes as plan_changes_utils
 from backend.utils import claim_check
@@ -866,7 +867,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     if attachment_refs:
         chat_sessions[history_key][-1].additional_kwargs["attachments"] = attachment_refs
     if request.attachments:
-        chat_sessions[history_key][-1].additional_kwargs["attachment_names"] = [a.filename for a in request.attachments][:10]      # so a later turn knows to look this file's text up (attachment_utils)
+        chat_sessions[history_key][-1].additional_kwargs["attachment_names"] = [sent.filename for sent in request.attachments][:10]      # so a later turn knows to look this file's text up (attachment_utils)
 
     initial_state["attachment_summaries"] = attachment_summaries
     initial_state["image_refs"] = attachment_refs      # the photos attached to THIS message, for putting words on one (backend/services/photo_cards.py)
@@ -1399,7 +1400,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # What an attachment from EARLIER in this conversation showed (backend/utils/attachment_utils.py): without it a follow-up said it could not remember the picture. Looked up only when an earlier
             # message carried a file, never for a guest, and not when the knowledge-base route already put the session's documents in.
             if not is_guest_username(username) and attachments_earlier_in(chat_sessions[history_key]) and not any(d.metadata.get("source") == "session_vector_store" for d in documents):
-                earlier_attachment_context = await asyncio.to_thread(earlier_attachments_block, username, session_id, [a.filename for a in (request.attachments or [])])
+                earlier_attachment_context = await asyncio.to_thread(earlier_attachments_block, username, session_id, [file.filename for file in (request.attachments or [])])
                 if earlier_attachment_context:
                     prompt = prompt + earlier_attachment_context
                     yield f"data: {json.dumps({'event': 'node_progress', 'node': 'earlier_attachments', 'title': 'Remembering what you attached earlier', 'detail': 'Added what an earlier attachment in this conversation showed.'})}\n\n"
@@ -3125,6 +3126,12 @@ async def sync_local_workspace(payload: LocalWorkspaceSync, current_user = Depen
 async def disconnect_local_workspace(current_user = Depends(get_current_user)):
     await asyncio.to_thread(clear_local_workspace, current_user.get("sub"))
     return {"status": "disconnected"}
+
+
+@app.get("/api/memory/compaction-meter")
+async def memory_compaction_meter(current_user = Depends(get_current_user)):
+    """How many of this person's memory notes are waiting to be folded together, and the number at which they are (the session column's compaction meter). A count and a limit only."""
+    return await asyncio.to_thread(compaction_meter.view, get_db(), current_user.get("sub"))
 
 
 @app.post("/api/memory/compact")

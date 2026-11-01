@@ -1482,6 +1482,14 @@ export interface UserFact {
 
 export type MemoryDomain = "work" | "own" | "personal" | "general";
 
+/** How many memory notes are waiting to be folded together and the number at which they are (the compaction meter; backend/utils/compaction_meter.py). Counts only. */
+export async function getCompactionMeter(): Promise<{ uncompacted: number; threshold: number }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/memory/compaction-meter`, { headers: { ...authHeaders } });
+  if (!res.ok) throw new Error("Failed to load the compaction meter.");
+  return res.json();
+}
+
 export async function listMemoryFacts(): Promise<UserFact[]> {
   const authHeaders = await getAuthHeaders();
   const res = await fetch(`${BASE_URL}/api/memory`, {
@@ -2365,6 +2373,7 @@ export const api = {
   getConversation,
   deleteConversation,
   listMemoryFacts,
+  getCompactionMeter,
   deleteMemoryFact,
   editMemoryFact,
   setMemoryDomain,

@@ -6,11 +6,11 @@
   align-items: center;
   justify-content: space-between;
   gap: 0.6rem;
-  margin: 0 5.5rem 0.5rem 0;
+  margin: 0 5.5rem -0.5rem 0;
   padding: 0.35rem 0.75rem;
-  border-radius: 8px;
+  border-radius: 25px;
   border: 1px solid var(--border-color);
-  background: var(--bg-surface);
+  background: var(--panel-bg);
   color: var(--text-main);
   font-size: 0.78rem;
   line-height: 1.35;

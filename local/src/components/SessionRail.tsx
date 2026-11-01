@@ -1,17 +1,22 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Icon from './icons';
 import type { RingView } from './budgetText';
+import Ring from './Ring';
 import { ConnectionPanel, Gauge, RepoFields, ScopeField, type ConnectionProps, type RepoControls, type ScopeControls } from './SessionColumn';
 import { ChipChoices, glyph, type ChatSettings, type ChipControl } from './ComposerChips';
 import { chipLabel, isChanged, type ChipKey } from './composerChipsLogic';
-import { LEVEL_COLOR, contextGauge, folderLine, gaugeSummary, runnerLine, type ContextUse } from './sessionColumnLogic';
+import { contextGauge, folderLine, gaugeSummary, runnerLine, type ContextUse } from './sessionColumnLogic';
+import CompactionMeter from './CompactionMeter';
+import { gaugesSummary, isOverloaded, meterCaption, meterTitle, type CompactionView } from './compactionMeterLogic';
 import './__styles__/SessionRail.css';
 
 interface Props {
   /** The usage ring's view (components/budgetText.ts); null when there is no limit to show. */
   usage: RingView | null;
-  /** How full the model's context window got on the last turn; null before the first turn. */
+  /** How full the model's context window got on the last turn; null before the first turn. Shown as the compaction meter's tooltip: the ring it used to be is gone. */
   context: ContextUse | null;
+  /** The memory compaction meter's reading (notes waiting to be folded together, and the number at which they are); null before the first reading. */
+  compaction: CompactionView | null;
   /** The scope Sonic answers from; null when there are none to pick. */
   scope: ScopeControls | null;
   /** The target GitHub repo; null where it is not offered. */
@@ -26,34 +31,21 @@ type Panel = 'connection' | 'repo' | 'gauges' | 'scope' | ChipKey | 'help';
 
 const CHIP_ORDER: ChipKey[] = ['model', 'mode', 'thinking', 'answers'];
 
-const MINI = 14;
-const MINI_STROKE = 3;
-const MINI_RADIUS = (MINI - MINI_STROKE) / 2;
-const MINI_LENGTH = 2 * Math.PI * MINI_RADIUS;
-
 /** A tiny ring: the share filled is how full the gauge is, in the colour of its level (the same colours as the column's gauges). */
 function MiniRing({ fraction, level }: { fraction: number; level: string }) {
-  return (
-    <svg width={MINI} height={MINI} viewBox={`0 0 ${MINI} ${MINI}`} aria-hidden="true">
-      <circle cx={MINI / 2} cy={MINI / 2} r={MINI_RADIUS} fill="none" stroke="var(--border-color)" strokeWidth={MINI_STROKE} className="rail-ring-track" />
-      <circle
-        cx={MINI / 2} cy={MINI / 2} r={MINI_RADIUS} fill="none" stroke={LEVEL_COLOR[level] ?? LEVEL_COLOR.ok} strokeWidth={MINI_STROKE} strokeLinecap="round"
-        strokeDasharray={`${Math.min(1, Math.max(0, fraction)) * MINI_LENGTH} ${MINI_LENGTH}`} transform={`rotate(-90 ${MINI / 2} ${MINI / 2})`}
-      />
-    </svg>
-  );
+  return <Ring fraction={fraction} level={level} size={14} stroke={3} percent={false} trackClass="rail-ring-track" />;
 }
 
 /**
- * The session column, shrunk to icons for a phone: a GitHub mark (the target repo), two small rings (the context and the usage gauges) and a lock (the scope), in a narrow strip at the right
+ * The session column, shrunk to icons for a phone: a GitHub mark (the target repo), two small rings (the memory compaction meter and the usage gauge) and a lock (the scope), in a narrow strip at the right
  * edge. Pressing one opens a small card beside it with the same controls the column has (components/SessionColumn.tsx); pressing outside it, or Escape, closes it. The page's top-bar button hides
  * the whole strip. Nothing here is state of its own beyond which card is open.
  */
-const SessionRail: React.FC<Props> = ({ usage, context, scope, repo, settings, connection }) => {
+const SessionRail: React.FC<Props> = ({ usage, context, compaction, scope, repo, settings, connection }) => {
   const [open, setOpen] = useState<Panel | null>(null);
   const rail = useRef<HTMLElement>(null);
   const contextView = contextGauge(context);
-  const hasGauges = !!(contextView || usage);
+  const hasGauges = !!(compaction || usage);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -67,7 +59,7 @@ const SessionRail: React.FC<Props> = ({ usage, context, scope, repo, settings, c
   if (!repo && !hasGauges && !scope && !settings && !connection) return null;
   const toggle = (panel: Panel) => setOpen(current => (current === panel ? null : panel));
   const scopeName = scope ? (scope.choices.find(choice => choice.value === scope.value)?.label ?? scope.value) : '';
-  const summary = gaugeSummary(contextView, usage);
+  const summary = gaugesSummary(compaction, usage);
 
   // The Connection button's dot: amber when the runner is not answering or the folder needs attention, green when either is connected and none is not, none when there is nothing connected.
   const connectionTone = (() => {
@@ -108,14 +100,19 @@ const SessionRail: React.FC<Props> = ({ usage, context, scope, repo, settings, c
         <div className="rail-item">
           <button
             type="button" className={`rail-btn rail-rings${open === 'gauges' ? ' is-open' : ''}`} aria-expanded={open === 'gauges'}
-            aria-label={`Gauges: ${summary}`} title={summary} onClick={() => toggle('gauges')}
+            aria-label={`Gauges: ${summary}`} title={compaction ? meterTitle(compaction, contextView?.text) : summary} onClick={() => toggle('gauges')}
           >
-            {contextView && <MiniRing fraction={contextView.fraction} level={contextView.level} />}
+            {compaction && <CompactionMeter view={compaction} contextText={contextView?.text} mini />}
             {usage && <MiniRing fraction={usage.fraction} level={usage.level} />}
           </button>
           {open === 'gauges' && (
             <div className="rail-pop" role="dialog" aria-label="Gauges">
-              {contextView && <Gauge name="Context" fraction={contextView.fraction} level={contextView.level} text={contextView.text} />}
+              {compaction && (
+                <div className="sc-gauge">
+                  <CompactionMeter view={compaction} contextText={contextView?.text} />
+                  <div className="sc-gauge-body"><span className="sc-gauge-name">Memory</span><span className={`sc-gauge-text${isOverloaded(compaction) ? ' ring-caption-overloaded' : ''}`}>{meterCaption(compaction)}</span></div>
+                </div>
+              )}
               {usage && <Gauge name="Usage" fraction={usage.fraction} level={usage.level} text={usage.text} />}
             </div>
           )}

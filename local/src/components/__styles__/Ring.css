@@ -1,0 +1,12 @@
+/* The ring both gauges are drawn with (components/Ring.tsx). Only the memory ring is animated: its arc fills smoothly, traces back to the start slower after a compaction, and pulses when overloaded. */
+.ring { flex: 0 0 auto; }
+.ring-animated .ring-arc { transition: stroke-dasharray 0.7s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.ring-returning .ring-arc { transition: stroke-dasharray 1.8s cubic-bezier(0.45, 0, 0.2, 1); }
+.ring-overloaded .ring-arc { animation: ring-pulse 0.9s ease-in-out infinite; }
+.ring-caption-overloaded { color: var(--accent-danger, #ef4444); }
+@keyframes ring-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .ring-animated .ring-arc, .ring-returning .ring-arc { transition: none; }
+  .ring-overloaded .ring-arc { animation: none; }
+}

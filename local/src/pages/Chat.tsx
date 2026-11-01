@@ -32,6 +32,7 @@ import MemorySourceDialog from '../components/MemorySourceDialog';
 import BudgetBanner from '../components/BudgetBanner';
 import SessionColumn, { type ConnectionProps, type FolderControls, type RepoControls } from '../components/SessionColumn';
 import SessionRail from '../components/SessionRail';
+import { cleanMeter, type CompactionView } from '../components/compactionMeterLogic';
 import TerminalBlade from '../components/TerminalBlade';
 import { terminalChoices, terminalTarget, type TerminalChoice } from '../components/terminalLogic';
 import { planAnchorId } from '../components/planPlacement';
@@ -59,6 +60,7 @@ import { describeChatError, toChatSendError } from '../chatErrors';
 import { formatMessageTime, fullMessageTime } from '../messageTime';
 
 /** How long a message waits for the folder sync and the git branch before it is sent anyway. */
+const COMPACTION_RECHECK_MS = 6_000;      // the compaction meter is read again this long after a reply: compaction runs in the background just after a note is written
 const PRE_SEND_SYNC_MS = 20_000;
 const PRE_SEND_BRANCH_MS = 5_000;
 
@@ -769,6 +771,8 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     : null;
   const [folderBranch, setFolderBranch] = useState<string | null>(null);
   const [contextUse, setContextUse] = useState<{ sessionId: string; used: number; window: number; fraction: number } | null>(null);
+  /** The memory compaction meter (it replaced the context ring): notes waiting to be folded together, against the number at which they are. null until the first reading, or where there is none (a guest). */
+  const [compactionMeter, setCompactionMeter] = useState<CompactionView | null>(null);
   const { status: workspaceStatus, currentGitBranch } = workspace;
   useEffect(() => {
     if (!columnVisible || workspaceStatus === 'disconnected') return undefined;
@@ -1181,6 +1185,21 @@ useEffect(() => {
   useEffect(() => {
     if (!loading) refreshBudget();
   }, [loading, refreshBudget]);
+
+  // The compaction meter: read on load and each time a reply finishes, and once more a few seconds later, because compaction runs in the background just after a note is written (no polling loop).
+  const refreshCompactionMeter = React.useCallback(() => {
+    if (!principal || isEmbedded || isGuestPrincipal(principal)) return;
+    api.getCompactionMeter().then(raw => setCompactionMeter(cleanMeter(raw))).catch(() => { /* no meter endpoint here, or signed out: nothing to show */ });
+  }, [principal, isEmbedded]);
+
+  useEffect(() => { refreshCompactionMeter(); }, [refreshCompactionMeter]);
+
+  useEffect(() => {
+    if (loading) return undefined;
+    refreshCompactionMeter();
+    const later = window.setTimeout(refreshCompactionMeter, COMPACTION_RECHECK_MS);
+    return () => window.clearTimeout(later);
+  }, [loading, refreshCompactionMeter]);
 
   const handleToolModelChange = async (next: ToolModel) => {
     const before = toolModel;
@@ -3192,6 +3211,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           runnerStart={runnerStart}
           usage={budget ? ringView(budget) : null}
           context={contextUse && contextUse.sessionId === sessionId ? contextUse : null}
+          compaction={compactionMeter}
           plan={codePlan && workspace.canEdit ? codePlan : null}
           scope={allowedAffiliates.length > 0 ? { value: selectedAffiliate, choices: scopeOptions, busy: loading || fetchingScope, onChange: setSelectedAffiliate } : null}
           memory={lastMemory}
@@ -3213,6 +3233,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
         <SessionRail
           usage={budget ? ringView(budget) : null}
           context={contextUse && contextUse.sessionId === sessionId ? contextUse : null}
+          compaction={compactionMeter}
           scope={allowedAffiliates.length > 0 ? { value: selectedAffiliate, choices: scopeOptions, busy: loading || fetchingScope, onChange: setSelectedAffiliate } : null}
           repo={repoControls}
           settings={chatSettings}

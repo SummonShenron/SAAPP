@@ -131,7 +131,7 @@ def test_a_plain_message_gets_no_names():
 
 def test_the_chat_turn_records_the_names_and_adds_the_block_off_the_event_loop_and_never_for_a_guest():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
-    assert 'chat_sessions[history_key][-1].additional_kwargs["attachment_names"] = [a.filename for a in request.attachments][:10]' in source
-    assert "await asyncio.to_thread(earlier_attachments_block, username, session_id, [a.filename for a in (request.attachments or [])])" in source
+    assert 'chat_sessions[history_key][-1].additional_kwargs["attachment_names"] = [sent.filename for sent in request.attachments][:10]' in source
+    assert "await asyncio.to_thread(earlier_attachments_block, username, session_id, [file.filename for file in (request.attachments or [])])" in source
     assert "if not is_guest_username(username) and attachments_earlier_in(chat_sessions[history_key])" in source
     assert source.index("earlier_attachments_block, username") < source.index("paperwork_utils.build_paperwork_block(")      # before the paperwork guidance reads the turn's attachments

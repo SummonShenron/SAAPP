@@ -1,10 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import type { CodePlan, MemorySources, RunnerInfo } from '../api';
 import type { RingView } from './budgetText';
+import Ring from './Ring';
 import {
-  APPROVAL_OPTIONS, GIT_OPTIONS, LEVEL_COLOR, RUNNER_INSTALL_CMD, RUNNER_INSTALL_POWERSHELL, contextGauge, folderLight, folderLine, gaugeSummary, memoryLine, parseCollapsed, planProgress, runnerLine, serializeCollapsed, toggleCollapsed,
+  APPROVAL_OPTIONS, GIT_OPTIONS, RUNNER_INSTALL_CMD, RUNNER_INSTALL_POWERSHELL, contextGauge, folderLight, folderLine, gaugeSummary, memoryLine, parseCollapsed, planProgress, runnerLine, serializeCollapsed, toggleCollapsed,
   type ContextUse, type Line, type Option, type RunnerStartPhase, type ScopeChoice,
 } from './sessionColumnLogic';
+import CompactionMeter from './CompactionMeter';
+import { gaugesSummary, isOverloaded, meterCaption, type CompactionView } from './compactionMeterLogic';
 import './__styles__/SessionColumn.css';
 
 /** What the person can do with the connected folder (moved here from the small folder button beside the message box, where the options had to be cycled one at a time). `options` only while it is connected. */
@@ -34,8 +37,10 @@ interface Props {
   runnerStart: { phase: RunnerStartPhase; onStart: () => void } | null;
   /** The usage ring's view (components/budgetText.ts); null when there is no limit to show. */
   usage: RingView | null;
-  /** How full the model's context window got on the last turn, as the server reported it (counts only); null before the first turn. */
+  /** How full the model's context window got on the last turn, as the server reported it (counts only); null before the first turn. Shown as the compaction meter's tooltip: the ring it used to be is gone. */
   context: ContextUse | null;
+  /** The memory compaction meter's reading (notes waiting to be folded together, and the number at which they are); null before the first reading. */
+  compaction: CompactionView | null;
   /** The approved plan, while there is one. */
   plan: CodePlan | null;
   /** The scope Sonic answers from, as a dropdown right in the panel (it used to open the settings menu's picker down by the message box). null when there are none to pick. */
@@ -51,24 +56,13 @@ interface Props {
   controls?: React.ReactNode;
 }
 
-const RING_SIZE = 44;
-const RING_STROKE = 4;
-const RING_RADIUS = (RING_SIZE - RING_STROKE) / 2;
-const RING_LENGTH = 2 * Math.PI * RING_RADIUS;
 const COLLAPSED_KEY = 'sessionColumnCollapsed';
 
-/** One ring with its name and what it says. `level` picks the colour, the same way the usage ring's does. */
+/** One ring with its name and what it says. `level` picks the colour, the same way the usage ring's does. The ring itself is components/Ring.tsx, shared with the memory compaction meter. */
 export function Gauge({ name, fraction, level, text }: { name: string; fraction: number; level: string; text: string }) {
   return (
     <div className="sc-gauge">
-      <svg width={RING_SIZE} height={RING_SIZE} viewBox={`0 0 ${RING_SIZE} ${RING_SIZE}`} role="img" aria-label={`${name}: ${text}`}>
-        <circle cx={RING_SIZE / 2} cy={RING_SIZE / 2} r={RING_RADIUS} fill="none" stroke="var(--border-color)" strokeWidth={RING_STROKE} className="sc-gauge-track" />
-        <circle
-          cx={RING_SIZE / 2} cy={RING_SIZE / 2} r={RING_RADIUS} fill="none" stroke={LEVEL_COLOR[level] ?? LEVEL_COLOR.ok} strokeWidth={RING_STROKE} strokeLinecap="round"
-          strokeDasharray={`${Math.min(1, Math.max(0, fraction)) * RING_LENGTH} ${RING_LENGTH}`} transform={`rotate(-90 ${RING_SIZE / 2} ${RING_SIZE / 2})`}
-        />
-        <text x={RING_SIZE / 2} y={RING_SIZE / 2 + 4} textAnchor="middle" className="sc-gauge-number">{Math.round(fraction * 100)}%</text>
-      </svg>
+      <Ring fraction={fraction} level={level} label={`${name}: ${text}`} trackClass="sc-gauge-track" numberClass="sc-gauge-number" />
       <span className="sc-gauge-body"><span className="sc-gauge-name">{name}</span><span className="sc-gauge-text">{text}</span></span>
     </div>
   );
@@ -226,7 +220,7 @@ export function ConnectionPanel({ folder, runnerEnabled, runners, runnerStart, f
  * controls, the gauges, the plan while there is one, and what this conversation is scoped to. It only shows what the page already knows; settings stay in the "..." menu (the scope row
  * opens that menu's own picker). A card with nothing to show is not drawn, and any card can be folded (remembered in this browser).
  */
-const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runnerStart, usage, context, plan, scope, memory, folderControls, repo, controls }) => {
+const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runnerStart, usage, context, compaction, plan, scope, memory, folderControls, repo, controls }) => {
   // "2s ago" goes stale on its own: redraw the times every few seconds.
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -276,12 +270,18 @@ const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runner
         </Card>
       )}
 
-      {(contextView || usage) && (
+      {(compaction || usage) && (
         <Card
           id="gauges" label="Gauges" title="Gauges" collapsed={folded.has('gauges')} onToggle={toggle}
-          summary={<span className="sc-summary">{gaugeSummary(contextView, usage)}</span>}
+          summary={<span className="sc-summary">{gaugesSummary(compaction, usage)}</span>}
         >
-          {contextView && <Gauge name="Context" fraction={contextView.fraction} level={contextView.level} text={contextView.text} />}
+          {/* The memory compaction meter replaced the context ring (which never came close to filling: a reply is given only the last ten messages). The context figure is kept as its tooltip. */}
+          {compaction && (
+            <div className="sc-gauge">
+              <CompactionMeter view={compaction} contextText={contextView?.text} />
+              <div className="sc-gauge-body"><span className="sc-gauge-name">Memory</span><span className={`sc-gauge-text${isOverloaded(compaction) ? ' ring-caption-overloaded' : ''}`}>{meterCaption(compaction)}</span></div>
+            </div>
+          )}
           {usage && <Gauge name="Usage" fraction={usage.fraction} level={usage.level} text={usage.text} />}
         </Card>
       )}
