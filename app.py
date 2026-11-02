@@ -150,6 +150,7 @@ from backend.utils import self_model
 from backend.utils import runner_jobs
 from backend.utils import runner_scripts
 from backend.utils import clarifications as clarify_utils
+from backend.utils import emotion_checkin
 from backend.utils import initiation as initiation_utils
 from backend.utils import proactive_gates
 from backend.utils import reach as reach_utils
@@ -802,6 +803,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         await asyncio.to_thread(initiation_utils.answered, username)
     # Whether this message picks up the one open question Sonic asked at a lull (backend/utils/curiosity.py): counted only.
     previous_marks = (getattr(chat_sessions[history_key][-1], "additional_kwargs", None) or {}) if chat_sessions[history_key] else {}
+    answers_checkin = bool(previous_marks.get(emotion_checkin.CHECKIN_MARK))  # this message answers a check-in on how they are (backend/utils/emotion_checkin.py): counted once the reading is in
     answers_curiosity = bool(previous_marks.get(curiosity_utils.CURIOSITY_MARK)) and curiosity_utils.taken(question)
     answers_shelf = bool(previous_marks.get(shelf_utils.SHELF_MARK)) and curiosity_utils.taken(question)
     # The same message is also the response to anything Sonic brought up on its own (backend/utils/offer_response.py): counted for everyone, and kept per person (counts only).
@@ -1156,6 +1158,16 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             emotional_context = safety_plan.context + build_emotional_context(
                 final_state.get("emotional_state"), datetime.now(timezone.utc)
             )
+            # A later, spaced-out check-in on a feeling that is still being carried, with no lift shown (backend/utils/emotion_checkin.py). Never inside a safety context: that layer has its own.
+            if answers_checkin:
+                tally(turn_counts, "emotion_checkin_still_low" if energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)) == "subdued" else "emotion_checkin_eased")
+            checkin_offered = emotion_checkin.due(
+                final_state.get("emotional_state"), datetime.now(timezone.utc), chat_sessions[history_key],
+                risk_active=risk_level != RISK_NONE, closing=is_closing_message(question), guest=is_guest_username(username),
+            )
+            if checkin_offered:
+                emotional_context += emotion_checkin.build_block()
+                tally(turn_counts, "emotion_checkin_offered")
             user_tz = await asyncio.to_thread(get_user_timezone, username)
             today_local = local_today(user_tz)
             # A meeting the person started in THIS conversation with the Start office hours button (backend/utils/meetings.py): its agenda, last notes and prep, for as long as it runs.
@@ -1793,6 +1805,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 ai_message.additional_kwargs[ENCOURAGEMENT_MARK] = True
             if callback_offered:
                 ai_message.additional_kwargs[CALLBACK_MARK] = True
+            if checkin_offered and emotion_checkin.asked(full_response):
+                ai_message.additional_kwargs[emotion_checkin.CHECKIN_MARK] = True  # spent only when the reply really ended on a question to them: the spacing reads this mark
+                tally(turn_counts, "emotion_checkin_asked")
             # Counted and capped on what Sonic actually did, not on what it was invited to do.
             if curiosity_invited and curiosity_utils.asked_a_question(full_response):
                 ai_message.additional_kwargs[curiosity_utils.CURIOSITY_MARK] = True

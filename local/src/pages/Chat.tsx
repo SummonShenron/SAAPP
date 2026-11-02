@@ -15,7 +15,7 @@ import { loadLocalGitMode, localGitModeLabel, nextLocalGitMode, parseGitReply, s
 import LocalFolderConsent from '../components/LocalFolderConsent';
 import { hasLocalFolderConsent, recordLocalFolderConsent, type FsDirectoryHandle } from '../localWorkspace';
 import type { ApplyResult, UndoResult } from '../localEdits';
-import type { EditProposal } from '../localEditsCore';
+import { withProposal, type EditProposal } from '../localEditsCore';
 import { decideAutoApply, levelLabel, loadLevel, nextLevel, saveLevel, type ApprovalLevel } from '../editApproval';
 import ConversationsBlade from '../components/ConversationsBlade';
 import MiniPatchy, { type PatchyEnergy } from '../components/MiniPatchy';
@@ -82,7 +82,7 @@ interface Message {
   sentAt?: string; // ISO time the message was sent: the server's stamp for a saved message, the browser's clock for one sent now (shown beside the feedback hearts on hover)
   images?: MessageImage[];
   liveBrowserUrl?: string; // view-only browserless.io LiveURL — see browser_live_view handling
-  editProposal?: EditProposal; // diff card for edits proposed to the connected local folder
+  editProposals?: EditProposal[]; // diff cards for edits proposed to the connected local folder: one per proposal, in the order they came (a reply can carry several)
   runnerCheck?: { job: RunnerJob; runner?: { name?: string | null; root_name?: string | null } }; // a check Sonic asked to run on the person's own machine (Run / Cancel card)
   commandSteps?: { steps: CommandStep[]; runner: { id: string; name?: string | null; root_name?: string | null; project_id?: string | null } }; // a list of steps Sonic proposed, run one click at a time (components/CommandStepsCard.tsx)
   // A message sent while Sonic was already working, meant to change what it does next.
@@ -496,15 +496,17 @@ const ChatMessageList = React.memo(function ChatMessageList({
                 </div>
               )}
 
-              {msg.editProposal && (
+              {msg.editProposals?.map(proposal => (
+                // Keyed by the proposal: a card keeps its own Apply/Undo state, so a second proposal in the same reply must be a new card, not the first one showing different files.
                 <LocalEditCard
-                  proposal={msg.editProposal}
+                  key={proposal.proposal_id}
+                  proposal={proposal}
                   canApply={canEditLocal}
                   onApply={proposal => localEditActionsRef.current.apply(proposal)}
                   onUndo={proposalId => localEditActionsRef.current.undo(proposalId)}
                   onDecision={(proposalId, outcome, reason) => localEditActionsRef.current.decide(proposalId, outcome, reason)}
                 />
-              )}
+              ))}
 
               {msg.runnerCheck && <RunnerCheckCard key={msg.runnerCheck.job.id} job={msg.runnerCheck.job} runner={msg.runnerCheck.runner} />}
 
@@ -1409,9 +1411,9 @@ useEffect(() => {
     const traceOpen = showTracePanel;
     shell.setTopBarActions(
       <>
-        {!isGuestPrincipal(principal) && <ConversationSummaryControl sessionId={sessionId} busy={loading} turns={userTurnCount} />}
-        {!isGuestPrincipal(principal) && <WorkingNotesControl sessionId={sessionId} busy={loading} turns={userTurnCount} />}
         {!isGuestPrincipal(principal) && <MeetingControl sessionId={sessionId} onStarted={(name) => meetingStartedRef.current(name)} />}
+        {!isGuestPrincipal(principal) && <WorkingNotesControl sessionId={sessionId} busy={loading} turns={userTurnCount} />}
+        {!isGuestPrincipal(principal) && <ConversationSummaryControl sessionId={sessionId} busy={loading} turns={userTurnCount} />}
         <button
           type="button"
           className="topbar-btn"
@@ -1888,7 +1890,7 @@ useEffect(() => {
                   const updated = [...prev];
                   const lastIndex = updated.length - 1;
                   if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
-                    updated[lastIndex] = { ...updated[lastIndex], editProposal: proposal };
+                    updated[lastIndex] = { ...updated[lastIndex], editProposals: withProposal(updated[lastIndex].editProposals, proposal) };
                   }
                   return updated;
                 });

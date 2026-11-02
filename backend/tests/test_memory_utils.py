@@ -984,8 +984,11 @@ def test_the_chat_endpoint_reads_the_fact_list_once_in_a_worker_thread_and_runs_
     source = (pathlib.Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
     start = source.index("await asyncio.to_thread(load_user_facts, username)")
     block = source[start: start + 1500]
-    for needle in ("await asyncio.to_thread(fetch_relevant_corrections", "await asyncio.to_thread(embed_text, question)", "await asyncio.to_thread(lambda: fetch_relevant_user_facts("):
+    for needle in ("await asyncio.to_thread(fetch_relevant_corrections", "await asyncio.to_thread(lambda: fetch_relevant_user_facts("):
         assert needle in block, needle
+    # The question is embedded once, in a worker thread, before the relatable line is chosen (it is compared with that line's entries) and threaded through everything after it.
+    assert source.count("question_embedding = await asyncio.to_thread(embed_text, question) if question else None") == 1
+    assert "precomputed_embedding=question_embedding" in block
     assert "facts = await asyncio.to_thread(load_user_facts, username)" in source  # and the Memory page's list
 
 
