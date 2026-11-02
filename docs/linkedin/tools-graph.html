@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>One message through Sonic's tools</title>
+<style>
+  :root { --bg:#131416; --card:#1c1d20; --line:#34353b; --text:#ececee; --muted:#9a9aa2; --or:#e0955f; --teal:#43c79a; --vio:#a597f5; --yel:#e6c35c; --red:#ef6b6b; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { background: var(--bg); color: var(--text); font-family: "Segoe UI", "Inter", Arial, sans-serif; }
+  .tall { width: 1080px; padding: 54px 60px 34px; background: var(--bg); }
+  .tag { font-size: 26px; font-weight: 600; letter-spacing: 1px; color: var(--muted); text-transform: uppercase; }
+  h1 { font-size: 66px; line-height: 1.04; font-weight: 700; letter-spacing: -1.5px; margin-top: 10px; }
+  h1 span { color: var(--or); }
+  .lede { font-size: 30px; color: var(--muted); margin-top: 12px; line-height: 1.25; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  .small { background: var(--card); border: 2px solid var(--line); border-top: 7px solid var(--c); border-radius: 20px; padding: 14px 18px 15px; }
+  .small h4 { font-size: 30px; color: var(--c); line-height: 1.1; }
+  .small p { font-size: 25px; color: var(--text); margin-top: 6px; line-height: 1.22; }
+  .foot { display: flex; justify-content: space-between; align-items: center; font-size: 25px; color: var(--muted); padding-top: 22px; }
+  .foot b { color: var(--text); font-weight: 600; }
+  .graph { display: block; width: 960px; margin: 18px auto 0; overflow: visible; }
+  .graph text { font-family: "Segoe UI", "Inter", Arial, sans-serif; }
+  .g-title { font-size: 33px; font-weight: 700; }
+  .g-desc { font-size: 24px; fill: var(--text); }
+  .g-name { font-size: 21px; fill: var(--muted); font-family: Consolas, "Cascadia Mono", monospace !important; }
+  .g-pill { font-size: 17px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; }
+  .g-side { font-size: 25px; font-weight: 700; fill: var(--text); letter-spacing: .3px; }
+  .g-note { font-size: 23px; fill: var(--text); }
+  .g-small { font-size: 21px; fill: var(--muted); }
+  .band { font-size: 24px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; }
+</style></head>
+<body>
+<div class="tall" id="tall">
+  <div class="tag">Start to finish</div>
+  <h1>One message, <span>every route.</span></h1>
+  <p class="lede">Follow a message down the graph. The tool loop is one branch, and it fans out again below.</p>
+  <svg class="graph" id="g" viewBox="0 0 960 1892" aria-label="One message through the routing graph and the tool menu"></svg>
+
+  <div class="two" style="margin-top:20px">
+    <div class="small" style="--c:var(--teal)"><h4>Your &ldquo;yes&rdquo; goes first</h4><p>An approval reply skips straight to the write step, ahead of every other rule.</p></div>
+    <div class="small" style="--c:var(--yel)"><h4>Words decide the obvious</h4><p>Commit or merge words, a picture request, a progress note: sent by code, no model call.</p></div>
+    <div class="small" style="--c:var(--red)"><h4>After outside text</h4><p>Read a web page, a mail or a log this turn? The commit tools drop off the menu for the rest of it.</p></div>
+    <div class="small" style="--c:var(--vio)"><h4>Plan mode &amp; places</h4><p>Plan mode swaps edits for a plan. A question about places adds maps, only then.</p></div>
+  </div>
+  <div class="foot"><span><b>Sonic Assistant</b></span><span>start to finish</span></div>
+</div>
+
+<script>
+(function () {
+  const NS = "http://www.w3.org/2000/svg";
+  const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const C = { or: css("--or"), teal: css("--teal"), vio: css("--vio"), yel: css("--yel"), red: css("--red"), line: css("--line"), card: css("--card"), muted: css("--muted"), text: css("--text") };
+  const g = document.getElementById("g");
+
+  function el(tag, attrs, text) {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (text !== undefined) e.textContent = text;
+    g.appendChild(e);
+    return e;
+  }
+  function curve(x1, y1, x2, y2, color, o) {
+    o = o || {};
+    const dx = o.dx !== undefined ? o.dx : (x2 - x1) * 0.55;
+    const d = o.d || `M${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+    el("path", { d, fill: "none", stroke: color, "stroke-width": o.w || 4, "stroke-linecap": "round", "stroke-opacity": o.o || 0.95, "stroke-dasharray": o.dash || "" });
+    if (o.arrow !== false) el("polygon", { points: `${x2 - 13},${y2 - 8} ${x2},${y2} ${x2 - 13},${y2 + 8}`, fill: color });
+  }
+  function box(x, y, w, h, color, strong) {
+    el("rect", { x, y, width: w, height: h, rx: 22, fill: color });
+    el("rect", { x: x + 8, y: y + (strong ? 3 : 0), width: w - 8 - (strong ? 3 : 0), height: h - (strong ? 6 : 0), rx: 20, fill: C.card, stroke: strong ? color : C.line, "stroke-width": strong ? 3 : 2 });
+  }
+  function down(x, y1, y2, color) {
+    el("path", { d: `M${x} ${y1} V ${y2 - 2}`, stroke: color, "stroke-width": 4, "stroke-linecap": "round", fill: "none" });
+    el("polygon", { points: `${x - 8},${y2 - 13} ${x},${y2} ${x + 8},${y2 - 13}`, fill: color });
+  }
+  const left = (y, h, color, title, sub, pill) => {
+    box(0, y, 230, h, color);
+    el("text", { x: 26, y: y + 40, class: "g-title", fill: color }, title);
+    el("text", { x: 26, y: y + 72, class: "g-desc" }, sub);
+    if (pill) el("text", { x: 26, y: y + h - 16, class: "g-pill", fill: color }, pill);
+  };
+
+  /* ---------- top: the routing graph ---------- */
+  el("rect", { x: 0, y: 112, width: 230, height: 62, rx: 31, fill: C.card, stroke: C.muted, "stroke-width": 2 });
+  el("text", { x: 115, y: 152, "text-anchor": "middle", class: "g-desc" }, "Your message");
+  down(115, 174, 224, C.muted);
+  left(224, 112, C.or, "Reasoner", "feeling, risk, need", "model call");
+  down(115, 336, 372, C.muted);
+  left(372, 128, C.teal, "Coordinator", "builds a queue", "plain code");
+
+  const rows = [
+    { c: C.vio, t: "Chat", d: "Just talk. No tools at all.", n: "conversational_node" },
+    { c: C.vio, t: "Remember", d: "Save what you said, or recall it.", n: "memory_save · memory_recall" },
+    { c: C.vio, t: "Your documents", d: "Search, grade, rewrite, retry.", n: "retrieve → grade → rewrite" },
+    { c: C.or, t: "Summarize a PR", d: "Reads a pull request, summarizes it.", n: "pr_summary" },
+    { c: C.teal, t: "Change something", d: "Drafts a PR, issue, event or email.", n: "propose_write → card → execute_write" },
+    { c: C.teal, t: "Images", d: "A picture card, or a generated image.", n: "image_card · image_gen" },
+    { c: C.yel, t: "The tool loop", d: "Reads, searches, proposes. 7 steps.", n: "tool_agent_node", strong: true },
+  ];
+  const X = 330, W = 470, H = 104, P = 124, BAR_X = 880;
+  const cx = 230, cy = 436;
+  rows.forEach((r, i) => {
+    const y = 4 + P * i, yc = y + H / 2;
+    curve(cx, cy, X, yc, r.c, { dx: 34 });
+    box(X, y, W, H, r.c, r.strong);
+    el("text", { x: X + 28, y: y + 38, class: "g-title", fill: r.c }, r.t);
+    el("text", { x: X + 28, y: y + 68, class: "g-desc" }, r.d);
+    el("text", { x: X + 28, y: y + 94, class: "g-name" }, r.n);
+    const ye = 430 + (yc - 430) * 0.5;
+    curve(X + W, yc, BAR_X, ye, r.c, { dx: 24, w: 3.5, o: 0.8 });
+  });
+  el("rect", { x: BAR_X, y: 4, width: 70, height: 848, rx: 26, fill: C.card, stroke: C.muted, "stroke-width": 2 });
+  el("text", { x: BAR_X + 44, y: 428, class: "g-side", "text-anchor": "middle", transform: `rotate(-90 ${BAR_X + 44} 428)` }, "formatter → one voice");
+  // your yes comes back round
+  el("path", { d: `M${X} 590 C 210 600, 115 590, 115 508`, fill: "none", stroke: C.teal, "stroke-width": 3.5, "stroke-dasharray": "3 9", "stroke-linecap": "round" });
+  el("polygon", { points: "108,522 115,506 122,522", fill: C.teal });
+  el("text", { x: 14, y: 628, class: "g-small", style: "fill:" + C.teal }, "next turn, your “yes”");
+  el("text", { x: 14, y: 654, class: "g-small", style: "fill:" + C.teal }, "runs execute_write");
+  el("text", { x: 14, y: 716, class: "g-pill", fill: C.or }, "A queue, not one choice");
+  ["“Save this, then find my", "notes” runs memory_save,", "then the retriever."].forEach((t, k) =>
+    el("text", { x: 14, y: 750 + 28 * k, class: "g-note" }, t));
+
+  /* ---------- bottom: the tool loop fans out ---------- */
+  const TOOL_Y = 4 + P * 6, TOOL_CY = TOOL_Y + H / 2, TOOL_B = TOOL_Y + H;
+  el("text", { x: 0, y: 912, class: "band", style: "font-size:21px;letter-spacing:1px", fill: C.yel }, "Inside the loop");
+  el("text", { x: 0, y: 940, class: "g-small" }, "a subset, picked per turn");
+
+  const groups = [
+    { c: C.or, t: "Read your code", who: "9 · everyone", l: ["read_repo_file · search_code", "trace_symbol · diff_branches · +5"] },
+    { c: C.teal, t: "Web & compute", who: "3 · everyone", l: ["web_search · read_url", "run_python"] },
+    { c: C.or, t: "Your accounts", who: "12 · once linked", l: ["search_gmail · read_drive_file", "list_google_calendar_events · +9"] },
+    { c: C.teal, t: "Memory & files", who: "4 · signed in", l: ["search_library · read_library_file", "search_memory · list_library_files"] },
+    { c: C.red, t: "Operate the app", who: "4 · admins", l: ["list_app_incidents · read_app_logs", "check_deploy_status · +1"] },
+    { c: C.vio, t: "Your machine", who: "6 · runner", l: ["run_local_check · run_local_command", "propose_steps · look_at_local_page"] },
+    { c: C.yel, t: "Propose changes", who: "7 · folder", l: ["propose_local_edits · propose_commit", "propose_git_commit · propose_merge"], strong: true },
+  ];
+  const GX = 300, GW = 480, GH = 120, GP = 130, G0 = 970, SX = 850;
+  const aH = 4 * GP + GH, bY = G0 + 5 * GP, bH = GP + GH;
+  const sinkMid = (i) => (i < 5 ? G0 + aH / 2 : bY + bH / 2);
+  groups.forEach((gr, i) => {
+    const y = G0 + GP * i, yc = y + GH / 2;
+    curve(0, 0, GX, yc, gr.c, { d: `M${X} ${TOOL_CY + 2} C 250 ${TOOL_CY + 2}, 262 ${yc}, ${GX} ${yc}`, w: 4 });
+    box(GX, y, GW, GH, gr.c, gr.strong);
+    el("text", { x: GX + 28, y: y + 38, class: "g-title", style: "font-size:30px", fill: gr.c }, gr.t);
+    const pillW = 14 + gr.who.length * 11.5;
+    el("rect", { x: GX + GW - pillW - 14, y: y + 14, width: pillW, height: 28, rx: 14, fill: "none", stroke: gr.c, "stroke-width": 2 });
+    el("text", { x: GX + GW - pillW / 2 - 14, y: y + 34, "text-anchor": "middle", class: "g-pill", fill: gr.c }, gr.who);
+    gr.l.forEach((t, k) => el("text", { x: GX + 28, y: y + 72 + 28 * k, class: "g-name", style: "font-size:19px" }, t));
+    const ye = sinkMid(i) + (yc - sinkMid(i)) * 0.55;
+    curve(GX + GW, yc, SX, ye, gr.c, { dx: 28, w: 3.5, o: 0.8 });
+  });
+  el("rect", { x: SX, y: G0, width: 100, height: aH, rx: 26, fill: C.card, stroke: C.or, "stroke-width": 2.5 });
+  el("text", { x: SX + 58, y: G0 + aH / 2, class: "g-side", "text-anchor": "middle", transform: `rotate(-90 ${SX + 58} ${G0 + aH / 2})` }, "a result, back into the loop");
+  el("rect", { x: SX, y: bY, width: 100, height: bH, rx: 26, fill: C.card, stroke: C.teal, "stroke-width": 2.5 });
+  el("text", { x: SX + 58, y: bY + bH / 2, class: "g-side", "text-anchor": "middle", transform: `rotate(-90 ${SX + 58} ${bY + bH / 2})` }, "a card you click");
+  // the result goes round again
+  el("path", { d: `M${SX + 50} ${G0} C ${SX + 50} ${G0 - 50}, 760 ${G0 - 50}, 760 ${TOOL_B + 6}`, fill: "none", stroke: C.or, "stroke-width": 3.5, "stroke-dasharray": "3 9", "stroke-linecap": "round" });
+  el("polygon", { points: `752,${TOOL_B + 20} 760,${TOOL_B + 4} 768,${TOOL_B + 20}`, fill: C.or });
+  el("text", { x: 738, y: G0 - 70, class: "g-small", "text-anchor": "end", style: "fill:" + C.or }, "next step");
+  // the menu notes, left of the fan
+  box(0, 1200, 230, 232, C.teal);
+  el("text", { x: 26, y: 1240, class: "g-title", fill: C.teal }, "The menu");
+  ["Built each turn", "by plain code:", "· who you are", "· what’s connected", "· what you asked", "· what it has read"].forEach((t, k) =>
+    el("text", { x: 26, y: 1274 + 28 * k, class: "g-note", style: "font-size:22px;" + (k < 2 ? "fill:" + C.muted : "") }, t));
+})();
+</script>
+</body></html>
