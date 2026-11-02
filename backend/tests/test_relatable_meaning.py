@@ -107,6 +107,38 @@ def test_an_empty_embedding_leaves_that_entry_out():
     assert set(out) == {only["id"]}
 
 
+# ---- the entries added 2026-11-02 (what Jack and Sonic actually talk about) ---------------------------------------------
+
+ADDED = {
+    "memory_quiet": "my assistant keeps forgetting what we decided last week",
+    "plan_flaw": "can you poke holes in this rollout before i send it",
+    "honest_feedback": "give me feedback on how that answer came across",
+    "evidence_over_pushing": "how do i know it got better after the prompt change",
+    "simple_over_clever": "this feels overengineered for what it does",
+    "one_question": "we have unclear requirements on this one",
+    "look_dont_guess": "tool calling keeps going wrong in this loop",
+}
+
+
+def test_the_added_entries_are_in_the_profile_and_each_is_offered_for_one_of_its_trigger_words():
+    assert set(ADDED) <= {entry["id"] for entry in RELATABLE}
+    for entry_id, message in ADDED.items():
+        entry = pick(message)
+        assert entry and entry["id"] == entry_id and "match" not in entry, (entry_id, entry and entry["id"])
+
+
+def test_the_added_lines_restate_the_profile_or_an_approved_leaning():
+    from backend.components.sonic_leanings import LEANINGS
+    from backend.components.sonic_profile import SONIC_PROFILE
+
+    stated = " ".join(SONIC_PROFILE["into"] + SONIC_PROFILE["prefers"] + SONIC_PROFILE["wont"]).lower()
+    for phrase in ("remembering context quietly", "saying plainly, once, when a plan has a real flaw", "direct, honest feedback", "changing it only for evidence",
+                   "overcomplicated code when a simple script", "asking the one question that would actually change the answer"):
+        assert phrase in stated, phrase
+    approved = {leaning["id"] for leaning in LEANINGS if leaning.get("approved")}
+    assert {"say_where_i_looked", "never_invent_an_identifier"} <= approved   # look_dont_guess restates these two
+
+
 # ---- why a turn brought nothing up -----------------------------------------------------------------------------
 
 QUIET = dict(brought_something_up=False, guest=False, risk_active=False, closing=False, energy_tier="open", source_type="conversational", rate_limited=False)
