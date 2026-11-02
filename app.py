@@ -111,7 +111,7 @@ from backend.utils.encouragement_utils import (
     ENCOURAGEMENT_MARK, build_encouragement_block, build_encouragement_revision_prompt, encouragement_reply_issue,
     select_encouragement,
 )
-from backend.utils.relatable_utils import RELATABLE_MARK, build_relatable_block, mentions_itself, select_relatable
+from backend.utils.relatable_utils import RELATABLE_MARK, build_relatable_block, entry_vectors, mentions_itself, recently_offered, select_relatable
 from backend.utils.self_observations import asks_about_itself, build_self_knowledge_block, observations_for_turn
 from backend.utils.emotion_checks import emotional_reply_issue, build_emotional_revision_prompt
 from backend.utils.wrapup_utils import is_closing_message, CLOSING_DIRECTIVE, closing_reply_issue, build_closing_revision_prompt
@@ -151,6 +151,7 @@ from backend.utils import runner_jobs
 from backend.utils import runner_scripts
 from backend.utils import clarifications as clarify_utils
 from backend.utils import initiation as initiation_utils
+from backend.utils import proactive_gates
 from backend.utils import reach as reach_utils
 from backend.utils import budget_guard
 from backend.utils import context_window, llm_turns, llm_usage, loop_watchdog
@@ -1205,17 +1206,22 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     open_loop_entry = None
                 else:
                     headsup_entry = None
+            # Computed once and threaded through the relatable line, both memory recalls and the shelf below: they all embed the identical question string this turn.
+            question_embedding = await asyncio.to_thread(embed_text, question) if question else None
             # Occasionally Sonic may mention a habit of its own when what the user said genuinely overlaps with one
-            # (backend/utils/relatable_utils.py); silent under a safety or held-down emotional context, on a closing
+            # (backend/utils/relatable_utils.py), by a trigger word or by meaning; silent under a safety or held-down emotional context, on a closing
             # message, on grounded KB answers, and rate-limited.
             relatable_entry = None if (open_loop_entry or headsup_entry) else select_relatable(
                 final_state.get("original_question", question), chat_sessions[history_key],
                 source_type=source_type, risk_active=risk_level != RISK_NONE,
                 energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
                 closing=is_closing_message(question),
+                vector=question_embedding, vectors=await asyncio.to_thread(entry_vectors, embed_text),
             )
             if relatable_entry:
                 tally(turn_counts, "relatable_offered")
+                if relatable_entry.get("match") == "meaning":
+                    tally(turn_counts, "relatable_by_meaning")
             # Sonic's own measured track record (backend/utils/self_observations.py): only the approved observations
             # that apply to this turn, and only a few. Nothing under a safety context.
             self_knowledge_lines = await asyncio.to_thread(
@@ -1375,11 +1381,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # also fills the in-memory copy the calls after it use (backend/utils/memory_utils.py).
             await asyncio.to_thread(load_user_facts, username)
             guardrail_context = await asyncio.to_thread(fetch_relevant_corrections, username, question)
-            # Computed once and threaded through both fact + semantic memory recall below — they
-            # embed the identical question string this turn, and re-embedding it a second time
-            # (the semantic recall call, further down) would be a genuinely free duplicate
-            # network round trip to the embeddings API for no behavior change.
-            question_embedding = await asyncio.to_thread(embed_text, question) if question else None
+            # question_embedding (computed above, before the relatable line) is threaded through both fact + semantic memory recall — they embed the identical question string this turn.
             memory_context = await asyncio.to_thread(lambda: fetch_relevant_user_facts(username, question, precomputed_embedding=question_embedding, messages=chat_sessions[history_key]))
             goal_nudge_context = "" if (risk_level != RISK_NONE or open_loop_entry) else await asyncio.to_thread(fetch_goal_nudge_context, username)
 
@@ -1844,6 +1846,18 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 tally(turn_counts, "experience_cited")
             if ai_message.additional_kwargs.get(curiosity_utils.CURIOSITY_MARK):
                 tally(turn_counts, "offer_made")  # whatever kind of offer it was, once: the volume the welcome goal's guardrail reads (backend/utils/goals.py)
+            # A turn where Sonic brought nothing up of its own is counted with the first gate that held it back (backend/utils/proactive_gates.py), so the numbers say what is in the way.
+            quiet = proactive_gates.quiet_reason(
+                brought_something_up=bool(
+                    open_loop_entry or headsup_entry or relatable_entry or encouragement_entry or self_history or callback_offered or goal_nudge_context or finding_offer
+                    or shelf_offer or curiosity_invited or lean_entry or clarify_entry or task_results_context or meeting_context
+                ),
+                guest=is_guest_username(username), risk_active=risk_level != RISK_NONE, closing=is_closing_message(question),
+                energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)), source_type=source_type,
+                rate_limited=recently_offered(chat_sessions[history_key]),
+            )
+            if quiet:
+                tally(turn_counts, "proactive_quiet", quiet)
             if clarify_entry:
                 # A getting-to-know-you question is recorded as asked only if the reply really asked something; otherwise it waits for one more try.
                 if curiosity_utils.asked_a_question(full_response):
