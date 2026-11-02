@@ -1133,8 +1133,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             risk_level = effective_risk(safety_state, datetime.now(timezone.utc))
             risk_fresh = bool(safety_state) and bool(safety_state.get("escalated")) and int(safety_state.get("turns_since", 1) or 0) == 0
             if risk_level != RISK_NONE and not is_guest_username(username):
-                # Nothing proactive for a week after, and for as long as, someone is in a safety context.
-                spawn_background_task(asyncio.to_thread(initiation_utils.risk_escalated, username))
+                # Nothing proactive for as long as someone is in a safety context, and until the safety layer would relax this level (not a fixed week).
+                spawn_background_task(asyncio.to_thread(initiation_utils.risk_escalated, username, risk_level))
             # What this turn's reply must do (work through the people in their life first; a human line only
             # when due), and the people Sonic remembers from earlier conversations to ask about by name.
             safety_plan = plan_safety_turn(

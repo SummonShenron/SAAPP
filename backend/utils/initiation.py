@@ -9,7 +9,7 @@ nobody asked for, so it carries a stricter bar than anything else, and every rul
   they're into (interest_anchor.py, which has stricter limits of its own). Never to a wish of Sonic's own: the wording is
   checked for "I wanted to check in", "I was curious", "I've been wondering", and the identity check runs on it too.
 - RARE. At most one every MIN_HOURS_BETWEEN hours, never while its last message in the thread is still unanswered, never
-  more than MAX_UNANSWERED in a row, and never for a week after a safety escalation.
+  more than MAX_UNANSWERED in a row, and never until the person is out of a safety context (the time the safety layer itself takes to relax that level).
 - QUIET. Only in an existing conversation, and only after a real pause since the last message.
 - ON RETURN, NOT IN THE BACKGROUND. It is decided when the user opens a conversation (POST /api/chat/opening), so there is no
   scheduler, no push, and no message written while nobody was there. The timestamp is the moment it was written, so it never
@@ -28,6 +28,7 @@ from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional
 from backend.utils import interest_anchor
 from backend.utils import open_loops as ol
 from backend.utils.identity_checks import identity_reply_issue
+from backend.utils.safety_utils import AFTER_CRISIS_HOURS, ELEVATED_HOURS, RISK_ACUTE, RISK_ELEVATED, RISK_IMMINENT
 from backend.utils.time_utils import build_time_context, gap_seconds, local_today, sent_at, stamp
 
 logger = logging.getLogger("SASS Logger")
@@ -38,7 +39,9 @@ KIND_KEY = "initiated_kind"
 
 MIN_HOURS_BETWEEN = 20
 MAX_UNANSWERED = 3
-RISK_QUIET_DAYS = 7
+# After a turn in a safety context no opening message is written until the person is out of it: as long as the safety layer takes to relax that level to "none" (backend/utils/safety_utils.py
+# effective_risk), counted from the last turn that was in force, so a fixed week no longer keeps Sonic quiet after a moment that has passed. An unknown level waits the longest.
+RISK_QUIET_HOURS = {RISK_ELEVATED: ELEVATED_HOURS, RISK_ACUTE: AFTER_CRISIS_HOURS, RISK_IMMINENT: AFTER_CRISIS_HOURS}
 MIN_PAUSE_SECONDS = ol.FOLLOW_UP_MIN_GAP_SECONDS  # a real pause since the thread's last message
 MAX_WORDS = 40
 MAX_ANCHOR_CHARS = 140
@@ -110,9 +113,9 @@ def reset_unanswered(db, username: str) -> None:
     )
 
 
-def note_risk(db, username: str, now: datetime) -> None:
-    """A safety escalation happened: no opening message for a week, whatever else is due. `$max` only ever extends it."""
-    until = (now + timedelta(days=RISK_QUIET_DAYS)).isoformat()
+def note_risk(db, username: str, now: datetime, level: str = RISK_IMMINENT) -> None:
+    """A turn was in a safety context at `level`: no opening message until the person is out of it (RISK_QUIET_HOURS), whatever else is due. `$max` only ever extends it."""
+    until = (now + timedelta(hours=RISK_QUIET_HOURS.get(level, AFTER_CRISIS_HOURS))).isoformat()
     db[SETTINGS_COLLECTION].update_one({"username": username}, {"$max": {"no_initiation_until": until}}, upsert=True)
 
 
@@ -140,8 +143,8 @@ def answered(username: str) -> None:
     _with_db(reset_unanswered, username)
 
 
-def risk_escalated(username: str, now: Optional[datetime] = None) -> None:
-    _with_db(note_risk, username, now or datetime.now(timezone.utc))
+def risk_escalated(username: str, level: str = RISK_IMMINENT, now: Optional[datetime] = None) -> None:
+    _with_db(note_risk, username, now or datetime.now(timezone.utc), level)
 
 
 # ---------------------------------------------------------------------------------------------------------------

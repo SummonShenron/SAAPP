@@ -124,7 +124,7 @@ def test_each_gate_refuses_for_its_own_reason(state, transcript, kwargs, expecte
     assert reason(state, transcript, **kwargs) == expected
 
 
-def test_it_may_open_again_once_the_wall_clock_cap_has_passed_and_after_a_quiet_week():
+def test_it_may_open_again_once_the_wall_clock_cap_has_passed_and_after_the_quiet_period():
     assert reason({"last_initiated_at": NOW - timedelta(hours=21)}) is None
     assert reason({"quiet_until": NOW - timedelta(minutes=1)}) is None
 
@@ -294,14 +294,31 @@ def test_unanswered_openings_are_counted_and_reset_only_when_there_is_something_
     assert ini.load_state(db, "u")["unanswered"] == 0 and ini.load_state(db, "u")["enabled"] is True
 
 
-def test_a_safety_escalation_silences_openings_for_a_week_and_only_ever_extends_it():
+def test_the_quiet_after_a_safety_turn_lasts_as_long_as_the_safety_layer_takes_to_relax_that_level():
+    from backend.utils import safety_utils as su
+
+    assert ini.RISK_QUIET_HOURS == {su.RISK_ELEVATED: su.ELEVATED_HOURS, su.RISK_ACUTE: su.AFTER_CRISIS_HOURS, su.RISK_IMMINENT: su.AFTER_CRISIS_HOURS}
+    for level, hours in ini.RISK_QUIET_HOURS.items():
+        db = _DB()
+        ini.note_risk(db, "u", NOW, level)
+        assert ini.load_state(db, "u")["quiet_until"] == NOW + timedelta(hours=hours), level
     db = _DB()
-    ini.note_risk(db, "u", NOW)
-    assert ini.load_state(db, "u")["quiet_until"] == NOW + timedelta(days=7)
-    ini.note_risk(db, "u", NOW - timedelta(days=3))  # an earlier one never shortens it
-    assert ini.load_state(db, "u")["quiet_until"] == NOW + timedelta(days=7)
-    ini.note_risk(db, "u", NOW + timedelta(days=2))
-    assert ini.load_state(db, "u")["quiet_until"] == NOW + timedelta(days=9)
+    ini.note_risk(db, "u", NOW, "something_new")  # an unknown level waits the longest
+    assert ini.load_state(db, "u")["quiet_until"] == NOW + timedelta(hours=su.AFTER_CRISIS_HOURS)
+    assert max(ini.RISK_QUIET_HOURS.values()) < 24  # no longer a week: the next day is open again
+
+
+def test_a_safety_turn_only_ever_extends_the_quiet():
+    db = _DB()
+    ini.note_risk(db, "u", NOW, "acute")
+    until = ini.load_state(db, "u")["quiet_until"]
+    ini.note_risk(db, "u", NOW - timedelta(hours=5), "acute")  # an earlier one never shortens it
+    ini.note_risk(db, "u", NOW, "elevated")  # nor does a milder level at the same moment
+    assert ini.load_state(db, "u")["quiet_until"] == until
+    ini.note_risk(db, "u", NOW + timedelta(hours=3), "elevated")  # a milder turn whose window ends sooner does not shorten it either
+    assert ini.load_state(db, "u")["quiet_until"] == until
+    ini.note_risk(db, "u", NOW + timedelta(hours=10), "elevated")  # a later turn still in force moves it on
+    assert ini.load_state(db, "u")["quiet_until"] == NOW + timedelta(hours=10 + ini.RISK_QUIET_HOURS["elevated"])
 
 
 # ---- the whole decision ----------------------------------------------------------------------------------------------
@@ -372,9 +389,28 @@ def test_a_guest_the_kill_switch_and_a_recent_safety_escalation_each_keep_it_sil
     monkeypatch.setenv("PROACTIVE_OPENING_ENABLED", "false")
     assert not ini.proactive_opening_enabled() and w.open() is None
     monkeypatch.delenv("PROACTIVE_OPENING_ENABLED")
-    ini.note_risk(w.db, "u", NOW - timedelta(days=1))
+    ini.note_risk(w.db, "u", NOW - timedelta(hours=1), "acute")
     assert w.open() is None
     assert w.model.prompts == [] and w.saved == []
+
+
+def test_it_opens_again_once_the_person_is_out_of_the_safety_context(monkeypatch):
+    w = World(monkeypatch)
+    ini.note_risk(w.db, "u", NOW - timedelta(hours=ini.RISK_QUIET_HOURS["acute"] + 1), "acute")  # a bad night, and it has passed
+    assert w.open() is not None
+    w = World(monkeypatch)
+    ini.note_risk(w.db, "u", NOW - timedelta(hours=ini.RISK_QUIET_HOURS["elevated"] + 1), "elevated")  # a low moment, hours ago
+    assert w.open() is not None
+    w = World(monkeypatch)
+    ini.note_risk(w.db, "u", NOW - timedelta(hours=ini.RISK_QUIET_HOURS["elevated"] - 1), "elevated")  # still inside the window
+    assert w.open() is None
+
+
+def test_a_week_long_quiet_written_before_this_change_still_holds_until_it_ends(monkeypatch):
+    w = World(monkeypatch)
+    w.db[ini.SETTINGS_COLLECTION].update_one({"username": "u"}, {"$set": {"no_initiation_until": (NOW + timedelta(days=5)).isoformat()}})  # what the old rule left in the database
+    assert w.open() is None
+    assert w.open(now=NOW + timedelta(days=5, minutes=1)) is not None
 
 
 def test_a_quiet_goal_is_raised_when_no_loop_is_due(monkeypatch):
@@ -444,6 +480,7 @@ def test_the_chat_turn_counts_an_answered_opening_and_marks_a_safety_context():
         assert needle in source, needle
     risk = source.index("initiation_utils.risk_escalated")
     assert "risk_level != RISK_NONE" in source[risk - 300: risk]
+    assert "initiation_utils.risk_escalated, username, risk_level" in source  # the level in force, so the quiet lasts as long as that level does
 
 
 def test_the_counters_know_the_new_keys_and_report_how_often_openings_are_answered():

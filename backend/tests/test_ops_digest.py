@@ -255,10 +255,10 @@ def test_the_list_of_announced_ids_stays_bounded(world):
     assert len(seen) == od.MAX_SEEN_IDS and seen[-1] == f"id_{od.MAX_SEEN_IDS + 24}"
 
 
-def test_the_week_after_a_safety_escalation_is_quiet_for_the_digest_too(world):
-    ini.note_risk(world.db, "jack", NOW - timedelta(days=2))
+def test_the_hours_after_a_safety_turn_are_quiet_for_the_digest_too(world):
+    ini.note_risk(world.db, "jack", NOW - timedelta(hours=2), "acute")
     assert post(world) is None and world.reader.calls == []
-    later = NOW + timedelta(days=6)
+    later = NOW + timedelta(days=1)
     world.reader.rows = [dict(incident(), created_at=(later - timedelta(hours=1)).isoformat())]
     assert post(world, now=later) is not None
 
