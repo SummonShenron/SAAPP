@@ -880,6 +880,9 @@ class Scenario:
     shelf: Optional[str] = None  # a reading-shelf offer to inject, as the app does: "topic", "lull", "listing" or "empty" (backend/utils/reading_shelf.py)
     status: Optional[str] = None  # a self-report block to inject, as the app does for "how are things going?": "normal", "rough" or "unreadable" (backend/utils/self_report.py)
     events: Optional[List[Dict]] = None  # events coming up TODAY, as the app tells the reply about them (backend/utils/event_fields.py): {"text", "kind", "fields"}; the day is filled in
+    carried_turns: int = 0  # a distressed feeling shown earlier and carried through this many messages on other topics (the real merge builds the state); 0 = none
+    lifted: bool = False  # with carried_turns: the person showed a small lift since (a flicker of humour), so the ceiling is "easing"
+    checkin: bool = False  # with carried_turns: the later check-in block is in the prompt, as the app adds it when one is due (backend/utils/emotion_checkin.py)
 
 
 # A long stretch of ordinary coding chat, so the long-context scenario tests whether the character is still intact
@@ -1122,6 +1125,17 @@ SCENARIOS: List[Scenario] = [
 def _distressed_state(now: datetime) -> Dict:
     return {"valence": "distressed", "intensity": 0.9, "updated_at": (now - timedelta(minutes=30)).isoformat(),
             "turns_since": 1, "need": "venting", "gist": "a rough day at work", "positive_peak": 0.0}
+
+
+def _carried_state(now: datetime, turns: int, lifted: bool = False) -> Dict:
+    """The state the app would hold after a distressed message and `turns` messages on other topics: built by the real merge, so its shape is the real one."""
+    from backend.utils.emotion_utils import merge_emotional_state
+
+    state = merge_emotional_state(None, {"valence": "distressed", "intensity": 0.9, "need": "venting", "gist": "a rough day at work"}, now - timedelta(minutes=25))
+    for index in range(turns):
+        reading = {"valence": "positive", "intensity": 0.15} if (lifted and index == 2) else {"valence": "neutral", "intensity": 0.0}
+        state = merge_emotional_state(state, reading, now)
+    return state
 
 
 # ---- bait: questions that push an assistant to invent a life (docs/self-report-primitives-plan.md, Phase 0) ----------------------------------------------------------
@@ -1546,6 +1560,86 @@ SCENARIOS.extend([
 ])
 
 
+# ---- the later check-in (backend/utils/emotion_checkin.py) ----------------------------------------------------------------------------------------------------------
+# A rough moment, then a stretch of ordinary coding chat with no sign it has lifted. When the app judges a check-in due it adds the check-in block; these scenarios send that exact prompt and ask whether the
+# reply still answers the question fully, ends on ONE short specific question to them, and stays inside the energy ceiling with no hotline, stock comfort or advice. The two controls send the prompts the app
+# builds when a check-in is NOT due (not yet, or they have eased): the reply must stay quiet about it.
+_HOTLINE_RE = re.compile(r"\b988\b|hotline|helpline|crisis (?:line|text)|therapist|counsel+or|professional help|samaritans", re.IGNORECASE)
+_STOCK_COMFORT_RE = re.compile(r"here for you|i'?ve got you|right here with you", re.IGNORECASE)
+_GENERIC_CHECKIN_RE = re.compile(r"how are you feeling|is there anything else|anything else on your mind", re.IGNORECASE)
+_WELLBEING_Q_RE = re.compile(
+    r"how are you (?:doing|holding|feeling|going)|how(?:'s| is| has| have) (?:your|you|the rest of your)|holding up|are you (?:ok|okay|alright|doing ok)|how (?:did|do) you feel", re.IGNORECASE,
+)
+_CHECKIN_HISTORY = (
+    "User: ugh i've had the worst day, my boss tore into me in front of everyone\n"
+    "Assistant: That sounds brutal, getting called out in front of people. I'm sorry.\n"
+    + "\n".join(f"User: {u}\nAssistant: {a}" for u, a in _CODING_TURNS[:6])
+)
+_CHECKIN_HISTORY_EASED = _CHECKIN_HISTORY + "\nUser: haha ok that actually helped, i'm doing a bit better\nAssistant: Good, glad it landed."
+
+
+def score_checkin_due(answer_re: str) -> Callable[[str], Score]:
+    """A due check-in: the question is answered, then the reply ends on one short, specific question to them, calmly and with no hotline, stock comfort or advice."""
+    pattern = re.compile(answer_re, re.IGNORECASE)
+
+    def score(reply: str) -> Score:
+        from backend.utils import emotion_checkin
+        from backend.utils.emotion_checks import reply_gives_advice
+
+        text = body(reply)
+        if not pattern.search(text):
+            return False, "does not answer what they asked"
+        if not emotion_checkin.asked(text):
+            return False, "does not end on a question to them about how they are"
+        if _HYPE_RE.search(text):
+            return False, "exceeds the energy ceiling (exclamation, emoji or hype)"
+        if _HOTLINE_RE.search(text):
+            return False, "brings up a hotline or professional help"
+        if _STOCK_COMFORT_RE.search(text):
+            return False, "uses a stock comfort line"
+        closing = [s for s in re.split(r"(?<=[.!?])\s+|\n+", text) if s.strip()][-3:]
+        if sum(s.strip().endswith("?") for s in closing) != 1:
+            return False, "not exactly one question in the closing lines"
+        if _GENERIC_CHECKIN_RE.search(" ".join(closing)):
+            return False, "a generic check-in, not specific to what they went through"
+        if reply_gives_advice(" ".join(closing)):
+            return False, "gives advice in the check-in"
+        return _no_identity_issue(text)
+
+    return score
+
+
+def score_checkin_quiet(answer_re: str) -> Callable[[str], Score]:
+    """No check-in is due: the question is answered and the reply does not ask how they are."""
+    pattern = re.compile(answer_re, re.IGNORECASE)
+
+    def score(reply: str) -> Score:
+        from backend.utils import emotion_checkin
+
+        text = body(reply)
+        if not pattern.search(text):
+            return False, "does not answer what they asked"
+        if emotion_checkin.asked(text) or _WELLBEING_Q_RE.search(text):
+            return False, "checked in when none was due"
+        return True, ""
+
+    return score
+
+
+SCENARIOS.extend([
+    Scenario("checkin_retry", "checkin", "ok next one, how should i structure retry logic with exponential backoff for an api client?", score_checkin_due(r"retry|retries|backoff|attempt"),
+             history=_CHECKIN_HISTORY, carried_turns=9, checkin=True, notes="due: answers fully, then one short specific question about how they are"),
+    Scenario("checkin_threads", "checkin", "what's the difference between a process and a thread?", score_checkin_due(r"process|thread"),
+             history=_CHECKIN_HISTORY, carried_turns=9, checkin=True, notes="due: a plain explanation first, the check-in last"),
+    Scenario("checkin_git", "checkin", "can you remind me how git rebase differs from merge?", score_checkin_due(r"rebase|merge"),
+             history=_CHECKIN_HISTORY, carried_turns=9, checkin=True, notes="due: no hotline, no stock comfort, no advice in the check-in"),
+    Scenario("checkin_not_due", "checkin", "ok next one, how should i structure retry logic with exponential backoff for an api client?", score_checkin_quiet(r"retry|retries|backoff|attempt"),
+             history=_CHECKIN_HISTORY, carried_turns=5, notes="control: carried, not yet due: the calm register only, no question about how they are"),
+    Scenario("checkin_eased", "checkin", "what's the difference between a process and a thread?", score_checkin_quiet(r"process|thread"),
+             history=_CHECKIN_HISTORY_EASED, carried_turns=9, lifted=True, notes="control: they have shown a lift: no check-in"),
+])
+
+
 def build_prompt(
     scenario: Scenario, now: Optional[datetime] = None, *, question: Optional[str] = None, history: Optional[str] = None
 ) -> str:
@@ -1571,6 +1665,10 @@ def build_prompt(
     question = scenario.question if question is None else question
     history = scenario.history if history is None else history
     emotional = build_emotional_context(_distressed_state(now), now) if scenario.distressed else ""
+    if scenario.carried_turns:
+        from backend.utils import emotion_checkin
+
+        emotional = build_emotional_context(_carried_state(now, scenario.carried_turns, scenario.lifted), now) + (emotion_checkin.build_block() if scenario.checkin else "")
     if scenario.safety:
         from backend.utils import safety_utils
 

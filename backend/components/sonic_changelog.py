@@ -296,6 +296,21 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "later_check_in",
+        "requires": [
+            "backend/utils/emotion_checkin.py::def due",
+            "app.py::emotion_checkin.due(",
+        ],
+        "month": "2026-11",
+        "title": "A later check-in",
+        "line": (
+            "After a hard moment I can check in again a good while later, with one short question about how you are, even when we've moved on to other things. "
+            "I only do it if you haven't shown it lifting, and never back to back."
+        ),
+        "keywords": ["check in", "check-in", "checking in", "how i'm doing", "ask how i am", "after a hard moment", "hard day"],
+        "volunteer": [],
+    },
+    {
         "id": "look_at_local_pages",
         "requires": [
             "backend/utils/runner_jobs.py::def look_job",

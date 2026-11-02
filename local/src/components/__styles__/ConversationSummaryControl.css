@@ -193,3 +193,11 @@
   color: var(--text-muted);
   font-size: 0.78rem;
 }
+
+/* On phones the top bar sits near the left edge, so the panel anchors to the button's left side and opens rightward. */
+@media (max-width: 600px) {
+  .convo-summary-panel {
+    left: 0;
+    right: auto;
+  }
+}

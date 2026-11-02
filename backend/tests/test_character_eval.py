@@ -93,6 +93,49 @@ def test_ceiling_rejects_exclamations_emoji_and_hype_but_ignores_the_follow_up_t
     _fails(ce.score_ceiling, "Let's dive in, here are some names")
 
 
+def test_the_check_in_scorer_wants_the_answer_then_one_short_specific_question_and_nothing_else():
+    due = ce.score_checkin_due(r"retry|backoff")
+    _passes(due, "Cap the delay, add jitter, and retry up to five attempts with exponential backoff. How has the rest of your day been after that rough start? No need to get into it.")
+    _passes(due, "Retry five times with exponential backoff.\n\nHow are you holding up after the day at work earlier?\n<<<FOLLOW_UP: Add jitter>>>")
+    _fails(due, "How are you holding up after the day at work earlier?", "does not answer")
+    _fails(due, "Retry with exponential backoff. Hope that helps.", "does not end on a question")
+    _fails(due, "Retry with exponential backoff. Want me to run the tests?", "does not end on a question")
+    _fails(due, "Retry with exponential backoff! How are you holding up after earlier?", "energy ceiling")
+    _fails(due, "Retry with exponential backoff. If it keeps weighing on you, a therapist could help. How are you holding up?", "hotline")
+    _fails(due, "Retry with exponential backoff. I'm here for you. How are you holding up after earlier?", "stock comfort")
+    _fails(due, "Retry with exponential backoff. How are you feeling?", "generic")
+    _fails(due, "Should I add jitter? Retry with exponential backoff. How are you holding up after earlier?", "one question")
+    _fails(due, "Retry with exponential backoff. You could try taking a break. How are you holding up after earlier?", "advice")
+
+
+def test_the_quiet_scorer_wants_the_answer_and_no_question_about_how_they_are():
+    quiet = ce.score_checkin_quiet(r"retry|backoff")
+    _passes(quiet, "Retry with exponential backoff, and cap the delay.")
+    _fails(quiet, "Retry with exponential backoff. How are you holding up after earlier?", "none was due")
+    _fails(quiet, "Retry with exponential backoff. Are you okay after earlier?", "none was due")
+    _fails(quiet, "Cap the delay.", "does not answer")
+
+
+def test_the_check_in_scenarios_send_the_block_only_where_the_app_would_by_its_own_rule():
+    from datetime import datetime, timezone
+
+    from backend.utils import emotion_checkin as ec
+
+    now = datetime(2026, 11, 2, 18, 0, tzinfo=timezone.utc)
+    by_id = {s.id: s for s in ce.SCENARIOS}
+    for scenario_id in ("checkin_retry", "checkin_threads", "checkin_git"):
+        scenario = by_id[scenario_id]
+        state = ce._carried_state(now, scenario.carried_turns, scenario.lifted)
+        assert ec.due(state, now, [], risk_active=False, closing=False, guest=False), scenario_id
+        assert ec.build_block() in ce.build_prompt(scenario, now), scenario_id
+    for scenario_id in ("checkin_not_due", "checkin_eased"):
+        scenario = by_id[scenario_id]
+        state = ce._carried_state(now, scenario.carried_turns, scenario.lifted)
+        assert not ec.due(state, now, [], risk_active=False, closing=False, guest=False), scenario_id
+        prompt = ce.build_prompt(scenario, now)
+        assert "EMOTIONAL CONTEXT" in prompt and ec.build_block() not in prompt, scenario_id
+
+
 def test_every_scenario_is_well_formed_and_ids_are_unique():
     ids = [s.id for s in ce.SCENARIOS]
     assert len(ids) == len(set(ids))

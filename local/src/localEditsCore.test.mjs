@@ -1,7 +1,7 @@
 // Run with: node --test src/localEditsCore.test.mjs   (from local/; Node 22.18+ runs the TypeScript module directly)
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { changesMovedSince, forUndo, planEdits } from './localEditsCore.ts';
+import { changesMovedSince, forUndo, planEdits, withProposal } from './localEditsCore.ts';
 
 const DOC = { title: 'Resume', blocks: [{ type: 'paragraph', text: 'Hello' }] };
 const files = (map) => async (path) => (path in map ? map[path] : null);
@@ -178,4 +178,29 @@ test('applying a delete removes the file, and a rollback or Undo writes its text
   const source = readFileSync(new URL('./localEdits.ts', import.meta.url), 'utf8');
   assert.match(source, /else if \(change\.deleted\) \{\s*await removeFile\(root, change\.path\);/);
   assert.match(source, /if \(change\.before === null\) await removeFile\(root, change\.path\);\s*else await writeFileText\(root, change\.path, change\.before\);/);
+});
+
+// ---- several proposals in one reply (found 2026-11-02: an edit was applied, then a test for it was proposed in the same reply, and its card showed "Applied to your folder." with no Apply) ----
+
+const proposal = (id, path = 'a.ts') => ({ proposal_id: id, summary: id, folder: 'f', files: [{ path, kind: 'edit', diff: '', additions: 1, deletions: 0 }], edits: [] });
+
+test('a second proposal in the same reply is added after the first, never in place of it', () => {
+  const first = withProposal(undefined, proposal('p1'));
+  const both = withProposal(first, proposal('p2', 'test_a.py'));
+  assert.deepEqual(both.map(p => p.proposal_id), ['p1', 'p2']);
+  assert.deepEqual(first.map(p => p.proposal_id), ['p1']);   // the list it was given is not changed
+});
+
+test('the same proposal arriving twice is one card, and keeps its place at the end', () => {
+  const list = withProposal(withProposal([], proposal('p1')), proposal('p2'));
+  assert.deepEqual(withProposal(list, proposal('p1')).map(p => p.proposal_id), ['p2', 'p1']);
+});
+
+test('each proposal is its own card: the chat page lists them and keys every card by its proposal id', async () => {
+  const { readFileSync } = await import('node:fs');
+  const chat = readFileSync(new URL('./pages/Chat.tsx', import.meta.url), 'utf8');
+  assert.match(chat, /msg\.editProposals\?\.map\(proposal => \(/);
+  assert.match(chat, /<LocalEditCard\s+key=\{proposal\.proposal_id\}/);   // without a key one mounted card keeps its "applied" state when a second proposal replaces the first
+  assert.match(chat, /editProposals: withProposal\(updated\[lastIndex\]\.editProposals, proposal\)/);
+  assert.doesNotMatch(chat, /\beditProposal\b/);   // the single-proposal field is gone
 });

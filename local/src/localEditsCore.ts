@@ -47,6 +47,14 @@ export interface EditProposal {
   edits: EditOp[];
 }
 
+/**
+ * The proposals shown under one reply, with `proposal` added. One reply can carry several (an edit, then a test for it, as the turn goes on), each its own card with its own Apply and Undo,
+ * so a new one is appended and never replaces an earlier one. The same proposal arriving twice (a replayed event) replaces itself instead of doubling.
+ */
+export function withProposal(existing: EditProposal[] | undefined, proposal: EditProposal): EditProposal[] {
+  return [...(existing ?? []).filter(p => p.proposal_id !== proposal.proposal_id), proposal];
+}
+
 /** One file's change as it will be written: `before` is null for a file that doesn't exist yet. */
 export interface FileChange {
   path: string;

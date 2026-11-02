@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type MeetingsState } from '../api';
+import Icon from './icons';
 import './__styles__/MeetingControl.css';
 
 interface Props {
@@ -90,12 +91,12 @@ export const MeetingControl: React.FC<Props> = ({ sessionId, onStarted }) => {
         <button type="button" className={`topbar-btn meeting-btn${state.meetings[0].due_today ? ' meeting-btn-now' : ''}`} disabled={busy}
           onClick={() => start(state.meetings[0].id, state.meetings[0].name)}
           title={state.meetings[0].due_today ? `${state.meetings[0].name} is due today (${state.meetings[0].schedule})` : `Start ${state.meetings[0].name} with Sonic`}>
-          <span className="meeting-btn-long">Start office hours</span><span className="meeting-btn-short">Office hours</span>
+          <span className="meeting-btn-long">Start office hours</span><span className="meeting-btn-short"><Icon name="meeting" size={18} /></span>
         </button>
       ) : (
         <div className="meeting-menu-wrap">
           <button type="button" className={`topbar-btn meeting-btn${state.meetings.some(m => m.due_today) ? ' meeting-btn-now' : ''}`} disabled={busy} aria-expanded={menuOpen} onClick={() => setMenuOpen(open => !open)}>
-            <span className="meeting-btn-long">Start office hours</span><span className="meeting-btn-short">Office hours</span>
+            <span className="meeting-btn-long">Start office hours</span><span className="meeting-btn-short"><Icon name="meeting" size={18} /></span>
           </button>
           {menuOpen && (
             <div className="meeting-menu" role="menu">
