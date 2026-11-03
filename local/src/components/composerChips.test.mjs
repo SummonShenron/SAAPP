@@ -2,11 +2,11 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { CHIPS, answersId, answersValue, chipLabel, isChanged, modeId, modeValue, optionOf, thinkingId, thinkingValue } from './composerChipsLogic.ts';
+import { BASE_MODEL, CHIPS, answersId, answersValue, chipLabel, isChanged, modeId, modeValue, modelChipValue, modelsChanged, modelsLabel, optionOf, specOption, thinkingId, thinkingValue } from './composerChipsLogic.ts';
 
-test('each setting is one icon with its states (two, and three for the code model), and the quiet one is the ordinary state', () => {
+test('each setting is one icon with its states (two, and four for the code model), and the quiet one is the ordinary state', () => {
   for (const spec of Object.values(CHIPS)) {
-    assert.equal(spec.options.length, spec.key === 'model' ? 3 : 2, spec.key);          // Gemini, Claude, and Claude Sonnet (offered only where the server has its price)
+    assert.equal(spec.options.length, spec.key === 'model' ? 4 : 2, spec.key);          // Gemini, Claude, Claude Sonnet and GPT-5.4 mini (each offered only where the server has what it needs)
     assert.ok(spec.options.some(option => option.id === spec.ordinary), `${spec.key} has its ordinary state among its options`);
     for (const option of spec.options) assert.ok(option.name && option.hint, `${spec.key}/${option.id} says what it is and what it does`);
   }
@@ -17,10 +17,11 @@ test('the names the person sees', () => {
   assert.deepEqual(CHIPS.mode.options.map(option => option.name), ['Plan', 'Agent']);
   assert.deepEqual(CHIPS.thinking.options.map(option => option.name), ['Swift', 'Deep']);
   assert.deepEqual(CHIPS.answers.options.map(option => option.name), ['Grounded', 'Open']);
-  assert.deepEqual(CHIPS.model.options.map(option => option.name), ['Gemini', 'Claude', 'Claude Sonnet']);
+  assert.deepEqual(CHIPS.model.options.map(option => option.name), ['Gemini', 'Claude', 'Claude Sonnet', 'GPT-5.4 mini']);
   assert.equal(chipLabel('thinking', 'swift'), 'Thinking: Swift');
   assert.equal(chipLabel('model', 'claude'), 'Code model: Claude');
   assert.equal(chipLabel('model', 'sonnet'), 'Code model: Claude Sonnet');
+  assert.equal(chipLabel('model', 'gpt'), 'Code model: GPT-5.4 mini');
 });
 
 test('an unknown value reads as the ordinary state, and only the other state is "changed"', () => {
@@ -34,6 +35,7 @@ test('an unknown value reads as the ordinary state, and only the other state is 
   assert.equal(isChanged('model', 'gemini'), false);
   assert.equal(isChanged('model', 'claude'), true);
   assert.equal(isChanged('model', 'sonnet'), true);
+  assert.equal(isChanged('model', 'gpt'), true);
 });
 
 test('Sonnet is left out of the popup unless the server offers it, says what it costs, and draws the Claude mark', () => {
@@ -41,8 +43,9 @@ test('Sonnet is left out of the popup unless the server offers it, says what it 
   assert.match(chips, /spec\.options\.filter\(option => !control\.hide\?\.includes\(option\.id\)\)/);
   assert.match(chips, /id === 'claude' \|\| id === 'sonnet'\) return <ClaudeMark \/>/);
   const chat = readFileSync(new URL('../pages/Chat.tsx', import.meta.url), 'utf8');
-  assert.match(chat, /hide: sonnetAvailable \? \[\] : \['sonnet'\]/);
+  assert.match(chat, /hide: \[\.\.\.\(claudeAvailable \? \[\] : \['claude'\]\), \.\.\.\(sonnetAvailable \? \[\] : \['sonnet'\]\), \.\.\.\(gptAvailable \? \[\] : \['gpt'\]\)\]/);
   assert.match(chat, /setSonnetAvailable\(data\.sonnet_available === true\)/);
+  assert.match(chat, /setGptAvailable\(data\.gpt_available === true\)/);
   assert.match(optionOf('model', 'sonnet').hint, /about 20 times the cost of Claude/);
 });
 
@@ -87,7 +90,7 @@ test('in the session column the chips are a card below "This conversation", thei
   const chips = readFileSync(new URL('./ComposerChips.tsx', import.meta.url), 'utf8');
   assert.doesNotMatch(chips, /layout|inline/);                                                    // the 'bar' layout is gone: nothing is drawn under the message box
   assert.match(chips, /const ComposerChips: React\.FC<ChatSettings> = /);
-  assert.match(chips, /\{open && open !== 'help' && openControl && choices\(open, openControl\)\}/);  // the open choice is listed under the row
+  assert.match(chips, /\{open && open !== 'help' && open !== 'model' && openControl && choices\(open, openControl\)\}/);  // the open choice is listed under the row
   const css = readFileSync(new URL('./__styles__/ComposerChips.css', import.meta.url), 'utf8');
   assert.match(css, /\.composer-chips-panel \.cc-pop, \.composer-chips-panel \.cc-pop-help \{ position: static; width: auto;/);
 });
@@ -119,4 +122,52 @@ test('the settings are only in the side panel, on every screen: never under the 
   assert.equal((chat.match(/<ComposerChips /g) ?? []).length, 1);                              // built once, for the column card ...
   assert.match(chat, /settings=\{chatSettings\}/);                                             // ... and the same object feeds the phone strip
   assert.match(chat, /const railVisible = compactScreen && showSessionColumn;/);              // the strip is what the top-bar button shows and hides on a narrow screen
+});
+
+test('the model chip is two settings in one popup: the Base model (who writes the reply) and the Code model (who does the code steps)', () => {
+  assert.equal(BASE_MODEL.title, 'Base model');
+  assert.equal(CHIPS.model.title, 'Code model');
+  assert.deepEqual(BASE_MODEL.options.map(option => option.id), ['gemini', 'gpt']);
+  assert.equal(BASE_MODEL.ordinary, 'gemini');
+  for (const option of [...BASE_MODEL.options, ...CHIPS.model.options]) assert.ok(option.short && option.short.length <= 40, `${option.id} has a short line that fits a half-width column`);
+  assert.equal(specOption(BASE_MODEL, 'nonsense').id, 'gemini');                                 // an unknown value reads as Gemini
+  assert.match(specOption(BASE_MODEL, 'gpt').hint, /Gemini whatever this says/);                  // the safety rule is stated where the choice is made
+});
+
+test('the model chip shows the first model that is not the ordinary one, Base first, and is highlighted when either differs', () => {
+  assert.equal(modelChipValue('gemini', 'gemini'), 'gemini');
+  assert.equal(modelChipValue('gpt', 'claude'), 'gpt');
+  assert.equal(modelChipValue('gemini', 'sonnet'), 'sonnet');
+  assert.equal(modelChipValue(null, 'claude'), 'claude');                                         // no base choice offered: only the code model counts
+  assert.equal(modelChipValue('gpt', null), 'gpt');
+  assert.equal(modelChipValue(null, null), 'gemini');
+  assert.equal(modelsChanged('gemini', 'gemini'), false);
+  assert.equal(modelsChanged(null, null), false);
+  assert.equal(modelsChanged('gpt', 'gemini'), true);
+  assert.equal(modelsChanged('gemini', 'gpt'), true);
+  assert.equal(modelsChanged(null, 'claude'), true);
+});
+
+test('the model chip names both settings, and leaves out one that is not offered', () => {
+  assert.equal(modelsLabel('gpt', 'claude'), 'Models: Base GPT-5.4 mini, Code Claude');
+  assert.equal(modelsLabel('gemini', 'gemini'), 'Models: Base Gemini, Code Gemini');
+  assert.equal(modelsLabel(null, 'sonnet'), 'Models: Code Claude Sonnet');
+  assert.equal(modelsLabel('gpt', null), 'Models: Base GPT-5.4 mini');
+});
+
+test('the two-column popup and its wiring: ModelChoices in the column card and the phone strip, the base model from its own setting, GPT drawn with its own mark', () => {
+  const chips = readFileSync(new URL('./ComposerChips.tsx', import.meta.url), 'utf8');
+  assert.match(chips, /export function ModelChoices\(/);
+  assert.match(chips, /\{base && <OptionList spec=\{BASE_MODEL\} control=\{base\} onDone=\{onDone\} compact \/>\}/);   // Base is the first column
+  assert.match(chips, /\{code && <OptionList spec=\{CHIPS\.model\} control=\{code\} onDone=\{onDone\} compact \/>\}/);
+  assert.match(chips, /\{open === 'model' && <ModelChoices base=\{baseModel\} code=\{model\}/);
+  assert.match(chips, /id === 'gpt'\) return <GptMark \/>/);
+  const rail = readFileSync(new URL('./SessionRail.tsx', import.meta.url), 'utf8');
+  assert.match(rail, /<ModelChoices base=\{settings\.baseModel\} code=\{settings\.model\}/);
+  const chat = readFileSync(new URL('../pages/Chat.tsx', import.meta.url), 'utf8');
+  assert.match(chat, /baseModel: replyModelAvailable \? \{ value: replyModel, onChange: id => \{ void handleReplyModelChange\(id as ReplyModel\); \} \} : null,/);
+  assert.match(chat, /setReplyModelAvailable\(data\.available\)/);
+  const css = readFileSync(new URL('./__styles__/ComposerChips.css', import.meta.url), 'utf8');
+  assert.match(css, /\.cc-cols \{ display: grid; grid-template-columns: repeat\(auto-fit, minmax\(120px, 1fr\)\)/);
+  assert.ok(css.indexOf('.cc-pop.cc-cols') < css.indexOf('.composer-chips-panel .cc-pop,'), 'the column card override (width: auto) comes after the popup width, so it wins');
 });

@@ -31,7 +31,14 @@ DEFAULT_PLAN_MODE = False       # "Plan first": a change to the person's folder 
 TOOL_MODEL_GEMINI = "gemini"
 TOOL_MODEL_CLAUDE = "claude"
 TOOL_MODEL_SONNET = "sonnet"
-VALID_TOOL_MODELS = {TOOL_MODEL_GEMINI, TOOL_MODEL_CLAUDE, TOOL_MODEL_SONNET}
+TOOL_MODEL_GPT = "gpt"           # GPT-5.4 mini (OpenAI): offered only with an OpenAI key AND a price in LLM_PRICES, like Sonnet (backend/models/models.py openai_available)
+VALID_TOOL_MODELS = {TOOL_MODEL_GEMINI, TOOL_MODEL_CLAUDE, TOOL_MODEL_SONNET, TOOL_MODEL_GPT}
+
+# The BASE model: which model writes the reply the person reads (the Code model above does only the reasoning steps of code work). "gemini" is today's model and what a person who never chose gets;
+# "gpt" is GPT-5.4 mini, offered only where the server has its key and price, never for a guest or the embedded view, and never inside a safety context (app.py: that path was built and evaluated on Gemini).
+REPLY_MODEL_GEMINI = "gemini"
+REPLY_MODEL_GPT = "gpt"
+VALID_REPLY_MODELS = {REPLY_MODEL_GEMINI, REPLY_MODEL_GPT}
 
 
 # PAAPP's legacy calendar tool hardcoded every event to 'America/Chicago' for a single operator —
@@ -106,6 +113,12 @@ def _resolve_tool_model(doc: dict) -> Optional[str]:
     """The stored choice, or None for "never chose" (so the server's default applies)."""
     mode = doc.get("tool_model")
     return mode if mode in VALID_TOOL_MODELS else None
+
+
+def _resolve_reply_model(doc: dict) -> Optional[str]:
+    """The stored base-model choice, or None for "never chose" (Gemini)."""
+    mode = doc.get("reply_model")
+    return mode if mode in VALID_REPLY_MODELS else None
 
 
 def _resolve_deep_thinking(doc: dict) -> bool:
@@ -244,35 +257,84 @@ def set_user_tool_model(username: str, mode: str) -> Optional[str]:
     return mode
 
 
+def get_user_reply_model(username: str) -> Optional[str]:
+    """The person's stored base-model choice, or None when they never chose. A guest or the embed is always Gemini."""
+    if username in TOOL_MODEL_LOCKED_USERS:
+        return REPLY_MODEL_GEMINI
+    return _resolve_reply_model(_fetch_settings_doc(username))
+
+
+def set_user_reply_model(username: str, mode: str) -> Optional[str]:
+    """Validates and saves the base-model choice. An unknown model is refused (None, nothing saved); a locked identity can only ever be Gemini."""
+    if mode not in VALID_REPLY_MODELS:
+        return None
+    if username in TOOL_MODEL_LOCKED_USERS:
+        mode = REPLY_MODEL_GEMINI
+
+    db = get_db()
+    if db is not None:
+        db["user_settings"].update_one({"username": username}, {"$set": {"reply_model": mode}}, upsert=True)
+    _write_local_setting(username, "reply_model", mode)
+    return mode
+
+
+def reply_model_view(username: str, gpt_ready: bool) -> dict:
+    """What the model chip shows for the BASE model: the model in effect, whether the person chose it, the default, and whether GPT can be offered to them at all (a key and a price are configured and they are
+    not a guest). Without that the effective model is Gemini whatever was stored."""
+    stored = get_user_reply_model(username)
+    offered = bool(gpt_ready) and username not in TOOL_MODEL_LOCKED_USERS
+    effective = stored if (offered and stored == REPLY_MODEL_GPT) else REPLY_MODEL_GEMINI
+    return {"reply_model": effective, "choice": stored, "default": REPLY_MODEL_GEMINI, "available": offered, "gpt_available": offered}
+
+
+def save_reply_model_choice(username: str, mode: str, gpt_ready: bool):
+    """What the settings endpoint does with a request: (the view, None) when saved, or (None, (status, message)) when refused. An unknown model is a 400; GPT where it is not set up and priced is a 409."""
+    if mode not in VALID_REPLY_MODELS:
+        return None, (400, "reply_model must be 'gemini' or 'gpt'")
+    if mode == REPLY_MODEL_GPT and not gpt_ready:
+        return None, (409, "GPT isn't set up on this server, so it can't be used yet.")
+    set_user_reply_model(username, mode)
+    return reply_model_view(username, gpt_ready), None
+
+
 def server_default_tool_model() -> str:
     """What a person who never chose gets: Gemini, unless the operator set TOOL_AGENT_PROVIDER=anthropic."""
     return TOOL_MODEL_CLAUDE if os.getenv("TOOL_AGENT_PROVIDER", "").strip().lower() == "anthropic" else TOOL_MODEL_GEMINI
 
 
-def tool_model_view(username: str, claude_ready: bool, sonnet_ready: bool = False) -> dict:
-    """What the settings menu shows: the model in effect, whether the person chose it, the server's default, whether Claude can be offered to them at all
-    (a key is configured and they are not a guest), and whether Sonnet can (also needs its price configured). With no key, the effective model is Gemini whatever was stored;
-    a stored Sonnet that can no longer be offered shows as Claude (it is served by Haiku, see models.tool_agent_llm)."""
+def tool_model_view(username: str, claude_ready: bool, sonnet_ready: bool = False, gpt_ready: bool = False) -> dict:
+    """What the settings menu shows for the CODE model: the model in effect, whether the person chose it, the server's default, which of Claude, Sonnet and GPT can be offered to them
+    (Claude needs a key; Sonnet also its price; GPT a key and its price; none for a guest) and `available`: whether there is anything to choose beyond Gemini. With no key for a choice, the effective model
+    is Gemini whatever was stored; a stored Sonnet that can no longer be offered shows as Claude (it is served by Haiku, see models.tool_agent_llm)."""
     stored = get_user_tool_model(username)
-    offered = bool(claude_ready) and username not in TOOL_MODEL_LOCKED_USERS
-    sonnet_offered = offered and bool(sonnet_ready)
-    effective = (stored or server_default_tool_model()) if offered else TOOL_MODEL_GEMINI
+    unlocked = username not in TOOL_MODEL_LOCKED_USERS
+    claude_offered = bool(claude_ready) and unlocked
+    sonnet_offered = claude_offered and bool(sonnet_ready)
+    gpt_offered = bool(gpt_ready) and unlocked
+    effective = (stored or server_default_tool_model()) if (claude_offered or gpt_offered) else TOOL_MODEL_GEMINI
     if effective == TOOL_MODEL_SONNET and not sonnet_offered:
         effective = TOOL_MODEL_CLAUDE
-    return {"tool_model": effective, "choice": stored, "default": server_default_tool_model(), "available": offered, "sonnet_available": sonnet_offered}
+    if effective in (TOOL_MODEL_CLAUDE, TOOL_MODEL_SONNET) and not claude_offered:
+        effective = TOOL_MODEL_GEMINI
+    if effective == TOOL_MODEL_GPT and not gpt_offered:
+        effective = TOOL_MODEL_GEMINI
+    return {"tool_model": effective, "choice": stored, "default": server_default_tool_model(), "available": claude_offered or gpt_offered,
+            "claude_available": claude_offered, "sonnet_available": sonnet_offered, "gpt_available": gpt_offered}
 
 
-def save_tool_model_choice(username: str, mode: str, claude_ready: bool, sonnet_ready: bool = False):
+def save_tool_model_choice(username: str, mode: str, claude_ready: bool, sonnet_ready: bool = False, gpt_ready: bool = False):
     """What the settings endpoint does with a request: (the view to return, None) when saved, or (None, (status code, message)) when it is refused. An unknown
-    model is a 400; Claude when no key is configured is a 409 (it cannot be offered, so it cannot be chosen), and so is Sonnet without a key or without its price."""
+    model is a 400; Claude when no key is configured is a 409 (it cannot be offered, so it cannot be chosen), and so is Sonnet without a key or without its price, and GPT without its key or price."""
     if mode not in VALID_TOOL_MODELS:
-        return None, (400, "tool_model must be 'gemini', 'claude' or 'sonnet'")
+        return None, (400, "tool_model must be 'gemini', 'claude', 'sonnet' or 'gpt'")
     if mode in (TOOL_MODEL_CLAUDE, TOOL_MODEL_SONNET) and not claude_ready:
         return None, (409, "Claude isn't set up on this server.")
     if mode == TOOL_MODEL_SONNET and not sonnet_ready:
         return None, (409, "Claude Sonnet isn't priced on this server, so it can't be used yet.")
+    if mode == TOOL_MODEL_GPT and not gpt_ready:
+        return None, (409, "GPT isn't set up on this server, so it can't be used yet.")
     set_user_tool_model(username, mode)
-    return tool_model_view(username, claude_ready, sonnet_ready), None
+    return tool_model_view(username, claude_ready, sonnet_ready, gpt_ready), None
 
 
 def get_user_target_repo(username: str) -> Optional[str]:
@@ -289,7 +351,7 @@ def get_user_settings_bundle(username: str) -> dict:
     chat-request path, which used to call the three getters above separately (3 network round
     trips per message for 3 fields on the exact same document) instead of once."""
     if username in TOGGLE_LOCKED_USERS:
-        return {"rag_mode": RAG_MODE_STRICT, "deep_thinking": DEFAULT_DEEP_THINKING, "plan_mode": DEFAULT_PLAN_MODE, "target_repo": None, "tool_model": TOOL_MODEL_GEMINI, "profile": profile_utils.stored_profile({})}
+        return {"rag_mode": RAG_MODE_STRICT, "deep_thinking": DEFAULT_DEEP_THINKING, "plan_mode": DEFAULT_PLAN_MODE, "target_repo": None, "tool_model": TOOL_MODEL_GEMINI, "reply_model": REPLY_MODEL_GEMINI, "profile": profile_utils.stored_profile({})}
     doc = _fetch_settings_doc(username)
     return {
         "rag_mode": _resolve_rag_mode(doc),
@@ -297,6 +359,7 @@ def get_user_settings_bundle(username: str) -> dict:
         "plan_mode": _resolve_plan_mode(doc),
         "target_repo": _resolve_target_repo(doc),
         "tool_model": TOOL_MODEL_GEMINI if username in TOOL_MODEL_LOCKED_USERS else _resolve_tool_model(doc),
+        "reply_model": REPLY_MODEL_GEMINI if username in TOOL_MODEL_LOCKED_USERS else _resolve_reply_model(doc),
         "profile": _resolve_profile(doc),  # the profile page's fields (backend/utils/profile_utils.py), read from the same document
     }
 

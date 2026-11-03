@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Icon, { type IconName } from './icons';
-import { CHIPS, chipLabel, isChanged, optionOf, type ChipKey } from './composerChipsLogic';
+import { BASE_MODEL, CHIPS, chipLabel, isChanged, modelChipValue, modelsChanged, modelsLabel, specOption, type ChipKey, type ChipSpec } from './composerChipsLogic';
 import './__styles__/ComposerChips.css';
 
 export interface ChipControl {
@@ -12,8 +12,10 @@ export interface ChipControl {
 
 /** What the chat settings need, in the three places they can live: under the message box, in the column's "Chat settings" card, and down the phone strip (SessionRail). */
 export interface ChatSettings {
-  /** The code model; null where it is not offered (Claude is not set up on the server, or a guest). */
+  /** The code model; null where it is not offered (neither Claude nor GPT is set up on the server, or a guest). */
   model: ChipControl | null;
+  /** The base model, the one that writes the reply; null where there is no choice (GPT is not set up on the server, or a guest). It shares the model chip's popup with the code model, as its first column. */
+  baseModel: ChipControl | null;
   /** Plan or Agent; null without a connected folder that can be edited (it only matters there). */
   mode: ChipControl | null;
   thinking: ChipControl;
@@ -50,6 +52,16 @@ function ClaudeMark() {
   );
 }
 
+/** GPT's mark: a rounded hexagon with a ring in it, in a green. Drawn here as a small SVG of our own, not OpenAI's logo; swap in the official file if you prefer it exact. */
+function GptMark() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" className="cc-mark" fill="none" stroke="#10a37f" strokeWidth="1.9" strokeLinejoin="round">
+      <path d="M12 2.6 20 7.3v9.4l-8 4.7-8-4.7V7.3z" />
+      <circle cx="12" cy="12" r="3.3" />
+    </svg>
+  );
+}
+
 /** The little robot the follow-up suggestions carry (Chat.tsx), in the chip's own colour. */
 function RobotMark() {
   return (
@@ -72,28 +84,59 @@ const ICON_NAMES: Record<string, IconName> = { plan: 'checklist', swift: 'bolt',
 export function glyph(id: string): React.ReactNode {
   if (id === 'gemini') return <GeminiMark />;
   if (id === 'claude' || id === 'sonnet') return <ClaudeMark />;
+  if (id === 'gpt') return <GptMark />;
   if (id === 'agent') return <RobotMark />;
   return <Icon name={ICON_NAMES[id] ?? 'checklist'} size={18} />;
 }
 
-/** The two choices of one chip, each with its icon, name and what it does; the one in force is marked. `className` is the popup's own (the bar's floats, the phone strip's opens beside its button). */
-export function ChipChoices({ chipKey, control, onDone, className }: { chipKey: ChipKey; control: ChipControl; onDone: () => void; className: string }) {
-  const spec = CHIPS[chipKey];
+/** The choices of one setting as a list: its heading, then each choice with its icon, name and what it does, the one in force marked. `compact` puts the short line under each name (the full wording is the tooltip). */
+function OptionList({ spec, control, onDone, compact }: { spec: ChipSpec; control: ChipControl; onDone: () => void; compact: boolean }) {
   return (
-    <div className={className} role="menu" aria-label={spec.title}>
+    <div className="cc-col" role="group" aria-label={spec.title}>
       <div className="cc-pop-title">{spec.title}</div>
       {spec.options.filter(option => !control.hide?.includes(option.id)).map(option => (
         <button
-          key={option.id} type="button" role="menuitemradio" aria-checked={option.id === control.value}
+          key={option.id} type="button" role="menuitemradio" aria-checked={option.id === control.value} title={option.hint}
           className={`cc-opt${option.id === control.value ? ' is-selected' : ''}`}
           onClick={() => { if (option.id !== control.value) control.onChange(option.id); onDone(); }}
         >
           <span className="cc-opt-icon">{glyph(option.id)}</span>
-          <span className="cc-opt-text"><b>{optionOf(chipKey, option.id).name}</b><span>{option.hint}</span></span>
+          <span className="cc-opt-text"><b>{specOption(spec, option.id).name}</b><span>{compact ? (option.short ?? option.hint) : option.hint}</span></span>
         </button>
       ))}
     </div>
   );
+}
+
+/** The choices of one chip, each with its icon, name and what it does; the one in force is marked. `className` is the popup's own (the bar's floats, the phone strip's opens beside its button). */
+export function ChipChoices({ chipKey, control, onDone, className }: { chipKey: ChipKey; control: ChipControl; onDone: () => void; className: string }) {
+  const spec = CHIPS[chipKey];
+  return (
+    <div className={className} role="menu" aria-label={spec.title}>
+      <OptionList spec={spec} control={control} onDone={onDone} compact={false} />
+    </div>
+  );
+}
+
+/**
+ * The model chip's popup: two columns, the Base model (which model writes the reply) and the Code model (which does the reasoning steps of code work), each only where the server offers a choice. Both sit in
+ * the same popup so one press shows how Sonic is set up. The columns share the width and stack by themselves where it is too narrow for two (the CSS: cc-cols).
+ */
+export function ModelChoices({ base, code, onDone, className }: { base: ChipControl | null; code: ChipControl | null; onDone: () => void; className: string }) {
+  return (
+    <div className={`${className} cc-cols`} role="menu" aria-label="Models">
+      {base && <OptionList spec={BASE_MODEL} control={base} onDone={onDone} compact />}
+      {code && <OptionList spec={CHIPS.model} control={code} onDone={onDone} compact />}
+    </div>
+  );
+}
+
+/** What the model chip shows for its two settings: its icon (the first one that is not the ordinary model), whether it is highlighted, and its name. Null when neither setting is offered. */
+export function modelChip(base: ChipControl | null, code: ChipControl | null): { value: string; changed: boolean; label: string } | null {
+  if (!base && !code) return null;
+  const baseValue = base ? base.value : null;
+  const codeValue = code ? code.value : null;
+  return { value: modelChipValue(baseValue, codeValue), changed: modelsChanged(baseValue, codeValue), label: modelsLabel(baseValue, codeValue) };
 }
 
 type Open = ChipKey | 'help' | null;
@@ -103,7 +146,7 @@ type Open = ChipKey | 'help' | null;
  * shows which of its two states is on (and is highlighted when that is not the ordinary one); pressing it lists both states under the row and says what each does. In the column the open choice is
  * listed under the row at the card's width instead of floating, because the column scrolls and is narrower than a popup. One is open at a time; a press anywhere else, or Escape, closes it.
  */
-const ComposerChips: React.FC<ChatSettings> = ({ model, mode, thinking, answers, disabled, onExport, exportDisabled, help }) => {
+const ComposerChips: React.FC<ChatSettings> = ({ model, baseModel, mode, thinking, answers, disabled, onExport, exportDisabled, help }) => {
   const [open, setOpen] = useState<Open>(null);
   const root = useRef<HTMLDivElement>(null);
 
@@ -139,9 +182,26 @@ const ComposerChips: React.FC<ChatSettings> = ({ model, mode, thinking, answers,
     );
   };
 
+  /** The model chip: one icon for the Base model and the Code model together, opening the two-column popup. */
+  const modelButton = () => {
+    const state = modelChip(baseModel, model);
+    if (!state) return null;
+    return (
+      <div className="cc-item" key="model">
+        <button
+          type="button" className={`cc-btn${state.changed ? ' is-changed' : ''}${open === 'model' ? ' is-open' : ''}`}
+          aria-haspopup="menu" aria-expanded={open === 'model'} aria-label={state.label} title={disabled ? `${state.label} (locked while Sonic is working)` : state.label}
+          disabled={disabled} onClick={() => toggle('model')}
+        >
+          {glyph(state.value)}
+        </button>
+      </div>
+    );
+  };
+
   const row = (
     <>
-      {chip('model', model)}
+      {modelButton()}
       {chip('mode', mode)}
       {chip('thinking', thinking)}
       {chip('answers', answers)}
@@ -159,12 +219,13 @@ const ComposerChips: React.FC<ChatSettings> = ({ model, mode, thinking, answers,
   );
 
   // The open choice is listed under the row, at the card's width.
-  const openControl = open && open !== 'help' ? controlOf(open) : null;
+  const openControl = open && open !== 'help' && open !== 'model' ? controlOf(open) : null;
   return (
     <div className="composer-chips composer-chips-panel" ref={root}>
       <div className="cc-row">{row}</div>
       {open === 'help' && <div className="cc-pop cc-pop-help" role="dialog" aria-label="Help">{help}</div>}
-      {open && open !== 'help' && openControl && choices(open, openControl)}
+      {open === 'model' && <ModelChoices base={baseModel} code={model} onDone={() => setOpen(null)} className="cc-pop" />}
+      {open && open !== 'help' && open !== 'model' && openControl && choices(open, openControl)}
     </div>
   );
 };

@@ -656,8 +656,8 @@ def test_the_app_overrides_routing_suppresses_nudges_and_guarantees_a_line_when_
     assert 'goal_nudge_context = "" if (risk_level != RISK_NONE or open_loop_entry) else await asyncio.to_thread(fetch_goal_nudge_context, username)' in source
     assert 'source_type == "conversational" and risk_level == RISK_NONE and is_closing_message(question)' in source
     assert "safety_plan = plan_safety_turn(" in source and "safety_plan.context" in source
-    assert "safety_plan.reply_issue(full_response)" in source
-    assert "safety_plan.needs_resource_line(full_response)" in source and "full_response += CRISIS_RESOURCE_LINE" in source
+    assert "safety_plan.reply_issue(checked_reply)" in source      # checked_reply: the reply with typographic quotes made plain (a model that writes "I’m" must not slip past a check written with "I'm")
+    assert "safety_plan.needs_resource_line(plain_quotes(full_response))" in source and "full_response += CRISIS_RESOURCE_LINE" in source
     assert "remembered_support_people" in source
 
 

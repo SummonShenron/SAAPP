@@ -378,7 +378,8 @@ export const EVERYDAY: Record<string, Content> = {
       <p>The short version:</p>
       <ul>
         <li>What you type, and anything you attach, is sent to Google's Gemini so Sonic can answer.</li>
-        <li>If you set <strong>Code model</strong> to Claude, the code and tool steps of a request (the question, and the code and results Sonic reads while working on it) go to Anthropic instead of Google for those steps. Sonic's reply is still written by Gemini. Set it back to Gemini any time.</li>
+        <li>If you set <strong>Code model</strong> to Claude, the code and tool steps of a request (the question, the code and results Sonic reads while working on it, and the few saved notes about you that relate to the request, if any) go to Anthropic instead of Google for those steps. Sonic's reply is written by your Base model. Set it back to Gemini any time.</li>
+        <li>If you choose <strong>GPT-5.4 mini</strong> (OpenAI) as the Base model, what Gemini would have received for a reply goes to OpenAI instead, and as the Code model, the code and tool steps do. It's off unless you pick it, and when someone is going through something hard Sonic uses Gemini whatever it's set to.</li>
         <li>Your conversations are kept until you delete them. Photos and files you attach are removed after 30 days, or sooner if you delete the conversation.</li>
         <li>{ctx.guest
           ? 'Guests share one temporary identity, so nothing here is tied to you.'
@@ -415,7 +416,7 @@ export const EVERYDAY: Record<string, Content> = {
         <li><strong>Open Answers:</strong> on (the default), Sonic can also use its general knowledge when your documents don't have the answer. Off, it sticks to your documents.</li>
         <li><strong>Deep Thinking:</strong> slower but more thorough, for tricky questions with several parts.</li>
         <li><strong>Plan first</strong> (with a folder connected): a request to change your files starts with a plan you approve. Sonic reads, then shows the files, the steps and what it is unsure of; nothing is edited until you press Approve. Steps tick off as you apply their edits, and "Continue" picks up where a long change left off. It costs an extra reading pass, so it is off by default.</li>
-        <li><strong>Code model:</strong> which AI does the reasoning steps when Sonic reads code, searches or writes code for you: Gemini or Claude. Sonic's reply is still written by Gemini either way. It only appears when Claude is set up, and it isn't offered in the guest demo.</li>
+        <li><strong>Models:</strong> one icon, two columns. <em>Base model</em> is the AI that writes Sonic's replies (Gemini, or GPT-5.4 mini where it's set up). <em>Code model</em> is the AI that does the reasoning steps when Sonic reads code, searches or writes code for you (Gemini, Claude, Claude Sonnet or GPT-5.4 mini). A column only appears when something besides Gemini is set up, and neither is offered in the guest demo.</li>
       </ul>
       <p>The choices about how Sonic behaves are on the Account page: letting Sonic start conversations and bring things up (under "About you"), showing or hiding the little robot, and, for admins, the incident digest. The steps Sonic took to answer are under the <strong>microscope</strong> button at the top right.</p>
       <p><HelpLink go={ctx.go} path="/account">Open Account settings</HelpLink></p>

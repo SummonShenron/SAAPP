@@ -22,6 +22,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from backend.utils.emotion_checks import reply_body
 from backend.utils.emotion_utils import EMOTION_INJECTION_THRESHOLD, effective_intensity, energy_tier
+from backend.utils.text_plain import plain_quotes
 
 CHECKIN_MARK = "emotion_checkin"
 CHECKIN_AFTER_TURNS = int(os.getenv("EMOTION_CHECKIN_AFTER_TURNS", "8"))
@@ -110,9 +111,13 @@ _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
 # config?", "does that make sense to you?") is about the work, so it is never counted as a check-in.
 _ABOUT_THEM = re.compile(
     r"\b(?:how are you|how(?:'s| is| has| have| was| did) (?:your|you|the rest|it been|everything|that sit)|holding up|doing (?:now|okay|ok|alright|better|right now)|"
-    r"are you (?:ok|okay|alright|doing)|you (?:ok|okay|alright)\b|feeling (?:now|any|a bit|better)|weighing on you|sitting with you|(?:rest of )?your (?:day|week|morning|afternoon|evening))\b",
+    r"are you (?:ok|okay|alright|doing)|you (?:ok|okay|alright)\b|feeling (?:now|any|a bit|better)|weighing on you|sitting with you|(?:rest of )?your (?:day|week|morning|afternoon|evening)|"
+    # "How's it going after that rough day earlier": a general "how's it going" counts only when it points at what they went through ("how's it going with the retry loop?" is about the work)
+    r"how(?:'s| is| has| have| was)? (?:it|that|things|everything) (?:going|been|sitting)\b[^.?!]{0,60}\b(?:after|since|rough|hard|tough|battered|steadier|calmer|settling|lighter|better|day)|"
+    r"still (?:pretty |very much |really )?(?:in it|battered|raw|rough|heavy)|settling down|any (?:calmer|better)|a (?:bit|little) (?:steadier|calmer|lighter))\b",
     re.IGNORECASE,
 )
+_QUESTION_STEM = re.compile(r"^(?:how|are you|have you|any)\b", re.IGNORECASE)
 _ABOUT_THE_WORK = re.compile(r"\b(?:want me to|should i|shall i|would you like me|do you want me|need me to|like me to)\b", re.IGNORECASE)
 
 
@@ -120,15 +125,17 @@ MAX_SKIP_WORDS = 25  # a closing line after the question ("No need to go into it
 
 
 def _to_them(sentence: str) -> bool:
-    return sentence.endswith("?") and bool(_ABOUT_THEM.search(sentence)) and not _ABOUT_THE_WORK.search(sentence)
+    """A question to the person about how they are. A question mark is not required: it is a question when it ends in one OR opens like one ("How are you holding up after that rough day at work"), since some models leave it off."""
+    asks = sentence.endswith("?") or bool(_QUESTION_STEM.match(sentence))
+    return asks and bool(_ABOUT_THEM.search(sentence)) and not _ABOUT_THE_WORK.search(sentence)
 
 
 def asked(reply: str) -> bool:
     """Whether a reply ended on a question to the person about themselves (not "want me to run the tests?"), optionally followed by one short line that makes it easy to skip. Only then is a
     check-in counted and marked as made."""
-    sentences = [s.strip() for s in _SENTENCE_SPLIT.split(reply_body(reply or "")) if s.strip()]
+    sentences = [s.strip() for s in _SENTENCE_SPLIT.split(reply_body(plain_quotes(reply or ""))) if s.strip()]      # typographic apostrophes ("How’s your day") read as plain ones
     if not sentences:
         return False
     if _to_them(sentences[-1]):
         return True
-    return len(sentences) >= 2 and _to_them(sentences[-2]) and not sentences[-1].endswith("?") and len(sentences[-1].split()) <= MAX_SKIP_WORDS
+    return len(sentences) >= 2 and _to_them(sentences[-2]) and not sentences[-1].endswith("?") and not _to_them(sentences[-1]) and len(sentences[-1].split()) <= MAX_SKIP_WORDS

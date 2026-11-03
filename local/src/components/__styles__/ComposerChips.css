@@ -36,6 +36,15 @@
 .cc-opt-text b { font-size: 0.85rem; font-weight: 600; }
 .cc-opt-text span { font-size: 0.75rem; line-height: 1.4; color: var(--text-muted); }
 
+/* The model chip's popup (components/ComposerChips.tsx ModelChoices): the Base model and the Code model as two columns where each gets at least 120px, and one over the other where it does not.
+   The 272px column's card (210px inside) and the phone strip's card are too narrow for two (measured: 94px each wraps every name), so there they stack, Base first; a wider popup gets two columns.
+   Each choice shows a short line under its name; the full wording is its tooltip. */
+.cc-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 4px 8px; align-items: start; }
+.cc-cols .cc-col { min-width: 0; }
+.cc-cols .cc-opt { padding: 6px; gap: 8px; }
+.cc-cols .cc-opt-text span { font-size: 0.7rem; line-height: 1.3; }
+.cc-pop.cc-cols { width: min(340px, calc(100vw - 24px)); }
+
 .cc-help-title { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 600; padding-right: 16px; color: var(--accent-primary); }
 .cc-help-list { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 6px; }
 

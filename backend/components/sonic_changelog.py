@@ -226,6 +226,20 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "gpt_model_choice",
+        "requires": [
+            "backend/models/openai_llm.py::class OpenAILLM",
+            "backend/models/models.py::def openai_available",
+        ],
+        "month": "2026-11",
+        "title": "GPT-5.4 mini as a model choice",
+        "line": (
+            "I can now use GPT-5.4 mini, where it is set up, either to write my replies (Base model) or for the code steps (Code model), chosen in the Models setting. Gemini stays the default."
+        ),
+        "keywords": ["gpt", "openai", "gpt-5.4", "base model", "reply model", "which model", "different model"],
+        "volunteer": [],
+    },
+    {
         "id": "attachments_remembered",
         "requires": [
             "backend/utils/attachment_utils.py::def earlier_attachments_block",

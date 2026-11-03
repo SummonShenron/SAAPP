@@ -499,7 +499,7 @@ def test_the_schedule_lines_lead_with_the_job_and_its_time_and_the_block_says_ho
 
 def test_the_chat_endpoint_checks_a_routines_answer_against_its_schedule():
     source = open("app.py", encoding="utf-8").read()
-    assert "routines_utils.reply_issue(full_response, routines_context)" in source
+    assert "routines_utils.reply_issue(checked_reply, routines_context)" in source      # checked_reply: the reply with typographic quotes made plain, so the check sees what it was written for
 
 
 # ------------------------------------------------------------------------ asked about a run that happened, pushback, and curly apostrophes ------------------------------------------------------------------------

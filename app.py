@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
-from backend.models.models import llm, get_stream_llm, claude_available, sonnet_available
+from backend.models.models import llm, get_stream_llm, claude_available, sonnet_available, openai_available
 from backend.models.attachment import Attachment
 from backend.services.github_service import (
     process_pr_summary, verify_and_store_github_token, GitHubTokenRejected, GitHubUnreachable,
@@ -151,6 +151,7 @@ from backend.utils import runner_jobs
 from backend.utils import runner_scripts
 from backend.utils import clarifications as clarify_utils
 from backend.utils import emotion_checkin
+from backend.utils.text_plain import plain_quotes
 from backend.utils import initiation as initiation_utils
 from backend.utils import proactive_gates
 from backend.utils import reach as reach_utils
@@ -182,7 +183,7 @@ from backend.utils.shared_history import CALLBACK_MARK, build_callback_block, ca
 from backend.utils.user_settings_utils import (
     get_user_rag_mode, set_user_rag_mode, VALID_RAG_MODES,
     get_user_deep_thinking_mode, set_user_deep_thinking_mode, get_user_plan_mode, set_user_plan_mode,
-    tool_model_view, save_tool_model_choice,
+    tool_model_view, save_tool_model_choice, reply_model_view, save_reply_model_choice,
     get_user_target_repo, set_user_target_repo,
     get_user_settings_bundle,
     get_user_profile,
@@ -443,6 +444,9 @@ class CodePlanAction(BaseModel):
 
 class ToolModelUpdate(BaseModel):
     tool_model: str
+
+class ReplyModelUpdate(BaseModel):
+    reply_model: str
 
 class TargetRepoUpdate(BaseModel):
     target_repo: Optional[str] = None
@@ -767,7 +771,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     _settings = get_user_settings_bundle(username)
     effective_rag_mode = _settings["rag_mode"]
     effective_deep_thinking = _settings["deep_thinking"]
-    effective_tool_model = _settings.get("tool_model")      # "claude" | "sonnet" | "gemini" | None (never chose: the server's default)
+    effective_tool_model = _settings.get("tool_model")      # "claude" | "sonnet" | "gpt" | "gemini" | None (never chose: the server's default)
+    if _settings.get("reply_model") == "gpt":
+        response_llm = get_stream_llm(username, choice="gpt")       # the BASE model they chose, where the server offers it (otherwise the same Gemini model as above); see the safety override below
     effective_target_repo = _settings["target_repo"]
     user_profile = _settings.get("profile") or profile_utils.stored_profile({})  # what they set on the Account page (backend/utils/profile_utils.py)
     reach_level = reach_utils.reach_of(user_profile)  # how often Sonic may bring something up by itself (backend/utils/reach.py)
@@ -1597,7 +1603,10 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             if closing_turn:
                 prompt = prompt + CLOSING_DIRECTIVE
             # 3. STREAM RESPONSE TOKENS FROM LLM
-            token_stream = response_llm.astream(prompt)
+            # The model the person chose writes the reply, EXCEPT inside a safety context: that path (the support ladder, the listening mode, the checks around it) was built and evaluated on Gemini, so it
+            # always gets Gemini whatever the base-model setting says.
+            turn_llm = response_llm if risk_level == RISK_NONE else get_stream_llm(username)
+            token_stream = turn_llm.astream(prompt)
             async for chunk in token_stream:
                 # Same Stop check as the graph phase above — a user cutting off a response
                 # that's clearly going the wrong way shouldn't leave the LLM generating the
@@ -1656,29 +1665,32 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 tally(turn_counts, "reply_fit_checked")
                 revision_prompt, revision_tag = None, None
                 safety_revised, last_resort_line = False, False
-                safety_issue = safety_plan.reply_issue(full_response)
-                emotional_issue = None if safety_plan.active else emotional_reply_issue(final_state.get("emotional_state"), full_response)
+                # Every check below is written with straight apostrophes ("I'm glad you're back"), and some models write typographic ones ("I’m glad you’re back"; GPT does by default): the same sentence then
+                # passed every check unseen (found 2026-11-02). The checks read a plain-quotes COPY; what the person sees, and what a rewrite is told it rejected, stays the model's own text.
+                checked_reply = plain_quotes(full_response)
+                safety_issue = safety_plan.reply_issue(checked_reply)
+                emotional_issue = None if safety_plan.active else emotional_reply_issue(final_state.get("emotional_state"), checked_reply)
                 # Sonic's identity boundary (backend/utils/identity_checks.py): no claimed feelings, no stake in
                 # whether the person stays or comes back. Not applied while a safety context is in force, which has
                 # its own rules for what the reply must do.
                 identity_issue = None if safety_plan.active else identity_reply_issue(
-                    full_response, person_signal=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)) != "open")  # concern for the person only with a real emotional signal
+                    checked_reply, person_signal=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)) != "open")  # concern for the person only with a real emotional signal
                 if identity_issue is None and not safety_plan.active:
                     # An invented read, or a verdict on a piece on the reading shelf: also a matter of what Sonic is (backend/utils/reading_shelf.py).
                     identity_issue = shelf_utils.shelf_reply_issue(
-                        full_response, shelf_utils.offer_has_items(shelf_offer), refresh_reported=bool(self_report_kind or routines_context))
+                        checked_reply, shelf_utils.offer_has_items(shelf_offer), refresh_reported=bool(self_report_kind or routines_context))
                 if identity_issue is None and not safety_plan.active and events_shown:
                     # Named a time for something it was never told the time of: the gap the event block exists to keep honest (backend/utils/event_fields.py).
-                    identity_issue = event_fields.reply_issue(full_response, events_shown, question)
+                    identity_issue = event_fields.reply_issue(checked_reply, events_shown, question)
                 if identity_issue is None and not safety_plan.active and self_report_kind:
                     # Said everything is fine while the status on record shows a problem: the one thing the curated-disclosure rule forbids.
-                    identity_issue = self_report_utils.reply_issue(full_response, self_report_snap, tz_name=user_tz, admin=is_admin_user,
+                    identity_issue = self_report_utils.reply_issue(checked_reply, self_report_snap, tz_name=user_tz, admin=is_admin_user,
                                                                    kind=self_report_kind, person=self_report_person)
                 if identity_issue is None and not safety_plan.active and routines_context:
                     # A job said to run at a different part of the day than the schedule it was given lists (backend/utils/routines.py).
-                    identity_issue = routines_utils.reply_issue(full_response, routines_context)
+                    identity_issue = routines_utils.reply_issue(checked_reply, routines_context)
                 encouragement_issue = (
-                    encouragement_reply_issue(full_response, encouragement_entry)
+                    encouragement_reply_issue(checked_reply, encouragement_entry)
                     if encouragement_entry and not safety_plan.active else None
                 )
                 if safety_issue:
@@ -1698,7 +1710,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     revision_tag = "encouragement"
                     revision_title = "Keeping the encouragement honest"
                 elif closing_turn:
-                    closing_issue = closing_reply_issue(full_response)
+                    closing_issue = closing_reply_issue(checked_reply)
                     if closing_issue:
                         revision_prompt, _ = build_closing_revision_prompt(prompt, full_response, closing_issue)
                         revision_tag = "closing_engagement"
@@ -1712,7 +1724,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     yield f"data: {json.dumps({'event': 'regenerate_reset'})}\n\n"
                     rejected_draft = full_response
                     full_response = ""
-                    async for chunk in response_llm.astream(revision_prompt):
+                    async for chunk in turn_llm.astream(revision_prompt):
                         content = getattr(chunk, "content", "")
                         if isinstance(content, list):
                             token = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
@@ -1728,7 +1740,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 # The one element that must not depend on the model getting it right: when a human line is due
                 # (imminent danger, the people in their life exhausted, or they asked) the reply always names a
                 # real one, added in code if the rewrite still left it out.
-                if safety_plan.needs_resource_line(full_response):
+                if safety_plan.needs_resource_line(plain_quotes(full_response)):
                     full_response += CRISIS_RESOURCE_LINE
                     last_resort_line = True
                     yield f"data: {json.dumps({'event': 'token', 'text': CRISIS_RESOURCE_LINE})}\n\n"
@@ -1760,7 +1772,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     original_response = full_response
                     corrected_prompt = build_correction_prompt(prompt, verdict["tag"], verdict["reason"])
                     full_response = ""
-                    async for chunk in response_llm.astream(corrected_prompt):
+                    async for chunk in turn_llm.astream(corrected_prompt):
                         content = getattr(chunk, "content", "")
                         if isinstance(content, list):
                             token = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
@@ -3302,13 +3314,30 @@ async def get_tool_model_setting(current_user = Depends(get_current_user)):
     """Which model does the tool agent's reasoning steps for this person: their own choice, else the server's default. `available` is whether Claude can be
     offered at all (a key is configured); guests and the embed are always Gemini."""
     username = current_user.get("sub")
-    return tool_model_view(username, claude_available(), sonnet_available())
+    return tool_model_view(username, claude_available(), sonnet_available(), openai_available())
 
 
 @app.put("/api/settings/tool-model")
 async def update_tool_model_setting(payload: ToolModelUpdate, current_user = Depends(get_current_user)):
     username = current_user.get("sub")
-    view, problem = save_tool_model_choice(username, payload.tool_model, claude_available(), sonnet_available())
+    view, problem = save_tool_model_choice(username, payload.tool_model, claude_available(), sonnet_available(), openai_available())
+    if problem:
+        raise HTTPException(status_code=problem[0], detail=problem[1])
+    return view
+
+
+@app.get("/api/settings/reply-model")
+async def get_reply_model_setting(current_user = Depends(get_current_user)):
+    """Which model writes the reply the person reads (the BASE model): their own choice, else Gemini. `available` is whether GPT can be offered at all (an OpenAI key and a price are configured);
+    guests and the embed are always Gemini."""
+    username = current_user.get("sub")
+    return reply_model_view(username, openai_available())
+
+
+@app.put("/api/settings/reply-model")
+async def update_reply_model_setting(payload: ReplyModelUpdate, current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    view, problem = save_reply_model_choice(username, payload.reply_model, openai_available())
     if problem:
         raise HTTPException(status_code=problem[0], detail=problem[1])
     return view

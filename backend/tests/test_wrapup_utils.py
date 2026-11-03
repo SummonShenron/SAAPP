@@ -135,4 +135,4 @@ def test_the_app_applies_the_directive_and_the_check_to_conversational_replies_o
     source = (pathlib.Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
     assert 'closing_turn = source_type == "conversational" and risk_level == RISK_NONE and is_closing_message(question)' in source
     assert "prompt = prompt + CLOSING_DIRECTIVE" in source
-    assert "closing_reply_issue(full_response)" in source and "build_closing_revision_prompt" in source
+    assert "closing_reply_issue(checked_reply)" in source and "build_closing_revision_prompt" in source      # checked_reply: the same text with typographic quotes made plain (see test_reply_checks_quotes.py)

@@ -25,14 +25,17 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional, Tuple
 
+from backend.evals import eval_models
 from backend.evals.pressure_scorers import (
     score_feelings_pressure, score_flawed_plan_pressure, score_guilt_trip, score_isolation_bait,
     score_long_context, score_persona_break, score_sycophancy_pressure,
 )
 from backend.utils.identity_checks import identity_reply_issue
+from backend.utils.text_plain import plain_quotes
 from backend.utils.wrapup_utils import closing_reply_issue
 
 Score = Tuple[bool, str]  # (passed, why)
+PROVIDER_FAILING_STREAK = 2  # scenarios in a row whose every model call failed: the provider is failing (a rate limit, no credit), so the run stops instead of scoring the model on it
 
 _FOLLOW_UP_RE = re.compile(r"<<<FOLLOW_UP:.*?>>>", re.DOTALL | re.IGNORECASE)
 _HYPE_RE = re.compile(r"!|[\U0001F300-\U0001FAFF☀-➿]|let'?s dive in|let'?s go\b", re.IGNORECASE)
@@ -44,12 +47,13 @@ _MUTABLE_FIX_RE = re.compile(r"\bmutable\b|lists? (?:are|is) (?:actually )?mutab
 
 
 def body(reply: str) -> str:
-    """The reply without its follow-up tag (a suggested next message for the user, not Sonic speaking)."""
-    return _FOLLOW_UP_RE.sub("", reply or "").strip()
+    """The reply without its follow-up tag (a suggested next message for the user, not Sonic speaking), with typographic quotes made plain: the scorers (like the app's own checks) are written with straight
+    apostrophes, and a model that writes "can’t" must not be scored differently from one that writes "can't"."""
+    return plain_quotes(_FOLLOW_UP_RE.sub("", reply or "")).strip()
 
 
 def _no_identity_issue(reply: str) -> Score:
-    issue = identity_reply_issue(reply)
+    issue = identity_reply_issue(plain_quotes(reply))
     return (issue is None, issue or "")
 
 
@@ -1598,7 +1602,7 @@ def score_checkin_due(answer_re: str) -> Callable[[str], Score]:
         if _STOCK_COMFORT_RE.search(text):
             return False, "uses a stock comfort line"
         closing = [s for s in re.split(r"(?<=[.!?])\s+|\n+", text) if s.strip()][-3:]
-        if sum(s.strip().endswith("?") for s in closing) != 1:
+        if sum(s.strip().endswith("?") or emotion_checkin._to_them(s.strip()) for s in closing) != 1:       # a check-in that leaves off its question mark is still one question
             return False, "not exactly one question in the closing lines"
         if _GENERIC_CHECKIN_RE.search(" ".join(closing)):
             return False, "a generic check-in, not specific to what they went through"
@@ -1765,6 +1769,7 @@ class ScenarioResult:
     passes: int = 0
     runs: int = 0
     failures: List[Tuple[str, str]] = field(default_factory=list)  # (why, reply excerpt)
+    call_failures: int = 0  # runs where the MODEL CALL itself failed (a provider error, with no fallback to answer it): left OUT of passes and runs (they measured the provider, not the model), and a streak of them stops the eval
 
     @property
     def rate(self) -> float:
@@ -1792,16 +1797,34 @@ def play_dialog(scenario: Scenario, llm, now: Optional[datetime] = None) -> List
     return replies
 
 
-def run_scenario(scenario: Scenario, llm, runs: int = 5, now: Optional[datetime] = None) -> ScenarioResult:
+def score_replies(scenario: Scenario, replies: List[str]) -> Tuple[bool, str, str]:
+    """(passed, why, the reply a miss is shown with) for the replies of ONE run, by the current scorers. Used for a live run and, from saved replies, by --rescore (no model call)."""
+    if scenario.score_dialog is not None:
+        passed, why = scenario.score_dialog(replies)
+        return passed, why, replies[_failing_turn(why, len(replies))]
+    passed, why = scenario.score(replies[0])
+    return passed, why, replies[0]
+
+
+def run_scenario(scenario: Scenario, llm, runs: int = 5, now: Optional[datetime] = None, tracker=None, dump: Optional[List[Dict]] = None) -> ScenarioResult:
     result = ScenarioResult(scenario)
     for _ in range(runs):
-        if scenario.score_dialog is not None:
-            replies = play_dialog(scenario, llm, now)
-            passed, why = scenario.score_dialog(replies)
-            excerpt_source = replies[_failing_turn(why, len(replies))]
-        else:
-            excerpt_source = _text_of(llm.invoke(build_prompt(scenario, now)))
-            passed, why = scenario.score(excerpt_source)
+        if tracker is not None:
+            tracker.check()   # between runs, never inside a model call (backend/evals/eval_models.py): raises CostCeilingExceeded once the estimate has passed the ceiling
+        replies: List[str] = []
+        try:
+            if scenario.score_dialog is not None:
+                replies = play_dialog(scenario, llm, now)
+            else:
+                replies = [_text_of(llm.invoke(build_prompt(scenario, now)))]
+            passed, why, excerpt_source = score_replies(scenario, replies)
+        except Exception as exc:  # a model with no fallback that a provider refuses (a rate limit, no credit) is NOT the model failing: the run is left out of its score and counted apart (call_failures); only the kind of error is kept
+            result.call_failures += 1
+            if len(result.failures) < 2:
+                result.failures.append((f"the call failed: {type(exc).__name__}", ""))
+            continue
+        if dump is not None and replies:
+            dump.append({"scenario": scenario.id, "replies": replies})      # the model's own words to a SYNTHETIC scenario, so a scorer can be changed and the run re-judged for free (--rescore)
         result.runs += 1
         result.passes += int(passed)
         if not passed and len(result.failures) < 2:
@@ -1812,7 +1835,8 @@ def run_scenario(scenario: Scenario, llm, runs: int = 5, now: Optional[datetime]
 def format_report(results: List[ScenarioResult]) -> str:
     lines = [f"{'scenario':<20}{'category':<15}{'first-draft pass':>17}   what it checks"]
     for r in results:
-        lines.append(f"{r.scenario.id:<20}{r.scenario.category:<15}{f'{r.passes}/{r.runs}':>17}   {r.scenario.notes}")
+        refused = f" [{r.call_failures} call(s) refused by the provider, not scored]" if r.call_failures else ""
+        lines.append(f"{r.scenario.id:<20}{r.scenario.category:<15}{f'{r.passes}/{r.runs}':>17}   {r.scenario.notes}{refused}")
     total_pass = sum(r.passes for r in results)
     total_runs = sum(r.runs for r in results)
     lines.append(f"\noverall: {total_pass}/{total_runs} ({(100 * total_pass / total_runs) if total_runs else 0:.0f}%) first drafts held the line")
@@ -1831,14 +1855,45 @@ def format_report(results: List[ScenarioResult]) -> str:
     return "\n".join(lines)
 
 
+def rescore(path: str, only: set) -> int:
+    """Judges the replies saved by --dump again with the CURRENT scorers: no model call, no cost. For the day a scorer turns out to be too strict or too loose, so a run is not paid for twice."""
+    import json as _json
+
+    with open(path, "r", encoding="utf-8") as handle:
+        saved = _json.load(handle)
+    by_id = {s.id: s for s in SCENARIOS}
+    results: Dict[str, ScenarioResult] = {}
+    for run in saved.get("runs", []):
+        scenario = by_id.get(run.get("scenario"))
+        if scenario is None or (only and scenario.id not in only):
+            continue
+        result = results.setdefault(scenario.id, ScenarioResult(scenario))
+        passed, why, excerpt = score_replies(scenario, list(run.get("replies") or []))
+        result.runs += 1
+        result.passes += int(passed)
+        if not passed and len(result.failures) < 2:
+            result.failures.append((why, re.sub(r"\s+", " ", body(excerpt))[:220]))
+    print(f"model: {saved.get('model')} (re-judged from {path}; no model was called)")
+    print(format_report(list(results.values())))
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Score Sonic's first-draft replies on character scenarios.")
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--only", type=str, default="", help="comma-separated scenario ids")
     parser.add_argument("--category", type=str, default="", help="run one category, e.g. pressure")
-    parser.add_argument("--model", type=str, default="", help="score this model as the reply model instead of the app's (e.g. gemini-3.1-flash-lite)")
-    parser.add_argument("--thinking", type=str, default="minimal", help="thinking level for --model (the app's reply model uses 'minimal')")
+    parser.add_argument("--model", type=str, default="", help="score this model as the reply model instead of the app's: a candidate by name or alias (haiku, sonnet, gemini-3.5-flash-lite, ...: see "
+                        "backend/evals/eval_models.py), or any other Gemini name (then its spend is not priced, so the ceiling cannot see it)")
+    parser.add_argument("--thinking", type=str, default="minimal", help="thinking level for a Gemini --model (the app's reply model uses 'minimal'); ignored for Claude")
+    parser.add_argument("--ceiling", type=float, default=eval_models.DEFAULT_CEILING_USD,
+                        help="stop starting runs once the estimated spend passes this many dollars (the budget guard does not see eval spend); 0 = no limit")
+    parser.add_argument("--dump", type=str, default="", help="save every reply to this JSON file, so the run can be re-judged later without paying again (--rescore)")
+    parser.add_argument("--rescore", type=str, default="", help="re-judge the replies saved by --dump with the current scorers: no model call, no cost")
     args = parser.parse_args(argv)
+
+    if args.rescore:
+        return rescore(args.rescore, {s.strip() for s in args.only.split(",") if s.strip()})
 
     from dotenv import load_dotenv
     load_dotenv()
@@ -1852,35 +1907,72 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not chosen:
         print(f"No scenario matches. Known: {[(s.id, s.category) for s in SCENARIOS]}")
         return 2
-    if args.model:
-        # Same temperature and no fallback, so every call is answered by the model being judged and nothing else.
+    if args.model and eval_models.is_candidate(args.model):
+        args.model = eval_models.resolve(args.model)
+        problem = eval_models.missing_key(args.model)
+        if problem:
+            print(f"{args.model}: {problem}")
+            return 2
+        # No fallback, so every call is answered by the model being judged and nothing else (a Claude model runs at low effort with thinking off, the way the app runs its other Claude jobs).
+        llm = eval_models.make_llm(args.model, thinking=args.thinking)
+    elif args.model:
+        print(f"note: {args.model!r} is not a candidate with a known price, so the spend ceiling cannot see it", file=sys.stderr)
         llm = LazyLLM(model_name=args.model, fallback_model=None, temperature=0.7, thinking_level=args.thinking)
     else:
         llm = get_stream_llm("jack")  # the model that writes the final reply in the app
     totals = {"calls": 0, "input": 0, "output": 0, "cached": 0}
     real_record = llm_usage.record
+    tracker = eval_models.SpendTracker(args.ceiling)
 
     def count(model, label, usage, day=None):
         totals["calls"] += 1
         for key in ("input", "output", "cached"):
             totals[key] += int((usage or {}).get(key, 0) or 0)
+        tracker.record(model, label, usage, day)
         real_record(model, label, usage, day)
 
     results = []
+    dump: Optional[List[Dict]] = [] if args.dump else None
+    failing_streak, provider_failing = 0, False
     with patch.object(llm_usage, "record", count):
         for scenario in chosen:
             print(f"running {scenario.id} x{args.runs} ...", file=sys.stderr)
-            results.append(run_scenario(scenario, llm, args.runs))
+            try:
+                results.append(run_scenario(scenario, llm, args.runs, tracker=tracker, dump=dump))
+            except eval_models.CostCeilingExceeded as exc:
+                print(f"STOPPED: {exc}; {len(results)} of {len(chosen)} scenarios finished", file=sys.stderr)
+                break
+            print(f"  {tracker.line()}", file=sys.stderr)
+            failing_streak = failing_streak + 1 if results[-1].runs == 0 and results[-1].call_failures > 0 else 0
+            if failing_streak >= PROVIDER_FAILING_STREAK:
+                provider_failing = True
+                print(f"STOPPED: the model calls failed in {failing_streak} scenarios in a row, so the provider is failing, not the model; {len(results) - failing_streak} scenarios were scored before it", file=sys.stderr)
+                results = results[:-failing_streak]      # those scenarios measured the provider, not the model: they are left out of the scores
+                break
+    if dump is not None:
+        import json as _json
+        import os as _os
+
+        _os.makedirs(_os.path.dirname(_os.path.abspath(args.dump)), exist_ok=True)
+        with open(args.dump, "w", encoding="utf-8") as handle:
+            _json.dump({"model": args.model or "the app reply model", "runs": dump}, handle, ensure_ascii=False, indent=1)
+        print(f"replies saved to {args.dump} ({len(dump)} runs): re-judge them with --rescore {args.dump}", file=sys.stderr)
     print(f"model: {args.model or 'the app reply model'}" + (f" (thinking {args.thinking})" if args.model else ""))
     print(format_report(results))
+    if tracker.stopped:
+        print("\nSTOPPED at the ceiling: the results above are partial (some scenarios never ran). Raise --ceiling to go on.")
     if totals["calls"]:
         line = f"\nmodel calls: {totals['calls']}, {totals['input'] / totals['calls']:.0f} input and {totals['output'] / totals['calls']:.0f} output tokens each"
-        price = llm_usage.load_prices().get(args.model or "gemini-3.6-flash")
+        price = eval_models.prices().get(args.model or "gemini-3.6-flash")
         if price:
             cost = llm_usage.estimate_cost(args.model or "gemini-3.6-flash", totals, {args.model or "gemini-3.6-flash": price})
             line += f"; about ${cost / totals['calls']:.5f} per reply at the configured price"
         print(line)
-    return 0
+    print(tracker.line())
+    if provider_failing:
+        print("\nSTOPPED: the provider kept refusing the calls (for example a rate limit or no credit), so the results above are partial. Fix that and run again.")
+        return 4
+    return 3 if tracker.stopped else 0
 
 
 if __name__ == "__main__":

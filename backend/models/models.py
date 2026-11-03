@@ -1,9 +1,25 @@
 # backend/models/models.py
+import logging
 import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import AIMessage
 
 from backend.utils import llm_usage
+
+logger = logging.getLogger("SASS Logger")
+
+
+def _job_model(env_name: str, default: str) -> str:
+    """The Gemini model for one job (docs/model-eval-plan.md): `default` (today's model) unless the environment variable names another one. An override only applies when that model is PRICED in LLM_PRICES,
+    the same rule as the Sonnet option: the budget guard counts dollars from those prices, so a model without one would spend money it cannot see. An unpriced name leaves today's model in place and says so
+    (the log names the setting and the model, never anything a person wrote). Gemini names only: a Claude model needs its own wrapper (backend/models/claude_llm.py)."""
+    wanted = os.getenv(env_name, "").strip()
+    if not wanted or wanted == default:
+        return default
+    if wanted not in llm_usage.cached_prices():
+        logger.warning("[models] %s=%s is ignored: that model has no price in LLM_PRICES, so its spend would be invisible. Using %s.", env_name, wanted, default)
+        return default
+    return wanted
 
 # Shared by invoke/astream/ainvoke so a pattern added once (like 504 below, added after a real
 # production trace) protects every call path automatically instead of drifting across three
@@ -214,7 +230,7 @@ class LazyLLM:
 
 # 1. Primary Reasoning LLM (Full depth for backend LangGraph executions)
 llm = LazyLLM(
-    model_name="gemini-3.6-flash",
+    model_name=_job_model("CHAT_MODEL", "gemini-3.6-flash"),        # CHAT_MODEL: the formatter-type chat nodes (unset = today's model)
     fallback_model="gemini-3.1-flash-lite",
     temperature=0.7,
     thinking_level="high",  # Max reasoning depth for planning & retrieval
@@ -227,7 +243,7 @@ llm = LazyLLM(
 # costs one timeout, not two), and fall back to the bigger model — which is on a different quota
 # pool — only when the primary fails, so normal turns still cost what they did.
 lite_llm = LazyLLM(
-    model_name="gemini-3.1-flash-lite",
+    model_name=_job_model("LITE_MODEL", "gemini-3.1-flash-lite"),   # LITE_MODEL: routing flags, memory jobs and the default tool loop (unset = today's model)
     fallback_model="gemini-3.6-flash",
     fallback_thinking_level="minimal",
     temperature=0.2,
@@ -254,7 +270,7 @@ lite_llm_deep = LazyLLM(
 
 # 3. Dedicated Streaming LLM (Gemini 3.5 with low thinking level for fast TTFT)
 stream_llm = LazyLLM(
-    model_name="gemini-3.6-flash",
+    model_name=_job_model("REPLY_MODEL", "gemini-3.6-flash"),       # REPLY_MODEL: the reply the person reads, and the embedded one below (unset = today's model)
     fallback_model="gemini-3.1-flash-lite",
     temperature=0.7,
     thinking_level="minimal",  # <--- Drops TTFT from ~31s to ~1-2s while retaining quality
@@ -262,7 +278,7 @@ stream_llm = LazyLLM(
 
 # 4. Embedded Streaming LLM (BTY iframe traffic prioritizes minimum latency)
 embedded_llm = LazyLLM(
-    model_name="gemini-3.6-flash",
+    model_name=_job_model("REPLY_MODEL", "gemini-3.6-flash"),
     fallback_model="gemini-3.1-flash-lite",
     temperature=0.7,
     thinking_level="minimal",
@@ -287,6 +303,18 @@ def sonnet_available() -> bool:
     from backend.utils import llm_usage
 
     return claude_llm.api_key() is not None and claude_llm.SONNET_MODEL in llm_usage.cached_prices()
+
+
+def openai_available() -> bool:
+    """Whether the GPT options can be offered: an OpenAI key is configured AND LLM_PRICES lists GPT-5.4 mini. The same rule as Sonnet: without a price its calls would add nothing to anyone's spend, and the budget
+    guard (which counts dollars from those prices) would not see them."""
+    from backend.models import openai_llm
+
+    return openai_llm.api_key() is not None and openai_llm.DEFAULT_MODEL in llm_usage.cached_prices()
+
+
+_openai_llms: dict = {}
+OPENAI_TOOL_EFFORT = os.getenv("OPENAI_TOOL_EFFORT", "low").strip().lower() or None     # the reasoning effort GPT runs the tool loop at (its default is none); a tool call with an effort goes through OpenAI's Responses endpoint
 
 
 _review_llm: dict = {}
@@ -326,9 +354,19 @@ def tool_agent_llm(deep: bool, choice=None):
     TOOL_AGENT_PROVIDER=anthropic. Claude is only ever used with a key present, and carries the Gemini model it replaces as its fallback, so a Claude failure degrades to what
     the turn was before, never to an error. A "sonnet" choice that cannot be offered (no price configured) is served by Haiku, the cheaper of the two. See backend/models/claude_llm.py."""
     gemini = lite_llm_deep if deep else lite_llm
-    wanted = choice if choice in ("claude", "sonnet", "gemini") else ("claude" if os.getenv("TOOL_AGENT_PROVIDER", "").strip().lower() == "anthropic" else "gemini")
+    wanted = choice if choice in ("claude", "sonnet", "gpt", "gemini") else ("claude" if os.getenv("TOOL_AGENT_PROVIDER", "").strip().lower() == "anthropic" else "gemini")
     if wanted == "gemini":
         return gemini
+    if wanted == "gpt":
+        # GPT-5.4 mini ("gpt"): only with a key AND a price (openai_available), else the Gemini model it would replace; carries that model as its fallback like Claude does.
+        if not openai_available():
+            return gemini
+        key = ("gpt", deep)
+        if key not in _openai_llms:
+            from backend.models import openai_llm
+
+            _openai_llms[key] = openai_llm.OpenAILLM(model_name=openai_llm.DEFAULT_MODEL, fallback=gemini, effort=OPENAI_TOOL_EFFORT)
+        return _openai_llms[key]
     from backend.models import claude_llm
 
     if not claude_llm.api_key():
@@ -348,5 +386,15 @@ def get_chat_llm(username: str):
     return embedded_llm if username == "guest_bty" else llm
 
 
-def get_stream_llm(username: str):
-    return embedded_llm if username == "guest_bty" else stream_llm
+def get_stream_llm(username: str, choice=None):
+    """The model that writes the reply the person reads. `choice` is their base-model setting: "gpt" (GPT-5.4 mini) when they chose it AND the server offers it (openai_available); anything else, a guest and the
+    embedded view get Gemini, as before. GPT carries the Gemini model it replaces as its fallback (a failure before the first word is answered by Gemini), and is never used for the embedded view."""
+    if username == "guest_bty":
+        return embedded_llm
+    if choice == "gpt" and openai_available():
+        if "reply" not in _openai_llms:
+            from backend.models import openai_llm
+
+            _openai_llms["reply"] = openai_llm.OpenAILLM(model_name=openai_llm.DEFAULT_MODEL, fallback=stream_llm, effort=None)       # a reply is written at the model's own default effort (none)
+        return _openai_llms["reply"]
+    return stream_llm

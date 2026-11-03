@@ -30,7 +30,7 @@ import MeetingControl from '../components/MeetingControl';
 import WorkingNotesControl from '../components/WorkingNotesControl';
 import ConversationSummaryControl from '../components/ConversationSummaryControl';
 import PlanCard from '../components/PlanCard';
-import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type BudgetView, type CodePlan, type KnowledgeBase, type MemorySources, type RunnerJob, type ToolModel } from '../api';
+import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type BudgetView, type CodePlan, type KnowledgeBase, type MemorySources, type ReplyModel, type RunnerJob, type ToolModel } from '../api';
 import MemorySourceDialog from '../components/MemorySourceDialog';
 import BudgetBanner from '../components/BudgetBanner';
 import SessionColumn, { type ConnectionProps, type FolderControls, type RepoControls } from '../components/SessionColumn';
@@ -733,6 +733,10 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [toolModel, setToolModel] = useState<ToolModel>('gemini');
   const [toolModelAvailable, setToolModelAvailable] = useState<boolean>(false);
   const [sonnetAvailable, setSonnetAvailable] = useState<boolean>(false);       // Sonnet is offered only where the server has its price (it costs about 20 times Haiku)
+  const [claudeAvailable, setClaudeAvailable] = useState<boolean>(false);       // Claude (Haiku) is offered only where the server has a Claude key
+  const [gptAvailable, setGptAvailable] = useState<boolean>(false);             // GPT-5.4 mini is offered only where the server has an OpenAI key and the model's price
+  const [replyModel, setReplyModel] = useState<ReplyModel>('gemini');           // the BASE model: which model writes the reply (Gemini unless they chose GPT)
+  const [replyModelAvailable, setReplyModelAvailable] = useState<boolean>(false);
   const [budget, setBudget] = useState<BudgetView | null>(null);
   const openingRequestedRef = useRef<string | null>(null);
   const [allowedAffiliates, setAllowedAffiliates] = useState<KnowledgeBase[]>([]);
@@ -1181,7 +1185,13 @@ useEffect(() => {
   useEffect(() => {
     if (!principal) return;
     api.getToolModel()
-      .then(data => { setToolModel(data.tool_model); setToolModelAvailable(data.available); setSonnetAvailable(data.sonnet_available === true); })
+      .then(data => {
+        setToolModel(data.tool_model); setToolModelAvailable(data.available);
+        setSonnetAvailable(data.sonnet_available === true); setClaudeAvailable(data.claude_available === true); setGptAvailable(data.gpt_available === true);
+      })
+      .catch(() => { /* guests and embeds have no such setting */ });
+    api.getReplyModel()
+      .then(data => { setReplyModel(data.reply_model); setReplyModelAvailable(data.available); })
       .catch(() => { /* guests and embeds have no such setting */ });
   }, [principal]);
 
@@ -1241,6 +1251,18 @@ useEffect(() => {
     } catch (err) {
       console.error("Failed to update the code model setting:", err);
       setToolModel(before);
+    }
+  };
+
+  const handleReplyModelChange = async (next: ReplyModel) => {
+    const before = replyModel;
+    setReplyModel(next);
+    try {
+      const result = await api.updateReplyModel(next);
+      setReplyModel(result.reply_model);
+    } catch (err) {
+      console.error("Failed to update the base model setting:", err);
+      setReplyModel(before);
     }
   };
 
@@ -2374,7 +2396,12 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
   // The chat settings, built once for the two places they live: the content of the session column's "Chat settings" card, and one button each down the phone strip (SessionRail). Never under the
   // message box, on any screen.
   const chatSettings: ChatSettings = {
-    model: toolModelAvailable ? { value: toolModel, onChange: id => { void handleToolModelChange(id as ToolModel); }, hide: sonnetAvailable ? [] : ['sonnet'] } : null,
+    // The CODE model: Claude, Sonnet and GPT are each left out of the popup where the server does not offer them.
+    model: toolModelAvailable
+      ? { value: toolModel, onChange: id => { void handleToolModelChange(id as ToolModel); }, hide: [...(claudeAvailable ? [] : ['claude']), ...(sonnetAvailable ? [] : ['sonnet']), ...(gptAvailable ? [] : ['gpt'])] }
+      : null,
+    // The BASE model (which model writes the reply): a choice only where the server can run GPT.
+    baseModel: replyModelAvailable ? { value: replyModel, onChange: id => { void handleReplyModelChange(id as ReplyModel); } } : null,
     mode: workspace.canEdit ? { value: modeId(planMode), onChange: id => { void handlePlanModeChange(modeValue(id)); } } : null,
     thinking: { value: thinkingId(deepThinking), onChange: id => { void handleDeepThinkingChange(thinkingValue(id)); } },
     answers: { value: answersId(ragMode), onChange: id => { void handleRagModeChange(answersValue(id)); } },
