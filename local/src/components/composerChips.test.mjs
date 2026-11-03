@@ -177,8 +177,8 @@ test('the model chip draws ONE svg: the left part of the Base model mark and the
   assert.match(chips, /export function ModelGlyph\(\{ base, code \}: \{ base: string \| null; code: string \| null \}\)/);
   assert.match(chips, /const SHAPES: Record<string, \(\) => React\.JSX\.Element> = \{ gemini: GeminiShape, claude: ClaudeShape, sonnet: ClaudeShape, gpt: GptShape \};/);   // Claude and Claude Sonnet are the same mark
   assert.match(chips, /if \(Left === Right\) return glyph\(left\);/);                                // the same maker is one whole mark, not a mark split against itself
-  assert.match(chips, /<polygon points="0,0 14,0 10,24 0,24" \/>/);                                   // the slanted halves ...
-  assert.match(chips, /<polygon points="14,0 24,0 24,24 10,24" \/>/);                                 // ... meet on the same line
+  assert.match(chips, /<polygon points="0,0 24,0 0,24" \/>/);                                         // the upper-left half ...
+  assert.match(chips, /<polygon points="24,0 24,24 0,24" \/>/);                                       // ... and the lower-right half meet on the 45 degree "/" from (0,24) to (24,0)
   assert.match(chips, /useId\(\)\.replace\(\/:\/g, ''\)/);                                          // each chip's clip paths have their own ids (the column card and the phone strip can both be on the page)
   assert.match(chips, /<ModelGlyph base=\{baseModel \? baseModel\.value : null\} code=\{model \? model\.value : null\} \/>/);
   const rail = readFileSync(new URL('./SessionRail.tsx', import.meta.url), 'utf8');

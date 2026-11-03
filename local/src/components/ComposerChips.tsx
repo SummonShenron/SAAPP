@@ -72,7 +72,7 @@ function GptMark() {
 const SHAPES: Record<string, () => React.JSX.Element> = { gemini: GeminiShape, claude: ClaudeShape, sonnet: ClaudeShape, gpt: GptShape };
 
 /**
- * The model chip's icon: ONE svg that is the left part of the Base model's mark and the right part of the Code model's, split on a slant. Where both are the same maker (the ordinary Gemini and Gemini, or
+ * The model chip's icon: ONE svg that is the upper-left half of the Base model's mark and the lower-right half of the Code model's, split on a 45 degree "/" slash from the bottom-left corner to the top-right. Where both are the same maker (the ordinary Gemini and Gemini, or
  * Claude and Claude Sonnet) it is that mark whole, and where only one of the two is offered it is that one's mark.
  */
 export function ModelGlyph({ base, code }: { base: string | null; code: string | null }) {
@@ -85,8 +85,8 @@ export function ModelGlyph({ base, code }: { base: string | null; code: string |
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" className="cc-mark">
       <defs>
-        <clipPath id={`${id}l`}><polygon points="0,0 14,0 10,24 0,24" /></clipPath>
-        <clipPath id={`${id}r`}><polygon points="14,0 24,0 24,24 10,24" /></clipPath>
+        <clipPath id={`${id}l`}><polygon points="0,0 24,0 0,24" /></clipPath>
+        <clipPath id={`${id}r`}><polygon points="24,0 24,24 0,24" /></clipPath>
       </defs>
       <g clipPath={`url(#${id}l)`}><Left /></g>
       <g clipPath={`url(#${id}r)`}><Right /></g>
