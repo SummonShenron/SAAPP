@@ -65,9 +65,9 @@ def test_without_a_price_or_a_key_sonnet_cannot_be_chosen_and_nothing_is_saved()
     assert usu.get_user_tool_model("jack") is None
 
 
-def test_an_unknown_model_is_still_a_400_and_the_message_names_all_three():
-    view, problem = usu.save_tool_model_choice("jack", "gpt", claude_ready=True, sonnet_ready=True)
-    assert view is None and problem == (400, "tool_model must be 'gemini', 'claude' or 'sonnet'")
+def test_an_unknown_model_is_still_a_400_and_the_message_names_every_choice():
+    view, problem = usu.save_tool_model_choice("jack", "gpt-9", claude_ready=True, sonnet_ready=True, gpt_ready=True)      # "gpt" itself is a choice now (GPT-5.4 mini)
+    assert view is None and problem == (400, "tool_model must be 'gemini', 'claude', 'sonnet' or 'gpt'")
 
 
 def test_a_stored_sonnet_that_can_no_longer_be_offered_shows_as_claude():
@@ -131,4 +131,4 @@ def test_the_endpoints_and_the_chip_know_about_it():
     app_source = open(os.path.join(REPO, "app.py"), encoding="utf-8").read()
     assert "from backend.models.models import llm, get_stream_llm, claude_available, sonnet_available" in app_source
     api = open(os.path.join(REPO, "local", "src", "api.ts"), encoding="utf-8").read()
-    assert "export type ToolModel = 'gemini' | 'claude' | 'sonnet';" in api and "sonnet_available: boolean;" in api
+    assert "export type ToolModel = 'gemini' | 'claude' | 'sonnet' | 'gpt';" in api and "sonnet_available: boolean;" in api

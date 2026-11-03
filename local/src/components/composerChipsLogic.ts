@@ -3,7 +3,8 @@
 
 export type ChipKey = 'model' | 'mode' | 'thinking' | 'answers';
 
-export interface ChipOption { id: string; name: string; hint: string; }
+/** `hint` says what a choice does in full (the tooltip); `short` is the line under its name where there is little room (the two-column model popup in the 272px column, and the phone strip). */
+export interface ChipOption { id: string; name: string; hint: string; short?: string; }
 
 export interface ChipSpec {
   key: ChipKey;
@@ -18,10 +19,12 @@ export const CHIPS: Record<ChipKey, ChipSpec> = {
   model: {
     key: 'model', title: 'Code model', ordinary: 'gemini',
     options: [
-      { id: 'gemini', name: 'Gemini', hint: 'The default.' },
-      { id: 'claude', name: 'Claude', hint: 'Claude Haiku does the reasoning and code-writing steps. The reply is still written by Gemini.' },
+      { id: 'gemini', name: 'Gemini', hint: 'The default.', short: 'The default.' },
+      { id: 'claude', name: 'Claude', hint: 'Claude Haiku does the reasoning and code-writing steps. The reply is still written by your Base model.', short: 'Haiku does the code steps.' },
       // Offered only where the server has Sonnet's price (ChipControl.hide): it costs about 20 times Haiku per step, so the hint says so.
-      { id: 'sonnet', name: 'Claude Sonnet', hint: 'The strongest for hard code changes, and about 20 times the cost of Claude per step. The reply is still written by Gemini.' },
+      { id: 'sonnet', name: 'Claude Sonnet', hint: 'The strongest for hard code changes, and about 20 times the cost of Claude per step. The reply is still written by your Base model.', short: 'Strongest, about 20x the cost.' },
+      // Offered only where the server has an OpenAI key and the model's price (ChipControl.hide).
+      { id: 'gpt', name: 'GPT-5.4 mini', hint: 'GPT-5.4 mini (OpenAI) does the reasoning and code-writing steps, thinking a little before each one. A middle tier between Claude and Claude Sonnet. The reply is still written by your Base model.', short: 'Thinks before each code step.' },
     ],
   },
   mode: {
@@ -47,9 +50,47 @@ export const CHIPS: Record<ChipKey, ChipSpec> = {
   },
 };
 
-export function optionOf(key: ChipKey, id: string): ChipOption {
-  const spec = CHIPS[key];
+/**
+ * The BASE model: which model writes the reply the person reads (the Code model above does only the reasoning steps of code work). It sits in the same popup as the Code model, as its first column
+ * (components/ComposerChips.tsx ModelChoices), and is offered only where the server can run GPT. Inside a safety context the server always uses Gemini, whatever this says.
+ */
+export const BASE_MODEL: ChipSpec = {
+  key: 'model', title: 'Base model', ordinary: 'gemini',
+  options: [
+    { id: 'gemini', name: 'Gemini', hint: 'The default. Gemini writes the replies.', short: 'The default.' },
+    { id: 'gpt', name: 'GPT-5.4 mini', hint: 'GPT-5.4 mini (OpenAI) writes the replies. New, and still being tested. When someone is going through something hard, Sonic uses Gemini whatever this says.', short: 'New. Still being tested.' },
+  ],
+};
+
+export function specOption(spec: ChipSpec, id: string): ChipOption {
   return spec.options.find(option => option.id === id) ?? spec.options.find(option => option.id === spec.ordinary)!;
+}
+
+export function optionOf(key: ChipKey, id: string): ChipOption {
+  return specOption(CHIPS[key], id);
+}
+
+/**
+ * The model chip stands for two settings, the Base model and the Code model; either may be missing (null) where the server does not offer a choice for it. Its icon shows the first one that is not the
+ * ordinary model (Base first), else Gemini.
+ */
+export function modelChipValue(base: string | null, code: string | null): string {
+  if (base && base !== BASE_MODEL.ordinary) return base;
+  if (code && code !== CHIPS.model.ordinary) return code;
+  return CHIPS.model.ordinary;
+}
+
+/** Whether the model chip is highlighted: either of its two settings is not the ordinary one. */
+export function modelsChanged(base: string | null, code: string | null): boolean {
+  return (base !== null && base !== BASE_MODEL.ordinary) || (code !== null && code !== CHIPS.model.ordinary);
+}
+
+/** "Models: Base GPT-5.4 mini, Code Claude": the chip's accessible name and tooltip; a setting that is not offered is left out. */
+export function modelsLabel(base: string | null, code: string | null): string {
+  const parts: string[] = [];
+  if (base !== null) parts.push(`Base ${specOption(BASE_MODEL, base).name}`);
+  if (code !== null) parts.push(`Code ${specOption(CHIPS.model, code).name}`);
+  return `Models: ${parts.join(', ')}`;
 }
 
 /** Whether a chip is in a state other than its ordinary one (the icon is highlighted then). */

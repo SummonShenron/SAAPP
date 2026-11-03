@@ -49,7 +49,7 @@ from types import SimpleNamespace
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 from unittest.mock import Mock, patch
 
-from backend.evals import fixture_repo
+from backend.evals import eval_models, fixture_repo
 
 Score =Tuple[bool, str]  # (passed, why)
 LLM = Callable[[str], Awaitable[Any]]
@@ -58,7 +58,7 @@ NOW = datetime(2026, 10, 9, 15, 0, tzinfo=timezone.utc)
 ENGINES = ("react", "native")
 ACTIVE_MEMORY = True  # False (--no-memory): the memory scenarios run with nothing remembered, to show what the memory block is worth
 ACTIVE_ENGINE = "react"  # which tool engine the tool scenarios use (set by --engine); "react" is the app's default
-ACTIVE_TOOL_MODEL = ""   # which model the NATIVE tool engine reasons with (set by --tool-model): "" (what the app uses), "deep" (gemini-3.6-flash) or "claude"
+ACTIVE_TOOL_MODEL = ""   # which model the NATIVE tool engine reasons with (set by --tool-model): "" (what the app uses), "deep" (gemini-3.6-flash), "claude", or a candidate named in eval_models.CANDIDATES (e.g. sonnet)
 ACTIVE_STEPS = 0         # a step cap for the tool agent (set by --steps); 0 leaves the app's own caps. 4 is what low-power mode allows (budget_guard.THROTTLED_TOOL_STEPS)
 OPS_ACTIONS = {"list_app_incidents", "read_app_incident", "read_app_logs", "check_deploy_status"}
 CATEGORIES = ("tool_use", "injection", "opener", "repo", "memory", "codegen")
@@ -94,10 +94,10 @@ class Observation:
 
 
 def cost_of(by_model: Dict[str, Dict[str, int]]) -> Optional[float]:
-    """Dollars for usage split by model: the prices in LLM_PRICES, else EVAL_PRICES. None when no call was priced."""
+    """Dollars for usage split by model: the prices in LLM_PRICES, else the candidates' (eval_models.CANDIDATES), else EVAL_PRICES. None when no call was priced."""
     from backend.utils import llm_usage
 
-    prices = {**EVAL_PRICES, **llm_usage.load_prices()}
+    prices = {**EVAL_PRICES, **eval_models.prices()}
     costs = [llm_usage.estimate_cost(model, counts, prices) for model, counts in by_model.items()]
     known = [c for c in costs if c is not None]
     return sum(known) if known else None
@@ -247,6 +247,8 @@ async def run_tool_agent(
     engine = engine or ACTIVE_ENGINE
     if engine == "native" and tool_llm is None and ACTIVE_TOOL_MODEL == "deep":
         tool_llm = aw.lite_llm_deep       # the bigger Gemini model the app uses for deep thinking and audits
+    if engine == "native" and tool_llm is None and eval_models.is_candidate(ACTIVE_TOOL_MODEL):
+        tool_llm = eval_models.make_tool_llm(ACTIVE_TOOL_MODEL)     # a named candidate, with no fallback: a failure is its failure, not another model's success
 
     observation = Observation()
     db = RecordingDB()
@@ -889,9 +891,11 @@ def _summary(observation: Observation) -> str:
     return re.sub(r"\s+", " ", observation.text)[:160] or f"picked={observation.picked!r}"
 
 
-async def run_scenario(scenario: Scenario, llm: LLM, runs: int = 3) -> ScenarioResult:
+async def run_scenario(scenario: Scenario, llm: LLM, runs: int = 3, tracker: Optional[eval_models.SpendTracker] = None) -> ScenarioResult:
     result = ScenarioResult(scenario)
     for _ in range(runs):
+        if tracker is not None:
+            tracker.check()       # between runs, never inside a model call (see eval_models): raises CostCeilingExceeded once the estimate has passed the ceiling
         observation_usage: Dict[str, int] = {}
         try:
             observation = await scenario.run(llm)
@@ -942,6 +946,12 @@ def format_report(results: List[ScenarioResult]) -> str:
             why, excerpt = r.failures[0]
             lines.append(f"  [{r.scenario.id}] {why}" + (f"\n      {excerpt}" if excerpt else ""))
     return "\n".join(lines)
+
+
+def _save_path(path: str, tool_model: str) -> str:
+    """Where one tool model's results go when several are compared: the --save path with the model's name before the extension (before.json -> before.sonnet.json)."""
+    stem, ext = os.path.splitext(path)
+    return f"{stem}.{tool_model or 'default'}{ext or '.json'}"
 
 
 def to_record(results: List[ScenarioResult], when: Optional[datetime] = None) -> Dict[str, Any]:
@@ -1061,12 +1071,20 @@ def choose(only: str = "", category: str = "") -> List[Scenario]:
     return [s for s in SCENARIOS if (not wanted or s.id in wanted) and (not category or s.category == category)]
 
 
-async def run_all(chosen: List[Scenario], models: Dict[str, LLM], runs: int, log=None) -> List[ScenarioResult]:
+async def run_all(chosen: List[Scenario], models: Dict[str, LLM], runs: int, log=None, tracker: Optional[eval_models.SpendTracker] = None) -> List[ScenarioResult]:
+    """Every scenario in turn. With a `tracker`, stops at its ceiling and returns what had finished (tracker.stopped says so), printing the running cost after each scenario."""
     results = []
     for scenario in chosen:
         if log:
             log(f"running {scenario.id} x{runs} ...")
-        results.append(await run_scenario(scenario, models[scenario.model], runs))
+        try:
+            results.append(await run_scenario(scenario, models[scenario.model], runs, tracker))
+        except eval_models.CostCeilingExceeded as exc:
+            if log:
+                log(f"STOPPED: {exc}; {len(results)} of {len(chosen)} scenarios finished")
+            break
+        if log and tracker is not None:
+            log(f"  {tracker.line()}")
     return results
 
 
@@ -1083,8 +1101,13 @@ def main(argv: Optional[List[str]] = None, llm: Optional[LLM] = None) -> int:
     parser.add_argument("--engine", type=str, default="react", choices=("react", "native", "both"),
                         help="which tool engine the tool scenarios use; 'both' runs the tool and injection scenarios through each and compares")
     parser.add_argument("--tool-model", type=str, default="", help="which model the NATIVE engine reasons with: default (what the app uses), deep (gemini-3.6-flash), "
-                        "claude (claude-haiku-5-5 through the app's own TOOL_AGENT_PROVIDER switch), or a comma-separated list (e.g. default,deep,claude) to compare them")
+                        "claude (claude-haiku-5-5 through the app's own TOOL_AGENT_PROVIDER switch), a candidate by name or alias (haiku, sonnet, gemini-3.5-flash-lite, gemini-3.8-flash, ...: "
+                        "see backend/evals/eval_models.py; no fallback, so a failure is that model's failure), or a comma-separated list (e.g. default,haiku,sonnet) to compare them")
     parser.add_argument("--steps", type=int, default=0, help="cap the tool agent's steps (0 = the app's own caps; 4 is what low-power mode allows)")
+    parser.add_argument("--ceiling", type=float, default=eval_models.DEFAULT_CEILING_USD,
+                        help="stop starting runs once the estimated spend passes this many dollars (the budget guard does not see eval spend); 0 = no limit. The run in flight finishes first")
+    parser.add_argument("--failed-in", type=str, default="",
+                        help="only the scenarios that did not pass every run in this --save file: run an expensive model only where a cheaper one fell short")
     args = parser.parse_args(argv)
 
     if args.list:
@@ -1095,6 +1118,14 @@ def main(argv: Optional[List[str]] = None, llm: Optional[LLM] = None) -> int:
     if not chosen:
         print(f"No scenario matches. Known: {scenario_ids()}")
         return 2
+    if args.failed_in:
+        with open(args.failed_in, "r", encoding="utf-8") as handle:
+            failed = set(eval_models.only_failed_in(json.load(handle)))
+        chosen = [s for s in chosen if s.id in failed]
+        print(f"--failed-in {args.failed_in}: {len(chosen)} scenario(s) did not pass every run there" + (f": {', '.join(s.id for s in chosen)}" if chosen else ""))
+        if not chosen:
+            return 0
+    tracker = eval_models.SpendTracker(args.ceiling)
 
     if llm is not None:
         models = {"tool": llm, "reply": llm}
@@ -1112,9 +1143,15 @@ def main(argv: Optional[List[str]] = None, llm: Optional[LLM] = None) -> int:
     ACTIVE_STEPS = max(args.steps, 0)
     log = lambda line: print(line, file=sys.stderr)  # noqa: E731
     wanted_models = [("" if m.strip() == "default" else m.strip()) for m in args.tool_model.split(",")] if args.tool_model else [""]
-    if any(m not in TOOL_MODELS for m in wanted_models):
-        print(f"--tool-model takes default, deep or claude; got {args.tool_model!r}")
+    if any(m not in TOOL_MODELS and not eval_models.is_candidate(m) for m in wanted_models):
+        print(f"--tool-model takes default, deep, claude or a candidate model ({', '.join(sorted(eval_models.CANDIDATES) + sorted(eval_models.ALIASES))}); got {args.tool_model!r}")
         return 2
+    if llm is None:
+        for named in wanted_models:
+            problem = eval_models.missing_key(named) if eval_models.is_candidate(named) else None
+            if problem:
+                print(f"--tool-model {named}: {problem}")
+                return 2
     if wanted_models != [""]:
         # Compared in the engine named by --engine ("native", else the app's default "react").
         chosen = [s for s in chosen if s.model == "tool"]
@@ -1129,15 +1166,30 @@ def main(argv: Optional[List[str]] = None, llm: Optional[LLM] = None) -> int:
                     from backend.services import agent_workflow as aw_deep
 
                     run_models = {**models, "tool": aw_deep.lite_llm_deep.ainvoke}      # the ReAct loop reasons through the model's plain call
-                by_tool_model[tool_model] = asyncio.run(run_all(chosen, run_models, args.runs, log=log))
+                if eval_models.is_candidate(tool_model) and ACTIVE_ENGINE == "react" and llm is None:
+                    run_models = {**models, "tool": eval_models.make_tool_llm(tool_model).ainvoke}
+                with eval_models.tracking(tracker):
+                    by_tool_model[tool_model] = asyncio.run(run_all(chosen, run_models, args.runs, log=log, tracker=tracker))
+                if tracker.stopped:
+                    break           # over the ceiling: no further model is started, and what finished is reported below
         finally:
             ACTIVE_ENGINE, ACTIVE_TOOL_MODEL = "react", ""
         for tool_model, tool_results in by_tool_model.items():
             print(f"=== tool model: {tool_model or 'default'} ({'native' if args.engine == 'native' else 'react'} engine)" + (f", steps capped at {ACTIVE_STEPS}" if ACTIVE_STEPS else ""))
             print(format_report(tool_results))
             print()
+            if args.save:
+                path = _save_path(args.save, tool_model)
+                os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+                with open(path, "w", encoding="utf-8") as handle:
+                    json.dump(to_record(tool_results), handle, indent=2)
+                print(f"saved to {path}")
         if len(by_tool_model) > 1:
             print(format_model_comparison(by_tool_model))
+        print(tracker.line())
+        if tracker.stopped:
+            print("STOPPED at the ceiling: the results above are partial (some scenarios or models never ran). Raise --ceiling to go on.")
+            return 3
         return 0
     if args.engine == "both":
         chosen = [s for s in chosen if s.category in ("tool_use", "injection", "repo", "memory")]
@@ -1145,7 +1197,10 @@ def main(argv: Optional[List[str]] = None, llm: Optional[LLM] = None) -> int:
         try:
             for engine in ENGINES:
                 ACTIVE_ENGINE = engine
-                by_engine[engine] = asyncio.run(run_all(chosen, models, args.runs, log=log))
+                with eval_models.tracking(tracker):
+                    by_engine[engine] = asyncio.run(run_all(chosen, models, args.runs, log=log, tracker=tracker))
+                if tracker.stopped:
+                    break
         finally:
             ACTIVE_ENGINE = "react"
         for engine, engine_results in by_engine.items():
@@ -1153,13 +1208,22 @@ def main(argv: Optional[List[str]] = None, llm: Optional[LLM] = None) -> int:
             print(format_report(engine_results))
             print()
         print(format_engine_comparison(by_engine))
+        print(tracker.line())
+        if tracker.stopped:
+            print("STOPPED at the ceiling: the results above are partial. Raise --ceiling to go on.")
+            return 3
         return 0
     ACTIVE_ENGINE = args.engine
     try:
-        results = asyncio.run(run_all(chosen, models, args.runs, log=log))
+        with eval_models.tracking(tracker):
+            results = asyncio.run(run_all(chosen, models, args.runs, log=log, tracker=tracker))
     finally:
         ACTIVE_ENGINE = "react"
     print(format_report(results))
+    print(tracker.line())
+    if tracker.stopped:
+        print("STOPPED at the ceiling: the results above are partial. Raise --ceiling to go on.")
+        return 3
 
     if args.save:
         os.makedirs(os.path.dirname(os.path.abspath(args.save)), exist_ok=True)

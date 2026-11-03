@@ -3,7 +3,7 @@ import Icon from './icons';
 import type { RingView } from './budgetText';
 import Ring from './Ring';
 import { ConnectionPanel, Gauge, RepoFields, ScopeField, type ConnectionProps, type RepoControls, type ScopeControls } from './SessionColumn';
-import { ChipChoices, glyph, type ChatSettings, type ChipControl } from './ComposerChips';
+import { ChipChoices, ModelChoices, glyph, modelChip, type ChatSettings, type ChipControl } from './ComposerChips';
 import { chipLabel, isChanged, type ChipKey } from './composerChipsLogic';
 import { contextGauge, folderLine, gaugeSummary, runnerLine, type ContextUse } from './sessionColumnLogic';
 import CompactionMeter from './CompactionMeter';
@@ -144,6 +144,22 @@ const SessionRail: React.FC<Props> = ({ usage, context, compaction, onSwitchMete
         <>
           <span className="rail-sep" aria-hidden="true" />
           {CHIP_ORDER.map(key => {
+            if (key === 'model') {
+              // The model chip stands for the Base model and the Code model together, and opens both columns beside its button.
+              const state = modelChip(settings.baseModel, settings.model);
+              if (!state) return null;
+              return (
+                <div className="rail-item" key={key}>
+                  <button
+                    type="button" className={`rail-btn${state.changed ? ' is-changed' : ''}${open === key ? ' is-open' : ''}`} aria-haspopup="menu" aria-expanded={open === key}
+                    aria-label={state.label} title={settings.disabled ? `${state.label} (locked while Sonic is working)` : state.label} disabled={settings.disabled} onClick={() => toggle(key)}
+                  >
+                    {glyph(state.value)}
+                  </button>
+                  {open === key && <ModelChoices base={settings.baseModel} code={settings.model} onDone={() => setOpen(null)} className="rail-pop rail-choices" />}
+                </div>
+              );
+            }
             const control = controlOf(key);
             if (!control) return null;
             const label = chipLabel(key, control.value);

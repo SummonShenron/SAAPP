@@ -10,6 +10,7 @@ langchain-community
 langchain-google-genai
 langchain-anthropic
 anthropic
+langchain-openai
 langchain-mongodb
 langgraph-checkpoint-mongodb
 pymongo

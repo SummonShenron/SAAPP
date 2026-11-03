@@ -435,17 +435,50 @@ export async function updateDeepThinking(deepThinking: boolean): Promise<{ deep_
 
 /**
  * Which model does the tool agent's reasoning steps (reading code, searching, writing the code in its answer). The reply itself is written by Gemini either way,
- * so "claude" (Haiku) and "sonnet" are the hybrid. `available` is false when Claude isn't set up on the server or for guests, and then the setting isn't offered.
- * `sonnet_available` is whether Sonnet is offered too: it needs its price configured on the server (it costs about 20 times as much).
+ * so "claude" (Haiku), "sonnet" and "gpt" (GPT-5.4 mini) are the hybrid. `available` is false when there is nothing to choose beyond Gemini (no Claude and no GPT set up on the server, or a guest), and then the setting
+ * isn't offered. `claude_available`, `sonnet_available` and `gpt_available` say which choices are: Claude needs a key, Sonnet also its price (it costs about 20 times as much), GPT a key and its price.
  */
-export type ToolModel = 'gemini' | 'claude' | 'sonnet';
+export type ToolModel = 'gemini' | 'claude' | 'sonnet' | 'gpt';
 export interface ToolModelSetting {
   tool_model: ToolModel;
   /** The person's own choice, or null when they never chose (the server's default applies). */
   choice: ToolModel | null;
   default: ToolModel;
   available: boolean;
+  claude_available: boolean;
   sonnet_available: boolean;
+  gpt_available: boolean;
+}
+
+/**
+ * The BASE model: which model writes the reply the person reads. Gemini unless they chose GPT (GPT-5.4 mini) and the server offers it (`available`/`gpt_available`: a key and a price are configured, and the person is
+ * not a guest). Inside a safety context the server always uses Gemini, whatever this says.
+ */
+export type ReplyModel = 'gemini' | 'gpt';
+export interface ReplyModelSetting {
+  reply_model: ReplyModel;
+  choice: ReplyModel | null;
+  default: ReplyModel;
+  available: boolean;
+  gpt_available: boolean;
+}
+
+export async function getReplyModel(): Promise<ReplyModelSetting> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/reply-model`, { headers: { ...authHeaders } });
+  if (!res.ok) throw new Error("Failed to fetch the base model setting.");
+  return res.json();
+}
+
+export async function updateReplyModel(replyModel: ReplyModel): Promise<ReplyModelSetting> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/reply-model`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ reply_model: replyModel })
+  });
+  if (!res.ok) throw new Error("Failed to update the base model setting.");
+  return res.json();
 }
 
 export async function getToolModel(): Promise<ToolModelSetting> {
@@ -2473,6 +2506,8 @@ export const api = {
   updateDeepThinking,
   getToolModel,
   updateToolModel,
+  getReplyModel,
+  updateReplyModel,
   getProactiveOpening,
   updateProactiveOpening,
   getOpsDigest,

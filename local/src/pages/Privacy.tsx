@@ -6,7 +6,7 @@ export const PrivacyPage: React.FC = () => {
     <div className="legal-container">
       <header className="legal-header">
         <h1>Privacy Policy</h1>
-        <p className="legal-updated">Last updated: October 2026</p>
+        <p className="legal-updated">Last updated: November 2026</p>
       </header>
 
       <section className="legal-body">
@@ -19,11 +19,44 @@ export const PrivacyPage: React.FC = () => {
 
         <h2>The short version</h2>
         <ul>
-          <li>What you type, and any photos or files you attach, are sent to Google's Gemini service so Sonic can write its replies.</li>
+          <li>What you type, and any photos or files you attach, are sent to Google's Gemini service so Sonic can write its replies. For code work, some of it can also go to Anthropic's Claude, and if you choose GPT as a model, to OpenAI (see "Anthropic's Claude" and "OpenAI's GPT" below).</li>
           <li>Your conversations are kept until you delete them. The photos and files you attach are removed automatically after 30 days, or sooner if you delete the conversation.</li>
           <li>Sonic keeps short notes about you (preferences, plans, things you told it) so it can help you better. You can read and remove every one on the Memory page.</li>
           <li>Sonic only looks at your email, calendar or Drive when you ask. It sends an email, adds an event or edits a document only after you approve that specific action.</li>
           <li>We don't sell your data and we don't show ads.</li>
+        </ul>
+
+        <h2>Anthropic's Claude (for code work)</h2>
+        <p>
+          Sonic can use Anthropic's Claude model for two things, and only in code work. Sonic's replies are still written by Gemini.
+        </p>
+        <ul>
+          <li>
+            <strong>If you choose it:</strong> when you set the Code model to Claude, the code and tool steps of a request (your question, the code and results Sonic reads while working
+            on it, and the few saved notes about you that relate to that request, if any) go to Anthropic instead of Google for those steps. Set it back to Gemini any time.
+          </li>
+          <li>
+            <strong>A second reading of a change:</strong> after you press Apply on a change to your connected folder, Sonic may ask Claude for a short second reading of that change. It
+            receives your request and the changes shown on the Apply card (the same text you saw, capped in length), and nothing else. This only happens on a server where Claude is set
+            up. We keep a count of these readings, never their content.
+          </li>
+          <li>Anthropic handles that text under its own terms. The second reading above receives only your request and the change itself, not your Memory notes or account details.</li>
+        </ul>
+
+        <h2>OpenAI's GPT (only if you choose it)</h2>
+        <p>
+          Where the server offers it, you can pick OpenAI's GPT-5.4 mini in the model setting. Nothing goes to OpenAI unless you do, and the default is Gemini.
+        </p>
+        <ul>
+          <li>
+            <strong>As the Base model:</strong> GPT writes Sonic's replies, so what Gemini would have received for a reply goes to OpenAI instead: your message, the recent conversation, any photo or file you
+            attached, and the saved notes about you that relate to it. When someone is going through something hard, Sonic writes the reply with Gemini whatever this is set to.
+          </li>
+          <li>
+            <strong>As the Code model:</strong> the code and tool steps of a request (your question, the code and results Sonic reads while working on it, and the few saved notes about you that
+            relate to it, if any) go to OpenAI instead of Google for those steps. The reply is written by your Base model.
+          </li>
+          <li>OpenAI handles that text under its own terms. We keep a count of these calls and what they cost, never their content. Set either setting back to Gemini (or Claude) any time.</li>
         </ul>
 
         <h2>1. Information we collect</h2>

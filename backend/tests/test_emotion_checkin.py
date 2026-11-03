@@ -125,6 +125,12 @@ def test_no_more_than_the_cap_in_one_stretch():
     ("That is the API side of things, how are you holding up after the rough morning with your boss? No need to go into it if you just want to focus on code.", True),
     ("Use tenacity if you want a prebuilt one. How are you holding up after the rough morning with your boss? No need to go into it if you'd rather just keep working through Python questions, just wanted to check in.", True),
     ("That covers the logic. How are you doing right now after that rough morning with your boss? No need to answer if you'd rather just stick to the code.", True),
+    # endings of real replies from GPT-5.4 mini, 2026-11-02: natural check-ins the first detector missed (one has no question mark; two do not use "how are you")
+    ("That keeps the mess in one place. How are you holding up after that rough day at work", True),
+    ("Use rebase for a clean branch. How’s it going after that rough day earlier — still pretty battered, or settling down a bit?", True),
+    ("That is where Git starts acting like it has a grudge. How are you doing after that rough day, by the way — any calmer now?", True),
+    ("Use rebase for a clean branch. How’s it going with the retry loop?", False),                      # "how's it going" about the WORK is not a check-in
+    ("That is the core structure. How is the migration going so far?", False),
     ("That is the core structure. Can you share your config? I can look at it.", False),                   # a question with "you" that is about the work
     ("That is the core structure. Does that make sense to you?", False),
     ("Here is the fix. How are you holding up after earlier? Only if you feel like saying, and a very long closing line that goes on and on and on and on past the limit for a skip line of this kind.", False),
