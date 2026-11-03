@@ -3,7 +3,7 @@ import Icon from './icons';
 import type { RingView } from './budgetText';
 import Ring from './Ring';
 import { ConnectionPanel, Gauge, RepoFields, ScopeField, type ConnectionProps, type RepoControls, type ScopeControls } from './SessionColumn';
-import { ChipChoices, ModelChoices, glyph, modelChip, type ChatSettings, type ChipControl } from './ComposerChips';
+import { ChipChoices, ModelChoices, ModelGlyph, glyph, modelChip, type ChatSettings, type ChipControl } from './ComposerChips';
 import { chipLabel, isChanged, type ChipKey } from './composerChipsLogic';
 import { contextGauge, folderLine, gaugeSummary, runnerLine, type ContextUse } from './sessionColumnLogic';
 import CompactionMeter from './CompactionMeter';
@@ -154,7 +154,7 @@ const SessionRail: React.FC<Props> = ({ usage, context, compaction, onSwitchMete
                     type="button" className={`rail-btn${state.changed ? ' is-changed' : ''}${open === key ? ' is-open' : ''}`} aria-haspopup="menu" aria-expanded={open === key}
                     aria-label={state.label} title={settings.disabled ? `${state.label} (locked while Sonic is working)` : state.label} disabled={settings.disabled} onClick={() => toggle(key)}
                   >
-                    {glyph(state.value)}
+                    <ModelGlyph base={settings.baseModel ? settings.baseModel.value : null} code={settings.model ? settings.model.value : null} />
                   </button>
                   {open === key && <ModelChoices base={settings.baseModel} code={settings.model} onDone={() => setOpen(null)} className="rail-pop rail-choices" />}
                 </div>

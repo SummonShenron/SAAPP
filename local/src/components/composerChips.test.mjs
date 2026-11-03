@@ -171,3 +171,16 @@ test('the two-column popup and its wiring: ModelChoices in the column card and t
   assert.match(css, /\.cc-cols \{ display: grid; grid-template-columns: repeat\(auto-fit, minmax\(120px, 1fr\)\)/);
   assert.ok(css.indexOf('.cc-pop.cc-cols') < css.indexOf('.composer-chips-panel .cc-pop,'), 'the column card override (width: auto) comes after the popup width, so it wins');
 });
+
+test('the model chip draws ONE svg: the left part of the Base model mark and the right part of the Code model mark, whole where both are the same maker', () => {
+  const chips = readFileSync(new URL('./ComposerChips.tsx', import.meta.url), 'utf8');
+  assert.match(chips, /export function ModelGlyph\(\{ base, code \}: \{ base: string \| null; code: string \| null \}\)/);
+  assert.match(chips, /const SHAPES: Record<string, \(\) => React\.JSX\.Element> = \{ gemini: GeminiShape, claude: ClaudeShape, sonnet: ClaudeShape, gpt: GptShape \};/);   // Claude and Claude Sonnet are the same mark
+  assert.match(chips, /if \(Left === Right\) return glyph\(left\);/);                                // the same maker is one whole mark, not a mark split against itself
+  assert.match(chips, /<polygon points="0,0 14,0 10,24 0,24" \/>/);                                   // the slanted halves ...
+  assert.match(chips, /<polygon points="14,0 24,0 24,24 10,24" \/>/);                                 // ... meet on the same line
+  assert.match(chips, /useId\(\)\.replace\(\/:\/g, ''\)/);                                          // each chip's clip paths have their own ids (the column card and the phone strip can both be on the page)
+  assert.match(chips, /<ModelGlyph base=\{baseModel \? baseModel\.value : null\} code=\{model \? model\.value : null\} \/>/);
+  const rail = readFileSync(new URL('./SessionRail.tsx', import.meta.url), 'utf8');
+  assert.match(rail, /<ModelGlyph base=\{settings\.baseModel \? settings\.baseModel\.value : null\} code=\{settings\.model \? settings\.model\.value : null\} \/>/);
+});

@@ -173,6 +173,6 @@ def test_the_chat_turn_hands_the_choice_to_the_agent():
 def test_the_model_chip_is_offered_only_when_available_and_changes_the_tool_model():
     # The "..." menu entry became the model chip under the message box (components/ComposerChips.tsx): no chip when Claude cannot be offered.
     chat = open(os.path.join(REPO, "local", "src", "pages", "Chat.tsx"), encoding="utf-8").read()
-    start = chat.index("model: toolModelAvailable ?")        # the chip is one entry of the shared chatSettings object (the bar, the column card and the phone strip all read it)
+    start = chat.index("model: toolModelAvailable")        # the chip is one entry of the shared chatSettings object (the bar, the column card and the phone strip all read it)
     chip = chat[start:chat.index(": null,", start)]
-    assert "handleToolModelChange" in chip and "value: toolModel" in chip and "id as ToolModel" in chip and "hide: sonnetAvailable ? [] : ['sonnet']" in chip
+    assert "handleToolModelChange" in chip and "value: toolModel" in chip and "id as ToolModel" in chip and "(sonnetAvailable ? [] : ['sonnet'])" in chip and "(gptAvailable ? [] : ['gpt'])" in chip

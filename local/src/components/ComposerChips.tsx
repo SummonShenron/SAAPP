@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import Icon, { type IconName } from './icons';
 import { BASE_MODEL, CHIPS, chipLabel, isChanged, modelChipValue, modelsChanged, modelsLabel, specOption, type ChipKey, type ChipSpec } from './composerChipsLogic';
 import './__styles__/ComposerChips.css';
@@ -30,34 +30,66 @@ export interface ChatSettings {
 }
 
 
+// The three model marks as drawings in a 24x24 box, apart from their <svg>, so a mark can be drawn whole (GeminiMark, ClaudeMark, GptMark) or as half of the model chip's combined mark (ModelGlyph).
+function GeminiShape() {
+  return <path d="M12 2C12.6 7.4 16.6 11.4 22 12C16.6 12.6 12.6 16.6 12 22C11.4 16.6 7.4 12.6 2 12C7.4 11.4 11.4 7.4 12 2Z" fill="#4f8df5" />;
+}
+
+function ClaudeShape() {
+  return (
+    <g transform="translate(12 12)" fill="#d97757">
+      {Array.from({ length: 12 }, (_, i) => (
+        <rect key={i} x="-1.1" y={i % 2 === 0 ? -10.5 : -8.4} width="2.2" height={i % 2 === 0 ? 6.5 : 4.4} rx="1.1" transform={`rotate(${i * 30})`} />
+      ))}
+    </g>
+  );
+}
+
+function GptShape() {
+  return (
+    <g fill="none" stroke="#10a37f" strokeWidth="1.9" strokeLinejoin="round">
+      <path d="M12 2.6 20 7.3v9.4l-8 4.7-8-4.7V7.3z" />
+      <circle cx="12" cy="12" r="3.3" />
+    </g>
+  );
+}
+
 /** Gemini's mark: the four-pointed star, in its blue. Drawn here as a small SVG; swap in the official file if you prefer it exact. */
 function GeminiMark() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" className="cc-mark">
-      <path d="M12 2C12.6 7.4 16.6 11.4 22 12C16.6 12.6 12.6 16.6 12 22C11.4 16.6 7.4 12.6 2 12C7.4 11.4 11.4 7.4 12 2Z" fill="#4f8df5" />
-    </svg>
-  );
+  return <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" className="cc-mark"><GeminiShape /></svg>;
 }
 
 /** Claude's mark: the burst of rays, in clay. Drawn here as a small SVG; swap in the official file if you prefer it exact. */
 function ClaudeMark() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" className="cc-mark">
-      <g transform="translate(12 12)" fill="#d97757">
-        {Array.from({ length: 12 }, (_, i) => (
-          <rect key={i} x="-1.1" y={i % 2 === 0 ? -10.5 : -8.4} width="2.2" height={i % 2 === 0 ? 6.5 : 4.4} rx="1.1" transform={`rotate(${i * 30})`} />
-        ))}
-      </g>
-    </svg>
-  );
+  return <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" className="cc-mark"><ClaudeShape /></svg>;
 }
 
 /** GPT's mark: a rounded hexagon with a ring in it, in a green. Drawn here as a small SVG of our own, not OpenAI's logo; swap in the official file if you prefer it exact. */
 function GptMark() {
+  return <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" className="cc-mark"><GptShape /></svg>;
+}
+
+const SHAPES: Record<string, () => React.JSX.Element> = { gemini: GeminiShape, claude: ClaudeShape, sonnet: ClaudeShape, gpt: GptShape };
+
+/**
+ * The model chip's icon: ONE svg that is the left part of the Base model's mark and the right part of the Code model's, split on a slant. Where both are the same maker (the ordinary Gemini and Gemini, or
+ * Claude and Claude Sonnet) it is that mark whole, and where only one of the two is offered it is that one's mark.
+ */
+export function ModelGlyph({ base, code }: { base: string | null; code: string | null }) {
+  const id = useId().replace(/:/g, '');
+  const left = base ?? code ?? 'gemini';
+  const right = code ?? base ?? 'gemini';
+  const Left = SHAPES[left] ?? GeminiShape;
+  const Right = SHAPES[right] ?? GeminiShape;
+  if (Left === Right) return glyph(left);
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" className="cc-mark" fill="none" stroke="#10a37f" strokeWidth="1.9" strokeLinejoin="round">
-      <path d="M12 2.6 20 7.3v9.4l-8 4.7-8-4.7V7.3z" />
-      <circle cx="12" cy="12" r="3.3" />
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" className="cc-mark">
+      <defs>
+        <clipPath id={`${id}l`}><polygon points="0,0 14,0 10,24 0,24" /></clipPath>
+        <clipPath id={`${id}r`}><polygon points="14,0 24,0 24,24 10,24" /></clipPath>
+      </defs>
+      <g clipPath={`url(#${id}l)`}><Left /></g>
+      <g clipPath={`url(#${id}r)`}><Right /></g>
     </svg>
   );
 }
@@ -193,7 +225,7 @@ const ComposerChips: React.FC<ChatSettings> = ({ model, baseModel, mode, thinkin
           aria-haspopup="menu" aria-expanded={open === 'model'} aria-label={state.label} title={disabled ? `${state.label} (locked while Sonic is working)` : state.label}
           disabled={disabled} onClick={() => toggle('model')}
         >
-          {glyph(state.value)}
+          <ModelGlyph base={baseModel ? baseModel.value : null} code={model ? model.value : null} />
         </button>
       </div>
     );

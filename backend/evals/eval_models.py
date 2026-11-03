@@ -22,8 +22,11 @@ CANDIDATES: Dict[str, Dict[str, Any]] = {
     "gemini-3.8-flash": {"provider": "gemini", "price": {"input": 0.75, "output": 3.75, "cached_input": 0.075}},
     # OpenAI's model page, read 2026-11-02: $0.75 input, $0.075 cached input, $4.50 output; Chat Completions, tool calling, streaming, image input.
     "gpt-5.4-mini": {"provider": "openai", "price": {"input": 0.75, "output": 4.50, "cached_input": 0.075}},
+    # Prices from OpenAI's pricing page (2026-11-02). Eval-only for now: not offered in the app, so not in models.py.
+    "gpt-5.6-terra": {"provider": "openai", "price": {"input": 1.00, "output": 5.00, "cached_input": 0.05}},
+    "gpt-5.6-luna": {"provider": "openai", "price": {"input": 0.20, "output": 1.20, "cached_input": 0.02}},
 }
-ALIASES = {"haiku": "claude-haiku-5-5", "sonnet": "claude-sonnet-5-5", "mini": "gpt-5.4-mini", "gpt": "gpt-5.4-mini"}
+ALIASES = {"haiku": "claude-haiku-5-5", "sonnet": "claude-sonnet-5-5", "mini": "gpt-5.4-mini", "gpt": "gpt-5.4-mini", "terra": "gpt-5.6-terra", "luna": "gpt-5.6-luna"}
 # The reasoning effort GPT-5.4 mini runs the tool loop at (its default is none): "improved coding and reasoning" is the case for a middle tier, so the loop gets some. EVAL_OPENAI_EFFORT tries another
 # (none, low, medium, high, xhigh); a reply is written at the model's own default.
 TOOL_LOOP_OPENAI_EFFORT = os.getenv("EVAL_OPENAI_EFFORT", "low").strip().lower() or None
