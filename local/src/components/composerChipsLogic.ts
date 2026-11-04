@@ -134,3 +134,44 @@ export const thinkingValue = (id: string): boolean => id === 'deep';
 /** The server's two modes are "strict" (answers from the knowledge base) and "open". */
 export const answersId = (ragMode: string): string => (ragMode === 'open' ? 'open' : 'grounded');
 export const answersValue = (id: string): string => (id === 'open' ? 'open' : 'strict');
+
+export type PresetId = 'lite' | 'smart' | 'max';
+
+/**
+ * One-press pairings of the Code and the Execute model (2026-11-05), because three separate model settings are not something a person works out at a glance. The Base model (which writes the reply) is not
+ * part of a preset: it is a different kind of choice. "Custom" is not a preset but the raw Code and Execute columns, shown when the pair matches none of these. Each says plainly that Anthropic receives the
+ * code, because choosing a Claude model is what sends it there, and that Smart and Max cost more (no dollar figure is claimed beyond one that was measured: a large Sonnet change has cost over a dollar; docs/model-eval-plan.md). Smart only does what it says in Plan mode: the Execute model only carries out an approved plan, so in Agent mode Sonnet does every step.
+ */
+export interface Preset { id: PresetId; name: string; hint: string; short: string; code: string; execute: string; recommended?: boolean; }
+
+export const PRESETS: Preset[] = [
+  {
+    id: 'lite', name: 'Lite', code: 'claude', execute: 'claude', recommended: true, short: 'Haiku plans and writes. The cheapest.',
+    hint: 'Claude Haiku writes the plan and carries it out. The cheapest. Your code goes to Anthropic for the coding steps.',
+  },
+  {
+    id: 'smart', name: 'Smart', code: 'sonnet', execute: 'claude', short: 'Sonnet plans and checks; Haiku writes.',
+    hint: 'Claude Sonnet writes the plan and reads the finished change; Claude Haiku carries out the steps. Costs several times Lite. Best in Plan mode: in Agent mode Sonnet does every step. Your code goes to Anthropic.',
+  },
+  {
+    id: 'max', name: 'Max', code: 'sonnet', execute: 'sonnet', short: 'Sonnet does everything. Costs the most.',
+    hint: 'Claude Sonnet plans and carries out every step: the strongest, and about 20 times the cost of Lite per step. A large change has cost over a dollar, which can use up a daily limit. Your code goes to Anthropic.',
+  },
+];
+
+/** The preset the Code and Execute settings add up to, or "custom". A null Execute (not offered) or "same" means the Code model carries out the plan too. */
+export function presetOf(code: string | null, execute: string | null): PresetId | 'custom' {
+  const carriesOut = resolvedExecute(code, execute);
+  return PRESETS.find(preset => preset.code === code && preset.execute === carriesOut)?.id ?? 'custom';
+}
+
+/** Whether a preset can be offered here: its Code model is not hidden, and its Execute model is (or, with no Execute choice offered, is the same model as the Code one). `hide` lists what the server cannot provide. */
+export function presetAvailable(preset: Preset, codeHide: string[] = [], executeOffered: boolean, executeHide: string[] = []): boolean {
+  if (codeHide.includes(preset.code)) return false;
+  return executeOffered ? !executeHide.includes(preset.execute) : preset.execute === preset.code;
+}
+
+/** What pressing a preset sets: the Code model, and the Execute model when there is such a choice (null otherwise: nothing to set). */
+export function presetSettings(preset: Preset, executeOffered: boolean): { code: string; execute: string | null } {
+  return { code: preset.code, execute: executeOffered ? preset.execute : null };
+}

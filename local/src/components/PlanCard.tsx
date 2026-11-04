@@ -89,7 +89,7 @@ export const PlanCard: React.FC<Props> = ({ sessionId, plan, busy, onChange, onA
         <ul className="plan-card-list">
           {plan.files.map(file => <li key={file.path}><code>{file.path}</code>{file.new ? ' (new)' : ''}{file.why ? `: ${file.why}` : ''}</li>)}
         </ul>
-        {plan.tests.length > 0 && <><div className="plan-card-sub">Tests worth running</div><ul className="plan-card-list">{plan.tests.map(t => <li key={t}>{t}</li>)}</ul></>}
+        {plan.tests.length > 0 && <><div className="plan-card-sub">Tests to write and run</div><ul className="plan-card-list">{plan.tests.map(t => <li key={t}>{t}</li>)}</ul></>}
         {plan.unknowns.length > 0 && <><div className="plan-card-sub">Not sure about</div><ul className="plan-card-list">{plan.unknowns.map(u => <li key={u}>{u}</li>)}</ul></>}
       </details>
 

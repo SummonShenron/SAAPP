@@ -1,6 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import Icon, { type IconName } from './icons';
-import { BASE_MODEL, CHIPS, EXECUTE_MODEL, chipLabel, isChanged, modelChipValue, modelsChanged, modelsLabel, resolvedExecute, specOption, type ChipKey, type ChipSpec } from './composerChipsLogic';
+import { BASE_MODEL, CHIPS, EXECUTE_MODEL, PRESETS, chipLabel, isChanged, modelChipValue, modelsChanged, modelsLabel, presetAvailable, presetOf, presetSettings, resolvedExecute, specOption, type ChipKey, type ChipSpec } from './composerChipsLogic';
 import './__styles__/ComposerChips.css';
 
 export interface ChipControl {
@@ -197,16 +197,55 @@ export function ChipChoices({ chipKey, control, onDone, className }: { chipKey: 
 }
 
 /**
- * The model chip's popup: up to three columns, the Base model (which model writes the reply), the Code model (which does the reasoning steps of code work and writes a plan) and the Execute model (which carries
- * out an approved plan), each only where the server offers a choice. They sit in the same popup so one press shows how Sonic is set up. The columns share the width and stack by themselves where it is too
- * narrow (the CSS: cc-cols); in the 272px column's card they stack, Base first.
+ * The presets row of the model popup (components/composerChipsLogic.ts PRESETS): Lite, Smart and Max pair the Code and the Execute model in one press, and Custom shows the two raw columns. Only the presets this
+ * server can provide are listed; with none, or no Code choice at all, there is no row. The one the settings add up to is marked; when they add up to none, Custom is.
+ */
+function PresetRow({ code, execute, custom, onCustom, onDone }: { code: ChipControl; execute: ChipControl | null; custom: boolean; onCustom: () => void; onDone: () => void }) {
+  const offered = PRESETS.filter(preset => presetAvailable(preset, code.hide, execute !== null, execute?.hide));
+  if (offered.length === 0) return null;
+  const current = presetOf(code.value, execute ? execute.value : null);
+  return (
+    <div className="cc-col cc-presets" role="group" aria-label="Presets">
+      <div className="cc-pop-title">Preset (Code and Execute models)</div>
+      <div className="cc-preset-row">
+        {offered.map(preset => (
+          <button
+            key={preset.id} type="button" role="menuitemradio" aria-checked={current === preset.id} title={preset.hint}
+            className={`cc-opt cc-preset${current === preset.id ? ' is-selected' : ''}`}
+            onClick={() => {
+              const next = presetSettings(preset, execute !== null);
+              if (next.code !== code.value) code.onChange(next.code);
+              if (execute && next.execute !== null && next.execute !== execute.value) execute.onChange(next.execute);
+              onDone();
+            }}
+          >
+            <span className="cc-opt-text"><b>{preset.name}{preset.recommended ? ' (recommended)' : ''}</b><span>{preset.short}</span></span>
+          </button>
+        ))}
+        <button type="button" role="menuitemradio" aria-checked={current === 'custom'} title="Choose the Code and Execute model separately." className={`cc-opt cc-preset${current === 'custom' ? ' is-selected' : ''}`} onClick={onCustom}>
+          <span className="cc-opt-text"><b>Custom</b><span>Choose each one yourself.</span></span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The model chip's popup: the presets row (Lite, Smart, Max, Custom) over up to three columns, the Base model (which model writes the reply), the Code model (which does the reasoning steps of code work and writes a plan)
+ * and the Execute model (which carries out an approved plan), each only where the server offers a choice. They sit in the same popup so one press shows how Sonic is set up. The Code and Execute columns are the
+ * Custom view: shown when Custom is pressed or the settings match no preset, hidden behind a preset otherwise. The columns share the width and stack by themselves where it is too narrow (the CSS: cc-cols); in the
+ * 272px column's card they stack, Base first.
  */
 export function ModelChoices({ base, code, execute = null, onDone, className }: { base: ChipControl | null; code: ChipControl | null; execute?: ChipControl | null; onDone: () => void; className: string }) {
+  const [custom, setCustom] = useState(false);
+  const hasPresets = code !== null && PRESETS.some(preset => presetAvailable(preset, code.hide, execute !== null, execute?.hide));
+  const showRaw = !hasPresets || custom || presetOf(code ? code.value : null, execute ? execute.value : null) === 'custom';
   return (
     <div className={`${className} cc-cols`} role="menu" aria-label="Models">
+      {code && hasPresets && <PresetRow code={code} execute={execute} custom={custom} onCustom={() => setCustom(true)} onDone={onDone} />}
       {base && <OptionList spec={BASE_MODEL} control={base} onDone={onDone} compact />}
-      {code && <OptionList spec={CHIPS.model} control={code} onDone={onDone} compact />}
-      {execute && <OptionList spec={EXECUTE_MODEL} control={execute} onDone={onDone} compact />}
+      {showRaw && code && <OptionList spec={CHIPS.model} control={code} onDone={onDone} compact />}
+      {showRaw && execute && <OptionList spec={EXECUTE_MODEL} control={execute} onDone={onDone} compact />}
     </div>
   );
 }

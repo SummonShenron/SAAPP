@@ -16,7 +16,7 @@ SAAPP is a FastAPI backend (`app.py`, `backend/`) with a React frontend (`local/
 
 ## How to look (it saves steps)
 - Use `search_literal` for a known string, then read only the function you need with `start_line` and `line_count`. Big files: `agent_workflow.py` is about 3,800 lines, so never read it from the top.
-- Read the test that covers the code before you change the code. Do not list the whole tree.
+- Read the test that covers the code before you change the code.
 
 ## Rules this project keeps
 - `app.py` holds endpoints and request classes only. Helpers go in `backend/utils/` or `backend/services/`.
@@ -29,8 +29,12 @@ SAAPP is a FastAPI backend (`app.py`, `backend/`) with a React frontend (`local/
 - Never claim a test passed, or a change was applied, unless a result says so.
 
 ## Check your work against the real thing (each of these was a real mistake)
-- **Test inputs come from the real code, never from imagination.** Read the code that produces the data and copy its exact shape, including what it returns when nothing is found or it fails. (An invented web search result passed; the real one is one line of JSON.)
+- **Test inputs come from the real code, never from imagination.** Read the code that produces the data and copy its exact shape, including what it returns when nothing is found or it fails.
 - **A change has two ends.** If you add a field or kind sent across a boundary (backend to frontend, server to runner), find what receives it (`search_literal` a sibling value) and change it too, or say you did not.
 - **Count by the real format** (numbered lines, JSON rows), and treat "nothing found" text as zero.
 - **No fixed dates in tests** when the code also reads the clock: use `datetime.now(timezone.utc) - timedelta(days=1)`.
+- **Every name you use is imported or defined.** A new call whose import sits elsewhere is the commonest slip; the proposal check refuses it.
+- **Every counter you add is recorded and tested.** A key nothing increments, or a test of only its name, is dead.
+- **A test must fail without your change.** Undo the change, watch it fail, restore it.
+- **Tools that share state (page tools, the datastore) run in order**, never at once.
 - **End by saying what you checked and what you did not.**

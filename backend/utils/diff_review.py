@@ -13,7 +13,7 @@ WHAT IT SENDS. The request and the diff cards (the same text the person is shown
 import json
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 ENABLED = os.getenv("DIFF_REVIEW_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")
 MAX_ROUNDS = int(os.getenv("DIFF_REVIEW_MAX_ROUNDS", "2"))
@@ -39,6 +39,61 @@ REVIEW_PROMPT = (
 )
 
 
+# The plan-end reading (2026-11-05): a stronger model reads the whole of an approved plan's change against the plan itself. It looks for what a cheaper model that wrote the code tends to leave out,
+# which Jack and Claude Code found by hand on the browser and datastore migrations (a counter nothing increments, a test that passes without the change, tools run at once that share a page, a name
+# never imported). It sees the plan and the diff only, so it still says nothing about what the diff does not show.
+PLAN_REVIEW_ENABLED = os.getenv("PLAN_REVIEW_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")
+PLAN_MAX_DIFF_CHARS = int(os.getenv("PLAN_REVIEW_MAX_CHARS", "40000"))
+PLAN_MAX_REQUEST_CHARS = 2600
+PLAN_MAX_FINDINGS = 5
+
+PLAN_REVIEW_PROMPT = (
+    "You are the senior reviewer of a code change that was made by following an approved plan. You see the plan and the whole diff, not the rest of the repository.\n"
+    "Report ONLY problems that would make the change wrong, incomplete or failing in real use, and only when the plan and the diff themselves show it. Check exactly these:\n"
+    "1. A step of the plan, or part of the goal, that the diff does not do.\n"
+    "2. A test that would still pass if the change were taken out (it asserts only a name, a count of keys, or the shape of source text, or it mocks away the very thing the change does).\n"
+    "3. A test whose input data is invented rather than the shape the real code returns.\n"
+    "4. A counter, key, field or option that is added but that nothing in the diff ever sets or increments, or that is incremented but that no test checks.\n"
+    "5. A field, kind or value that now crosses a boundary (backend to frontend, server to runner) with no change in the diff to what receives it.\n"
+    "6. Calls that now run at the same moment but share one page, session, connection or list, with nothing making them run in order.\n"
+    "7. A name the new code uses that nothing in the diff defines or imports.\n"
+    "8. Counting or parsing that treats every line alike (a \"nothing found\" message counted as a result), or a test that hard-codes today's date when the code also reads the clock.\n"
+    "If the diff does not let you tell, say nothing about it. No comments on style, naming or anything that is fine. At most five problems, the worst first.\n"
+    "Answer with ONLY this JSON: {\"findings\": [{\"blocking\": true, \"file\": \"path\", \"problem\": \"under 30 words\", \"fix\": \"under 30 words\"}]}. "
+    "Use {\"findings\": []} when there is nothing. blocking is true only when the change would be wrong or fail without the fix.\n"
+)
+
+
+def plan_request(plan: Optional[Dict[str, Any]]) -> str:
+    """The approved plan as the request the reviewer reads: its goal, its steps (with the files each changes) and the tests it wanted. Pure; "" when there is no plan."""
+    if not plan:
+        return ""
+    lines = [f"Goal: {plan.get('goal', '')}", "Steps:"]
+    for step in plan.get("steps") or []:
+        files = f" [{', '.join(step.get('files') or [])}]" if step.get("files") else ""
+        lines.append(f"- {step.get('text', '')}{files}")
+    if plan.get("tests"):
+        lines += ["Tests the plan wanted:"] + [f"- {t}" for t in plan["tests"]]
+    return "\n".join(lines)
+
+
+def reader_for(executing_plan: bool, claude_may_read: bool, strong: Any, ordinary: Any) -> Tuple[str, Any]:
+    """Which model reads an applied change: ("none", None) when this person's code may not go to Claude (they chose no Anthropic model for the code work); ("plan", Sonnet) while carrying out an approved plan,
+    when the plan reading is on and Sonnet can be used; otherwise ("ordinary", Haiku), which may itself be None (then there is no review). Pure."""
+    if not claude_may_read:
+        return "none", None
+    if executing_plan and PLAN_REVIEW_ENABLED and strong is not None:
+        return "plan", strong
+    return "ordinary", ordinary
+
+
+def plan_counts(findings: Optional[List[Dict[str, Any]]]) -> Dict[str, int]:
+    """The day's tally for a plan-end reading (self_counters.COMBO_KEYS): one run, and one blocked when a finding blocks. {} when the call failed (a failed review is no review). Pure."""
+    if findings is None:
+        return {}
+    return {"plan_review_runs": 1, **({"plan_review_blocked": 1} if blocking(findings) else {})}
+
+
 def trivial(files: List[Dict[str, Any]]) -> bool:
     """A change not worth a review: only prose, only deleted or moved files, or a couple of lines. Pure."""
     text_files = [f for f in files if f.get("format") not in ("docx", "docx_edit") and f.get("kind") not in ("delete", "rename")]
@@ -47,15 +102,16 @@ def trivial(files: List[Dict[str, Any]]) -> bool:
     return sum(int(f.get("additions", 0) or 0) + int(f.get("deletions", 0) or 0) for f in text_files) < MIN_CHANGED_LINES
 
 
-def diff_text(files: List[Dict[str, Any]]) -> str:
-    """The diff cards as one text, each file under its path, capped overall with a note where it was cut."""
+def diff_text(files: List[Dict[str, Any]], limit: Optional[int] = None) -> str:
+    """The diff cards as one text, each file under its path, capped overall (MAX_DIFF_CHARS, or `limit`) with a note where it was cut."""
+    cap = MAX_DIFF_CHARS if limit is None else limit
     parts, used = [], 0
     for card in files:
         if card.get("format") in ("docx", "docx_edit"):
             continue
         head = f"=== {card.get('path')} ({card.get('kind', 'edit')})\n"
         body = "" if card.get("kind") == "delete" else str(card.get("diff") or "")
-        room = MAX_DIFF_CHARS - used - len(head)
+        room = cap - used - len(head)
         if room <= 0:
             parts.append("=== (more files not shown)")
             break
@@ -65,12 +121,15 @@ def diff_text(files: List[Dict[str, Any]]) -> str:
     return "\n".join(parts)
 
 
-def build_prompt(request: str, files: List[Dict[str, Any]]) -> str:
+def build_prompt(request: str, files: List[Dict[str, Any]], plan: bool = False) -> str:
+    """The prompt for one reading. `plan` is the plan-end reading: the broader prompt, the plan as the request, and room for a whole plan's diff."""
+    if plan:
+        return f"{PLAN_REVIEW_PROMPT}\nTHE APPROVED PLAN:\n{(request or '').strip()[:PLAN_MAX_REQUEST_CHARS]}\n\nTHE DIFF:\n{diff_text(files, PLAN_MAX_DIFF_CHARS)}\n"
     return f"{REVIEW_PROMPT}\nTHE REQUEST:\n{(request or '').strip()[:MAX_REQUEST_CHARS]}\n\nTHE DIFF:\n{diff_text(files)}\n"
 
 
-def parse(text: Any) -> List[Dict[str, Any]]:
-    """The findings from the model's answer: at most MAX_FINDINGS dicts {blocking, file, problem, fix}, or [] for anything that is not the JSON asked for. Never raises. Pure."""
+def parse(text: Any, limit: int = MAX_FINDINGS) -> List[Dict[str, Any]]:
+    """The findings from the model's answer: at most `limit` (MAX_FINDINGS) dicts {blocking, file, problem, fix}, or [] for anything that is not the JSON asked for. Never raises. Pure."""
     raw = str(text or "")
     start, end = raw.find("{"), raw.rfind("}")
     if start < 0 or end <= start:
@@ -90,7 +149,7 @@ def parse(text: Any) -> List[Dict[str, Any]]:
             "problem": " ".join(row["problem"].split())[:240],
             "fix": " ".join(str(row.get("fix") or "").split())[:240],
         })
-        if len(found) >= MAX_FINDINGS:
+        if len(found) >= limit:
             break
     return found
 
@@ -132,11 +191,12 @@ def _text_of(response: Any) -> str:
     return str(content or "")
 
 
-async def review(llm: Any, request: str, files: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
-    """Asks `llm` (one cheap call) to review the diff. The findings (possibly none), or None when the call failed or there is no model: a failed review is no review. Never raises."""
+async def review(llm: Any, request: str, files: List[Dict[str, Any]], plan: bool = False) -> Optional[List[Dict[str, Any]]]:
+    """Asks `llm` (one call) to review the diff; `plan` is the plan-end reading (build_prompt). The findings (possibly none), or None when the call failed or there is no model: a failed review is no
+    review. Never raises."""
     if llm is None or not files:
         return None
     try:
-        return parse(_text_of(await llm.ainvoke(build_prompt(request, files))))
+        return parse(_text_of(await llm.ainvoke(build_prompt(request, files, plan))), PLAN_MAX_FINDINGS if plan else MAX_FINDINGS)
     except Exception:
         return None

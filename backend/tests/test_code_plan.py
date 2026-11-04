@@ -792,3 +792,32 @@ def test_long_text_is_cut_at_a_word_with_an_ellipsis_never_mid_word():
     assert errors == [] and len(text) <= cp.TEXT_MAX and text.endswith("…") and text[:-1].split(" ")[-1] == "counter"
     short = "Add the burst component"
     assert cp._flat(short, cp.TEXT_MAX) == short and cp.TEXT_MAX >= 300
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# The plan's tests are small specs that a cheaper model writes (2026-11-05)
+# ---------------------------------------------------------------------------------------------------------------
+
+SPEC = "local/src/x.test.mjs::counts two calls: build a turn from the real tool result shape, run it, assert the counter reads 2 and not 1. " + "y" * 150
+
+
+def test_a_test_line_may_be_a_small_spec_longer_than_the_other_short_lines():
+    assert len(SPEC) > cp.SHORT_MAX
+    plan, errors = cp.clean_plan(good_plan(tests=[SPEC] * 7, unknowns=[SPEC]), exists)
+    assert plan is not None, errors
+    assert len(plan["tests"]) == cp.MAX_TESTS and all(len(line) == len(SPEC) for line in plan["tests"])
+    assert len(plan["unknowns"][0]) <= cp.SHORT_MAX < len(SPEC)            # the other short lines keep their cap
+    cut, _ = cp.clean_plan(good_plan(tests=[SPEC + "z" * 400]), exists)
+    assert len(cut["tests"][0]) <= cp.TEST_MAX < len(SPEC + "z" * 400)
+
+
+def test_the_planner_is_told_to_write_the_tests_as_specs_and_the_executor_to_make_them_pass_without_loosening_them():
+    for phrase in ("THE TESTS ARE PART OF THE PLAN", "must FAIL if the change were taken out", "gets a test that shows it is set", "No test: why"):
+        assert phrase in cp.PLAN_RULES.replace('\\"', '"'), phrase
+    assert "run it with run_local_check" in cp.EXECUTE_RULES and "never by loosening or removing the test" in cp.EXECUTE_RULES
+
+
+def test_the_approved_plan_the_executor_reads_keeps_a_long_test_spec_whole_and_before_the_unknowns():
+    plan, _ = cp.clean_plan(good_plan(tests=[SPEC], unknowns=["still unsure"]), exists)
+    text = cp.build_context(dict(plan, state=cp.APPROVED))
+    assert SPEC in text and "Tests (small specs" in text and text.index(SPEC) < text.index("still unsure")

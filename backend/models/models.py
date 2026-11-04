@@ -332,6 +332,22 @@ def review_llm():
     return _review_llm["haiku"]
 
 
+_plan_review_llm: dict = {}
+
+
+def plan_review_llm():
+    """The model that reads the whole change of an approved plan at its end (backend/utils/diff_review.py PLAN_REVIEW_PROMPT): Claude Sonnet at low effort with thinking off, with room for five findings. None
+    unless Sonnet can be offered (a Claude key AND a price in LLM_PRICES, so the spend guard sees these calls). No Gemini fallback on purpose: a failed review is no review, and it must never quietly cost
+    more or send a person's code to a provider they did not choose. The caller decides whether this person may have their code read by Claude at all."""
+    from backend.models import claude_llm
+
+    if not sonnet_available():
+        return None
+    if "sonnet" not in _plan_review_llm:
+        _plan_review_llm["sonnet"] = claude_llm.ClaudeLLM(model_name=claude_llm.SONNET_MODEL, fallback=None, effort="low", thinking_off=True, max_tokens=1500)
+    return _plan_review_llm["sonnet"]
+
+
 _summary_llm: dict = {}
 
 

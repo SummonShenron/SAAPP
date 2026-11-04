@@ -310,6 +310,20 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "plan_end_review",
+        "requires": [
+            "backend/utils/diff_review.py::PLAN_REVIEW_PROMPT",
+            "backend/models/models.py::def plan_review_llm",
+        ],
+        "month": "2026-11",
+        "title": "A senior read at the end of a plan",
+        "line": (
+            "When I finish an approved plan on a Claude model, Claude Sonnet reads the whole change against the plan and I fix what it finds. Your code goes to Anthropic only if you chose a Claude model."
+        ),
+        "keywords": ["plan review", "review the plan", "senior review", "sonnet review", "end of the plan", "check the whole change"],
+        "volunteer": [],
+    },
+    {
         "id": "steps_to_run",
         "requires": [
             "backend/utils/command_steps.py::def clean_steps",

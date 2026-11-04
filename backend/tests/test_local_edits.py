@@ -369,3 +369,67 @@ def test_a_new_file_sent_with_empty_old_and_new_string_filler_is_still_a_new_fil
     assert empty["ok"] and empty["texts"]["pkg/__init__.py"] == "", empty
     real_replace = le.validate_edit_proposal([{"path": "a.py", "old_string": "x = 1", "new_string": "", "content": ""}], files.get)
     assert real_replace["ok"] and real_replace["texts"]["a.py"] == "\n", real_replace          # new_string "" next to a real old_string still deletes that text
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# A forgotten import or definition (le.undefined_names, checked in validate_edit_proposal)
+# ---------------------------------------------------------------------------------------------------------------
+
+def test_a_name_that_is_used_but_never_defined_or_imported_is_found():
+    assert le.undefined_names("def f():\n    return json.dumps({})\n") == ["json"]
+    assert le.undefined_names("import json\n\ndef f():\n    return json.dumps({})\n") == []
+
+
+def test_everything_python_itself_defines_counts_as_defined():
+    source = (
+        "import os.path as osp\nfrom a import b as c\n\nclass K:\n    attr = 1\n\n"
+        "def f(x, *rest, key=None, **extra):\n    try:\n        y = [i for i in rest if (z := i)]\n    except ValueError as err:\n"
+        "        return err, y, z, c, osp, extra, key, len(rest), __file__, __name__\n    return K.attr\n"
+        "square = lambda n: n * n\n"
+    )
+    assert le.undefined_names(source) == []
+
+
+def test_match_captures_and_type_parameters_are_defined():
+    source = "def f(command):\n    match command:\n        case [first, *rest]:\n            return first, rest\n        case {'k': v, **others}:\n            return v, others\n        case other:\n            return other\n"
+    assert le.undefined_names(source) == []
+    assert le.undefined_names("def ident[T](x: T) -> T:\n    return x\n") == []
+
+
+def test_a_file_that_does_not_parse_or_that_star_imports_is_not_judged():
+    assert le.undefined_names("def oops(:\n    pass\n") == []
+    assert le.undefined_names("from helpers import *\n\nprint(anything)\n") == []
+
+
+def test_an_edit_that_uses_a_name_it_never_imported_is_refused_and_names_it():
+    result = le.validate_edit_proposal([_replace("src/app.py", "return 'hi ' + name", "return json.dumps('hi ' + name)")], _read)
+    assert result["ok"] is False
+    assert "src/app.py" in result["errors"][0] and "json" in result["errors"][0] and "import" in result["errors"][0]
+
+
+def test_the_same_edit_with_its_import_is_accepted():
+    result = le.validate_edit_proposal([
+        _replace("src/app.py", "import os\n", "import json\nimport os\n"),
+        _replace("src/app.py", "return 'hi ' + name", "return json.dumps('hi ' + name)"),
+    ], _read)
+    assert result["ok"] is True
+
+
+def test_a_new_python_file_is_checked_too_and_other_languages_are_not():
+    created = le.validate_edit_proposal([{"path": "src/new.py", "content": "def f():\n    return helper()\n"}], _read)
+    assert created["ok"] is False and "helper" in created["errors"][0]
+    assert le.validate_edit_proposal([{"path": "src/new.ts", "content": "const x = helper();\n"}], _read)["ok"] is True
+
+
+def test_a_name_the_file_already_lacked_is_not_blamed_on_the_proposal():
+    files = {"src/old.py": "def f():\n    return legacy()\n\ndef g():\n    return 1\n"}
+    result = le.validate_edit_proposal([_replace("src/old.py", "return 1", "return 2")], files.get)
+    assert result["ok"] is True
+    worse = le.validate_edit_proposal([_replace("src/old.py", "return 1", "return fresh()")], files.get)
+    assert worse["ok"] is False and "fresh" in worse["errors"][0] and "legacy" not in worse["errors"][0]
+
+
+def test_a_moved_file_is_compared_with_what_it_was_at_its_old_path():
+    files = {"src/old.py": "def f():\n    return legacy()\n"}
+    moved = le.validate_edit_proposal([{"path": "src/old.py", "rename_to": "src/new.py"}], files.get)
+    assert moved["ok"] is True
