@@ -228,6 +228,8 @@ async def run_tool_agent(
     repo: bool = False,
     history: Optional[List[Any]] = None,
     memory: Optional[str] = None,
+    local_root: str = "",
+    proposals: Optional[List[Dict[str, Any]]] = None,
 ) -> Observation:
     """One real pass of the tool agent with `llm`, in a world where nothing outward is real. Returns what it chose and did.
 
@@ -313,6 +315,9 @@ async def run_tool_agent(
         return remembered
 
     fixture_root = fixture_repo.materialize() if repo else ""
+    local_paths = sorted(
+        os.path.relpath(os.path.join(folder, name), local_root).replace("\\", "/") for folder, _, names in os.walk(local_root) for name in names
+    ) if local_root else []
     with ExitStack() as stack:
         if repo:
             from backend.services.repo_checkout import CheckoutHandle
@@ -320,6 +325,29 @@ async def run_tool_agent(
             stack.callback(fixture_repo.remove, fixture_root)
             handle = CheckoutHandle(root=fixture_root, tempdir=fixture_root, owned=False)
             stack.enter_context(patch.object(aw, "fetch_and_extract_checkout", lambda *a, **k: handle))
+        if local_root:
+            # A real project folder as the person's CONNECTED folder, so the turn takes the app's own edit path (orientation, the project's guidance file, propose_local_edits checked against the files).
+            # Nothing is written to it: the proposals the model makes are captured in `proposals` for the caller to apply to a copy (replay_eval.py). Everything the proposal path counts or remembers is
+            # stopped before it can reach a database.
+            from backend.services.repo_checkout import CheckoutHandle
+            from backend.utils import self_counters
+
+            local_handle = CheckoutHandle(root=local_root, tempdir=local_root, owned=False)
+
+            async def capture_event(event, payload=None, *args, **kwargs):
+                if event == "local_edit_proposal" and proposals is not None:
+                    proposals.append(payload)
+
+            async def no_count(*args, **kwargs):
+                return None
+
+            stack.enter_context(patch.object(aw, "get_workspace_handle", lambda username: local_handle))
+            stack.enter_context(patch.object(aw, "snapshot_paths", lambda username: local_paths))
+            stack.enter_context(patch.object(aw, "workspace_status", lambda username: {"connected": True, "name": "saapp"}))
+            stack.enter_context(patch.object(aw, "safe_emit_event", capture_event))
+            stack.enter_context(patch.object(aw, "_count_proposal", no_count))
+            stack.enter_context(patch.object(aw.local_edit_decisions, "remember_proposal", lambda *a, **k: None))
+            stack.enter_context(patch.object(self_counters, "record_turn_counts", lambda *a, **k: None))
         stack.enter_context(patch.dict(os.environ, env))
         os.environ.pop("BROWSERLESS_WS_ENDPOINT", None)  # the browser tools then refuse to start (restored on exit)
         stack.enter_context(patch.object(ops, "_sdk", lambda: sdk))
@@ -555,7 +583,8 @@ def _codegen_score(observation: Observation, *needles: str) -> Score:
     code = _code_in(observation.answer)
     if not code.strip():
         return False, f"no code in the answer (it made {observation.usage.get('calls', 0)} model calls and never wrote any)"
-    missing = [needle for needle in needles if needle not in code]
+    # A needle is a string the code must contain, or a tuple of strings of which ONE is enough (two correct ways to do the same thing: a delete route may answer jsonify(...) or `"", 204`).
+    missing = [needle for needle in needles if not any(option in code for option in ((needle,) if isinstance(needle, str) else needle))]
     if missing:
         return False, f"the code never uses {missing}"
     invented = _invented_imports(code)
@@ -565,13 +594,14 @@ def _codegen_score(observation: Observation, *needles: str) -> Score:
 
 
 def score_codegen_delete_customer(observation: Observation) -> Score:
-    """The existing customer routes: `@bp.route("/customers/<int:customer_id>", ...)`, plain `@require_auth`, JSON replies through jsonify."""
-    return _codegen_score(observation, "DELETE", "/customers/<int:customer_id>", "@require_auth", "jsonify")
+    """The existing customer routes: `@bp.route("/customers/<int:customer_id>", ...)`, plain `@require_auth`, JSON replies through jsonify. A delete may also answer `"", 204` (no content), which is as correct (a strong model's
+    answer was marked wrong for it on 2026-11-02: it also added the missing model function and noticed the id-reuse bug in new_customer)."""
+    return _codegen_score(observation, "DELETE", "/customers/<int:customer_id>", "@require_auth", ("jsonify", "204"))
 
 
 def score_codegen_is_overdue(observation: Observation) -> Score:
     """The repo's rule (jobs/overdue.py): a SENT invoice is overdue once its due date plus settings.grace_days is before today."""
-    return _codegen_score(observation, "def is_overdue", "grace_days", "timedelta", "sent")
+    return _codegen_score(observation, "def is_overdue", "grace_days", ("timedelta", ".days"), "sent")
 
 
 def score_codegen_void_route(observation: Observation) -> Score:
@@ -587,7 +617,7 @@ def score_codegen_admin_report(observation: Observation) -> Score:
 
 def score_codegen_final_notices(observation: Observation) -> Score:
     """Needs jobs/reminders.py (the job's shape), services/email.py (send_email), models/invoice.py and jobs/overdue.py (the date arithmetic with timedelta)."""
-    return _codegen_score(observation, "def send_final_notices", "send_email", "list_invoices", "overdue", "timedelta", "customer_email")
+    return _codegen_score(observation, "def send_final_notices", "send_email", "list_invoices", "overdue", ("timedelta", ".days"), "customer_email")
 
 
 def score_codegen_ratelimit_test(observation: Observation) -> Score:
@@ -885,10 +915,15 @@ def scenario_ids() -> List[str]:
 # Running, reporting, comparing
 # ---------------------------------------------------------------------------------------------------------------
 
+# How much of a failing answer the report keeps. 160 is enough to see which way a run went; EVAL_ANSWER_CHARS=4000 keeps a whole written change, to read what a model actually wrote when a check says it
+# missed (a check that fails every strong model is usually the check's fault, and only the answer shows that).
+ANSWER_EXCERPT_CHARS = int(os.getenv("EVAL_ANSWER_CHARS", "160") or 160)
+
+
 def _summary(observation: Observation) -> str:
     if observation.actions or observation.answer:
-        return f"actions={observation.actions} | " + re.sub(r"\s+", " ", observation.answer)[:160]
-    return re.sub(r"\s+", " ", observation.text)[:160] or f"picked={observation.picked!r}"
+        return f"actions={observation.actions} | " + re.sub(r"\s+", " ", observation.answer)[:ANSWER_EXCERPT_CHARS]
+    return re.sub(r"\s+", " ", observation.text)[:ANSWER_EXCERPT_CHARS] or f"picked={observation.picked!r}"
 
 
 async def run_scenario(scenario: Scenario, llm: LLM, runs: int = 3, tracker: Optional[eval_models.SpendTracker] = None) -> ScenarioResult:

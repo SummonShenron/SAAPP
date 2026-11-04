@@ -118,6 +118,32 @@ def test_the_client_is_built_without_a_temperature_because_the_model_rejects_one
     assert "effort" not in built and "thinking" not in built
 
 
+def test_the_drop_block_control_sends_the_beta_header_with_the_field_and_is_off_by_default(monkeypatch):
+    built = {}
+
+    class Recorder:
+        def __init__(self, **kwargs):
+            built.update(kwargs)
+
+    monkeypatch.setattr("langchain_anthropic.ChatAnthropic", Recorder)
+    drop = {"block_binding": {"prefix_mismatch_behavior": "drop_block"}}
+    ClaudeLLM(thinking_off=False)._client()
+    assert "default_headers" not in built and "thinking" not in built                       # off unless asked for: nothing about the check is sent
+    built.clear()
+    ClaudeLLM(thinking_off=False, drop_block=True)._client()
+    assert built["default_headers"] == {"anthropic-beta": "thinking-binding-controls-2026-08-01"}
+    assert built["thinking"] == {"type": "adaptive", **drop}                                # the header and the field go together; the model's default thinking is adaptive
+    built.clear()
+    ClaudeLLM(model_name="claude-haiku-5-5", thinking_off=True, drop_block=True)._client()
+    assert built["thinking"] == {"type": "adaptive", **drop} and built["effort"] == "low"       # `disabled` does not accept the field (probed against the API), so "off" is adaptive at the lowest effort
+    built.clear()
+    ClaudeLLM(model_name="claude-sonnet-5-5", effort="medium", thinking_off=True, drop_block=True)._client()
+    assert built["thinking"] == {"type": "adaptive", **drop} and built["effort"] == "low"       # likewise Sonnet's `between_tools`
+    built.clear()
+    ClaudeLLM(model_name="claude-sonnet-5-5", effort="medium", thinking_off=False, drop_block=True)._client()
+    assert built["thinking"] == {"type": "adaptive", **drop} and built["effort"] == "medium"    # thinking left on keeps its effort
+
+
 def test_the_key_is_read_from_either_name_and_never_required_to_import():
     assert claude_llm.api_key() == "sk-ant-not-a-real-key"
 

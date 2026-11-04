@@ -35,6 +35,12 @@ SONNET_MODEL = os.getenv("CLAUDE_SONNET_MODEL", "claude-sonnet-5-5")
 SONNET_EFFORT = os.getenv("CLAUDE_SONNET_EFFORT", "medium").strip().lower() or None
 DEFAULT_EFFORT = os.getenv("CLAUDE_EFFORT", "").strip().lower() or None          # "low" | "medium" | "high"; unset leaves the model's own default
 THINKING_OFF = os.getenv("CLAUDE_THINKING", "").strip().lower() in ("0", "off", "false", "disabled")
+# Anthropic ties every thinking block to the exact conversation that produced it. A loop that changes the tool list between steps, or re-renders anything earlier in the conversation, makes the API refuse the whole
+# request with a 400 ("Invalid `signature` in `thinking` block... bound to a different conversation"), which is a silent fall back to Gemini in the app and a crash in an eval. Their stopgap (the "Preserved thinking" page)
+# is a beta header plus `block_binding: drop_block`: a block that no longer matches is dropped and the request goes through (the loops read only the text blocks, so nothing here depends on it). Off by default
+# (CLAUDE_DROP_BLOCK=on turns it on) until it is measured; it was found with the coding eval on 2026-11-02 (docs/model-eval-plan.md).
+DROP_BLOCK = os.getenv("CLAUDE_DROP_BLOCK", "").strip().lower() in ("1", "on", "true", "yes")
+THINKING_BINDING_BETA = "thinking-binding-controls-2026-08-01"
 CACHE_DEFAULT = os.getenv("CLAUDE_CACHE", "on").strip().lower() not in ("0", "off", "false", "no")      # automatic prompt caching (see the class)
 MAX_TOKENS = int(os.getenv("CLAUDE_MAX_TOKENS", "8192"))
 TIMEOUT_SECONDS = float(os.getenv("CLAUDE_TIMEOUT", "60"))
@@ -54,11 +60,13 @@ def _messages(prompt: Any) -> Any:
 
 class ClaudeLLM:
     def __init__(self, model_name: str = DEFAULT_MODEL, fallback: Any = None, max_tokens: int = MAX_TOKENS, timeout: float = TIMEOUT_SECONDS,
-                 max_retries: int = 1, effort: Optional[str] = DEFAULT_EFFORT, thinking_off: bool = THINKING_OFF, cache: bool = CACHE_DEFAULT):
+                 max_retries: int = 1, effort: Optional[str] = DEFAULT_EFFORT, thinking_off: bool = THINKING_OFF, cache: bool = CACHE_DEFAULT,
+                 drop_block: bool = DROP_BLOCK):
         self.model_name = model_name
         self.fallback = fallback
         self.max_tokens, self.timeout, self.max_retries = max_tokens, timeout, max_retries
         self.effort, self.thinking_off, self.cache = effort, thinking_off, cache
+        self.drop_block = drop_block
         self._chat: Any = None
         self._tool_runnables: Dict[tuple, Any] = {}
 
@@ -82,6 +90,13 @@ class ClaudeLLM:
             if self.thinking_off:
                 # Sonnet 5.5 answers `disabled` with a 400; "between_tools" is how it is told not to think (accepted at effort high or below).
                 kwargs["thinking"] = {"type": "between_tools"} if "sonnet" in self.model_name else {"type": "disabled"}
+            if self.drop_block:
+                # The header and the field go together (the field without the header is a 400). Only `adaptive` thinking accepts the field (`disabled` and Sonnet's `between_tools` answer
+                # "block_binding: Extra inputs are not permitted", probed 2026-11-03), so a request for thinking off becomes adaptive at the lowest effort: it thinks rarely, and the control is allowed.
+                kwargs["default_headers"] = {"anthropic-beta": THINKING_BINDING_BETA}
+                if self.thinking_off:
+                    kwargs["effort"] = "low"
+                kwargs["thinking"] = {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}}
             if self.cache:
                 # Automatic caching: one top-level field, and the API keeps the cache breakpoint at the end of the conversation as it grows.
                 kwargs["model_kwargs"] = {"cache_control": {"type": "ephemeral"}}

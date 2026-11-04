@@ -69,7 +69,30 @@ function GptMark() {
   return <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" className="cc-mark"><GptShape /></svg>;
 }
 
-const SHAPES: Record<string, () => React.JSX.Element> = { gemini: GeminiShape, claude: ClaudeShape, sonnet: ClaudeShape, gpt: GptShape };
+/** Claude Sonnet's mark: the same burst of rays, with a nested inner ring of rays in a deeper clay, so it reads as the heavier model at a glance. */
+function ClaudeSonnetShape() {
+  return (
+    <g transform="translate(12 12)">
+      <g fill="#d97757">
+        {Array.from({ length: 12 }, (_, i) => (
+          <rect key={`o${i}`} x="-1.1" y={i % 2 === 0 ? -10.5 : -8.4} width="2.2" height={i % 2 === 0 ? 6.5 : 4.4} rx="1.1" transform={`rotate(${i * 30})`} />
+        ))}
+      </g>
+      <g fill="#a84f2e">
+        {Array.from({ length: 6 }, (_, i) => (
+          <rect key={`i${i}`} x="-0.8" y="-5.2" width="1.6" height="3" rx="0.8" transform={`rotate(${i * 60 + 30})`} />
+        ))}
+      </g>
+    </g>
+  );
+}
+
+/** Claude Sonnet's mark whole: the burst with its inner ring, wherever Sonnet is shown on its own (the popup's list, the phone strip, a chip with no second model to split against). */
+function ClaudeSonnetMark() {
+  return <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" className="cc-mark"><ClaudeSonnetShape /></svg>;
+}
+
+const SHAPES: Record<string, () => React.JSX.Element> = { gemini: GeminiShape, claude: ClaudeShape, sonnet: ClaudeSonnetShape, gpt: GptShape };
 
 /**
  * The model chip's icon: ONE svg that is the upper-left half of the Base model's mark and the lower-right half of the Code model's, split on a 45 degree "/" slash from the bottom-left corner to the top-right. Where both are the same maker (the ordinary Gemini and Gemini, or
@@ -115,7 +138,8 @@ const ICON_NAMES: Record<string, IconName> = { plan: 'checklist', swift: 'bolt',
 /** The icon for one state of one chip. */
 export function glyph(id: string): React.ReactNode {
   if (id === 'gemini') return <GeminiMark />;
-  if (id === 'claude' || id === 'sonnet') return <ClaudeMark />;
+  if (id === 'claude') return <ClaudeMark />;
+  if (id === 'sonnet') return <ClaudeSonnetMark />;
   if (id === 'gpt') return <GptMark />;
   if (id === 'agent') return <RobotMark />;
   return <Icon name={ICON_NAMES[id] ?? 'checklist'} size={18} />;

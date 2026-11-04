@@ -26,6 +26,36 @@ _MAX_DIFF_LINES_PER_FILE = 400
 _MAX_ERRORS_REPORTED = 12
 
 
+def _without_unused_fields(op: Dict[str, Any]) -> Dict[str, Any]:
+    """`op` without the optional fields a model filled in with an empty value to say "not used" (found 2026-11-03: GPT-5.4 mini sends `rename_to: ""`, `delete: false`, an empty `document`, `word_edits: []`
+    and `save_as: ""` on every edit, as a model does when each parameter must have some value). Presence is what the checks below test for, so an empty rename_to read as "move this file" and every edit was refused
+    as "a rename stands alone". An empty `content` next to an `old_string` is the same filler (a new file has no old_string); an empty content with nothing else is a real, empty new file, and stays."""
+    clean = dict(op)
+    for key in ("rename_to", "save_as"):
+        if key in clean and not clean[key]:
+            del clean[key]
+    if clean.get("delete") is False:
+        del clean["delete"]
+    if "word_edits" in clean and not clean["word_edits"]:
+        del clean["word_edits"]
+    document = clean.get("document")
+    if "document" in clean and (not document or (isinstance(document, dict) and not document.get("blocks") and not document.get("title"))):
+        del clean["document"]
+    if clean.get("content") == "" and clean.get("old_string"):
+        del clean["content"]
+    if "content" in clean and clean.get("old_string") == "":        # an empty old_string never matches anything: next to content it is the same filler, and the edit is a new file
+        del clean["old_string"]
+        if clean.get("new_string") == "":
+            del clean["new_string"]
+    if clean.get("delete") is True or "rename_to" in clean:         # a delete or a rename carries no text: the same filler, empty, is not a second change
+        for key in ("old_string", "new_string", "content"):
+            if clean.get(key) == "":
+                del clean[key]
+        if clean.get("replace_all") is False:
+            del clean["replace_all"]
+    return clean
+
+
 def _to_lf(text: str) -> Tuple[str, bool]:
     uses_crlf = "\r\n" in text
     return (text.replace("\r\n", "\n") if uses_crlf else text), uses_crlf
@@ -154,6 +184,7 @@ def validate_edit_proposal(edits: Any, read_file: Callable[[str], Optional[str]]
         if not isinstance(op, dict):
             errors.append(f"edit {index}: must be an object")
             continue
+        op = _without_unused_fields(op)
         path = safe_relative_path(op.get("path"))
         if path is None:
             errors.append(f"edit {index}: invalid path {op.get('path')!r} (use a path relative to the folder root)")

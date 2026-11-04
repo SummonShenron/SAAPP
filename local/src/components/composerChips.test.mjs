@@ -41,7 +41,9 @@ test('an unknown value reads as the ordinary state, and only the other state is 
 test('Sonnet is left out of the popup unless the server offers it, says what it costs, and draws the Claude mark', () => {
   const chips = readFileSync(new URL('./ComposerChips.tsx', import.meta.url), 'utf8');
   assert.match(chips, /spec\.options\.filter\(option => !control\.hide\?\.includes\(option\.id\)\)/);
-  assert.match(chips, /id === 'claude' \|\| id === 'sonnet'\) return <ClaudeMark \/>/);
+  assert.match(chips, /id === 'claude'\) return <ClaudeMark \/>/);
+  assert.match(chips, /sonnet: ClaudeSonnetShape/);
+  assert.match(chips, /id === 'sonnet'\) return <ClaudeSonnetMark \/>/);                  // Sonnet's own mark wherever it is drawn whole, so the popup list and the split chip agree
   const chat = readFileSync(new URL('../pages/Chat.tsx', import.meta.url), 'utf8');
   assert.match(chat, /hide: \[\.\.\.\(claudeAvailable \? \[\] : \['claude'\]\), \.\.\.\(sonnetAvailable \? \[\] : \['sonnet'\]\), \.\.\.\(gptAvailable \? \[\] : \['gpt'\]\)\]/);
   assert.match(chat, /setSonnetAvailable\(data\.sonnet_available === true\)/);
@@ -175,7 +177,7 @@ test('the two-column popup and its wiring: ModelChoices in the column card and t
 test('the model chip draws ONE svg: the left part of the Base model mark and the right part of the Code model mark, whole where both are the same maker', () => {
   const chips = readFileSync(new URL('./ComposerChips.tsx', import.meta.url), 'utf8');
   assert.match(chips, /export function ModelGlyph\(\{ base, code \}: \{ base: string \| null; code: string \| null \}\)/);
-  assert.match(chips, /const SHAPES: Record<string, \(\) => React\.JSX\.Element> = \{ gemini: GeminiShape, claude: ClaudeShape, sonnet: ClaudeShape, gpt: GptShape \};/);   // Claude and Claude Sonnet are the same mark
+  assert.match(chips, /const SHAPES: Record<string, \(\) => React\.JSX\.Element> = \{ gemini: GeminiShape, claude: ClaudeShape, sonnet: ClaudeSonnetShape, gpt: GptShape \};/);   // Sonnet has its own shape (the Claude burst with an inner ring of rays)
   assert.match(chips, /if \(Left === Right\) return glyph\(left\);/);                                // the same maker is one whole mark, not a mark split against itself
   assert.match(chips, /<polygon points="0,0 24,0 0,24" \/>/);                                         // the upper-left half ...
   assert.match(chips, /<polygon points="24,0 24,24 0,24" \/>/);                                       // ... and the lower-right half meet on the 45 degree "/" from (0,24) to (24,0)

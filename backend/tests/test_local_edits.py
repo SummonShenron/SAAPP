@@ -335,3 +335,37 @@ def test_a_replace_all_edit_validates_and_is_marked_in_the_normalized_edit():
 def test_a_plain_edit_does_not_carry_a_replace_all_marker():
     result = le.validate_edit_proposal([_replace("src/app.py", "'hi ' + name", "'yo ' + name")], _read)
     assert "replace_all" not in result["edits"][0]
+
+
+def test_unused_optional_fields_filled_with_empty_values_do_not_turn_an_edit_into_a_rename_or_a_delete():
+    # What GPT-5.4 mini really sent for every edit (2026-11-03): all optional fields present, each empty, so each edit was refused as "a rename stands alone".
+    filler = {"replace_all": False, "content": "", "delete": False, "rename_to": "", "document": {"title": "", "blocks": []}, "word_edits": [], "save_as": ""}
+    files = {"a.py": "x = 1\ny = 2\n"}
+    result = le.validate_edit_proposal([{"path": "a.py", "old_string": "x = 1", "new_string": "x = 10", **filler}], files.get)
+    assert result["ok"], result
+    assert result["texts"]["a.py"] == "x = 10\ny = 2\n"
+    assert all(key not in result["edits"][0] for key in ("rename_to", "delete", "document", "word_edits", "save_as"))
+
+
+def test_the_filler_rule_leaves_real_renames_deletes_and_empty_new_files_alone():
+    files = {"a.py": "x = 1\n", "b.py": "y = 2\n"}
+    renamed = le.validate_edit_proposal([{"path": "a.py", "rename_to": "c.py", "delete": False, "content": ""}], files.get)
+    assert renamed["ok"] and "c.py" in renamed["texts"], renamed
+    deleted = le.validate_edit_proposal([{"path": "b.py", "delete": True, "rename_to": "", "document": {"title": "", "blocks": []}}], files.get)
+    assert deleted["ok"], deleted
+    empty_new_file = le.validate_edit_proposal([{"path": "pkg/__init__.py", "content": ""}], files.get)
+    assert empty_new_file["ok"] and empty_new_file["texts"]["pkg/__init__.py"] == "", empty_new_file       # an empty file is a real request
+    both = le.validate_edit_proposal([{"path": "a.py", "rename_to": "c.py", "old_string": "x = 1", "new_string": "x = 2"}], files.get)
+    assert not both["ok"] and "stands alone" in " ".join(both["errors"])                                      # a real mixture is still refused
+
+
+def test_a_new_file_sent_with_empty_old_and_new_string_filler_is_still_a_new_file():
+    # The mirror of the rename case: a model that fills every optional field sends old_string "" and new_string "" next to the content of a NEW file; new-file mode needs old_string to be absent.
+    files = {"a.py": "x = 1\n"}
+    result = le.validate_edit_proposal([{"path": "pkg/new.py", "old_string": "", "new_string": "", "content": "VALUE = 1\n", "replace_all": False, "delete": False, "rename_to": ""}], files.get)
+    assert result["ok"], result
+    assert result["texts"]["pkg/new.py"] == "VALUE = 1\n"
+    empty = le.validate_edit_proposal([{"path": "pkg/__init__.py", "old_string": "", "new_string": "", "content": ""}], files.get)
+    assert empty["ok"] and empty["texts"]["pkg/__init__.py"] == "", empty
+    real_replace = le.validate_edit_proposal([{"path": "a.py", "old_string": "x = 1", "new_string": "", "content": ""}], files.get)
+    assert real_replace["ok"] and real_replace["texts"]["a.py"] == "\n", real_replace          # new_string "" next to a real old_string still deletes that text
