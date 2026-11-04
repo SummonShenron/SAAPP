@@ -71,6 +71,58 @@ def go(llm, act=None, **kwargs):
     return run(nl.run(llm=llm, tools=kwargs.pop("tools", TOOLS), act=act or Acts(), question=kwargs.pop("question", "where is X?"), **kwargs))
 
 
+class StubPage:
+    """A stand-in page session: records what it was asked and whether it was closed."""
+
+    def __init__(self):
+        self.visited, self.closed = [], False
+
+    def navigate(self, url):
+        self.visited.append(url)
+        return f"opened {url}"
+
+    def read_text(self):
+        return f"text of {self.visited[-1]}"
+
+    def close(self):
+        self.closed = True
+
+
+def test_a_page_session_is_reused_across_two_native_steps():
+    made, holder = [], {"session": None}
+
+    def get_session():
+        if holder["session"] is None:
+            holder["session"] = StubPage()
+            made.append(holder["session"])
+        return holder["session"]
+
+    async def act(decision):
+        page = get_session()
+        if decision["tool_action"] == "browser_navigate":
+            return page.navigate(decision["args"]["url"])
+        return page.read_text()
+
+    page_tools = [{"name": "browser_navigate", "description": "open"}, {"name": "browser_read_text", "description": "read"}]
+    llm = ToolLLM(asks(call("browser_navigate", {"url": "https://example.com"}, id="n1")), asks(call("browser_read_text", {}, id="r1")), answers("The page says hello."))
+    result = go(llm, act, tools=page_tools)
+    assert result["final_answer"] == "The page says hello."
+    assert len(made) == 1 and made[0].visited == ["https://example.com"], "one session served both steps"
+    assert [a["observation"] for a in result["attempts"]] == ["opened https://example.com", "text of https://example.com"]
+
+
+def test_page_tool_calls_are_counted_by_key_and_nothing_else_about_the_page_is_recorded(monkeypatch):
+    recorded = []
+    monkeypatch.setattr("backend.utils.self_counters.record_turn_counts", lambda counts, *a, **k: recorded.append(dict(counts)))
+    page_tools = [{"name": "browser_navigate", "description": "open"}, {"name": "browser_read_text", "description": "read"}]
+    llm = ToolLLM(asks(call("browser_navigate", {"url": "https://example.com"}, id="n1")), asks(call("browser_read_text", {}, id="r1")), answers("done"))
+    go(llm, Acts({"browser_read_text": "secret page words"}), tools=page_tools)
+    counts = recorded[-1]
+    assert counts["browser_navigate_native"] == 1 and counts["browser_read_native"] == 1
+    assert not any(k.startswith("browser_") and k not in ("browser_navigate_native", "browser_read_native") for k in counts)
+    assert "example.com" not in repr(counts) and "secret page words" not in repr(counts)
+
+
 # ---- the basic loop -------------------------------------------------------------------------------------------------------------------
 
 def test_a_reply_with_no_tool_calls_is_the_answer_and_the_conversation_starts_with_the_fixed_prompt_then_the_request():
@@ -333,7 +385,7 @@ MENU = [
 
 def test_declarations_come_from_the_live_menu_for_tools_the_engine_can_handle_only():
     decls = nt.declarations_from_menu(MENU)
-    assert [d["name"] for d in decls] == ["list_repo_tree", "read_repo_file", "check_deploy_status", "list_app_incidents", "propose_local_edits"]
+    assert [d["name"] for d in decls] == ["list_repo_tree", "read_repo_file", "check_deploy_status", "list_app_incidents", "propose_local_edits", "browser_navigate"]          # browser_navigate has a native schema now; run_repo_tests and some_future_tool still do not
     read = decls[1]
     assert read["description"] == "args: path (relative file path), start_line (optional); shows the file"          # whitespace collapsed
     assert read["parameters"]["required"] == ["path"] and set(read["parameters"]["properties"]) == {"path", "start_line", "line_count"}

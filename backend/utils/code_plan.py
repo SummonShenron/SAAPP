@@ -409,6 +409,24 @@ def clear_all(db, username: str) -> int:
 # ---------------------------------------------------------------------------------------------------------------
 
 PLAN_PHASE, EXECUTE_PHASE = "plan", "execute"
+
+# A cheaper model for CARRYING OUT an approved plan (2026-11-04). The plan is written by whatever model the person chose (Sonnet, say); the plan card already holds what a cheaper model most needs (the
+# files, the ordered steps, the checks, what is unknown), so execution turns can run on Haiku. A first plan-mode run on Sonnet cost $1.30 for 51 calls (docs/model-eval-plan.md), about 20 times what the same
+# calls cost on Haiku. Server-wide for now (an environment value, so it can be tried and measured before it becomes a setting): "claude" (Haiku), "sonnet", "gpt" or "gemini"; unset means no change.
+EXECUTE_MODEL_ENV = "CODE_PLAN_EXECUTE_MODEL"
+TOOL_MODEL_CHOICES = ("gemini", "claude", "sonnet", "gpt")
+
+
+def execute_phase_choice(choice: Optional[str], plan_phase: Optional[str]) -> Optional[str]:
+    """The tool-model choice for this turn: while an approved plan is being carried out (EXECUTE_PHASE) the model named in CODE_PLAN_EXECUTE_MODEL, if it is a known one, replaces the person's own
+    choice; any other phase, and an unset or unknown value, leave `choice` as it is. Whether the model can really be used (a key, a price) is decided where it is built (models.tool_agent_llm), which
+    falls back to a cheaper available model, never to an error."""
+    if plan_phase != EXECUTE_PHASE:
+        return choice
+    wanted = os.getenv(EXECUTE_MODEL_ENV, "").strip().lower()
+    return wanted if wanted in TOOL_MODEL_CHOICES else choice
+
+
 # Short replies only: "yes but also touch the tests" is feedback on the plan, not an approval of it. The page's Approve button sends APPROVE_MESSAGE.
 APPROVE_MESSAGE = "Go ahead with the approved plan."
 _APPROVE_RE = re.compile(r"\b(?:approve[d]?|yes|yeah|yep|yup|lgtm|sure|do it|go ahead|sounds good|looks good|let'?s do it|let'?s go)\b", re.IGNORECASE)
