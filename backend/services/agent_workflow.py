@@ -3950,6 +3950,19 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         deep_thinking = bool(state.get("deep_thinking")) and not low_power
         wide_budget = (bool(state.get("deep_thinking")) or is_audit_task) and not low_power
 
+        # The model for this turn's reasoning steps: the person's Code model, except while an approved plan is being carried out, when their own execute model (or the server default, for a person already on
+        # Claude) applies. Said in the trace when it differs, so nobody wonders which model ran a step.
+        tool_model_choice = code_plan.execute_phase_choice(state.get("tool_model"), plan_phase, state.get("execute_model"))
+        if plan_phase == code_plan.EXECUTE_PHASE and tool_model_choice != state.get("tool_model"):
+            await safe_emit_event(
+                "trace_detail",
+                {
+                    "node": "tool_agent_node",
+                    "title": "Carrying out the approved plan...",
+                    "detail": f"This step runs on {code_plan.EXECUTE_MODEL_NAMES.get(str(tool_model_choice), 'your execute model')}, not your Code model.",
+                },
+            )
+
         architecture_map = ""
         if is_audit_task:
             await safe_emit_event(
@@ -4099,7 +4112,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                     node_name="tool_agent_node",
                     initial_attempts=resumed_attempts,
                     max_retry_nudges=TOOL_AGENT_MAX_RETRY_NUDGES_DEEP if wide_budget else TOOL_AGENT_MAX_RETRY_NUDGES,
-                    llm=tool_agent_llm(bool(deep_thinking), code_plan.execute_phase_choice(state.get("tool_model"), plan_phase)),
+                    llm=tool_agent_llm(bool(deep_thinking), tool_model_choice),
                     stuck_action_redirects=TOOL_AGENT_STUCK_ACTION_REDIRECTS,
                     capability_denial_watchlist=TOOL_AGENT_CAPABILITY_DENIAL_WATCHLIST,
                     architecture_map=architecture_map,

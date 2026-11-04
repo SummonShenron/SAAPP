@@ -39,6 +39,9 @@ VALID_TOOL_MODELS = {TOOL_MODEL_GEMINI, TOOL_MODEL_CLAUDE, TOOL_MODEL_SONNET, TO
 REPLY_MODEL_GEMINI = "gemini"
 REPLY_MODEL_GPT = "gpt"
 VALID_REPLY_MODELS = {REPLY_MODEL_GEMINI, REPLY_MODEL_GPT}
+# The model that CARRIES OUT an approved plan (plan mode): "same" (the default) means the person's own Code model; otherwise one of the Code models, chosen in the model chip.
+EXECUTE_MODEL_SAME = "same"
+VALID_EXECUTE_MODELS = VALID_TOOL_MODELS | {EXECUTE_MODEL_SAME}
 
 
 # PAAPP's legacy calendar tool hardcoded every event to 'America/Chicago' for a single operator —
@@ -119,6 +122,12 @@ def _resolve_reply_model(doc: dict) -> Optional[str]:
     """The stored base-model choice, or None for "never chose" (Gemini)."""
     mode = doc.get("reply_model")
     return mode if mode in VALID_REPLY_MODELS else None
+
+
+def _resolve_execute_model(doc: dict) -> Optional[str]:
+    """The stored execute-model choice, or None for "same as my Code model" (never chose, or chose that)."""
+    mode = doc.get("execute_model")
+    return mode if mode in VALID_TOOL_MODELS else None
 
 
 def _resolve_deep_thinking(doc: dict) -> bool:
@@ -297,6 +306,57 @@ def save_reply_model_choice(username: str, mode: str, gpt_ready: bool):
     return reply_model_view(username, gpt_ready), None
 
 
+def get_user_execute_model(username: str) -> Optional[str]:
+    """The model the person chose to CARRY OUT an approved plan, or None for "same as my Code model" (never chose, or chose that). A guest or the embed has no plan mode and no choice."""
+    if username in TOOL_MODEL_LOCKED_USERS:
+        return None
+    return _resolve_execute_model(_fetch_settings_doc(username))
+
+
+def set_user_execute_model(username: str, mode: str) -> Optional[str]:
+    """Validates and saves the execute-model choice ("same" or one of the Code models). An unknown value is refused (None, nothing saved); a locked identity can only ever be "same"."""
+    if mode not in VALID_EXECUTE_MODELS:
+        return None
+    if username in TOOL_MODEL_LOCKED_USERS:
+        mode = EXECUTE_MODEL_SAME
+
+    db = get_db()
+    if db is not None:
+        db["user_settings"].update_one({"username": username}, {"$set": {"execute_model": mode}}, upsert=True)
+    _write_local_setting(username, "execute_model", mode)
+    return mode
+
+
+def execute_model_view(username: str, claude_ready: bool, sonnet_ready: bool = False, gpt_ready: bool = False) -> dict:
+    """What the model chip shows for the EXECUTE model: the choice in effect ("same" or a model), whether the person chose one, the default ("same"), which providers can be offered to them (the same rules
+    as the Code model: Claude needs a key, Sonnet also its price, GPT a key and its price, nothing for a guest) and `available`: whether there is anything to choose. A stored model that can no longer be offered
+    shows as "same", so the page never claims a model that would not run."""
+    stored = get_user_execute_model(username)
+    unlocked = username not in TOOL_MODEL_LOCKED_USERS
+    claude_offered = bool(claude_ready) and unlocked
+    sonnet_offered = claude_offered and bool(sonnet_ready)
+    gpt_offered = bool(gpt_ready) and unlocked
+    offered = {TOOL_MODEL_GEMINI: unlocked, TOOL_MODEL_CLAUDE: claude_offered, TOOL_MODEL_SONNET: sonnet_offered, TOOL_MODEL_GPT: gpt_offered}
+    effective = stored if stored and offered.get(stored) else EXECUTE_MODEL_SAME
+    return {"execute_model": effective, "choice": stored, "default": EXECUTE_MODEL_SAME, "available": claude_offered or gpt_offered,
+            "claude_available": claude_offered, "sonnet_available": sonnet_offered, "gpt_available": gpt_offered}
+
+
+def save_execute_model_choice(username: str, mode: str, claude_ready: bool, sonnet_ready: bool = False, gpt_ready: bool = False):
+    """What the settings endpoint does with a request: (the view, None) when saved, or (None, (status, message)) when refused. An unknown value is a 400; a provider that is not set up (or not priced) is a 409,
+    exactly as for the Code model, so a choice that could not run can never be saved."""
+    if mode not in VALID_EXECUTE_MODELS:
+        return None, (400, "execute_model must be 'same', 'gemini', 'claude', 'sonnet' or 'gpt'")
+    if mode in (TOOL_MODEL_CLAUDE, TOOL_MODEL_SONNET) and not claude_ready:
+        return None, (409, "Claude isn't set up on this server.")
+    if mode == TOOL_MODEL_SONNET and not sonnet_ready:
+        return None, (409, "Claude Sonnet isn't priced on this server, so it can't be used yet.")
+    if mode == TOOL_MODEL_GPT and not gpt_ready:
+        return None, (409, "GPT isn't set up on this server, so it can't be used yet.")
+    set_user_execute_model(username, mode)
+    return execute_model_view(username, claude_ready, sonnet_ready, gpt_ready), None
+
+
 def server_default_tool_model() -> str:
     """What a person who never chose gets: Gemini, unless the operator set TOOL_AGENT_PROVIDER=anthropic."""
     return TOOL_MODEL_CLAUDE if os.getenv("TOOL_AGENT_PROVIDER", "").strip().lower() == "anthropic" else TOOL_MODEL_GEMINI
@@ -351,7 +411,7 @@ def get_user_settings_bundle(username: str) -> dict:
     chat-request path, which used to call the three getters above separately (3 network round
     trips per message for 3 fields on the exact same document) instead of once."""
     if username in TOGGLE_LOCKED_USERS:
-        return {"rag_mode": RAG_MODE_STRICT, "deep_thinking": DEFAULT_DEEP_THINKING, "plan_mode": DEFAULT_PLAN_MODE, "target_repo": None, "tool_model": TOOL_MODEL_GEMINI, "reply_model": REPLY_MODEL_GEMINI, "profile": profile_utils.stored_profile({})}
+        return {"rag_mode": RAG_MODE_STRICT, "deep_thinking": DEFAULT_DEEP_THINKING, "plan_mode": DEFAULT_PLAN_MODE, "target_repo": None, "tool_model": TOOL_MODEL_GEMINI, "reply_model": REPLY_MODEL_GEMINI, "execute_model": None, "profile": profile_utils.stored_profile({})}
     doc = _fetch_settings_doc(username)
     return {
         "rag_mode": _resolve_rag_mode(doc),
@@ -360,6 +420,7 @@ def get_user_settings_bundle(username: str) -> dict:
         "target_repo": _resolve_target_repo(doc),
         "tool_model": TOOL_MODEL_GEMINI if username in TOOL_MODEL_LOCKED_USERS else _resolve_tool_model(doc),
         "reply_model": REPLY_MODEL_GEMINI if username in TOOL_MODEL_LOCKED_USERS else _resolve_reply_model(doc),
+        "execute_model": None if username in TOOL_MODEL_LOCKED_USERS else _resolve_execute_model(doc),
         "profile": _resolve_profile(doc),  # the profile page's fields (backend/utils/profile_utils.py), read from the same document
     }
 

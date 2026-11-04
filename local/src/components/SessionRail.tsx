@@ -146,7 +146,7 @@ const SessionRail: React.FC<Props> = ({ usage, context, compaction, onSwitchMete
           {CHIP_ORDER.map(key => {
             if (key === 'model') {
               // The model chip stands for the Base model and the Code model together, and opens both columns beside its button.
-              const state = modelChip(settings.baseModel, settings.model);
+              const state = modelChip(settings.baseModel, settings.model, settings.executeModel);
               if (!state) return null;
               return (
                 <div className="rail-item" key={key}>
@@ -154,9 +154,9 @@ const SessionRail: React.FC<Props> = ({ usage, context, compaction, onSwitchMete
                     type="button" className={`rail-btn${state.changed ? ' is-changed' : ''}${open === key ? ' is-open' : ''}`} aria-haspopup="menu" aria-expanded={open === key}
                     aria-label={state.label} title={settings.disabled ? `${state.label} (locked while Sonic is working)` : state.label} disabled={settings.disabled} onClick={() => toggle(key)}
                   >
-                    <ModelGlyph base={settings.baseModel ? settings.baseModel.value : null} code={settings.model ? settings.model.value : null} />
+                    <ModelGlyph base={settings.baseModel ? settings.baseModel.value : null} code={settings.model ? settings.model.value : null} execute={settings.executeModel ? settings.executeModel.value : null} />
                   </button>
-                  {open === key && <ModelChoices base={settings.baseModel} code={settings.model} onDone={() => setOpen(null)} className="rail-pop rail-choices" />}
+                  {open === key && <ModelChoices base={settings.baseModel} code={settings.model} execute={settings.executeModel} onDone={() => setOpen(null)} className="rail-pop rail-choices" />}
                 </div>
               );
             }
