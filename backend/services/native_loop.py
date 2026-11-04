@@ -117,6 +117,9 @@ _REPO_TOOLS = frozenset({"read_repo_file", "search_code", "search_literal", "fin
 # Acting is not looking: an edit, a check or a commit proposal does not use up the step budget (Jack, 2026-10-31: "action steps dont count against the budget"). Reads still count, so a turn cannot read
 # forever; the refunds are capped per turn so one turn cannot run away with the person's money.
 PAGE_TOOLS = frozenset({"browser_navigate", "browser_read_text", "browser_click", "browser_type", "browser_screenshot"})   # share one stateful page session per turn: a step runs them one at a time, in the model's order
+# The admin datastore query also runs one at a time, in the model's order, never beside another call in its step.
+_SERIAL_TOOLS = PAGE_TOOLS
+_SOLO_TOOLS = frozenset({"run_mongo_query"})      # starts only after every other call of its step has finished; several run one at a time, in the model's order
 ACTION_TOOLS = frozenset({"propose_local_edits", "run_local_check", "run_local_command", "run_sandbox_tests", "propose_commit", "propose_git_commit", "propose_merge", "start_local_server", "look_at_local_page", "stop_local_server", "propose_steps"})
 ACTION_REFUND_CAP = int(os.getenv("TOOL_AGENT_ACTION_REFUND_CAP", "30"))
 _CHECK_TOOLS = frozenset({"run_local_check", "run_local_command"})     # what the model can run a check with on the person's computer (a claim that a check passed is held to a run: backend/utils/claim_check.py)
@@ -174,12 +177,14 @@ def enabled() -> bool:
 # left is MongoDB, the browser, test runs, and two draft-and-confirm flows (send an email, a multi-file code plan). Appending to the person's target doc is native
 # (propose_append_target_doc, via is_unsafe): it used to be routed by wording alone, and a request that did not say "doc" ran here with no such tool (prod, 2026-10-23).
 _OLD_ENGINE_ONLY_RE = re.compile(
-    r"\b(?:mongo(?:db)?|pymongo|database|db|"
+    r"\b(?:"
     r"run\s+(?:the\s+)?ci|"
     r"(?:send|draft|write|compose|reply(?:\s+to)?|forward)\b[^.\n]{0,40}\be-?mails?|"
     r"(?:implementation|code)\s+plan)\b",
     re.IGNORECASE,
 )
+# The Mongo words (and the plain "database" / "db") go to the old engine only while the native engine does not offer run_mongo_query (the admin datastore tool, native_tools.REGISTRY).
+_MONGO_WORDS_RE = re.compile(r"\b(?:mongo(?:db)?|pymongo|database|db)\b", re.IGNORECASE)
 # Asking for tests to be run was old-engine-only (its test runners are GitHub Actions and a snippet runner). When the native engine is offering run_local_check (a runner on the person's own
 # machine, backend/utils/runner_jobs.py), it can do that too, so these phrases keep the turn native; "run CI" above still goes to the old engine, which has the GitHub runner.
 _TEST_RUN_RE = re.compile(r"\b(?:pytest|unit\s+tests?|run\s+(?:the\s+)?tests?)\b", re.IGNORECASE)
@@ -200,20 +205,22 @@ def _page_words_route_old(text: str, looks_native: bool, browser_native: bool) -
     return bool(_PAGE_WORDS_RE.search(_LOOK_WORDS_RE.sub(" ", text or "") if looks_native else (text or "")))
 
 
-def old_engine_reason(text: str = "", flags: Optional[Dict[str, Any]] = None, test_runs_native: bool = False, looks_native: bool = False, browser_native: bool = False) -> str:
+def old_engine_reason(text: str = "", flags: Optional[Dict[str, Any]] = None, test_runs_native: bool = False, looks_native: bool = False, browser_native: bool = False, mongo_native: bool = False) -> str:
     """The word or phrase that sent a turn to the old engine ("browser", "database", "run the tests"), or the router's flag, or "" when nothing did. For telling the person why a mode was skipped."""
     for name in _OLD_ENGINE_ONLY_FLAGS:
         if (flags or {}).get(name):
             return name
-    found = _OLD_ENGINE_ONLY_RE.search(text or "") or (None if browser_native else _PAGE_WORDS_RE.search(_LOOK_WORDS_RE.sub(" ", text or "") if looks_native else (text or ""))) or (None if test_runs_native else _TEST_RUN_RE.search(text or ""))
+    found = _OLD_ENGINE_ONLY_RE.search(text or "") or (None if mongo_native else _MONGO_WORDS_RE.search(text or "")) or (None if browser_native else _PAGE_WORDS_RE.search(_LOOK_WORDS_RE.sub(" ", text or "") if looks_native else (text or ""))) or (None if test_runs_native else _TEST_RUN_RE.search(text or ""))
     return " ".join(found.group(0).split()).lower() if found else ""
 
 
-def needs_old_engine(text: str = "", flags: Optional[Dict[str, Any]] = None, test_runs_native: bool = False, looks_native: bool = False, browser_native: bool = False) -> bool:
+def needs_old_engine(text: str = "", flags: Optional[Dict[str, Any]] = None, test_runs_native: bool = False, looks_native: bool = False, browser_native: bool = False, mongo_native: bool = False) -> bool:
     """Whether the request, or the router's reading of it, points at a tool only the old engine has. `test_runs_native`: this turn's native tools include one that runs the person's tests."""
     if any((flags or {}).get(name) for name in _OLD_ENGINE_ONLY_FLAGS):
         return True
     if _OLD_ENGINE_ONLY_RE.search(text or "") or _page_words_route_old(text, looks_native, browser_native):
+        return True
+    if not mongo_native and _MONGO_WORDS_RE.search(text or ""):
         return True
     return (not test_runs_native) and bool(_TEST_RUN_RE.search(text or ""))
 
@@ -225,7 +232,8 @@ def eligible(*, edit_turn: bool, resumed: bool, tools: List[Dict[str, Any]], tex
     test_runs_native = any(tool.get("name") == "run_local_check" for tool in tools)
     looks_native = any(tool.get("name") == "look_at_local_page" for tool in tools)
     browser_native = any(tool.get("name") == "browser_navigate" for tool in tools)
-    return enabled() and bool(tools) and not edit_turn and not resumed and not needs_old_engine(text, flags, test_runs_native, looks_native, browser_native)
+    mongo_native = any(tool.get("name") == "run_mongo_query" for tool in tools)
+    return enabled() and bool(tools) and not edit_turn and not resumed and not needs_old_engine(text, flags, test_runs_native, looks_native, browser_native, mongo_native)
 
 
 def _text(content: Any) -> str:
@@ -472,8 +480,9 @@ async def run(
     async def execute_calls(step_number: int, calls: List[Dict[str, Any]]) -> List[str]:
         """Runs one step's tool calls together and puts each result into the conversation, the receipt and the held results. Returns the results in order."""
         results: List[Any] = [None] * len(calls)
-        page_idx = [i for i, c in enumerate(calls) if str(c.get("name") or "") in PAGE_TOOLS]
-        other_idx = [i for i in range(len(calls)) if i not in set(page_idx)]
+        solo_idx = [i for i, c in enumerate(calls) if str(c.get("name") or "") in _SOLO_TOOLS]
+        page_idx = [i for i, c in enumerate(calls) if str(c.get("name") or "") in _SERIAL_TOOLS]
+        other_idx = [i for i in range(len(calls)) if i not in set(page_idx) and i not in set(solo_idx)]
 
         async def run_pages() -> None:
             for i in page_idx:                 # one at a time, in order; run_call turns a failing tool into its own ERROR result, so later ones still run
@@ -482,6 +491,8 @@ async def run(
         others = await asyncio.gather(run_pages(), *(run_call(step_number, calls[i]) for i in other_idx))
         for i, value in zip(other_idx, others[1:]):
             results[i] = value
+        for i in solo_idx:                     # the datastore query runs alone: after all the others, one at a time; run_call turns a failure into its own ERROR result
+            results[i] = await run_call(step_number, calls[i])
         for index, (call, result) in enumerate(zip(calls, results)):
             args = call.get("args") if isinstance(call.get("args"), dict) else {}
             if call.get("name") != "save_draft":      # keeping a draft is not a step worth listing in the receipt
@@ -766,6 +777,8 @@ async def run(
         page_counts: dict = {}
         for a in attempts:                                  # one count per page tool call that ran natively: counts only, never the address, text or label
             name = str(a.get("action_desc", "")).split("(", 1)[0]
+            if name == "run_mongo_query":                   # counts only: never the code, a collection or the result
+                page_counts["run_mongo_query_native"] = page_counts.get("run_mongo_query_native", 0) + 1
             if name in PAGE_TOOLS:
                 key = "browser_read_native" if name == "browser_read_text" else f"{name}_native"
                 page_counts[key] = page_counts.get(key, 0) + 1
