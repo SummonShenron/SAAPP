@@ -4,6 +4,7 @@ import { getEffectivePrincipal, isGuestPrincipal } from '../api';
 import ChatSettingsCard from '../components/ChatSettingsCard';
 import ProfileCard from '../components/ProfileCard';
 import RunnerSettingsCard from '../components/RunnerSettingsCard';
+import BillingCard from '../components/BillingCard';
 import './__styles__/Account.css';
 
 /**
@@ -34,6 +35,8 @@ export const AccountPage: React.FC<{ theme: string; toggleTheme: () => void }> =
       <ChatSettingsCard mascotAllowed={principal !== 'guest_bty'} />
 
       {!guest && <RunnerSettingsCard />}
+
+      {!guest && <BillingCard />}
 
       <section className="account-card">
         <h3>Appearance</h3>
@@ -76,6 +79,8 @@ export const AccountPage: React.FC<{ theme: string; toggleTheme: () => void }> =
           </div>
         </section>
       )}
+
+      <p className="account-note"><a href="#/terms">Terms of Service</a></p>
     </div>
   );
 };

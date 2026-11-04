@@ -93,6 +93,9 @@ COMBO_KEYS = ("combo_turns", "combo_hits", "combo_steps_granted", "combo_failed_
               "plan_review_runs", "plan_review_blocked")
 # Lessons for the project's guidance file (backend/utils/lesson_proposals.py): turns that were told they could propose one, and proposals that touched the guidance file. Counts only.
 LESSON_KEYS = ("lesson_offered", "guidance_edit_proposed")
+# Apply or Decline pressed when no turn was waiting for it (backend/services/local_edit_decisions.py why_no_waiter): the stream was cut while the turn waited, the wait timed out, the proposal was already answered,
+# or this process never held it (another instance, a restart). Counts only.
+APPLY_WAIT_KEYS = ("apply_no_waiter_cancelled", "apply_no_waiter_timeout", "apply_no_waiter_decided", "apply_no_waiter_not_here")
 # The conversation summary (backend/utils/conversation_summary.py): messages that said Sonic should already know something ("I already told you"), and the same inside a conversation that had a
 # summary in force; turns that had one and the characters it added to their prompts; folds (and the ones the person asked for), items kept and thrown out by the checks, and edits by the person. Counts only.
 CONVSUM_KEYS = ("convsum_forgot", "convsum_forgot_summarized", "convsum_summarized_turns", "convsum_chars_injected", "convsum_folds", "convsum_manual_folds", "convsum_item_added", "convsum_item_dropped",
@@ -111,7 +114,7 @@ PROACTIVE_KEYS = ("relatable_by_meaning",
                   # Later check-ins on a feeling still being carried (backend/utils/emotion_checkin.py): turns that were told to end with one, replies that really did, and on the next message whether the person's
                   # ceiling had eased or they were still low. Counts only.
                   "emotion_checkin_offered", "emotion_checkin_asked", "emotion_checkin_eased", "emotion_checkin_still_low")
-_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS + LESSON_KEYS + CONVSUM_KEYS + LOOK_KEYS + BROWSER_KEYS + MONGO_KEYS + STEPS_KEYS + PROACTIVE_KEYS
+_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS + LESSON_KEYS + APPLY_WAIT_KEYS + CONVSUM_KEYS + LOOK_KEYS + BROWSER_KEYS + MONGO_KEYS + STEPS_KEYS + PROACTIVE_KEYS
 KEYS = frozenset(
     list(_PLAIN_KEYS) + [f"{group}_{name}" for group, names in _GROUPS.items() for name in names]
 )

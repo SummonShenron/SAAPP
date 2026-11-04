@@ -132,7 +132,7 @@ OWN_SCOPES = ("my_day", "my_five")
 REQUEST_HISTORY = timedelta(days=14)  # how long a decided request stays listed for the admins
 _SEVERITY = {OK: 0, NOTICE: 1, THROTTLED: 2, BLOCKED: 3}
 # How a scope is said to a person, where it is not already plain English ("day", "month").
-_SCOPE_TEXT = {"five": "5-hour", "my_day": "your daily", "my_five": "your 5-hour"}
+_SCOPE_TEXT = {"five": "5-hour", "my_day": "your daily", "my_five": "your 5-hour", "paid_day": "your paid daily"}
 
 _cache: Dict[str, Any] = {"at": None, "rows": [], "five_at": None, "five_rows": [], "five_anchor": None, "ext_at": None, "ext": {}, "uext": {}}
 
@@ -339,6 +339,8 @@ def spent(
     for row in rows:
         if llm_usage.is_eval_label(row.get("label")):
             continue  # an eval run is counted on the usage page, but it must never be able to pause chat
+        if llm_usage.is_paid_label(row.get("label")):
+            continue  # a paid turn is paid for out of the person's own credit (backend/utils/credits.py): it must not use up the budget Jack is paying for
         counts = {field: int(row.get(field) or 0) for field in llm_usage.FIELDS}
         tokens = counts["input"] + counts["output"]
         cost = llm_usage.estimate_cost(str(row.get("model")), counts, prices)
@@ -442,10 +444,37 @@ def evaluate(totals: Dict[str, Any], limits: Dict[str, float], now: datetime, ex
     }
 
 
-def current_state(db: Any = None, now: Optional[datetime] = None, username: Optional[str] = None) -> Dict[str, Any]:
+def _paid_state(db: Any, now: datetime, username: str) -> Optional[Dict[str, Any]]:
+    """The state for a person who is PAID (billing on, a balance above zero), or None: the free limits then apply as always. Under their paid daily ceiling they get full power: no free limit and no shared block
+    applies to their own turn (it is charged to them). At their ceiling the turn is paused with their balance untouched. Never raises (None on a problem: the free logic runs)."""
+    try:
+        from backend.utils import credits
+
+        if db is None:
+            from backend.utils.db_utils import get_db
+
+            db = get_db()
+        status = credits.paid_status(db, username, now) if db is not None else None
+        if status is None:
+            return None
+        if not status["at_ceiling"]:
+            return {"level": OK, "detail": [], "paused": [], "paid": True}
+        resets = _next_reset("my_day", now, {}).isoformat()
+        return {"level": BLOCKED, "fraction": 1.0, "scope": "paid_day", "unit": "usd", "resets_at": resets, "detail": [], "paused": list(PAUSED_FEATURES), "paid": True, "blocked_scopes": ["paid_day"], "resets": {"paid_day": resets}}
+    except Exception:
+        logger.warning("[budget] could not read a paid balance; the free limits apply for this call.")
+        return None
+
+
+def current_state(db: Any = None, now: Optional[datetime] = None, username: Optional[str] = None, paid_bypass: bool = False) -> Dict[str, Any]:
     """The guard's state right now. Blocking (a database read when the cache is stale): call it off the event loop. It never
     raises: if the usage can't be read, the guard is off for this call, so cost control can't take chat down. `username` adds that person's
-    own limits (user_budgets) to the global ones; leave it out for anything that is not a person's turn (use limit_username to decide for an admin)."""
+    own limits (user_budgets) to the global ones; leave it out for anything that is not a person's turn (use limit_username to decide for an admin). `paid_bypass` is passed ONLY by the chat turn, the one place
+    a paid person's use is charged to them: with billing on and a balance, the free limits do not apply to that turn (see _paid_state). Scheduled tasks and the other callers leave it off, so they stay on the free limits."""
+    if paid_bypass and username and os.getenv("BILLING_ENABLED", "").strip().lower() in ("1", "true", "yes", "on"):      # billing off: nothing below runs, not even a read
+        paid = _paid_state(db, now or datetime.now(timezone.utc), str(username))
+        if paid is not None:
+            return paid
     limits = budgets()
     own = user_budgets() if username else {}
     if not limits and not own:
@@ -688,6 +717,16 @@ def _when_text(resets_at: Optional[str], scope: Optional[str]) -> str:
     return f" until {resets_at[:10]} ({billing_time.label()})"
 
 
+# Said where a limit has stopped someone (the blocked reply and the blocked banner), so the people who hit it learn what is coming without being promised more than exists: a paid option for people who want more
+# is PLANNED (docs/paid-tier-plan.md), with no date and no price. It lives here, once, and the page reads it from the server. PAID_OPTION_NOTICE=off removes it (for example if the plan is dropped);
+# when billing really exists this is the one sentence to change. Never in a crisis reply.
+PAID_OPTION_NOTE = "A paid option for people who want more is planned, but it isn't available yet."
+
+
+def paid_option_note() -> str:
+    return "" if os.getenv("PAID_OPTION_NOTICE", "on").strip().lower() in ("0", "false", "no", "off") else PAID_OPTION_NOTE
+
+
 def blocked_reply(resets_at: Optional[str], crisis: bool = False, scope: Optional[str] = None) -> str:
     """What someone is told when chat is paused by the budget. In a crisis the human support line comes first, in code, because
     the model is not being called. `scope` says which limit it was: the person's own, or the shared one."""
@@ -699,14 +738,21 @@ def blocked_reply(resets_at: Optional[str], crisis: bool = False, scope: Optiona
             "Please don't wait on me." + CRISIS_RESOURCE_LINE + " I'd rather you had a person with you in the meantime."
         )
     when = _when_text(resets_at, scope)
+    if scope == "paid_day":
+        return (
+            f"You've reached your daily limit for paid use, so I'm paused for you{when}. It's a safety limit on how much can be used in a day, and your balance is untouched. "
+            "Nothing you sent was lost. Please try again after it resets."
+        )
+    note = paid_option_note()
+    tail = f" {note}" if note else ""
     if scope in ("my_day", "my_five"):
         return (
             f"You've reached your own usage limit for now, so I'm paused for you{when}. It's a limit on how much I can do for one person "
-            "in a stretch of time, not something you did wrong, and nothing you sent was lost. Please try again after it resets."
+            "in a stretch of time, not something you did wrong, and nothing you sent was lost. Please try again after it resets." + tail
         )
     return (
         f"I've reached my usage limit and I'm paused{when}. That's a limit on my side, not something you did, "
-        "and nothing you sent was lost. Please try again after it resets."
+        "and nothing you sent was lost. Please try again after it resets." + tail
     )
 
 
@@ -725,7 +771,7 @@ def public_view(state: Optional[Dict[str, Any]], admin: bool) -> Dict[str, Any]:
     level = state.get("level", OFF)
     shown = level if (admin or level in LOW_POWER_LEVELS) else OK if level == NOTICE else level
     scope = state.get("scope")
-    own = scope in ("my_day", "my_five")  # the limit in force is this person's own, not the shared one
+    own = scope in ("my_day", "my_five", "paid_day")  # the limit in force is this person's own, not the shared one
     view: Dict[str, Any] = {"level": shown, "paused": state.get("paused", []), "resets_at": state.get("resets_at")}
     if own and shown in LOW_POWER_LEVELS:
         view["own_limit"] = True  # lets the banner say "your" limit without sending anyone an amount
@@ -749,7 +795,10 @@ def public_view(state: Optional[Dict[str, Any]], admin: bool) -> Dict[str, Any]:
             if own else "Low-power mode: deep thinking and some background extras are paused to stay within the usage budget."
         )
     elif shown == BLOCKED:
-        view["message"] = "Paused: you have reached your usage limit." if own else "Paused: the usage budget has been reached."
+        view["message"] = ("Paused: you have reached your daily limit for paid use. Your balance is untouched." if scope == "paid_day"
+                           else "Paused: you have reached your usage limit." if own else "Paused: the usage budget has been reached.")
+        if paid_option_note() and scope != "paid_day":
+            view["upgrade_note"] = paid_option_note()          # the banner adds it after its own words (components/BudgetBanner.tsx)
     elif shown == NOTICE:
         view["message"] = f"{round(state.get('fraction', 0) * 100)}% of the {_SCOPE_TEXT.get(scope, scope)} usage budget is used."
     else:

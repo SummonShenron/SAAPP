@@ -106,6 +106,9 @@ from backend.utils.embedding_utils import embed_text
 from backend.utils import relevant_findings
 from backend.utils import citation_media
 from backend.utils import applied_changes
+from backend.utils import process_info
+from backend.utils import credits
+from backend.services import payments
 from backend.utils.emotion_utils import build_emotional_context, effective_intensity, energy_tier
 from backend.utils.encouragement_utils import (
     ENCOURAGEMENT_MARK, build_encouragement_block, build_encouragement_revision_prompt, encouragement_reply_issue,
@@ -310,6 +313,9 @@ async def lifespan(app: FastAPI):
     # A meeting the person forgot to end closes itself after a quiet spell, with its notes (backend/services/meeting_sweep.py).
     meeting_sweep_task = spawn_background_task(_run_meeting_sweep())
     watchdog_task = loop_watchdog.start()  # logs when the event loop is blocked, and what was waiting (backend/utils/loop_watchdog.py)
+    single_process_notice = process_info.single_process_warning()    # a deployment that asks for more than one worker breaks the wait for Apply (backend/utils/process_info.py)
+    if single_process_notice:
+        logger.warning(single_process_notice)
     if get_db() is not None:
         ensure_calendar_indexes()
         microsoft_utils.ensure_indexes()
@@ -406,6 +412,24 @@ class ChatRequest(BaseModel):
 class EditDecisionRequest(BaseModel):
     outcome: str                    # "applied", "declined" or "undone" (an applied change taken back)
     reason: str = ""                # why it was declined, in the person's words (optional)
+
+class BillingTopUpRequest(BaseModel):
+    amount_usd: float               # the top-up, in dollars (at least the server's minimum)
+
+class BillingCeilingRequest(BaseModel):
+    daily_usd: float | None = None  # the person's own daily limit for paid use, lower than the server's; null clears it
+
+class AdminBillingCeilingRequest(BaseModel):
+    user: str
+    daily_usd: float | None = None  # an admin's override of one person's daily ceiling; null removes it
+
+class AdminBillingRefundRequest(BaseModel):
+    user: str
+    amount_usd: float               # unused credit a person asked to have refunded, by email
+    ref: str | None = None          # the payment processor's refund id, if there is one (otherwise one is made up)
+
+class AdminBillingUnfreezeRequest(BaseModel):
+    user: str
 
 class SteerRequest(BaseModel):
     session_id: str
@@ -785,7 +809,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     # thinking is off whatever the setting says, and the optional extras further down are skipped.
     is_admin_user = is_global_admin(directory, username)
     # A person's own limits apply to them, admins included (so an admin's testing cannot use up the shared budget everyone else draws on).
-    budget_state = await asyncio.to_thread(budget_guard.current_state, None, None, budget_guard.limit_username(username, is_admin_user))
+    # `True` is paid_bypass: this turn is the one place a paid person's use is charged to them, so with billing on and a balance the free limits do not apply to it (backend/utils/credits.py; off unless BILLING_ENABLED).
+    budget_state = await asyncio.to_thread(budget_guard.current_state, None, None, budget_guard.limit_username(username, is_admin_user), True)
     if not budget_guard.allows("deep_thinking", budget_state):
         effective_deep_thinking = False
     # When this person was last here, so a task of theirs with a window waits for a quiet moment (backend/utils/user_activity.py): one timestamp, written at most every
@@ -915,6 +940,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         # Aggregate counts about how Sonic itself behaved this turn (no user, no text): backend/utils/self_counters.py.
         turn_counts = new_turn_counts()
         llm_turn = llm_turns.begin(username)  # counts this turn's model calls, and adds them to this person's own count (backend/utils/llm_turns.py)
+        if budget_state.get("paid") and budget_state.get("level") != budget_guard.BLOCKED:
+            llm_turns.note_paid()  # paid for out of their own credit: counted under a paid: label and charged when it finishes (backend/utils/credits.py)
         if answers_an_opening:
             tally(turn_counts, "initiation_answered")
             if answered_kind == "interest":
@@ -2358,6 +2385,8 @@ async def delete_document(
 @app.get("/api/conversations")
 async def list_conversations(current_user = Depends(get_current_user)):
     username = current_user.get("sub")
+    if is_guest_username(username):
+        return []    # every guest shares one identity and one public sign-in token, so a list of "their" conversations would be every guest's; a guest reaches only the one whose id they hold
     return await asyncio.to_thread(list_user_conversation_summaries, username)
 
 @app.get("/api/conversations/{session_id}")
@@ -3813,7 +3842,8 @@ def saapp_health_check():
         "db": db_status,
         "service": "SAAPP Widget",
         "version": "1.0.0",
-        "timestamp": datetime.now(timezone.utc).isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        **process_info.health_fields(),      # pid and start time: two pids at one address means two instances (backend/utils/process_info.py)
     }
 
 async def require_global_admin(current_user = Depends(get_current_user)):
@@ -4064,6 +4094,11 @@ async def report_local_edit_decision(proposal_id: str, payload: EditDecisionRequ
     """The diff card's Apply or Decline, reported to the tool loop that is waiting on it (backend/services/local_edit_decisions.py). Applying itself happens in the browser."""
     username = current_user.get("sub")
     status = local_edit_decisions.decide(username, proposal_id, payload.outcome, payload.reason)
+    # Nobody waiting: which way it came to that, so the next time a turn ends at Apply the counters say why (local_edit_decisions.why_no_waiter). Counts only.
+    why = local_edit_decisions.why_no_waiter(username, proposal_id) if status == "no_waiter" else None
+    waiter_counts = local_edit_decisions.no_waiter_counts(payload.outcome, status, why or "")
+    if waiter_counts:
+        await asyncio.to_thread(record_turn_counts, waiter_counts)
     # What happened to the proposal, counted once, by size (backend/utils/code_outcomes.py): aggregate counts only, no person and no text.
     counted = local_edit_decisions.note_outcome(username, proposal_id, payload.outcome)
     if counted:
@@ -4075,7 +4110,100 @@ async def report_local_edit_decision(proposal_id: str, payload: EditDecisionRequ
         finished = await asyncio.to_thread(code_plan_utils.record_applied_for_user, get_db(), username, list(local_edit_decisions.changes_for(username, proposal_id)))
         if finished:
             await asyncio.to_thread(record_turn_counts, {"code_plan_steps_done": finished})
-    return {"status": status}
+    return {"status": status, **({"why": why} if why and payload.outcome in local_edit_decisions.OUTCOMES else {})}
+
+
+def _billing_user(current_user) -> str:
+    """The signed-in person for a billing endpoint. 404 with billing off (nothing is advertised), 403 for a guest."""
+    if not credits.enabled():
+        raise HTTPException(status_code=404, detail="Not found.")
+    username = current_user.get("sub")
+    if not username or is_guest_username(username):
+        raise HTTPException(status_code=403, detail="Billing is for signed-in people.")
+    return username
+
+
+@app.get("/api/billing/me", tags=["Billing"])
+async def billing_me(current_user = Depends(get_current_user)):
+    """The person's own balance, today's paid use, their daily ceiling and recent ledger rows (backend/utils/credits.py). 404 unless BILLING_ENABLED."""
+    username = _billing_user(current_user)
+    return await asyncio.to_thread(credits.public_view, get_db(), username, None, payments.get_provider() is not None)
+
+
+@app.get("/api/billing/quote", tags=["Billing"])
+async def billing_quote(amount_usd: float = Query(...), current_user = Depends(get_current_user)):
+    """What a top-up of this much CREDIT costs: the credit, the processing line and the total charged to the card, so the page can show them before anyone pays."""
+    _billing_user(current_user)
+    code, body = payments.quote_view(amount_usd)
+    if code != 200:
+        raise HTTPException(status_code=code, detail=body.get("detail", "Could not price that."))
+    return body
+
+
+@app.post("/api/billing/checkout", tags=["Billing"])
+async def billing_checkout(payload: BillingTopUpRequest, current_user = Depends(get_current_user)):
+    """Starts a top-up through the payment provider's hosted page (backend/services/payments.py). 503 until a provider is set up."""
+    username = _billing_user(current_user)
+    return_url = os.getenv("BILLING_RETURN_URL", "")
+    code, body = await asyncio.to_thread(payments.start_checkout, get_db(), username, payload.amount_usd, return_url, return_url)
+    if code != 200:
+        raise HTTPException(status_code=code, detail=body.get("detail", "Could not start a checkout."))
+    return body
+
+
+@app.post("/api/billing/webhook", tags=["Billing"])
+async def billing_webhook(request: Request):
+    """The payment provider's webhook: no sign-in, because the provider is the caller; its signature is what is checked, and only a completed payment credits, once per payment id."""
+    if not credits.enabled():
+        raise HTTPException(status_code=404, detail="Not found.")
+    body = await request.body()
+    signature = request.headers.get("stripe-signature") or request.headers.get("x-signature")
+    code, result = await asyncio.to_thread(payments.accept_webhook, get_db(), body, signature)
+    if code != 200:
+        raise HTTPException(status_code=code, detail=result.get("detail", "Could not handle the event."))
+    return result
+
+
+@app.put("/api/billing/ceiling", tags=["Billing"])
+async def billing_set_own_ceiling(payload: BillingCeilingRequest, current_user = Depends(get_current_user)):
+    """The person sets their own daily limit for paid use, lower than the server's (null clears it)."""
+    username = _billing_user(current_user)
+    ok, message, now_in_force = await asyncio.to_thread(credits.set_own_ceiling, get_db(), username, payload.daily_usd)
+    if not ok:
+        raise HTTPException(status_code=400, detail=message)
+    return {"message": message, "daily_ceiling_usd": credits.to_usd(now_in_force)}
+
+
+@app.put("/api/admin/billing/ceiling", tags=["Billing"])
+async def billing_admin_set_ceiling(payload: AdminBillingCeilingRequest, admin = Depends(require_global_admin)):
+    """An admin raises (or lowers) one person's daily ceiling for paid use. Saved with who and when. Nothing else raises a ceiling."""
+    if not credits.enabled():
+        raise HTTPException(status_code=404, detail="Not found.")
+    ok, message = await asyncio.to_thread(credits.admin_set_ceiling, get_db(), admin.get("sub"), payload.user.strip(), payload.daily_usd)
+    if not ok:
+        raise HTTPException(status_code=400, detail=message)
+    return {"message": message}
+
+
+@app.post("/api/admin/billing/refund", tags=["Billing"])
+async def billing_admin_refund(payload: AdminBillingRefundRequest, admin = Depends(require_global_admin)):
+    """Records a refund of UNUSED credit a person asked for by email (never more than their balance; used credit and the processing line are not refundable). The card itself is refunded in the payment
+    processor's dashboard."""
+    if not credits.enabled():
+        raise HTTPException(status_code=404, detail="Not found.")
+    ok, message, balance = await asyncio.to_thread(credits.refund, get_db(), admin.get("sub"), payload.user.strip(), payload.amount_usd, payload.ref)
+    if not ok:
+        raise HTTPException(status_code=400, detail=message)
+    return {"message": message, "balance_usd": credits.to_usd(balance)}
+
+
+@app.post("/api/admin/billing/unfreeze", tags=["Billing"])
+async def billing_admin_unfreeze(payload: AdminBillingUnfreezeRequest, admin = Depends(require_global_admin)):
+    """Lifts the freeze a disputed payment put on an account, after an admin has looked at it. Saved with who and when."""
+    if not credits.enabled():
+        raise HTTPException(status_code=404, detail="Not found.")
+    done = await asyncio.to_thread(credits.unfreeze, get_db(), admin.get("sub"), payload.user.strip())
+    return {"unfrozen": bool(done)}
 
 
 class LocalGitBundleRequest(BaseModel):

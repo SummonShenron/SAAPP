@@ -664,16 +664,28 @@ def test_the_module_logs_no_text_and_keeps_no_feelings():
     assert "feelings" in cs.PROMPT.lower() and "moods" in cs.PROMPT.lower()
 
 
-def test_the_fold_uses_the_lite_model_unless_a_claude_model_is_asked_for(monkeypatch):
+def test_the_fold_uses_the_lite_model_unless_a_claude_model_is_asked_for_and_the_person_chose_claude(monkeypatch):
     from backend.models import models
 
     sentinel = object()
     monkeypatch.setattr(models, 'summary_llm', lambda: sentinel)
+    monkeypatch.setattr(cs, '_chose_claude', lambda username: username == 'chose-claude')
     monkeypatch.delenv('CONVERSATION_SUMMARY_MODEL', raising=False)
-    assert cs._fold_model() is models.lite_llm, 'the default: lite beat Haiku in the real-model comparison'
+    assert cs._fold_model('chose-claude') is models.lite_llm, 'the default: lite beat Haiku in the real-model comparison'
     monkeypatch.setenv('CONVERSATION_SUMMARY_MODEL', '  ')
-    assert cs._fold_model() is models.lite_llm
+    assert cs._fold_model('chose-claude') is models.lite_llm
     monkeypatch.setenv('CONVERSATION_SUMMARY_MODEL', 'claude-haiku-5-5')
-    assert cs._fold_model() is sentinel, 'opting in'
+    assert cs._fold_model('chose-claude') is sentinel, 'opting in, for a person who chose Claude'
+    assert cs._fold_model('chose-gemini') is models.lite_llm, "the server setting alone never sends someone else's conversation to Anthropic"
+    assert cs._fold_model() is models.lite_llm and cs._fold_model(None) is models.lite_llm
     monkeypatch.setattr(models, 'summary_llm', lambda: None)
-    assert cs._fold_model() is models.lite_llm, 'no Claude key: lite again'
+    assert cs._fold_model('chose-claude') is models.lite_llm, 'no Claude key: lite again'
+
+
+def test_who_counts_as_having_chosen_claude(monkeypatch):
+    from backend.utils import user_settings_utils as settings
+
+    monkeypatch.setattr(settings, 'get_user_tool_model', lambda u: {'a': 'claude', 'b': 'sonnet', 'c': 'gemini', 'd': 'gpt', 'e': None, 'f': None}[u])
+    monkeypatch.setattr(settings, 'get_user_execute_model', lambda u: {'a': None, 'b': None, 'c': 'claude', 'd': 'same', 'e': None, 'f': 'sonnet'}[u])
+    assert [cs._chose_claude(u) for u in 'abcdef'] == [True, True, True, False, False, True]          # Code or Execute counts
+    assert cs._chose_claude(None) is False and cs._chose_claude('') is False and cs._chose_claude('unknown-person') is False       # a lookup problem is no consent

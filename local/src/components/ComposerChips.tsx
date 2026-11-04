@@ -99,8 +99,8 @@ const SHAPES: Record<string, () => React.JSX.Element> = { gemini: GeminiShape, c
 
 /**
  * The model chip's icon: ONE svg drawn from the marks of the models in play. Two different marks are cut on a 45 degree "/" slash (the first one upper-left, the second lower-right); three are cut as thirds
- * meeting at the centre: the Base model on top, the Code model lower-left, the Execute model lower-right (the plan is written, then carried out, left to right). Models that share a mark share a part, so
- * a person who has not chosen an Execute model (it is their Code model) or who is on one maker throughout sees a slash or one whole mark, never a mark cut against itself. Only models that are offered take part.
+ * meeting at the centre: the Base model on top, the Tool model lower-left, the Execute model lower-right (the plan is written, then carried out, left to right). Models that share a mark share a part, so
+ * a person who has not chosen an Execute model (it is their Tool model) or who is on one maker throughout sees a slash or one whole mark, never a mark cut against itself. Only models that are offered take part.
  */
 export function ModelGlyph({ base, code, execute = null }: { base: string | null; code: string | null; execute?: string | null }) {
   const id = useId().replace(/:/g, '');
@@ -206,7 +206,7 @@ function PresetRow({ code, execute, custom, onCustom, onDone }: { code: ChipCont
   const current = presetOf(code.value, execute ? execute.value : null);
   return (
     <div className="cc-col cc-presets" role="group" aria-label="Presets">
-      <div className="cc-pop-title">Preset (Code and Execute models)</div>
+      <div className="cc-pop-title">Preset (Tool and Execute models)</div>
       <div className="cc-preset-row">
         {offered.map(preset => (
           <button
@@ -219,10 +219,10 @@ function PresetRow({ code, execute, custom, onCustom, onDone }: { code: ChipCont
               onDone();
             }}
           >
-            <span className="cc-opt-text"><b>{preset.name}{preset.recommended ? ' (recommended)' : ''}</b><span>{preset.short}</span></span>
+            <span className="cc-opt-text"><b>{preset.name}</b><span>{preset.short}</span></span>
           </button>
         ))}
-        <button type="button" role="menuitemradio" aria-checked={current === 'custom'} title="Choose the Code and Execute model separately." className={`cc-opt cc-preset${current === 'custom' ? ' is-selected' : ''}`} onClick={onCustom}>
+        <button type="button" role="menuitemradio" aria-checked={current === 'custom'} title="Choose the Tool and Execute model separately." className={`cc-opt cc-preset${current === 'custom' ? ' is-selected' : ''}`} onClick={onCustom}>
           <span className="cc-opt-text"><b>Custom</b><span>Choose each one yourself.</span></span>
         </button>
       </div>
@@ -231,8 +231,8 @@ function PresetRow({ code, execute, custom, onCustom, onDone }: { code: ChipCont
 }
 
 /**
- * The model chip's popup: the presets row (Lite, Smart, Max, Custom) over up to three columns, the Base model (which model writes the reply), the Code model (which does the reasoning steps of code work and writes a plan)
- * and the Execute model (which carries out an approved plan), each only where the server offers a choice. They sit in the same popup so one press shows how Sonic is set up. The Code and Execute columns are the
+ * The model chip's popup: the presets row (Lite, Smart, Max, Custom) over up to three columns, the Base model (which model writes the reply), the Tool model (which does the reasoning steps of code work and writes a plan)
+ * and the Execute model (which carries out an approved plan), each only where the server offers a choice. They sit in the same popup so one press shows how Sonic is set up. The Tool and Execute columns are the
  * Custom view: shown when Custom is pressed or the settings match no preset, hidden behind a preset otherwise. The columns share the width and stack by themselves where it is too narrow (the CSS: cc-cols); in the
  * 272px column's card they stack, Base first.
  */
@@ -302,7 +302,7 @@ const ComposerChips: React.FC<ChatSettings> = ({ model, baseModel, executeModel,
     );
   };
 
-  /** The model chip: one icon for the Base, Code and Execute models together, opening the popup that lists them. */
+  /** The model chip: one icon for the Base, Tool and Execute models together, opening the popup that lists them. */
   const modelButton = () => {
     const state = modelChip(baseModel, model, executeModel);
     if (!state) return null;

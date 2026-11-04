@@ -356,7 +356,7 @@ def _app_source():
 
 def test_the_chat_turn_decides_the_budget_first_and_pauses_the_extras_and_the_model_when_told_to():
     source = _app_source()
-    state_at = source.index("budget_state = await asyncio.to_thread(budget_guard.current_state, None, None, budget_guard.limit_username(username, is_admin_user))")
+    state_at = source.index("budget_state = await asyncio.to_thread(budget_guard.current_state, None, None, budget_guard.limit_username(username, is_admin_user), True)")
     assert state_at < source.index('"budget_level": budget_state.get("level")') < source.index("async def token_streamer():")
     assert "effective_deep_thinking = False" in source[state_at: state_at + 300]
     for gate in ('budget_guard.allows("answer_recheck", budget_state)', 'budget_guard.allows("memory_summaries", budget_state)',
@@ -897,3 +897,37 @@ def test_with_both_limits_set_the_request_is_for_whichever_is_furthest_along_and
     state = bg.current_state(db, at(15), "kim")
     assert bg.public_view(state, False)["own_scope"] == "my_day"
     assert bg.request_increase(db, "kim", state, at(15))["scope"] == "my_day"
+
+
+# ---- the paid option is said to be planned where a limit stops someone (2026-11-05; docs/paid-tier-plan.md step 1) -------------------------------------
+
+def test_a_blocked_reply_says_a_paid_option_is_planned_and_not_available_in_every_scope_and_makes_no_promise_of_a_date_or_price(monkeypatch):
+    import re
+
+    monkeypatch.delenv("PAID_OPTION_NOTICE", raising=False)
+    for scope in ("my_day", "my_five", "day", "five", None):
+        reply = bg.blocked_reply("2026-11-01T00:00:00+00:00", False, scope)
+        assert bg.PAID_OPTION_NOTE in reply, scope
+    note = bg.PAID_OPTION_NOTE
+    assert "planned" in note and "isn't available yet" in note
+    assert not re.search(r"\d|\$|free|price|cost|soon|week|month", note, re.IGNORECASE)          # no date, no amount, no promise of timing
+
+
+def test_a_crisis_reply_never_carries_the_paid_option_note(monkeypatch):
+    monkeypatch.delenv("PAID_OPTION_NOTICE", raising=False)
+    assert bg.PAID_OPTION_NOTE not in bg.blocked_reply("2026-11-01T00:00:00+00:00", crisis=True)
+
+
+def test_the_note_can_be_switched_off(monkeypatch):
+    for off in ("off", "0", "false", "no"):
+        monkeypatch.setenv("PAID_OPTION_NOTICE", off)
+        assert bg.paid_option_note() == "" and bg.PAID_OPTION_NOTE not in bg.blocked_reply(None, False, "day")
+        assert "upgrade_note" not in bg.public_view({"level": bg.BLOCKED, "scope": "day"}, False)
+
+
+def test_only_a_blocked_view_carries_the_note_for_the_banner(monkeypatch):
+    monkeypatch.delenv("PAID_OPTION_NOTICE", raising=False)
+    assert bg.public_view({"level": bg.BLOCKED, "scope": "my_day"}, False)["upgrade_note"] == bg.PAID_OPTION_NOTE
+    assert bg.public_view({"level": bg.BLOCKED, "scope": "day"}, True)["upgrade_note"] == bg.PAID_OPTION_NOTE
+    for level in (bg.THROTTLED, bg.OK, bg.NOTICE, bg.OFF):
+        assert "upgrade_note" not in bg.public_view({"level": level, "scope": "day"}, False), level          # no nagging before anyone is stopped

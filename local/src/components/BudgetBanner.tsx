@@ -38,7 +38,7 @@ const BudgetBanner: React.FC<{
     text = `You've used ${percent}% of your ${SCOPE_WORDS[budget.own_scope ?? 'my_day']} usage.`;
   }
   if (budget.level === 'throttled') text = `Low-power mode until ${when(budget.resets_at)}: ${budget.message.replace(/^Low-power mode( for you)?:\s*/, '')}`;
-  if (budget.level === 'blocked') text = `Paused until ${when(budget.resets_at)}: ${own ? 'you have reached your usage limit' : 'the usage budget has been reached'}.`;
+  if (budget.level === 'blocked') text = `Paused until ${when(budget.resets_at)}: ${own ? 'you have reached your usage limit' : 'the usage budget has been reached'}.${budget.upgrade_note ? ` ${budget.upgrade_note}` : ''}`;
   const paused = budget.paused.length ? `Paused: ${budget.paused.join(', ')}.` : undefined;
   const canExtend = Boolean(onExtend) && budget.level === 'blocked' && Boolean(budget.can_extend);
   const className = budget.level === 'ok' ? 'notice' : budget.level;

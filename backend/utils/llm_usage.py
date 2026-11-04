@@ -43,6 +43,9 @@ ROUTES_COLLECTION = "llm_model_routes"
 # mark_as_eval(); nothing else sets this.
 SOURCE_ENV = "LLM_USAGE_SOURCE"
 EVAL_PREFIX = "eval:"
+# A call made during a PAID turn (backend/utils/credits.py: the person pays for it out of their own credit) is counted under this label prefix, which the shared budget leaves out the way it leaves out an eval:
+# Jack is not paying for it. The usage page still shows it, and the person's own counts (backend/utils/user_usage.py) still include it, which is what their paid daily ceiling is judged on.
+PAID_PREFIX = "paid:"
 FIELDS = ("calls", "input", "output", "reasoning", "cached")
 FLUSH_AFTER_CALLS = 40
 FLUSH_AFTER_SECONDS = 120
@@ -153,6 +156,10 @@ def is_eval_label(label: Any) -> bool:
     return str(label or "").startswith(EVAL_PREFIX)
 
 
+def is_paid_label(label: Any) -> bool:
+    return str(label or "").startswith(PAID_PREFIX)
+
+
 def minute_key(now: Optional[datetime] = None) -> str:
     """The UTC minute a moment falls in, "YYYY-MM-DDTHH:MM". Sorts as text in time order, so a range read is a plain `$gte`."""
     moment = now or datetime.now(timezone.utc)
@@ -172,12 +179,15 @@ def record(model: str, label: str, usage: Dict[str, int], day: Optional[str] = N
     try:
         from_eval = os.getenv(SOURCE_ENV, "").strip().lower() == "eval"
         label = EVAL_PREFIX + str(label or "unknown") if from_eval and not is_eval_label(label) else label
+        turn = llm_turns.current()
+        paid = bool(turn is not None and getattr(turn, "paid", False)) and not from_eval
+        label = PAID_PREFIX + str(label or "unknown") if paid and not is_paid_label(label) else label
         key = (day or _today(), str(model or "unknown")[:80], str(label or "unknown")[:120])
         with _lock:
             slot = _buffer.setdefault(key, empty_usage())
             slot["calls"] += 1
             add_into(slot, usage)
-            if not from_eval:  # the minute rows exist only for the budget guard's window, which an eval must not move
+            if not from_eval and not paid:  # the minute rows exist only for the budget guard's window, which neither an eval nor a paid turn (Jack is not paying for it) may move
                 minute_slot = _minutes.setdefault((minute_key(), key[1]), empty_usage())
                 minute_slot["calls"] += 1
                 add_into(minute_slot, usage)
@@ -244,6 +254,12 @@ def flush(db: Any = None) -> int:
             from backend.utils import user_usage
 
             user_usage.flush(db)
+        except Exception:
+            pass
+        try:
+            from backend.utils import credits
+
+            credits.flush(db)          # the charges of finished paid turns, with the other counts
         except Exception:
             pass
 

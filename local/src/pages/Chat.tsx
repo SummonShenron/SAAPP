@@ -736,7 +736,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [gptAvailable, setGptAvailable] = useState<boolean>(false);             // GPT-5.4 mini is offered only where the server has an OpenAI key and the model's price
   const [replyModel, setReplyModel] = useState<ReplyModel>('gemini');           // the BASE model: which model writes the reply (Gemini unless they chose GPT)
   const [replyModelAvailable, setReplyModelAvailable] = useState<boolean>(false);
-  const [executeSetting, setExecuteSetting] = useState<ExecuteModelSetting | null>(null);      // the EXECUTE model: which model carries out an approved plan ("same" as the Code model unless they chose one); null until loaded, or where there is no such setting
+  const [executeSetting, setExecuteSetting] = useState<ExecuteModelSetting | null>(null);      // the EXECUTE model: which model carries out an approved plan ("same" as the Tool model unless they chose one); null until loaded, or where there is no such setting
   const [budget, setBudget] = useState<BudgetView | null>(null);
   const openingRequestedRef = useRef<string | null>(null);
   const [allowedAffiliates, setAllowedAffiliates] = useState<KnowledgeBase[]>([]);
