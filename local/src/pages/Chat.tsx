@@ -2584,7 +2584,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               </div>
             ) : (
               currentExampleQuestions.map((card, idx) => (
-                <div key={idx} className="query-card" onClick={() => !loading && chooseWelcomeCard(card)}>
+                <div key={idx} className="query-card" data-help="chat.suggestion" onClick={() => !loading && chooseWelcomeCard(card)}>
                   {card.label && <small className="query-card-label">{card.label}</small>}
                   <p>{card.text}</p>
                   <span>→</span>

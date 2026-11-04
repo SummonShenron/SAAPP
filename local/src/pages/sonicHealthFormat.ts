@@ -42,6 +42,12 @@ export const KB_LABELS: Record<string, string> = {
   personal: 'Personal knowledge bases (counts only)',
 };
 
+/** The server names a built-in knowledge base by its id ("Affiliate C"); show the name people know it by. Personal and unknown knowledge bases keep the name they came with. */
+export function nameKnowledgeBases<T extends { id: string; display_name: string }>(bases: T[] | null | undefined): T[] {
+  if (!Array.isArray(bases)) return [];
+  return bases.map(base => (KB_LABELS[base.id] ? { ...base, display_name: KB_LABELS[base.id] } : base));
+}
+
 /** The reading shelf's topics as a person would name them (the admin shelf tab and the Reading page). */
 export const SHELF_TOPIC_LABELS: Record<string, string> = {
   bug_hunts: 'Bug hunts',

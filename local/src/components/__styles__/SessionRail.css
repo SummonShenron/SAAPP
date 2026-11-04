@@ -67,6 +67,8 @@
 
 /* The strip takes a little of the conversation's width so no text runs under it. */
 .chat-page:has(.session-rail) .chat-window { padding-right: 46px; }
+/* The empty chat has no .chat-window: its example cards ran under the strip (the right-hand card's edge sat beneath the icons). Same room, on the cards only, so the message box keeps its full width. */
+.chat-page:has(.session-rail) .example-cards-container { margin-right: 38px; }
 
 /* The runner nudge beside the Connection button on the phone strip: the callout itself, without a second border inside the popover's. */
 .rail-nudge { padding: 0; }

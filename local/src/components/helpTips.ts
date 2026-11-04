@@ -34,6 +34,7 @@ export const HELP_TIPS: Record<string, HelpTip> = {
   'chat.terminal': { title: 'Terminal', what: 'Shows the output of checks and commands Sonic ran on your own computer through the runner.', when: 'You have the runner set up and want to see what it printed.' },
   'chat.terminalPanel': { title: 'Terminal', what: 'The output of checks and commands run on your computer through the runner, newest first.' },
   'chat.sessionColumn': { title: 'Session column', what: 'Shows or hides the column down the right side: your computer and folder, the repository, how full the memory is, the plan, and your chat settings.' },
+  'chat.suggestion': { title: 'A suggested question', what: 'A question to start with. Pressing it sends it as your first message.', when: 'You are not sure what to ask.' },
   'chat.loadEarlier': { title: 'Load earlier messages', what: 'Brings in the older part of a long conversation.' },
   'chat.budget': { title: 'Usage', what: 'Says where you are against the usage limit. When a limit is reached Sonic pauses and says when it resets.' },
 

@@ -3,6 +3,7 @@ import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Suspense, useState, useEffect } from "react";
 import { api, getEffectivePrincipal, isGuestPrincipal } from "../api";
 import { useIsGlobalAdmin } from "../hooks/useIsGlobalAdmin";
+import { useSelfServiceAccess } from "../hooks/useSelfServiceAccess";
 import { useAuthReady } from "../hooks/useAuthReady";
 import { useConversationList } from "../hooks/useConversationList";
 import { useMediaQuery } from "../hooks/useMediaQuery";
@@ -61,6 +62,7 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
   const auth = useAuthReady(isEmbedded);
   const authReady = auth.state === 'ready';
   const isAdmin = useIsGlobalAdmin(authReady);
+  const canSelfService = useSelfServiceAccess(authReady);      // the Self Service link only for someone who may add documents (a guest saw a locked, empty page)
 
   // The rail: a drawer on a phone; on a wide screen expanded unless the person collapsed it (and it stays as they left it), on a narrower
   // one icons only unless they expanded it.
@@ -203,6 +205,7 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
         drawerOpen={drawerOpen}
         onCloseDrawer={() => setDrawerOpen(false)}
         isAdmin={isAdmin}
+        canSelfService={canSelfService}
         isGuest={guest}
         userName={userName}
         userEmail={userEmail}

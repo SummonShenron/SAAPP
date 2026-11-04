@@ -97,8 +97,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
         <div className="landing-left">
           <div className="landing-id landing-hero-text">
             <h2>SONIC ASSISTANT</h2>
-            <h3>RAG Pipeline & Multi-Tenant Data Isolation System.</h3>
-            <h4>Built by Jack Harper.</h4>
+            <h3>An AI assistant that remembers you, helps you code, and runs your checks.</h3>
+            <h4>Built by Jack Harper. A RAG pipeline with each person's data kept separate.</h4>
           </div>
 
           <div className="landing-signin">

@@ -25,6 +25,8 @@ interface RailProps {
   drawerOpen: boolean;
   onCloseDrawer: () => void;
   isAdmin: boolean;
+  /** Whether the person may add documents to a knowledge base: the Self Service page is only shown to them (components/selfServiceAccess.ts). */
+  canSelfService: boolean;
   isGuest: boolean;
   userName: string;
   userEmail: string | null;
@@ -55,7 +57,7 @@ const HELP_RAIL: Record<string, string> = {
 };
 
 const Rail: React.FC<RailProps> = (props) => {
-  const { theme, onToggleTheme, compact, onToggleCompact, isMobile, drawerOpen, onCloseDrawer, isAdmin, isGuest, userName, userEmail, onHelp, onLogout, conversations } = props;
+  const { theme, onToggleTheme, compact, onToggleCompact, isMobile, drawerOpen, onCloseDrawer, isAdmin, canSelfService, isGuest, userName, userEmail, onHelp, onLogout, conversations } = props;
   const navigate = useNavigate();
   const { pathname } = useLocation();
 
@@ -108,7 +110,7 @@ const Rail: React.FC<RailProps> = (props) => {
 
   const pages: { path: string; label: string; icon: IconName; show: boolean }[] = [
     { path: '/chat', label: 'Chat', icon: 'chat', show: true },
-    { path: '/self-service', label: 'Self Service', icon: 'folder', show: true },
+    { path: '/self-service', label: 'Self Service', icon: 'folder', show: canSelfService },
     { path: '/tidy', label: 'Tidy up', icon: 'tidy', show: !isGuest },
     { path: '/memory', label: 'Memory', icon: 'memory', show: !isGuest },
     { path: '/reading', label: 'Reading', icon: 'book', show: !isGuest },

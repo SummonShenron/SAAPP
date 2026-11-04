@@ -3,6 +3,7 @@ import type { SessionCheck } from './utils/authReady';
 import { IDLE_LIMIT_MS, isKeepaliveLine, readOrGiveUp } from './streamWatchdog';
 import { ChatSendError, kindForStatus, safeDetail, toChatSendError } from './chatErrors';
 import { SyncRequestError } from './localWorkspaceCore';
+import { nameKnowledgeBases } from './pages/sonicHealthFormat';
 
 declare global {
   interface Window {
@@ -244,7 +245,7 @@ export async function getAffiliates(username: string): Promise<KnowledgeBase[]> 
     throw new Error("Could not load secure workspace claims.");
   }
   const data = await response.json();
-  return data.accessible_affiliates;
+  return nameKnowledgeBases(data.accessible_affiliates);
 }
 
 /**

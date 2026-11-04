@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import { api, type KnowledgeBase } from '../api';
-
+import { nameKnowledgeBases } from '../pages/sonicHealthFormat';
 interface UseAffiliateScopeArgs {
   enabled: boolean;
   selectedAffiliate: string;
@@ -37,7 +37,7 @@ export function useAffiliateScope({
 
     // Handle guest flows first; do not wait on Clerk
     if (isGuest) {
-      setAllowedAffiliates([{ id: guestScope, display_name: guestScope.replace('_', ' ') }]);
+      setAllowedAffiliates(nameKnowledgeBases([{ id: guestScope, display_name: guestScope.replace('_', ' ') }]));
       if (selectedAffiliate === 'All' || selectedAffiliate !== guestScope) {
         setSelectedAffiliate(guestScope);
       }
