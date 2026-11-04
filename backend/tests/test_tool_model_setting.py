@@ -167,7 +167,7 @@ def test_the_chat_turn_hands_the_choice_to_the_agent():
     app_source = open(os.path.join(REPO, "app.py"), encoding="utf-8").read()
     assert '"tool_model": effective_tool_model,' in app_source and 'effective_tool_model = _settings.get("tool_model")' in app_source
     node_source = open(os.path.join(REPO, "backend", "services", "agent_workflow.py"), encoding="utf-8").read()
-    assert 'llm=tool_agent_llm(bool(deep_thinking), code_plan.execute_phase_choice(state.get("tool_model"), plan_phase)),' in node_source          # the person's choice, except while an approved plan is carried out (backend/tests/test_code_plan_execute_model.py)
+    assert "llm=tool_agent_llm(bool(deep_thinking), tool_model_choice)," in node_source          # the person's choice, except while an approved plan is carried out (backend/tests/test_code_plan_execute_model.py)
 
 
 def test_the_model_chip_is_offered_only_when_available_and_changes_the_tool_model():

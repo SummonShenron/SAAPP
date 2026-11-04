@@ -40,6 +40,9 @@ export const PrivacyPage: React.FC = () => {
             receives your request and the changes shown on the Apply card (the same text you saw, capped in length), and nothing else. This only happens on a server where Claude is set
             up. We keep a count of these readings, never their content.
           </li>
+          <li>
+            <strong>As the Execute model:</strong> if you set the Execute model to Claude, the steps that carry out an approved plan in Plan mode go to Anthropic, whatever your Code model is. Leave it on "Same as Code" and nothing changes. A server can also be set to carry out plans on Claude, but only for people whose own Code model is already Claude: it never moves anyone's code to Anthropic who did not choose Anthropic.
+          </li>
           <li>Anthropic handles that text under its own terms. The second reading above receives only your request and the change itself, not your Memory notes or account details.</li>
         </ul>
 
@@ -56,7 +59,10 @@ export const PrivacyPage: React.FC = () => {
             <strong>As the Code model:</strong> the code and tool steps of a request (your question, the code and results Sonic reads while working on it, and the few saved notes about you that
             relate to it, if any) go to OpenAI instead of Google for those steps. The reply is written by your Base model.
           </li>
-          <li>OpenAI handles that text under its own terms. We keep a count of these calls and what they cost, never their content. Set either setting back to Gemini (or Claude) any time.</li>
+          <li>
+            <strong>As the Execute model:</strong> when you approve a plan in Plan mode, the steps that carry it out (the code and results Sonic reads and writes in those steps, and the few saved notes about you that relate to them, if any) go to OpenAI instead of the provider of your Code model. Your Code model still writes the plan.
+          </li>
+          <li>OpenAI handles that text under its own terms. We keep a count of these calls and what they cost, never their content. Set any of these settings back (to Gemini, Claude, or "Same as Code") any time.</li>
         </ul>
 
         <h2>1. Information we collect</h2>

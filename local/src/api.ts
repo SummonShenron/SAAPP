@@ -481,6 +481,40 @@ export async function updateReplyModel(replyModel: ReplyModel): Promise<ReplyMod
   return res.json();
 }
 
+/**
+ * The EXECUTE model: which model carries out an approved plan (Plan mode); the Code model writes the plan. "same" (the default) means the Code model. `choice` is what the person chose (null when nothing),
+ * `execute_model` what is in effect: a choice that can no longer be offered shows as "same". `claude_available`, `sonnet_available` and `gpt_available` are the same flags as for the Code model, and `available`
+ * is false where there is nothing to choose beyond Gemini (no Claude and no GPT set up on the server, or a guest).
+ */
+export type ExecuteModel = 'same' | ToolModel;
+export interface ExecuteModelSetting {
+  execute_model: ExecuteModel;
+  choice: ToolModel | null;
+  default: 'same';
+  available: boolean;
+  claude_available: boolean;
+  sonnet_available: boolean;
+  gpt_available: boolean;
+}
+
+export async function getExecuteModel(): Promise<ExecuteModelSetting> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/execute-model`, { headers: { ...authHeaders } });
+  if (!res.ok) throw new Error("Failed to fetch the execute model setting.");
+  return res.json();
+}
+
+export async function updateExecuteModel(executeModel: ExecuteModel): Promise<ExecuteModelSetting> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/settings/execute-model`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ execute_model: executeModel })
+  });
+  if (!res.ok) throw new Error("Failed to update the execute model setting.");
+  return res.json();
+}
+
 export async function getToolModel(): Promise<ToolModelSetting> {
   const authHeaders = await getAuthHeaders();
   const res = await fetch(`${BASE_URL}/api/settings/tool-model`, { headers: { ...authHeaders } });
@@ -2508,6 +2542,8 @@ export const api = {
   updateToolModel,
   getReplyModel,
   updateReplyModel,
+  getExecuteModel,
+  updateExecuteModel,
   getProactiveOpening,
   updateProactiveOpening,
   getOpsDigest,

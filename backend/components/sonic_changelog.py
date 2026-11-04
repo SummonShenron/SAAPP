@@ -240,6 +240,20 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "execute_model_choice",
+        "requires": [
+            "backend/utils/code_plan.py::def execute_phase_choice",
+            "backend/utils/user_settings_utils.py::def save_execute_model_choice",
+        ],
+        "month": "2026-11",
+        "title": "A different model to carry out an approved plan",
+        "line": (
+            "I can now carry out an approved plan with a different model from the one that wrote it, chosen in the Execute model setting. By default it is the same as your Code model."
+        ),
+        "keywords": ["execute model", "plan mode", "carry out the plan", "cheaper model", "who runs the plan", "plan first", "approved plan"],
+        "volunteer": [],
+    },
+    {
         "id": "attachments_remembered",
         "requires": [
             "backend/utils/attachment_utils.py::def earlier_attachments_block",

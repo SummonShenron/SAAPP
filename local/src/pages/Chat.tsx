@@ -30,7 +30,7 @@ import MeetingControl from '../components/MeetingControl';
 import WorkingNotesControl from '../components/WorkingNotesControl';
 import ConversationSummaryControl from '../components/ConversationSummaryControl';
 import PlanCard from '../components/PlanCard';
-import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type BudgetView, type CodePlan, type KnowledgeBase, type MemorySources, type ReplyModel, type RunnerJob, type ToolModel } from '../api';
+import { api, BASE_URL, getAuthHeaders, getEffectivePrincipal, isGuestPrincipal, type BudgetView, type CodePlan, type ExecuteModel, type ExecuteModelSetting, type KnowledgeBase, type MemorySources, type ReplyModel, type RunnerJob, type ToolModel } from '../api';
 import MemorySourceDialog from '../components/MemorySourceDialog';
 import BudgetBanner from '../components/BudgetBanner';
 import SessionColumn, { type ConnectionProps, type FolderControls, type RepoControls } from '../components/SessionColumn';
@@ -737,6 +737,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [gptAvailable, setGptAvailable] = useState<boolean>(false);             // GPT-5.4 mini is offered only where the server has an OpenAI key and the model's price
   const [replyModel, setReplyModel] = useState<ReplyModel>('gemini');           // the BASE model: which model writes the reply (Gemini unless they chose GPT)
   const [replyModelAvailable, setReplyModelAvailable] = useState<boolean>(false);
+  const [executeSetting, setExecuteSetting] = useState<ExecuteModelSetting | null>(null);      // the EXECUTE model: which model carries out an approved plan ("same" as the Code model unless they chose one); null until loaded, or where there is no such setting
   const [budget, setBudget] = useState<BudgetView | null>(null);
   const openingRequestedRef = useRef<string | null>(null);
   const [allowedAffiliates, setAllowedAffiliates] = useState<KnowledgeBase[]>([]);
@@ -1193,6 +1194,9 @@ useEffect(() => {
     api.getReplyModel()
       .then(data => { setReplyModel(data.reply_model); setReplyModelAvailable(data.available); })
       .catch(() => { /* guests and embeds have no such setting */ });
+    api.getExecuteModel()
+      .then(data => setExecuteSetting(data))
+      .catch(() => { /* guests and embeds have no such setting */ });
   }, [principal]);
 
   // The usage budget status (backend/utils/budget_guard.py): read on load, pushed by the server when a turn starts under a notice,
@@ -1263,6 +1267,17 @@ useEffect(() => {
     } catch (err) {
       console.error("Failed to update the base model setting:", err);
       setReplyModel(before);
+    }
+  };
+
+  const handleExecuteModelChange = async (next: ExecuteModel) => {
+    const before = executeSetting;
+    setExecuteSetting(current => (current ? { ...current, execute_model: next } : current));
+    try {
+      setExecuteSetting(await api.updateExecuteModel(next));
+    } catch (err) {
+      console.error("Failed to update the execute model setting:", err);
+      setExecuteSetting(before);
     }
   };
 
@@ -2402,6 +2417,10 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
       : null,
     // The BASE model (which model writes the reply): a choice only where the server can run GPT.
     baseModel: replyModelAvailable ? { value: replyModel, onChange: id => { void handleReplyModelChange(id as ReplyModel); } } : null,
+    // The EXECUTE model (who carries out an approved plan): only where plans exist (a connected folder that can be edited) and there is a provider to choose besides Gemini; each provider is left out where the server does not offer it.
+    executeModel: workspace.canEdit && executeSetting?.available
+      ? { value: executeSetting.execute_model, onChange: id => { void handleExecuteModelChange(id as ExecuteModel); }, hide: [...(executeSetting.claude_available ? [] : ['claude']), ...(executeSetting.sonnet_available ? [] : ['sonnet']), ...(executeSetting.gpt_available ? [] : ['gpt'])] }
+      : null,
     mode: workspace.canEdit ? { value: modeId(planMode), onChange: id => { void handlePlanModeChange(modeValue(id)); } } : null,
     thinking: { value: thinkingId(deepThinking), onChange: id => { void handleDeepThinkingChange(thinkingValue(id)); } },
     answers: { value: answersId(ragMode), onChange: id => { void handleRagModeChange(answersValue(id)); } },

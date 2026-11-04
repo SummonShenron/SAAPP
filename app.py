@@ -183,7 +183,7 @@ from backend.utils.shared_history import CALLBACK_MARK, build_callback_block, ca
 from backend.utils.user_settings_utils import (
     get_user_rag_mode, set_user_rag_mode, VALID_RAG_MODES,
     get_user_deep_thinking_mode, set_user_deep_thinking_mode, get_user_plan_mode, set_user_plan_mode,
-    tool_model_view, save_tool_model_choice, reply_model_view, save_reply_model_choice,
+    tool_model_view, save_tool_model_choice, reply_model_view, save_reply_model_choice, execute_model_view, save_execute_model_choice,
     get_user_target_repo, set_user_target_repo,
     get_user_settings_bundle,
     get_user_profile,
@@ -447,6 +447,10 @@ class ToolModelUpdate(BaseModel):
 
 class ReplyModelUpdate(BaseModel):
     reply_model: str
+
+
+class ExecuteModelUpdate(BaseModel):
+    execute_model: str
 
 class TargetRepoUpdate(BaseModel):
     target_repo: Optional[str] = None
@@ -860,6 +864,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         "rag_mode": effective_rag_mode,
         "deep_thinking": effective_deep_thinking,
         "tool_model": effective_tool_model,
+        "execute_model": _settings.get("execute_model"),     # who carries out an approved plan: None = the same as their Code model
         "edit_decisions": bool(request.edit_decisions),
         "code_followup": code_followup,
         "runner_cards": bool(request.runner_cards),
@@ -3338,6 +3343,22 @@ async def get_reply_model_setting(current_user = Depends(get_current_user)):
 async def update_reply_model_setting(payload: ReplyModelUpdate, current_user = Depends(get_current_user)):
     username = current_user.get("sub")
     view, problem = save_reply_model_choice(username, payload.reply_model, openai_available())
+    if problem:
+        raise HTTPException(status_code=problem[0], detail=problem[1])
+    return view
+
+
+@app.get("/api/settings/execute-model")
+async def get_execute_model_setting(current_user = Depends(get_current_user)):
+    """Which model carries out an approved plan for this person: "same" (their Code model, the default) or the one they chose. `available` is whether there is a provider to choose beyond Gemini; guests and the embed have no choice."""
+    username = current_user.get("sub")
+    return execute_model_view(username, claude_available(), sonnet_available(), openai_available())
+
+
+@app.put("/api/settings/execute-model")
+async def update_execute_model_setting(payload: ExecuteModelUpdate, current_user = Depends(get_current_user)):
+    username = current_user.get("sub")
+    view, problem = save_execute_model_choice(username, payload.execute_model, claude_available(), sonnet_available(), openai_available())
     if problem:
         raise HTTPException(status_code=problem[0], detail=problem[1])
     return view

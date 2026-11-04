@@ -76,6 +76,7 @@ class GraphState(TypedDict):
     code_followup: Optional[str]                  # "redo" | "followed" when this message follows a coding reply of Sonic's, else None (backend/utils/code_outcomes.py): the cue for proposing a lesson (backend/utils/lesson_proposals.py)
     runner_cards: Optional[bool]                  # the page can show a local-runner check card (Run / Cancel), so the run_local_check tool may be offered (backend/utils/runner_jobs.py)
     tool_model: Optional[str]                     # "claude" | "sonnet" | "gpt" | "gemini": the person's choice for the tool agent's reasoning steps; None = the server's default
+    execute_model: Optional[str]                  # "claude" | "sonnet" | "gpt" | "gemini": the person's choice for the model that carries out an approved plan; None = the same as their Code model
     budget_level: Optional[str]                   # the usage budget guard's level this turn (backend/utils/budget_guard.py)
     insight_answer: Optional[str]                 # Woven into CONVERSATIONAL_PROMPT's {insight} slot
     paused_clarification: Optional[Dict[str, Any]]  # {"original_question": str, "attempts": list[dict]} —

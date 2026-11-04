@@ -1,6 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import Icon, { type IconName } from './icons';
-import { BASE_MODEL, CHIPS, chipLabel, isChanged, modelChipValue, modelsChanged, modelsLabel, specOption, type ChipKey, type ChipSpec } from './composerChipsLogic';
+import { BASE_MODEL, CHIPS, EXECUTE_MODEL, chipLabel, isChanged, modelChipValue, modelsChanged, modelsLabel, resolvedExecute, specOption, type ChipKey, type ChipSpec } from './composerChipsLogic';
 import './__styles__/ComposerChips.css';
 
 export interface ChipControl {
@@ -16,6 +16,8 @@ export interface ChatSettings {
   model: ChipControl | null;
   /** The base model, the one that writes the reply; null where there is no choice (GPT is not set up on the server, or a guest). It shares the model chip's popup with the code model, as its first column. */
   baseModel: ChipControl | null;
+  /** The execute model, the one that carries out an approved plan (Plan mode); null where it is not offered (no provider besides Gemini is set up, a guest, or no folder to edit). It is the model popup's third column. */
+  executeModel: ChipControl | null;
   /** Plan or Agent; null without a connected folder that can be edited (it only matters there). */
   mode: ChipControl | null;
   thinking: ChipControl;
@@ -95,24 +97,43 @@ function ClaudeSonnetMark() {
 const SHAPES: Record<string, () => React.JSX.Element> = { gemini: GeminiShape, claude: ClaudeShape, sonnet: ClaudeSonnetShape, gpt: GptShape };
 
 /**
- * The model chip's icon: ONE svg that is the upper-left half of the Base model's mark and the lower-right half of the Code model's, split on a 45 degree "/" slash from the bottom-left corner to the top-right. Where both are the same maker (the ordinary Gemini and Gemini, or
- * Claude and Claude Sonnet) it is that mark whole, and where only one of the two is offered it is that one's mark.
+ * The model chip's icon: ONE svg drawn from the marks of the models in play. Two different marks are cut on a 45 degree "/" slash (the first one upper-left, the second lower-right); three are cut as thirds
+ * meeting at the centre: the Base model on top, the Code model lower-left, the Execute model lower-right (the plan is written, then carried out, left to right). Models that share a mark share a part, so
+ * a person who has not chosen an Execute model (it is their Code model) or who is on one maker throughout sees a slash or one whole mark, never a mark cut against itself. Only models that are offered take part.
  */
-export function ModelGlyph({ base, code }: { base: string | null; code: string | null }) {
+export function ModelGlyph({ base, code, execute = null }: { base: string | null; code: string | null; execute?: string | null }) {
   const id = useId().replace(/:/g, '');
-  const left = base ?? code ?? 'gemini';
-  const right = code ?? base ?? 'gemini';
-  const Left = SHAPES[left] ?? GeminiShape;
-  const Right = SHAPES[right] ?? GeminiShape;
-  if (Left === Right) return glyph(left);
+  const shapes: Array<() => React.JSX.Element> = [];
+  const names: string[] = [];
+  for (const role of [base, code, resolvedExecute(code, execute)]) {
+    if (!role) continue;
+    const shape = SHAPES[role] ?? GeminiShape;
+    if (!shapes.includes(shape)) { shapes.push(shape); names.push(role); }
+  }
+  if (shapes.length <= 1) return glyph(names[0] ?? 'gemini');
+  const [First, Second, Third] = shapes;
+  if (!Third) {
+    return (
+      <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" className="cc-mark">
+        <defs>
+          <clipPath id={`${id}l`}><polygon points="0,0 24,0 0,24" /></clipPath>
+          <clipPath id={`${id}r`}><polygon points="24,0 24,24 0,24" /></clipPath>
+        </defs>
+        <g clipPath={`url(#${id}l)`}><First /></g>
+        <g clipPath={`url(#${id}r)`}><Second /></g>
+      </svg>
+    );
+  }
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" className="cc-mark">
       <defs>
-        <clipPath id={`${id}l`}><polygon points="0,0 24,0 0,24" /></clipPath>
-        <clipPath id={`${id}r`}><polygon points="24,0 24,24 0,24" /></clipPath>
+        <clipPath id={`${id}t`}><polygon points="12,12 -8.78,0 -8.78,-24 32.78,-24 32.78,0" /></clipPath>
+        <clipPath id={`${id}a`}><polygon points="12,12 12,36 -12,36 -8.78,0" /></clipPath>
+        <clipPath id={`${id}b`}><polygon points="12,12 32.78,0 36,36 12,36" /></clipPath>
       </defs>
-      <g clipPath={`url(#${id}l)`}><Left /></g>
-      <g clipPath={`url(#${id}r)`}><Right /></g>
+      <g clipPath={`url(#${id}t)`}><First /></g>
+      <g clipPath={`url(#${id}a)`}><Second /></g>
+      <g clipPath={`url(#${id}b)`}><Third /></g>
     </svg>
   );
 }
@@ -175,24 +196,27 @@ export function ChipChoices({ chipKey, control, onDone, className }: { chipKey: 
 }
 
 /**
- * The model chip's popup: two columns, the Base model (which model writes the reply) and the Code model (which does the reasoning steps of code work), each only where the server offers a choice. Both sit in
- * the same popup so one press shows how Sonic is set up. The columns share the width and stack by themselves where it is too narrow for two (the CSS: cc-cols).
+ * The model chip's popup: up to three columns, the Base model (which model writes the reply), the Code model (which does the reasoning steps of code work and writes a plan) and the Execute model (which carries
+ * out an approved plan), each only where the server offers a choice. They sit in the same popup so one press shows how Sonic is set up. The columns share the width and stack by themselves where it is too
+ * narrow (the CSS: cc-cols); in the 272px column's card they stack, Base first.
  */
-export function ModelChoices({ base, code, onDone, className }: { base: ChipControl | null; code: ChipControl | null; onDone: () => void; className: string }) {
+export function ModelChoices({ base, code, execute = null, onDone, className }: { base: ChipControl | null; code: ChipControl | null; execute?: ChipControl | null; onDone: () => void; className: string }) {
   return (
     <div className={`${className} cc-cols`} role="menu" aria-label="Models">
       {base && <OptionList spec={BASE_MODEL} control={base} onDone={onDone} compact />}
       {code && <OptionList spec={CHIPS.model} control={code} onDone={onDone} compact />}
+      {execute && <OptionList spec={EXECUTE_MODEL} control={execute} onDone={onDone} compact />}
     </div>
   );
 }
 
-/** What the model chip shows for its two settings: its icon (the first one that is not the ordinary model), whether it is highlighted, and its name. Null when neither setting is offered. */
-export function modelChip(base: ChipControl | null, code: ChipControl | null): { value: string; changed: boolean; label: string } | null {
-  if (!base && !code) return null;
+/** What the model chip shows for its settings: its icon value (the first one that is not the ordinary model), whether it is highlighted, and its name. Null when none of the settings is offered. */
+export function modelChip(base: ChipControl | null, code: ChipControl | null, execute: ChipControl | null = null): { value: string; changed: boolean; label: string } | null {
+  if (!base && !code && !execute) return null;
   const baseValue = base ? base.value : null;
   const codeValue = code ? code.value : null;
-  return { value: modelChipValue(baseValue, codeValue), changed: modelsChanged(baseValue, codeValue), label: modelsLabel(baseValue, codeValue) };
+  const executeValue = execute ? execute.value : null;
+  return { value: modelChipValue(baseValue, codeValue, executeValue), changed: modelsChanged(baseValue, codeValue, executeValue), label: modelsLabel(baseValue, codeValue, executeValue) };
 }
 
 type Open = ChipKey | 'help' | null;
@@ -202,7 +226,7 @@ type Open = ChipKey | 'help' | null;
  * shows which of its two states is on (and is highlighted when that is not the ordinary one); pressing it lists both states under the row and says what each does. In the column the open choice is
  * listed under the row at the card's width instead of floating, because the column scrolls and is narrower than a popup. One is open at a time; a press anywhere else, or Escape, closes it.
  */
-const ComposerChips: React.FC<ChatSettings> = ({ model, baseModel, mode, thinking, answers, disabled, onExport, exportDisabled, help }) => {
+const ComposerChips: React.FC<ChatSettings> = ({ model, baseModel, executeModel, mode, thinking, answers, disabled, onExport, exportDisabled, help }) => {
   const [open, setOpen] = useState<Open>(null);
   const root = useRef<HTMLDivElement>(null);
 
@@ -238,9 +262,9 @@ const ComposerChips: React.FC<ChatSettings> = ({ model, baseModel, mode, thinkin
     );
   };
 
-  /** The model chip: one icon for the Base model and the Code model together, opening the two-column popup. */
+  /** The model chip: one icon for the Base, Code and Execute models together, opening the popup that lists them. */
   const modelButton = () => {
-    const state = modelChip(baseModel, model);
+    const state = modelChip(baseModel, model, executeModel);
     if (!state) return null;
     return (
       <div className="cc-item" key="model">
@@ -249,7 +273,7 @@ const ComposerChips: React.FC<ChatSettings> = ({ model, baseModel, mode, thinkin
           aria-haspopup="menu" aria-expanded={open === 'model'} aria-label={state.label} title={disabled ? `${state.label} (locked while Sonic is working)` : state.label}
           disabled={disabled} onClick={() => toggle('model')}
         >
-          <ModelGlyph base={baseModel ? baseModel.value : null} code={model ? model.value : null} />
+          <ModelGlyph base={baseModel ? baseModel.value : null} code={model ? model.value : null} execute={executeModel ? executeModel.value : null} />
         </button>
       </div>
     );
@@ -280,7 +304,7 @@ const ComposerChips: React.FC<ChatSettings> = ({ model, baseModel, mode, thinkin
     <div className="composer-chips composer-chips-panel" ref={root}>
       <div className="cc-row">{row}</div>
       {open === 'help' && <div className="cc-pop cc-pop-help" role="dialog" aria-label="Help">{help}</div>}
-      {open === 'model' && <ModelChoices base={baseModel} code={model} onDone={() => setOpen(null)} className="cc-pop" />}
+      {open === 'model' && <ModelChoices base={baseModel} code={model} execute={executeModel} onDone={() => setOpen(null)} className="cc-pop" />}
       {open && open !== 'help' && open !== 'model' && openControl && choices(open, openControl)}
     </div>
   );

@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { BASE_MODEL, CHIPS, answersId, answersValue, chipLabel, isChanged, modeId, modeValue, modelChipValue, modelsChanged, modelsLabel, optionOf, specOption, thinkingId, thinkingValue } from './composerChipsLogic.ts';
+import { BASE_MODEL, CHIPS, EXECUTE_MODEL, answersId, answersValue, chipLabel, isChanged, modeId, modeValue, modelChipValue, modelsChanged, modelsLabel, optionOf, resolvedExecute, specOption, thinkingId, thinkingValue } from './composerChipsLogic.ts';
 
 test('each setting is one icon with its states (two, and four for the code model), and the quiet one is the ordinary state', () => {
   for (const spec of Object.values(CHIPS)) {
@@ -174,15 +174,107 @@ test('the two-column popup and its wiring: ModelChoices in the column card and t
   assert.ok(css.indexOf('.cc-pop.cc-cols') < css.indexOf('.composer-chips-panel .cc-pop,'), 'the column card override (width: auto) comes after the popup width, so it wins');
 });
 
-test('the model chip draws ONE svg: the left part of the Base model mark and the right part of the Code model mark, whole where both are the same maker', () => {
+test('the model chip draws ONE svg from the models in play: a slash for two different marks, thirds for three, one whole mark where they share one', () => {
   const chips = readFileSync(new URL('./ComposerChips.tsx', import.meta.url), 'utf8');
-  assert.match(chips, /export function ModelGlyph\(\{ base, code \}: \{ base: string \| null; code: string \| null \}\)/);
-  assert.match(chips, /const SHAPES: Record<string, \(\) => React\.JSX\.Element> = \{ gemini: GeminiShape, claude: ClaudeShape, sonnet: ClaudeSonnetShape, gpt: GptShape \};/);   // Sonnet has its own shape (the Claude burst with an inner ring of rays)
-  assert.match(chips, /if \(Left === Right\) return glyph\(left\);/);                                // the same maker is one whole mark, not a mark split against itself
-  assert.match(chips, /<polygon points="0,0 24,0 0,24" \/>/);                                         // the upper-left half ...
-  assert.match(chips, /<polygon points="24,0 24,24 0,24" \/>/);                                       // ... and the lower-right half meet on the 45 degree "/" from (0,24) to (24,0)
-  assert.match(chips, /useId\(\)\.replace\(\/:\/g, ''\)/);                                          // each chip's clip paths have their own ids (the column card and the phone strip can both be on the page)
-  assert.match(chips, /<ModelGlyph base=\{baseModel \? baseModel\.value : null\} code=\{model \? model\.value : null\} \/>/);
+  assert.match(chips, /export function ModelGlyph\(\{ base, code, execute = null \}: \{ base: string \| null; code: string \| null; execute\?: string \| null \}\)/);
+  assert.match(chips, /const SHAPES: Record<string, \(\) => React\.JSX\.Element> = \{ gemini: GeminiShape, claude: ClaudeShape, sonnet: ClaudeSonnetShape, gpt: GptShape \};/);   // Sonnet has its own shape
+  assert.match(chips, /for \(const role of \[base, code, resolvedExecute\(code, execute\)\]\)/);        // the Execute model is the Code model unless the person chose another
+  assert.match(chips, /if \(!shapes\.includes\(shape\)\) \{ shapes\.push\(shape\); names\.push\(role\); \}/);   // models that share a mark share a part
+  assert.match(chips, /if \(shapes\.length <= 1\) return glyph\(names\[0\] \?\? 'gemini'\);/);               // one mark: drawn whole, never split against itself
+  assert.match(chips, /<polygon points="0,0 24,0 0,24" \/>/);                                          // two marks: the upper-left half ...
+  assert.match(chips, /<polygon points="24,0 24,24 0,24" \/>/);                                        // ... and the lower-right half meet on the 45 degree "/" from (0,24) to (24,0)
+  assert.match(chips, /useId\(\)\.replace\(\/:\/g, ''\)/);                                           // each chip's clip paths have their own ids (the column card and the phone strip can both be on the page)
+  assert.match(chips, /<ModelGlyph base=\{baseModel \? baseModel\.value : null\} code=\{model \? model\.value : null\} execute=\{executeModel \? executeModel\.value : null\} \/>/);
   const rail = readFileSync(new URL('./SessionRail.tsx', import.meta.url), 'utf8');
-  assert.match(rail, /<ModelGlyph base=\{settings\.baseModel \? settings\.baseModel\.value : null\} code=\{settings\.model \? settings\.model\.value : null\} \/>/);
+  assert.match(rail, /<ModelGlyph base=\{settings\.baseModel \? settings\.baseModel\.value : null\} code=\{settings\.model \? settings\.model\.value : null\} execute=\{settings\.executeModel \? settings\.executeModel\.value : null\} \/>/);
+});
+
+// ---- the Execute model: the third setting of the model chip ---------------------------------------------------------------------------
+
+test('the Execute model has its own spec: "same as Code" is the quiet default and every other choice names its provider', () => {
+  assert.equal(EXECUTE_MODEL.title, 'Execute model');
+  assert.equal(EXECUTE_MODEL.ordinary, 'same');
+  assert.deepEqual(EXECUTE_MODEL.options.map(option => option.id), ['same', 'gemini', 'claude', 'sonnet', 'gpt']);
+  for (const option of EXECUTE_MODEL.options) assert.ok(option.short && option.short.length <= 40, `${option.id} has a short line that fits a column`);
+  assert.match(specOption(EXECUTE_MODEL, 'claude').hint, /Anthropic/);                       // choosing a provider sends the code of those steps there: each hint says so
+  assert.match(specOption(EXECUTE_MODEL, 'sonnet').hint, /Anthropic/);
+  assert.match(specOption(EXECUTE_MODEL, 'gpt').hint, /OpenAI/);
+  assert.match(specOption(EXECUTE_MODEL, 'gemini').hint, /Google/);
+  assert.equal(specOption(EXECUTE_MODEL, 'nonsense').id, 'same');                            // an unknown value reads as the default
+});
+
+test('the Execute model is the Code model unless the person chose another', () => {
+  assert.equal(resolvedExecute('sonnet', null), 'sonnet');
+  assert.equal(resolvedExecute('sonnet', 'same'), 'sonnet');
+  assert.equal(resolvedExecute('sonnet', 'claude'), 'claude');
+  assert.equal(resolvedExecute(null, 'claude'), 'claude');
+  assert.equal(resolvedExecute(null, null), null);
+});
+
+test('the chip value, highlight and label account for the Execute model without changing what two settings gave', () => {
+  assert.equal(modelChipValue('gemini', 'gemini', 'same'), 'gemini');
+  assert.equal(modelChipValue('gemini', 'gemini', 'claude'), 'claude');                    // only the Execute model differs
+  assert.equal(modelChipValue('gpt', 'sonnet', 'claude'), 'gpt');                          // Base first, then Code, then Execute
+  assert.equal(modelChipValue('gemini', 'sonnet', 'claude'), 'sonnet');
+  assert.equal(modelsChanged('gemini', 'gemini', 'same'), false);
+  assert.equal(modelsChanged('gemini', 'gemini', null), false);
+  assert.equal(modelsChanged('gemini', 'gemini', 'claude'), true);
+  assert.equal(modelsLabel('gpt', 'sonnet', 'claude'), 'Models: Base GPT-5.4 mini, Code Claude Sonnet, Execute Claude');
+  assert.equal(modelsLabel('gemini', 'sonnet', 'same'), 'Models: Base Gemini, Code Claude Sonnet, Execute Same as Code');
+  assert.equal(modelsLabel('gemini', 'sonnet'), 'Models: Base Gemini, Code Claude Sonnet');          // not offered: left out, as before
+  assert.equal(modelsLabel(null, 'claude'), 'Models: Code Claude');
+});
+
+test('the popup has a third column for the Execute model and the page offers it only where plans exist and there is a provider to choose', () => {
+  const chips = readFileSync(new URL('./ComposerChips.tsx', import.meta.url), 'utf8');
+  assert.match(chips, /\{execute && <OptionList spec=\{EXECUTE_MODEL\} control=\{execute\} onDone=\{onDone\} compact \/>\}/);
+  assert.match(chips, /\{open === 'model' && <ModelChoices base=\{baseModel\} code=\{model\} execute=\{executeModel\} onDone/);
+  assert.match(chips, /executeModel: ChipControl \| null;/);
+  const rail = readFileSync(new URL('./SessionRail.tsx', import.meta.url), 'utf8');
+  assert.match(rail, /<ModelChoices base=\{settings\.baseModel\} code=\{settings\.model\} execute=\{settings\.executeModel\} onDone/);
+  assert.match(rail, /modelChip\(settings\.baseModel, settings\.model, settings\.executeModel\)/);
+  const chat = readFileSync(new URL('../pages/Chat.tsx', import.meta.url), 'utf8');
+  assert.match(chat, /executeModel: workspace\.canEdit && executeSetting\?\.available/);                       // plans only exist with a folder that can be edited
+  assert.match(chat, /hide: \[\.\.\.\(executeSetting\.claude_available \? \[\] : \['claude'\]\), \.\.\.\(executeSetting\.sonnet_available \? \[\] : \['sonnet'\]\), \.\.\.\(executeSetting\.gpt_available \? \[\] : \['gpt'\]\)\]/);
+  assert.match(chat, /api\.getExecuteModel\(\)/);
+  assert.match(chat, /setExecuteSetting\(await api\.updateExecuteModel\(next\)\)/);
+  assert.match(chat, /setExecuteSetting\(before\);/);                                                          // a failed save puts the old value back
+  const api = readFileSync(new URL('../api.ts', import.meta.url), 'utf8');
+  assert.match(api, /\/api\/settings\/execute-model/);
+  assert.match(api, /export type ExecuteModel = 'same' \| ToolModel;/);
+});
+
+// A point in a polygon (even-odd rule), for the geometry test below.
+function inside(x, y, points) {
+  let result = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const [xi, yi] = points[i];
+    const [xj, yj] = points[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) result = !result;
+  }
+  return result;
+}
+
+test('the three parts of the icon tile the 24 by 24 box exactly: no gap and no overlap, Base on top, Code lower-left, Execute lower-right', () => {
+  const chips = readFileSync(new URL('./ComposerChips.tsx', import.meta.url), 'utf8');
+  const read = suffix => {
+    const match = chips.match(new RegExp('<clipPath id=\\{`\\$\\{id\\}' + suffix + '`\\}><polygon points="([^"]+)" />'));
+    assert.ok(match, `clip path ${suffix} not found`);
+    return match[1].split(' ').map(pair => pair.split(',').map(Number));
+  };
+  const parts = { top: read('t'), lowerLeft: read('a'), lowerRight: read('b') };
+  const hits = { top: 0, lowerLeft: 0, lowerRight: 0 };
+  for (let x = 0; x < 24; x += 1) {
+    for (let y = 0; y < 24; y += 1) {
+      const inParts = Object.entries(parts).filter(([, points]) => inside(x + 0.5, y + 0.5, points)).map(([name]) => name);
+      assert.equal(inParts.length, 1, `the point (${x + 0.5}, ${y + 0.5}) is in ${inParts.length} parts`);
+      hits[inParts[0]] += 1;
+    }
+  }
+  for (const [name, count] of Object.entries(hits)) assert.ok(count > 120, `${name} has a real share of the icon (${count} of 576 points)`);      // about a third each
+  assert.ok(inside(12, 2, parts.top) && inside(3, 20, parts.lowerLeft) && inside(21, 20, parts.lowerRight), 'Base is on top, Code lower-left, Execute lower-right');
+  const first = chips.indexOf('<g clipPath={`url(#${id}t)`}><First />');
+  const second = chips.indexOf('<g clipPath={`url(#${id}a)`}><Second />');
+  const third = chips.indexOf('<g clipPath={`url(#${id}b)`}><Third />');
+  assert.ok(first > 0 && second > first && third > second, 'the marks are drawn in the order Base, Code, Execute');
 });
