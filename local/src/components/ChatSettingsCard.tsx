@@ -52,7 +52,7 @@ export const ChatSettingsCard: React.FC<Props> = ({ mascotAllowed }) => {
             <div className="account-label">Show SAAPP, the little robot</div>
             <div className="account-hint">He sits on the message box and reacts while Sonic works. Turn him off for a plain logo.</div>
           </div>
-          <input type="checkbox" className="profile-switch" checked={showPatchy} onChange={event => changeMascot(event.target.checked)} aria-label="Show SAAPP, the little robot" />
+          <input type="checkbox" className="profile-switch" checked={showPatchy} onChange={event => changeMascot(event.target.checked)} aria-label="Show SAAPP, the little robot" data-help="account.mascot" />
         </div>
       )}
       {showDigest && digest && (
@@ -62,7 +62,7 @@ export const ChatSettingsCard: React.FC<Props> = ({ mascotAllowed }) => {
             <div className="account-hint">For admins: when you open a conversation, Sonic tells you about new production incidents, once each and at most every 12 hours. Nothing new means no message.</div>
             {digestError && <div className="account-error" role="alert">{digestError}</div>}
           </div>
-          <input type="checkbox" className="profile-switch" checked={digest.enabled} onChange={event => void changeDigest(event.target.checked)} aria-label="Incident digest" />
+          <input type="checkbox" className="profile-switch" checked={digest.enabled} onChange={event => void changeDigest(event.target.checked)} aria-label="Incident digest" data-help="account.digest" />
         </div>
       )}
     </section>

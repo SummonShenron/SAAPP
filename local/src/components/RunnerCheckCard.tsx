@@ -92,7 +92,7 @@ export default function RunnerCheckCard({ job: first, runner }: RunnerCheckCardP
   const where = [runner?.name, runner?.root_name].filter(Boolean).join(' · ');
   const facts = look ? lookLines(job) : [];
   return (
-    <div className="rcc-card" data-verdict={kind}>
+    <div className="rcc-card" data-verdict={kind} data-help="card.runnerCheck">
       <div className="rcc-header">
         {serve
           ? <span className="rcc-title">Start the <strong>{job.check}</strong> server on your machine{where ? <span className="rcc-where"> ({where})</span> : null}</span>

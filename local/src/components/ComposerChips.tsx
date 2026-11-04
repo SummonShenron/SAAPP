@@ -259,6 +259,9 @@ export function modelChip(base: ChipControl | null, code: ChipControl | null, ex
   return { value: modelChipValue(baseValue, codeValue, executeValue), changed: modelsChanged(baseValue, codeValue, executeValue), label: modelsLabel(baseValue, codeValue, executeValue) };
 }
 
+// The tip each chip opens in Help Mode (components/helpTips.ts); the model chip, Export and Help carry theirs directly.
+const HELP_CHIP: Record<ChipKey, string> = { model: 'chip.model', mode: 'chip.mode', thinking: 'chip.thinking', answers: 'chip.answers' };
+
 type Open = ChipKey | 'help' | null;
 
 /**
@@ -290,7 +293,7 @@ const ComposerChips: React.FC<ChatSettings> = ({ model, baseModel, executeModel,
     if (!control) return null;
     const label = chipLabel(key, control.value);
     return (
-      <div className="cc-item" key={key}>
+      <div className="cc-item" key={key} data-help={HELP_CHIP[key]}>
         <button
           type="button" className={`cc-btn${isChanged(key, control.value) ? ' is-changed' : ''}${open === key ? ' is-open' : ''}`}
           aria-haspopup="menu" aria-expanded={open === key} aria-label={label} title={disabled ? `${label} (locked while Sonic is working)` : label}
@@ -307,7 +310,7 @@ const ComposerChips: React.FC<ChatSettings> = ({ model, baseModel, executeModel,
     const state = modelChip(baseModel, model, executeModel);
     if (!state) return null;
     return (
-      <div className="cc-item" key="model">
+      <div className="cc-item" key="model" data-help="chip.model">
         <button
           type="button" className={`cc-btn${state.changed ? ' is-changed' : ''}${open === 'model' ? ' is-open' : ''}`}
           aria-haspopup="menu" aria-expanded={open === 'model'} aria-label={state.label} title={disabled ? `${state.label} (locked while Sonic is working)` : state.label}
@@ -326,10 +329,10 @@ const ComposerChips: React.FC<ChatSettings> = ({ model, baseModel, executeModel,
       {chip('thinking', thinking)}
       {chip('answers', answers)}
       <div className="cc-right">
-        <button type="button" className="cc-btn" aria-label="Export this conversation" title="Export this conversation" disabled={exportDisabled} onClick={onExport}>
+        <button type="button" className="cc-btn" data-help="chip.export" aria-label="Export this conversation" title="Export this conversation" disabled={exportDisabled} onClick={onExport}>
           <Icon name="download" size={18} />
         </button>
-        <div className="cc-item cc-help">
+        <div className="cc-item cc-help" data-help="chip.help">
           <button type="button" className={`cc-btn${open === 'help' ? ' is-open' : ''}`} aria-haspopup="dialog" aria-expanded={open === 'help'} aria-label="Help" title="Help" onClick={() => toggle('help')}>
             <Icon name="help" size={18} />
           </button>

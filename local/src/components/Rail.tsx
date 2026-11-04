@@ -48,6 +48,12 @@ function relativeTime(iso: string): string {
  * The app's left rail: the logo and name, the pages, the recent conversations, and the person's own chip with its menu. On a wide screen it can
  * collapse to icons; on a phone it is a drawer that slides in over the page. It replaces the top navigation bar and the hero banner.
  */
+// The tip each page button opens in Help Mode (components/helpTips.ts).
+const HELP_RAIL: Record<string, string> = {
+  '/chat': 'rail.chat', '/self-service': 'rail.selfService', '/tidy': 'rail.tidy', '/memory': 'rail.memory', '/reading': 'rail.reading',
+  '/tasks': 'rail.activities', '/meetings': 'rail.officeHours', '/integrations': 'rail.integrations', '/sonic-health': 'rail.sonicHealth',
+};
+
 const Rail: React.FC<RailProps> = (props) => {
   const { theme, onToggleTheme, compact, onToggleCompact, isMobile, drawerOpen, onCloseDrawer, isAdmin, isGuest, userName, userEmail, onHelp, onLogout, conversations } = props;
   const navigate = useNavigate();
@@ -120,23 +126,23 @@ const Rail: React.FC<RailProps> = (props) => {
         aria-label="Navigation"
       >
         <div className="rail-head">
-          <button type="button" className="rail-brand" onClick={() => go('/chat')} title={BRAND_NAME} aria-label={BRAND_NAME}>
+          <button type="button" className="rail-brand" onClick={() => go('/chat')} title={BRAND_NAME} aria-label={BRAND_NAME} data-help="rail.brand">
             <LogoMark size={28} />
             {!compact && <span className="rail-wordmark">{BRAND_NAME}</span>}
           </button>
           {!isMobile && !compact && (
-            <button type="button" className="rail-icon-btn" onClick={onToggleCompact} aria-label="Collapse sidebar" title="Collapse sidebar"><Icon name="panel" size={16} /></button>
+            <button type="button" className="rail-icon-btn" onClick={onToggleCompact} aria-label="Collapse sidebar" title="Collapse sidebar" data-help="rail.collapse"><Icon name="panel" size={16} /></button>
           )}
           {isMobile && (
-            <button type="button" className="rail-icon-btn" onClick={onCloseDrawer} aria-label="Close menu"><Icon name="close" size={18} /></button>
+            <button type="button" className="rail-icon-btn" onClick={onCloseDrawer} aria-label="Close menu" data-help="rail.closeMenu"><Icon name="close" size={18} /></button>
           )}
         </div>
 
         {!isMobile && compact && (
-          <button type="button" className="rail-icon-btn rail-expand" onClick={onToggleCompact} aria-label="Expand sidebar" title="Expand sidebar"><Icon name="panel" size={16} /></button>
+          <button type="button" className="rail-icon-btn rail-expand" onClick={onToggleCompact} aria-label="Expand sidebar" title="Expand sidebar" data-help="rail.collapse"><Icon name="panel" size={16} /></button>
         )}
 
-        <button type="button" className="rail-new" onClick={conversations.onNew} title="Start a new conversation">
+        <button type="button" className="rail-new" onClick={conversations.onNew} title="Start a new conversation" data-help="rail.new">
           <Icon name="plus" size={16} />
           {!compact && <span className="rail-label">New chat</span>}
         </button>
@@ -153,6 +159,7 @@ const Rail: React.FC<RailProps> = (props) => {
               aria-expanded={compact && p.path === '/chat' ? convoOpen : undefined}
               aria-current={pathname.startsWith(p.path) ? 'page' : undefined}
               title={compact ? p.label : undefined}
+              data-help={HELP_RAIL[p.path]}
             >
               <Icon name={p.icon} size={18} />
               {!compact && <span className="rail-label">{p.label}</span>}
@@ -161,7 +168,7 @@ const Rail: React.FC<RailProps> = (props) => {
         </nav>
 
         {!compact ? (
-          <div className="rail-recent">
+          <div className="rail-recent" data-help="rail.recent">
             <div className="rail-section">Recent</div>
             <div className="rail-recent-list">
               {conversations.loading && <div className="rail-empty">Loading…</div>}
@@ -172,12 +179,13 @@ const Rail: React.FC<RailProps> = (props) => {
                   className={`rail-convo${c.session_id === conversations.activeId && pathname.startsWith('/chat') ? ' active' : ''}`}
                   title={`${c.title || 'Untitled'} · ${relativeTime(c.updated_at)}`}
                 >
-                  <button type="button" className="rail-convo-main" onClick={() => conversations.onSelect(c.session_id)}>
+                  <button type="button" className="rail-convo-main" data-help="rail.convo" onClick={() => conversations.onSelect(c.session_id)}>
                     {c.title || 'New conversation'}
                   </button>
                   <button
                     type="button"
                     className="rail-convo-delete"
+                    data-help="rail.convoDelete"
                     aria-label={`Delete ${c.title || 'conversation'}`}
                     title="Delete conversation"
                     onClick={() => conversations.onDelete(c.session_id, c.title)}

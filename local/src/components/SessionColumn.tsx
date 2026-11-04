@@ -4,8 +4,7 @@ import type { RingView } from './budgetText';
 import Ring from './Ring';
 import {
   APPROVAL_OPTIONS, GIT_OPTIONS, RUNNER_INSTALL_CMD, RUNNER_INSTALL_POWERSHELL, contextGauge, folderLight, folderLine, gaugeSummary, memoryLine, parseCollapsed, planProgress, runnerLine, serializeCollapsed, toggleCollapsed,
-  type ContextUse, type Line, type Option, type RunnerStartPhase, type ScopeChoice,
-} from './sessionColumnLogic';
+  type ContextUse, type Line, type Option, type RunnerStartPhase, type ScopeChoice, RUNNER_NUDGE_TEXT, RUNNER_NUDGE_TITLE } from './sessionColumnLogic';
 import CompactionMeter from './CompactionMeter';
 import { gaugesSummary, isOverloaded, meterCaption, meterName, type CompactionView } from './compactionMeterLogic';
 import './__styles__/SessionColumn.css';
@@ -35,6 +34,8 @@ interface Props {
   runners: RunnerInfo[] | null;
   /** The "Start runner" button on a runner that is not answering; null where the link it opens cannot exist (not Windows). `asked` after it was pressed. */
   runnerStart: { phase: RunnerStartPhase; onStart: () => void } | null;
+  /** The way to the runner's setup (see ConnectionProps.runnerSetup); the nudge shows at the top of the column while it is due. */
+  runnerSetup?: RunnerSetup | null;
   /** The usage ring's view (components/budgetText.ts); null when there is no limit to show. */
   usage: RingView | null;
   /** How full the model's context window got on the last turn, as the server reported it (counts only); null before the first turn. Shown as the compaction meter's tooltip: the ring it used to be is gone. */
@@ -130,6 +131,11 @@ function Row({ line }: { line: Line }) {
   );
 }
 
+// The tip each card opens in Help Mode (components/helpTips.ts).
+const HELP_CARD: Record<string, string> = {
+  connection: 'session.connection', github: 'session.github', gauges: 'session.gauges', plan: 'session.plan', conversation: 'session.conversation', controls: 'session.controls',
+};
+
 /**
  * One card of the column. Its title is a button that folds it to just the title; a folded card keeps a small `summary` in its header (status dots, a percentage) so folding it does not hide the
  * one thing worth seeing. `badge` is always shown (the plan's "1 of 3 steps").
@@ -139,7 +145,7 @@ function Card({ id, label, title, badge, summary, className, collapsed, onToggle
 }) {
   const bodyId = `sc-body-${id}`;
   return (
-    <section className={`sc-card${collapsed ? ' sc-card-collapsed' : ''}${className ? ` ${className}` : ''}`} aria-label={label}>
+    <section className={`sc-card${collapsed ? ' sc-card-collapsed' : ''}${className ? ` ${className}` : ''}`} aria-label={label} data-help={HELP_CARD[id]}>
       <h2 className="sc-title">
         <button type="button" className="sc-title-btn" aria-expanded={!collapsed} aria-controls={bodyId} onClick={() => onToggle(id)}>
           <span className="sc-chevron" aria-hidden="true">▸</span>
@@ -163,9 +169,27 @@ export interface ConnectionProps {
   runnerStart: { phase: RunnerStartPhase; onStart: () => void } | null;
   /** The folder's actions and options; null where a folder cannot be connected (a guest, or a browser with no folder picker). */
   folderControls: FolderControls | null;
+  /** The way to the runner's setup, which is in the Account settings: `visible` while the nudge is due (no runner set up and not dismissed), `onOpen` goes there, `onDismiss` is "Not now". null where there is no runner to set up (a guest). */
+  runnerSetup?: RunnerSetup | null;
 }
 
-export function ConnectionPanel({ folder, runnerEnabled, runners, runnerStart, folderControls }: ConnectionProps) {
+export interface RunnerSetup { visible: boolean; onOpen: () => void; onDismiss: () => void; }
+
+/** The nudge: said once, in the column and the phone strip, where no runner is set up. It explains what the runner is for and opens the Account settings; "Not now" keeps it away for a week. */
+export function RunnerNudge({ setup, className }: { setup: RunnerSetup; className?: string }) {
+  return (
+    <div className={`sc-nudge${className ? ` ${className}` : ''}`} role="status" aria-label={RUNNER_NUDGE_TITLE}>
+      <div className="sc-nudge-title">{RUNNER_NUDGE_TITLE}</div>
+      <p className="sc-nudge-text">{RUNNER_NUDGE_TEXT}</p>
+      <div className="sc-nudge-actions">
+        <button type="button" className="sc-btn sc-btn-primary" onClick={setup.onOpen}>Open Account settings</button>
+        <button type="button" className="sc-btn" onClick={setup.onDismiss}>Not now</button>
+      </div>
+    </div>
+  );
+}
+
+export function ConnectionPanel({ folder, runnerEnabled, runners, runnerStart, folderControls, runnerSetup }: ConnectionProps) {
   // "2s ago" goes stale on its own: redraw the times every few seconds.
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -177,6 +201,12 @@ export function ConnectionPanel({ folder, runnerEnabled, runners, runnerStart, f
   return (
     <>
     {runner && <Row line={runner} />}
+    {runner && runners !== null && runners.length === 0 && runnerSetup && (
+      <div className="sc-runner-start">
+        <button type="button" className="sc-btn sc-btn-primary" onClick={runnerSetup.onOpen}>Set up the runner</button>
+        <span className="sc-option-hint">It runs your tests and checks on your own computer, after you approve each one. The steps are in your Account settings.</span>
+      </div>
+    )}
     {runner && runner.tone === 'warn' && runnerStart && (
       <div className="sc-runner-start">
         <button type="button" className="sc-btn sc-btn-primary" onClick={runnerStart.onStart} disabled={runnerStart.phase === 'starting'} aria-busy={runnerStart.phase === 'starting'}>
@@ -225,7 +255,7 @@ export function ConnectionPanel({ folder, runnerEnabled, runners, runnerStart, f
  * controls, the gauges, the plan while there is one, and what this conversation is scoped to. It only shows what the page already knows; settings stay in the "..." menu (the scope row
  * opens that menu's own picker). A card with nothing to show is not drawn, and any card can be folded (remembered in this browser).
  */
-const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runnerStart, usage, context, compaction, onSwitchMeter, onFold, folding, plan, scope, memory, folderControls, repo, controls }) => {
+const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runnerStart, runnerSetup, usage, context, compaction, onSwitchMeter, onFold, folding, plan, scope, memory, folderControls, repo, controls }) => {
   // "2s ago" goes stale on its own: redraw the times every few seconds.
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -253,6 +283,7 @@ const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runner
   const progress = plan ? planProgress(plan) : null;
   return (
     <aside className="session-column" aria-label="Session">
+      {runnerSetup?.visible && <RunnerNudge setup={runnerSetup} />}
       {/* One card for the connection: the runner on the person's computer and the folder they connected (the same folder for both), with the folder's actions and options below. Folded, its header keeps
           the runner's dot and the folder's light (the one the folder button beside the message box used to carry, green when connected). */}
       <Card
@@ -266,7 +297,7 @@ const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runner
           </span>
         )}
       >
-        <ConnectionPanel folder={folder} runnerEnabled={runnerEnabled} runners={runners} runnerStart={runnerStart} folderControls={folderControls} />
+        <ConnectionPanel folder={folder} runnerEnabled={runnerEnabled} runners={runners} runnerStart={runnerStart} folderControls={folderControls} runnerSetup={runnerSetup} />
       </Card>
 
       {repo && (

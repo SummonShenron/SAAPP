@@ -166,7 +166,7 @@ export const SelfServicePage: React.FC = () => {
       <div className="vertical-card-stack">
         
         {/* CARD 1: TARGET BOUNDARY CONFIGURATION */}
-        <section className="service-card boundary-card">
+        <section className="service-card boundary-card" data-help="selfservice.kb">
           <div className="card-badge">STEP 1</div>
           <h2>Select Target Knowledge Base</h2>
           <p className="card-description">Choose which organizational security perimeter you are authorized to provision text data structures into.</p>
@@ -191,7 +191,7 @@ export const SelfServicePage: React.FC = () => {
         </section>
 
         {/* CARD 2: RAW DOCUMENT PROVISIONING ZONE */}
-        <section className={`service-card upload-card ${!hasIngestPermission ? 'read-only-lock' : ''}`}>
+        <section className={`service-card upload-card ${!hasIngestPermission ? 'read-only-lock' : ''}`} data-help="selfservice.upload">
           <div className="card-badge">STEP 2</div>
           <h2>Ingest Pipeline Processing</h2>
           <p className="card-description">Stage files for localized formatting, parsing, vector embedding splitting, and metadata pinning.</p>
@@ -242,7 +242,7 @@ export const SelfServicePage: React.FC = () => {
         </section>
 
         {/* CARD 3: AUDIT AND PURGE CONTROLS */}
-        <section className="service-card management-card">
+        <section className="service-card management-card" data-help="selfservice.manifest">
           <div className="card-badge">STEP 3</div>
           <h2>Document Manifest & Vector Exclusions</h2>
           <p className="card-description">Search, query, and cleanly delete documents currently sitting within this isolated security boundary index.</p>

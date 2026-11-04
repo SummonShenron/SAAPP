@@ -232,17 +232,17 @@ export const MeetingsPage: React.FC = () => {
                     )}
                   </div>
                   <div className="task-actions">
-                    <button type="button" className={`memory-edit-save${meeting.due_today ? ' meeting-start-now' : ''}`} disabled={busyId === meeting.id} onClick={() => handleStart(meeting)}>
+                    <button type="button" className={`memory-edit-save${meeting.due_today ? ' meeting-start-now' : ''}`} data-help="meetings.start" disabled={busyId === meeting.id} onClick={() => handleStart(meeting)}>
                       Start office hours
                     </button>
-                    <button type="button" className="memory-edit-cancel" onClick={() => toggleNotes(meeting)}>
+                    <button type="button" className="memory-edit-cancel" data-help="meetings.notes" onClick={() => toggleNotes(meeting)}>
                       {openNotesId === meeting.id ? 'Hide notes' : `Notes (${meeting.notes})`}
                     </button>
-                    <button type="button" className="memory-edit-cancel" onClick={() => setOpenProgressId(openProgressId === meeting.id ? null : meeting.id)}>
+                    <button type="button" className="memory-edit-cancel" data-help="meetings.progress" onClick={() => setOpenProgressId(openProgressId === meeting.id ? null : meeting.id)}>
                       {openProgressId === meeting.id ? 'Hide progress notes' : 'Progress notes'}
                     </button>
-                    <button type="button" className="memory-edit-cancel" disabled={busyId === meeting.id} onClick={() => beginEdit(meeting)}>Edit</button>
-                    <button type="button" className="delete-row-btn" disabled={busyId === meeting.id} onClick={() => handleDelete(meeting)}>Delete</button>
+                    <button type="button" className="memory-edit-cancel" data-help="meetings.edit" disabled={busyId === meeting.id} onClick={() => beginEdit(meeting)}>Edit</button>
+                    <button type="button" className="delete-row-btn" data-help="meetings.delete" disabled={busyId === meeting.id} onClick={() => handleDelete(meeting)}>Delete</button>
                   </div>
                 </div>
 
@@ -291,7 +291,7 @@ export const MeetingsPage: React.FC = () => {
 
           {editing === null && (
             <div className="task-new-row">
-              <button type="button" className="memory-edit-save" disabled={atLimit} onClick={() => beginEdit(null)}>New meeting</button>
+              <button type="button" className="memory-edit-save" data-help="meetings.new" disabled={atLimit} onClick={() => beginEdit(null)}>New meeting</button>
               {atLimit && <span className="task-meta">You're at the limit of {maxMeetings}. Delete one to add another.</span>}
             </div>
           )}
@@ -306,7 +306,7 @@ export const MeetingsPage: React.FC = () => {
                 placeholder="e.g. Weekly alignment check-in" onChange={e => patch({ name: e.target.value })} />
               <label className="task-label" htmlFor="meeting-cadence">When do you mean to hold it? <span className="task-optional">optional</span></label>
               <div className="meeting-when-row">
-                <select id="meeting-cadence" className="memory-category-select" value={draft.cadence} onChange={e => patch({ cadence: e.target.value as Draft['cadence'] })}>
+                <select id="meeting-cadence" data-help="meetings.cadence" className="memory-category-select" value={draft.cadence} onChange={e => patch({ cadence: e.target.value as Draft['cadence'] })}>
                   <option value="none">No set time</option>
                   <option value="weekly">Every week</option>
                   <option value="daily">Every day</option>
@@ -322,16 +322,16 @@ export const MeetingsPage: React.FC = () => {
               </div>
               <div className="memory-edit-hint">It only marks the meeting as due that day, in your timezone. You can still start it early, late, or skip it.</div>
               <label className="task-label" htmlFor="meeting-match">Title on your Google Calendar <span className="task-optional">optional</span></label>
-              <input id="meeting-match" className="manifest-search-input" type="text" maxLength={80} value={draft.match}
+              <input id="meeting-match" data-help="meetings.match" className="manifest-search-input" type="text" maxLength={80} value={draft.match}
                 placeholder="Only if it is on a calendar, e.g. alignment check in" onChange={e => patch({ match: e.target.value })} />
               <label className="task-label" htmlFor="meeting-purpose">What is it for? <span className="task-optional">optional</span></label>
               <textarea id="meeting-purpose" className="memory-edit-text" rows={3} maxLength={300} value={draft.purpose}
                 placeholder="e.g. Review the week and how aligned it was with getting back to enterprise AI." onChange={e => patch({ purpose: e.target.value })} />
               <label className="task-label" htmlFor="meeting-agenda">Agenda <span className="task-optional">one item per line, up to 8</span></label>
-              <textarea id="meeting-agenda" className="memory-edit-text" rows={5} value={draft.agenda}
+              <textarea id="meeting-agenda" data-help="meetings.agenda" className="memory-edit-text" rows={5} value={draft.agenda}
                 placeholder={'What did you get done this week?\nWhich jobs did you apply to?\nHow aligned was it?'} onChange={e => patch({ agenda: e.target.value })} />
               <label className="task-label" htmlFor="meeting-coaching">How much should Sonic challenge you?</label>
-              <select id="meeting-coaching" className="memory-category-select" value={draft.coaching} onChange={e => patch({ coaching: e.target.value as Draft['coaching'] })}>
+              <select id="meeting-coaching" data-help="meetings.coaching" className="memory-category-select" value={draft.coaching} onChange={e => patch({ coaching: e.target.value as Draft['coaching'] })}>
                 {COACHING_CHOICES.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
               </select>
               <div className="memory-edit-hint">

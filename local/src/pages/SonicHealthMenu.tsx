@@ -99,6 +99,7 @@ export default function SonicHealthMenu({ tab, onSelect, badges }: Props) {
               id={`sh-tab-${single ? group.tabs[0] : group.id}`}
               type="button"
               className={`sh-tab${showing ? ' sh-tab-active' : ''}`}
+              data-help="health.tab"
               aria-current={showing && single ? 'page' : undefined}
               aria-haspopup={single ? undefined : 'true'}
               aria-expanded={single ? undefined : expanded}
@@ -122,6 +123,7 @@ export default function SonicHealthMenu({ tab, onSelect, badges }: Props) {
                         id={`sh-tab-${entry}`}
                         type="button"
                         className={`sh-menu-entry${tab === entry ? ' sh-menu-entry-active' : ''}`}
+                        data-help="health.entry"
                         aria-current={tab === entry ? 'page' : undefined}
                         onClick={() => choose(group, entry)}
                         onKeyDown={event => onEntryKey(event, group, position)}

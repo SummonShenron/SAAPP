@@ -61,7 +61,7 @@ const ProfileCard: React.FC = () => {
   const pronounValue = custom ? '__other' : profile.pronouns;
 
   return (
-    <section className="account-card profile-card">
+    <section className="account-card profile-card" data-help="account.about">
       <h3>About you</h3>
       <p className="account-note profile-intro">Tell Sonic what you'd like it to know. Everything here is optional, and you can change or clear it any time. Sonic uses it quietly: it won't read it back to you.</p>
 
@@ -109,7 +109,7 @@ const ProfileCard: React.FC = () => {
       </div>
 
       <div className="profile-field">
-        <div className="account-label">How you like answers</div>
+        <div className="account-label" data-help="account.style">How you like answers</div>
         <div className="profile-style">
           <label>Length
             <select className="account-input" value={profile.style.length} onChange={e => updateStyle({ length: e.target.value })}>
@@ -137,7 +137,7 @@ const ProfileCard: React.FC = () => {
       </div>
 
       <div className="profile-field">
-        <label className="account-label" htmlFor="profile-avoid">Please don't bring up</label>
+        <label className="account-label" htmlFor="profile-avoid" data-help="account.avoid">Please don't bring up</label>
         <TagInput id="profile-avoid" label="topics to leave alone" values={profile.avoid} onChange={avoid => update({ avoid })} max={10} maxLength={60} placeholder="A topic to leave alone, then Enter" />
         <div className="account-hint">Sonic won't raise these on its own. If you bring one up yourself, it will talk about it normally.</div>
         {fieldError('avoid')}
@@ -145,7 +145,7 @@ const ProfileCard: React.FC = () => {
 
       <div className="profile-field">
         <label className="account-label" htmlFor="profile-reach">How much Sonic reaches out</label>
-        <select id="profile-reach" className="account-input" value={profile.reach ?? 'default'}
+        <select id="profile-reach" data-help="account.reach" className="account-input" value={profile.reach ?? 'default'}
           onChange={e => update({ reach: e.target.value as NonNullable<UserProfile['reach']>, offers: e.target.value !== 'none' })}>
           <option value="none">Not at all</option><option value="low">Less</option><option value="default">Sonic's usual</option><option value="more">More</option>
         </select>
@@ -161,12 +161,12 @@ const ProfileCard: React.FC = () => {
             <div className="account-hint">It may open a chat with one question about something you told it, like how a date went. How often follows the setting above: about once a day and a half
               when less, once a day when usual, up to a few a day when more, and never twice in a row. Saved as soon as you change it.</div>
           </div>
-          <input type="checkbox" className="profile-switch" checked={messageFirst && profile.reach !== 'none'} disabled={profile.reach === 'none'} onChange={e => toggleMessageFirst(e.target.checked)} aria-label="Let Sonic start conversations" />
+          <input type="checkbox" className="profile-switch" data-help="account.messageFirst" checked={messageFirst && profile.reach !== 'none'} disabled={profile.reach === 'none'} onChange={e => toggleMessageFirst(e.target.checked)} aria-label="Let Sonic start conversations" />
         </div>
       )}
 
       <div className="profile-actions">
-        <button type="button" className="account-btn" onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
+        <button type="button" className="account-btn" data-help="account.save" onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
         {saved && <span className="profile-saved" role="status">Saved.</span>}
         {error && !error.field && <span className="account-error" role="alert">{error.message}</span>}
       </div>

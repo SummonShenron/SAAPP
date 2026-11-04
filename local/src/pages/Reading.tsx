@@ -35,7 +35,7 @@ export const ReadingPage: React.FC = () => {
       </header>
 
       <div className="vertical-card-stack">
-        <section className="service-card">
+        <section className="service-card" data-help="reading.shelf">
           <div className="card-badge">{items.length} ON THE SHELF</div>
           <h2>Sonic's reading shelf</h2>
           <p className="card-description">
@@ -44,7 +44,7 @@ export const ReadingPage: React.FC = () => {
           </p>
 
           {topics.length > 1 && (
-            <div className="reading-filters" role="group" aria-label="Filter by topic">
+            <div className="reading-filters" role="group" aria-label="Filter by topic" data-help="reading.topics">
               <button type="button" className={`reading-chip${topic === '' ? ' active' : ''}`} onClick={() => setTopic('')}>All</button>
               {topics.map(t => (
                 <button key={t} type="button" className={`reading-chip${topic === t ? ' active' : ''}`} onClick={() => setTopic(t)}>

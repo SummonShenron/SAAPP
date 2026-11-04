@@ -877,7 +877,7 @@ def test_a_person_with_their_own_limit_is_told_when_it_starts_over_and_nobody_el
     assert "own_resets_at" not in bg.public_view(bg.evaluate({"month_usd": 10}, {"month_usd": 100.0}, NOW), False)     # no limit of their own: nothing to say
 
 
-def test_with_both_limits_set_the_request_is_for_whichever_is_furthest_along_and_only_that_one_is_raised(monkeypatch):
+def test_with_both_limits_set_the_request_is_for_whichever_is_furthest_along_and_an_approval_raises_both(monkeypatch):
     monkeypatch.setenv("LLM_USER_BUDGET_5H_TOKENS", "1000")
     monkeypatch.setenv("LLM_USER_BUDGET_DAILY_TOKENS", "2000")
     # 970 of 1000 in the window (97%), 1,400 of 2,000 today (70%): the window is the one to raise.
@@ -890,7 +890,7 @@ def test_with_both_limits_set_the_request_is_for_whichever_is_furthest_along_and
     bg.decide_request(db, "admin@example.com", asked["id"], True, at(15, 5))
     raised = bg.current_state(db, at(15, 6), "jack")
     limits = {d["scope"]: d["limit"] for d in raised["detail"]}
-    assert limits == {"my_five": 1_250, "my_day": 2_000}                         # the window moved, the day did not
+    assert limits == {"my_five": 1_250, "my_day": 2_500}                         # an approval raises both the window and the day by 25%
 
     # And when the day is the one furthest along (1,900 of 2,000 today, 300 of 1,000 in the window) the request is for the day.
     db = _DB(people=[person_row("kim", at(9), 1_600), person_row("kim", at(14), 300)])

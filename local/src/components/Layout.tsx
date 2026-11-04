@@ -11,6 +11,7 @@ import Spinner from "../components/Spinner";
 import HelpPanel from "../components/HelpPanel";
 import Rail from "./Rail";
 import TopBar from "./TopBar";
+import { HelpModeProvider } from "./HelpMode";
 import { useShell } from "./shellStore";
 import { useAuth } from '@clerk/clerk-react';
 import "./__styles__/AppShell.css";
@@ -190,6 +191,8 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
 
   // Regular Standalone Mode Layout
   return (
+    // Help Mode (components/HelpMode.tsx) covers the whole shell; the long guide it links to is the same panel the user menu opens.
+    <HelpModeProvider onOpenGuide={() => { if (!showHelp) toggleHelp(); }}>
     <div className={`portal-container app-shell ${theme === "shadow" ? "theme-shadow" : ""}`}>
       <Rail
         theme={theme}
@@ -216,7 +219,7 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
       />
 
       <div className="app-main">
-        <TopBar title={title} isMobile={isMobile} onOpenMenu={() => setDrawerOpen(true)} actions={onChat ? topBarActions : null} onHelp={toggleHelp} />
+        <TopBar title={title} isMobile={isMobile} onOpenMenu={() => setDrawerOpen(true)} actions={onChat ? topBarActions : null} />
         <div className="app-content">
           {/* Main page content: only once the person is fully signed in */}
           {authReady ? (
@@ -245,5 +248,6 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
         </div>
       )}
     </div>
+    </HelpModeProvider>
   );
 }

@@ -52,7 +52,7 @@ const GroupRow: React.FC<{ group: TidyGroup; checked: boolean; onToggle: () => v
   return (
     <li className="tidy-group">
       <label className="tidy-group-head">
-        <input type="checkbox" checked={checked} onChange={onToggle} aria-label={`Sort ${group.label}`} />
+        <input type="checkbox" checked={checked} onChange={onToggle} aria-label={`Sort ${group.label}`} data-help="tidy.group" />
         <span className="tidy-group-title">{group.label}</span>
         <span className="tidy-group-meta">{plural(group.files.length, 'file', 'files')} · {formatBytes(group.bytes)}</span>
       </label>
@@ -190,7 +190,7 @@ export const TidyPage: React.FC = () => {
               <li><strong>Nothing is deleted or overwritten.</strong> If a name is already taken, the file gets a number, like "report (2).pdf".</li>
               <li><strong>You can undo it.</strong> One button puts every file back.</li>
             </ul>
-            <button type="button" className="tidy-btn" onClick={choose}>Choose a folder</button>
+            <button type="button" className="tidy-btn" data-help="tidy.choose" onClick={choose}>Choose a folder</button>
           </section>
           {last && (
             <section className="tidy-card">
@@ -201,7 +201,7 @@ export const TidyPage: React.FC = () => {
                     You tidied “{last.folderName}” on {new Date(last.at).toLocaleDateString()}: {plural(last.done.length, 'file', 'files')} moved.
                   </div>
                 </div>
-                <button type="button" className="tidy-btn tidy-btn-quiet" onClick={() => undo(last)}>Undo it</button>
+                <button type="button" className="tidy-btn tidy-btn-quiet" data-help="tidy.undo" onClick={() => undo(last)}>Undo it</button>
               </div>
             </section>
           )}
@@ -213,14 +213,14 @@ export const TidyPage: React.FC = () => {
       {stage === 'empty' && (
         <section className="tidy-card">
           <p>There's nothing here that Sonic would move. {plan && plan.stays.length ? `${plural(plan.stays.length, 'file', 'files')} stay where they are (${describeStays(plan.stays)}).` : 'The folder has no loose files.'}</p>
-          <button type="button" className="tidy-btn tidy-btn-quiet" onClick={startOver}>Choose a different folder</button>
+          <button type="button" className="tidy-btn tidy-btn-quiet" data-help="tidy.startOver" onClick={startOver}>Choose a different folder</button>
         </section>
       )}
 
       {stage === 'toobig' && (
         <section className="tidy-card">
           <p>That folder has more than {MAX_FILES.toLocaleString()} loose files, which is too many to sort at once. Try a smaller folder, like Downloads.</p>
-          <button type="button" className="tidy-btn tidy-btn-quiet" onClick={startOver}>Choose a different folder</button>
+          <button type="button" className="tidy-btn tidy-btn-quiet" data-help="tidy.startOver" onClick={startOver}>Choose a different folder</button>
         </section>
       )}
 
@@ -239,10 +239,10 @@ export const TidyPage: React.FC = () => {
             {plan.groups.map(g => <GroupRow key={g.id} group={g} checked={selected.has(g.id)} onToggle={() => toggle(g.id)} />)}
           </ul>
           <div className="tidy-actions">
-            <button type="button" className="tidy-btn" onClick={tidy} disabled={!moves.length}>
+            <button type="button" className="tidy-btn" data-help="tidy.go" onClick={tidy} disabled={!moves.length}>
               {moves.length ? `Tidy up ${plural(moves.length, 'file', 'files')}` : 'Nothing selected'}
             </button>
-            <button type="button" className="tidy-btn tidy-btn-quiet" onClick={startOver}>Choose a different folder</button>
+            <button type="button" className="tidy-btn tidy-btn-quiet" data-help="tidy.startOver" onClick={startOver}>Choose a different folder</button>
           </div>
         </>
       )}
@@ -272,8 +272,8 @@ export const TidyPage: React.FC = () => {
             </>
           )}
           <div className="tidy-actions">
-            {stage === 'done' && last && <button type="button" className="tidy-btn tidy-btn-quiet" onClick={() => undo(last)}>Undo</button>}
-            <button type="button" className="tidy-btn" onClick={startOver}>Tidy another folder</button>
+            {stage === 'done' && last && <button type="button" className="tidy-btn tidy-btn-quiet" data-help="tidy.undo" onClick={() => undo(last)}>Undo</button>}
+            <button type="button" className="tidy-btn" data-help="tidy.startOver" onClick={startOver}>Tidy another folder</button>
           </div>
         </section>
       )}

@@ -293,7 +293,7 @@ export const MemoryPage: React.FC = () => {
 
       <div className="vertical-card-stack">
         {loops.length > 0 && (
-          <section className="service-card memory-card">
+          <section className="service-card memory-card" data-help="memory.comingUp">
             <div className="card-badge">{loops.filter(l => l.status !== 'cancelled').length} COMING UP</div>
             <h2>Coming Up</h2>
             <p className="card-description">
@@ -343,12 +343,12 @@ export const MemoryPage: React.FC = () => {
                     </div>
                     <div className="memory-row-actions">
                       {!cancelled && !loop.confirmed_at && Object.keys(loop.fields ?? {}).length > 0 && (
-                        <button type="button" className="memory-event-action" title="Mark this as checked: it's right" onClick={() => saveLoopChanges(loop, { confirm: true })} disabled={busy || editing}>
+                        <button type="button" className="memory-event-action" title="Mark this as checked: it's right" data-help="memory.looksRight" onClick={() => saveLoopChanges(loop, { confirm: true })} disabled={busy || editing}>
                           Looks right
                         </button>
                       )}
                       {!cancelled && (
-                        <button type="button" className="memory-edit-btn" title="Edit this" aria-label="Edit this upcoming item" onClick={() => startEditingLoop(loop)} disabled={busy || editing}>
+                        <button type="button" className="memory-edit-btn" title="Edit this" aria-label="Edit this upcoming item" data-help="memory.editLoop" onClick={() => startEditingLoop(loop)} disabled={busy || editing}>
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <path d="M12 20h9" />
                             <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
@@ -359,6 +359,7 @@ export const MemoryPage: React.FC = () => {
                         type="button"
                         className="memory-event-action"
                         title={cancelled ? 'Bring this back' : "It fell through: Sonic won't ask about it"}
+                        data-help="memory.cancelLoop"
                         onClick={() => saveLoopChanges(loop, { status: cancelled ? 'open' : 'cancelled' })}
                         disabled={busy || editing}
                       >
@@ -368,6 +369,7 @@ export const MemoryPage: React.FC = () => {
                         type="button"
                         className="memory-delete-btn"
                         title="Forget this"
+                        data-help="memory.forgetLoop"
                         onClick={() => handleDeleteLoop(loop.id, loop.text)}
                       >
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -384,7 +386,7 @@ export const MemoryPage: React.FC = () => {
             </div>
           </section>
         )}
-        <section className="service-card memory-card">
+        <section className="service-card memory-card" data-help="memory.saved">
           <div className="card-badge">{facts.length} SAVED</div>
           <h2>Saved Memories</h2>
           <p className="card-description">
@@ -402,7 +404,7 @@ export const MemoryPage: React.FC = () => {
           <div className="memory-controls-row">
             <input
               type="text"
-              placeholder="Search your memories..."
+              placeholder="Search your memories..." data-help="memory.search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="manifest-search-input"
@@ -411,6 +413,7 @@ export const MemoryPage: React.FC = () => {
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value)}
               className="memory-category-select"
+              data-help="memory.category"
             >
               <option value="all">All categories</option>
               {categories.map(cat => (
@@ -421,7 +424,7 @@ export const MemoryPage: React.FC = () => {
               value={domainFilter}
               onChange={(e) => setDomainFilter(e.target.value)}
               className="memory-category-select"
-              aria-label="Filter by part of your life"
+              aria-label="Filter by part of your life" data-help="memory.domain"
             >
               <option value="all">All parts of your life</option>
               {DOMAIN_CHOICES.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
@@ -429,7 +432,7 @@ export const MemoryPage: React.FC = () => {
             </select>
             <button
               type="button"
-              className="delete-row-btn memory-clear-all-btn"
+              className="delete-row-btn memory-clear-all-btn" data-help="memory.clearAll"
               onClick={handleClearAll}
               disabled={clearing || (facts.length === 0 && loops.length === 0 && stored.notes === 0 && stored.archived === 0)}
             >
@@ -452,13 +455,13 @@ export const MemoryPage: React.FC = () => {
                       <span className={`memory-badge ${CATEGORY_COLORS[fact.category] || 'cat-preference'}`}>
                         {fact.category}
                       </span>
-                      <span className="memory-badge memory-source-badge">
+                      <span className="memory-badge memory-source-badge" data-help="memory.source">
                         {SOURCE_LABELS[fact.source] || fact.source}
                       </span>
                       <select
                         className="memory-domain-select"
                         value={fact.domain ?? ''}
-                        aria-label="Which part of your life this memory is about"
+                        aria-label="Which part of your life this memory is about" data-help="memory.rowDomain"
                         title={fact.domain_locked ? 'You chose this, so Sonic keeps it' : 'Change which part of your life this is about'}
                         disabled={domainSavingId === fact.id}
                         onChange={(e) => handleSetDomain(fact, e.target.value as MemoryDomain)}
@@ -511,7 +514,7 @@ export const MemoryPage: React.FC = () => {
                     {editingId !== fact.id && (fact.name_variants ?? []).map(variant => (
                       <div key={variant.names.join('|')} className="memory-name-variant">
                         “{variant.names.join('” and “')}” look like one person written two ways. Sonic writes “{variant.shown_as}”, the spelling you used most recently.
-                        <button type="button" className="memory-event-action" onClick={() => handleDifferentPeople(variant.names)}>They're different people</button>
+                        <button type="button" className="memory-event-action" data-help="memory.differentPeople" onClick={() => handleDifferentPeople(variant.names)}>They're different people</button>
                       </div>
                     ))}
                     {editingId !== fact.id && fact.related_facts && fact.related_facts.length > 0 && (
@@ -522,7 +525,7 @@ export const MemoryPage: React.FC = () => {
                             {linked.fact}
                             <button
                               type="button"
-                              className="memory-link-remove"
+                              className="memory-link-remove" data-help="memory.unlink"
                               title="These don't belong together"
                               aria-label={`Unlink from: ${linked.fact}`}
                               onClick={() => handleUnlink(fact.id, linked.id)}
@@ -534,7 +537,7 @@ export const MemoryPage: React.FC = () => {
                       </div>
                     )}
                     <div className="memory-row-meta">
-                      <span className={`memory-confidence ${confidenceTone(fact.effective_confidence)}`}>
+                      <span className={`memory-confidence ${confidenceTone(fact.effective_confidence)}`} data-help="memory.confidence">
                         <span
                           className="memory-confidence-bar"
                           style={{ width: `${Math.round(fact.effective_confidence * 100)}%` }}
@@ -551,6 +554,7 @@ export const MemoryPage: React.FC = () => {
                       type="button"
                       className="memory-edit-btn"
                       title="Edit this memory"
+                      data-help="memory.editFact"
                       aria-label="Edit this memory"
                       onClick={() => startEditing(fact)}
                       disabled={editingId === fact.id || savingId !== null}
@@ -564,6 +568,7 @@ export const MemoryPage: React.FC = () => {
                       type="button"
                       className="memory-delete-btn"
                       title="Forget this memory"
+                      data-help="memory.forgetFact"
                       onClick={() => handleDeleteFact(fact.id, fact.fact)}
                       disabled={deletingId !== null}
                     >

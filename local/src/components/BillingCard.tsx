@@ -81,11 +81,11 @@ export default function BillingCard() {
   };
 
   return (
-    <section className="account-card billing-card" aria-label="Paid use">
+    <section className="account-card billing-card" aria-label="Paid use" data-help="billing.card">
       <h3>Paid use</h3>
       <p className="billing-balance"><strong>{balanceLine(view)}</strong> {usageLine(view)}</p>
 
-      <div className="billing-block">
+      <div className="billing-block" data-help="billing.add">
         <div className="account-label">Add credit</div>
         <div className="billing-add">
           <input className="account-input" type="text" inputMode="decimal" aria-label="Amount of credit to add, in dollars" value={amountText} disabled={busy || blocked !== null}
@@ -97,7 +97,7 @@ export default function BillingCard() {
         {!blocked && quote && <p className="billing-quote" aria-live="polite">{quoteLine(quote)}</p>}
       </div>
 
-      <div className="billing-block">
+      <div className="billing-block" data-help="billing.limit">
         <div className="account-label">Your daily limit</div>
         <div className="account-hint">The most paid use in one day is {money(view.daily_ceiling_usd)}. You can set it lower.</div>
         <div className="billing-add">
@@ -117,7 +117,7 @@ export default function BillingCard() {
         </div>
       )}
 
-      <ul className="billing-fine">{FINE_PRINT.map(line => <li key={line}>{line}</li>)}</ul>
+      <ul className="billing-fine" data-help="billing.fine">{FINE_PRINT.map(line => <li key={line}>{line}</li>)}</ul>
     </section>
   );
 }

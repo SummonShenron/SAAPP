@@ -105,7 +105,7 @@ export default function LocalEditCard({ proposal, canApply, onApply, onUndo, onD
 
       {proposal.files.map(file => (
         <div key={file.path} className="led-file">
-          <button type="button" className="led-file-header" onClick={() => toggleFile(file.path)}>
+          <button type="button" className="led-file-header" data-help="card.diffFile" onClick={() => toggleFile(file.path)}>
             <span>{openFiles.has(file.path) ? '▾' : '▸'} {file.path}</span>
             <span className="led-file-kind">
               {file.format === 'docx_edit'
@@ -144,11 +144,11 @@ export default function LocalEditCard({ proposal, canApply, onApply, onUndo, onD
       <div className="led-actions">
         {(phase === 'pending' || phase === 'applying') && (
           <>
-            <button type="button" className="led-btn led-btn-primary" onClick={apply} disabled={phase === 'applying' || !canApply}>
+            <button type="button" className="led-btn led-btn-primary" data-help="card.apply" onClick={apply} disabled={phase === 'applying' || !canApply}>
               {phase === 'applying' ? 'Applying…' : 'Apply changes'}
             </button>
             {proposal.awaiting && phase === 'pending' && !declining && (
-              <button type="button" className="led-btn" onClick={() => setDeclining(true)}>Decline</button>
+              <button type="button" className="led-btn" data-help="card.decline" onClick={() => setDeclining(true)}>Decline</button>
             )}
             {!canApply && <span className="led-note">Connect your local folder (… menu) to apply these.</span>}
             {proposal.autoSkipReason && <span className="led-note">Asking because {proposal.autoSkipReason}.</span>}
@@ -159,7 +159,7 @@ export default function LocalEditCard({ proposal, canApply, onApply, onUndo, onD
             <input className="led-reason" type="text" maxLength={300} autoFocus value={reason} aria-label="Why decline? (optional)"
               placeholder="Why? (optional) Sonic will adjust" onChange={e => setReason(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') decline(); }} />
-            <button type="button" className="led-btn" onClick={decline}>Decline</button>
+            <button type="button" className="led-btn" data-help="card.decline" onClick={decline}>Decline</button>
             <button type="button" className="led-btn" onClick={() => setDeclining(false)}>Back</button>
           </>
         )}
@@ -167,7 +167,7 @@ export default function LocalEditCard({ proposal, canApply, onApply, onUndo, onD
         {(phase === 'applied' || phase === 'undoing') && (
           <>
             <span className="led-note led-ok">{proposal.auto ? 'Applied to your folder automatically (your edit-approval setting).' : 'Applied to your folder.'}</span>
-            <button type="button" className="led-btn" onClick={undo} disabled={phase === 'undoing'}>
+            <button type="button" className="led-btn" data-help="card.undo" onClick={undo} disabled={phase === 'undoing'}>
               {phase === 'undoing' ? 'Undoing…' : 'Undo'}
             </button>
           </>

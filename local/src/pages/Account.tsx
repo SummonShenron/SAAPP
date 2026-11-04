@@ -21,7 +21,7 @@ export const AccountPage: React.FC<{ theme: string; toggleTheme: () => void }> =
     <div className="account-page">
       <h2 className="account-heading">Account settings</h2>
 
-      <section className="account-card">
+      <section className="account-card" data-help="account.profile">
         <h3>Profile</h3>
         <dl className="account-rows">
           <div><dt>Signed in as</dt><dd>{guest ? 'Guest (shared sandbox)' : principal}</dd></div>
@@ -38,7 +38,7 @@ export const AccountPage: React.FC<{ theme: string; toggleTheme: () => void }> =
 
       {!guest && <BillingCard />}
 
-      <section className="account-card">
+      <section className="account-card" data-help="account.theme">
         <h3>Appearance</h3>
         <div className="account-row-action">
           <div>
@@ -50,7 +50,7 @@ export const AccountPage: React.FC<{ theme: string; toggleTheme: () => void }> =
       </section>
 
       {!guest && (
-        <section className="account-card">
+        <section className="account-card" data-help="account.data">
           <h3>Your data</h3>
           <p className="account-note">
             Your conversations are kept until you delete them. Photos and files you attach are removed after 30 days, or sooner if you delete the conversation.

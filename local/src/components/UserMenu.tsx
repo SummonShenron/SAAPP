@@ -67,6 +67,7 @@ const UserMenu: React.FC<UserMenuProps> = ({ name, email, theme, compact, onTogg
       <button
         type="button"
         className="user-chip"
+        data-help="user.chip"
         onClick={() => setOpen(v => !v)}
         aria-haspopup="menu"
         aria-expanded={open}

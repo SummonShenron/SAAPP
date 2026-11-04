@@ -150,7 +150,7 @@ export const TerminalBlade: React.FC<Props> = ({ runnerId, projectId, projectNam
   };
 
   return (
-    <aside className="terminal-blade" role="dialog" aria-label="Terminal">
+    <aside className="terminal-blade" role="dialog" aria-label="Terminal" data-help="chat.terminalPanel">
       <header className="tb-head">
         <span className="tb-title"><Icon name="terminal" size={15} /> Terminal</span>
         {choices && choices.length > 0 && onPick ? (

@@ -197,3 +197,29 @@ export function gaugeSummary(context: { fraction: number } | null, usage: { frac
 
 /** The colour of a gauge ring by its level, the same for the column's rings and the phone strip's small ones. */
 export const LEVEL_COLOR: Record<string, string> = { ok: 'var(--usage-ok, #2f7de1)', notice: '#f59e0b', throttled: '#f97316', blocked: 'var(--accent-danger)' };
+
+// ---- The runner nudge (2026-11-05): "Run checks on your machine" lives in the Account settings, which is easy to miss. Where no runner is set up, the session column and the phone strip say so once, with a button
+// that opens it. The person can say "Not now", and the nudge stays away for a week. Pure: the page keeps the time and the storage.
+
+export const RUNNER_NUDGE_KEY = 'runner_nudge_dismissed_until';
+export const RUNNER_NUDGE_DAYS = 7;
+export const RUNNER_NUDGE_TITLE = 'Set up the runner';
+export const RUNNER_NUDGE_TEXT = 'The runner lets Sonic run your tests and checks on your own computer, after you approve each one. It is not set up yet, and the steps are in your Account settings.';
+
+/** When "Not now" lasts until, as a time in milliseconds. */
+export function nudgeDismissedUntil(now: number): number {
+  return now + RUNNER_NUDGE_DAYS * 24 * 60 * 60 * 1000;
+}
+
+/** The stored "dismissed until" time, or null for anything that is not a time. */
+export function parseNudgeDismissed(raw: string | null): number | null {
+  const value = raw === null ? Number.NaN : Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/** Whether to show the nudge: the person can have a runner (not a guest), the page has asked and found none (not while it is still asking, and not when one is set up but not answering: that has its own Start button),
+ *  and they have not said "Not now" within the last week. */
+export function runnerNudgeVisible(runnerEnabled: boolean, runners: RunnerInfo[] | null, dismissedUntil: number | null, now: number): boolean {
+  if (!runnerEnabled || runners === null || runners.length > 0) return false;
+  return !(dismissedUntil !== null && dismissedUntil > now);
+}

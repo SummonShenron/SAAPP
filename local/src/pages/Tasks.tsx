@@ -284,17 +284,17 @@ export const TasksPage: React.FC = () => {
                     <div className="task-meta">{statusLine(task)} · {lastLine(task)}</div>
                   </div>
                   <div className="task-actions">
-                    <button type="button" className="memory-edit-save" onClick={() => openResults(task)}>
+                    <button type="button" className="memory-edit-save" data-help="tasks.results" onClick={() => openResults(task)}>
                       {openId === task.id ? 'Hide results' : 'Results'}
                     </button>
-                    <button type="button" className="memory-edit-cancel" disabled={busyId === task.id || task.id in running || task.status === 'paused'} onClick={() => handleRunNow(task)}>
+                    <button type="button" className="memory-edit-cancel" data-help="tasks.runNow" disabled={busyId === task.id || task.id in running || task.status === 'paused'} onClick={() => handleRunNow(task)}>
                       {task.id in running ? 'Running...' : 'Run now'}
                     </button>
-                    <button type="button" className="memory-edit-cancel" disabled={busyId === task.id} onClick={() => handleToggle(task)}>
+                    <button type="button" className="memory-edit-cancel" data-help="tasks.pause" disabled={busyId === task.id} onClick={() => handleToggle(task)}>
                       {task.status === 'active' ? 'Pause' : 'Resume'}
                     </button>
-                    <button type="button" className="memory-edit-cancel" disabled={busyId === task.id} onClick={() => openEdit(task)}>Edit</button>
-                    <button type="button" className="delete-row-btn" disabled={busyId === task.id} onClick={() => handleDelete(task)}>Delete</button>
+                    <button type="button" className="memory-edit-cancel" data-help="tasks.edit" disabled={busyId === task.id} onClick={() => openEdit(task)}>Edit</button>
+                    <button type="button" className="delete-row-btn" data-help="tasks.delete" disabled={busyId === task.id} onClick={() => handleDelete(task)}>Delete</button>
                   </div>
                 </div>
 
@@ -341,21 +341,21 @@ export const TasksPage: React.FC = () => {
 
           {wizard === 0 && (
             <div className="task-new-row">
-              <button type="button" className="memory-edit-save" disabled={atLimit} onClick={openWizard}>New task</button>
+              <button type="button" className="memory-edit-save" data-help="tasks.new" disabled={atLimit} onClick={openWizard}>New task</button>
               {atLimit && <span className="task-meta">You're at the limit of {limits?.max_tasks}. Delete one to add another.</span>}
             </div>
           )}
         </section>
 
         {wizard > 0 && (
-          <section className="service-card memory-card" ref={wizardRef}>
+          <section className="service-card memory-card" ref={wizardRef} data-help="tasks.wizard">
             <div className="card-badge">STEP {wizard} OF 4</div>
             <h2>{editingId ? 'Edit Task' : 'New Task'}</h2>
 
             {wizard === 1 && (
               <div className="task-form">
                 <div className="task-label">What kind of task?</div>
-                <div className="task-kinds" role="radiogroup" aria-label="Kind of task">
+                <div className="task-kinds" role="radiogroup" aria-label="Kind of task" data-help="tasks.kind">
                   {KIND_CHOICES.map(choice => (
                     <label key={choice.kind} className={`task-kind${draft.kind === choice.kind ? ' task-kind-on' : ''}`}>
                       <input type="radio" name="task-kind" checked={draft.kind === choice.kind}
@@ -422,7 +422,7 @@ export const TasksPage: React.FC = () => {
             {wizard === 3 && (
               <div className="task-form">
                 <label className="task-label" htmlFor="task-cadence">How often?</label>
-                <select id="task-cadence" className="memory-category-select" value={draft.kind === 'code_audit' ? 'weekly' : draft.cadence} disabled={draft.kind === 'code_audit'}
+                <select id="task-cadence" data-help="tasks.cadence" className="memory-category-select" value={draft.kind === 'code_audit' ? 'weekly' : draft.cadence} disabled={draft.kind === 'code_audit'}
                   onChange={e => patch({ cadence: e.target.value as 'daily' | 'weekly' })}>
                   <option value="daily">Every day</option>
                   <option value="weekly">Every week</option>
@@ -440,7 +440,7 @@ export const TasksPage: React.FC = () => {
                   {Array.from({ length: 24 }, (_, hour) => <option key={hour} value={hour}>{hourLabel(hour)}</option>)}
                 </select>
                 <label className="task-label" htmlFor="task-window">Run it <span className="task-optional">optional</span></label>
-                <select id="task-window" className="memory-category-select" value={draft.window_hours ?? 0} onChange={e => patch({ window_hours: Number(e.target.value) })}>
+                <select id="task-window" data-help="tasks.window" className="memory-category-select" value={draft.window_hours ?? 0} onChange={e => patch({ window_hours: Number(e.target.value) })}>
                   {WINDOW_CHOICES.map(choice => <option key={choice.hours} value={choice.hours}>{choice.label}</option>)}
                 </select>
                 {(draft.window_hours ?? 0) > 0 && (
@@ -462,7 +462,7 @@ export const TasksPage: React.FC = () => {
                 {wantsJobs && (
                   <>
                     <label className="task-label" htmlFor="task-location">Where should the jobs be? <span className="task-optional">optional</span></label>
-                    <input id="task-location" className="manifest-search-input" type="text" maxLength={80} value={draft.location}
+                    <input id="task-location" data-help="tasks.location" className="manifest-search-input" type="text" maxLength={80} value={draft.location}
                       placeholder="e.g. Austin, TX, or Remote" onChange={e => patch({ location: e.target.value })} />
                   </>
                 )}

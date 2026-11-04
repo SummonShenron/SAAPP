@@ -248,7 +248,7 @@ export const IntegrationsPage: React.FC = () => {
       </header>
 
       <div className="integrations-layout">
-        <nav className="integrations-sidebar" aria-label="Integrations sections">
+        <nav className="integrations-sidebar" aria-label="Integrations sections" data-help="integrations.tabs">
           {(['google', 'outlook', 'github', 'settings'] as const).map(tab => (
             <button
               key={tab}
@@ -264,7 +264,7 @@ export const IntegrationsPage: React.FC = () => {
       <h2 className="integrations-group" style={{ margin: '0 0 1rem' }}>Accounts</h2>
       <div className="integrations-grid">
         {activeTab === 'google' && (
-        <section className="service-card integration-card">
+        <section className="service-card integration-card" data-help="integrations.google">
           <div className="card-badge">GOOGLE</div>
           <div className="integration-card-head">
             <h2>Google (Calendar, Gmail, Drive, Docs)</h2>
@@ -334,7 +334,7 @@ export const IntegrationsPage: React.FC = () => {
         {!isGuest && status?.connected && activeTab === 'settings' && <CalendarHeadsUps />}
 
         {activeTab === 'outlook' && (
-        <section className="service-card integration-card">
+        <section className="service-card integration-card" data-help="integrations.microsoft">
           <div className="card-badge">MICROSOFT</div>
           <div className="integration-card-head">
             <h2>Microsoft (Outlook, Calendar, OneDrive)</h2>
@@ -376,7 +376,7 @@ export const IntegrationsPage: React.FC = () => {
       {!isGuest && <h2 className="integrations-group" style={{ margin: '1.5rem 0 0' }}>Advanced</h2>}
       <div className="integrations-grid">
         {!isGuest && activeTab === 'google' && (
-          <section className="service-card integration-card">
+          <section className="service-card integration-card" data-help="integrations.targetDoc">
             <div className="card-badge">TARGET DOCUMENT</div>
             <h2>Target Document</h2>
             <p className="card-description">
@@ -409,7 +409,7 @@ export const IntegrationsPage: React.FC = () => {
           </section>
         )}
         {!isGuest && activeTab === 'github' && (
-          <section className="service-card integration-card">
+          <section className="service-card integration-card" data-help="integrations.github">
             <div className="card-badge">GITHUB TOKEN</div>
             <h2>GitHub Token</h2>
             <p className="card-description">

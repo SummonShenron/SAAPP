@@ -63,7 +63,7 @@ const StepsDisclosure: React.FC<Props> = ({ steps, running, idPrefix, latest = f
 
   return (
     <div className="steps-inline">
-      <button type="button" className="steps-toggle" aria-expanded={open} aria-controls={bodyId} onClick={() => setChosen(!open)}>
+      <button type="button" className="steps-toggle" data-help="msg.steps" aria-expanded={open} aria-controls={bodyId} onClick={() => setChosen(!open)}>
         <span className="steps-toggle-label">{stepsLabel(steps.length)}</span>
         <span className="steps-toggle-chevron" aria-hidden="true">▸</span>
       </button>

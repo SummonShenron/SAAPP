@@ -67,3 +67,7 @@
 
 /* The strip takes a little of the conversation's width so no text runs under it. */
 .chat-page:has(.session-rail) .chat-window { padding-right: 46px; }
+
+/* The runner nudge beside the Connection button on the phone strip: the callout itself, without a second border inside the popover's. */
+.rail-nudge { padding: 0; }
+.rail-nudge .sc-nudge { margin: 0; border: 0; background: none; }

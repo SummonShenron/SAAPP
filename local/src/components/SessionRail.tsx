@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import Icon from './icons';
 import type { RingView } from './budgetText';
 import Ring from './Ring';
-import { ConnectionPanel, Gauge, RepoFields, ScopeField, type ConnectionProps, type RepoControls, type ScopeControls } from './SessionColumn';
+import { ConnectionPanel, Gauge, RepoFields, RunnerNudge, ScopeField, type ConnectionProps, type RepoControls, type ScopeControls } from './SessionColumn';
 import { ChipChoices, ModelChoices, ModelGlyph, glyph, modelChip, type ChatSettings, type ChipControl } from './ComposerChips';
 import { chipLabel, isChanged, type ChipKey } from './composerChipsLogic';
 import { contextGauge, folderLine, gaugeSummary, runnerLine, type ContextUse } from './sessionColumnLogic';
@@ -70,6 +70,7 @@ const SessionRail: React.FC<Props> = ({ usage, context, compaction, onSwitchMete
   const connectionTone = (() => {
     if (!connection) return null;
     const tones = [connection.runnerEnabled ? runnerLine(connection.runners).tone : 'off', folderLine(connection.folder.status, connection.folder.name, connection.folder.fileCount).tone];
+    if (connection.runnerSetup?.visible) return 'warn';          // no runner set up and the nudge is due: the button asks for a look, like a runner that is not answering
     return tones.includes('warn') ? 'warn' : tones.includes('ok') ? 'ok' : null;
   })();
   const controlOf = (key: ChipKey): ChipControl | null => (settings ? settings[key] : null);
@@ -86,6 +87,7 @@ const SessionRail: React.FC<Props> = ({ usage, context, compaction, onSwitchMete
             {connectionTone && <span className={`rail-dot rail-dot-${connectionTone}`} aria-hidden="true" />}
           </button>
           {open === 'connection' && <div className="rail-pop" role="dialog" aria-label="Connection"><ConnectionPanel {...connection} /></div>}
+          {open !== 'connection' && connection.runnerSetup?.visible && <div className="rail-pop rail-nudge" role="dialog" aria-label="Set up the runner"><RunnerNudge setup={connection.runnerSetup} /></div>}
         </div>
       )}
       {repo && (

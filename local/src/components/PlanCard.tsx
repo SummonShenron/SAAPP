@@ -48,7 +48,7 @@ export const PlanCard: React.FC<Props> = ({ sessionId, plan, busy, onChange, onA
   const stateLabel = plan.state === 'proposed' ? 'Waiting for your OK' : plan.state === 'approved' ? `Approved, ${remaining} step${remaining === 1 ? '' : 's'} to go` : 'Finished';
 
   return (
-    <section className={`plan-card plan-card-${plan.state}`} aria-label="Plan">
+    <section className={`plan-card plan-card-${plan.state}`} aria-label="Plan" data-help="card.plan">
       <header className="plan-card-head">
         <span className="plan-card-title">Plan</span>
         <span className="plan-card-state">{stateLabel}</span>
@@ -95,7 +95,7 @@ export const PlanCard: React.FC<Props> = ({ sessionId, plan, busy, onChange, onA
 
       {plan.state === 'proposed' && (
         <div className="plan-card-actions">
-          <button type="button" className="plan-approve" disabled={working || busy} onClick={() => void approve()}>Approve and start</button>
+          <button type="button" className="plan-approve" data-help="card.planApprove" disabled={working || busy} onClick={() => void approve()}>Approve and start</button>
           <button type="button" className="plan-link" disabled={working} onClick={() => void act('cancel')}>Cancel</button>
           <span className="plan-card-hint">Or tell Sonic what to change and it will revise the plan. Nothing is edited until you approve.</span>
         </div>

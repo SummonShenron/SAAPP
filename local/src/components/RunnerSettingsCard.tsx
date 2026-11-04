@@ -37,7 +37,7 @@ function AddProjectForm({ runner, disabled, onAsked, onError }: { runner: Runner
     }
   };
   return (
-    <div className="runner-add runner-add-project">
+    <div className="runner-add runner-add-project" data-help="runner.addProject">
       <input className="account-input" type="text" maxLength={80} placeholder="Project folder name, for example my-app" aria-label={`Name of a project folder to add on ${runner.name}`} value={folder}
         disabled={disabled || asking} onChange={event => setFolder(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !asking && !disabled) void ask(); }} />
       <button type="button" className="account-btn" disabled={disabled || asking || !folder.trim()} onClick={() => void ask()}>{asking ? 'Asking...' : 'Add a project'}</button>
@@ -198,7 +198,7 @@ export default function RunnerSettingsCard() {
   const left = pairing ? minutesLeft(pairing.expires_at, now) : 0;
 
   return (
-    <section className="account-card runner-card" aria-labelledby="runner-heading">
+    <section className="account-card runner-card" aria-labelledby="runner-heading" data-help="runner.card">
       <h3 id="runner-heading">Run checks on your machine</h3>
       <p className="account-note runner-intro">
         Optional. A small program on your own computer, the SAAPP runner, can run your project's tests or type check when Sonic asks and you press Run on a card in the chat. It finds those checks in your
@@ -231,12 +231,12 @@ export default function RunnerSettingsCard() {
                   </div>
                 )}
               </div>
-              <button type="button" className="account-btn" onClick={() => void remove(runner.id, runner.name)}>Remove</button>
+              <button type="button" className="account-btn" data-help="runner.remove" onClick={() => void remove(runner.id, runner.name)}>Remove</button>
 
               <div className="runner-projects">
                 {runner.projects.length === 0 && <p className="account-hint">No project yet. Add one below: a window opens on that computer and you choose the folder there.</p>}
                 {runner.projects.map(project => (
-                  <section key={project.id} className="runner-project" aria-label={`Project ${project.name}`}>
+                  <section key={project.id} className="runner-project" aria-label={`Project ${project.name}`} data-help="runner.project">
                     <div className="runner-project-head">
                       <div className="account-label">{project.name}</div>
                       <button type="button" className="runner-link" onClick={() => void removeProject(runner, project)}>Remove project</button>
@@ -244,7 +244,7 @@ export default function RunnerSettingsCard() {
                     {runner.connected && statusSentence(project.status) && <div className="account-hint runner-warning" role="status">{statusSentence(project.status)}</div>}
                     {project.checks.length === 0 && !(runner.connected && statusSentence(project.status)) && <div className="account-hint">{noChecksLine(runner.connected)}</div>}
                     {project.checks.map(check => (
-                      <label key={check.name} className="runner-check">
+                      <label key={check.name} className="runner-check" data-help="runner.check">
                         <input type="checkbox" checked={checkIsOn(project.settings, check.name)} disabled={saving === runner.id}
                           onChange={event => void changeProject(runner, project, withCheck(project.settings, check.name, event.target.checked))} />
                         <span className="runner-check-text">
@@ -254,7 +254,7 @@ export default function RunnerSettingsCard() {
                         </span>
                       </label>
                     ))}
-                    <label className="runner-check">
+                    <label className="runner-check" data-help="runner.fakeKey">
                       <input type="checkbox" checked={project.settings.fake_keys} disabled={saving === runner.id}
                         onChange={event => void changeProject(runner, project, withFakeKeys(project.settings, event.target.checked))} />
                       <span className="runner-check-text">
@@ -270,7 +270,7 @@ export default function RunnerSettingsCard() {
                 <AddProjectForm runner={runner} disabled={!runner.connected} onAsked={load} onError={setError} />
                 {!runner.connected && <p className="account-hint">Start this runner first; then you can add a project.</p>}
                 {runner.commands && (
-                  <label className="runner-check">
+                  <label className="runner-check" data-help="runner.readOnly">
                     <input type="checkbox" checked={runner.settings.read_only_auto} disabled={saving === runner.id} onChange={event => void changeReadOnlyAuto(runner, event.target.checked)} />
                     <span className="runner-check-text">
                       <span className="account-label">Run commands that only look around without asking</span>
@@ -278,7 +278,7 @@ export default function RunnerSettingsCard() {
                     </span>
                   </label>
                 )}
-                <label className="runner-check">
+                <label className="runner-check" data-help="runner.autoUpdate">
                   <input type="checkbox" checked={runner.settings.auto_update} disabled={saving === runner.id} onChange={event => void changeAutoUpdate(runner, event.target.checked)} />
                   <span className="runner-check-text">
                     <span className="account-label">Update this runner automatically</span>
@@ -294,7 +294,7 @@ export default function RunnerSettingsCard() {
       <div className="runner-add">
         <input className="account-input" type="text" maxLength={40} placeholder="Name this computer (optional)" aria-label="Name for the new runner" value={name}
           disabled={busy || atLimit} onChange={event => setName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !busy && !atLimit) void add(); }} />
-        <button type="button" className="account-btn" disabled={busy || atLimit || !list} onClick={() => void add()}>{busy ? 'Making a code...' : 'Add a runner'}</button>
+        <button type="button" className="account-btn" data-help="runner.add" disabled={busy || atLimit || !list} onClick={() => void add()}>{busy ? 'Making a code...' : 'Add a runner'}</button>
       </div>
       {atLimit && list && <p className="account-hint">You can have {list.limit} runners at most. Remove one you no longer use to add another.</p>}
       {error && <div className="account-error" role="alert">{error}</div>}
@@ -303,7 +303,7 @@ export default function RunnerSettingsCard() {
         <div className="runner-pairing">
           <div className="runner-code-line">
             <span className="account-label">Your one-time code</span>
-            <code className="runner-code" aria-label="Pairing code">{pairing.code}</code>
+            <code className="runner-code" aria-label="Pairing code" data-help="runner.code">{pairing.code}</code>
             <button type="button" className="account-btn" onClick={() => void copy('code', pairing.code)}>{copied === 'code' ? 'Copied' : 'Copy'}</button>
           </div>
           <div className="account-hint">{left > 0 ? `It works once, for about ${left} more minute${left === 1 ? '' : 's'}.` : 'This code has expired. Choose Add a runner for a new one.'}</div>
@@ -311,7 +311,7 @@ export default function RunnerSettingsCard() {
           {scripts ? (
             <>
               <div className="runner-os">
-                <button type="button" className="account-btn runner-primary" onClick={() => download(scripts[os])}>Download setup for {OS_LABEL[os]}</button>
+                <button type="button" className="account-btn runner-primary" data-help="runner.download" onClick={() => download(scripts[os])}>Download setup for {OS_LABEL[os]}</button>
                 <span className="account-hint">Other systems:</span>
                 {(Object.keys(OS_LABEL) as OsKind[]).filter(kind => kind !== os).map(kind => (
                   <button key={kind} type="button" className="runner-link" onClick={() => setOs(kind)}>{OS_LABEL[kind]}</button>

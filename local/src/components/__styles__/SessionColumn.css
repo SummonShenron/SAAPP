@@ -129,3 +129,9 @@
    covered. The chat page is a size container so the conversation can measure its own margins. */
 div.chat-page.chat-page { position: relative; container: chatpage / inline-size; }
 .chat-page > .session-column { position: absolute; top: 0; right: 0; bottom: 0; }
+
+/* The runner nudge (components/SessionColumn.tsx RunnerNudge): a callout at the top of the column, in the card's own colours with the accent on its edge. */
+.sc-nudge { display: flex; flex-direction: column; gap: 6px; padding: 12px; margin-bottom: 10px; border: 1px solid var(--accent-primary); border-radius: 10px; background: var(--bg-surface-hover); }
+.sc-nudge-title { font-weight: 600; font-size: 0.9rem; }
+.sc-nudge-text { margin: 0; font-size: 0.8rem; line-height: 1.45; color: var(--text-muted); }
+.sc-nudge-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }

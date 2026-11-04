@@ -42,7 +42,7 @@ import { planAnchorId } from '../components/planPlacement';
 import { waitAtMost } from '../streamWatchdog';
 import ComposerChips, { type ChatSettings } from '../components/ComposerChips';
 import { answersId, answersValue, modeId, modeValue, thinkingId, thinkingValue } from '../components/composerChipsLogic';
-import { RUNNER_START_LINK, RUNNER_START_WAIT_MS, canStartRunnerFromLink, runnerStartPhase, scopeChoices } from '../components/sessionColumnLogic';
+import { RUNNER_NUDGE_KEY, RUNNER_START_LINK, RUNNER_START_WAIT_MS, canStartRunnerFromLink, nudgeDismissedUntil, parseNudgeDismissed, runnerNudgeVisible, runnerStartPhase, scopeChoices } from '../components/sessionColumnLogic';
 import { ringView } from '../components/budgetText';
 import { type TraceStep } from '../components/TracePanel';
 import { finishedSteps, mergeExcerpts, mergeFacts, recordExcerpt, recordFacts, toolStepLabel, type TraceExcerptsById, type TraceFactsById } from '../components/traceFacts';
@@ -253,6 +253,7 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
       <button
         type="button"
         onClick={handleCopy}
+        data-help="msg.copyCode"
         style={{
           position: 'absolute',
           top: '6px',
@@ -311,7 +312,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
       {earlierCount > 0 && (
         <button
           type="button"
-          onClick={() => loadEarlierRef.current()}
+          onClick={() => loadEarlierRef.current()} data-help="chat.loadEarlier"
           disabled={loadingEarlier}
           style={{
             alignSelf: 'center',
@@ -493,7 +494,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
                   {msg.failure.retryable && (
                     <button
                       type="button"
-                      className="message-failure-retry"
+                      className="message-failure-retry" data-help="msg.retry"
                       disabled={loading}
                       onClick={() => handleSendMessageRef.current(msg.failure!.retryText, attachmentsRef.current, [msg.failure!.userMessageId, msg.id])}
                     >
@@ -528,7 +529,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
                   <button
                     type="button"
                     onClick={() => handleSendMessageRef.current(followUp, attachmentsRef.current)}
-                    className="follow-up-btn"
+                    className="follow-up-btn" data-help="msg.followUp"
                     style={{
                       background: 'var(--follow-up-bg)',
                       border: '1px solid rgba(6, 182, 212, 0.4)',
@@ -566,7 +567,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
                     type="button"
                     onClick={() => handleFeedbackRef.current(msg.id, 'like')}
                     className={`circle-icon-button feedback-like ${msg.feedback === 'like' ? 'active' : ''}`}
-                    title="Helpful"
+                    title="Helpful" data-help="msg.like"
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
@@ -577,7 +578,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
                     type="button"
                     onClick={() => handleFeedbackRef.current(msg.id, 'dislike')}
                     className={`circle-icon-button feedback-dislike ${msg.feedback === 'dislike' ? 'active' : ''}`}
-                    title="Not helpful"
+                    title="Not helpful" data-help="msg.dislike"
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path transform="translate(-2 0)" d="M12 5.67L10.94 4.61A5.5 5.5 0 0 0 3.16 12.39L4.22 13.45L12 21.23L10.8 17.5L13.2 15L11.2 12L12.8 9.5Z" />
@@ -751,6 +752,9 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const workspace = useLocalWorkspace({ enabled: !isEmbedded && !isGuestPrincipal(principal) });
   // What the session column shows about the connection: whether the runner answers (asked every half minute while the column is showing), and the folder's branch.
   const { runners: runnerList, askSoon: checkRunnerSoon } = useRunnerPing(!isEmbedded && !isGuestPrincipal(principal));
+  // The runner's setup is in the Account settings, which is easy to miss: where no runner is set up, the session column and the phone strip say so once and open it (components/sessionColumnLogic.ts runnerNudgeVisible).
+  // "Not now" keeps it away for a week, remembered in this browser; a browser that cannot remember simply shows it again.
+  const [nudgeDismissed, setNudgeDismissed] = useState<number | null>(() => { try { return parseNudgeDismissed(localStorage.getItem(RUNNER_NUDGE_KEY)); } catch { return null; } });
   // The terminal (components/TerminalBlade.tsx): a button in the top bar opens it while a runner of theirs is connected to the project that is open. The runner is asked about whether or not the
   // session column is showing, because the terminal button depends on the answer too.
   // The project picked from the blade's dropdown, used only when the open folder names none of the connected projects.
@@ -1455,7 +1459,7 @@ useEffect(() => {
           className="topbar-btn"
           onClick={toggleTracePanel}
           aria-pressed={traceOpen}
-          aria-label="Toggle execution trace"
+          aria-label="Toggle execution trace" data-help="chat.trace"
           title={traceOpen ? 'Hide the steps as nodes' : 'Show the steps as nodes'}
         >
           <Icon name="microscope" size={18} />
@@ -1467,7 +1471,7 @@ useEffect(() => {
             className="topbar-btn"
             onClick={() => setShowTerminal(open => !open)}
             aria-pressed={showTerminal}
-            aria-label="Toggle the terminal"
+            aria-label="Toggle the terminal" data-help="chat.terminal"
             title={showTerminal ? 'Close the terminal' : 'Open the terminal: run commands on your computer'}
           >
             <Icon name="terminal" size={18} />
@@ -1478,7 +1482,7 @@ useEffect(() => {
           className="topbar-btn"
           onClick={toggleSessionColumn}
           aria-pressed={showSessionColumn}
-          aria-label="Toggle the session column"
+          aria-label="Toggle the session column" data-help="chat.sessionColumn"
           title={showSessionColumn ? 'Hide the session column' : 'Show the session column'}
         >
           <Icon name="panelRight" size={18} />
@@ -2512,12 +2516,22 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
   };
   // The runner on the person's computer and the folder, for the phone strip's Connection button (the column draws the same through its own props). A runner is tied to the account, so it shows on a
   // phone as on a desktop; the folder's controls are null where there is no folder picker (a phone browser).
+  const runnerSetup = isGuestPrincipal(principal) ? null : {
+    visible: runnerNudgeVisible(!isGuestPrincipal(principal), runnerList, nudgeDismissed, Date.now()),
+    onOpen: () => routeNavigate('/account'),
+    onDismiss: () => {
+      const until = nudgeDismissedUntil(Date.now());
+      setNudgeDismissed(until);
+      try { localStorage.setItem(RUNNER_NUDGE_KEY, String(until)); } catch { /* not remembered: it shows again next time */ }
+    },
+  };
   const connection: ConnectionProps = {
     folder: { status: workspace.status, name: workspace.folderName, fileCount: workspace.fileCount, branch: workspace.status === 'disconnected' ? null : folderBranch },
     runnerEnabled: !isGuestPrincipal(principal),
     runners: runnerList,
     runnerStart,
     folderControls,
+    runnerSetup,
   };
   // The attach button. In the app it sits at the left of the text; the embedded widget keeps it with the other buttons at the right.
   const attachButton = (
@@ -2527,6 +2541,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
       onClick={() => document.getElementById("file-upload")?.click()}
       title="Attach a file"
       aria-label="Attach a file"
+      data-help="composer.attach"
     >
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <line x1="12" y1="5" x2="12" y2="19" />
@@ -2712,7 +2727,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                 ref={inputRef}
                 onPointerDown={() => setInputEngaged(true)}
                 onBlur={() => setInputEngaged(false)}
-                className="chat-textarea"
+                className="chat-textarea" data-help="composer.input"
                 placeholder={loading ? "Steer Sonic..." : chatPlaceholder}
                 value={input}
                 onChange={(e) => {
@@ -2873,7 +2888,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
 
                 <button
                   type={loading && !input.trim() ? "button" : "submit"}
-                  className="circle-icon-button send-button"
+                  className="circle-icon-button send-button" data-help="composer.send"
                   onClick={loading && !input.trim() ? stopGeneration : undefined}
                   disabled={!loading && !input.trim()}
                   title={loading ? (input.trim() ? "Steer Sonic" : "Stop generating") : "Send"}
@@ -3305,6 +3320,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           runnerEnabled={!isGuestPrincipal(principal)}
           runners={runnerList}
           runnerStart={runnerStart}
+          runnerSetup={runnerSetup}
           usage={budget ? ringView(budget) : null}
           context={contextUse && contextUse.sessionId === sessionId ? contextUse : null}
           compaction={shownMeter}

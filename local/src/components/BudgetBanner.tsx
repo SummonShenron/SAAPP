@@ -70,7 +70,7 @@ const BudgetBanner: React.FC<{
   };
 
   return (
-    <div className={`budget-banner budget-${className}${theme === 'shadow' ? ' budget-dark' : ''}`} role="status" aria-live="polite" title={paused}>
+    <div className={`budget-banner budget-${className}${theme === 'shadow' ? ' budget-dark' : ''}`} role="status" aria-live="polite" title={paused} data-help="chat.budget">
       <span className="budget-banner-dot" aria-hidden="true" />
       <span className="budget-banner-text">{text}</span>
       {canAsk && budget.increase_request === 'pending' && <span className="budget-request-status">✓ Request sent. An admin will review it.</span>}

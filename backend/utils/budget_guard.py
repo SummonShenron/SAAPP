@@ -649,18 +649,22 @@ def decide_request(db: Any, admin: str, request_id: str, approve: bool, now: Opt
         raise ValueError("That period has already ended, so the request no longer matters.")
     decided = {"status": "approved" if approve else "declined", "decided_by": str(admin)[:200], "decided_at": moment.isoformat()}
     if approve:
-        user, scope = str(doc["user"]), str(doc["scope"])
-        existing = db[USER_EXTENSIONS_COLLECTION].find_one({"user": user, "scope": scope}, {"_id": 0}) or {}
-        until_old = _as_aware(existing.get("until"))
-        running = until_old is not None and until_old > moment
-        extra = (float(existing.get("extra") or 0) if running else 0.0) + EXTENSION_STEP
-        grants = (list(existing.get("grants") or []) if running else [])[-49:]
-        grants.append({"by": decided["decided_by"], "at": decided["decided_at"], "extra": round(extra, 4)})
-        db[USER_EXTENSIONS_COLLECTION].update_one(
-            {"user": user, "scope": scope}, {"$set": {"user": user, "scope": scope, "extra": round(extra, 4), "until": until.isoformat(), "grants": grants}},
-            upsert=True,
-        )
-        decided["extra"] = round(extra, 4)
+        user, requested_scope = str(doc["user"]), str(doc["scope"])
+        # An approved increase covers both of the person's own limits (daily and 5-hour), each until its own reset.
+        for scope in OWN_SCOPES:
+            scope_until = until if scope == requested_scope else _next_reset(scope, moment)
+            existing = db[USER_EXTENSIONS_COLLECTION].find_one({"user": user, "scope": scope}, {"_id": 0}) or {}
+            until_old = _as_aware(existing.get("until"))
+            running = until_old is not None and until_old > moment
+            extra = (float(existing.get("extra") or 0) if running else 0.0) + EXTENSION_STEP
+            grants = (list(existing.get("grants") or []) if running else [])[-49:]
+            grants.append({"by": decided["decided_by"], "at": decided["decided_at"], "extra": round(extra, 4)})
+            db[USER_EXTENSIONS_COLLECTION].update_one(
+                {"user": user, "scope": scope}, {"$set": {"user": user, "scope": scope, "extra": round(extra, 4), "until": scope_until.isoformat(), "grants": grants}},
+                upsert=True,
+            )
+            if scope == requested_scope:
+                decided["extra"] = round(extra, 4)
     db[REQUESTS_COLLECTION].update_one({"id": request_id}, {"$set": decided})
     _reset_cache()
     return {**doc, **decided}

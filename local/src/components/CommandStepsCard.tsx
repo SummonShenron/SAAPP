@@ -93,7 +93,7 @@ export default function CommandStepsCard({ steps, runner, onTell }: Props) {
   const busy = Object.values(runs).some(run => run.state === 'running');
   const waiting = steps.filter(step => (runs[step.id] ?? IDLE).state === 'idle').length;
   return (
-    <div className="csc-card">
+    <div className="csc-card" data-help="card.steps">
       <div className="csc-header">
         <span className="csc-title">{steps.length} step{steps.length === 1 ? '' : 's'} to run on your machine{where ? <span className="csc-where"> ({where})</span> : null}</span>
       </div>
