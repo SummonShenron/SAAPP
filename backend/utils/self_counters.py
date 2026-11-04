@@ -98,6 +98,8 @@ CONVSUM_KEYS = ("convsum_forgot", "convsum_forgot_summarized", "convsum_summariz
 LOOK_KEYS = ("server_started", "server_failed", "look_done", "look_in_preview", "look_problem_seen", "look_failed")
 # The cloud page-driving tools run on the native engine (backend/services/native_tools.py, native_loop.py): calls of each. Counts only: no address, page or text.
 BROWSER_KEYS = ("browser_navigate_native", "browser_read_native", "browser_click_native", "browser_type_native", "browser_screenshot_native")
+# The admin datastore query on the native engine (backend/services/native_tools.py, native_loop.py): calls made. Counts only: no query, collection or result.
+MONGO_KEYS = ("run_mongo_query_native",)
 # Step lists Sonic put on a card for the person to run themselves (backend/utils/command_steps.py): lists shown, steps in them, and lists refused because a step was not allowed. Counts only.
 STEPS_KEYS = ("steps_proposed", "steps_in_lists", "steps_refused")
 # Relatable lines picked by meaning rather than by a trigger word (backend/utils/relatable_utils.py): a share of relatable_offered, to see whether the meaning match earns its place. Counts only.
@@ -105,7 +107,7 @@ PROACTIVE_KEYS = ("relatable_by_meaning",
                   # Later check-ins on a feeling still being carried (backend/utils/emotion_checkin.py): turns that were told to end with one, replies that really did, and on the next message whether the person's
                   # ceiling had eased or they were still low. Counts only.
                   "emotion_checkin_offered", "emotion_checkin_asked", "emotion_checkin_eased", "emotion_checkin_still_low")
-_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS + LESSON_KEYS + CONVSUM_KEYS + LOOK_KEYS + BROWSER_KEYS + STEPS_KEYS + PROACTIVE_KEYS
+_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS + LESSON_KEYS + CONVSUM_KEYS + LOOK_KEYS + BROWSER_KEYS + MONGO_KEYS + STEPS_KEYS + PROACTIVE_KEYS
 KEYS = frozenset(
     list(_PLAIN_KEYS) + [f"{group}_{name}" for group, names in _GROUPS.items() for name in names]
 )

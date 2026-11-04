@@ -111,7 +111,7 @@ def test_the_pattern_covers_every_tool_the_native_engine_lacks_in_the_old_menu()
     seen = asyncio.run(be.run_tool_agent(model, "check my gmail inbox", repo=True, engine="react"))
     lacking = sorted(set(re.findall(r"^- ([a-z_]+) —", seen.menu, re.M)) - set(nt.REGISTRY))
     assert lacking == [
-        "propose_code_plan", "propose_send_email", "run_mongo_query", "run_repo_tests", "run_snippet",
+        "propose_code_plan", "propose_send_email", "run_repo_tests", "run_snippet",
     ], "the old engine's menu changed: decide whether each new tool needs the old engine, and update _OLD_ENGINE_ONLY_RE"
 
 
@@ -126,7 +126,7 @@ def test_in_the_real_tool_agent_a_gmail_request_runs_the_old_engine_and_a_repo_q
     async def react_model(prompt):
         return SimpleNamespace(content=json.dumps({"action": "final", "answer": "ok"}))
 
-    for question, engine in (("query the mongodb users collection", "react"), ("where is GRACE_DAYS read?", "native"),
+    for question, engine in (("query the mongodb users collection", "native"), ("where is GRACE_DAYS read?", "native"),
                              ("search my gmail inbox for the last two messages", "native")):
         turn = llm_turns.begin()
         asyncio.run(be.run_tool_agent(react_model, question, repo=True, engine="native", tool_llm=ToolLLM()))

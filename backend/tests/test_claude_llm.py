@@ -273,7 +273,7 @@ def test_any_other_provider_value_stays_on_gemini(monkeypatch):
 
 def test_the_tool_agent_asks_for_its_model_through_the_switch():
     source = open(os.path.join(REPO, "backend", "services", "agent_workflow.py"), encoding="utf-8").read()
-    assert 'llm=tool_agent_llm(bool(deep_thinking), state.get("tool_model")),' in source
+    assert 'llm=tool_agent_llm(bool(deep_thinking), code_plan.execute_phase_choice(state.get("tool_model"), plan_phase)),' in source          # through the switch, with the plan phase's own choice applied first
 
 
 def test_the_packages_are_declared():
