@@ -80,9 +80,10 @@ function ClaudeSonnetShape() {
           <rect key={`o${i}`} x="-1.1" y={i % 2 === 0 ? -10.5 : -8.4} width="2.2" height={i % 2 === 0 ? 6.5 : 4.4} rx="1.1" transform={`rotate(${i * 30})`} />
         ))}
       </g>
-      <g fill="#a84f2e">
+      <circle cx="0" cy="0" r="3.4" fill="#8a3c20" />
+      <g fill="#8a3c20">
         {Array.from({ length: 6 }, (_, i) => (
-          <rect key={`i${i}`} x="-0.8" y="-5.2" width="1.6" height="3" rx="0.8" transform={`rotate(${i * 60 + 30})`} />
+          <rect key={`i${i}`} x="-1.2" y="-6.4" width="2.4" height="3.4" rx="1.2" transform={`rotate(${i * 60 + 30})`} />
         ))}
       </g>
     </g>

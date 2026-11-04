@@ -374,6 +374,17 @@ const ChatMessageList = React.memo(function ChatMessageList({
                   />
                 </div>
               )}
+              {msg.editProposals?.map(proposal => (
+                // Keyed by the proposal: a card keeps its own Apply/Undo state, so a second proposal in the same reply must be a new card, not the first one showing different files.
+                <LocalEditCard
+                  key={proposal.proposal_id}
+                  proposal={proposal}
+                  canApply={canEditLocal}
+                  onApply={proposal => localEditActionsRef.current.apply(proposal)}
+                  onUndo={proposalId => localEditActionsRef.current.undo(proposalId)}
+                  onDecision={(proposalId, outcome, reason) => localEditActionsRef.current.decide(proposalId, outcome, reason)}
+                />
+              ))}
               <div className="message-text">
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
@@ -495,18 +506,6 @@ const ChatMessageList = React.memo(function ChatMessageList({
                   </details>
                 </div>
               )}
-
-              {msg.editProposals?.map(proposal => (
-                // Keyed by the proposal: a card keeps its own Apply/Undo state, so a second proposal in the same reply must be a new card, not the first one showing different files.
-                <LocalEditCard
-                  key={proposal.proposal_id}
-                  proposal={proposal}
-                  canApply={canEditLocal}
-                  onApply={proposal => localEditActionsRef.current.apply(proposal)}
-                  onUndo={proposalId => localEditActionsRef.current.undo(proposalId)}
-                  onDecision={(proposalId, outcome, reason) => localEditActionsRef.current.decide(proposalId, outcome, reason)}
-                />
-              ))}
 
               {msg.runnerCheck && <RunnerCheckCard key={msg.runnerCheck.job.id} job={msg.runnerCheck.job} runner={msg.runnerCheck.runner} />}
 
@@ -1581,6 +1580,13 @@ useEffect(() => {
   };
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Re-measure whenever the text changes, including when it is cleared after send. An empty box drops its inline height so the CSS default (single line) applies at once.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = input ? `${el.scrollHeight}px` : '';
+  }, [input]);
   const handlePastedImage = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = e.clipboardData?.items;
     if (!items) return;

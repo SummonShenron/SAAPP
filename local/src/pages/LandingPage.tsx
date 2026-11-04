@@ -118,20 +118,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
               Sign In / Sign Up
             </button>
 
-            <div className="landing-affiliate">
-              <strong style={{ color: 'var(--landing-ink)' }}>Affiliate access</strong>
-              <div style={{ marginTop: 4 }}>
-                <span style={{ display: 'inline-block', marginRight: 10 }}>
-                  <strong>A</strong> — Sonic docs
-                </span>
-                <span style={{ display: 'inline-block', marginRight: 10 }}>
-                  <strong>B</strong> — Dragon Ball docs
-                </span>
-                <span style={{ display: 'inline-block' }}>
-                  <strong>C</strong> — Jack's portfolio
-                </span>
-              </div>
-            </div>
+            <p className="landing-guest-note">
+              Signing in grants access to Sonic's full tool suite and access to your own private knowledge base.
+            </p>
           </div>
 
         {showNotice && (
