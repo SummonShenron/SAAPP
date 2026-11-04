@@ -17,8 +17,11 @@ reason when they give one), or no answer within the timeout, in which case nothi
 - NO TEXT IS LOGGED: a decision's reason is the person's words.
 """
 import asyncio
+import logging
 import os
 from typing import Any, Awaitable, Callable, Dict, Optional
+
+logger = logging.getLogger("SASS Logger")
 
 WAIT_SECONDS = float(os.getenv("LOCAL_EDIT_WAIT_SECONDS", "600"))
 HEARTBEAT_SECONDS = 20.0            # how often the stream is touched while waiting, so a proxy does not close it as idle, and the person sees Sonic is waiting
@@ -89,6 +92,36 @@ def waiting_count() -> int:
     return len(_waiting)
 
 
+# WHY NOBODY WAS WAITING (2026-11-05). In production the turn twice ended the moment Apply was pressed, and nothing said why. A report that finds no waiter now says which of these it was, and is counted:
+# "cancelled" (the stream was cut while the turn waited: a proxy, the browser, a reload), "timeout" (the wait ran out), "decided" (this proposal was already answered: a second press), or "not_here" (this process
+# never held it: another instance took the report, the server restarted, or it is more than six hours old). Only the first two cases and the last are failures; "decided" is a harmless second press.
+NO_WAITER_REASONS = ("cancelled", "timeout", "decided", "not_here")
+
+
+def why_no_waiter(username: str, proposal_id: str) -> str:
+    """Which of NO_WAITER_REASONS applies to a report that found nobody waiting (see above). Reads only what this process remembers about the proposal; never raises."""
+    try:
+        entry = _proposals.get(proposal_id)
+        if entry is None or entry["username"] != username:
+            return "not_here"
+        return entry.get("ended") if entry.get("ended") in NO_WAITER_REASONS else "not_here"
+    except Exception:
+        return "not_here"
+
+
+def no_waiter_counts(outcome: Any, status: str, why: str) -> Dict[str, int]:
+    """The day's tally (self_counters.APPLY_WAIT_KEYS) for a report: one `apply_no_waiter_<why>` when an Apply or a Decline found nobody waiting. {} for anything else (an Undo never has a waiter). Counts only."""
+    if status != "no_waiter" or outcome not in OUTCOMES or why not in NO_WAITER_REASONS:
+        return {}
+    return {f"apply_no_waiter_{why}": 1}
+
+
+def _note_end(proposal_id: str, ended: str) -> None:
+    entry = _proposals.get(proposal_id)
+    if entry is not None:
+        entry["ended"] = ended
+
+
 def decide(username: str, proposal_id: str, outcome: Any, reason: Any = "") -> str:
     """Records the person's decision. Returns "recorded", "no_waiter" (no turn is waiting for it: it ended or timed out) or "not_yours". Nothing about the proposal is revealed
     to someone else: an id that belongs to another person looks like one that is not waiting."""
@@ -110,11 +143,13 @@ async def wait_for(proposal_id: str, timeout: Optional[float] = None, on_tick: O
         return None
     limit = WAIT_SECONDS if timeout is None else timeout
     waited = 0.0
+    ended = "timeout"
     try:
         while waited < limit:
             step = min(HEARTBEAT_SECONDS, limit - waited)
             try:
                 await asyncio.wait_for(entry["event"].wait(), timeout=step)
+                ended = "decided"
                 return entry["outcome"]
             except asyncio.TimeoutError:
                 waited += step
@@ -124,5 +159,10 @@ async def wait_for(proposal_id: str, timeout: Optional[float] = None, on_tick: O
                     except Exception:
                         pass
         return None
+    except asyncio.CancelledError:
+        ended = "cancelled"           # the turn was cancelled while it waited: the stream was cut, or the person pressed Stop or left
+        raise
     finally:
+        _note_end(proposal_id, ended)
+        logger.info("[local_edit_decisions] a wait for a decision ended: %s after about %ds.", ended, int(waited))     # no proposal text, no path, no person
         forget(proposal_id)

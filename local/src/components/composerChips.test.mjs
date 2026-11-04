@@ -19,9 +19,9 @@ test('the names the person sees', () => {
   assert.deepEqual(CHIPS.answers.options.map(option => option.name), ['Grounded', 'Open']);
   assert.deepEqual(CHIPS.model.options.map(option => option.name), ['Gemini', 'Claude', 'Claude Sonnet', 'GPT-5.4 mini']);
   assert.equal(chipLabel('thinking', 'swift'), 'Thinking: Swift');
-  assert.equal(chipLabel('model', 'claude'), 'Code model: Claude');
-  assert.equal(chipLabel('model', 'sonnet'), 'Code model: Claude Sonnet');
-  assert.equal(chipLabel('model', 'gpt'), 'Code model: GPT-5.4 mini');
+  assert.equal(chipLabel('model', 'claude'), 'Tool model: Claude');
+  assert.equal(chipLabel('model', 'sonnet'), 'Tool model: Claude Sonnet');
+  assert.equal(chipLabel('model', 'gpt'), 'Tool model: GPT-5.4 mini');
 });
 
 test('an unknown value reads as the ordinary state, and only the other state is "changed"', () => {
@@ -76,7 +76,7 @@ test('the message box has the four chips with Export and Help at the far right, 
   assert.match(chat, /onExport: handleExportChat,/);
   assert.doesNotMatch(chat, /Export this conversation/);                                        // no longer a button in the message box row itself
   assert.doesNotMatch(chat, /showScopePicker/);                                                 // the scope lives in the column and the phone strip's lock
-  assert.doesNotMatch(chat, /Open Answers:|Deep Thinking:|Plan first:|Code model:/);            // those toggles are the chips now
+  assert.doesNotMatch(chat, /Open Answers:|Deep Thinking:|Plan first:|Tool model:/);            // those toggles are the chips now
   const chips = readFileSync(new URL('./ComposerChips.tsx', import.meta.url), 'utf8');
   assert.match(chips, /aria-label="Help"/);                                                      // Help at the far right
   assert.match(chips, /<div className="cc-right">\s*<button[^>]*aria-label="Export this conversation"[\s\S]*?aria-label="Help"/);      // with Export just before it, in the same group
@@ -126,9 +126,9 @@ test('the settings are only in the side panel, on every screen: never under the 
   assert.match(chat, /const railVisible = compactScreen && showSessionColumn;/);              // the strip is what the top-bar button shows and hides on a narrow screen
 });
 
-test('the model chip is two settings in one popup: the Base model (who writes the reply) and the Code model (who does the code steps)', () => {
+test('the model chip is two settings in one popup: the Base model (who writes the reply) and the Tool model (who does the code steps)', () => {
   assert.equal(BASE_MODEL.title, 'Base model');
-  assert.equal(CHIPS.model.title, 'Code model');
+  assert.equal(CHIPS.model.title, 'Tool model');
   assert.deepEqual(BASE_MODEL.options.map(option => option.id), ['gemini', 'gpt']);
   assert.equal(BASE_MODEL.ordinary, 'gemini');
   for (const option of [...BASE_MODEL.options, ...CHIPS.model.options]) assert.ok(option.short && option.short.length <= 40, `${option.id} has a short line that fits a half-width column`);
@@ -151,9 +151,9 @@ test('the model chip shows the first model that is not the ordinary one, Base fi
 });
 
 test('the model chip names both settings, and leaves out one that is not offered', () => {
-  assert.equal(modelsLabel('gpt', 'claude'), 'Models: Base GPT-5.4 mini, Code Claude');
-  assert.equal(modelsLabel('gemini', 'gemini'), 'Models: Base Gemini, Code Gemini');
-  assert.equal(modelsLabel(null, 'sonnet'), 'Models: Code Claude Sonnet');
+  assert.equal(modelsLabel('gpt', 'claude'), 'Models: Base GPT-5.4 mini, Tool Claude');
+  assert.equal(modelsLabel('gemini', 'gemini'), 'Models: Base Gemini, Tool Gemini');
+  assert.equal(modelsLabel(null, 'sonnet'), 'Models: Tool Claude Sonnet');
   assert.equal(modelsLabel('gpt', null), 'Models: Base GPT-5.4 mini');
 });
 
@@ -178,7 +178,7 @@ test('the model chip draws ONE svg from the models in play: a slash for two diff
   const chips = readFileSync(new URL('./ComposerChips.tsx', import.meta.url), 'utf8');
   assert.match(chips, /export function ModelGlyph\(\{ base, code, execute = null \}: \{ base: string \| null; code: string \| null; execute\?: string \| null \}\)/);
   assert.match(chips, /const SHAPES: Record<string, \(\) => React\.JSX\.Element> = \{ gemini: GeminiShape, claude: ClaudeShape, sonnet: ClaudeSonnetShape, gpt: GptShape \};/);   // Sonnet has its own shape
-  assert.match(chips, /for \(const role of \[base, code, resolvedExecute\(code, execute\)\]\)/);        // the Execute model is the Code model unless the person chose another
+  assert.match(chips, /for \(const role of \[base, code, resolvedExecute\(code, execute\)\]\)/);        // the Execute model is the Tool model unless the person chose another
   assert.match(chips, /if \(!shapes\.includes\(shape\)\) \{ shapes\.push\(shape\); names\.push\(role\); \}/);   // models that share a mark share a part
   assert.match(chips, /if \(shapes\.length <= 1\) return glyph\(names\[0\] \?\? 'gemini'\);/);               // one mark: drawn whole, never split against itself
   assert.match(chips, /<polygon points="0,0 24,0 0,24" \/>/);                                          // two marks: the upper-left half ...
@@ -203,7 +203,7 @@ test('the Execute model has its own spec: "same as Code" is the quiet default an
   assert.equal(specOption(EXECUTE_MODEL, 'nonsense').id, 'same');                            // an unknown value reads as the default
 });
 
-test('the Execute model is the Code model unless the person chose another', () => {
+test('the Execute model is the Tool model unless the person chose another', () => {
   assert.equal(resolvedExecute('sonnet', null), 'sonnet');
   assert.equal(resolvedExecute('sonnet', 'same'), 'sonnet');
   assert.equal(resolvedExecute('sonnet', 'claude'), 'claude');
@@ -219,10 +219,10 @@ test('the chip value, highlight and label account for the Execute model without 
   assert.equal(modelsChanged('gemini', 'gemini', 'same'), false);
   assert.equal(modelsChanged('gemini', 'gemini', null), false);
   assert.equal(modelsChanged('gemini', 'gemini', 'claude'), true);
-  assert.equal(modelsLabel('gpt', 'sonnet', 'claude'), 'Models: Base GPT-5.4 mini, Code Claude Sonnet, Execute Claude');
-  assert.equal(modelsLabel('gemini', 'sonnet', 'same'), 'Models: Base Gemini, Code Claude Sonnet, Execute Same as Code');
-  assert.equal(modelsLabel('gemini', 'sonnet'), 'Models: Base Gemini, Code Claude Sonnet');          // not offered: left out, as before
-  assert.equal(modelsLabel(null, 'claude'), 'Models: Code Claude');
+  assert.equal(modelsLabel('gpt', 'sonnet', 'claude'), 'Models: Base GPT-5.4 mini, Tool Claude Sonnet, Execute Claude');
+  assert.equal(modelsLabel('gemini', 'sonnet', 'same'), 'Models: Base Gemini, Tool Claude Sonnet, Execute Same as Tool');
+  assert.equal(modelsLabel('gemini', 'sonnet'), 'Models: Base Gemini, Tool Claude Sonnet');          // not offered: left out, as before
+  assert.equal(modelsLabel(null, 'claude'), 'Models: Tool Claude');
 });
 
 test('the popup has a third column for the Execute model and the page offers it only where plans exist and there is a provider to choose', () => {
@@ -283,12 +283,12 @@ test('the three parts of the icon tile the 24 by 24 box exactly: no gap and no o
 
 import { PRESETS, presetAvailable, presetOf, presetSettings } from './composerChipsLogic.ts';
 
-test('there are three presets, Lite recommended, each naming a Code and an Execute model the pickers offer and each saying Anthropic gets the code', () => {
+test('there are three presets, each naming a Code and an Execute model the pickers offer and each saying Anthropic gets the code', () => {
   assert.deepEqual(PRESETS.map(p => p.name), ['Lite', 'Smart', 'Max']);
-  assert.deepEqual(PRESETS.filter(p => p.recommended).map(p => p.id), ['lite']);
+  assert.ok(PRESETS.every(p => !('recommended' in p)));                                              // no "(recommended)" label: it wrapped the Lite tile onto two lines
   assert.deepEqual(PRESETS.map(p => [p.code, p.execute]), [['claude', 'claude'], ['sonnet', 'claude'], ['sonnet', 'sonnet']]);
   for (const preset of PRESETS) {
-    assert.ok(CHIPS.model.options.some(o => o.id === preset.code), `${preset.id}: its Code model is a real choice`);
+    assert.ok(CHIPS.model.options.some(o => o.id === preset.code), `${preset.id}: its Tool model is a real choice`);
     assert.ok(EXECUTE_MODEL.options.some(o => o.id === preset.execute), `${preset.id}: its Execute model is a real choice`);
     assert.match(preset.hint, /Your code goes to Anthropic/);
     assert.ok(preset.short.length <= 45, `${preset.id}: one short line`);
@@ -300,8 +300,8 @@ test('there are three presets, Lite recommended, each naming a Code and an Execu
 
 test('the settings a person has add up to a preset, or to custom', () => {
   assert.equal(presetOf('claude', 'claude'), 'lite');
-  assert.equal(presetOf('claude', 'same'), 'lite');                       // "Same as Code" on Haiku is Lite
-  assert.equal(presetOf('claude', null), 'lite');                         // no Execute choice offered: the Code model carries out the plan
+  assert.equal(presetOf('claude', 'same'), 'lite');                       // "Same as Tool" on Haiku is Lite
+  assert.equal(presetOf('claude', null), 'lite');                         // no Execute choice offered: the Tool model carries out the plan
   assert.equal(presetOf('sonnet', 'claude'), 'smart');
   assert.equal(presetOf('sonnet', 'sonnet'), 'max');
   assert.equal(presetOf('sonnet', 'same'), 'max');
@@ -318,7 +318,7 @@ test('a preset is offered only where the server can provide the models it names'
   assert.equal(presetAvailable(smart, [], true, ['claude']), false);                                                             // Sonnet plans but Haiku cannot carry out
 });
 
-test('pressing a preset sets the Code model, and the Execute model only where there is such a choice', () => {
+test('pressing a preset sets the Tool model, and the Execute model only where there is such a choice', () => {
   assert.deepEqual(presetSettings(PRESETS[1], true), { code: 'sonnet', execute: 'claude' });
   assert.deepEqual(presetSettings(PRESETS[1], false), { code: 'sonnet', execute: null });
   assert.deepEqual(presetSettings(PRESETS[0], true), { code: 'claude', execute: 'claude' });          // explicit, not "same": a server default for the Execute model cannot change what Lite means
@@ -335,5 +335,17 @@ test('the popup shows the presets row, applies a preset to both controls, and ke
   assert.match(chips, /\{showRaw && execute && <OptionList spec=\{EXECUTE_MODEL\}/);
   assert.match(chips, /\{base && <OptionList spec=\{BASE_MODEL\}/);                                  // the Base model is never part of a preset
   const help = readFileSync(new URL('./helpContent.tsx', import.meta.url), 'utf8');
-  assert.match(help, /<em>Presets<\/em> set the Code and Execute models together/);
+  assert.match(help, /<em>Presets<\/em> set the Tool and Execute models together/);
+});
+
+// ---- the banner says a paid option is planned only when chat is paused (2026-11-05) ---------------------------------------------------------------------
+
+test('the blocked banner adds the server\'s planned-paid-option sentence and no other level does', () => {
+  const banner = readFileSync(new URL('./BudgetBanner.tsx', import.meta.url), 'utf8');
+  assert.match(banner, /budget\.level === 'blocked'\) text = `Paused until[^`]*\$\{budget\.upgrade_note \? ` \$\{budget\.upgrade_note\}` : ''\}`;/);
+  assert.equal((banner.match(/upgrade_note/g) ?? []).length, 2);                         // once, in the blocked line
+  const api = readFileSync(new URL('../api.ts', import.meta.url), 'utf8');
+  assert.match(api, /upgrade_note\?: string;/);
+  const help = readFileSync(new URL('./helpContent.tsx', import.meta.url), 'utf8');
+  assert.match(help, /A paid option for people who want more is planned, but it isn't available yet\./);
 });

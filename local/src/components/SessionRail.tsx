@@ -145,7 +145,7 @@ const SessionRail: React.FC<Props> = ({ usage, context, compaction, onSwitchMete
           <span className="rail-sep" aria-hidden="true" />
           {CHIP_ORDER.map(key => {
             if (key === 'model') {
-              // The model chip stands for the Base model and the Code model together, and opens both columns beside its button.
+              // The model chip stands for the Base model and the Tool model together, and opens both columns beside its button.
               const state = modelChip(settings.baseModel, settings.model, settings.executeModel);
               if (!state) return null;
               return (

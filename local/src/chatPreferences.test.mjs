@@ -40,7 +40,7 @@ test("the three entries are gone from the chat's menu and the trace entry is kep
   // what stays in the embedded widget's menu: Help, Export and Delete. The toggles that were above them (scope, open answers, deep thinking, plan first, code model) are the icons under the message box now
   // (components/ComposerChips.tsx) and the scope is in the session column, so they are no longer menu entries.
   for (const kept of ["label: 'Help'", "label: 'Export'", "label: 'Delete'"]) assert.ok(chat.includes(kept), kept);
-  for (const moved of ['Open Answers:', 'Deep Thinking:', 'Plan first:', 'Code model:', 'Scope:']) assert.ok(!chat.includes(moved), `${moved} is a chip or the column's now`);
+  for (const moved of ['Open Answers:', 'Deep Thinking:', 'Plan first:', 'Tool model:', 'Scope:']) assert.ok(!chat.includes(moved), `${moved} is a chip or the column's now`);
 });
 
 test('the Account page holds them: the robot for everyone with a mascot, the digest for admins only, and message first was already there', () => {

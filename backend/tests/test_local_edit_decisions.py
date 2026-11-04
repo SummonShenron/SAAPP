@@ -210,11 +210,19 @@ def test_the_endpoint_the_request_flag_and_the_card_are_wired():
 
 
 def test_the_decisions_module_logs_nothing_the_person_wrote():
+    """The one log line allowed is how a wait ended (2026-11-05): a fixed sentence, the word for how it ended, and the seconds. Never the reason, a path, a summary or a person's name."""
     import ast
-    tree = ast.parse((ROOT / "backend" / "services" / "local_edit_decisions.py").read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("info", "warning", "error", "exception", "debug"):
-            raise AssertionError("a log line in the decisions module")
+    source = (ROOT / "backend" / "services" / "local_edit_decisions.py").read_text(encoding="utf-8")
+    logs = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("info", "warning", "error", "exception", "debug")]
+    assert len(logs) == 1, "a log line in the decisions module beyond the one that says how a wait ended"
+    call = logs[0]
+    assert node_text(call.args[0]) == "[local_edit_decisions] a wait for a decision ended: %s after about %ds."
+    assert [ast.unparse(arg) for arg in call.args[1:]] == ["ended", "int(waited)"]
+
+
+def node_text(node):
+    import ast
+    return node.value if isinstance(node, ast.Constant) else ast.unparse(node)
 
 
 def test_an_outcome_is_counted_once_per_proposal_and_only_for_its_owner():
@@ -307,3 +315,68 @@ def test_the_hook_is_given_to_the_native_loop_only_while_a_plan_is_carried_out_a
     from backend.utils import self_counters
 
     assert "code_plan_fed_next" in self_counters.KEYS
+
+
+# ---- why nobody was waiting (2026-11-05: the turn twice ended the moment Apply was pressed in production, and nothing said why) ---------------------------------
+
+@pytest.fixture
+def remembered():
+    led._proposals.clear()
+    yield
+    led._proposals.clear()
+
+
+@run_async
+async def test_a_report_after_the_stream_was_cut_while_waiting_is_told_it_was_cancelled(remembered):
+    led.remember_proposal("jack", "p1", {"a.py": (1, 0)})
+    led.register("jack", "p1")
+    waiter = asyncio.create_task(led.wait_for("p1", timeout=30))
+    await asyncio.sleep(0)
+    waiter.cancel()                                                                  # the request is cancelled, as when a proxy or the browser drops the stream
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert led.decide("jack", "p1", "applied") == "no_waiter"
+    assert led.why_no_waiter("jack", "p1") == "cancelled"
+
+
+@run_async
+async def test_a_report_after_the_wait_ran_out_or_after_a_decision_already_made_says_which(remembered):
+    led.remember_proposal("jack", "late", {})
+    led.register("jack", "late")
+    assert await led.wait_for("late", timeout=0.05) is None
+    assert led.why_no_waiter("jack", "late") == "timeout"
+    led.remember_proposal("jack", "twice", {})
+    led.register("jack", "twice")
+    waiter = asyncio.create_task(led.wait_for("twice", timeout=5))
+    await asyncio.sleep(0)
+    led.decide("jack", "twice", "applied")
+    assert (await waiter)["outcome"] == "applied"
+    assert led.decide("jack", "twice", "applied") == "no_waiter"                     # the second press of the button
+    assert led.why_no_waiter("jack", "twice") == "decided"
+
+
+def test_a_proposal_this_process_never_held_is_not_here_and_a_strangers_looks_the_same(remembered):
+    assert led.why_no_waiter("jack", "never-seen") == "not_here"                     # another instance, a restart, or older than six hours
+    led.remember_proposal("jack", "mine", {})
+    assert led.why_no_waiter("mallory", "mine") == "not_here"                        # nothing is revealed to someone else
+    assert led.why_no_waiter("jack", "mine") == "not_here"                           # remembered but never waited on: no reason on record
+
+
+def test_only_an_apply_or_decline_with_nobody_waiting_is_counted_and_with_a_key_the_tally_accepts():
+    from backend.utils.self_counters import KEYS
+
+    for why in led.NO_WAITER_REASONS:
+        counts = led.no_waiter_counts("applied", "no_waiter", why)
+        assert counts == {f"apply_no_waiter_{why}": 1} and set(counts) <= KEYS
+    assert led.no_waiter_counts("declined", "no_waiter", "cancelled") == {"apply_no_waiter_cancelled": 1}
+    assert led.no_waiter_counts("undone", "no_waiter", "not_here") == {}             # an Undo never has a waiter: not a failure
+    assert led.no_waiter_counts("applied", "recorded", "cancelled") == {}            # someone was waiting: nothing went wrong
+    assert led.no_waiter_counts("applied", "no_waiter", "made-up") == {}
+
+
+def test_the_endpoint_counts_the_failure_and_returns_the_reason_for_an_apply_or_decline_only():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    assert 'why = local_edit_decisions.why_no_waiter(username, proposal_id) if status == "no_waiter" else None' in source
+    assert "waiter_counts = local_edit_decisions.no_waiter_counts(payload.outcome, status, why or \"\")" in source
+    assert "await asyncio.to_thread(record_turn_counts, waiter_counts)" in source
+    assert 'return {"status": status, **({"why": why} if why and payload.outcome in local_edit_decisions.OUTCOMES else {})}' in source

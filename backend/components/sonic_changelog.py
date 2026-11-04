@@ -220,7 +220,7 @@ CHANGELOG = [
         "month": "2026-11",
         "title": "Claude Sonnet for the code steps",
         "line": (
-            "I can now use Claude Sonnet for the reasoning and code-writing steps when you pick it in the Code model setting, which costs about 20 times more per step than Claude Haiku."
+            "I can now use Claude Sonnet for the reasoning and code-writing steps when you pick it in the Tool model setting, which costs about 20 times more per step than Claude Haiku."
         ),
         "keywords": ["sonnet", "code model", "stronger model", "better model", "bigger model", "which model"],
         "volunteer": [],
@@ -234,7 +234,7 @@ CHANGELOG = [
         "month": "2026-11",
         "title": "GPT-5.4 mini as a model choice",
         "line": (
-            "I can now use GPT-5.4 mini, where it is set up, either to write my replies (Base model) or for the code steps (Code model), chosen in the Models setting. Gemini stays the default."
+            "I can now use GPT-5.4 mini, where it is set up, either to write my replies (Base model) or for the tool steps (Tool model), chosen in the Models setting. Gemini stays the default."
         ),
         "keywords": ["gpt", "openai", "gpt-5.4", "base model", "reply model", "which model", "different model"],
         "volunteer": [],
@@ -248,7 +248,7 @@ CHANGELOG = [
         "month": "2026-11",
         "title": "A different model to carry out an approved plan",
         "line": (
-            "I can now carry out an approved plan with a different model from the one that wrote it, chosen in the Execute model setting. By default it is the same as your Code model."
+            "I can now carry out an approved plan with a different model from the one that wrote it, chosen in the Execute model setting. By default it is the same as your Tool model."
         ),
         "keywords": ["execute model", "plan mode", "carry out the plan", "cheaper model", "who runs the plan", "plan first", "approved plan"],
         "volunteer": [],

@@ -1,14 +1,14 @@
-import React, { useId } from 'react';
-import { LOGO_GRADIENT_STOPS, LOGO_GRADIENT_X, LOGO_PATH, LOGO_VIEWBOX } from './logoMarkData';
+import React from 'react';
+import { LOGO_DASH, LOGO_DASHED_FROM, LOGO_ORANGE, LOGO_POINTS, LOGO_STROKE, LOGO_VIEWBOX } from './logoMarkData';
 
 const [, , VB_W, VB_H] = LOGO_VIEWBOX.split(' ').map(Number);
 
 /**
- * The swirl mark as inline vector. `color` is the full-colour gradient; `mono` fills with the current text colour, so it follows the theme (white on
- * dark, the accent blue on light) with no second file. `size` is the height in pixels; the width keeps the mark's own proportions.
+ * The Sonic mark as inline vector. `color` is the brand orange; `mono` paints with the current text colour, so it follows the theme (white on dark, black on light) with no second file. `size` is the height in
+ * pixels; the width keeps the mark's own proportions. The stroke and the dots are the supplied files' own, so at a small size the line is thin, which is how the mark is drawn.
  */
 const LogoMark: React.FC<{ size?: number; variant?: 'color' | 'mono'; className?: string; label?: string }> = ({ size = 28, variant = 'color', className, label }) => {
-  const gradientId = `logo-gradient-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
+  const paint = variant === 'color' ? LOGO_ORANGE : 'currentColor';
   return (
     <svg
       className={className}
@@ -20,14 +20,11 @@ const LogoMark: React.FC<{ size?: number; variant?: 'color' | 'mono'; className?
       aria-hidden={label ? undefined : true}
       focusable="false"
     >
-      {variant === 'color' && (
-        <defs>
-          <linearGradient id={gradientId} gradientUnits="userSpaceOnUse" x1={LOGO_GRADIENT_X[0]} y1={0} x2={LOGO_GRADIENT_X[1]} y2={0}>
-            {LOGO_GRADIENT_STOPS.map(([offset, color]) => <stop key={offset} offset={`${offset}%`} stopColor={color} />)}
-          </linearGradient>
-        </defs>
-      )}
-      <path fill={variant === 'color' ? `url(#${gradientId})` : 'currentColor'} fillRule="evenodd" d={LOGO_PATH} />
+      {LOGO_POINTS.slice(0, -1).map(([x, y], index) => {
+        const [nextX, nextY] = LOGO_POINTS[index + 1];
+        return <line key={index} x1={x} y1={y} x2={nextX} y2={nextY} stroke={paint} strokeWidth={LOGO_STROKE} strokeDasharray={index === LOGO_DASHED_FROM ? LOGO_DASH : undefined} />;
+      })}
+      {LOGO_POINTS.map(([x, y, radius], index) => <circle key={index} cx={x} cy={y} r={radius} fill={paint} />)}
     </svg>
   );
 };

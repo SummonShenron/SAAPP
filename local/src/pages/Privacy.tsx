@@ -19,31 +19,39 @@ export const PrivacyPage: React.FC = () => {
 
         <h2>The short version</h2>
         <ul>
-          <li>What you type, and any photos or files you attach, are sent to Google's Gemini service so Sonic can write its replies. For code work, some of it can also go to Anthropic's Claude, and if you choose GPT as a model, to OpenAI (see "Anthropic's Claude" and "OpenAI's GPT" below).</li>
+          <li>What you type, and any photos or files you attach, are sent to Google's Gemini service so Sonic can write its replies. For tool steps (mostly code work, but also reading your email or calendar), some of it can also go to Anthropic's Claude, and if you choose GPT as a model, to OpenAI (see "Anthropic's Claude" and "OpenAI's GPT" below). Some requests also use a search, maps, browser or image service, and each is listed under "Other services that receive part of what you ask".</li>
           <li>Your conversations are kept until you delete them. The photos and files you attach are removed automatically after 30 days, or sooner if you delete the conversation.</li>
           <li>Sonic keeps short notes about you (preferences, plans, things you told it) so it can help you better. You can read and remove every one on the Memory page.</li>
           <li>Sonic only looks at your email, calendar or Drive when you ask. It sends an email, adds an event or edits a document only after you approve that specific action.</li>
           <li>We don't sell your data and we don't show ads.</li>
         </ul>
 
-        <h2>Anthropic's Claude (for code work)</h2>
+        <h2>Anthropic's Claude (for tool steps, mostly code work)</h2>
         <p>
-          Sonic can use Anthropic's Claude model for two things, and only in code work. Sonic's replies are still written by Gemini.
+          Sonic can use Anthropic's Claude model for the steps where it works with tools: mostly code work, but also a request that reads your email, calendar or Drive, searches, or looks at a page. Sonic's replies are still written by Gemini.
         </p>
         <ul>
           <li>
-            <strong>If you choose it:</strong> when you set the Code model to Claude, the code and tool steps of a request (your question, the code and results Sonic reads while working
+            <strong>If you choose it:</strong> when you set the Tool model to Claude, the tool steps of a request (your question, the code, emails, events, files or search results Sonic reads while working
             on it, and the few saved notes about you that relate to that request, if any) go to Anthropic instead of Google for those steps. Set it back to Gemini any time.
           </li>
           <li>
-            <strong>A second reading of a change:</strong> after you press Apply on a change to your connected folder, Sonic may ask Claude for a short second reading of that change. It
-            receives your request and the changes shown on the Apply card (the same text you saw, capped in length), and nothing else. This only happens on a server where Claude is set
-            up. We keep a count of these readings, never their content.
+            <strong>A second reading of a change:</strong> only if you have chosen Claude for your Tool model or your Execute model. After you press Apply on a change to your connected folder, Sonic may ask
+            Claude for a short second reading of that change. It receives your request and the changes shown on the Apply card (the same text you saw, capped in length), and nothing else. If you have
+            not chosen Claude, no second reading is made and nothing is sent to Anthropic for it. We keep a count of these readings, never their content.
           </li>
           <li>
-            <strong>As the Execute model:</strong> if you set the Execute model to Claude, the steps that carry out an approved plan in Plan mode go to Anthropic, whatever your Code model is. Leave it on "Same as Code" and nothing changes. A server can also be set to carry out plans on Claude, but only for people whose own Code model is already Claude: it never moves anyone's code to Anthropic who did not choose Anthropic.
+            <strong>A reading at the end of an approved plan:</strong> in Plan mode, when the plan you approved has been carried out and you have chosen Claude, Claude Sonnet may read the whole change
+            against the plan. It receives the plan (its goal, steps and tests) and the changes shown on the Apply cards, capped in length, and nothing else. Without a Claude choice it is not done.
           </li>
-          <li>Anthropic handles that text under its own terms. The second reading above receives only your request and the change itself, not your Memory notes or account details.</li>
+          <li>
+            <strong>The summary of a long conversation:</strong> Sonic keeps a short running summary of a long conversation, written by Gemini. A server can be set to write it with Claude instead, but
+            only for people who have chosen Claude: it never moves anyone's conversation to Anthropic who did not choose Anthropic.
+          </li>
+          <li>
+            <strong>As the Execute model:</strong> if you set the Execute model to Claude, the steps that carry out an approved plan in Plan mode go to Anthropic, whatever your Tool model is. Leave it on "Same as Tool" and nothing changes. A server can also be set to carry out plans on Claude, but only for people whose own Tool model is already Claude: it never moves anyone's code to Anthropic who did not choose Anthropic.
+          </li>
+          <li>Anthropic handles that text under its own terms. The readings above receive only your request or plan and the change itself, not your Memory notes or account details.</li>
         </ul>
 
         <h2>OpenAI's GPT (only if you choose it)</h2>
@@ -56,13 +64,25 @@ export const PrivacyPage: React.FC = () => {
             attached, and the saved notes about you that relate to it. When someone is going through something hard, Sonic writes the reply with Gemini whatever this is set to.
           </li>
           <li>
-            <strong>As the Code model:</strong> the code and tool steps of a request (your question, the code and results Sonic reads while working on it, and the few saved notes about you that
+            <strong>As the Tool model:</strong> the tool steps of a request (your question, the code, emails, events, files or search results Sonic reads while working on it, and the few saved notes about you that
             relate to it, if any) go to OpenAI instead of Google for those steps. The reply is written by your Base model.
           </li>
           <li>
-            <strong>As the Execute model:</strong> when you approve a plan in Plan mode, the steps that carry it out (the code and results Sonic reads and writes in those steps, and the few saved notes about you that relate to them, if any) go to OpenAI instead of the provider of your Code model. Your Code model still writes the plan.
+            <strong>As the Execute model:</strong> when you approve a plan in Plan mode, the steps that carry it out (the code and results Sonic reads and writes in those steps, and the few saved notes about you that relate to them, if any) go to OpenAI instead of the provider of your Tool model. Your Tool model still writes the plan.
           </li>
-          <li>OpenAI handles that text under its own terms. We keep a count of these calls and what they cost, never their content. Set any of these settings back (to Gemini, Claude, or "Same as Code") any time.</li>
+          <li>OpenAI handles that text under its own terms. We keep a count of these calls and what they cost, never their content. Set any of these settings back (to Gemini, Claude, or "Same as Tool") any time.</li>
+        </ul>
+
+        <h2>Other services that receive part of what you ask</h2>
+        <p>Besides the language models above, some of what you ask goes to a service that does one particular job. Each receives only what it needs for that job.</p>
+        <ul>
+          <li><strong>Searching the web:</strong> when you ask Sonic to search the web, the search words go to a search service (Tavily) or, when it is unavailable, to public search engines.</li>
+          <li><strong>Opening a web page:</strong> when you ask Sonic to look at a page, a hosted browser service (Browserless) opens it, so the address and what the page shows pass through that service.</li>
+          <li><strong>Places and distances:</strong> when you ask about places or getting somewhere, the places and areas you name go to Google Maps.</li>
+          <li><strong>Pictures:</strong> when you ask for an image, your description goes to Google's image model.</li>
+          <li><strong>Searching your notes and documents:</strong> the text of your Memory notes, and of documents you add, is turned into numbers for searching by Google's embedding service.</li>
+          <li><strong>GitHub:</strong> if you save a GitHub token, the repository you name is read through GitHub, and a pull request or issue is opened only when you approve it.</li>
+          <li><strong>Your own computer:</strong> if you connect the Sonic runner, a check or command runs on your computer only after you approve that specific one. What it prints comes back to Sonic and goes to whichever model is doing that step, so do not approve a command that prints something you would not want a model to read.</li>
         </ul>
 
         <h2>1. Information we collect</h2>
@@ -118,7 +138,7 @@ export const PrivacyPage: React.FC = () => {
         <p>
           We use Clerk for sign-in, MongoDB Atlas for storage, Google's Gemini API to generate
           responses and to read photos and files you attach, and standard hosting and error-monitoring
-          services to keep the service running. Each provider receives only what it needs to do its
+          services to keep the service running, and the services listed above when you use what they do. Each provider receives only what it needs to do its
           job for us. We do not use your conversations or documents to train models ourselves.
         </p>
 

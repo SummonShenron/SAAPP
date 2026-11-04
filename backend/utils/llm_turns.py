@@ -18,6 +18,7 @@ thousands of tokens), the checks after them and the streamed reply. This module 
 """
 import logging
 import threading
+import uuid
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional
@@ -118,6 +119,8 @@ class Turn:
         self.experience_offered = False  # a real case from its own record was offered to this turn's reply (backend/utils/experiences.py)
         self.audit_wording = False  # the message had audit-style wording ("scan the repo", "every file"): wider step budget, normal model
         self.done = False
+        self.paid = False  # this turn is paid for out of the person's own credit (backend/utils/credits.py): its model calls are counted under a paid: label (kept out of the shared budget) and its cost is charged when it finishes
+        self.id = uuid.uuid4().hex  # the reference of this turn's charge in the ledger, so a charge saved twice counts once
         self._lock = threading.Lock()
 
 
@@ -141,6 +144,17 @@ def begin(user: Optional[str] = None) -> Turn:
     except Exception:
         pass
     return turn
+
+
+def note_paid() -> None:
+    """Marks the turn running in this context as paid for out of the person's own credit (the guard found them paid: backend/utils/budget_guard.py `paid_bypass`). From here its calls are counted under a paid:
+    label and its cost is charged when it finishes. Never raises."""
+    try:
+        turn = _current.get()
+        if turn is not None and not turn.done:
+            turn.paid = True
+    except Exception:
+        pass
 
 
 def current() -> Optional[Turn]:
@@ -456,6 +470,11 @@ def finish(turn: Optional[Turn], outcome: str = "ok", day: Optional[str] = None)
             from backend.utils import user_usage
 
             user_usage.add(turn.user, turn.input + turn.output, turn.calls, cost_micro=turn.cost_micro)
+            if turn.paid:
+                from backend.utils import credits
+
+                if not credits.queue_debit(turn.user, turn.id, turn.cost_micro) and turn.input + turn.output > 0:
+                    logger.warning("[credits] a paid turn used tokens but cost nothing (a model with no price in LLM_PRICES?); it was not charged.")      # no person, no text
         with _lock:
             slot = _pending.setdefault(key, {field: 0 for field in FIELDS})
             if outcome == "blocked":

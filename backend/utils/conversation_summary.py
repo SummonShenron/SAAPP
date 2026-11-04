@@ -558,12 +558,27 @@ def edit_item(db, username: str, session_id: str, item_id: str, text: Optional[s
 _running: set = set()
 
 
-def _fold_model():
+def _chose_claude(username: Optional[str]) -> bool:
+    """Whether this person chose an Anthropic model for their code work (Code or Execute model). The summary is the person's own conversation, so it may go to Anthropic only for someone who has chosen to
+    send their words there; a server setting alone never moves anyone's conversation to a provider they did not pick (docs/consent-audit.md). Never raises (False on any problem)."""
+    try:
+        from backend.utils import code_plan
+        from backend.utils import user_settings_utils as settings
+
+        if not username:
+            return False
+        return settings.get_user_tool_model(username) in code_plan.ANTHROPIC_CHOICES or settings.get_user_execute_model(username) in code_plan.ANTHROPIC_CHOICES
+    except Exception:
+        return False
+
+
+def _fold_model(username: Optional[str] = None):
     """The lite model, which beat Haiku on a real-model comparison (docs/conversation-summary-plan.md: better recall, faster, less churn, about the same cost). Setting
-    CONVERSATION_SUMMARY_MODEL to a Claude model id (for example claude-haiku-5-5) opts in to that model instead; with no Claude key that falls back to the lite model too."""
+    CONVERSATION_SUMMARY_MODEL to a Claude model id (for example claude-haiku-5-5) opts in to that model instead, but ONLY for a person who chose a Claude model themselves (`_chose_claude`); with no
+    Claude key that falls back to the lite model too."""
     from backend.models.models import lite_llm, summary_llm
 
-    if os.getenv("CONVERSATION_SUMMARY_MODEL", "").strip():
+    if os.getenv("CONVERSATION_SUMMARY_MODEL", "").strip() and _chose_claude(username):
         return summary_llm() or lite_llm
     return lite_llm
 
@@ -612,7 +627,7 @@ async def capture(
             result.update(folded=end - start)
             return result
         if invoke is None:
-            invoke = _fold_model().ainvoke
+            invoke = _fold_model(username).ainvoke
         patch = parse_patch(_response_text(await invoke(build_prompt(summary, window))))
         if not isinstance(patch.get("add"), list) and not isinstance(patch.get("remove"), list):
             # The answer could not be used: nothing is lost (the messages stay unfolded and the window is capped); try again a little later.

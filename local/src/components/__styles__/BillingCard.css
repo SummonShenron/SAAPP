@@ -1,0 +1,9 @@
+/* The Billing card (components/BillingCard.tsx): it reuses the Account page's own card, field and button styles and only adds its layout. */
+.billing-balance { margin: 0 0 12px; line-height: 1.5; }
+.billing-block { margin-top: 14px; }
+.billing-add { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.billing-add .account-input { flex: 1 1 140px; min-width: 0; }
+.billing-quote { margin: 8px 0 0; font-size: 0.9rem; color: var(--text-main); }
+.billing-error { color: var(--danger, #c0392b); }
+.billing-rows { margin: 6px 0 0; padding-left: 18px; font-size: 0.85rem; color: var(--text-muted); display: flex; flex-direction: column; gap: 2px; }
+.billing-fine { margin: 16px 0 0; padding-left: 18px; font-size: 0.8rem; line-height: 1.45; color: var(--text-muted); display: flex; flex-direction: column; gap: 4px; }

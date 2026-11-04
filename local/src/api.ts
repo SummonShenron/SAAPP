@@ -482,8 +482,8 @@ export async function updateReplyModel(replyModel: ReplyModel): Promise<ReplyMod
 }
 
 /**
- * The EXECUTE model: which model carries out an approved plan (Plan mode); the Code model writes the plan. "same" (the default) means the Code model. `choice` is what the person chose (null when nothing),
- * `execute_model` what is in effect: a choice that can no longer be offered shows as "same". `claude_available`, `sonnet_available` and `gpt_available` are the same flags as for the Code model, and `available`
+ * The EXECUTE model: which model carries out an approved plan (Plan mode); the Tool model writes the plan. "same" (the default) means the Tool model. `choice` is what the person chose (null when nothing),
+ * `execute_model` what is in effect: a choice that can no longer be offered shows as "same". `claude_available`, `sonnet_available` and `gpt_available` are the same flags as for the Tool model, and `available`
  * is false where there is nothing to choose beyond Gemini (no Claude and no GPT set up on the server, or a guest).
  */
 export type ExecuteModel = 'same' | ToolModel;
@@ -801,6 +801,8 @@ export interface BudgetView {
   unpriced_tokens?: number;
   /** Everyone: the limit in force is this person's own, not the shared one. */
   own_limit?: boolean;
+  /** When chat is paused: one sentence saying a paid option is planned and not available yet (the server's words; absent when it is switched off). */
+  upgrade_note?: string;
   /** Everyone with a limit of their own: how far along that limit is (0 to over 1), which one it is, and the level it is at. A percentage only: never an amount, never the shared budget. */
   own_fraction?: number;
   own_scope?: 'my_day' | 'my_five';
@@ -868,6 +870,68 @@ export async function extendBudget(): Promise<BudgetView> {
     try { detail = (await res.json())?.detail ?? ''; } catch { /* no JSON body */ }
     throw new Error(typeof detail === 'string' && detail ? detail : `Could not extend the budget (${res.status}).`);
   }
+  return res.json();
+}
+
+// ---- Billing (paid use; the endpoints answer 404 until the server switches billing on, backend/utils/credits.py) -------------------------------------------------
+
+export interface BillingRow { kind: 'topup' | 'spend' | 'refund' | 'adjust' | string; usd: number; at: string | null; day: string | null; }
+
+/** The person's own account: balance, today's paid use, the daily limit in force and the one they set, the fee rule, and recent rows. Amounts in dollars. */
+export interface BillingView {
+  enabled: boolean;
+  balance_usd: number;
+  paid: boolean;
+  daily_ceiling_usd: number;
+  own_ceiling_usd: number | null;
+  spent_today_usd: number;
+  min_topup_usd: number;
+  fee_percent: number;
+  fee_fixed_usd: number;
+  frozen: boolean;
+  topups_paused: boolean;
+  can_top_up: boolean;
+  recent: BillingRow[];
+}
+
+/** What a top-up costs: the credit asked for, the processing line, and the total charged to the card. */
+export interface BillingQuote { credit_usd: number; fee_usd: number; total_usd: number; }
+
+async function billingProblem(res: Response, fallback: string): Promise<Error> {
+  let detail = '';
+  try { detail = (await res.json())?.detail ?? ''; } catch { /* no JSON body */ }
+  return new Error(typeof detail === 'string' && detail ? detail : `${fallback} (${res.status}).`);
+}
+
+/** The person's billing account, or null when billing is off on this server (a 404: nothing is shown at all). */
+export async function getBilling(): Promise<BillingView | null> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/billing/me`, { headers: { ...authHeaders } });
+  if (res.status === 404 || res.status === 403) return null;
+  if (!res.ok) throw await billingProblem(res, 'Could not load billing');
+  return res.json();
+}
+
+export async function getBillingQuote(amountUsd: number): Promise<BillingQuote> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/billing/quote?amount_usd=${encodeURIComponent(String(amountUsd))}`, { headers: { ...authHeaders } });
+  if (!res.ok) throw await billingProblem(res, 'Could not price that');
+  return res.json();
+}
+
+/** Starts a top-up and returns the payment provider's hosted page to send the person to (they never enter a card in this app). */
+export async function startBillingCheckout(amountUsd: number): Promise<{ url: string } & BillingQuote> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/billing/checkout`, { method: 'POST', headers: { ...authHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ amount_usd: amountUsd }) });
+  if (!res.ok) throw await billingProblem(res, 'Could not start the payment');
+  return res.json();
+}
+
+/** The person's own daily limit for paid use, lower than the server's; null clears it. */
+export async function setBillingCeiling(dailyUsd: number | null): Promise<{ message: string; daily_ceiling_usd: number }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/billing/ceiling`, { method: 'PUT', headers: { ...authHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ daily_usd: dailyUsd }) });
+  if (!res.ok) throw await billingProblem(res, 'Could not save that limit');
   return res.json();
 }
 
@@ -2549,6 +2613,10 @@ export const api = {
   getOpsDigest,
   updateOpsDigest,
   getBudget,
+  getBilling,
+  getBillingQuote,
+  startBillingCheckout,
+  setBillingCeiling,
   extendBudget,
   requestBudgetIncrease,
   getBudgetRequests,
