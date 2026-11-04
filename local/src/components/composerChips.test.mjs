@@ -161,7 +161,7 @@ test('the two-column popup and its wiring: ModelChoices in the column card and t
   const chips = readFileSync(new URL('./ComposerChips.tsx', import.meta.url), 'utf8');
   assert.match(chips, /export function ModelChoices\(/);
   assert.match(chips, /\{base && <OptionList spec=\{BASE_MODEL\} control=\{base\} onDone=\{onDone\} compact \/>\}/);   // Base is the first column
-  assert.match(chips, /\{code && <OptionList spec=\{CHIPS\.model\} control=\{code\} onDone=\{onDone\} compact \/>\}/);
+  assert.match(chips, /\{showRaw && code && <OptionList spec=\{CHIPS\.model\} control=\{code\} onDone=\{onDone\} compact \/>\}/);           // the Code column is the Custom view of the presets row
   assert.match(chips, /\{open === 'model' && <ModelChoices base=\{baseModel\} code=\{model\}/);
   assert.match(chips, /id === 'gpt'\) return <GptMark \/>/);
   const rail = readFileSync(new URL('./SessionRail.tsx', import.meta.url), 'utf8');
@@ -227,7 +227,7 @@ test('the chip value, highlight and label account for the Execute model without 
 
 test('the popup has a third column for the Execute model and the page offers it only where plans exist and there is a provider to choose', () => {
   const chips = readFileSync(new URL('./ComposerChips.tsx', import.meta.url), 'utf8');
-  assert.match(chips, /\{execute && <OptionList spec=\{EXECUTE_MODEL\} control=\{execute\} onDone=\{onDone\} compact \/>\}/);
+  assert.match(chips, /\{showRaw && execute && <OptionList spec=\{EXECUTE_MODEL\} control=\{execute\} onDone=\{onDone\} compact \/>\}/);
   assert.match(chips, /\{open === 'model' && <ModelChoices base=\{baseModel\} code=\{model\} execute=\{executeModel\} onDone/);
   assert.match(chips, /executeModel: ChipControl \| null;/);
   const rail = readFileSync(new URL('./SessionRail.tsx', import.meta.url), 'utf8');
@@ -277,4 +277,63 @@ test('the three parts of the icon tile the 24 by 24 box exactly: no gap and no o
   const second = chips.indexOf('<g clipPath={`url(#${id}a)`}><Second />');
   const third = chips.indexOf('<g clipPath={`url(#${id}b)`}><Third />');
   assert.ok(first > 0 && second > first && third > second, 'the marks are drawn in the order Base, Code, Execute');
+});
+
+// ---- presets (2026-11-05) -------------------------------------------------------------------------------------------------------------------------
+
+import { PRESETS, presetAvailable, presetOf, presetSettings } from './composerChipsLogic.ts';
+
+test('there are three presets, Lite recommended, each naming a Code and an Execute model the pickers offer and each saying Anthropic gets the code', () => {
+  assert.deepEqual(PRESETS.map(p => p.name), ['Lite', 'Smart', 'Max']);
+  assert.deepEqual(PRESETS.filter(p => p.recommended).map(p => p.id), ['lite']);
+  assert.deepEqual(PRESETS.map(p => [p.code, p.execute]), [['claude', 'claude'], ['sonnet', 'claude'], ['sonnet', 'sonnet']]);
+  for (const preset of PRESETS) {
+    assert.ok(CHIPS.model.options.some(o => o.id === preset.code), `${preset.id}: its Code model is a real choice`);
+    assert.ok(EXECUTE_MODEL.options.some(o => o.id === preset.execute), `${preset.id}: its Execute model is a real choice`);
+    assert.match(preset.hint, /Your code goes to Anthropic/);
+    assert.ok(preset.short.length <= 45, `${preset.id}: one short line`);
+  }
+  assert.match(PRESETS[1].hint, /Best in Plan mode: in Agent mode Sonnet does every step/);      // Smart only splits the work in Plan mode
+  assert.match(PRESETS[2].hint, /over a dollar/);                                                    // the one cost figure that was measured, and the daily-limit warning
+  assert.ok(!PRESETS.some(p => p.name === 'Deep'));                                                  // "Deep" is the Deep Thinking chip
+});
+
+test('the settings a person has add up to a preset, or to custom', () => {
+  assert.equal(presetOf('claude', 'claude'), 'lite');
+  assert.equal(presetOf('claude', 'same'), 'lite');                       // "Same as Code" on Haiku is Lite
+  assert.equal(presetOf('claude', null), 'lite');                         // no Execute choice offered: the Code model carries out the plan
+  assert.equal(presetOf('sonnet', 'claude'), 'smart');
+  assert.equal(presetOf('sonnet', 'sonnet'), 'max');
+  assert.equal(presetOf('sonnet', 'same'), 'max');
+  assert.equal(presetOf('sonnet', null), 'max');
+  for (const [code, execute] of [['gemini', 'same'], ['gemini', 'claude'], ['gpt', 'same'], ['claude', 'sonnet'], ['claude', 'gemini'], [null, null]]) assert.equal(presetOf(code, execute), 'custom', `${code}/${execute}`);
+});
+
+test('a preset is offered only where the server can provide the models it names', () => {
+  const [lite, smart, max] = PRESETS;
+  assert.deepEqual([lite, smart, max].map(p => presetAvailable(p, [], true, [])), [true, true, true]);
+  assert.deepEqual([lite, smart, max].map(p => presetAvailable(p, ['sonnet'], true, ['sonnet'])), [true, false, false]);        // no Sonnet price
+  assert.deepEqual([lite, smart, max].map(p => presetAvailable(p, ['claude', 'sonnet'], true, ['claude', 'sonnet'])), [false, false, false]);      // no Claude at all
+  assert.deepEqual([lite, smart, max].map(p => presetAvailable(p, [], false, [])), [true, false, true]);                         // no Execute choice: only a preset with one model for both
+  assert.equal(presetAvailable(smart, [], true, ['claude']), false);                                                             // Sonnet plans but Haiku cannot carry out
+});
+
+test('pressing a preset sets the Code model, and the Execute model only where there is such a choice', () => {
+  assert.deepEqual(presetSettings(PRESETS[1], true), { code: 'sonnet', execute: 'claude' });
+  assert.deepEqual(presetSettings(PRESETS[1], false), { code: 'sonnet', execute: null });
+  assert.deepEqual(presetSettings(PRESETS[0], true), { code: 'claude', execute: 'claude' });          // explicit, not "same": a server default for the Execute model cannot change what Lite means
+});
+
+test('the popup shows the presets row, applies a preset to both controls, and keeps the raw columns as Custom', () => {
+  const chips = readFileSync(new URL('./ComposerChips.tsx', import.meta.url), 'utf8');
+  assert.match(chips, /function PresetRow\(/);
+  assert.match(chips, /presetAvailable\(preset, code\.hide, execute !== null, execute\?\.hide\)/);
+  assert.match(chips, /if \(next\.code !== code\.value\) code\.onChange\(next\.code\);/);
+  assert.match(chips, /if \(execute && next\.execute !== null && next\.execute !== execute\.value\) execute\.onChange\(next\.execute\);/);
+  assert.match(chips, /const showRaw = !hasPresets \|\| custom \|\| presetOf\(code \? code\.value : null, execute \? execute\.value : null\) === 'custom';/);
+  assert.match(chips, /\{showRaw && code && <OptionList spec=\{CHIPS\.model\}/);
+  assert.match(chips, /\{showRaw && execute && <OptionList spec=\{EXECUTE_MODEL\}/);
+  assert.match(chips, /\{base && <OptionList spec=\{BASE_MODEL\}/);                                  // the Base model is never part of a preset
+  const help = readFileSync(new URL('./helpContent.tsx', import.meta.url), 'utf8');
+  assert.match(help, /<em>Presets<\/em> set the Code and Execute models together/);
 });

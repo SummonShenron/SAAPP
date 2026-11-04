@@ -581,6 +581,8 @@ async def run(
         if warning and required_action and not required_done() and required_action.get("steps_notice"):
             # the generic notice says "write your answer, with the code in full": the opposite of what a change request needs
             warning = f"STEPS: you have {budget - step + 1} tool step{'s' if budget - step + 1 != 1 else ''} left, this one included. {required_action['steps_notice']}"
+        if warning and offered & ACTION_TOOLS:
+            warning += combo_rules.action_room_note(combo.refunded, ACTION_REFUND_CAP)      # a turn that can act is told what acting earns, so it acts on what it knows instead of reading on
         if warning and (budget - step + 1) not in told_at:      # once per count: a steer that discards a decision must not repeat it
             told_at.add(budget - step + 1)
             messages.append(HumanMessage(content=warning))
@@ -782,7 +784,7 @@ async def run(
             if name in PAGE_TOOLS:
                 key = "browser_read_native" if name == "browser_read_text" else f"{name}_native"
                 page_counts[key] = page_counts.get(key, 0) + 1
-        await asyncio.to_thread(record_turn_counts, {**meter.counts(sum(len(item["text"]) for item in held)), **combo.counts(), **page_counts})
+        await asyncio.to_thread(record_turn_counts, {**meter.counts(sum(len(item["text"]) for item in held)), **combo.counts(forced and stop_reason in ("", "step_limit")), **page_counts})
     except Exception:
         logger.debug("[native_loop] could not record the prompt sizes.", exc_info=True)
     return {

@@ -219,7 +219,7 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
                 "files": {"type": "array", "items": _STRING, "description": "the paths (from files above) this step changes"},
             }, ["text", "files"]),
         },
-        "tests": {"type": "array", "items": _STRING, "description": "the tests worth running after the change (short lines)"},
+        "tests": {"type": "array", "items": _STRING, "description": "behaviour tests for the change, one small spec per line: test file and name, what it sets up (the real shape the code returns), what it calls, the exact assertion; it must fail without the change"},
         "unknowns": {"type": "array", "items": _STRING, "description": "what you could not tell from reading, instead of guessing"},
     }, ["goal", "files", "steps"]),
     # a connected local folder: a proposal the person applies (or not) from a diff card. Nothing is written by the call.
@@ -344,7 +344,7 @@ NATIVE_DESCRIPTIONS: Dict[str, str] = {
     "submit_plan": (
         "Hand the person your plan for the change they asked for, instead of editing. It changes nothing: they see the plan as a card and approve it, change a step, or cancel. Call it ONCE, "
         "after reading what you need: the goal, every file the change touches with why (an existing file must exist in the folder, exactly as you read it; mark a file you create with new), "
-        "ordered steps that each name their files, the tests worth running, and what you could not tell from reading. If it returns an error, fix what it names and call it again."
+        "ordered steps that each name their files, behaviour tests written as small specs (setup, call, assertion; a step of the plan writes them), and what you could not tell from reading. If it returns an error, fix what it names and call it again."
     ),
     "propose_local_edits": (
         "Make a change to the person's connected local folder. It changes nothing by itself: the person sees a diff with an Apply button, which is their confirmation, and can undo it. "

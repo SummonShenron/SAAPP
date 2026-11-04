@@ -85,8 +85,12 @@ PLAN_CHANGE_KEYS = ("plan_change_updated", "plan_change_cancelled", "plan_change
 # Combos in a coding turn (backend/utils/combo.py): turns where an action landed, actions that landed, steps handed back for them, checks that failed in a new way, times the chain dropped (a step with no
 # landed action), turns that hit the per-turn ceiling, and turns that chained three or more steps. Counts only.
 COMBO_KEYS = ("combo_turns", "combo_hits", "combo_steps_granted", "combo_failed_checks", "combo_drops", "combo_ceiling_hit", "combo_long",
+              # Turns that landed an action and still ran out of steps, and of those the ones whose last step was a hit (the chain was alive: more steps per hit would have helped).
+              "combo_limit_turns", "combo_limit_alive",
               # Second readings of an applied change (backend/utils/diff_review.py): how many ran, and how many found something blocking (and so gave steps back).
-              "review_runs", "review_blocked")
+              "review_runs", "review_blocked",
+              # The plan-end reading by Sonnet (the same module, PLAN_REVIEW_PROMPT): how many ran, and how many found something blocking.
+              "plan_review_runs", "plan_review_blocked")
 # Lessons for the project's guidance file (backend/utils/lesson_proposals.py): turns that were told they could propose one, and proposals that touched the guidance file. Counts only.
 LESSON_KEYS = ("lesson_offered", "guidance_edit_proposed")
 # The conversation summary (backend/utils/conversation_summary.py): messages that said Sonic should already know something ("I already told you"), and the same inside a conversation that had a

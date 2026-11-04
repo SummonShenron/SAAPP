@@ -44,6 +44,11 @@
 .cc-cols .cc-opt { padding: 6px; gap: 8px; }
 .cc-cols .cc-opt-text span { font-size: 0.7rem; line-height: 1.3; }
 .cc-pop.cc-cols { width: min(340px, calc(100vw - 24px)); }
+/* The presets row (ComposerChips.tsx PresetRow): across the whole popup, above the model columns; each preset is a small tile with its name and one line, the one in force marked like any choice. */
+.cc-cols .cc-presets { grid-column: 1 / -1; }
+.cc-preset-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 4px; }
+.cc-cols .cc-preset { border: 1px solid var(--border-color, transparent); }
+.cc-cols .cc-preset.is-selected { border-color: var(--accent-primary); }
 
 .cc-help-title { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 600; padding-right: 16px; color: var(--accent-primary); }
 .cc-help-list { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 6px; }

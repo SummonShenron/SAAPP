@@ -241,7 +241,85 @@ def test_the_review_model_is_haiku_at_low_effort_with_thinking_off_no_fallback_a
 def test_the_tool_agent_collects_applied_cards_reviews_them_and_hands_the_loop_the_reviewer():
     source = (ROOT / "backend/services/agent_workflow.py").read_text(encoding="utf-8")
     assert "_applied_cards.extend(result.get(\"files\") or [])" in source and "async def _review_applied():" in source
-    assert "findings = await diff_review.review(review_llm(), latest_message_content, files)" in source
+    assert "kind, reader = diff_review.reader_for(plan_phase == code_plan.EXECUTE_PHASE, claude_may_read, plan_review_llm(), review_llm())" in source
+    assert "findings = await diff_review.review(reader, latest_message_content, files)" in source
+    assert "findings = await diff_review.review(reader, diff_review.plan_request(plan) or latest_message_content, files, plan=True)" in source
+    assert "claude_may_read = state.get(\"tool_model\") in code_plan.ANTHROPIC_CHOICES or tool_model_choice in code_plan.ANTHROPIC_CHOICES" in source
     assert "reviewer=_review_applied if local_workspace_handle is not None else None," in source
     loop = (ROOT / "backend/services/native_loop.py").read_text(encoding="utf-8")
     assert "if reviewer is not None and applied_now and not more_plan_steps and review_rounds < diff_review.MAX_ROUNDS:" in loop and "combo.after_review(blocked)" in loop
+
+
+# ---- the plan-end reading by Sonnet (2026-11-05) --------------------------------------------------------------------------------------------
+
+PLAN = {"goal": "Count browser calls", "steps": [{"id": "s1", "text": "Add the counter keys", "files": ["backend/utils/self_counters.py"]}, {"id": "s2", "text": "Record them in the loop", "files": []}],
+        "tests": ["a turn with two page calls counts two"]}
+
+
+def test_the_plan_is_shown_to_the_reviewer_as_its_goal_its_steps_with_files_and_its_tests():
+    text = dr.plan_request(PLAN)
+    assert text.splitlines()[0] == "Goal: Count browser calls"
+    assert "- Add the counter keys [backend/utils/self_counters.py]" in text and "- Record them in the loop" in text
+    assert "Tests the plan wanted:" in text and "- a turn with two page calls counts two" in text
+    assert dr.plan_request(None) == "" and dr.plan_request({}) == ""
+
+
+def test_the_plan_reading_uses_the_broader_prompt_the_plan_and_room_for_a_whole_plans_diff():
+    big = card("a.py", diff="+" + "x" * 30000)
+    plan_prompt = dr.build_prompt(dr.plan_request(PLAN), [big], plan=True)
+    for phrase in ("A step of the plan", "would still pass if the change were taken out", "nothing in the diff ever sets or increments", "share one page, session, connection or list", "nothing in the diff defines or imports"):
+        assert phrase in plan_prompt, phrase
+    assert "THE APPROVED PLAN:\nGoal: Count browser calls" in plan_prompt and "[cut]" not in plan_prompt          # 30,000 characters fit the plan reading's 40,000
+    ordinary = dr.build_prompt("add a thing", [big])
+    assert dr.REVIEW_PROMPT in ordinary and dr.PLAN_REVIEW_PROMPT not in ordinary and "[cut]" in ordinary          # and not the ordinary reading's 12,000
+
+
+def test_the_plan_reading_may_report_five_findings_and_the_ordinary_one_three():
+    rows = json.dumps({"findings": [{"blocking": True, "file": f"f{i}.py", "problem": f"problem {i}", "fix": "do it"} for i in range(7)]})
+    assert len(dr.parse(rows)) == 3
+    assert len(dr.parse(rows, dr.PLAN_MAX_FINDINGS)) == 5
+
+    class Fake:
+        async def ainvoke(self, prompt):
+            return AIMessage(content=rows)
+
+    assert len(asyncio.run(dr.review(Fake(), "x", [card("a.py")]))) == 3
+    assert len(asyncio.run(dr.review(Fake(), "x", [card("a.py")], plan=True))) == 5
+
+
+def test_who_reads_a_change_depends_on_whether_the_person_chose_claude_and_whether_a_plan_is_being_carried_out():
+    strong, ordinary = object(), object()
+    assert dr.reader_for(True, True, strong, ordinary) == ("plan", strong)
+    assert dr.reader_for(False, True, strong, ordinary) == ("ordinary", ordinary)
+    assert dr.reader_for(True, True, None, ordinary) == ("ordinary", ordinary)          # no Sonnet price: the Haiku reading, as before
+    assert dr.reader_for(True, True, None, None) == ("ordinary", None)                   # no Claude key at all: no review
+    # a person who chose Gemini or GPT for the code work: their code goes to Claude for no reading at all
+    assert dr.reader_for(True, False, strong, ordinary) == ("none", None)
+    assert dr.reader_for(False, False, strong, ordinary) == ("none", None)
+
+
+def test_the_plan_reading_can_be_switched_off(monkeypatch):
+    monkeypatch.setattr(dr, "PLAN_REVIEW_ENABLED", False)
+    strong, ordinary = object(), object()
+    assert dr.reader_for(True, True, strong, ordinary) == ("ordinary", ordinary)
+
+
+def test_a_plan_reading_is_counted_as_a_run_and_as_blocked_only_when_something_blocks_and_a_failed_one_is_not_counted():
+    from backend.utils import self_counters
+
+    assert dr.plan_counts([]) == {"plan_review_runs": 1}
+    assert dr.plan_counts([{"blocking": False, "problem": "x"}]) == {"plan_review_runs": 1}
+    assert dr.plan_counts([{"blocking": True, "problem": "x"}]) == {"plan_review_runs": 1, "plan_review_blocked": 1}
+    assert dr.plan_counts(None) == {}
+    assert set(dr.plan_counts([{"blocking": True, "problem": "x"}])) <= set(self_counters.COMBO_KEYS)          # the keys the day's tally accepts
+
+
+def test_the_plan_review_model_is_sonnet_at_low_effort_with_thinking_off_no_fallback_and_none_without_a_price(monkeypatch):
+    monkeypatch.setattr(models_module, "_plan_review_llm", {})
+    monkeypatch.setattr(models_module, "sonnet_available", lambda: False)
+    assert models_module.plan_review_llm() is None
+    monkeypatch.setenv("CLAUDE_API_KEY", "sk-ant-not-a-real-key")
+    monkeypatch.setattr(models_module, "sonnet_available", lambda: True)
+    llm = models_module.plan_review_llm()
+    assert llm.model_name == "claude-sonnet-5-5" and llm.effort == "low" and llm.thinking_off is True and llm.fallback is None and llm.max_tokens == 1500
+    assert models_module.plan_review_llm() is llm

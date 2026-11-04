@@ -23,7 +23,7 @@ from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langchain_core.documents import Document
 from backend.services.search import get_secure_retriever
 from backend.models.claude_llm import ClaudeLLM
-from backend.models.models import get_chat_llm, lite_llm, lite_llm_deep, review_llm, tool_agent_llm
+from backend.models.models import get_chat_llm, lite_llm, lite_llm_deep, plan_review_llm, review_llm, tool_agent_llm
 from backend.state import graph_db
 from backend.utils.attachment_utils import retrieve_from_session
 from backend.utils.isolation_kb_utils import load_directory, load_user_directory_groups
@@ -4055,14 +4055,26 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             return result
 
         async def _review_applied():
-            """A second reading of what the person applied since the last one (backend/utils/diff_review.py): (findings, advisories), or None when there is nothing worth reviewing, no Haiku, or the call failed.
-            The free date check runs even without a model."""
+            """A second reading of what the person applied since the last one (backend/utils/diff_review.py): (findings, advisories), or None when there is nothing worth reviewing, no reviewer, or the call
+            failed. The free date check runs even without a model. Carrying out an approved plan, the reading is Sonnet's, against the plan itself (PLAN_REVIEW_PROMPT); otherwise Haiku's. Either one sends the
+            diff to Anthropic, so it is only done for a person who chose an Anthropic model for the code work (the Code model, or the Execute model): nothing sends a person's code to a provider they did not pick."""
             files = list(_applied_cards)
             _applied_cards.clear()
             if not diff_review.ENABLED or diff_review.trivial(files):
                 return None
             advisories = diff_review.fixed_date_notes(files)
-            findings = await diff_review.review(review_llm(), latest_message_content, files)
+            claude_may_read = state.get("tool_model") in code_plan.ANTHROPIC_CHOICES or tool_model_choice in code_plan.ANTHROPIC_CHOICES
+            kind, reader = diff_review.reader_for(plan_phase == code_plan.EXECUTE_PHASE, claude_may_read, plan_review_llm(), review_llm())
+            if kind == "plan":
+                plan = await asyncio.to_thread(code_plan.load, get_db(), username, state.get("session_id") or "")
+                findings = await diff_review.review(reader, diff_review.plan_request(plan) or latest_message_content, files, plan=True)
+                counts = diff_review.plan_counts(findings)
+                if counts:
+                    from backend.utils.self_counters import record_turn_counts
+
+                    await asyncio.to_thread(record_turn_counts, counts)
+            else:
+                findings = await diff_review.review(reader, latest_message_content, files)
             if findings is None:
                 return ([], advisories) if advisories else None
             return findings, advisories

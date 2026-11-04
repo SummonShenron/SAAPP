@@ -11,6 +11,7 @@ Pure functions apart from the injected `read_file`; never raises on bad input â€
 as human-readable error strings for the model to act on.
 """
 import ast
+import builtins
 import difflib
 import json
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -157,6 +158,45 @@ def _rename_card(source: str, target: str, before: str, after: str) -> Dict[str,
     else:
         card["diff"] = header
     return card
+
+
+# Names a module has without defining them (builtins do not list these), and WindowsError, which exists only on Windows while this check runs on Linux.
+_MODULE_NAMES = {"__file__", "__builtins__", "__class__", "__path__", "WindowsError"}
+
+
+def undefined_names(source: str) -> List[str]:
+    """Names a Python file uses that nothing in the file defines or imports (a forgotten import). Coarse on purpose: a name defined anywhere in the file counts as defined, whatever the scope. A file that
+    does not parse returns [] (its syntax error is not this check's job), and so does one with `from x import *` (it can define anything)."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    defined = set(dir(builtins)) | _MODULE_NAMES
+    used: List[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            defined.add(node.name)
+        elif isinstance(node, ast.arg):
+            defined.add(node.arg)
+        elif isinstance(node, ast.Name):
+            if isinstance(node.ctx, ast.Load):
+                used.append(node.id)
+            else:
+                defined.add(node.id)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                if alias.name == "*":
+                    return []
+                defined.add((alias.asname or alias.name).split(".")[0])
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            defined.add(node.name)
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+            defined.add(node.name)                         # `case x:` / `case [*rest]:` bind a name without a Name node
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            defined.add(node.rest)
+        elif isinstance(node, getattr(ast, "TypeVar", ())) or isinstance(node, getattr(ast, "ParamSpec", ())) or isinstance(node, getattr(ast, "TypeVarTuple", ())):
+            defined.add(node.name)                         # `def f[T](x: T)` (Python 3.12)
+    return sorted({name for name in used if name not in defined})
 
 
 def validate_edit_proposal(edits: Any, read_file: Callable[[str], Optional[str]]) -> Dict[str, Any]:
@@ -356,6 +396,16 @@ def validate_edit_proposal(edits: Any, read_file: Callable[[str], Optional[str]]
             # A file that was already broken before the edit isn't this proposal's fault.
             if error and (before is None or _syntax_error(path, before) is None):
                 errors.append(error)
+            elif path.lower().endswith(".py"):
+                # A name the edit starts using that nothing defines or imports: the commonest slip in a change that spans two places (a new call, its import forgotten). Names the file already lacked
+                # before the edit are not this proposal's fault.
+                was = original[moved_to[path]] if path in moved_to else before          # a moved file is compared with what it was at its old path
+                missing = [name for name in undefined_names(after) if name not in (undefined_names(was) if was else [])]
+                if missing:
+                    errors.append(
+                        f"{path}: the result uses {', '.join(missing[:6])} but nothing in the file defines or imports " + ("it" if len(missing) == 1 else "them")
+                        + ". Add the missing import or definition in the same proposal"
+                    )
 
     if errors:
         return {"ok": False, "errors": errors[:_MAX_ERRORS_REPORTED]}

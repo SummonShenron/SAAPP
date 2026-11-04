@@ -141,8 +141,10 @@ class Combo:
         self.plan_grants += 1
         return True
 
-    def counts(self) -> Dict[str, int]:
-        """The turn's counts for the day's tally (backend/utils/self_counters.COMBO_KEYS): only whole numbers, nothing about what was done."""
+    def counts(self, ended_by_limit: bool = False) -> Dict[str, int]:
+        """The turn's counts for the day's tally (backend/utils/self_counters.COMBO_KEYS): only whole numbers, nothing about what was done. `ended_by_limit` says the loop ran out of steps (the forced
+        answer); then a turn that had landed an action counts as `combo_limit_turns`, and `combo_limit_alive` when its LAST step was itself a hit: the chain was still going when the steps ran out, the
+        case a bigger refund would help (the other turns ran out after the chain had already dropped)."""
         if not (self.hits or self.refunded or self.reviews):
             return {}
         counts = {"combo_turns": 1, "combo_hits": self.hits, "combo_steps_granted": self.refunded, "combo_failed_checks": self.failed_new, "combo_drops": self.drops,
@@ -151,7 +153,19 @@ class Combo:
             counts["combo_ceiling_hit"] = 1
         if self.longest >= 3:
             counts["combo_long"] = 1
+        if ended_by_limit and self.hits:
+            counts["combo_limit_turns"] = 1
+            counts["combo_limit_alive"] = 1 if self.streak else 0
         return {key: value for key, value in counts.items() if value}
+
+
+def action_room_note(refunded: int, cap: int = CAP, hit_steps: int = HIT_STEPS) -> str:
+    """One sentence for the model's low-steps warning on a turn that can act: the true terms of the combo, so it acts on what it already knows instead of reading on. "" when this turn has already
+    earned back what it may (the ceiling), so it is never promised room it will not get. Nothing here pays for an edit that is not wanted: an edit is still the person's to apply."""
+    if cap - refunded < 1:
+        return ""
+    return (f" If you already know the change to make or the check to run, do that now rather than another read: an edit that gets applied, or a check that runs, hands back up to {min(hit_steps, cap - refunded)} "
+            "tool steps. Do not make a change that was not asked for to earn them.")
 
 
 FAILED_CHECK_NOTE = (

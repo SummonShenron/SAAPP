@@ -187,4 +187,60 @@ def test_the_loop_uses_the_combo_and_records_its_counts():
     root = pathlib.Path(__file__).resolve().parents[2]
     source = (root / "backend/services/native_loop.py").read_text(encoding="utf-8")
     assert "combo = combo_rules.Combo(ACTION_TOOLS, ACTION_REFUND_CAP)" in source and "combo.after_step(calls, results)" in source
-    assert "**combo.counts()" in source
+    assert "**combo.counts(forced and stop_reason in (\"\", \"step_limit\"))" in source
+
+
+# ---- running out of steps while the chain is alive (2026-11-05) ----------------------------------------------------------------------------------
+
+def test_a_turn_that_landed_an_action_and_ran_out_of_steps_is_counted_and_so_is_one_whose_chain_was_still_going():
+    from backend.utils.self_counters import KEYS
+
+    alive = new()
+    alive.after_step([call("propose_local_edits", n=1)], [APPLIED])                    # the last step was a hit
+    counts = alive.counts(ended_by_limit=True)
+    assert counts["combo_limit_turns"] == 1 and counts["combo_limit_alive"] == 1 and set(counts) <= KEYS
+    dropped = new()
+    dropped.after_step([call("propose_local_edits", n=1)], [APPLIED])
+    dropped.after_step([call("read_repo_file", path="a.py")], ["text"])                # then a read: the chain dropped
+    counts = dropped.counts(ended_by_limit=True)
+    assert counts["combo_limit_turns"] == 1 and "combo_limit_alive" not in counts
+    assert "combo_limit_turns" not in alive.counts() and "combo_limit_turns" not in alive.counts(ended_by_limit=False)       # a turn that finished on its own is not one
+    assert new().counts(ended_by_limit=True) == {}                                     # nothing landed: not a combo turn (the loop's own cap_hit_turns counts it)
+
+
+def test_the_note_gives_the_true_terms_and_stops_when_the_turn_has_earned_all_it_may():
+    note = cb.action_room_note(0, 30, 4)
+    assert "hands back up to 4 tool steps" in note and "Do not make a change that was not asked for" in note
+    assert "up to 2 tool steps" in cb.action_room_note(28, 30, 4)                        # never promises more than the ceiling leaves
+    assert cb.action_room_note(30, 30, 4) == "" and cb.action_room_note(31, 30, 4) == ""
+
+
+def test_the_low_steps_warning_on_a_turn_that_can_act_carries_the_note_and_one_that_cannot_act_does_not():
+    from langchain_core.messages import AIMessage
+
+    from backend.services import native_loop as nl
+    from backend.utils import llm_turns
+
+    def run(tool_names):
+        seen, script = [], [_tool("read_repo_file", path=f"f{i}.py", start_line=10, line_count=60) for i in range(5)]
+
+        class LLM:
+            async def ainvoke_tools(self, messages, offered):
+                seen.append(" ".join(str(getattr(m, "content", "")) for m in messages))
+                item = script.pop(0) if script else "done"
+                return AIMessage(content=item if isinstance(item, str) else "", tool_calls=[] if isinstance(item, str) else [item])
+
+        async def act(decision):
+            return "text"
+
+        llm_turns.begin("someone")
+        try:
+            asyncio.run(nl.run(llm=LLM(), tools=[{"name": n, "description": n} for n in tool_names], act=act, question="look", max_steps=4, required_action=None))
+        finally:
+            llm_turns._current.set(None)
+        return " ".join(seen)
+
+    can_act = run(["read_repo_file", "propose_local_edits"])
+    assert "STEPS: you have 2 tool steps left" in can_act and "hands back up to 4 tool steps" in can_act
+    read_only = run(["read_repo_file"])
+    assert "STEPS: you have 2 tool steps left" in read_only and "hands back" not in read_only
