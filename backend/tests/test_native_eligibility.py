@@ -62,6 +62,29 @@ def test_read_only_requests_including_gmail_drive_and_the_calendar_go_native(tex
     assert ok(text) is True
 
 
+BROWSER_TOOLS = [{"name": "search_code"}, {"name": "browser_navigate"}]
+
+
+@pytest.mark.parametrize("text", [
+    "open the site in the browser and take a screenshot",
+    "navigate to the pricing page and click the sign up button",
+    "take screenshots of the page",
+])
+def test_page_driving_words_stay_native_when_the_browser_tools_are_offered(text):
+    assert nl.eligible(edit_turn=False, resumed=False, tools=BROWSER_TOOLS, text=text) is True
+    assert nl.eligible(edit_turn=False, resumed=False, tools=TOOLS, text=text) is False
+
+
+@pytest.mark.parametrize("text", [
+    "navigate to the page, then query the mongodb users collection",
+    "open the browser and run ci",
+    "open the browser and send an email to Dana",
+    "open the browser and write an implementation plan",
+])
+def test_the_other_old_engine_reasons_still_apply_with_the_browser_tools_offered(text):
+    assert nl.eligible(edit_turn=False, resumed=False, tools=BROWSER_TOOLS, text=text) is False
+
+
 def test_the_routers_reading_keeps_a_send_request_off_the_native_engine_but_lookups_may_go_native():
     assert ok("anything", flags={"needs_send_email": True}) is False
     for flag in ("needs_gmail_lookup", "needs_drive_lookup", "needs_calendar_lookup", "needs_github_search"):
@@ -88,7 +111,6 @@ def test_the_pattern_covers_every_tool_the_native_engine_lacks_in_the_old_menu()
     seen = asyncio.run(be.run_tool_agent(model, "check my gmail inbox", repo=True, engine="react"))
     lacking = sorted(set(re.findall(r"^- ([a-z_]+) —", seen.menu, re.M)) - set(nt.REGISTRY))
     assert lacking == [
-        "browser_click", "browser_navigate", "browser_read_text", "browser_screenshot", "browser_type",
         "propose_code_plan", "propose_send_email", "run_mongo_query", "run_repo_tests", "run_snippet",
     ], "the old engine's menu changed: decide whether each new tool needs the old engine, and update _OLD_ENGINE_ONLY_RE"
 
