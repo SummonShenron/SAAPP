@@ -6,8 +6,7 @@
     python -m backend.evals.behavior_eval --list
     python -m backend.evals.behavior_eval --save eval_results/before.json
     python -m backend.evals.behavior_eval --compare eval_results/before.json   # exits 1 if anything got worse
-    python -m backend.evals.behavior_eval --engine native --category tool_use  # the native tool-calling engine instead of ReAct
-    python -m backend.evals.behavior_eval --engine both --runs 3               # both engines side by side: quality, calls, tokens
+    python -m backend.evals.behavior_eval --category tool_use                  # the tool scenarios (the native tool-calling loop is the only engine)
 
 character_eval.py asks whether Sonic's CHARACTER holds in a reply. This asks the same of its BEHAVIOUR, the part the unit
 tests cannot reach because they script the model: which tool it reaches for, whether it still does the useful thing when the
@@ -55,9 +54,9 @@ Score =Tuple[bool, str]  # (passed, why)
 LLM = Callable[[str], Awaitable[Any]]
 
 NOW = datetime(2026, 10, 9, 15, 0, tzinfo=timezone.utc)
-ENGINES = ("react", "native")
+ENGINES = ("native",)
 ACTIVE_MEMORY = True  # False (--no-memory): the memory scenarios run with nothing remembered, to show what the memory block is worth
-ACTIVE_ENGINE = "react"  # which tool engine the tool scenarios use (set by --engine); "react" is the app's default
+ACTIVE_ENGINE = "native"  # the only tool engine since the old ReAct loop was deleted (docs/react-sunset-plan.md); kept so callers that pass one keep working
 ACTIVE_TOOL_MODEL = ""   # which model the NATIVE tool engine reasons with (set by --tool-model): "" (what the app uses), "deep" (gemini-3.6-flash), "claude", or a candidate named in eval_models.CANDIDATES (e.g. sonnet)
 ACTIVE_STEPS = 0         # a step cap for the tool agent (set by --steps); 0 leaves the app's own caps. 4 is what low-power mode allows (budget_guard.THROTTLED_TOOL_STEPS)
 OPS_ACTIONS = {"list_app_incidents", "read_app_incident", "read_app_logs", "check_deploy_status"}
@@ -198,11 +197,12 @@ class RecordingDB:
         return _Collection(self.touched, name)
 
 
-# When a check in the ReAct loop rejects a final answer, its notice is put into the next step's prompt. A phrase from each notice, so a run can say
-# which check (if any) sent the agent back to rewrite (react_loop.py has the full texts).
+# When a check rejects a final answer, its notice is put into the next step. A phrase from each notice, so a run can say
+# which check (if any) sent the agent back to rewrite. (The first five were the old ReAct loop's, deleted 2026-11-05: nothing produces them any more; backend/utils/answer_checks.py has the native three.)
 REJECTION_NOTICES = {
     "ungrounded_claim": "made at least one claim that doesn't actually appear",
-    "no_precedent": "haven't actually looked at any real code in this repo",
+    "no_precedent": "you have not looked at any real code in this repo",
+    "capability_denial": "is among your tools this turn",
     "duplicate_declaration": "declares something that already exists in this repo",
     "idiom": "doesn't actually follow a real pattern",
     "generic_code": "looks generic/exampleish",
@@ -233,9 +233,9 @@ async def run_tool_agent(
 ) -> Observation:
     """One real pass of the tool agent with `llm`, in a world where nothing outward is real. Returns what it chose and did.
 
-    `engine` is "react" (the app's default loop, driven through `llm`, a prompt-in/response-out callable) or "native" (the native
-    tool-calling engine, driven by the real model, or by `tool_llm`, an object with `ainvoke_tools`, in tests). Either way the
-    observation records the model calls and tokens the run used.
+    The native tool-calling loop is the only engine: it is driven by the real model, or by `tool_llm`, an object with `ainvoke_tools`, in tests. `engine` is
+    accepted for old callers and ignored. The observation records the model calls and tokens the run used. `llm` is the plain prompt-in/response-out
+    model the app's other nodes (the router, the memory jobs) call during the turn.
 
     `repo=True` puts the fixture repository (fixture_repo.py) behind the repo tools: the local checkout, code search, commits and pull
     requests all answer from it, so the agent investigates a repository whose true answers are known. `history` is the earlier messages of
@@ -246,7 +246,7 @@ async def run_tool_agent(
     from backend.utils import llm_usage
     from langchain_core.messages import HumanMessage
 
-    engine = engine or ACTIVE_ENGINE
+    engine = "native"
     if engine == "native" and tool_llm is None and ACTIVE_TOOL_MODEL == "deep":
         tool_llm = aw.lite_llm_deep       # the bigger Gemini model the app uses for deep thinking and audits
     if engine == "native" and tool_llm is None and eval_models.is_candidate(ACTIVE_TOOL_MODEL):
@@ -297,14 +297,15 @@ async def run_tool_agent(
 
     async def native_spy(**kwargs):
         result = await real_native_run(**kwargs)
-        observation.menu = ", ".join(tool["name"] for tool in kwargs["tools"])
+        # What the model was offered, as menu lines ("- name — description"), then the background block it was handed: what the scorers and the tests read.
+        observation.menu = chr(10).join(f"- {tool['name']} — {tool.get('description', '')}" for tool in kwargs["tools"]) + chr(10) + (kwargs.get("user_memory") or "")
         observation.actions.extend(a["action_desc"].split("(")[0] for a in result["attempts"])
         observation.actions.append("(final)")
         return result
 
     env = {
         "ERRAGENT_URL": "https://erragent.invalid", "ERRAGENT_APP_ID": "eval", "ERRAGENT_READ_SECRET": "ear_not-a-real-secret",
-        "GITHUB_TOKEN": "not-a-real-token", "TOOL_AGENT_ENGINE": engine,
+        "GITHUB_TOKEN": "not-a-real-token",
     }
     if ACTIVE_TOOL_MODEL == "claude":
         env["TOOL_AGENT_PROVIDER"] = "anthropic"      # the app's own switch (models.tool_agent_llm): the real wiring, fallback included, for either engine
@@ -357,6 +358,8 @@ async def run_tool_agent(
         stack.enter_context(patch.object(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP"))
         stack.enter_context(patch.object(aw, "get_db", lambda: db))
         stack.enter_context(patch.object(aw, "build_user_memory_block", fake_memory))
+        # The tool agent's own leanings lookup reads the database and embeds the request: neither belongs in a run where nothing outward is real.
+        stack.enter_context(patch("backend.utils.character.for_turn", lambda *a, **k: {"leanings": [], "experience": None}))
         stack.enter_context(patch.object(aw, "read_url", fake_read_url))
         stack.enter_context(patch.object(aw, "run_web_search", no_search))
         stack.enter_context(patch.object(aw.lite_llm, "ainvoke", spy))
@@ -373,8 +376,6 @@ async def run_tool_agent(
             {"username": "eval-user", "messages": [*(history or []), HumanMessage(content=question)], "documents": []}
         )
     observation.answer = str(result.get("content_to_format") or "")
-    if engine != "native":
-        observation.menu = prompts[0] if prompts else ""
     observation.db_touched = list(db.touched)
     return observation
 
@@ -1133,8 +1134,7 @@ def main(argv: Optional[List[str]] = None, llm: Optional[LLM] = None) -> int:
     parser.add_argument("--compare", type=str, default="", help="compare with a file written by --save; exit 1 if anything got worse")
     parser.add_argument("--tolerance", type=float, default=0.2, help="how far a pass rate may fall before it counts as worse (0-1)")
     parser.add_argument("--no-memory", action="store_true", help="run the memory scenarios with nothing remembered, to show what the memory block is worth")
-    parser.add_argument("--engine", type=str, default="react", choices=("react", "native", "both"),
-                        help="which tool engine the tool scenarios use; 'both' runs the tool and injection scenarios through each and compares")
+    parser.add_argument("--engine", type=str, default="native", choices=("native",), help="kept for old command lines: the native loop is the only engine")
     parser.add_argument("--tool-model", type=str, default="", help="which model the NATIVE engine reasons with: default (what the app uses), deep (gemini-3.6-flash), "
                         "claude (claude-haiku-5-5 through the app's own TOOL_AGENT_PROVIDER switch), a candidate by name or alias (haiku, sonnet, gemini-3.5-flash-lite, gemini-3.8-flash, ...: "
                         "see backend/evals/eval_models.py; no fallback, so a failure is that model's failure), or a comma-separated list (e.g. default,haiku,sonnet) to compare them")
@@ -1188,29 +1188,21 @@ def main(argv: Optional[List[str]] = None, llm: Optional[LLM] = None) -> int:
                 print(f"--tool-model {named}: {problem}")
                 return 2
     if wanted_models != [""]:
-        # Compared in the engine named by --engine ("native", else the app's default "react").
         chosen = [s for s in chosen if s.model == "tool"]
         by_tool_model: Dict[str, List[ScenarioResult]] = {}
-        ACTIVE_ENGINE = "native" if args.engine == "native" else "react"
         try:
             for tool_model in wanted_models:
                 ACTIVE_TOOL_MODEL = tool_model
-                log(f"=== tool model: {tool_model or 'default'} ({ACTIVE_ENGINE} engine)" + (f", steps capped at {ACTIVE_STEPS}" if ACTIVE_STEPS else ""))
+                log(f"=== tool model: {tool_model or 'default'} (native engine)" + (f", steps capped at {ACTIVE_STEPS}" if ACTIVE_STEPS else ""))
                 run_models = models
-                if tool_model == "deep" and ACTIVE_ENGINE == "react" and llm is None:
-                    from backend.services import agent_workflow as aw_deep
-
-                    run_models = {**models, "tool": aw_deep.lite_llm_deep.ainvoke}      # the ReAct loop reasons through the model's plain call
-                if eval_models.is_candidate(tool_model) and ACTIVE_ENGINE == "react" and llm is None:
-                    run_models = {**models, "tool": eval_models.make_tool_llm(tool_model).ainvoke}
                 with eval_models.tracking(tracker):
                     by_tool_model[tool_model] = asyncio.run(run_all(chosen, run_models, args.runs, log=log, tracker=tracker))
                 if tracker.stopped:
                     break           # over the ceiling: no further model is started, and what finished is reported below
         finally:
-            ACTIVE_ENGINE, ACTIVE_TOOL_MODEL = "react", ""
+            ACTIVE_TOOL_MODEL = ""
         for tool_model, tool_results in by_tool_model.items():
-            print(f"=== tool model: {tool_model or 'default'} ({'native' if args.engine == 'native' else 'react'} engine)" + (f", steps capped at {ACTIVE_STEPS}" if ACTIVE_STEPS else ""))
+            print(f"=== tool model: {tool_model or 'default'} (native engine)" + (f", steps capped at {ACTIVE_STEPS}" if ACTIVE_STEPS else ""))
             print(format_report(tool_results))
             print()
             if args.save:
@@ -1226,34 +1218,8 @@ def main(argv: Optional[List[str]] = None, llm: Optional[LLM] = None) -> int:
             print("STOPPED at the ceiling: the results above are partial (some scenarios or models never ran). Raise --ceiling to go on.")
             return 3
         return 0
-    if args.engine == "both":
-        chosen = [s for s in chosen if s.category in ("tool_use", "injection", "repo", "memory")]
-        by_engine: Dict[str, List[ScenarioResult]] = {}
-        try:
-            for engine in ENGINES:
-                ACTIVE_ENGINE = engine
-                with eval_models.tracking(tracker):
-                    by_engine[engine] = asyncio.run(run_all(chosen, models, args.runs, log=log, tracker=tracker))
-                if tracker.stopped:
-                    break
-        finally:
-            ACTIVE_ENGINE = "react"
-        for engine, engine_results in by_engine.items():
-            print(f"=== engine: {engine}")
-            print(format_report(engine_results))
-            print()
-        print(format_engine_comparison(by_engine))
-        print(tracker.line())
-        if tracker.stopped:
-            print("STOPPED at the ceiling: the results above are partial. Raise --ceiling to go on.")
-            return 3
-        return 0
-    ACTIVE_ENGINE = args.engine
-    try:
-        with eval_models.tracking(tracker):
-            results = asyncio.run(run_all(chosen, models, args.runs, log=log, tracker=tracker))
-    finally:
-        ACTIVE_ENGINE = "react"
+    with eval_models.tracking(tracker):
+        results = asyncio.run(run_all(chosen, models, args.runs, log=log, tracker=tracker))
     print(format_report(results))
     print(tracker.line())
     if tracker.stopped:

@@ -13,7 +13,6 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from backend.services import agent_workflow as aw
 from backend.tests.test_local_edits import FILES, _connect_folder
-from backend.tests.test_react_loop_retry_enforcement import GROUNDING_CHECK_MARKER, _llm_response
 from backend.utils.agent_utils import (
     is_stale_capability_denial,
     looks_like_edit_request,
@@ -149,123 +148,14 @@ def test_scrub_replaces_refusals_without_mutating_the_original_messages():
 # run_react_loop required_action
 # ---------------------------------------------------------------------------
 
-async def _run_loop(responses, act, *, required=aw._LOCAL_EDIT_REQUIRED_ACTION, max_iterations=8):
-    prompts = []
-    index = {"n": 0}
 
-    async def fake_ainvoke(prompt):
-        if GROUNDING_CHECK_MARKER in prompt:
-            return _llm_response(grounded=True, unsupported_claims=[])
-        prompts.append(prompt)
-        response = responses[min(index["n"], len(responses) - 1)]
-        index["n"] += 1
-        return response
-
-    orig = aw.lite_llm.ainvoke
-    aw.lite_llm.ainvoke = fake_ainvoke
-    try:
-        result = await aw.run_react_loop(
-            question="change the header", schema="repo=x", prompt_template="{question} | {schema} | {attempts}",
-            act=act, max_iterations=max_iterations, node_name="test_node", required_action=required,
-        )
-    finally:
-        aw.lite_llm.ainvoke = orig
-    return result, prompts
-
-
-PROPOSE = _llm_response(action="query", purpose="Propose it", tool_action="propose_local_edits", args={"summary": "s", "edits": []})
 PROPOSED_OK = "Proposed 1 edit(s) across 1 file(s): a.py. The user now sees a diff with an Apply button."
 
 
-@run_async
-async def test_final_without_the_required_action_is_rejected_twice_then_accepted():
-    acted = []
-
-    async def act(decision):
-        acted.append(decision)
-        return "unused"
-
-    result, prompts = await _run_loop(
-        [_llm_response(action="final", answer="first"), _llm_response(action="final", answer="second"),
-         _llm_response(action="final", answer="third")],
-        act,
-    )
-
-    assert result["final_answer"] == "third"
-    assert acted == []
-    assert "propose_local_edits" in prompts[1] and "IS connected" in prompts[1]
 
 
-@run_async
-async def test_final_is_accepted_immediately_once_the_action_succeeded():
-    acted = []
-
-    async def act(decision):
-        acted.append(decision)
-        return PROPOSED_OK
-
-    result, _ = await _run_loop([PROPOSE, _llm_response(action="final", answer="Proposed it.")], act)
-
-    assert result["final_answer"] == "Proposed it."
-    assert len(acted) == 1
 
 
-@run_async
-async def test_a_failed_proposal_does_not_count_as_done():
-    async def act(decision):
-        return "ERROR: these edits could not be applied cleanly, so nothing was proposed"
-
-    result, prompts = await _run_loop(
-        [PROPOSE, _llm_response(action="final", answer="gave up"), _llm_response(action="final", answer="gave up"),
-         _llm_response(action="final", answer="really gave up")],
-        act,
-    )
-
-    assert result["final_answer"] == "really gave up"
-    assert any("IS connected" in p for p in prompts)
-
-
-@run_async
-async def test_after_a_read_the_loop_is_told_to_propose_instead_of_reading_more():
-    read = lambda path: _llm_response(action="query", purpose="Read", tool_action="read_repo_file", args={"path": path})
-
-    async def act(decision):
-        return PROPOSED_OK if decision["tool_action"] == "propose_local_edits" else "file contents"
-
-    _, prompts = await _run_loop(
-        [read("a.py"), read("b.py"), read("c.py"), PROPOSE, _llm_response(action="final", answer="done")], act,
-    )
-
-    marker = "your next action must be propose_local_edits"
-    assert not any(marker in p for p in prompts[:3])  # not nagged before it has had a few steps
-    assert marker in prompts[3]
-
-
-@run_async
-async def test_no_nudge_before_anything_has_been_read():
-    async def act(decision):
-        return "No similar file paths found."
-
-    find = _llm_response(action="query", purpose="Find", tool_action="find_file", args={"query": "x"})
-    _, prompts = await _run_loop(
-        [find, _llm_response(action="query", purpose="Find", tool_action="find_file", args={"query": "y"}),
-         _llm_response(action="query", purpose="Find", tool_action="find_file", args={"query": "z"}),
-         _llm_response(action="query", purpose="Find", tool_action="find_file", args={"query": "w"}),
-         _llm_response(action="final", answer="x")],
-        act,
-    )
-
-    assert not any("your next action must be propose_local_edits" in p for p in prompts)
-
-
-@run_async
-async def test_without_a_required_action_nothing_changes():
-    async def act(decision):
-        return "unused"
-
-    result, _ = await _run_loop([_llm_response(action="final", answer="just answering")], act, required=None)
-
-    assert result["final_answer"] == "just answering"
 
 
 # ---------------------------------------------------------------------------
@@ -336,11 +226,11 @@ async def _run_turn(monkeypatch, question, attempts):
     monkeypatch.setattr(aw, "safe_emit_event", AsyncMock())
     captured = {}
 
-    async def fake_run_react_loop(**kwargs):
+    async def fake_native_run(**kwargs):
         captured.update(kwargs)
         return {"final_answer": "I looked around.", "attempts": attempts, "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", fake_native_run)
     state = {"username": "jack", "messages": [H(content=question)], "documents": []}
     result = await aw.tool_agent_node(state)
     return result["content_to_format"], captured

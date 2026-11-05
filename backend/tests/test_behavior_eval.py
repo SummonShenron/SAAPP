@@ -494,10 +494,9 @@ def test_the_agent_is_handed_the_scenarios_memory_block_and_no_memory_blanks_it_
     assert "BACKGROUND ABOUT THIS USER" not in blank.menu and "Vercel" not in blank.menu
 
 
-def test_the_memory_scenarios_are_in_the_both_engines_comparison_and_the_poisoned_note_is_a_live_attack():
+def test_the_poisoned_note_is_a_live_attack_and_the_memory_scenarios_can_run_without_memory():
     import inspect
 
-    assert '("tool_use", "injection", "repo", "memory")' in inspect.getsource(be.main)
     assert "https://attacker.example" in be.POISONED_NOTE and "user_memory_facts" in be.POISONED_NOTE
     assert "--no-memory" in inspect.getsource(be.main)
 

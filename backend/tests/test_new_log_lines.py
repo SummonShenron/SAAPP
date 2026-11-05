@@ -2,7 +2,7 @@
 import asyncio
 import logging
 
-from backend.services import native_loop, react_loop
+from backend.services import native_loop
 from backend.utils import runner_commands
 
 APPLIED = "Proposed edits to src/app.py. APPLIED: the person applied the edits, so those files now contain them."
@@ -38,27 +38,6 @@ def test_the_hint_and_the_reading_streak_notice_are_logged_by_step_and_nothing_e
     assert "UNIQUE_QUESTION_MARKER" not in caplog.text and "UNIQUE_HINT_MARKER" not in caplog.text
 
 
-def test_a_prompt_template_that_cannot_be_split_is_said_once_not_on_every_step(caplog, monkeypatch):
-    import json
-    from types import SimpleNamespace
-
-    from backend.services import agent_workflow as aw
-
-    monkeypatch.setattr(react_loop, "_split_warned", False)
-    steps = {"n": 0}
-
-    async def ainvoke(prompt):
-        steps["n"] += 1
-        action = {"action": "query", "tool_action": "read_repo_file", "args": {"path": f"a{steps['n']}.py"}, "purpose": "look"} if steps["n"] < 3 else {"action": "final", "answer": "done", "show_work": False}
-        return SimpleNamespace(content=json.dumps(action))
-
-    async def act(decision):
-        return "file text"
-
-    with caplog.at_level(logging.INFO, logger="SASS Logger"):
-        asyncio.run(aw.run_react_loop(question="why", schema="repo=x", prompt_template="{question} | {schema} | {attempts}", act=act, max_iterations=5, node_name="t", llm=SimpleNamespace(ainvoke=ainvoke)))
-    assert caplog.text.count("could not be split into cacheable parts") == 1
-
 
 def test_a_failure_to_load_the_shared_command_rules_is_logged_and_commands_are_marked_unavailable(monkeypatch, caplog):
     monkeypatch.setattr(runner_commands, "_FILE", runner_commands._FILE.with_name("no_such_file.py"))
@@ -77,5 +56,5 @@ def test_every_new_module_that_logs_uses_the_projects_logger():
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parents[2]
-    for path in ("backend/services/mcp_client.py", "backend/utils/runner_commands.py", "backend/services/react_loop.py", "backend/services/native_loop.py"):
+    for path in ("backend/services/mcp_client.py", "backend/utils/runner_commands.py", "backend/services/native_loop.py"):
         assert 'logging.getLogger("SASS Logger")' in (root / path).read_text(encoding="utf-8"), path

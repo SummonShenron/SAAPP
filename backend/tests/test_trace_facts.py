@@ -4,7 +4,6 @@ import functools
 import json
 
 from backend.services import native_loop
-from backend.services import react_loop
 from backend.utils import agent_utils as au
 
 
@@ -160,41 +159,6 @@ def test_step_ids_are_unique():
 
 
 # ----- the loops emit a step id and matching facts -----
-
-@run_async
-async def test_react_loop_ties_each_steps_facts_to_its_step_id(monkeypatch):
-    events = []
-
-    async def fake_emit(name, data):
-        events.append((name, data))
-
-    monkeypatch.setattr(react_loop, "safe_emit_event", fake_emit)
-    monkeypatch.setattr(au, "safe_emit_event", fake_emit)
-
-    async def fake_ainvoke(prompt):
-        class R:
-            content = json.dumps(replies.pop(0))
-        return R()
-
-    replies = [
-        {"action": "query", "purpose": "Read it", "tool_action": "read_repo_file", "args": {"path": "a.py", "value": "typed secret"}},
-        {"action": "final", "answer": "done"},
-    ]
-    monkeypatch.setattr(react_loop.lite_llm, "ainvoke", fake_ainvoke)
-
-    async def act(decision):
-        return "file body that must not be sent"
-
-    await react_loop.run_react_loop(
-        question="q", schema="s", prompt_template="{question}{schema}{attempts}{architecture_map}", act=act,
-        max_iterations=3, node_name="tool_agent_node",
-    )
-    steps = [data for name, data in events if name == "trace_detail" and data.get("detail") == "Read it"]
-    facts = [data for name, data in events if name == "trace_facts"]
-    assert len(steps) == 1 and len(facts) == 1
-    assert steps[0]["step_id"] == facts[0]["step_id"]
-    joined = " ".join(facts[0]["facts"])
-    assert "Tool: read_repo_file" in joined and "typed secret" not in joined and "file body" not in joined
 
 
 @run_async

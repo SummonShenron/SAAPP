@@ -126,7 +126,6 @@ def test_the_menu_the_dispatcher_the_batch_list_and_the_guard_are_all_wired_in()
     assert "- search_memory — args: query" in source
     assert "tool_agent_memory_module.SEARCH_ENABLED and username and not is_guest_username(username)" in source        # offered to signed-in people only
     assert 'if tool_action == "search_memory":' in source and "tool_agent_memory_module.search_for_agent(username, args.get(\"query\"), memory_vector_store" in source
-    assert '"search_memory",\n})' in source                                       # read-only, so it may be batched
     assert "nonlocal memory_guard" in source and "memory_guard = MemoryTurnGuard(memory_guard_text)" in source
 
 

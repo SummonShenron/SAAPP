@@ -32,7 +32,6 @@ from backend.components.constraints import (
     SUMMARIZER_PROMPT,
     GRADING_PROMPT,
     REWRITING_PROMPT,
-    TOOL_AGENT_PROMPT,
     REASONER_PROMPT,
     ISSUE_DRAFT_PROMPT,
     PR_REVIEW_PROMPT,
@@ -82,19 +81,18 @@ from backend.utils.pr_context import build_review_prompt, build_diff_context, co
 from backend.services.ci_test_runner import run_repo_tests, run_python_snippet, DEFAULT_MAX_WAIT_SECONDS as CI_TEST_RUN_MAX_WAIT_SECONDS
 from backend.utils.normalize_utils import ensure_str
 from backend.utils.agent_utils import (
-    parse_definition_index_from_observation, find_mismatched_start_line_note,
     # ReAct-loop pure helpers moved out of this file (docs/coding-agent-roadmap.md — refactor
     # process started per user request: agent_workflow.py keeps graph nodes, agent_utils.py
     # accumulates plain functions). Imported back under their original names so every existing
     # `aw._name` reference (tests, this file's own remaining code) keeps working unchanged.
     _READ_FILE_CHAR_CAP, _READ_FILE_DEFAULT_LINE_WINDOW, _READ_FILE_MIN_SNIPPET_CHARS,
     _DEFINITION_INDEX_WRAPPER, _TOP_LEVEL_DEF_RE, _build_definition_index,
-    _parse_agent_json, _EMPTY_OBSERVATION_VALUES, _is_empty_observation,
-    _mentions_unresolved_truncation, _MAX_OBSERVATION_CHARS, _truncate_observation,
+    _EMPTY_OBSERVATION_VALUES, _is_empty_observation,
+    _MAX_OBSERVATION_CHARS,
     _UnsafeActionRequested,
     _CAPABILITY_DENIAL_RE, _DIFF_FILE_HEADER_RE, _DIFF_NEW_FILE_RE,
     _extract_diff_file_grounding_lines, _final_diff_disagrees_with_fetched_content,
-    _format_observation_for_footer, _format_react_attempts, _format_attempts_steps,
+    _format_observation_for_footer, _format_attempts_steps,
     _FILE_EXTENSION_RE, _PATH_TOKEN_SPLIT_RE, _CAMEL_BOUNDARY_RE,
     _FUZZY_MATCH_CUTOFF, _FUZZY_MATCH_LIMIT, _tokenize_for_fuzzy_match, _fuzzy_path_score,
     fuzzy_query_tokens,
@@ -109,7 +107,6 @@ from backend.utils.agent_utils import (
     _import_scope_key, _repo_top_level_segments, _build_architecture_map,
     resolve_recent_mention, safe_emit_event, emit_trace_excerpt, emit_trace_facts, format_history,
 )
-from backend.services.react_loop import run_react_loop, _MAX_BATCH_SIZE
 from backend.utils.library_allowance import LibraryAllowance
 from backend.utils import memory_sources
 from backend.services import steering
@@ -120,7 +117,7 @@ from backend.utils import diff_review, lesson_proposals, place_questions, projec
 from backend.services import maps_tools
 from backend.utils import code_plan, budget_guard, date_resolve, llm_turns, memory_grounding, progress_notes, orientation, reading_shelf, routines, runner_commands, runner_jobs, self_report, targeted_read
 from backend.services.repo_checkout import (
-    RepoCheckoutError, fetch_and_extract_checkout, cleanup_checkout, find_declarations_in_checkout,
+    RepoCheckoutError, fetch_and_extract_checkout, cleanup_checkout,
 )
 
 
@@ -147,8 +144,6 @@ TOOL_AGENT_LOCAL_EDIT_MIN_STEPS = int(os.getenv("TOOL_AGENT_LOCAL_EDIT_MIN_STEPS
 # own ceiling (TOOL_AGENT_NATIVE_MAX_STEPS) and by low-power mode. What keeps a lost or stuck plan turn from running on is the loop's own guards: a call repeated three times ends it,
 # and checkpoints at a third and two thirds of the steps make it submit the plan or name what it still has to read.
 TOOL_AGENT_PLAN_STEPS = int(os.getenv("TOOL_AGENT_PLAN_STEPS", "12"))
-TOOL_AGENT_MAX_RETRY_NUDGES = int(os.getenv("TOOL_AGENT_MAX_RETRY_NUDGES", "1"))
-TOOL_AGENT_MAX_RETRY_NUDGES_DEEP = int(os.getenv("TOOL_AGENT_MAX_RETRY_NUDGES_DEEP", "3"))
 # TOOL_AGENT_PROMPT's {question} used to be filled from ONLY state["messages"][-1] — a real
 # production trace showed this loses a multi-turn task entirely: the instruction ("click the
 # widget icon and verify it works") was given a few turns before the model actually acted on it,
@@ -163,46 +158,6 @@ TOOL_AGENT_HISTORY_MAX_MESSAGES = int(os.getenv("TOOL_AGENT_HISTORY_MAX_MESSAGES
 # The same window for the reasoner, which runs on every turn (see reasoner_node for why it needs one).
 REASONER_HISTORY_MAX_MESSAGES = max(int(os.getenv("REASONER_HISTORY_MAX_MESSAGES", "10")), 2)
 
-# search_code only matches exact literal tokens against GitHub's keyword index — a colloquial
-# or descriptive name shares no tokens at all with a differently-named real file, so rewording
-# the query never helps. A real production trace showed advisory prompt text alone wasn't
-# enough once the model was several steps into repeating this exact mistake (see
-# docs/coding-agent-roadmap.md, "Failure A"); this mechanically escalates after 2 consecutive
-# misses on search_code specifically, regardless of how differently each one was worded.
-TOOL_AGENT_STUCK_ACTION_REDIRECTS = {
-    "search_code": (
-        2,
-        "You have called search_code multiple times in a row with no results. search_code "
-        "only matches exact literal tokens — if the term you're looking for doesn't appear "
-        "verbatim anywhere in the codebase (a colloquial or descriptive name instead of the "
-        "real identifier), rewording the query will not help. Call find_file instead, with "
-        "the same concept — do not call search_code again this turn.",
-    ),
-}
-
-# A second real production trace showed the exact same failure shape recur on a DIFFERENT,
-# unlisted action: list_repo_tree (a no-argument action) 404'd because of a bad repo resolution,
-# and with no entry here for it, the model just kept calling it again with a differently-worded
-# "purpose" each time — technically satisfying "try something different" without being able to
-# change anything that actually mattered, since a no-arg action has nothing to vary. Two
-# independent real instances of "an unlisted tool gets no mechanical backstop at all" is enough
-# to generalize rather than hand-author one more entry and wait for the third: any tool_action not
-# explicitly listed above still gets this generic circuit breaker once its own consecutive-miss
-# streak crosses this threshold — a real answer or a genuinely different tool switches it off, same
-# as the specific entries. The actual threshold/message constants for this live alongside
-# run_react_loop itself now (backend/services/react_loop.py), since nothing outside that loop
-# needs them.
-
-# Built after the extensive diagnostic loop in docs/coding-agent-roadmap.md (Sections 4b-4j) —
-# every one of those traces burned most of a turn's step budget reading files/searching one at a
-# time before ever getting to reason about them. Deliberately restricted to genuinely
-# side-effect-free, independent lookups: run_mongo_query/run_repo_tests/run_snippet are writes or
-# real slow CI dispatches that must never run concurrently with anything else (see _is_unsafe and
-# the admin gates in _act), and every browser_* action is inherently stateful/sequential — a click
-# depends on whatever page a prior navigate actually loaded, so "independent" never applies to them.
-# read_url IS batchable even though its fallback uses the turn's one shared browser session: its
-# plain-HTTP fast path is stateless, and only the rare real-browser fallback is serialized, by a
-# per-turn asyncio.Lock inside url_reader.read_url (the same shape as the repo_checkout.py tarball fix).
 # Menu entries that query GitHub's hosted index of the committed branch — withheld whenever the user
 # has a local folder connected, since that index can't see the folder's (often uncommitted) code.
 _GITHUB_INDEX_ACTIONS_PREFIXES = ("- search_code", "- trace_symbol")
@@ -226,14 +181,6 @@ _UNTRUSTED_CONTENT_TOOLS = frozenset({
     "mcp__maps__find_places",    # Google's summary of places quotes reviews written by other people
     "mcp__maps__travel_times",
 })
-
-TOOL_AGENT_BATCHABLE_ACTIONS = frozenset({
-    "list_repo_tree", "read_repo_file", "search_code", "find_file", "trace_symbol",
-    "search_literal", "diff_branches", "list_commits", "list_pull_requests", "web_search", "run_python",
-    "read_url", "search_library", "list_library_files", "read_library_file", "search_memory",
-})
-# The actual per-step concurrency cap (_MAX_BATCH_SIZE) lives alongside run_react_loop itself now
-# (backend/services/react_loop.py) — nothing outside that loop needs it.
 
 # A real production trace showed a "final" confidently and repeatedly denying browser access
 # ("I don't actually have a live browser tool...") while browser_navigate sat in that exact
@@ -309,7 +256,7 @@ _SEARCH_LITERAL_MAX_FILES_SCANNED = 300
 # find_file's best score below this means nothing is really named like the query (see _find_file).
 _FIND_FILE_WEAK_MATCH_SCORE = 0.7
 
-# Passed to run_react_loop as `required_action` on a turn where the user asked for a change and a
+# Passed to the native loop as `required_action` on a turn where the user asked for a change and a
 # local folder is connected (see tool_agent_node's edit_turn).
 _LOCAL_EDIT_REQUIRED_ACTION = {
     "tool_action": "propose_local_edits",
@@ -1961,7 +1908,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         # turns back — {question} alone (just this turn's message) can't recover that.
         prior_messages = state.get("messages", [])[:-1][-max((state.get("history_max") or 0) - 1, TOOL_AGENT_HISTORY_MAX_MESSAGES):]      # never fewer than before; more when this turn sent more word for word
         formatted_history = format_history(prior_messages) or "(no prior messages this conversation)"
-        # The whole earlier conversation, uncompacted, for the after-answer checks (react_loop.py): code the user showed in an earlier message is not in the
+        # The whole earlier conversation, uncompacted, for the after-answer checks (backend/utils/answer_checks.py): code the user showed in an earlier message is not in the
         # repo, so those checks need it to tell "discussing what you showed me" from "inventing". Not the compacted prompt history above, which cuts long
         # messages short and so would miss most of a pasted file.
         earlier_conversation_text = "\n".join(
@@ -2081,7 +2028,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         # A connected folder AND a message that asks for a change (directly, or as "do it" /
         # "why won't you just make the change" after an earlier request or refusal): the only way
         # to satisfy it is propose_local_edits, so the loop is told so mechanically — see
-        # run_react_loop's required_action.
+        # the native loop's required_action.
         edit_turn = local_workspace_handle is not None and looks_like_edit_request(state.get("messages", [])) and not commit_flow.is_commit_only_request(latest_message_content)
         # Plan mode (backend/utils/code_plan.py). A PLAN turn is read-only and ends in submit_plan; it needs the native engine, which has that tool. An EXECUTE turn carries an approved plan
         # out: "continue" or "go ahead" counts as the edit request it is, with a fresh step budget.
@@ -2090,21 +2037,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         plan_requested = plan_phase == code_plan.PLAN_PHASE and not edit_turn and looks_like_plan_request(state.get("messages", []))
         if plan_requested:
             edit_turn = True
-        if plan_phase == code_plan.PLAN_PHASE:
-            # The same words the engine choice below looks at (the message and the one before it), so a word in the last message cannot send the turn to the old engine, which has no plan card,
-            # after the plan gate said yes. When plan mode is on, the turn is a change request and it still cannot be a plan turn, the person is told why instead of getting no plan in silence.
-            engine_text = recent_user_text(latest_message_content, state.get("messages", []))
-            if not (edit_turn and native_loop.enabled() and not native_loop.needs_old_engine(engine_text, state.get("reasoner_flags"))):
-                if edit_turn:
-                    why = native_loop.old_engine_reason(engine_text, state.get("reasoner_flags")) if native_loop.enabled() else ""
-                    await safe_emit_event("plan_skipped", {"text": (
-                        f"Plan first is on, but this turn skipped it: \"{why}\" in your message sends it to the other engine, which cannot show a plan card. Reword it, or say \"make a plan\" in a new message."
-                        if why else "Plan first is on, but this turn skipped it: the plan engine is not switched on for this server."
-                    )})
-                    logger.info("[tool_agent_node] plan mode was on and the turn was skipped (%s).", why or "engine off")
-                plan_phase = None
-                if plan_requested:
-                    edit_turn = False
+        if plan_phase == code_plan.PLAN_PHASE and not edit_turn:
+            plan_phase = None            # plan mode is for a change request: a plain question during it is answered the ordinary way, with no plan
         if plan_phase == code_plan.EXECUTE_PHASE and not edit_turn and code_plan.reads_as_continue(latest_message_content):
             edit_turn = True
         if plan_phase == code_plan.EXECUTE_PHASE and not edit_turn:
@@ -2189,7 +2123,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
 
         # One CDP session per tool_agent_node call, lazily connected on the first browser_*
         # action and reused by every subsequent one this turn — the finally block around
-        # run_react_loop below closes it exactly once when the loop ends, on every exit path.
+        # the loop call below closes it exactly once when the loop ends, on every exit path.
         # "live_view_emitted" guards the browser_live_view custom event below so it only ever
         # fires once per turn, the moment a LiveURL first becomes available.
         browser_session_holder: dict = {"session": None, "live_view_emitted": False}
@@ -2224,7 +2158,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             # instead would force list_repo_tree/find_file out of _dispatch_github's sync
             # catch-all into their own dedicated _act branches for no real benefit.
             #
-            # The lock is load-bearing, not defensive: a batched "queries" step (react_loop.py)
+            # The lock is load-bearing, not defensive: a step with several calls
             # runs several actions concurrently via asyncio.gather, each on its own thread via
             # asyncio.to_thread. Without serializing here, two threads can both read
             # attempted=False before either sets it, each launching its own full tarball
@@ -2612,7 +2546,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             # One blob fetch, offloaded to a thread so a batch of these can genuinely run
             # concurrently via asyncio.gather instead of one request at a time — the same
             # asyncio.to_thread + asyncio.gather primitive already used for the top-level
-            # batched-actions path (run_react_loop's "queries" batching), pointed at this loop's
+            # batched-actions path (the loop's several calls in one step), pointed at this loop's
             # own blob fetches instead of the model's tool calls.
             try:
                 res = await asyncio.to_thread(
@@ -3162,16 +3096,6 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 "Hands the person your plan for the change instead of editing; call it once, after reading what you need."
             )
         actions_menu = "\n".join(menu_lines)
-        # The ops actions are batchable only for an admin who is actually offered them (they are not even named for anyone else).
-        batchable_actions = TOOL_AGENT_BATCHABLE_ACTIONS | (
-            ops_incidents.BATCHABLE_ACTIONS if is_admin and ops_incidents.ops_available() else frozenset()
-        )
-        prompt_template = TOOL_AGENT_PROMPT.replace("{actions_menu}", actions_menu.replace("{", "{{").replace("}", "}}"))
-        prompt_template = prompt_template.replace("{history}", formatted_history.replace("{", "{{").replace("}", "}}"))
-        prompt_template = prompt_template.replace("{batchable_actions}", ", ".join(sorted(batchable_actions)))
-        prompt_template = prompt_template.replace(
-            "{current_time}", build_agent_time_line(get_user_timezone(username)).replace("{", "{{").replace("}", "}}")
-        )
         coding_preferences = await asyncio.to_thread(fetch_coding_preferences, username)
         # The connected folder's own notes on where things are (.sonic/AGENTS.md, else AGENTS.md or CLAUDE.md): read from the server's copy of the folder, about a thousand tokens, the same every turn so the
         # prompt cache keeps them, and labelled as data (backend/utils/project_guidance.py). It rides with the person's coding preferences, at the stable start of the prompt, for both engines.
@@ -3188,15 +3112,11 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 if lesson_proposals.should_offer(state.get("code_followup"), guidance):
                     coding_preferences = coding_preferences + lesson_proposals.note(guidance)
                     await asyncio.to_thread(record_turn_counts, {"lesson_offered": 1})
-        prompt_template = prompt_template.replace(
-            "{coding_preferences}", coding_preferences.replace("{", "{{").replace("}", "}}")
-        )
         # What memory knows about this request (saved facts and recalled notes), as untrusted background: see backend/services/tool_agent_memory.py.
         # It is "" for most turns, and it lets the agent understand a reference to a project or setup that is not in the connected repository.
         user_memory = await build_user_memory_block(username, latest_message_content, state.get("messages"), memory_vector_store)
         if user_memory:
             await safe_emit_event("trace_detail", {"node": "tool_agent_node", "title": "Recalled relevant memory", "detail": "Found saved context about this request."})
-        prompt_template = prompt_template.replace("{user_memory}", user_memory.replace("{", "{{").replace("}", "}}"))
         # On a turn that carries remembered text, a rule in code (not the model's judgment) decides what that text can never cause: a database query
         # the user did not ask for, a read of stored memory, a fetch from a site the user did not name. Applied in _counted_act, so both engines obey it.
         memory_guard = None
@@ -3204,20 +3124,6 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         memory_guard_text = "\n".join([latest_message_content] + prior_user_text)
         if user_memory:
             memory_guard = MemoryTurnGuard(memory_guard_text)
-
-        async def _lookup_existing_declarations(names: list) -> dict:
-            # Whole-repo view for run_react_loop's "your code redeclares something that already
-            # exists" gate. Only possible with a local checkout (the API fallback has no cheap way
-            # to scan every file), in which case the gate simply doesn't run — never a new
-            # failure mode. _get_checkout() may block on a first-time download, so it runs in a
-            # thread like every other blocking checkout access in this function.
-            def _scan() -> dict:
-                handle = _get_checkout()
-                if handle is None:
-                    return {}
-                return find_declarations_in_checkout(handle.root, names)
-
-            return await asyncio.to_thread(_scan)
 
         def _is_unsafe(decision: dict) -> bool:
             if decision.get("tool_action") in {"propose_append_target_doc", "propose_send_email", "propose_commit", "propose_merge"}:
@@ -3262,7 +3168,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 await asyncio.to_thread(record_turn_counts, {"guidance_edit_proposed": 1})      # a rule (or any change) for the project's guidance file was put in front of the person
             # The native loop waits here for the person's decision and carries on with it; the page says it can report one (edit_decisions). Anything else ends the turn with the
             # card, as it always did.
-            waiting = bool(state.get("edit_decisions")) and use_native and local_edit_decisions.enabled()
+            waiting = bool(state.get("edit_decisions")) and local_edit_decisions.enabled()
             if waiting:
                 local_edit_decisions.register(username, proposal_id)
             await safe_emit_event("local_edit_proposal", {
@@ -3825,7 +3731,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 # run_python_sandboxed always returns {"output", "error"} and never raises —
                 # normalized to this loop's own "ERROR: ..." string convention (used by every
                 # other action) so a failed run gets picked up by the retry-nudge tracking in
-                # run_react_loop the same way a failed GitHub/Mongo call already does.
+                # the loop the same way a failed GitHub/Mongo call already does.
                 sandbox_result = await run_python_sandboxed(args.get("code", "") or "")
                 if sandbox_result.get("error"):
                     return f"ERROR: {sandbox_result['error']}"
@@ -3916,33 +3822,17 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 },
             )
 
-        # The native tool-calling engine (backend/services/native_loop.py): a measured spike behind TOOL_AGENT_ENGINE=native. It runs only
-        # when this turn needs nothing but the read-only tools it can offer; everything else keeps the ReAct loop.
-        native_tools = native_tools_module.declarations_from_menu(menu_lines) if native_loop.enabled() else []
-        if place_tools and native_loop.enabled():
+        # The native tool-calling engine (backend/services/native_loop.py) runs every tool-agent turn: the old ReAct loop and the switch between them are gone (docs/react-sunset-plan.md).
+        # The request and the one thing the person said before it ("yes, do it" after asking about something is still that request): the leanings lookup reads it.
+        engine_user_text = recent_user_text(latest_message_content, state.get("messages", []))
+        native_tools = native_tools_module.declarations_from_menu(menu_lines)
+        if place_tools:
             native_tools = native_tools + maps_tools.declarations()       # our two small tools, never the service's own (the menu line alone is not enough: they are not in the fixed registry)
         if plan_phase == code_plan.PLAN_PHASE:
             native_tools = [tool for tool in native_tools if tool.get("name") in _PLAN_TURN_TOOLS]     # read-only: nothing here can change the folder
-        # The request and the one thing the person said before it: "yes, do it" after asking about an email is still an email request.
-        # (Only one message back: people discuss "the database" or "email" as code topics all the time, and every match sends the turn
-        # to the dearer old engine.)
-        engine_user_text = recent_user_text(latest_message_content, state.get("messages", []))
-        engine_inputs = dict(
-            # The native engine offers propose_local_edits too (backend/services/native_tools.py), so a change request with a folder connected stays on it; only when that tool is
-            # missing from its menu does an edit turn go to the old engine.
-            edit_turn=edit_turn and plan_phase != code_plan.PLAN_PHASE and not any(tool.get("name") == "propose_local_edits" for tool in native_tools), tools=native_tools,
-            text=engine_user_text, flags=state.get("reasoner_flags"),
-        )
-        use_native = native_loop.eligible(**engine_inputs)
-        if not use_native:
-            # Why this turn is on the old loop, as a category (never the words that matched): what is left to move before that loop is deleted (docs/react-sunset-plan.md).
-            from backend.utils.self_counters import record_turn_counts
-            await asyncio.to_thread(record_turn_counts, {f"engine_react_{native_loop.react_reason(**engine_inputs)}": 1})
         # Counted per turn (backend/utils/llm_turns.py): which engine ran, and what switched deep mode on: the user's setting, the
         # audit-style wording of the message, or both (and whether low-power mode held it back).
-        llm_turns.note_tool_agent(
-            "native" if use_native else "react", bool(state.get("deep_thinking")), is_audit_task, low_power,
-        )
+        llm_turns.note_tool_agent("native", bool(state.get("deep_thinking")), is_audit_task, low_power)
 
         async def _counted_act(decision: dict):
             """The dispatcher, counting which tool was called and whether it came back as an error (names only: backend/utils/llm_turns.py)."""
@@ -4018,9 +3908,10 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 steering_source=kwargs.get("steering_source"), on_steering_applied=kwargs.get("on_steering_applied"),
                 library_allowance=kwargs.get("library_allowance"), is_unsafe=kwargs.get("is_unsafe"),
                 leanings=await _leanings_block(),
+                capability_denial_watchlist=kwargs.get("capability_denial_watchlist"), conversation_text=kwargs.get("conversation_text") or "",   # the answer checks ported from the old loop (backend/utils/answer_checks.py)
                 plan_budget=code_plan.PlanBudget(await asyncio.to_thread(code_plan.load, get_db(), username, state.get("session_id") or "")) if plan_phase == code_plan.EXECUTE_PHASE else None,
                 # With a folder connected: where reads come from (the folder, not GitHub) and, on a request for a change, the same "you must propose it" rule the old loop enforces.
-                environment_note=schema if local_workspace_handle is not None else "", required_action=kwargs.get("required_action"),
+                environment_note=schema, required_action=kwargs.get("required_action"),
                 shorten_old=not (isinstance(kwargs["llm"], ClaudeLLM) and kwargs["llm"].caches_prompt),   # a model that caches the conversation keeps old results whole (native_loop.py)
             )
 
@@ -4028,10 +3919,9 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         library_allowance = LibraryAllowance(enabled=not budget_guard.low_power(budget_state)) if library_scope else None
         try:
             try:
-                loop_result = await (_native_engine if use_native else run_react_loop)(
+                loop_result = await _native_engine(
                     question=msg + (f"\n\n{code_plan.PLAN_RULES}" if plan_phase == code_plan.PLAN_PHASE else "") + (await _plan_files_block() if plan_phase == code_plan.EXECUTE_PHASE else ""),
                     schema=schema,
-                    prompt_template=prompt_template,
                     act=_counted_act,
                     is_unsafe=_is_unsafe,
                     max_iterations=budget_guard.tool_steps(
@@ -4039,23 +3929,12 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                             TOOL_AGENT_PLAN_STEPS if plan_phase == code_plan.PLAN_PHASE else 0),
                         budget_state,
                     ),
-                    node_name="tool_agent_node",
-                    max_retry_nudges=TOOL_AGENT_MAX_RETRY_NUDGES_DEEP if wide_budget else TOOL_AGENT_MAX_RETRY_NUDGES,
                     llm=tool_agent_llm(bool(deep_thinking), tool_model_choice),
-                    stuck_action_redirects=TOOL_AGENT_STUCK_ACTION_REDIRECTS,
                     capability_denial_watchlist=TOOL_AGENT_CAPABILITY_DENIAL_WATCHLIST,
-                    architecture_map=architecture_map,
-                    batchable_actions=batchable_actions,
-                    declaration_lookup=_lookup_existing_declarations,
-                    # With a connected folder, a proposed edit is checked against the real file
-                    # (exact-once match) on the server and again in the browser, so a deliberate
-                    # mid-file read can't produce a fabricated edit — don't force reading to EOF.
-                    partial_read_windows_ok=local_workspace_handle is not None,
                     required_action=_PLAN_REQUIRED_ACTION if plan_phase == code_plan.PLAN_PHASE else (_LOCAL_EDIT_REQUIRED_ACTION if edit_turn else None),
                     steering_source=lambda: steering.drain(steering_key),
                     on_steering_applied=_on_steering_applied,
                     conversation_text=earlier_conversation_text,
-                    saved_notes=user_memory,
                     library_allowance=library_allowance,
                 )
             except _UnsafeActionRequested as e:

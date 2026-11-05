@@ -12,6 +12,8 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 from backend.services import agent_workflow as aw
 from backend.services import repo_checkout as rc
+from backend.tests import legacy_loop
+from backend.tests.legacy_loop import react_style
 
 
 def run_async(fn):
@@ -143,7 +145,7 @@ async def test_bad_extracted_repo_falls_back_to_default_and_notifies_model(monke
         captured_kwargs.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     await aw.tool_agent_node(_state("show me the updated functions/diffs for the refactor"))
 
@@ -174,7 +176,7 @@ async def test_genuinely_inaccessible_repo_warns_instead_of_looping_silently(mon
         captured_kwargs.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     await aw.tool_agent_node(_state("where is the login flow implemented?"))
 
@@ -191,7 +193,7 @@ async def test_successful_repo_resolution_adds_no_note(monkeypatch):
         captured_kwargs.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     await aw.tool_agent_node(_state("where is the login flow implemented?"))
 
@@ -243,9 +245,8 @@ async def test_run_python_dispatches_to_sandbox_and_normalizes_errors(monkeypatc
     result = await aw.tool_agent_node(_state("what's 6 times 7?"))
 
     assert "42" in result["content_to_format"]
-    # The sandbox's structured {"output","error"} result is normalized into this loop's own
-    # "ERROR: ..." string convention for a failure so retry-nudge tracking picks it up.
-    assert "ERROR" not in result["content_to_format"].split("**Result:**")[1][:50]
+    # The sandbox's structured {"output","error"} result reaches the model as plain text, and a success is not marked as an "ERROR: ..." string.
+    assert "42" in legacy_loop.observed() and "ERROR" not in legacy_loop.observed()
 
 
 @run_async
@@ -729,7 +730,7 @@ async def test_non_admin_cannot_execute_mongo_action_even_if_returned(monkeypatc
 
     result = await aw.tool_agent_node(_state())
 
-    assert "not authorized" in result["content_to_format"].lower()
+    assert "is not an available tool" in legacy_loop.observed()
 
 
 @run_async
@@ -751,7 +752,7 @@ async def test_non_admin_action_menu_never_includes_run_repo_tests(monkeypatch):
     # "if available to you (admin only)"), so check for the actual actionable menu entry
     # (its args shape) rather than the bare word, which is what actually determines whether the
     # model can call it.
-    assert all("run_repo_tests — args:" not in p for p in captured_prompts)
+    assert all("run_repo_tests — " not in p for p in captured_prompts)
 
 
 @run_async
@@ -770,7 +771,7 @@ async def test_admin_action_menu_includes_run_repo_tests(monkeypatch):
 
     await aw.tool_agent_node(_state("does the fix for X actually work?"))
 
-    assert any("run_repo_tests — args:" in p for p in captured_prompts)
+    assert any("run_repo_tests — " in p for p in captured_prompts)
 
 
 @run_async
@@ -787,7 +788,7 @@ async def test_non_admin_cannot_execute_run_repo_tests_even_if_returned(monkeypa
 
     result = await aw.tool_agent_node(_state())
 
-    assert "not authorized" in result["content_to_format"].lower()
+    assert "is not an available tool" in legacy_loop.observed()
 
 
 @run_async
@@ -837,7 +838,7 @@ async def test_non_admin_action_menu_never_includes_run_snippet(monkeypatch):
 
     await aw.tool_agent_node(_state("does this function actually work?"))
 
-    assert all("run_snippet — args:" not in p for p in captured_prompts)
+    assert all("run_snippet — " not in p for p in captured_prompts)
 
 
 @run_async
@@ -856,7 +857,7 @@ async def test_admin_action_menu_includes_run_snippet(monkeypatch):
 
     await aw.tool_agent_node(_state("does this function actually work?"))
 
-    assert any("run_snippet — args:" in p for p in captured_prompts)
+    assert any("run_snippet — " in p for p in captured_prompts)
 
 
 @run_async
@@ -881,7 +882,7 @@ async def test_run_snippet_menu_text_forbids_hand_rolled_stand_ins(monkeypatch):
     await aw.tool_agent_node(_state("does this function actually work?"))
 
     assert any(
-        "MUST import and call the real function/module" in p and "hand-rolled stand-in" in p
+        "must import and call the real function" in p and "a stand-in proves nothing" in p
         for p in captured_prompts
     )
 
@@ -900,7 +901,7 @@ async def test_non_admin_cannot_execute_run_snippet_even_if_returned(monkeypatch
 
     result = await aw.tool_agent_node(_state())
 
-    assert "not authorized" in result["content_to_format"].lower()
+    assert "is not an available tool" in legacy_loop.observed()
 
 
 @run_async
@@ -978,28 +979,6 @@ async def test_show_work_false_omits_the_steps_footer(monkeypatch):
     assert "Step 1" not in result["content_to_format"]
 
 
-@run_async
-async def test_show_work_true_includes_the_steps_footer(monkeypatch):
-    _setup_github_repo(monkeypatch)
-    responses = [
-        _llm_response(action="query", purpose="Check the tests directory", tool_action="list_repo_tree", args={}),
-        _llm_response(action="final", answer="Here's what I verified.", show_work=True),
-    ]
-    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
-    monkeypatch.setattr(
-        aw.requests, "get",
-        lambda url, headers=None, params=None, **kwargs: (
-            _http_response(200, {"default_branch": "main"}) if url.endswith("/repos/SummonShenron/SAAPP")
-            else _http_response(200, {"tree": [{"path": "app.py", "type": "blob"}]})
-        ),
-    )
-
-    result = await aw.tool_agent_node(_state("can you verify the test suite covers this?"))
-
-    assert "Here's what I verified." in result["content_to_format"]
-    assert "Step 1" in result["content_to_format"]
-    assert "Check the tests directory" in result["content_to_format"]
-
 
 # ---------------------------------------------------------------------------
 # Deep thinking (per-user setting) raises the step cap + retry-nudge budget
@@ -1014,32 +993,15 @@ async def test_deep_thinking_off_uses_standard_loop_limits(monkeypatch):
         captured_kwargs.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     state = _state("what does this repo do?")
     state["deep_thinking"] = False
     await aw.tool_agent_node(state)
 
     assert captured_kwargs["max_iterations"] == aw.TOOL_AGENT_MAX_ITERATIONS
-    assert captured_kwargs["max_retry_nudges"] == aw.TOOL_AGENT_MAX_RETRY_NUDGES
     assert captured_kwargs["llm"] is aw.lite_llm
 
-
-@run_async
-async def test_stuck_action_redirects_passed_to_react_loop(monkeypatch):
-    _setup_github_repo(monkeypatch)
-    captured_kwargs = {}
-
-    async def fake_run_react_loop(**kwargs):
-        captured_kwargs.update(kwargs)
-        return {"final_answer": "done", "attempts": [], "show_work": False}
-
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
-
-    await aw.tool_agent_node(_state("what does this repo do?"))
-
-    assert captured_kwargs["stuck_action_redirects"] is aw.TOOL_AGENT_STUCK_ACTION_REDIRECTS
-    assert "search_code" in captured_kwargs["stuck_action_redirects"]
 
 
 @run_async
@@ -1053,16 +1015,15 @@ async def test_deep_thinking_missing_from_state_defaults_to_standard_limits(monk
         captured_kwargs.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     await aw.tool_agent_node(_state("what does this repo do?"))
 
     assert captured_kwargs["max_iterations"] == aw.TOOL_AGENT_MAX_ITERATIONS
-    assert captured_kwargs["max_retry_nudges"] == aw.TOOL_AGENT_MAX_RETRY_NUDGES
 
 
 @run_async
-async def test_deep_thinking_on_raises_step_cap_and_retry_nudge_budget(monkeypatch):
+async def test_deep_thinking_on_raises_step_cap(monkeypatch):
     _setup_github_repo(monkeypatch)
     captured_kwargs = {}
 
@@ -1070,17 +1031,15 @@ async def test_deep_thinking_on_raises_step_cap_and_retry_nudge_budget(monkeypat
         captured_kwargs.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     state = _state("what does this repo do?")
     state["deep_thinking"] = True
     await aw.tool_agent_node(state)
 
     assert captured_kwargs["max_iterations"] == aw.TOOL_AGENT_MAX_ITERATIONS_DEEP
-    assert captured_kwargs["max_retry_nudges"] == aw.TOOL_AGENT_MAX_RETRY_NUDGES_DEEP
     assert captured_kwargs["llm"] is aw.lite_llm_deep
     assert aw.TOOL_AGENT_MAX_ITERATIONS_DEEP > aw.TOOL_AGENT_MAX_ITERATIONS
-    assert aw.TOOL_AGENT_MAX_RETRY_NUDGES_DEEP > aw.TOOL_AGENT_MAX_RETRY_NUDGES
 
 
 # ---------------------------------------------------------------------------
@@ -1337,126 +1296,9 @@ async def test_definition_index_survives_even_with_many_top_level_defs(monkeypat
 # note's own prose.
 # ---------------------------------------------------------------------------
 
-def test_mentions_unresolved_truncation_detects_both_read_file_variants():
-    # Exercises the real truncation note text directly rather than re-deriving it by hand.
-    assert aw._mentions_unresolved_truncation(
-        "... [truncated — this file has 500 lines total, too long to show in full. "
-        "Top-level definitions found in it:\nfoo (line 1)\nCall read_repo_file again with "
-        "start_line set to the one you actually need — do not assume the file's contents "
-        "past this point from general knowledge of what a file like this usually contains.]"
-    )
-    assert aw._mentions_unresolved_truncation(
-        "... [truncated — this file has 500 lines total; re-call with a start_line to read "
-        "further into it instead of guessing what comes next.]"
-    )
 
 
-def test_mentions_unresolved_truncation_detects_windowed_read_with_more_remaining():
-    # A second real trace immediately exposed a gap in the first fix: forced to retry, the
-    # model correctly called read_repo_file WITH a start_line — but a windowed read that still
-    # has more content below emits a THIRD, different message shape than the two "whole file
-    # too long" variants above, and it wasn't covered.
-    assert aw._mentions_unresolved_truncation(
-        "URL: https://github.com/x/y\nLines 400-549 of 4552 total:\n...\n"
-        "... [4003 more lines below — re-call with a higher start_line to keep reading]"
-    )
 
-
-def test_mentions_unresolved_truncation_negative_for_unrelated_text():
-    assert not aw._mentions_unresolved_truncation("URL: https://github.com/x/y\nimport os\n")
-    # The OTHER, unrelated truncation mechanism (_truncate_observation, for huge Mongo results
-    # etc.) uses different wording and must not false-positive here — re-reading with start_line
-    # makes no sense for that case since it isn't a read_repo_file pagination situation at all.
-    assert not aw._mentions_unresolved_truncation("... [truncated — 5000 total characters]")
-    # A windowed read that reaches the actual end of the file has no "more lines below" note at
-    # all (see _read_file's more_note logic) — must not false-positive on an ordinary complete read.
-    assert not aw._mentions_unresolved_truncation(
-        "URL: https://github.com/x/y\nLines 4500-4552 of 4552 total:\nasync def last_function():\n    pass\n"
-    )
-
-
-@run_async
-async def test_final_after_truncated_read_is_rejected_once_then_accepted(monkeypatch):
-    """The exact real production failure this closes: a truncated read_repo_file result, then
-    a confident 'final' with 3 full steps of budget still unused — no crash, no budget
-    exhaustion, just a premature stop. The retry-nudge machinery (already used for ERROR/empty
-    observations) must reject that first 'final' and force a real re-read with start_line."""
-    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
-    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
-    big_content, _ = _build_large_file_fixture()
-    repo_resp = _http_response(200, {"default_branch": "main"})
-    file_resp = _http_response(200, {"content": _b64(big_content)})
-
-    def fake_get(url, headers=None, params=None, **kwargs):
-        if url.endswith("/repos/SummonShenron/SAAPP"):
-            return repo_resp
-        if url.endswith("/contents/backend/services/agent_workflow.py"):
-            return file_resp
-        raise AssertionError(f"Unexpected GET: {url}")
-
-    monkeypatch.setattr(aw.requests, "get", fake_get)
-    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
-
-    responses = [
-        _llm_response(action="query", purpose="Read the file", tool_action="read_repo_file", args={"path": "backend/services/agent_workflow.py"}),
-        _llm_response(action="final", answer="Premature — proposing changes based on the truncated snippet alone."),
-        # start_line=360 reaches the true end of this 509-line fixture (360 + 150 - 1 = 509) —
-        # a genuinely complete read, not just a different-but-still-incomplete one (see
-        # test_final_rejected_again_if_the_retry_read_is_still_incomplete for that case).
-        _llm_response(action="query", purpose="Actually read further as instructed", tool_action="read_repo_file", args={"path": "backend/services/agent_workflow.py", "start_line": 360}),
-        _llm_response(action="final", answer="Now grounded in the real content."),
-    ]
-    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
-
-    result = await aw.tool_agent_node(_state("what does memory_save_node do?"))
-
-    assert "Now grounded in the real content." in result["content_to_format"]
-
-
-@run_async
-async def test_final_rejected_again_if_the_retry_read_is_still_incomplete(monkeypatch):
-    """The exact real production failure the "more lines below" widening closes: forced to
-    retry after a truncated whole-file read, the model correctly re-called with a start_line —
-    but that windowed read was ITSELF still incomplete (more content below), and under deep
-    thinking's multi-nudge budget it must be rejected AGAIN, not accepted just because it
-    technically used a different start_line once already. Only a read that actually reaches
-    the end of the file may be followed by an accepted final."""
-    monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
-    monkeypatch.setenv("GITHUB_TOKEN", "fake-token")
-    big_content, _ = _build_large_file_fixture()  # 509 lines total
-    repo_resp = _http_response(200, {"default_branch": "main"})
-    file_resp = _http_response(200, {"content": _b64(big_content)})
-
-    def fake_get(url, headers=None, params=None, **kwargs):
-        if url.endswith("/repos/SummonShenron/SAAPP"):
-            return repo_resp
-        if url.endswith("/contents/backend/services/agent_workflow.py"):
-            return file_resp
-        raise AssertionError(f"Unexpected GET: {url}")
-
-    monkeypatch.setattr(aw.requests, "get", fake_get)
-    monkeypatch.setattr(aw, "extract_github_repo", lambda text, fallback="SummonShenron/SAAPP": "SummonShenron/SAAPP")
-
-    responses = [
-        _llm_response(action="query", purpose="Read the file", tool_action="read_repo_file", args={"path": "backend/services/agent_workflow.py"}),
-        _llm_response(action="final", answer="Premature #1 — from the truncated whole-file snippet."),
-        # Still incomplete: start_line=260 + the default 150-line window ends at line 409, well
-        # short of this fixture's 509 total lines.
-        _llm_response(action="query", purpose="Retry with start_line", tool_action="read_repo_file", args={"path": "backend/services/agent_workflow.py", "start_line": 260}),
-        _llm_response(action="final", answer="Premature #2 — still hasn't reached the real content."),
-        # Reaches the true end this time (360 + 150 - 1 = 509 = total lines) — genuinely complete.
-        _llm_response(action="query", purpose="Retry again, further this time", tool_action="read_repo_file", args={"path": "backend/services/agent_workflow.py", "start_line": 360}),
-        _llm_response(action="final", answer="Now genuinely grounded in the full content."),
-    ]
-    monkeypatch.setattr(aw.lite_llm_deep, "ainvoke", AsyncMock(side_effect=responses))
-
-    state = _state("what does memory_save_node do?")
-    state["deep_thinking"] = True
-    result = await aw.tool_agent_node(state)
-
-    assert "Now genuinely grounded in the full content." in result["content_to_format"]
-    assert "Premature #1" not in result["content_to_format"]
-    assert "Premature #2" not in result["content_to_format"]
 
 
 @run_async
@@ -1727,9 +1569,8 @@ async def test_stack_trace_escalates_from_repo_to_web_search(monkeypatch):
     )
     result = await aw.tool_agent_node(_state(f"I'm getting this error, can you help?\n{stack_trace}"))
 
-    # Both steps actually happened and both are cited in the transparency footer.
-    assert "read_repo_file" in result["content_to_format"]
-    assert "web_search" in result["content_to_format"]
+    # Both steps actually happened, in order.
+    assert legacy_loop.CALLS == ["read_repo_file", "web_search"]
     assert "unreachable MongoDB URI" in result["content_to_format"]
     assert result["relevance_grade"] == "tool_agent"
 
@@ -1820,7 +1661,7 @@ async def test_browser_navigate_dispatches_and_returns_observation(monkeypatch):
 
     fake_navigate.assert_awaited_once()
     assert fake_navigate.call_args.args[1] == "https://sonicassistant.com"
-    assert "Sonic Assistant" in result["content_to_format"]
+    assert "Sonic Assistant" in legacy_loop.observed()
 
 
 @run_async
@@ -2074,8 +1915,8 @@ async def test_find_file_with_only_weak_matches_points_to_search_literal(monkeyp
         ["backend/services/memory_search.py", "backend/services/search.py", "local/src/pages/Chat.tsx"],
     )
 
-    assert "weak matches" in text
-    assert "search_literal" in text
+    assert "weak matches" in legacy_loop.observed()
+    assert "search_literal" in legacy_loop.observed()
 
 
 @run_async
@@ -2084,8 +1925,8 @@ async def test_find_file_with_a_strong_match_gets_no_hint(monkeypatch):
         monkeypatch, "Chat.tsx", ["local/src/pages/Chat.tsx", "backend/services/search.py"],
     )
 
-    assert "Chat.tsx" in text
-    assert "weak matches" not in text
+    assert "Chat.tsx" in legacy_loop.observed()
+    assert "weak matches" not in legacy_loop.observed()
 
 
 @run_async
@@ -2131,7 +1972,7 @@ async def test_visual_inspection_question_gets_browser_directive_injected(monkey
         captured_kwargs.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     await aw.tool_agent_node(_state(
         "can you inspect the actual page to find the z-index issue between the "
@@ -2151,7 +1992,7 @@ async def test_non_visual_question_gets_no_browser_directive(monkeypatch):
         captured_kwargs.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     await aw.tool_agent_node(_state("how does the goal nudge check-in work?"))
 
@@ -2368,7 +2209,7 @@ async def test_search_literal_is_case_insensitive_and_prints_the_real_casing(mon
 
     result = await aw.tool_agent_node(_state("where is the trace panel text"))
 
-    text = result["content_to_format"]
+    text = legacy_loop.observed()
     assert "Chat.tsx:2: : 'Waiting for the first execution step...'}" in text
     assert "No occurrences" not in text
 
@@ -2849,7 +2690,7 @@ async def test_checkout_is_cleaned_up_even_when_the_turn_raises_mid_loop(monkeyp
         await kwargs["act"]({"tool_action": "list_repo_tree", "args": {}, "purpose": "test"})
         raise RuntimeError("simulated mid-loop crash")
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     assert os.path.exists(handle.tempdir)
     with pytest.raises(RuntimeError):
@@ -2940,7 +2781,7 @@ async def test_audit_style_task_gets_deep_iteration_budget(monkeypatch):
         captured_kwargs.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     await aw.tool_agent_node(_state(
         "scan the repo and plan a refactor — tell me every file we need to touch"
@@ -2958,7 +2799,7 @@ async def test_ordinary_task_keeps_normal_iteration_budget(monkeypatch):
         captured_kwargs.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     await aw.tool_agent_node(_state("where is the login flow implemented?"))
 
@@ -3227,7 +3068,7 @@ async def test_audit_task_readme_is_injected_before_the_search_nudge(monkeypatch
         captured_kwargs.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     await aw.tool_agent_node(_state("scan the repo — tell me every file that touches process_pr_summary"))
 
@@ -3269,7 +3110,7 @@ async def test_audit_task_gets_architecture_map_injected_into_prompt(monkeypatch
         captured_kwargs.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     await aw.tool_agent_node(_state("scan the repo — tell me every file that touches process_pr_summary"))
 
@@ -3285,7 +3126,7 @@ async def test_ordinary_task_gets_no_architecture_map(monkeypatch):
         captured_kwargs.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     await aw.tool_agent_node(_state("where is the login flow implemented?"))
 
@@ -3305,7 +3146,7 @@ async def test_audit_task_gets_search_literal_nudge_even_with_no_internal_import
         captured_kwargs.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     await aw.tool_agent_node(_state("audit the repo — find every place get_db is used"))
 
@@ -3336,7 +3177,7 @@ async def test_audit_task_gets_search_literal_nudge_even_if_tree_fetch_fails(mon
         captured_kwargs.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     await aw.tool_agent_node(_state("audit the repo — find every place get_db is used"))
 
@@ -3361,7 +3202,7 @@ async def test_history_is_threaded_into_tool_agent_prompt(monkeypatch):
         captured_kwargs.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     state = {
         "username": "jack",
@@ -3374,7 +3215,7 @@ async def test_history_is_threaded_into_tool_agent_prompt(monkeypatch):
     }
     await aw.tool_agent_node(state)
 
-    assert "click the chat widget icon" in captured_kwargs["prompt_template"]
+    assert "click the chat widget icon" in captured_kwargs["history"]
 
 
 @run_async
@@ -3390,12 +3231,12 @@ async def test_coding_preferences_are_threaded_into_tool_agent_prompt(monkeypatc
         captured_kwargs.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     await aw.tool_agent_node(_state("fix the failing test"))
 
-    assert "KNOWN CODING PREFERENCES" in captured_kwargs["prompt_template"]
-    assert "Never use --no-verify." in captured_kwargs["prompt_template"]
+    assert "KNOWN CODING PREFERENCES" in captured_kwargs["coding_preferences"]
+    assert "Never use --no-verify." in captured_kwargs["coding_preferences"]
 
 
 @run_async
@@ -3411,11 +3252,11 @@ async def test_no_coding_preferences_leaves_no_placeholder_artifact(monkeypatch)
         captured_kwargs.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     await aw.tool_agent_node(_state("fix the failing test"))
 
-    assert "{coding_preferences}" not in captured_kwargs["prompt_template"]
+    assert "{coding_preferences}" not in captured_kwargs["coding_preferences"]
 
 
 @run_async
@@ -3427,7 +3268,7 @@ async def test_history_is_capped_at_max_messages(monkeypatch):
         captured_kwargs.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     old_messages = [HumanMessage(content=f"ancient message {i} — should be dropped") for i in range(20)]
     state = {
@@ -3440,8 +3281,8 @@ async def test_history_is_capped_at_max_messages(monkeypatch):
     }
     await aw.tool_agent_node(state)
 
-    assert "recent message — should be kept" in captured_kwargs["prompt_template"]
-    assert "ancient message 0 — should be dropped" not in captured_kwargs["prompt_template"]
+    assert "recent message — should be kept" in captured_kwargs["history"]
+    assert "ancient message 0 — should be dropped" not in captured_kwargs["history"]
 
 
 @run_async
@@ -3453,11 +3294,11 @@ async def test_history_fallback_text_on_first_message(monkeypatch):
         captured_kwargs.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     await aw.tool_agent_node(_state("what does this repo do?"))
 
-    assert "(no prior messages this conversation)" in captured_kwargs["prompt_template"]
+    assert "(no prior messages this conversation)" in captured_kwargs["history"]
 
 
 # ---------------------------------------------------------------------------
@@ -3475,7 +3316,7 @@ async def test_capability_denial_watchlist_passed_to_react_loop(monkeypatch):
         captured_kwargs.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     await aw.tool_agent_node(_state("what does this repo do?"))
 
@@ -3551,18 +3392,6 @@ async def test_tool_agent_node_executes_a_real_batch_of_independent_reads(monkey
     assert "A_CONTENT" in result["content_to_format"]
     assert "B_CONTENT" in result["content_to_format"]
 
-
-def test_tool_agent_prompt_documents_the_real_batchable_actions():
-    # The prompt's {batchable_actions} placeholder must actually get replaced with the real
-    # TOOL_AGENT_BATCHABLE_ACTIONS constant, not left as a literal unresolved placeholder (which
-    # would either crash prompt_template.format() or silently show the model a broken schema).
-    assert "run_mongo_query" not in aw.TOOL_AGENT_BATCHABLE_ACTIONS
-    assert "run_snippet" not in aw.TOOL_AGENT_BATCHABLE_ACTIONS
-    batchable_text = ", ".join(sorted(aw.TOOL_AGENT_BATCHABLE_ACTIONS))
-    filled = aw.TOOL_AGENT_PROMPT.replace("{batchable_actions}", batchable_text)
-    assert "{batchable_actions}" not in filled
-    assert "read_repo_file" in filled
-    assert batchable_text in filled
 
 
 # ---------------------------------------------------------------------------
@@ -3746,7 +3575,3 @@ async def test_menu_frames_read_url_as_the_default_for_reading_and_the_browser_f
     # The capability watchlist's menu-line proof for the browser must still match.
     assert "- browser_navigate —" in prompt
 
-
-def test_read_url_is_batchable_but_browser_actions_stay_sequential():
-    assert "read_url" in aw.TOOL_AGENT_BATCHABLE_ACTIONS
-    assert not any(a.startswith("browser_") for a in aw.TOOL_AGENT_BATCHABLE_ACTIONS)

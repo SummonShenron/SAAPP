@@ -74,44 +74,11 @@ def _react(responses, max_iterations=6):
     return asyncio.run(go()), prompts
 
 
-def test_reading_without_a_draft_gets_the_halfway_nudge_but_not_before_halfway():
-    _, prompts = _react([_read("a.py"), _read("b.py"), _read("c.py"), _read("d.py"), _read("e.py"), _final("done")])
-    assert "Halfway" not in prompts[0] and "Halfway" not in prompts[1]
-    assert "Halfway" in prompts[2]                                      # step 3 of 5 tool steps, with two files read
-    assert "Halfway" not in prompts[-1]                                 # the forced last step carries the final notice instead
 
 
-def test_a_draft_on_a_step_is_shown_back_at_every_later_step_and_stops_the_nudge():
-    _, prompts = _react([_read("a.py"), _read("b.py", draft="def route():\n    return 1"), _read("c.py"), _read("d.py"), _read("e.py"), _final("done")])
-    assert "YOUR DRAFT SO FAR" not in prompts[1]
-    assert all("def route():" in prompt and "YOUR DRAFT SO FAR" in prompt for prompt in prompts[2:])
-    assert all("Halfway" not in prompt for prompt in prompts)
 
 
-def test_a_corrected_draft_replaces_the_earlier_one():
-    _, prompts = _react([_read("a.py", draft="first version"), _read("b.py", draft="second version"), _read("c.py"), _final("done")], max_iterations=5)
-    assert "first version" in prompts[1] and "second version" not in prompts[1]
-    assert "second version" in prompts[2] and "first version" not in prompts[2]
 
-
-def test_the_forced_last_step_is_told_to_start_from_the_draft():
-    _, prompts = _react([_read("a.py", draft="def route(): ..."), _read("b.py"), _read("c.py"), _final("done")], max_iterations=4)
-    assert "Start your answer from it" in prompts[-1] and "def route(): ..." in prompts[-1]
-
-
-def test_a_final_does_not_keep_a_draft_and_the_answer_is_returned_as_given():
-    result, _ = _react([_read("a.py"), _final("the answer", draft="ignored")])
-    assert result["final_answer"] == "the answer"
-
-
-def test_a_loop_cut_off_with_no_answer_returns_the_draft_labelled_as_unfinished():
-    result, _ = _react([_read("a.py", draft="def route(): ..."), _read("b.py"), _read("c.py"), _final("")], max_iterations=4)
-    assert result["final_answer"].startswith(dc.UNFINISHED_LABEL) and "def route(): ..." in result["final_answer"]
-
-
-def test_the_prompt_schema_documents_the_draft():
-    from backend.components.constraints import TOOL_AGENT_PROMPT
-    assert '"draft"' in TOOL_AGENT_PROMPT and "DRAFTING A CHANGE" in TOOL_AGENT_PROMPT
 
 
 # ---- the native loop --------------------------------------------------------------------------------------------------------------------------------------

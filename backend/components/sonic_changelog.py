@@ -1143,7 +1143,7 @@ CHANGELOG = [
     {
         "id": "clarify_and_resume",
         "requires": [
-            "backend/components/constraints.py::Ask the user a question in your \"final\" answer only when",
+            "backend/services/native_loop.py::Ask the user a question in your answer only when",
         ],
         "month": "2026-09",
         "title": "Asking when I need to",

@@ -109,8 +109,8 @@ BROWSER_KEYS = ("browser_navigate_native", "browser_read_native", "browser_click
 MONGO_KEYS = ("run_mongo_query_native",)
 # The admin's test runs on the native engine (run_repo_tests, run_snippet): calls made. Counts only: no command, code or result.
 CI_KEYS = ("run_repo_tests_native", "run_snippet_native")
-# Tool-agent turns that ran on the old ReAct loop, by the reason the native engine could not take them (native_loop.react_loop reasons). Categories only, never the matched words. Counted to see what is left before the loop is deleted (docs/react-sunset-plan.md).
-ENGINE_KEYS = ("engine_react_switch_off", "engine_react_no_tools", "engine_react_edit_turn", "engine_react_flag", "engine_react_wording")
+# Final answers the native loop sent back once, by which check (backend/utils/answer_checks.py): a capability denied while the tool was offered, a diff that no real read backed, code with nothing real read. Counts only.
+ANSWER_CHECK_KEYS = ("answer_sent_back_denial", "answer_sent_back_diff", "answer_sent_back_no_read")
 # Step lists Sonic put on a card for the person to run themselves (backend/utils/command_steps.py): lists shown, steps in them, and lists refused because a step was not allowed. Counts only.
 STEPS_KEYS = ("steps_proposed", "steps_in_lists", "steps_refused")
 # Relatable lines picked by meaning rather than by a trigger word (backend/utils/relatable_utils.py): a share of relatable_offered, to see whether the meaning match earns its place. Counts only.
@@ -118,7 +118,7 @@ PROACTIVE_KEYS = ("relatable_by_meaning",
                   # Later check-ins on a feeling still being carried (backend/utils/emotion_checkin.py): turns that were told to end with one, replies that really did, and on the next message whether the person's
                   # ceiling had eased or they were still low. Counts only.
                   "emotion_checkin_offered", "emotion_checkin_asked", "emotion_checkin_eased", "emotion_checkin_still_low")
-_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS + LESSON_KEYS + APPLY_WAIT_KEYS + CONVSUM_KEYS + LOOK_KEYS + BROWSER_KEYS + MONGO_KEYS + CI_KEYS + ENGINE_KEYS + STEPS_KEYS + PROACTIVE_KEYS
+_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS + LESSON_KEYS + APPLY_WAIT_KEYS + CONVSUM_KEYS + LOOK_KEYS + BROWSER_KEYS + MONGO_KEYS + CI_KEYS + ANSWER_CHECK_KEYS + STEPS_KEYS + PROACTIVE_KEYS
 KEYS = frozenset(
     list(_PLAIN_KEYS) + [f"{group}_{name}" for group, names in _GROUPS.items() for name in names]
 )

@@ -10,6 +10,7 @@ from backend.services import local_workspace as lw
 from backend.services import native_tools as nt
 from backend.services import python_sandbox
 from backend.services import repo_checkout as rc
+from backend.tests import legacy_loop
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.skipif(not python_sandbox.SANDBOX_WASM_PATH.exists(), reason="the sandbox interpreter is not downloaded (backend/sandbox/README.md)")
@@ -37,11 +38,10 @@ async def _drive(monkeypatch, decision, *, connect=True, engine="native"):
 
     async def fake_run(**kwargs):
         seen["observation"] = await kwargs["act"](decision)
-        seen["prompt"] = kwargs.get("prompt_template", "")
+        seen["prompt"] = kwargs.get("prompt_template") or legacy_loop.menu_of(kwargs.get("tools"))
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
     monkeypatch.setattr(aw.native_loop, "run", fake_run)
-    monkeypatch.setattr(aw, "run_react_loop", fake_run)
     await aw.tool_agent_node(_state("fix the clamp function", username="jack"))
     seen["events"] = [c.args[0] for c in emit.call_args_list]
     return seen
@@ -73,9 +73,9 @@ def test_edits_that_do_not_apply_cleanly_are_reported_and_nothing_is_run(monkeyp
 
 
 def test_without_a_connected_folder_there_is_nothing_to_test_and_the_tool_is_not_offered(monkeypatch):
-    seen = run(_drive(monkeypatch, decision(tests=["tests/test_x.py"]), connect=False, engine="react"))
+    seen = run(_drive(monkeypatch, decision(tests=["tests/test_x.py"]), connect=False))
     assert seen["observation"] == "ERROR: no local folder is connected, so there is nothing to test"
-    connected = run(_drive(monkeypatch, decision(tests=["x.py"]), engine="react"))
+    connected = run(_drive(monkeypatch, decision(tests=["x.py"])))
     assert "run_sandbox_tests" in connected["prompt"] and "run_sandbox_tests" not in seen["prompt"]
 
 

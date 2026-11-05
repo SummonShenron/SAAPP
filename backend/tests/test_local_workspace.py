@@ -11,6 +11,7 @@ import pytest
 from backend.services import agent_workflow as aw
 from backend.services import local_workspace as lw
 from backend.services import repo_checkout as rc
+from backend.tests.legacy_loop import react_style
 
 USER = "jack@example.com"
 
@@ -238,14 +239,12 @@ async def test_tool_agent_node_reads_the_connected_folder_instead_of_downloading
 
     async def fake_run_react_loop(**kwargs):
         captured.update(kwargs)
-        captured["found"] = await kwargs["declaration_lookup"](["overflowItems"])
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     await aw.tool_agent_node(_state("move the controls", username="jack"))
 
-    assert captured["found"]["overflowItems"][0]["path"] == "src/Chat.tsx"
     assert "LOCAL WORKSPACE" in captured["schema"]
     assert "'local-rag'" in captured["schema"]
     # The snapshot outlives the turn.
@@ -264,7 +263,7 @@ async def test_tool_agent_node_without_a_connected_folder_has_no_workspace_note(
         captured.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
 
     await aw.tool_agent_node(_state("move the controls", username="jack"))
 

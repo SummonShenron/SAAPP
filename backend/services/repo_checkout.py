@@ -11,7 +11,7 @@ diff_branches/list_commits/list_pull_requests (real git history/PR metadata) and
 search_code/trace_symbol (GitHub's hosted search index) stay on the real API regardless — a
 tarball is a snapshot of one ref with no git history or search index, so those genuinely need it.
 
-Its own service module, not a "utils" file — mirrors why react_loop.py got its own file (see
+Its own service module, not a "utils" file — a standalone service module (see
 docs/coding-agent-roadmap.md, Section 13): this manages real lifecycle state (a temp directory on
 disk), not just plain stateless helpers.
 """
@@ -140,49 +140,3 @@ def cleanup_checkout(handle: CheckoutHandle | None) -> None:
     shutil.rmtree(handle.tempdir, ignore_errors=True)
 
 
-_DECLARATION_SCAN_EXTENSIONS = {".py", ".ts", ".tsx", ".js", ".jsx"}
-_DECLARATION_SCAN_SKIP_DIRS = {"node_modules", "dist", "build", "__pycache__", ".git", ".venv", "venv"}
-_DECLARATION_SCAN_MAX_FILE_BYTES = 500_000
-_DECLARATION_KEYWORDS = r"(?:const|let|var|function|class|interface|type|enum|def)"
-
-
-def find_declarations_in_checkout(root: str, names: list, max_per_name: int = 5) -> dict:
-    """One pass over a local checkout looking for lines that DECLARE any of `names` (JS/TS
-    const/let/var/function/class/interface/type/enum, or Python def/class). Returns
-    {name: [{"path", "line", "text"}, ...]} for names found, each capped at max_per_name. Used by
-    the "your code redeclares something that already exists" gate in run_react_loop, which needs
-    to see the WHOLE repo, not just the line ranges the model happened to read. Never raises —
-    an unreadable file is skipped, and an empty/invalid input returns {}."""
-    import re
-
-    names = [n for n in names if isinstance(n, str) and n.isidentifier()]
-    if not names or not root:
-        return {}
-    pattern = re.compile(
-        rf"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?{_DECLARATION_KEYWORDS}\s+({'|'.join(re.escape(n) for n in names)})\b"
-    )
-    found: dict = {}
-    root_path = Path(root)
-    for path in root_path.rglob("*"):
-        if path.suffix not in _DECLARATION_SCAN_EXTENSIONS:
-            continue
-        if any(part in _DECLARATION_SCAN_SKIP_DIRS for part in path.relative_to(root_path).parts):
-            continue
-        try:
-            if not path.is_file() or path.stat().st_size > _DECLARATION_SCAN_MAX_FILE_BYTES:
-                continue
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-        for line_no, line in enumerate(text.splitlines(), start=1):
-            match = pattern.match(line)
-            if not match:
-                continue
-            hits = found.setdefault(match.group(1), [])
-            if len(hits) < max_per_name:
-                hits.append({
-                    "path": path.relative_to(root_path).as_posix(),
-                    "line": line_no,
-                    "text": line.strip(),
-                })
-    return found

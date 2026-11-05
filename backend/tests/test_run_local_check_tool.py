@@ -11,6 +11,7 @@ from backend.services import agent_workflow as aw
 from backend.services import native_tools as nt
 from backend.tests.fake_runner_db import FakeDB
 from backend.utils import runner_jobs as rj
+from backend.tests import legacy_loop
 
 CHECKS = [{"name": "tests", "command": "pytest -q {files}"}, {"name": "types", "command": "npx tsc -b"}]
 
@@ -65,12 +66,11 @@ async def drive(monkeypatch, decisions, *, db=None, runner_cards=True, username=
     async def fake_run(**kwargs):
         for decision in decisions:
             seen["observations"].append(await kwargs["act"](decision))
-        seen["prompt"] = kwargs.get("prompt_template", "")
+        seen["prompt"] = kwargs.get("prompt_template") or legacy_loop.menu_of(kwargs.get("tools"))
         seen["tools"] = [t["name"] for t in (kwargs.get("tools") or [])]
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
     monkeypatch.setattr(aw.native_loop, "run", fake_run)
-    monkeypatch.setattr(aw, "run_react_loop", fake_run)
     state = _state("run the tests for me", username=username)
     state["runner_cards"] = runner_cards
     await aw.tool_agent_node(state)
@@ -156,7 +156,7 @@ def test_files_for_a_check_that_takes_none_are_refused(monkeypatch):
 
 def test_with_no_runner_connected_the_tool_is_not_offered_and_says_how_to_start_one_if_called(monkeypatch):
     db = FakeDB()
-    seen = run(drive(monkeypatch, [call("tests")], db=db, engine="react"))
+    seen = run(drive(monkeypatch, [call("tests")], db=db))
     assert "run_local_check" not in seen["prompt"] and seen["observations"][0].startswith("ERROR: no runner of theirs is connected")
 
 
@@ -167,7 +167,7 @@ def test_it_is_offered_with_the_runners_check_names_and_commands_when_all_condit
     connect_runner(db)
     seen = run(drive(monkeypatch, [], db=db))
     assert "run_local_check" in seen["tools"]
-    prompt = run(drive(monkeypatch, [], db=db, engine="react"))["prompt"]
+    prompt = run(drive(monkeypatch, [], db=db))["prompt"]
     assert "run_local_check" in prompt and "tests = pytest -q" in prompt and "(takes files)" in prompt and "types = npx tsc -b" in prompt
 
 
@@ -205,7 +205,6 @@ def test_its_output_counts_as_untrusted_and_as_a_test_run_and_is_on_the_plan():
 
     assert "run_local_check" in aw._UNTRUSTED_CONTENT_TOOLS and "run_local_check" in experience_capture.UNTRUSTED_TOOLS
     assert "run_local_check" in code_outcomes.TEST_TOOLS and "run_local_check" in code_plan._ON_PLAN_TOOLS
-    assert "run_local_check" not in aw.TOOL_AGENT_BATCHABLE_ACTIONS                                  # it waits for a person, so it never runs alongside other steps
 
 
 def test_the_page_flag_and_the_card_event_are_carried_through_app():
@@ -218,28 +217,6 @@ def test_the_page_flag_and_the_card_event_are_carried_through_app():
 
 # ---- which engine a request about tests goes to --------------------------------------------------------------------------------------------------
 
-def test_asking_to_run_tests_still_goes_to_the_old_engine_unless_the_native_engine_can_run_them(monkeypatch):
-    from backend.services import native_loop as nl
-
-    monkeypatch.setenv("TOOL_AGENT_ENGINE", "native")
-    for text in ("run the tests", "please run pytest on this", "run the unit tests", "do the unit tests pass?"):
-        assert nl.needs_old_engine(text) is True                                                # as before: its test runners were old-engine only
-        assert nl.needs_old_engine(text, test_runs_native=True) is False                        # now the native engine can run them on the person's machine
-    plain = [{"name": "read_repo_file"}]
-    with_runner = plain + [{"name": "run_local_check"}]
-    assert nl.eligible(edit_turn=False, tools=plain, text="run the tests") is False
-    assert nl.eligible(edit_turn=False, tools=with_runner, text="run the tests") is True
-
-
-def test_everything_else_that_only_the_old_engine_has_still_goes_there_even_with_a_runner(monkeypatch):
-    from backend.services import native_loop as nl
-
-    monkeypatch.setenv("TOOL_AGENT_ENGINE", "native")
-    with_runner = [{"name": "read_repo_file"}, {"name": "run_local_check"}]
-    for text in ("run CI on the branch", "run the ci", "query mongodb for the users", "open the browser and click", "draft an email to Sam"):
-        assert nl.needs_old_engine(text, test_runs_native=True) is True, text
-        assert nl.eligible(edit_turn=False, tools=with_runner, text=text) is False, text
-    assert nl.needs_old_engine("what does this function do?", test_runs_native=True) is False
 
 
 # ---- a computer with several projects: the folder connected in chat says which one ----------------------------------------------------------------------
@@ -286,7 +263,7 @@ def test_the_menu_lists_only_the_checks_of_the_project_the_chat_is_about(monkeyp
     db = FakeDB()
     connect_two_projects(db)
     connect_folder(multi_workspace, "local-rag")
-    prompt = run(drive(monkeypatch, [], db=db, username="multi", engine="react"))["prompt"]
+    prompt = run(drive(monkeypatch, [], db=db, username="multi"))["prompt"]
     line = next(l for l in prompt.splitlines() if l.startswith("- run_local_check"))                  # only the tool's own menu line: other lines of the prompt may mention npm for other reasons
     assert "tests = pytest -q" in line and "npm test" not in line and "types = npx tsc -b" not in line
 

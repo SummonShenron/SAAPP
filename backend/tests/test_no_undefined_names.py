@@ -16,7 +16,6 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 CHECKED = [
     "app.py",
     "backend/services/agent_workflow.py",
-    "backend/services/react_loop.py",
     "backend/services/steering.py",
     "backend/utils/app_utils.py",
     "backend/utils/agent_utils.py",
@@ -71,7 +70,6 @@ CHECKED = [
     "backend/utils/place_questions.py",
     "backend/utils/loop_rhythm.py",
     "backend/utils/runner_commands.py",
-    "backend/models/split_prompt.py",
     "backend/utils/project_guidance.py",
     "backend/utils/reading_waste.py",
 ]

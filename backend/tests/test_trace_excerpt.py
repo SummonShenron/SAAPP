@@ -142,12 +142,12 @@ def test_the_native_loop_emits_an_excerpt_for_a_successful_read_and_never_for_an
     assert excerpts[1][1]["files"] == [{"path": "a.py", "matches": [{"line": 1, "text": "x"}]}]
 
 
-def test_the_tool_agent_hands_the_native_loop_the_excerpt_emitter_and_the_old_loop_uses_it_too():
+def test_the_tool_agent_hands_the_native_loop_the_excerpt_emitter():
     workflow = (ROOT / "backend" / "services" / "agent_workflow.py").read_text(encoding="utf-8")
     assert "emit_facts=emit_trace_facts, emit_excerpt=emit_trace_excerpt" in workflow
-    react = (ROOT / "backend" / "services" / "react_loop.py").read_text(encoding="utf-8")
-    assert "await emit_trace_excerpt(step_id, build_tool_excerpt(tool_action_name, args, observation))" in react
-    assert 'safe_emit_event("trace_excerpt"' not in react                                               # only the checked emitter sends it
+    native = (ROOT / "backend" / "services" / "native_loop.py").read_text(encoding="utf-8")
+    assert "await emit_excerpt(step_id, excerpt)" in native
+    assert 'safe_emit_event("trace_excerpt"' not in native                                              # only the checked emitter sends it
 
 
 def test_the_stream_forwards_the_excerpt_to_the_requesters_browser_only():
@@ -242,7 +242,7 @@ def test_a_search_excerpt_is_checked_again_on_the_way_out(monkeypatch):
     assert len(capped["files"]) == 10 and sum(len(f["matches"]) for f in capped["files"]) == 25 and all(len(f["matches"]) <= 5 for f in capped["files"])
 
 
-def test_a_search_excerpt_is_sent_like_a_read_one_and_the_old_loop_sends_it_too(monkeypatch):
+def test_a_search_excerpt_is_sent_like_a_read_one(monkeypatch):
     sent = []
 
     async def fake_emit(name, data):
@@ -253,8 +253,6 @@ def test_a_search_excerpt_is_sent_like_a_read_one_and_the_old_loop_sends_it_too(
     asyncio.run(emit_trace_excerpt("abc", excerpt))
     assert sent == [("trace_excerpt", {"step_id": "abc", "excerpt": clean_trace_excerpt(excerpt)})]
     assert "SECRET" not in json.dumps(sent) and "hunter2" not in json.dumps(sent)
-    react = (ROOT / "backend" / "services" / "react_loop.py").read_text(encoding="utf-8")
-    assert "await emit_trace_excerpt(step_id, build_tool_excerpt(tool_action_name, args, observation))" in react             # the same call serves reads and searches
 
 
 def test_the_search_excerpt_helpers_log_nothing():

@@ -13,6 +13,7 @@ from backend.services import native_tools as nt
 from backend.services import ops_incidents as ops
 from backend.services import steering
 from backend.utils import llm_usage as lu
+from backend.tests.legacy_loop import react_style
 
 
 def run(coro):
@@ -237,16 +238,6 @@ def test_progress_is_announced_for_each_call_that_actually_runs_and_a_failing_an
 
 
 # ---- switching it on ---------------------------------------------------------------------------------------------------------------------
-
-def test_it_is_off_by_default_and_only_for_turns_the_old_engine_does_not_need(monkeypatch):
-    monkeypatch.delenv("TOOL_AGENT_ENGINE", raising=False)
-    assert not nl.enabled() and not nl.eligible(edit_turn=False, tools=TOOLS)
-    monkeypatch.setenv("TOOL_AGENT_ENGINE", "Native")
-    assert nl.enabled() and nl.eligible(edit_turn=False, tools=TOOLS)
-    assert not nl.eligible(edit_turn=True, tools=TOOLS)      # an edit request against a connected folder
-    assert not nl.eligible(edit_turn=False, tools=[])        # nothing it can offer
-    monkeypatch.setenv("TOOL_AGENT_ENGINE", "react")
-    assert not nl.enabled()
 
 
 # ---- mid-run steering (the same rules as the old loop) ---------------------------------------------------------------------------------------
@@ -544,11 +535,6 @@ def world(monkeypatch):
 
     monkeypatch.setattr(aw, "read_url", fake_read_url)
 
-    async def old_engine_must_not_run(**kwargs):
-        raise AssertionError("the old ReAct loop ran")
-
-    monkeypatch.setattr(aw, "run_react_loop", old_engine_must_not_run)
-
     def configure(groups, llm):
         monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: groups)
         monkeypatch.setattr(aw.lite_llm, "ainvoke_tools", llm.ainvoke_tools, raising=False)
@@ -586,18 +572,6 @@ def test_the_untrusted_data_rule_still_protects_a_native_turn(world):
     result = turn()
     assert world.fetched == [] and "not available now: incident data was read in this turn" in result["content_to_format"]
 
-
-def test_the_default_engine_is_untouched_when_the_switch_is_off(world, monkeypatch):
-    monkeypatch.delenv("TOOL_AGENT_ENGINE", raising=False)
-    ran = []
-
-    async def react(**kwargs):
-        ran.append(kwargs["max_iterations"])
-        return {"final_answer": "from the old loop", "attempts": [], "show_work": False}
-
-    monkeypatch.setattr(aw, "run_react_loop", react)
-    world.configure(["Global_Admins"], ToolLLM(answers("never used")))
-    assert "from the old loop" in turn()["content_to_format"] and ran
 
 
 def test_mid_run_steering_reaches_the_native_engine_through_the_real_steering_module(world):
@@ -693,11 +667,6 @@ def test_the_steps_notice_on_a_change_request_asks_for_the_proposal_not_for_the_
     assert notices and all("Your next tool step must be propose_local_edits" in text for text in notices)
     assert not any("the code itself, in full" in text for text in notices)
 
-
-def test_the_engine_choice_keeps_a_change_request_native_when_the_tool_is_offered():
-    source = open("backend/services/agent_workflow.py", encoding="utf-8").read()
-    assert 'edit_turn=edit_turn and plan_phase != code_plan.PLAN_PHASE and not any(tool.get("name") == "propose_local_edits" for tool in native_tools)' in source
-    assert 'required_action=kwargs.get("required_action")' in source
 
 
 def test_a_draft_and_confirm_tool_stops_the_loop_for_the_caller_instead_of_running(monkeypatch):
@@ -893,3 +862,9 @@ def test_a_handed_over_block_is_shortened_like_any_old_result_once_its_step_is_b
     late = [text for text in snapshots[-1] if text.startswith("FILES FOR STEP")]
     assert early and len(early[0]) == len(big)                                                               # whole while the step it serves is the next one
     assert late and len(late[0]) < 700 and "older result shortened" in late[0]                               # and cut down later, so it is not re-sent in full on every remaining call
+
+
+def test_the_tool_agent_has_one_loop_and_hands_it_the_edit_rule():
+    source = open("backend/services/agent_workflow.py", encoding="utf-8").read()
+    assert "run_react_loop" not in source and "react_loop" not in source and "native_loop.eligible" not in source and "native_loop.enabled" not in source
+    assert 'required_action=kwargs.get("required_action")' in source

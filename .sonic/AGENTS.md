@@ -5,7 +5,7 @@ SAAPP is a FastAPI backend (`app.py`, `backend/`) with a React frontend (`local/
 ## Start here, by task (read the named file first, not the whole tree)
 - **Chat page, trace panel, plan card**: `local/src/pages/Chat.tsx`; trace: `local/src/components/TracePanel.tsx`, `traceFacts.ts`; plan card: `PlanCard.tsx`. Styles: `local/src/index.css`, `local/src/components/__styles__/`.
 - **Sonic Health dashboard**: `local/src/pages/SonicHealth*.tsx` (menu: `sonicHealthTabs.ts`). Counters: add the key to `backend/utils/self_counters.py` first.
-- **The tool agent** (what Sonic does with tools): `backend/services/agent_workflow.py` (`tool_agent_node`: menu lines, the `_act` dispatcher; routing in `build_agent_plan`). Loops: `native_loop.py` (the main one) and `react_loop.py`. Native tool schemas: `native_tools.py`.
+- **The tool agent** (what Sonic does with tools): `backend/services/agent_workflow.py` (`tool_agent_node`: menu lines, the `_act` dispatcher; routing in `build_agent_plan`). The loop: `native_loop.py` (the only one); answer checks: `answer_checks.py`. Schemas: `native_tools.py`.
 - **A new tool** needs: a menu line and a dispatch branch in `agent_workflow.py`, a schema in `native_tools.py`, the untrusted-output sets if it returns other people's text, and a changelog entry.
 - **Prompts and voice**: `backend/components/constraints.py`, `sonic_profile.py`. What Sonic may say it can do: `backend/components/sonic_changelog.py`.
 - **Editing the connected folder**: `local_workspace.py`, `local_edit_decisions.py`, `propose_local_edits`; plans: `backend/utils/code_plan.py`; edit-request detection: `agent_utils.py` (`looks_like_edit_request`).

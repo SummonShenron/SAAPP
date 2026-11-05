@@ -17,26 +17,7 @@ def native_on(monkeypatch):
     monkeypatch.setenv("TOOL_AGENT_ENGINE", "native")
 
 
-def test_email_wording_stays_native_when_email_native():
-    assert nl.needs_old_engine('send an email to bob', email_native=True) is False
-    assert nl.old_engine_reason('send an email to bob', email_native=True) == ''
-    assert nl.eligible(edit_turn=False, tools=EMAIL_TOOLS, text="draft a reply email to the landlord") is True
 
-
-def test_email_wording_goes_old_without_email_native():
-    assert nl.needs_old_engine('send an email to bob') is True
-    assert nl.old_engine_reason('send an email to bob') == 'send an email'
-    assert nl.eligible(edit_turn=False, tools=PLAIN_TOOLS, text="draft a reply email to the landlord") is False
-
-
-def test_the_routers_send_flag_stays_native_when_the_tool_is_offered_and_goes_old_when_it_is_not():
-    flags = {"needs_send_email": True}
-    assert nl.eligible(edit_turn=False, tools=EMAIL_TOOLS, text="tell bob about the PR", flags=flags) is True
-    assert nl.eligible(edit_turn=False, tools=PLAIN_TOOLS, text="tell bob about the PR", flags=flags) is False
-    assert nl.needs_old_engine("anything", flags, email_native=True) is False
-    assert nl.needs_old_engine("anything", flags) is True
-    assert nl.old_engine_reason("anything", flags) == "needs_send_email"
-    assert nl.old_engine_reason("anything", flags, email_native=True) == ""
 
 
 def test_the_tools_offer_follows_the_menu_line_so_nobody_gets_it_unless_the_menu_has_it():
@@ -78,12 +59,6 @@ def test_registry_schema():
 def test_not_an_action_tool():
     assert 'propose_send_email' not in nl.ACTION_TOOLS                          # an approval card is not an applied action: it must not earn steps back
 
-
-@pytest.mark.parametrize("text", ["write an implementation plan for this", "make a code plan for the change", "I want an Implementation Plan first"])
-def test_asking_for_a_plan_no_longer_forces_the_old_engine(text):
-    assert nl.needs_old_engine(text) is False
-    assert nl.old_engine_reason(text) == ""
-    assert nl.eligible(edit_turn=False, tools=PLAIN_TOOLS, text=text) is True
 
 
 def test_the_code_plan_tool_is_gone_from_the_native_registry_and_from_the_old_menu():

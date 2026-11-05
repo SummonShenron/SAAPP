@@ -12,6 +12,7 @@ from backend.utils import budget_guard as bg
 from backend.utils import initiation as ini
 from backend.utils import llm_usage as lu
 from backend.utils.safety_utils import CRISIS_RESOURCE_LINE
+from backend.tests.legacy_loop import react_style
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 NOW = datetime(2026, 10, 10, 15, 0, tzinfo=timezone.utc)
@@ -283,7 +284,7 @@ def agent_calls(monkeypatch):
         calls.append(kwargs)
         return {"final_answer": "ok", "attempts": [], "show_work": True}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_loop))
     return calls
 
 
@@ -307,7 +308,6 @@ def test_audit_style_wording_gets_the_wide_step_budget_on_the_cheap_model_never_
     tool_turn("audit every file across the whole repo", False, bg.OK)
     assert agent_calls[0]["llm"] is aw.lite_llm                                              # not the dearer model
     assert agent_calls[0]["max_iterations"] == aw.TOOL_AGENT_MAX_ITERATIONS_DEEP             # but the room an audit needs
-    assert agent_calls[0]["max_retry_nudges"] == aw.TOOL_AGENT_MAX_RETRY_NUDGES_DEEP
     tool_turn("audit every file across the whole repo", True, bg.OK)                        # the user's own setting still gets it
     assert agent_calls[1]["llm"] is aw.lite_llm_deep
 

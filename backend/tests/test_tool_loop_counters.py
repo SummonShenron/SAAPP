@@ -103,12 +103,6 @@ def _final(text):
     return SimpleNamespace(content=json.dumps({"action": "final", "answer": text}))
 
 
-def test_the_react_loop_reports_an_early_answer_and_a_run_into_the_limit():
-    early = _run_react([_read("a.py"), _final("done")], max_iterations=6)
-    assert early.loop_ran and early.loop_steps == 2 and early.cap_hit is False
-    limit = _run_react([_read("a.py"), _read("b.py"), _read("c.py"), _final("done")], max_iterations=4)
-    assert limit.loop_ran and limit.loop_steps == 4 and limit.cap_hit is True
-
 
 def test_the_native_loop_reports_its_steps_and_whether_it_was_forced():
     source = open(os.path.join(REPO, "backend", "services", "native_loop.py"), encoding="utf-8").read()
@@ -158,5 +152,3 @@ def test_the_summary_and_the_health_page_show_how_turns_ended():
     assert loop["exits"] == {"early": 2, "late": 1, "cap_draft": 1, "cap_no_draft": 1} and loop["nudged"] == 3 and loop["nudged_drafted"] == 2
     page = open(os.path.join(REPO, "local", "src", "pages", "SonicHealth.tsx"), encoding="utf-8").read()
     assert "ran out of steps with nothing written" in page and "turns shown the halfway nudge that then had a draft" in page
-    react = open(os.path.join(REPO, "backend", "services", "react_loop.py"), encoding="utf-8").read()
-    assert "tool_steps=max(budget - 1, 1), had_draft=bool(latest_draft), nudged=nudged" in react

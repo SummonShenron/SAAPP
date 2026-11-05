@@ -33,9 +33,6 @@ def test_the_redirect_says_what_to_do_instead_and_never_contains_the_top_of_the_
     assert text.startswith("URL: https://example/x.py\nNOT READ FROM THE TOP: [truncated — this file has 7 lines total")
     assert "search_literal" in text and "start_line=<match line minus 15>, line_count=60" in text and "line 6: def target" in text
     assert "import thing3" not in text                                                  # the top of the file is not in the answer
-    from backend.utils.agent_utils import _mentions_unresolved_truncation
-
-    assert _mentions_unresolved_truncation(text)                                         # the older engine's rule against answering straight after a truncated read still fires
 
 
 def test_a_long_outline_is_capped_by_entries_and_by_characters():

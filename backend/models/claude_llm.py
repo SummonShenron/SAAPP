@@ -22,7 +22,6 @@ from typing import Any, Dict, Optional
 
 from langchain_core.messages import HumanMessage
 
-from backend.models.split_prompt import SplitPrompt
 from backend.utils import llm_usage
 
 logger = logging.getLogger("SASS Logger")
@@ -51,10 +50,7 @@ def api_key() -> Optional[str]:
 
 
 def _messages(prompt: Any) -> Any:
-    """A plain prompt string as a one-message conversation; a list of messages as it is. A SplitPrompt (backend/models/split_prompt.py) becomes one message of several blocks, each stable part marked to
-    be cached, so a loop that re-sends a growing prompt only pays full price for the part that changed."""
-    if isinstance(prompt, SplitPrompt) and prompt.cuts:
-        return [HumanMessage(content=prompt.blocks())]
+    """A plain prompt string as a one-message conversation; a list of messages as it is."""
     return [HumanMessage(content=prompt)] if isinstance(prompt, str) else prompt
 
 

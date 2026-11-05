@@ -7,7 +7,7 @@ rendered browser session is only the fallback, for the cases that genuinely need
 render, a bot wall that rejects plain requests).
 
 Like browser_tool.py, the public coroutine here never raises: every failure comes back as an
-"ERROR: ..." string, so run_react_loop's existing retry-nudge tracking treats a failed read exactly
+"ERROR: ..." string, so the tool loop's existing retry-nudge tracking treats a failed read exactly
 like any other failed step.
 
 Because this fetches a URL the model (and therefore, indirectly, the user) chose, from OUR server,
