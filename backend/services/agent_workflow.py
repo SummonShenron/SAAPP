@@ -4014,12 +4014,17 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         # (Only one message back: people discuss "the database" or "email" as code topics all the time, and every match sends the turn
         # to the dearer old engine.)
         engine_user_text = recent_user_text(latest_message_content, state.get("messages", []))
-        use_native = native_loop.eligible(
+        engine_inputs = dict(
             # The native engine offers propose_local_edits too (backend/services/native_tools.py), so a change request with a folder connected stays on it; only when that tool is
             # missing from its menu does an edit turn go to the old engine.
             edit_turn=edit_turn and plan_phase != code_plan.PLAN_PHASE and not any(tool.get("name") == "propose_local_edits" for tool in native_tools), resumed=bool(resumed_attempts), tools=native_tools,
             text=engine_user_text, flags=state.get("reasoner_flags"),
         )
+        use_native = native_loop.eligible(**engine_inputs)
+        if not use_native:
+            # Why this turn is on the old loop, as a category (never the words that matched): what is left to move before that loop is deleted (docs/react-sunset-plan.md).
+            from backend.utils.self_counters import record_turn_counts
+            await asyncio.to_thread(record_turn_counts, {f"engine_react_{native_loop.react_reason(**engine_inputs)}": 1})
         # Counted per turn (backend/utils/llm_turns.py): which engine ran, and what switched deep mode on: the user's setting, the
         # audit-style wording of the message, or both (and whether low-power mode held it back).
         llm_turns.note_tool_agent(
