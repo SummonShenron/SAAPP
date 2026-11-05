@@ -418,8 +418,11 @@ def evaluate(totals: Dict[str, Any], limits: Dict[str, float], now: datetime, ex
     for key, limit in limits.items():
         scope, unit = _KEYS.get(key) or tuple(key.split("_", 1))
         used = float(totals.get(key, 0) or 0)
-        limit = limit * (1 + (float(extensions.get(scope, 0) or 0) if scope in GLOBAL_SCOPES else 0.0))      # an approved increase is a bigger budget: every line moves with it
-        fraction = round(used / limit, 4)
+        base = limit
+        # An approved increase is relief on spend: it takes extra * base limit off what was spent, so 80% used plus one 25% step reads as 55% used.
+        relief = (float(extensions.get(scope, 0) or 0) if scope in GLOBAL_SCOPES else 0.0) * base
+        fraction = round(max(used - relief, 0.0) / base, 4)
+        limit = base + relief  # the extended limit, reported as is; 'spent' below stays the actual spend
         levels.append(BLOCKED if fraction >= block_at else THROTTLED if fraction >= throttle else NOTICE if fraction >= notice_at else OK)
         detail.append({"scope": scope, "unit": unit, "spent": round(used, 4), "limit": limit, "fraction": fraction})
     if not detail:

@@ -240,6 +240,29 @@ def eligible(*, edit_turn: bool, resumed: bool, tools: List[Dict[str, Any]], tex
     return enabled() and bool(tools) and not edit_turn and not resumed and not needs_old_engine(text, flags, test_runs_native, looks_native, browser_native, mongo_native, ci_native, email_native)
 
 
+# Why a turn ran on the old (ReAct) loop, as a category and never the words that matched (those are the person's text): counted per turn so the sunset of that loop (docs/react-sunset-plan.md) can see what is left.
+REACT_REASONS = ("switch_off", "no_tools", "edit_turn", "resumed", "flag", "wording")
+
+
+def react_reason(*, edit_turn: bool, resumed: bool, tools: List[Dict[str, Any]], text: str = "", flags: Optional[Dict[str, Any]] = None) -> str:
+    """"" when THIS turn may use the native engine (exactly when `eligible` says so), else the first reason it may not, one of REACT_REASONS. The checks run in the order `eligible` reads them."""
+    if not enabled():
+        return "switch_off"
+    if not tools:
+        return "no_tools"
+    if edit_turn:
+        return "edit_turn"
+    if resumed:
+        return "resumed"
+    names = {tool.get("name") for tool in tools}
+    lifted = {"needs_send_email"} if "propose_send_email" in names else set()
+    if any((flags or {}).get(name) and name not in lifted for name in _OLD_ENGINE_ONLY_FLAGS):
+        return "flag"
+    if needs_old_engine(text, None, "run_local_check" in names, "look_at_local_page" in names, "browser_navigate" in names, "run_mongo_query" in names, "run_repo_tests" in names, "propose_send_email" in names):
+        return "wording"
+    return ""
+
+
 def _text(content: Any) -> str:
     if isinstance(content, list):
         return "".join(part.get("text", "") if isinstance(part, dict) else str(part) for part in content).strip()
