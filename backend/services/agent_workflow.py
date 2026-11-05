@@ -91,7 +91,7 @@ from backend.utils.agent_utils import (
     _DEFINITION_INDEX_WRAPPER, _TOP_LEVEL_DEF_RE, _build_definition_index,
     _parse_agent_json, _EMPTY_OBSERVATION_VALUES, _is_empty_observation,
     _mentions_unresolved_truncation, _MAX_OBSERVATION_CHARS, _truncate_observation,
-    _UnsafeActionRequested, _ClarificationNeeded,
+    _UnsafeActionRequested,
     _CAPABILITY_DENIAL_RE, _DIFF_FILE_HEADER_RE, _DIFF_NEW_FILE_RE,
     _extract_diff_file_grounding_lines, _final_diff_disagrees_with_fetched_content,
     _format_observation_for_footer, _format_react_attempts, _format_attempts_steps,
@@ -405,7 +405,7 @@ def ensure_workflow_keys(state: GraphState) -> GraphState:
 # turn's input state from whatever was checkpointed on a PRIOR turn, however many turns back
 # that was (verified against LangGraph's own Pregel loop). app.py's initial_state never sets
 # most of these, so without this reset they'd all leak across turns the moment a checkpointer
-# was attached. paused_clarification, paused_code_plan, emotional_state and safety_state are the deliberate
+# was attached. emotional_state and safety_state are the deliberate
 # exceptions — these are the only fields meant to survive, so they're the only transient
 # GraphState fields NOT listed here.
 _TRANSIENT_STATE_DEFAULTS: Dict[str, Any] = {
@@ -460,7 +460,6 @@ async def coordinator_node(state: GraphState) -> GraphState:
         # really wired up, and the one field it doesn't apply to.
         incoming_pending_status = (state.get("pending_action") or {}).get("status")
         logger.debug(f"Incoming state pending_action status: {incoming_pending_status}")
-        logger.debug(f"Incoming state has paused_clarification: {bool(state.get('paused_clarification'))}")
         state = reset_transient_state(state)
 
         node_input = state.copy()
@@ -657,25 +656,6 @@ def classify_intent(message: str, state: dict = None) -> str:
             if REJECTION_PATTERN.search(msg_clean):
                 return "cancel_action"
 
-    # tool_agent_node's own clarification pause: a short reply like "the SAAPP one" won't
-    # reliably trip the reasoner's needs_github_search/needs_code_interpreter flags on its own,
-    # so without this explicit check it would fall through to a fresh, unrelated classification
-    # instead of resuming the paused search. Unlike the write-action check above (still
-    # text-based — see its comment), this reads real checkpointed state directly:
-    # paused_clarification is the one GraphState field reset_transient_state deliberately
-    # leaves alone, so it survives from the turn that raised it into this one.
-    if state.get("paused_clarification"):
-        logger.debug("Detected paused_clarification in state — resuming tool_agent")
-        return "resume_tool_agent"
-
-    # Same mechanism as paused_clarification just above, for an approved/rejected multi-file
-    # code-change plan (see propose_code_plan's _UnsafeActionRequested handling in
-    # tool_agent_node) — reuses the same "resume_tool_agent" destination since tool_agent_node's
-    # own resume logic is what actually branches on which paused field is present.
-    if state.get("paused_code_plan"):
-        logger.debug("Detected paused_code_plan in state — resuming tool_agent")
-        return "resume_tool_agent"
-
     pending_action = state.get("pending_action") or {}
     status = pending_action.get("status")
     logger.debug(f"pending_action.status: {status}")
@@ -831,16 +811,6 @@ def build_agent_plan(intent: str, state: dict) -> dict:
     # one of tool_agent_node's actions, not its own destination.
     if intent == "web_search":
         llm_turns.note_route(["approval_continuation"])
-        state["last_intent"] = "tool_agent"
-        return {"agents": ["tool_agent", "formatter"], "skip": []}
-
-    # Continuation of a paused tool_agent_node clarification (see classify_intent's
-    # state["paused_clarification"] check) — same reasoning as web_search just above: a short
-    # answer to "which repo did you mean?" won't reliably set the reasoner's own
-    # needs_github_search/needs_code_interpreter flags, so this routes deterministically
-    # instead of leaving it to flags that were never about this reply in the first place.
-    if intent == "resume_tool_agent":
-        llm_turns.note_route(["clarification_resume"])
         state["last_intent"] = "tool_agent"
         return {"agents": ["tool_agent", "formatter"], "skip": []}
 
@@ -1852,10 +1822,7 @@ def rewrite_query_node(state: GraphState) -> dict:
 # SHARED REACT-LOOP INFRASTRUCTURE (Mongo/GitHub/web all fold into tool_agent_node below)
 # ============================================================
 
-# Card-marker text used the same way WRITE_ACTIONS' card_marker is: classify_intent scans the
-# assistant's own previous message for this exact string to know a bare-looking reply is
-# actually the user answering a paused clarification, not a fresh, unrelated message.
-CLARIFICATION_CARD_MARKER = "Need a bit more information to continue"
+
 
 
 # ============================================================
@@ -2002,51 +1969,6 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             for m in state.get("messages", [])[:-1]
             if isinstance(getattr(m, "content", None), str) and m.content.strip()
         )
-
-        # Resuming a paused clarification: state["paused_clarification"] (real checkpointed
-        # state — the one field reset_transient_state deliberately leaves alone) carries the
-        # original question and the attempts already made, so the loop continues instead of
-        # starting over. Recombine into one question for the loop, then clear it immediately —
-        # it must not linger into the turn after this one.
-        resumed_attempts: list = []
-        paused = state.get("paused_clarification")
-        if paused:
-            resumed_attempts = paused.get("attempts", [])
-            original_question = paused.get("original_question", msg)
-            msg = (
-                f"{original_question}\n\n"
-                f"(You previously asked the user for clarification; they answered: \"{msg}\")"
-            )
-            state["paused_clarification"] = None
-
-        # Resuming an approved (or rejected) code-change plan: state["paused_code_plan"] (same
-        # deliberate reset_transient_state exemption as paused_clarification above) carries the
-        # proposed file list and the attempts already made, so approval resumes the SAME
-        # investigation thread to draft the real implementation instead of starting over — see
-        # propose_code_plan's _UnsafeActionRequested handling further down this function.
-        paused_plan = state.get("paused_code_plan")
-        if paused_plan:
-            resumed_attempts = paused_plan.get("attempts", [])
-            original_question = paused_plan.get("original_question", msg)
-            files_desc = ", ".join(f.get("path", "?") for f in paused_plan.get("files", []))
-            reply_clean = msg.lower().strip().strip("!.,")
-            # Ambiguous or outright-rejecting replies both go to the "revise" branch — only a
-            # clear, unambiguous approval proceeds to the expensive drafting pass.
-            approved = bool(APPROVAL_PATTERN.search(reply_clean)) and not REJECTION_PATTERN.search(reply_clean)
-            if approved:
-                msg = (
-                    f"{original_question}\n\n(You previously proposed a plan to touch: "
-                    f"{files_desc}, and the user approved it. Proceed to draft the complete, real "
-                    f"implementation now as your final answer — do not propose the plan again.)"
-                )
-            else:
-                msg = (
-                    f"{original_question}\n\n(You previously proposed a plan to touch: "
-                    f"{files_desc}. The user did NOT approve it as written — they said: "
-                    f"\"{msg}\". Revise your plan or ask a clarifying question; do not draft the "
-                    f"full implementation yet.)"
-                )
-            state["paused_code_plan"] = None
 
         # Resolve the repo BEFORE folding in attached/pasted code — arbitrary pasted content
         # can contain its own "word/word"-shaped substrings that would otherwise hijack
@@ -3094,14 +3016,6 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             "never see this action offered. This ALWAYS requires the user's approval before "
             "anything is sent — call it only once, with your finished draft, not as a way to "
             "iterate.",
-            "- propose_code_plan — args: files (a list of {\"path\", \"reason\"} objects for every "
-            "existing file your answer will propose changes to), summary (one or two sentences on "
-            "your overall approach). Use this INSTEAD OF 'final' whenever your answer is about to "
-            "propose code changes spanning 2 or more existing files — list what you plan to touch "
-            "and why, and wait for the user's confirmation before drafting the actual "
-            "implementation. Do not use this for a single-file suggestion, a conceptual "
-            "explanation, or code that doesn't touch this repo's real files — only when you're "
-            "about to commit to a specific real multi-file change.",
         ])
         if local_workspace_handle is not None:
             # GitHub's hosted search index only covers the committed default branch, so for code
@@ -3243,7 +3157,6 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 "look for the pull request with git or gh first (gh is never run here). Call it as a \"query\" step and then stop: the card is your answer, so do not say it was merged."
             )
         if plan_phase == code_plan.PLAN_PHASE:
-            menu_lines = [line for line in menu_lines if not line.startswith("- propose_code_plan")]
             menu_lines.append(
                 "- submit_plan — args: goal, files (a list of {\"path\", \"why\", \"new\": true only for a file the change creates}), steps (a list of {\"text\", \"files\"}), tests, unknowns. "
                 "Hands the person your plan for the change instead of editing; call it once, after reading what you need."
@@ -3307,7 +3220,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             return await asyncio.to_thread(_scan)
 
         def _is_unsafe(decision: dict) -> bool:
-            if decision.get("tool_action") in {"propose_append_target_doc", "propose_send_email", "propose_code_plan", "propose_commit", "propose_merge"}:
+            if decision.get("tool_action") in {"propose_append_target_doc", "propose_send_email", "propose_commit", "propose_merge"}:
                 return True  # inherently a write — no keyword scan needed, unlike run_mongo_query
             if decision.get("tool_action") != "run_mongo_query":
                 return False
@@ -4017,7 +3930,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         engine_inputs = dict(
             # The native engine offers propose_local_edits too (backend/services/native_tools.py), so a change request with a folder connected stays on it; only when that tool is
             # missing from its menu does an edit turn go to the old engine.
-            edit_turn=edit_turn and plan_phase != code_plan.PLAN_PHASE and not any(tool.get("name") == "propose_local_edits" for tool in native_tools), resumed=bool(resumed_attempts), tools=native_tools,
+            edit_turn=edit_turn and plan_phase != code_plan.PLAN_PHASE and not any(tool.get("name") == "propose_local_edits" for tool in native_tools), tools=native_tools,
             text=engine_user_text, flags=state.get("reasoner_flags"),
         )
         use_native = native_loop.eligible(**engine_inputs)
@@ -4127,7 +4040,6 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                         budget_state,
                     ),
                     node_name="tool_agent_node",
-                    initial_attempts=resumed_attempts,
                     max_retry_nudges=TOOL_AGENT_MAX_RETRY_NUDGES_DEEP if wide_budget else TOOL_AGENT_MAX_RETRY_NUDGES,
                     llm=tool_agent_llm(bool(deep_thinking), tool_model_choice),
                     stuck_action_redirects=TOOL_AGENT_STUCK_ACTION_REDIRECTS,
@@ -4326,50 +4238,6 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                         "messages": new_messages,
                     }
 
-                if e.decision.get("tool_action") == "propose_code_plan":
-                    plan_args = e.decision.get("args") or {}
-                    files = plan_args.get("files") or []
-                    summary = (plan_args.get("summary") or "").strip()
-                    if not files:
-                        incomplete_message = (
-                            "I need at least one file before proposing a plan — could you clarify "
-                            "what you're trying to change?"
-                        )
-                        new_messages = list(state.get("messages", [])) + [AIMessage(content=incomplete_message)]
-                        return {
-                            **state,
-                            "pending_action": None,
-                            "relevance_grade": "conversational",
-                            "generation": incomplete_message,
-                            "content_to_format": incomplete_message,
-                            "messages": new_messages,
-                        }
-                    file_lines = "\n".join(
-                        f"- `{f.get('path', '?')}` — {f.get('reason', 'no reason given')}" for f in files
-                    )
-                    summary_line = (
-                        f"Before I draft the full implementation, here's my plan:\n\n"
-                        f"**Files I plan to touch:**\n{file_lines}\n\n**Approach:** {summary}"
-                    )
-                    approval_message = (
-                        "**Approval Required**\n\n"
-                        f"{summary_line}\n\n"
-                        "*Please Approve, Modify parameters, or Reject this action.*"
-                    )
-                    new_messages = list(state.get("messages", [])) + [AIMessage(content=approval_message)]
-                    return {
-                        **state,
-                        "pending_action": None,
-                        "relevance_grade": "hitl_approval_required",
-                        "generation": approval_message,
-                        "content_to_format": approval_message,
-                        "messages": new_messages,
-                        "paused_code_plan": {
-                            "original_question": msg, "attempts": e.attempts,
-                            "files": files, "summary": summary,
-                        },
-                    }
-
                 drafted_code = (e.decision.get("args") or {}).get("code", "") or ""
                 purpose = e.decision.get("purpose", "Database query")
                 summary_line = f"Ready to run this database operation:\n```python\n{drafted_code}\n```\n**Purpose:** {purpose}"
@@ -4386,28 +4254,6 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                     "generation": approval_message,
                     "content_to_format": approval_message,
                     "messages": new_messages,
-                }
-            except _ClarificationNeeded as e:
-                steps_so_far = _format_attempts_steps(e.attempts)
-                clarification_message = (
-                    f"**{CLARIFICATION_CARD_MARKER}:**\n\n{e.question}"
-                    + (f"\n\n**What I've checked so far:**\n\n{steps_so_far}" if steps_so_far else "")
-                )
-                new_messages = list(state.get("messages", [])) + [AIMessage(content=clarification_message)]
-                return {
-                    **state,
-                    "relevance_grade": "needs_clarification",
-                    "generation": clarification_message,
-                    "content_to_format": clarification_message,
-                    "messages": new_messages,
-                    # Real, checkpointed resume state — CLARIFICATION_CARD_MARKER in the rendered
-                    # message above is now purely cosmetic (a heading users see), not part of how
-                    # the next turn detects/recovers this pause; that's classify_intent reading this
-                    # field directly, and reset_transient_state is the one place that deliberately
-                    # never clears it. NOTE: a live browser session cannot be checkpointed here —
-                    # if this pause resumes, tool_agent_node reconnects a fresh session rather
-                    # than resuming the old page, since the finally below already closed it.
-                    "paused_clarification": {"original_question": msg, "attempts": e.attempts},
                 }
         finally:
             # Past this point nothing can act on a steer; later ones are told "too late" and the

@@ -227,8 +227,8 @@ def test_asking_to_run_tests_still_goes_to_the_old_engine_unless_the_native_engi
         assert nl.needs_old_engine(text, test_runs_native=True) is False                        # now the native engine can run them on the person's machine
     plain = [{"name": "read_repo_file"}]
     with_runner = plain + [{"name": "run_local_check"}]
-    assert nl.eligible(edit_turn=False, resumed=False, tools=plain, text="run the tests") is False
-    assert nl.eligible(edit_turn=False, resumed=False, tools=with_runner, text="run the tests") is True
+    assert nl.eligible(edit_turn=False, tools=plain, text="run the tests") is False
+    assert nl.eligible(edit_turn=False, tools=with_runner, text="run the tests") is True
 
 
 def test_everything_else_that_only_the_old_engine_has_still_goes_there_even_with_a_runner(monkeypatch):
@@ -238,7 +238,7 @@ def test_everything_else_that_only_the_old_engine_has_still_goes_there_even_with
     with_runner = [{"name": "read_repo_file"}, {"name": "run_local_check"}]
     for text in ("run CI on the branch", "run the ci", "query mongodb for the users", "open the browser and click", "draft an email to Sam"):
         assert nl.needs_old_engine(text, test_runs_native=True) is True, text
-        assert nl.eligible(edit_turn=False, resumed=False, tools=with_runner, text=text) is False, text
+        assert nl.eligible(edit_turn=False, tools=with_runner, text=text) is False, text
     assert nl.needs_old_engine("what does this function do?", test_runs_native=True) is False
 
 

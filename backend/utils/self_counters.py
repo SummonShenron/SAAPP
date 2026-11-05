@@ -110,7 +110,7 @@ MONGO_KEYS = ("run_mongo_query_native",)
 # The admin's test runs on the native engine (run_repo_tests, run_snippet): calls made. Counts only: no command, code or result.
 CI_KEYS = ("run_repo_tests_native", "run_snippet_native")
 # Tool-agent turns that ran on the old ReAct loop, by the reason the native engine could not take them (native_loop.react_loop reasons). Categories only, never the matched words. Counted to see what is left before the loop is deleted (docs/react-sunset-plan.md).
-ENGINE_KEYS = ("engine_react_switch_off", "engine_react_no_tools", "engine_react_edit_turn", "engine_react_resumed", "engine_react_flag", "engine_react_wording")
+ENGINE_KEYS = ("engine_react_switch_off", "engine_react_no_tools", "engine_react_edit_turn", "engine_react_flag", "engine_react_wording")
 # Step lists Sonic put on a card for the person to run themselves (backend/utils/command_steps.py): lists shown, steps in them, and lists refused because a step was not allowed. Counts only.
 STEPS_KEYS = ("steps_proposed", "steps_in_lists", "steps_refused")
 # Relatable lines picked by meaning rather than by a trigger word (backend/utils/relatable_utils.py): a share of relatable_offered, to see whether the meaning match earns its place. Counts only.

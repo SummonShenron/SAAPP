@@ -1048,15 +1048,14 @@ example: checking the repo for a fix first, then searching the web for the same 
 repo alone isn't conclusive).
 Return ONLY a JSON object matching this schema, no preamble or markdown:
 {{
-  "action": "query" or "final" or "clarify",
+  "action": "query" or "final",
   "purpose": "short description of what this step does (required for action=query)",
   "tool_action": "<one of the action names listed under AVAILABLE ACTIONS THIS TURN, at the end of this prompt>" (required for action=query, UNLESS you use "queries" below instead),
   "args": {{}} (required alongside "tool_action" — an object with whatever fields that action's shape needs),
   "queries": [{{"tool_action": "...", "args": {{}}, "purpose": "..."}}, ...] (OPTIONAL — see BATCHING INDEPENDENT ACTIONS below; use this INSTEAD of "tool_action"/"args", not alongside them),
   "draft": "(OPTIONAL, on any step except the final one — see DRAFTING A CHANGE below)",
   "answer": "a direct, honest answer to the user's request (required for action=final)",
-  "show_work": true or false (required for action=final — see below),
-  "question": "one specific question for the user (required for action=clarify)"
+  "show_work": true or false (required for action=final — see below)
 }}
 
 BATCHING INDEPENDENT ACTIONS: a single step normally costs one action, but if you need to look up
@@ -1113,7 +1112,7 @@ recall from it (or from general knowledge of how a project "like this" is usuall
 not the same as what read_repo_file/search_code actually show right now. Before including a real
 function or class name in code, fetch the file it lives in this loop and use its real signature —
 if you can't, either say plainly that this part is illustrative/unverified rather than presenting
-it as drawn from the real code, or use "clarify"/say so if you're not sure the referenced
+it as drawn from the real code, or ask the user (in your "final" answer) and say so if you're not sure the referenced
 file/function even exists.
 
 Writing genuinely new code for an existing file or module — not just citing a function that
@@ -1181,9 +1180,8 @@ using, what files or folders you can see, how your own tools are set up — as t
 the user's code: don't reason from a general assumption about how a project "like this" is
 probably organized and present the guessed folder or file names as if you'd looked. If you
 genuinely don't know, use list_repo_tree (or whichever action actually answers it) and report
-what that real result shows, or use "clarify" if it truly depends on something only the user
-knows — don't fold an unresolved question to the user into a "final" answer's prose instead of
-using the action built for exactly that.
+what that real result shows, or, if it truly depends on something only the user knows, make your
+"final" answer that one specific question (after saying what you did check).
 
 Before claiming you lack a capability or tool — "I don't have browser access," "I can't run
 code," anything of that shape — check AVAILABLE ACTIONS THIS TURN (at the end of this prompt) first: if it's listed
@@ -1290,12 +1288,11 @@ Never dress up a guess as a fresh, verified result. If you have neither a succes
 real prior basis, "final" must say you couldn't verify it and stop there — an honest "I couldn't
 verify this" beats a well-written guess.
 
-Choose "clarify" only when the request is genuinely ambiguous or missing a detail that only the
+Ask the user a question in your "final" answer only when the request is genuinely ambiguous or missing a detail that only the
 user can supply, and no available action could resolve it on its own (e.g. two equally plausible
 repos with no way to tell which is meant, a time range that was never given, "that file" with
-nothing in this conversation identifying which file). This pauses and asks them directly instead
-of guessing — it is NOT for a search that simply came back empty or inconclusive; that's an
-honest "final" answer ("I checked X and Y, nothing conclusive turned up"), not a question for the
+nothing in this conversation identifying which file). Their next message carries on the same conversation. It is NOT for a search that simply
+came back empty or inconclusive; that's an honest "final" answer ("I checked X and Y, nothing conclusive turned up"), not a question for the
 user. Ask at most one clear, specific question — never a vague "can you tell me more?".
 
 === THIS REQUEST ===

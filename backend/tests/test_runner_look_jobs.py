@@ -354,8 +354,8 @@ def test_the_browser_word_stays_native_when_a_local_look_is_offered_but_click_an
     assert native_loop.old_engine_reason(text, None, False, True) == "" and native_loop.old_engine_reason(text) in ("browser", "screenshot")
     monkeypatch.setattr(native_loop, "enabled", lambda: True)
     tools = [{"name": "look_at_local_page"}]
-    assert native_loop.eligible(edit_turn=False, resumed=False, tools=tools, text=text) is True
-    assert native_loop.eligible(edit_turn=False, resumed=False, tools=[{"name": "read_repo_file"}], text=text) is False
+    assert native_loop.eligible(edit_turn=False, tools=tools, text=text) is True
+    assert native_loop.eligible(edit_turn=False, tools=[{"name": "read_repo_file"}], text=text) is False
 
 
 def test_the_counters_are_known_keys():

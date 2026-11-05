@@ -39,9 +39,9 @@ cannot use up the shared budget other people's meters are drawn from; set LLM_US
 Evals are not part of any of this: they are counted on the usage page but never against a budget (llm_usage.mark_as_eval).
 
 EXTENDING A BLOCK: when the global budget has blocked chat, a global admin can grant +25% (EXTENSION_STEP) once per click, as many times as
-they like. A grant raises the BUDGET of the scope that is blocking by 25% (then 50% and so on): its limit is scaled, so the notice, low-power and block
-lines all move with it and everything works as normal until the raised budget is reached (as a person's own limit is raised when an increase is approved
-for them). It ends when that scope resets (a day, a month, or the end of the current five-hour window). Each grant is saved with who and when. A per-person
+they like. A grant is RELIEF on the scope that is blocking: each 25% step takes 25 points off the percentage used (80% used plus one step reads as 55%; then 50 points and so on), so
+the notice, low-power and block lines all see the lower figure and everything works as normal until the relieved figure reaches them again (the reported limit grows by the same amount; a
+person's own limit, when an increase is approved for them, works the same way). It ends when that scope resets (a day, a month, or the end of the current five-hour window). Each grant is saved with who and when. A per-person
 block is not extended by this. (Until 2026-11-01 a grant raised only the block line and low-power mode stayed on throughout, so an approved increase left a
 coding turn with 4 tool steps.)
 
@@ -406,8 +406,8 @@ def _next_reset(scope: str, now: datetime, totals: Optional[Dict[str, Any]] = No
 
 def evaluate(totals: Dict[str, Any], limits: Dict[str, float], now: datetime, extensions: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
     """The guard's state from what has been spent and the limits that are set. Pure. `extensions` is {scope: extra fraction} an admin has
-    granted: it raises that global scope's BUDGET by that much (its limit is scaled, as a person's own limit is when an increase is approved for them), so the notice,
-    low-power and block lines all move with it and everything works as normal until the raised budget is reached. (Before 2026-11-01 it raised only the block line,
+    granted: it is relief on that global scope's spend: it takes that fraction of the base limit off what was spent (80% used plus 0.25 reads as 55%), so the notice,
+    low-power and block lines all see the lower figure, and the reported limit grows by the same amount. (Before 2026-11-01 it raised only the block line,
     so an approved increase unpaused chat but left low-power mode on: a coding turn got 4 tool steps.)"""
     notice_at, block_at = thresholds()
     throttle = throttle_at()
@@ -420,7 +420,7 @@ def evaluate(totals: Dict[str, Any], limits: Dict[str, float], now: datetime, ex
         used = float(totals.get(key, 0) or 0)
         base = limit
         # An approved increase is relief on spend: it takes extra * base limit off what was spent, so 80% used plus one 25% step reads as 55% used.
-        relief = (float(extensions.get(scope, 0) or 0) if scope in GLOBAL_SCOPES else 0.0) * base
+        relief = float(extensions.get(scope, 0) or 0) * base          # the global scopes' admin extensions and a person's own approved increases (scopes my_day / my_five)
         fraction = round(max(used - relief, 0.0) / base, 4)
         limit = base + relief  # the extended limit, reported as is; 'spent' below stays the actual spend
         levels.append(BLOCKED if fraction >= block_at else THROTTLED if fraction >= throttle else NOTICE if fraction >= notice_at else OK)
@@ -511,10 +511,9 @@ def current_state(db: Any = None, now: Optional[datetime] = None, username: Opti
             from backend.utils import user_usage
 
             who = str(username)
-            # An approved increase raises that person's limit for the scope it was granted for, until that window or day ends.
+            # An approved increase is relief on that person's spend for the scope it was granted for, until that window or day ends: +25% takes 25 points off the percentage they have used (evaluate).
             user_extended = _saved_user_extensions(db, who, moment)
-            if user_extended:
-                own = {key: limit * (1 + user_extended.get(_KEYS[key][0], 0.0)) for key, limit in own.items()}
+            extensions = {**extensions, **user_extended}
             my_anchor = _read_anchor(db, "my_five", moment, who) if any(key in own for key in MY_FIVE_KEYS) else None
             mine = user_usage.fetch(db, who, person_fetch_since(moment, my_anchor)) + user_usage.unsaved_rows(who)
             # Turns recorded before dollars were counted are priced at today's average price per token (known only when a global budget is set).

@@ -3,7 +3,7 @@ checkpointer + thread_id is used, LangGraph silently resurrects any GraphState c
 from a turn's input state from whatever was checkpointed on a prior turn, however many turns
 back that was. reset_transient_state (called as the very first thing coordinator_node does —
 the graph's sole entry point) is what neutralizes this for every field except
-paused_clarification, which is deliberately exempted so it — and only it — survives.
+emotional_state and safety_state, which are deliberately exempted so they survive.
 
 Uses langgraph.checkpoint.memory.InMemorySaver rather than the real MongoDBSaver: the
 resurrection mechanic being tested is a property of LangGraph's own Pregel loop, not the Mongo
@@ -116,82 +116,46 @@ async def test_transient_fields_do_not_resurrect_across_turns(monkeypatch):
 
 
 @run_async
-async def test_paused_clarification_survives_and_then_clears(monkeypatch):
-    """The one deliberate exception: paused_clarification must survive from the turn that sets
-    it into the very next turn (same thread_id), and be gone again by the turn after that."""
-    def stub_tool_agent(state):
-        if state.get("paused_clarification"):
-            return {
-                **state,
-                "relevance_grade": "tool_agent",
-                "content_to_format": "resumed successfully",
-                "paused_clarification": None,
-            }
-        return {
-            **state,
-            "relevance_grade": "needs_clarification",
-            "paused_clarification": {"original_question": state["messages"][-1].content, "attempts": []},
-        }
+async def test_a_pause_left_in_a_checkpoint_by_an_older_version_is_dropped_not_resumed():
+    """The tool agent no longer pauses (docs/react-sunset-plan.md, stage C), but a checkpoint written before that may still hold
+    paused_clarification / paused_code_plan. LangGraph builds channels from the CURRENT state schema, so the leftovers are ignored."""
+    from typing import Any, Dict, Optional, TypedDict
 
-    checkpointer = InMemorySaver()
-    graph = _build_graph(checkpointer, {"tool_agent_node": stub_tool_agent})
-    config = {"configurable": {"thread_id": "thread-b"}}
+    class OldState(TypedDict, total=False):
+        q: str
+        out: str
+        paused_clarification: Optional[Dict[str, Any]]
 
-    monkeypatch.setattr(
-        aw.lite_llm, "ainvoke",
-        AsyncMock(side_effect=[
-            _reasoner_flags(needs_github_search=True),  # turn 1
-            _reasoner_flags(needs_github_search=True),  # turn 2 (resume)
-            _reasoner_flags(),                            # turn 3
-        ]),
-    )
+    class NewState(TypedDict, total=False):
+        q: str
+        out: str
 
-    turn1 = await graph.ainvoke(_base_state("find the bug in agent_workflow.py"), config=config)
-    assert turn1["relevance_grade"] == "needs_clarification"
-    assert turn1["paused_clarification"] is not None
+    def old_node(state):
+        return {"paused_clarification": {"original_question": state["q"], "attempts": []}, "out": "paused"}
 
-    turn2 = await graph.ainvoke(_base_state("SummonShenron/SAAPP"), config=config)
-    assert turn2["content_to_format"] == "resumed successfully"
-    assert turn2["paused_clarification"] is None
+    def new_node(state):
+        return {"out": "ran:" + ",".join(sorted(key for key, value in state.items() if value is not None))}
 
-    turn3 = await graph.ainvoke(_base_state("thanks, one more question"), config=config)
-    assert turn3["paused_clarification"] is None
-
-
-@run_async
-async def test_paused_clarification_isolated_across_threads(monkeypatch):
-    """A different conversation (different thread_id) must never see another conversation's
-    paused clarification."""
-    def stub_tool_agent(state):
-        return {
-            **state,
-            "relevance_grade": "needs_clarification",
-            "paused_clarification": {"original_question": state["messages"][-1].content, "attempts": []},
-        }
-
-    checkpointer = InMemorySaver()
-    graph = _build_graph(checkpointer, {"tool_agent_node": stub_tool_agent})
-
-    monkeypatch.setattr(
-        aw.lite_llm, "ainvoke",
-        AsyncMock(side_effect=[
-            _reasoner_flags(needs_github_search=True),  # thread A
-            _reasoner_flags(),                            # thread B
-        ]),
-    )
-
-    await graph.ainvoke(_base_state("find the bug"), config={"configurable": {"thread_id": "thread-a"}})
-    thread_b_result = await graph.ainvoke(
-        _base_state("hello there"), config={"configurable": {"thread_id": "thread-b"}}
-    )
-
-    assert thread_b_result.get("paused_clarification") is None
+    saver = InMemorySaver()
+    config = {"configurable": {"thread_id": "old-checkpoint"}}
+    old = StateGraph(OldState)
+    old.add_node("work", old_node)
+    old.add_edge(START, "work")
+    old.add_edge("work", END)
+    assert (await old.compile(checkpointer=saver).ainvoke({"q": "hi"}, config))["paused_clarification"] is not None
+    new = StateGraph(NewState)
+    new.add_node("work", new_node)
+    new.add_edge(START, "work")
+    new.add_edge("work", END)
+    later = await new.compile(checkpointer=saver).ainvoke({"q": "again"}, config)
+    assert "paused_clarification" not in later and later["out"] == "ran:out,q"
+    assert "paused_clarification" not in GraphState.__annotations__ and "paused_code_plan" not in GraphState.__annotations__
 
 
 @run_async
 async def test_emotional_state_survives_a_topic_change_and_stays_scoped_to_its_session(monkeypatch):
     """emotional_state is the other deliberate reset_transient_state exemption (alongside
-    paused_clarification/paused_code_plan): a distressed turn followed by a neutral topic change
+    safety_state): a distressed turn followed by a neutral topic change
     in the SAME session must still carry the feeling forward (via the real reasoner_node ->
     coordinator path), while a different thread must never see it."""
     def _flags_with_emotion(valence, intensity, **flag_overrides):

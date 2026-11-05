@@ -1905,10 +1905,9 @@ async def test_browser_session_closed_after_normal_completion(monkeypatch):
 
 
 @run_async
-async def test_browser_session_closed_after_clarification_pause(monkeypatch):
-    """The finally around run_react_loop must fire on every exit path, not just the happy one —
-    a live CDP session can't be checkpointed into paused_clarification, so it has to be closed
-    here even though the turn is pausing rather than finishing."""
+async def test_browser_session_closed_when_the_turn_ends_with_a_question(monkeypatch):
+    """The finally around run_react_loop must fire on every exit path, not just the happy one: a live CDP
+    session can't be kept between turns, so it is closed here when the turn ends by asking the person something."""
     monkeypatch.setattr(aw, "load_user_directory_groups", lambda username: ["Guest"])
     monkeypatch.setenv("BROWSERLESS_WS_ENDPOINT", "wss://fake-endpoint")
     _FakeBrowserSession.instances = []
@@ -1924,7 +1923,7 @@ async def test_browser_session_closed_after_clarification_pause(monkeypatch):
 
     result = await aw.tool_agent_node(_state("check the site"))
 
-    assert result["relevance_grade"] == "needs_clarification"
+    assert "Which page on the site did you mean?" in result["content_to_format"]
     assert len(_FakeBrowserSession.instances) == 1
     _FakeBrowserSession.instances[0].close.assert_awaited_once()
 
