@@ -13,6 +13,7 @@ from backend.services import agent_workflow as aw
 from backend.services import native_loop
 from backend.services import tool_agent_memory as tam
 from backend.utils import memory_utils
+from backend.tests.legacy_loop import react_style
 
 
 def run_async(fn):
@@ -195,14 +196,9 @@ def test_the_native_loops_opening_message_carries_the_block_between_preferences_
     assert "BACKGROUND" not in native_loop.build_context("fix it", "", "", "", "", "")
 
 
-def test_the_old_loops_prompt_has_a_slot_for_it_right_above_the_request():
-    from backend.components.constraints import TOOL_AGENT_PROMPT
-
-    assert "{history}\n{user_memory}\nUSER REQUEST: {question}" in TOOL_AGENT_PROMPT  # right above the request, where it is hardest to overlook
-
 
 @run_async
-async def test_the_old_loop_gets_the_block_in_its_prompt_and_the_native_loop_gets_it_as_an_argument(monkeypatch):
+async def test_the_native_loop_gets_the_memory_block_as_an_argument(monkeypatch):
     from backend.tests.test_tool_agent_node import _setup_github_repo, _state
 
     _setup_github_repo(monkeypatch)
@@ -220,11 +216,11 @@ async def test_the_old_loop_gets_the_block_in_its_prompt_and_the_native_loop_get
         captured.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_react)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_react))
     store = object()
     await aw.tool_agent_node(_state("how is Patchy deployed?"), store)
 
-    assert "Patchy is deployed on Vercel." in captured["prompt_template"] and "{user_memory}" not in captured["prompt_template"]
+    assert "Patchy is deployed on Vercel." in captured["user_memory"]
     assert asked == {"username": "jack", "question": "how is Patchy deployed?", "store": store}
 
     monkeypatch.setenv("TOOL_AGENT_ENGINE", "native")
@@ -239,35 +235,6 @@ async def test_the_old_loop_gets_the_block_in_its_prompt_and_the_native_loop_get
     if native_seen:  # the native engine only runs when this turn qualifies for it
         assert native_seen["user_memory"] == block
 
-
-@run_async
-async def test_with_nothing_to_say_the_prompt_is_exactly_what_it_was_and_braces_in_memory_cannot_break_it(monkeypatch):
-    from backend.tests.test_tool_agent_node import _setup_github_repo, _state
-
-    _setup_github_repo(monkeypatch)
-    captured = {}
-
-    async def fake_react(**kwargs):
-        captured.update(kwargs)
-        return {"final_answer": "done", "attempts": [], "show_work": False}
-
-    monkeypatch.setattr(aw, "run_react_loop", fake_react)
-
-    async def nothing(*a, **k):
-        return ""
-
-    monkeypatch.setattr(aw, "build_user_memory_block", nothing)
-    await aw.tool_agent_node(_state("fix the test"))
-    assert "BACKGROUND ABOUT THIS USER" not in captured["prompt_template"] and "{user_memory}" not in captured["prompt_template"]
-
-    async def braces(*a, **k):
-        return "\n\nBACKGROUND ABOUT THIS USER\n- Prefers {curly} braces and {{double}}.\n"
-
-    monkeypatch.setattr(aw, "build_user_memory_block", braces)
-    await aw.tool_agent_node(_state("fix the test"))
-    template = captured["prompt_template"]
-    rendered = template.format(question="q", schema="s", attempts="(none)", architecture_map="")  # the loop formats the template; braces from memory must not break that
-    assert "Prefers {curly} braces and {{double}}." in rendered
 
 
 def test_the_workflow_hands_the_tool_agent_the_memory_store():
@@ -420,7 +387,7 @@ async def _captured_act(monkeypatch, question, block):
         captured.update(kwargs)
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_react)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_react))
     await aw.tool_agent_node(_state(question))
     return captured["act"]
 

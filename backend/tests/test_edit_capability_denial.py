@@ -64,27 +64,3 @@ def test_the_observed_denial_wording_is_recognized_as_a_denial():
         assert _CAPABILITY_DENIAL_RE.search(phrase), phrase
 
 
-@run_async
-async def test_denying_edit_ability_while_the_edit_tool_is_offered_is_rejected_once_then_the_tool_is_used():
-    responses = [
-        _resp(action="final", answer=OBSERVED_DENIAL, show_work=False),
-        _resp(action="query", purpose="propose it", tool_action="propose_local_edits",
-              args={"edits": [{"path": "local/src/pages/Chat.tsx", "content": "x"}]}),
-        _resp(action="final", answer="I proposed the edit; press Apply.", show_work=False),
-    ]
-
-    result, prompts, acted = await _run(responses, menu_has_edit_tool=True)
-
-    assert acted == ["propose_local_edits"]
-    assert "'- propose_local_edits —' is listed in AVAILABLE ACTIONS" in prompts[1]
-    assert result["final_answer"] == "I proposed the edit; press Apply."
-
-
-@run_async
-async def test_the_same_denial_is_accepted_when_the_edit_tool_is_not_offered():
-    """No connected folder -> no propose_local_edits in the menu -> "I can only read" is simply true."""
-    result, prompts, acted = await _run([_resp(action="final", answer=OBSERVED_DENIAL, show_work=False)], menu_has_edit_tool=False)
-
-    assert acted == []
-    assert len(prompts) == 1
-    assert result["final_answer"] == OBSERVED_DENIAL

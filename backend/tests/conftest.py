@@ -143,7 +143,14 @@ def background_index_builds_never_outlive_their_test(block_real_embedding_calls,
 
 
 @pytest.fixture(autouse=True)
-def default_tool_engine(monkeypatch):
-    """The suite runs the default (ReAct) tool loop unless a test chooses the native one. A developer's .env may set TOOL_AGENT_ENGINE=native (to match production), and the tests
-    that script the ReAct loop's model calls must not change with it; the native tests set the variable themselves, and their setting wins."""
-    monkeypatch.delenv("TOOL_AGENT_ENGINE", raising=False)
+def scripted_tool_agent_model(monkeypatch):
+    """The tool agent runs on the native loop (the old ReAct loop is gone). The Gemini models the tool agent uses by default answer through ScriptedDecisionLLM, so a test that
+    scripts aw.lite_llm.ainvoke drives the loop and no test can reach a real model through the tool agent. (tool_agent_llm itself is untouched: a test of which model it picks still sees the real choice.)"""
+    from backend.services import agent_workflow as aw
+
+    from backend.tests.legacy_loop import ScriptedDecisionLLM, reset
+
+    reset()
+    scripted = ScriptedDecisionLLM()
+    monkeypatch.setattr(aw.lite_llm, "ainvoke_tools", scripted.ainvoke_tools, raising=False)
+    monkeypatch.setattr(aw.lite_llm_deep, "ainvoke_tools", scripted.ainvoke_tools, raising=False)

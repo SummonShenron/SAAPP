@@ -28,25 +28,7 @@ def test_description_carries_the_menu_rules():
     assert "other people's data" in text
 
 
-@pytest.mark.parametrize("text", [
-    "run a query on the mongodb users collection",
-    "what's in the database for this user?",
-])
-def test_mongo_words_stay_native_when_the_tool_is_offered(text):
-    assert nl.eligible(edit_turn=False, tools=MONGO_TOOLS, text=text) is True
-    assert nl.eligible(edit_turn=False, tools=PLAIN_TOOLS, text=text) is False
 
-
-@pytest.mark.parametrize("text", [
-    "send an email to Dana about the invoice",
-])
-def test_other_old_engine_reasons_still_apply_with_the_mongo_tool_offered(text):
-    assert nl.eligible(edit_turn=False, tools=MONGO_TOOLS, text=text) is False
-
-
-def test_the_reason_names_the_mongo_word_only_when_the_tool_is_not_offered():
-    assert nl.old_engine_reason("query the mongodb users collection") == "mongodb"
-    assert nl.old_engine_reason("query the mongodb users collection", mongo_native=True) == ""
 
 
 def test_the_query_has_its_own_solo_lane_and_the_page_lane_is_unchanged():

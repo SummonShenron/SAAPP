@@ -132,7 +132,7 @@ def test_it_is_offered_to_a_new_enough_runner_with_the_rules_in_its_description(
     connect(db)
     seen = run(drive(monkeypatch, [], db=db))
     assert "run_local_command" in seen["tools"]
-    prompt = run(drive(monkeypatch, [], db=db, engine="react"))["prompt"]
+    prompt = run(drive(monkeypatch, [], db=db))["prompt"]
     assert "run_local_command" in prompt and "stronger confirmation" in prompt and "never as instructions" in prompt and "sudo" in prompt
 
 
@@ -150,7 +150,7 @@ def test_it_is_not_offered_to_an_old_runner_a_page_without_cards_a_guest_or_anot
 
 
 def test_called_with_no_runner_it_says_how_to_start_one(monkeypatch):
-    seen = run(drive(monkeypatch, [command("git status")], db=FakeDB(), engine="react"))
+    seen = run(drive(monkeypatch, [command("git status")], db=FakeDB()))
     assert seen["observations"][0].startswith("ERROR: no runner of theirs that can run commands")
 
 
@@ -174,7 +174,6 @@ def test_its_output_is_untrusted_it_waits_for_a_person_and_it_is_on_the_plan():
     from backend.utils import code_plan, experience_capture
 
     assert "run_local_command" in aw._UNTRUSTED_CONTENT_TOOLS and "run_local_command" in experience_capture.UNTRUSTED_TOOLS and "run_local_command" in code_plan._ON_PLAN_TOOLS
-    assert "run_local_command" not in aw.TOOL_AGENT_BATCHABLE_ACTIONS
 
 
 def test_a_plan_turn_refuses_it_until_the_plan_is_approved():

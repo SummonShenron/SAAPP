@@ -97,9 +97,6 @@ def test_only_a_successful_listing_counts():
     assert allowance.after_listing(la.LIST_TOOL, listing(30), 0) == 4          # a failed listing did not use up the turn's one decision
 
 
-def test_the_batch_size_matches_the_loops_own_limit():
-    assert la.READS_PER_STEP == aw._MAX_BATCH_SIZE
-
 
 def test_the_note_tells_the_model_to_batch():
     allowance = la.LibraryAllowance()
@@ -258,35 +255,9 @@ async def _run_react(file_count, allowance, max_iterations=4):
     return result, prompts, reads
 
 
-def test_react_a_twelve_file_review_reads_every_file_with_the_allowance():
-    allowance = la.LibraryAllowance()
-    result, prompts, reads = asyncio.run(_run_react(12, allowance))
-    assert sorted(reads) == names(12) and allowance.granted == 1 and allowance.unread(result["attempts"]) == []
-    assert any("1 more tool step was added" in p for p in prompts)
 
 
-def test_react_without_the_allowance_the_same_review_is_cut_off():
-    result, prompts, reads = asyncio.run(_run_react(12, None))
-    assert len(reads) == 10
 
-
-def test_react_seven_files_use_no_extra_steps():
-    allowance = la.LibraryAllowance()
-    result, prompts, reads = asyncio.run(_run_react(7, allowance))
-    assert sorted(reads) == names(7) and allowance.granted == 0
-
-
-def test_react_a_huge_library_is_capped_and_the_unread_files_are_known():
-    allowance = la.LibraryAllowance()
-    result, prompts, reads = asyncio.run(_run_react(60, allowance))
-    assert allowance.granted == 4 and len(reads) == 5 * 6                  # the list, then six batches of five, then the answer
-    assert len(allowance.unread(result["attempts"])) == 30 and "NOT read" in allowance.unread_note(result["attempts"])
-
-
-def test_react_a_review_that_fit_leaves_no_unread_note():
-    allowance = la.LibraryAllowance()
-    result, prompts, reads = asyncio.run(_run_react(12, allowance))
-    assert allowance.unread_note(result["attempts"]) == ""
 
 
 # ---- the wiring ---------------------------------------------------------------------------------------------------------------------------------

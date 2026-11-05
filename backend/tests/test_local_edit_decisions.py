@@ -10,6 +10,7 @@ from backend.services import local_edit_decisions as led
 from backend.services import local_workspace as lw
 from backend.services import repo_checkout as rc
 from backend.tests.test_local_edits import _connect_folder, _replace, run_async
+from backend.tests.legacy_loop import react_style
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -172,26 +173,6 @@ async def test_a_page_that_cannot_report_a_decision_gets_the_old_behaviour_and_n
     seen = await _drive(monkeypatch, lambda pid: None, edit_decisions=False)
     assert seen["card"]["awaiting_decision"] is False and "nothing has been changed yet" in seen["observation"] and led.waiting_count() == 0
 
-
-@run_async
-async def test_the_old_engine_never_waits(monkeypatch):
-    _connect_folder()
-    from backend.tests.test_tool_agent_node import _setup_github_repo, _state
-
-    monkeypatch.setenv("TOOL_AGENT_ENGINE", "react")
-    monkeypatch.setattr(aw, "fetch_and_extract_checkout", lambda *a, **k: (_ for _ in ()).throw(rc.RepoCheckoutError("x")))
-    _setup_github_repo(monkeypatch)
-    emit = AsyncMock()
-    monkeypatch.setattr(aw, "safe_emit_event", emit)
-    seen = {}
-
-    async def fake_react(**kwargs):
-        seen["observation"] = await kwargs["act"]({"tool_action": "propose_local_edits", "args": {"edits": [_replace("src/app.py", "'hi ' + name", "'hello ' + name")]}})
-        return {"final_answer": "done", "attempts": [], "show_work": False}
-
-    monkeypatch.setattr(aw, "run_react_loop", fake_react)
-    await aw.tool_agent_node({**_state("make the greeting friendlier", username="jack"), "edit_decisions": True})
-    assert "nothing has been changed yet" in seen["observation"] and led.waiting_count() == 0
 
 
 # ---- the wiring ----------------------------------------------------------------------------------------------------------------------------

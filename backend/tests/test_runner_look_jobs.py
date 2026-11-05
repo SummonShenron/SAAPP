@@ -344,19 +344,6 @@ def test_the_tools_are_declared_offered_only_with_a_capable_runner_and_wired_int
     assert 'budget_guard.low_power({"level": state.get("budget_level")})' in agent
 
 
-def test_the_browser_word_stays_native_when_a_local_look_is_offered_but_click_and_navigate_still_go_to_the_old_engine(monkeypatch):
-    from backend.services import native_loop
-
-    text = "can you check my page in the browser and take a screenshot?"
-    assert native_loop.needs_old_engine(text) is True
-    assert native_loop.needs_old_engine(text, None, False, True) is False
-    assert native_loop.needs_old_engine("navigate to the pricing page", None, False, True) is True and native_loop.needs_old_engine("click the login button", None, False, True) is True
-    assert native_loop.old_engine_reason(text, None, False, True) == "" and native_loop.old_engine_reason(text) in ("browser", "screenshot")
-    monkeypatch.setattr(native_loop, "enabled", lambda: True)
-    tools = [{"name": "look_at_local_page"}]
-    assert native_loop.eligible(edit_turn=False, tools=tools, text=text) is True
-    assert native_loop.eligible(edit_turn=False, tools=[{"name": "read_repo_file"}], text=text) is False
-
 
 def test_the_counters_are_known_keys():
     from backend.utils import self_counters

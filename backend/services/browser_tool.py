@@ -3,12 +3,12 @@
 
 Every public function here returns a plain string and never raises: failures come back as
 "ERROR: ..." strings, matching _read_file/_search_code's convention in agent_workflow.py so
-run_react_loop's existing retry-nudge tracking (_is_empty_observation, unretried_inconclusive_tools)
+the tool loop's existing retry-nudge tracking (_is_empty_observation, unretried_inconclusive_tools)
 picks up a failed/hung browser step exactly like a failed GitHub call, with no new plumbing.
 
 BrowserSession is deliberately dumb: one CDP connection, one context, one page, reused across
 every browser_* action within a single tool_agent_node call and closed exactly once when that
-call's ReAct loop ends (see agent_workflow.py's finally block around run_react_loop). It cannot be
+call's ReAct loop ends (see agent_workflow.py's finally block around the tool loop). It cannot be
 checkpointed between turns: the next turn that needs a page connects a fresh session.
 """
 import base64

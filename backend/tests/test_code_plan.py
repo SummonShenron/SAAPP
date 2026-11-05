@@ -456,7 +456,7 @@ def test_the_turn_is_wired_to_the_plan_in_the_agent_and_the_app():
     workflow = (ROOT / "backend" / "services" / "agent_workflow.py").read_text(encoding="utf-8")
     app_source = (ROOT / "app.py").read_text(encoding="utf-8")
     assert "tool_action == \"submit_plan\"" in workflow and "code_plan.progress_note(" in workflow and "code_plan.record_applied," in workflow
-    assert "plan_phase != code_plan.PLAN_PHASE and not any(tool.get(\"name\") == \"propose_local_edits\"" in workflow       # a plan turn is native whatever the edit tool says
+    assert "if plan_phase == code_plan.PLAN_PHASE and not edit_turn:" in workflow                                  # a question during plan mode is not a plan turn; a change request is
     assert "code_plan_utils.prepare," in app_source and "code_plan_utils.record_applied_for_user" in app_source and "code_plan_utils.clear_all" in app_source
     assert "plan_mode=bool(_settings.get(\"plan_mode\")) and budget_guard.allows(\"plan_mode\", budget_state)" in app_source
 

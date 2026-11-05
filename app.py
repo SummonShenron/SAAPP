@@ -1034,7 +1034,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                             "title": data.get("title", "Processing..."),
                             "detail": data.get("detail", ""),
                         }
-                        # Only present when tool_agent_node's batching (run_react_loop's
+                        # Only present when tool_agent_node's batching (the tool loop's
                         # "queries" support) actually ran this action concurrently alongside
                         # others in the same step — lets the frontend trace panel show that
                         # directly instead of the only way to confirm it being to read the

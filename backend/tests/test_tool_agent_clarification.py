@@ -69,19 +69,6 @@ def test_format_attempts_steps_renders_purpose_action_and_observation():
 # resume. The model is no longer offered "clarify"; a model that still returns it has its question shown as the answer.
 # ---------------------------------------------------------------------------
 
-@run_async
-async def test_a_clarify_action_is_shown_as_the_answer_not_raised_as_a_pause(monkeypatch):
-    async def act(decision):
-        return "should never be called"
-
-    async def fake_ainvoke(prompt):
-        return _llm_response(action="clarify", question="Which repo did you mean: SAAPP or errAgent?")
-
-    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
-    result = await aw.run_react_loop(question="find the bug", schema="repo=x", prompt_template="{question} | {schema} | {attempts}", act=act, max_iterations=3, node_name="test_node")
-    assert result["final_answer"] == "Which repo did you mean: SAAPP or errAgent?"
-    assert result["attempts"] == []
-
 
 @run_async
 async def test_a_tool_agent_turn_that_asks_ends_with_the_question_and_no_paused_state(monkeypatch):
@@ -93,11 +80,11 @@ async def test_a_tool_agent_turn_that_asks_ends_with_the_question_and_no_paused_
     assert "paused_clarification" not in result and "paused_code_plan" not in result
 
 
-def test_the_model_is_no_longer_offered_a_clarify_action_or_a_plan_pause():
-    from backend.components.constraints import TOOL_AGENT_PROMPT
-    assert '"query" or "final" or "clarify"' not in TOOL_AGENT_PROMPT
-    assert 'action=clarify' not in TOOL_AGENT_PROMPT
-    assert 'Ask the user a question in your "final" answer only when' in TOOL_AGENT_PROMPT
+def test_the_model_is_told_to_ask_in_its_answer_and_has_no_clarify_or_plan_pause_tool():
+    from backend.services import native_loop, native_tools
+
+    assert "Ask the user a question in your answer only when" in native_loop.SYSTEM_PROMPT
+    assert "clarify" not in native_tools.REGISTRY and "propose_code_plan" not in native_tools.REGISTRY
 
 
 def test_a_pause_left_in_old_state_never_resumes_anything():

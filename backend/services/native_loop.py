@@ -1,8 +1,8 @@
 """A tool-calling loop that works like a modern agent loop: one growing conversation, real function calls, results fed back.
 
-This is a SPIKE behind a switch (TOOL_AGENT_ENGINE=native; the default stays the old ReAct loop in react_loop.py). It exists to answer one
-question with measurements, not opinions: is this design cheaper and as good? backend/evals/behavior_eval.py runs the same scenarios
-through both engines and compares quality, model calls and tokens.
+This is the tool agent's only loop (2026-11-05: the old ReAct loop, react_loop.py, was deleted; docs/react-sunset-plan.md). It began as a measured spike behind
+TOOL_AGENT_ENGINE=native, answering one question with measurements, not opinions: is this design cheaper and as good? backend/evals/behavior_eval.py runs scenarios
+through it and compares quality, model calls and tokens.
 
 HOW IT DIFFERS FROM THE OLD LOOP (and why that should cost less)
 - ONE GROWING MESSAGE LIST. The old loop rebuilt a single text prompt on every step (about 8,000 tokens of rules and menu, with the changing
@@ -38,7 +38,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
-from backend.utils import act_not_suggest, claim_check, combo as combo_rules, diff_review, draft_checkpoint, loop_rhythm, reading_waste
+from backend.utils import act_not_suggest, answer_checks, claim_check, combo as combo_rules, diff_review, draft_checkpoint, loop_rhythm, reading_waste
 from backend.utils.prompt_meter import PromptMeter
 from backend.utils.agent_utils import _UnsafeActionRequested, build_tool_facts, build_trace_subject, new_trace_step_id
 
@@ -105,7 +105,8 @@ SYSTEM_PROMPT = """You are Sonic Assistant's research agent. You answer by calli
 - When asked to write or change code, call save_draft with your draft (the code, in full) as soon as you know roughly what to change, together with any reads you still need: it costs no step. Check the draft against what you read, save a corrected whole draft if anything is wrong, and start your answer from it.
 - What Sonic said earlier in the conversation about its own jobs, schedule, reading or status came from their own records, which you cannot check with these tools; it stands. Never retract, correct or comment on an earlier reply unless the person asks about it or what you read this turn directly contradicts it.
 - Read where the work is. Never read a file from line 1 (it is imports and setup): search_literal for a word from the task, then read_repo_file with start_line a little before the match and line_count about 60. A read from the top of a big file is refused with a map of the file. Do not read a file you already read this turn: its result is in the conversation above.
-- Answer in plain, concise prose. Cite the file paths and line numbers you actually read. If the request is genuinely ambiguous, ask one specific question as your reply."""
+- Answer in plain, concise prose. Cite the file paths and line numbers you actually read. Ask the user a question in your answer only when the request is genuinely ambiguous or missing a detail only they can supply and no tool could resolve it (two equally plausible repos, a time range that was never given, \"that file\" with nothing identifying which). "
+    "It is not for a search that came back empty: that is an honest \"I checked X and Y, nothing conclusive turned up\". Ask one clear, specific question, never a vague \"can you tell me more?\"; their next message carries on the same conversation."""
 
 # Offered next to the repository tools only: the model keeps a draft of a change inside the loop (backend/utils/draft_checkpoint.py). Nothing runs: the text is kept for later steps.
 SAVE_DRAFT_TOOL = {
@@ -162,103 +163,8 @@ def steps_left_notice(steps_left: int) -> Optional[str]:
     return None
 
 
-def enabled() -> bool:
-    """Whether the native engine is switched on (TOOL_AGENT_ENGINE=native). Off by default."""
-    return os.getenv("TOOL_AGENT_ENGINE", "react").strip().lower() == "native"
-
-
-# The native engine offers only the read-only subset in native_tools.REGISTRY. Everything else the old engine's menu has (MongoDB, the
-# browser, test runs, the draft-and-confirm email/doc/plan flows) simply is not there for the model to call.
-# declarations_from_menu drops those silently, so a turn that needed one ran on an engine that could not do it: on 2026-10-12 a request to
-# read Gmail got "the tool isn't wired into my loop" (and then an invented "it's timing out"), with the integration connected and working.
-# So a turn goes native only when nothing in it points at a tool the native engine lacks. Matching too much is harmless (such a turn
-# just uses the old engine, as it always did); matching too little breaks the request, so this errs wide.
-# Reading Gmail, Drive and the calendar IS native now (they only needed definitions: the dispatcher is shared by both engines). What is
-# left is MongoDB, the browser, test runs and the e-mail draft-and-confirm flow, each of which stays on the old engine only while the native engine does not offer its tool (the regexes and flags below).
-# Appending to the person's target doc is native (propose_append_target_doc, via is_unsafe): it used to be routed by wording alone, and a request that did not say "doc" ran here with no such tool (prod, 2026-10-23).
-# A multi-file "plan first" request no longer forces the old engine (2026-11-05), and the pause-and-resume flows (a clarifying question, an approved multi-file plan) are gone: native plan mode and
-# propose_local_edits do that job, and a question for the person is simply the answer (docs/react-sunset-plan.md, stage C).
-# The e-mail wording (send, draft, write, compose, reply or forward an e-mail). It goes to the old engine only while the native engine does not offer propose_send_email (native_tools.REGISTRY).
-_EMAIL_SEND_RE = re.compile(
-    r"\b(?:send|draft|write|compose|reply(?:\s+to)?|forward)\b[^.\n]{0,40}\be-?mails?\b",
-    re.IGNORECASE,
-)
-# The Mongo words (and the plain "database" / "db") go to the old engine only while the native engine does not offer run_mongo_query (the admin datastore tool, native_tools.REGISTRY).
-_MONGO_WORDS_RE = re.compile(r"\b(?:mongo(?:db)?|pymongo|database|db)\b", re.IGNORECASE)
-# Asking for tests to be run was old-engine-only (its test runners are GitHub Actions and a snippet runner). When the native engine is offering run_local_check (a runner on the person's own
-# machine, backend/utils/runner_jobs.py), it can do that too, so these phrases keep the turn native; "run CI" above still goes to the old engine, which has the GitHub runner.
-_TEST_RUN_RE = re.compile(r"\b(?:pytest|unit\s+tests?|run\s+(?:the\s+)?tests?)\b", re.IGNORECASE)
-_OLD_ENGINE_ONLY_FLAGS = ("needs_send_email",)
-# "run CI" went to the old engine (its GitHub test runner). It stays native while run_repo_tests is offered natively (admins), and goes old otherwise.
-_CI_RUN_RE = re.compile(r"\brun\s+(?:the\s+)?ci\b", re.IGNORECASE)
-
-
-# When the native engine is offering look_at_local_page (a runner and a browser on the person's own machine), "browser" and "screenshot" no longer mean the cloud browser only the old engine has; "navigate" and
-# "click" still do (the local look reads a page, it does not drive one).
-_LOOK_WORDS_RE = re.compile(r"\b(?:browser|screenshots?)\b", re.IGNORECASE)
-# The plain words for driving a page. They sent a turn to the old engine only while the native engine had no page tool to answer them: when it offers the cloud page tools (browser_navigate and the rest, native_tools.REGISTRY)
-# they stay native; with only look_at_local_page, "browser" and "screenshot" stay native and "navigate" and "click" still go old; with neither, all four go old.
-_PAGE_WORDS_RE = re.compile(r"\b(?:browser|screenshots?|navigate|click)\b", re.IGNORECASE)
-
-
-def _page_words_route_old(text: str, looks_native: bool, browser_native: bool) -> bool:
-    if browser_native:
-        return False
-    return bool(_PAGE_WORDS_RE.search(_LOOK_WORDS_RE.sub(" ", text or "") if looks_native else (text or "")))
-
-
-def old_engine_reason(text: str = "", flags: Optional[Dict[str, Any]] = None, test_runs_native: bool = False, looks_native: bool = False, browser_native: bool = False, mongo_native: bool = False, ci_native: bool = False, email_native: bool = False) -> str:
-    """The word or phrase that sent a turn to the old engine ("browser", "database", "run the tests"), or the router's flag, or "" when nothing did. For telling the person why a mode was skipped."""
-    for name in _OLD_ENGINE_ONLY_FLAGS:
-        if (flags or {}).get(name) and not (email_native and name == "needs_send_email"):
-            return name
-    found = (None if email_native else _EMAIL_SEND_RE.search(text or "")) or (None if ci_native else _CI_RUN_RE.search(text or "")) or (None if mongo_native else _MONGO_WORDS_RE.search(text or "")) or (None if browser_native else _PAGE_WORDS_RE.search(_LOOK_WORDS_RE.sub(" ", text or "") if looks_native else (text or ""))) or (None if test_runs_native else _TEST_RUN_RE.search(text or ""))
-    return " ".join(found.group(0).split()).lower() if found else ""
-
-
-def needs_old_engine(text: str = "", flags: Optional[Dict[str, Any]] = None, test_runs_native: bool = False, looks_native: bool = False, browser_native: bool = False, mongo_native: bool = False, ci_native: bool = False, email_native: bool = False) -> bool:
-    """Whether the request, or the router's reading of it, points at a tool only the old engine has. `test_runs_native`: this turn's native tools include one that runs the person's tests."""
-    if any((flags or {}).get(name) and not (email_native and name == "needs_send_email") for name in _OLD_ENGINE_ONLY_FLAGS):
-        return True
-    if (not ci_native and _CI_RUN_RE.search(text or "")) or (not email_native and _EMAIL_SEND_RE.search(text or "")) or _page_words_route_old(text, looks_native, browser_native):
-        return True
-    if not mongo_native and _MONGO_WORDS_RE.search(text or ""):
-        return True
-    return (not test_runs_native) and bool(_TEST_RUN_RE.search(text or ""))
-
-
-def eligible(*, edit_turn: bool, tools: List[Dict[str, Any]], text: str = "", flags: Optional[Dict[str, Any]] = None) -> bool:
-    """Whether THIS turn may use the native engine: it is switched on, there is at least one tool it can offer, the turn is not one of
-    the kinds only the old engine handles (an edit request when the edit tool is not offered here, a resumed clarification), and nothing in `text`
-    (the request and the recent conversation) or `flags` (the router's reading of it) calls for a tool the native engine lacks."""
-    test_runs_native = any(tool.get("name") == "run_local_check" for tool in tools)
-    looks_native = any(tool.get("name") == "look_at_local_page" for tool in tools)
-    browser_native = any(tool.get("name") == "browser_navigate" for tool in tools)
-    mongo_native = any(tool.get("name") == "run_mongo_query" for tool in tools)
-    ci_native = any(tool.get("name") == "run_repo_tests" for tool in tools)
-    email_native = any(tool.get("name") == "propose_send_email" for tool in tools)
-    return enabled() and bool(tools) and not edit_turn and not needs_old_engine(text, flags, test_runs_native, looks_native, browser_native, mongo_native, ci_native, email_native)
-
-
-# Why a turn ran on the old (ReAct) loop, as a category and never the words that matched (those are the person's text): counted per turn so the sunset of that loop (docs/react-sunset-plan.md) can see what is left.
-REACT_REASONS = ("switch_off", "no_tools", "edit_turn", "flag", "wording")
-
-
-def react_reason(*, edit_turn: bool, tools: List[Dict[str, Any]], text: str = "", flags: Optional[Dict[str, Any]] = None) -> str:
-    """"" when THIS turn may use the native engine (exactly when `eligible` says so), else the first reason it may not, one of REACT_REASONS. The checks run in the order `eligible` reads them."""
-    if not enabled():
-        return "switch_off"
-    if not tools:
-        return "no_tools"
-    if edit_turn:
-        return "edit_turn"
-    names = {tool.get("name") for tool in tools}
-    lifted = {"needs_send_email"} if "propose_send_email" in names else set()
-    if any((flags or {}).get(name) and name not in lifted for name in _OLD_ENGINE_ONLY_FLAGS):
-        return "flag"
-    if needs_old_engine(text, None, "run_local_check" in names, "look_at_local_page" in names, "browser_navigate" in names, "run_mongo_query" in names, "run_repo_tests" in names, "propose_send_email" in names):
-        return "wording"
-    return ""
+# There is no choice of engine any more (docs/react-sunset-plan.md): every tool-agent turn runs here. A tool the turn is not offered (CI or the datastore without admin, a runner check with no runner, an
+# e-mail with no menu line) is simply not among the tools, and the model says so.
 
 
 def _text(content: Any) -> str:
@@ -346,6 +252,8 @@ async def run(
     plan_feed: Optional[Callable[[], Awaitable[str]]] = None,
     after_apply_hint: str = "",
     reviewer: Optional[Callable[[], Awaitable[Optional[Any]]]] = None,
+    capability_denial_watchlist: Optional[List[Any]] = None,
+    conversation_text: str = "",
 ) -> Dict[str, Any]:
     """Runs the loop and returns what the old loop returns: `{"final_answer", "attempts", "show_work"}`, where each attempt is
     `{"purpose", "action_desc", "observation"}`. `llm` must offer `ainvoke_tools(messages, tools)`. `act(decision)` is the turn's
@@ -499,6 +407,7 @@ async def run(
     act_rejections = 0                                        # an answer that wrote code out instead of editing is sent back (backend/utils/act_not_suggest.py), at most twice
     combo = combo_rules.Combo(ACTION_TOOLS, ACTION_REFUND_CAP)   # what the actions of this turn earn back (backend/utils/combo.py): a landed action earns reading room, up to ACTION_REFUND_CAP steps
     claim_rejections = 0                                      # an answer that claimed a pass no run backed is sent back once (backend/utils/claim_check.py)
+    answer_sent_back: Dict[str, int] = {}                     # the three checks ported from the old loop (backend/utils/answer_checks.py), each at most answer_checks.MAX_SEND_BACKS times: counted by kind
     claim_checking = can_edit or bool(offered & _REPO_TOOLS)  # a coding turn
     review_rounds = 0                                         # second readings of an applied change run this turn, at most diff_review.MAX_ROUNDS
 
@@ -666,6 +575,21 @@ async def run(
                     messages.append(HumanMessage(content=claim_check.send_back_notice(unbacked, bool(offered & _CHECK_TOOLS))))
                     logger.info("[native_loop] step %s: an answer claiming a passing check that no run backed was sent back (%s).", step, ",".join(unbacked))
                     continue
+            if step < budget:
+                notice = None
+                if answer_sent_back.get("denial", 0) < answer_checks.MAX_SEND_BACKS and (denied := answer_checks.denied_capability(answer, offered, capability_denial_watchlist)):
+                    answer_sent_back["denial"] = answer_sent_back.get("denial", 0) + 1
+                    notice = answer_checks.denial_notice(denied)
+                elif not can_edit and answer_sent_back.get("diff", 0) < answer_checks.MAX_SEND_BACKS and (diff_path := answer_checks.ungrounded_diff_path(answer, attempts)):
+                    answer_sent_back["diff"] = answer_sent_back.get("diff", 0) + 1
+                    notice = answer_checks.diff_notice(diff_path)
+                elif not can_edit and answer_sent_back.get("no_read", 0) < answer_checks.MAX_SEND_BACKS and answer_checks.code_without_reading(answer, attempts, conversation_text):
+                    answer_sent_back["no_read"] = answer_sent_back.get("no_read", 0) + 1
+                    notice = answer_checks.NO_READ_NOTICE
+                if notice:
+                    messages.append(HumanMessage(content=notice))
+                    logger.info("[native_loop] step %s: an answer was sent back by the %s check.", step, ",".join(sorted(answer_sent_back)))
+                    continue
             final_text = answer
             stop_reason = "model_answered"
             break
@@ -811,7 +735,7 @@ async def run(
             if name in PAGE_TOOLS:
                 key = "browser_read_native" if name == "browser_read_text" else f"{name}_native"
                 page_counts[key] = page_counts.get(key, 0) + 1
-        await asyncio.to_thread(record_turn_counts, {**meter.counts(sum(len(item["text"]) for item in held)), **combo.counts(forced and stop_reason in ("", "step_limit")), **page_counts})
+        await asyncio.to_thread(record_turn_counts, {**meter.counts(sum(len(item["text"]) for item in held)), **combo.counts(forced and stop_reason in ("", "step_limit")), **page_counts, **{f"answer_sent_back_{kind}": count for kind, count in answer_sent_back.items()}})
     except Exception:
         logger.debug("[native_loop] could not record the prompt sizes.", exc_info=True)
     return {

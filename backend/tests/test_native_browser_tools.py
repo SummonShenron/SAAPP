@@ -109,16 +109,3 @@ def test_declarations_follow_the_menu():
     assert native_tools.declarations_from_menu([]) == []
 
 
-def test_page_words_go_native_only_when_a_page_tool_is_offered():
-    text = "open the browser, navigate there and click Login, then take a screenshot"
-    assert native_loop.needs_old_engine(text)
-    assert native_loop.needs_old_engine(text, looks_native=True)  # navigate/click still old with look-only
-    assert not native_loop.needs_old_engine(text, browser_native=True)
-    assert not native_loop.needs_old_engine("take a screenshot of the browser", looks_native=True)
-
-
-def test_other_old_engine_triggers_still_route_old_even_with_browser_tools():
-    for text in ("query the mongodb collection", "run ci on this", "draft an email to Sam"):
-        assert native_loop.needs_old_engine(text, browser_native=True), text
-    assert native_loop.old_engine_reason("navigate to the site") == "navigate"
-    assert native_loop.old_engine_reason("navigate to the site", browser_native=True) == ""

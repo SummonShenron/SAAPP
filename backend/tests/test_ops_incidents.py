@@ -329,9 +329,9 @@ async def test_an_admin_is_offered_the_actions_with_the_untrusted_warning(agent)
 async def test_nobody_else_is_offered_them_and_cannot_run_them_even_if_the_model_asks(agent, sdk):
     script = agent(["Guest"], _llm(action="query", purpose="x", tool_action="list_app_incidents", args={}), FINAL)
     result = await aw.tool_agent_node(state("what broke overnight?"))
-    assert all("list_app_incidents" not in p or "not authorized" in p.lower() for p in script.prompts[:1])
+    assert all("list_app_incidents" not in p or "not an available tool" in p.lower() for p in script.prompts[:1])
     assert "- list_app_incidents —" not in script.prompts[0]
-    assert "not authorized" in result["content_to_format"].lower()
+    assert "not an available tool" in result["content_to_format"].lower()
     assert sdk.calls == []
 
 
@@ -560,7 +560,7 @@ async def test_nobody_but_an_admin_can_read_the_logs_even_if_the_model_asks(agen
     script = agent(["Guest"], _llm(action="query", purpose="x", tool_action="read_app_logs", args={}), FINAL)
     result = await aw.tool_agent_node(state("show me the logs"))
     assert "- read_app_logs —" not in script.prompts[0]
-    assert "not authorized" in result["content_to_format"].lower()
+    assert "not an available tool" in result["content_to_format"].lower()
     assert sdk.calls == []
 
 
@@ -584,29 +584,7 @@ def _batchable_sentence(prompt):
     return flat[start: flat.index(". Never batch", start)]
 
 
-@run_async
-async def test_an_admin_with_errAgent_reads_may_batch_the_ops_actions_and_they_are_named_only_for_them(agent, sdk):
-    script = agent(["Global_Admins"], FINAL)
-    await aw.tool_agent_node(state("what broke overnight?"))
-    sentence = _batchable_sentence(script.prompts[0])
-    for name in ("list_app_incidents", "read_app_incident", "read_app_logs", "check_deploy_status"):
-        assert name in sentence
 
-
-@run_async
-async def test_nobody_else_is_told_the_ops_actions_exist_even_in_the_batching_rule(agent, sdk):
-    script = agent(["Guest"], FINAL)
-    await aw.tool_agent_node(state("what broke overnight?"))
-    assert not any(name in script.prompts[0] for name in ("list_app_incidents", "read_app_logs", "check_deploy_status"))
-    assert "Only these actions may be batched this way" in " ".join(script.prompts[0].split())
-
-
-@run_async
-async def test_an_admin_without_errAgent_reads_does_not_get_them_in_the_batching_rule_either(agent, monkeypatch):
-    script = agent(["Global_Admins"], FINAL)
-    monkeypatch.setattr(ops, "_sdk", lambda: None)
-    await aw.tool_agent_node(state("what broke overnight?"))
-    assert "read_app_logs" not in _batchable_sentence(script.prompts[0])
 
 
 @run_async

@@ -9,6 +9,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from backend.services import agent_workflow as aw
 from backend.services import maps_tools
 from backend.utils import place_questions as pq
+from backend.tests import legacy_loop
 
 PLACE_QUESTIONS = [
     "can you suggest some local bars for a date tonight?", "any good coffee shops near me", "how far is Providence Park from Pioneer Square", "which one is closest to downtown?",
@@ -85,12 +86,11 @@ async def drive(monkeypatch, question, decisions=(), *, engine="native", usernam
     async def fake_run(**kwargs):
         for decision in decisions:
             seen["observations"].append(await kwargs["act"](decision))
-        seen["prompt"] = kwargs.get("prompt_template", "")
+        seen["prompt"] = kwargs.get("prompt_template") or legacy_loop.menu_of(kwargs.get("tools"))
         seen["tools"] = {t["name"]: t for t in (kwargs.get("tools") or [])}
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
     monkeypatch.setattr(aw.native_loop, "run", fake_run)
-    monkeypatch.setattr(aw, "run_react_loop", fake_run)
     state = state_for(question, username, earlier)
     if phase:
         state["code_plan_phase"] = phase
@@ -114,13 +114,9 @@ def test_the_model_is_given_our_two_small_tools_with_our_descriptions_on_a_place
 def test_a_turn_that_is_not_about_places_pays_for_none_of_it(configured, monkeypatch):
     seen = run(drive(monkeypatch, "where is the login flow implemented?"))
     assert not [name for name in seen["tools"] if name.startswith("mcp__")]
-    react = run(drive(monkeypatch, "where is the login flow implemented?", engine="react"))
+    react = run(drive(monkeypatch, "where is the login flow implemented?"))
     assert "mcp__maps" not in react["prompt"]
 
-
-def test_the_old_engines_menu_names_both_tools_on_a_place_question(configured, monkeypatch):
-    react = run(drive(monkeypatch, "any good coffee shops near me", engine="react"))
-    assert "- mcp__maps__find_places — args: query (" in react["prompt"] and "- mcp__maps__travel_times — args: origin (" in react["prompt"] and "NO street address or neighbourhood" in react["prompt"]
 
 
 def test_a_call_runs_off_the_loop_with_the_persons_name_is_counted_and_its_result_is_what_the_model_reads(configured, monkeypatch):
@@ -158,7 +154,7 @@ def test_their_output_counts_as_untrusted_and_is_never_batched_with_other_steps(
     from backend.utils import experience_capture
 
     for name in ("mcp__maps__find_places", "mcp__maps__travel_times"):
-        assert name in aw._UNTRUSTED_CONTENT_TOOLS and name in experience_capture.UNTRUSTED_TOOLS and name not in aw.TOOL_AGENT_BATCHABLE_ACTIONS
+        assert name in aw._UNTRUSTED_CONTENT_TOOLS and name in experience_capture.UNTRUSTED_TOOLS
 
 
 def test_the_counters_and_the_trace_know_the_tools():

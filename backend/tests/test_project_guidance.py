@@ -135,7 +135,6 @@ async def drive(monkeypatch, files, *, engine="react", connected=True):
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
     monkeypatch.setattr(aw.native_loop, "run", fake_loop)
-    monkeypatch.setattr(aw, "run_react_loop", fake_loop)
     await aw.tool_agent_node(_state("where is the greeting built?", username="jack"))
     seen["events"] = [(c.args[0], c.args[1]) for c in emit.call_args_list]
     return seen
@@ -149,13 +148,6 @@ def test_the_native_engine_gets_the_guidance_with_the_persons_coding_preferences
     assert "PROJECT GUIDANCE (from .sonic/AGENTS.md in the connected folder)" in seen["coding_preferences"] and "Greetings are built in src/app.py" in seen["coding_preferences"]
     assert any(name == "trace_detail" and data["title"] == "Read the project's guidance" and ".sonic/AGENTS.md" in data["detail"] for name, data in seen["events"])
 
-
-def test_the_old_engine_gets_it_in_its_prompt_and_braces_in_the_file_do_not_break_the_template(monkeypatch):
-    seen = asyncio.run(drive(monkeypatch, GUIDED, engine="react"))
-    template = seen["prompt_template"]
-    assert "PROJECT GUIDANCE (from .sonic/AGENTS.md in the connected folder)" in template and "Use {{braces}} freely and {{0}} and {{{{double}}}}." in template
-    filled = template.format(question="q", schema="s", attempts="a", architecture_map="")                    # what the loop does with it every step: it must not raise
-    assert "Use {braces} freely and {0} and {{double}}." in filled
 
 
 def test_a_folder_without_a_guidance_file_gets_nothing_extra_and_costs_no_event(monkeypatch):

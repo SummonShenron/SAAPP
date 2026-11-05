@@ -38,7 +38,7 @@ def api_key() -> Optional[str]:
 
 
 def _messages(prompt: Any) -> Any:
-    """A plain prompt string (a SplitPrompt is a str, so it is used whole: OpenAI caches a repeated prefix by itself) as a one-message conversation; a list of messages as it is."""
+    """A plain prompt string as a one-message conversation (OpenAI caches a repeated prefix by itself); a list of messages as it is."""
     return [HumanMessage(content=str(prompt))] if isinstance(prompt, str) else prompt
 
 

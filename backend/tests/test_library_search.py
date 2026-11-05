@@ -87,7 +87,6 @@ def test_the_native_engine_can_offer_it_too():
     assert "search_library" in native_tools.REGISTRY and native_tools.REGISTRY["search_library"]["required"] == ["query"]
     line = "- search_library — args: query (words), max_results (optional); searches the person's documents"
     assert [d["name"] for d in native_tools.declarations_from_menu([line])] == ["search_library"]
-    assert "search_library" in aw.TOOL_AGENT_BATCHABLE_ACTIONS          # several searches (one per week or topic) go in one step
 
 
 # ---- whole files ----------------------------------------------------------------------------------------------------------------------------
@@ -178,7 +177,7 @@ def test_a_database_failure_is_an_error_not_a_crash(monkeypatch):
 
 def test_the_whole_file_tools_are_offered_batchable_and_native():
     for name in ("list_library_files", "read_library_file"):
-        assert name in aw.TOOL_AGENT_BATCHABLE_ACTIONS and name in native_tools.REGISTRY
+        assert name in native_tools.REGISTRY
     assert native_tools.REGISTRY["read_library_file"]["required"] == ["name"]
 
 
@@ -280,7 +279,7 @@ async def test_a_call_to_the_tool_without_a_library_is_refused_even_if_the_model
     monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
     result = await aw.tool_agent_node(_scoped_state("what do my notes say", []))
     assert "can't reach a library" in result["content_to_format"]
-    assert "ERROR: this person has no document library to search." in asked[1]          # the refusal is what the model was shown
+    assert "is not an available tool" in asked[1]          # the tool is not offered without a library, and a call for it is refused: that is what the model was shown
 
 
 def test_the_retrieval_node_never_searches_the_whole_index_and_names_only_sources_from_the_scoped_search():

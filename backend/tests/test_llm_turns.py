@@ -256,8 +256,8 @@ def test_the_real_tool_agent_reports_its_engine_and_what_made_it_deep(monkeypatc
 
     for question, audit in (("scan the whole repo and tell me every file that reads GRACE_DAYS", True), ("what does mark_overdue do?", False)):
         turn = lt.begin()
-        asyncio.run(be.run_tool_agent(model, question, repo=True, engine="react"))
-        assert turn.tool_agent and turn.engine == "react" and turn.audit_wording is audit and turn.deep_source is None, question
+        asyncio.run(be.run_tool_agent(model, question, repo=True))
+        assert turn.tool_agent and turn.engine == "native" and turn.audit_wording is audit and turn.deep_source is None, question
 
 
 # ---- why a turn went to the tool agent ---------------------------------------------------------------------------------------

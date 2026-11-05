@@ -106,14 +106,6 @@ def test_the_engine_text_is_the_latest_message_and_the_one_human_message_before_
     assert au.recent_user_text("x", []) == "x"
 
 
-def test_the_word_that_sent_a_turn_to_the_other_engine_is_named():
-    assert native_loop.old_engine_reason("goes only to the requester's own browser") == "browser"
-    assert native_loop.old_engine_reason("Query the DATABASE for me") == "database"
-    assert native_loop.old_engine_reason("please run the tests") == "run the tests"
-    assert native_loop.old_engine_reason("please run the tests", test_runs_native=True) == ""
-    assert native_loop.old_engine_reason("move the header", {"needs_send_email": True}) == "needs_send_email"
-    assert native_loop.old_engine_reason("make the greeting friendlier") == ""
-
 
 # ---- through the tool agent: the real gate ----------------------------------------------------------------------------------------------------------
 
@@ -136,7 +128,6 @@ async def _turn(monkeypatch, messages, *, phase="plan"):
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
     monkeypatch.setattr(aw.native_loop, "run", fake_loop)
-    monkeypatch.setattr(aw, "run_react_loop", fake_loop)
     await aw.tool_agent_node({"username": "jack", "messages": messages, "documents": [], "code_plan_phase": phase})
     seen["events"] = [(c.args[0], c.args[1]) for c in emit.call_args_list]
     seen["noted"] = [data["text"] for name, data in seen["events"] if name == "plan_skipped"]
@@ -149,20 +140,12 @@ async def test_asking_for_a_plan_gets_the_plan_card_tool_where_it_used_to_get_a_
     assert "submit_plan" in seen["tools"] and not seen["noted"]
 
 
-@run_async
-async def test_a_word_in_the_message_before_no_longer_lets_the_plan_gate_say_yes_and_the_engine_say_no(monkeypatch):
-    # "browser" is in the task message, two messages back from the ask. Before: the gate looked only at the latest message and approved a plan turn, the engine choice looked at two and
-    # ran the old engine, which has no plan card. Now both look at the same words and the person is told.
-    seen = await _turn(monkeypatch, [h(TASK), a("Here is the investigation."), h("go ahead and make a plan for the task")])
-    assert "submit_plan" not in seen["tools"]
-    assert len(seen["noted"]) == 1 and '"browser"' in seen["noted"][0] and "Plan first is on" in seen["noted"][0]
-
 
 @run_async
-async def test_a_plan_the_gate_dropped_does_not_leave_the_turn_forced_to_edit_when_only_a_plan_was_asked_for(monkeypatch):
+async def test_a_request_for_a_plan_is_a_plan_turn_and_is_held_to_the_plan_rule_not_the_edit_rule(monkeypatch):
     seen = await _turn(monkeypatch, [h(TASK), a("ok"), h("make a plan for the task")])
-    assert "submit_plan" not in seen["tools"]
-    assert not seen["required"]                                                                  # a request for a plan must not become "you must propose an edit"
+    assert "submit_plan" in seen["tools"]
+    assert seen["required"] is aw._PLAN_REQUIRED_ACTION                                          # a request for a plan must not become "you must propose an edit"
 
 
 @run_async
@@ -183,11 +166,6 @@ def test_the_note_reaches_the_page_as_the_noted_line_the_page_already_shows():
     chat = (ROOT / "local" / "src" / "pages" / "Chat.tsx").read_text(encoding="utf-8")
     assert "payload.event === 'noted'" in chat
 
-
-def test_both_the_gate_and_the_engine_choice_use_the_one_shared_text():
-    source = (ROOT / "backend" / "services" / "agent_workflow.py").read_text(encoding="utf-8")
-    assert source.count("recent_user_text(latest_message_content, state.get(\"messages\", []))") == 2
-    assert "needs_old_engine(latest_message_content" not in source
 
 
 # ---- a change described in words, with no file name (2026-10-28, 6 PM: "add one to the user message bubbles too") ---------------------------------------------

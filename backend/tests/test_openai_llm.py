@@ -7,7 +7,6 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from backend.evals import eval_models as em
 from backend.models import openai_llm as ol
-from backend.models.split_prompt import SplitPrompt
 from backend.utils import llm_usage
 
 
@@ -84,11 +83,8 @@ def test_the_real_client_is_built_with_the_token_limit_and_effort_and_no_tempera
     assert "reasoning_effort" not in default             # unset leaves the model's own default (none)
 
 
-def test_a_plain_prompt_a_split_prompt_and_a_message_list_each_become_messages():
+def test_a_plain_prompt_and_a_message_list_each_become_messages():
     assert ol._messages("hello")[0].content == "hello"
-    split = SplitPrompt("stable part. changing tail", cuts=[13])
-    messages = ol._messages(split)
-    assert len(messages) == 1 and messages[0].content == "stable part. changing tail"       # one whole string: OpenAI caches the prefix itself
     conversation = [HumanMessage(content="a"), AIMessage(content="b")]
     assert ol._messages(conversation) is conversation
     assert ol.OpenAILLM().caches_prompt is False

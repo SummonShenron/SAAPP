@@ -11,6 +11,7 @@ from backend.services import agent_workflow as aw
 from backend.services import local_edits as le
 from backend.services import local_workspace as lw
 from backend.services import repo_checkout as rc
+from backend.tests.legacy_loop import react_style
 
 FILES = {
     "src/app.py": "import os\n\ndef greet(name):\n    return 'hi ' + name\n\ndef bye(name):\n    return 'bye ' + name\n",
@@ -183,7 +184,7 @@ async def _drive_turn(monkeypatch, decisions):
             observed.append(await kwargs["act"](decision))
         return {"final_answer": "done", "attempts": [], "show_work": False}
 
-    monkeypatch.setattr(aw, "run_react_loop", fake_run_react_loop)
+    monkeypatch.setattr(aw.native_loop, "run", react_style(fake_run_react_loop))
     await aw.tool_agent_node(_state("make the greeting friendlier", username="jack"))
     return observed, captured, emit
 

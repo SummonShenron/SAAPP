@@ -6,10 +6,8 @@ from backend.services import native_loop
 from backend.utils.agent_utils import looks_like_edit_request
 
 
-def test_every_ticket_stays_on_the_native_engine_and_reads_as_an_edit_request():
-    # Words like "db" and "browser" (a file name such as browser.py counts) send a turn to the old engine (native_loop._OLD_ENGINE_ONLY_RE): a first run of this eval landed there by accident.
+def test_every_ticket_reads_as_an_edit_request():
     for task in re_.TASKS:
-        assert not native_loop.needs_old_engine(task.prompt, test_runs_native=True), task.id
         assert looks_like_edit_request([HumanMessage(content=task.prompt)]), task.id
 
 

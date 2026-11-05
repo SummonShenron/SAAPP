@@ -54,13 +54,6 @@ def test_ci_tools_schema_and_solo():
     assert nl._SOLO_TOOLS >= {"run_mongo_query", "run_repo_tests", "run_snippet"}
 
 
-@pytest.mark.parametrize("text", ["run CI", "run the CI"])
-def test_run_ci_phrase_routing(text):
-    assert nl.eligible(edit_turn=False, tools=CI_TOOLS, text=text) is True
-    assert nl.eligible(edit_turn=False, tools=PLAIN_TOOLS, text=text) is False
-    assert nl.old_engine_reason(text) == text.lower()
-    assert nl.old_engine_reason(text, ci_native=True) == ""
-
 
 def test_ci_counter_keys_are_registered():
     assert "run_repo_tests_native" in sc.CI_KEYS
