@@ -1143,15 +1143,15 @@ CHANGELOG = [
     {
         "id": "clarify_and_resume",
         "requires": [
-            "backend/services/agent_workflow.py::paused_clarification",
+            "backend/components/constraints.py::Ask the user a question in your \"final\" answer only when",
         ],
         "month": "2026-09",
-        "title": "Asking, then picking up",
+        "title": "Asking when I need to",
         "line": (
-            "If I need something from you before I can continue, I ask, and then I pick up where I left off, including "
-            "what I had already checked."
+            "If I need something from you before I can continue, I ask one specific question, and your answer carries on "
+            "the same conversation."
         ),
-        "keywords": ["clarify", "clarifying", "ask me", "pause", "pick up", "resume"],
+        "keywords": ["clarify", "clarifying", "ask me", "question", "pick up", "resume"],
         "volunteer": [],
     },
     {

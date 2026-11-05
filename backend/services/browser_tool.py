@@ -9,8 +9,7 @@ picks up a failed/hung browser step exactly like a failed GitHub call, with no n
 BrowserSession is deliberately dumb: one CDP connection, one context, one page, reused across
 every browser_* action within a single tool_agent_node call and closed exactly once when that
 call's ReAct loop ends (see agent_workflow.py's finally block around run_react_loop). It cannot be
-checkpointed into paused_clarification — a clarification pause reconnects a fresh session on
-resume rather than resuming the old page, which is an accepted limitation, not a bug.
+checkpointed between turns: the next turn that needs a page connects a fresh session.
 """
 import base64
 import logging

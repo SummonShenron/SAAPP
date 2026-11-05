@@ -56,8 +56,8 @@ def test_ci_tools_schema_and_solo():
 
 @pytest.mark.parametrize("text", ["run CI", "run the CI"])
 def test_run_ci_phrase_routing(text):
-    assert nl.eligible(edit_turn=False, resumed=False, tools=CI_TOOLS, text=text) is True
-    assert nl.eligible(edit_turn=False, resumed=False, tools=PLAIN_TOOLS, text=text) is False
+    assert nl.eligible(edit_turn=False, tools=CI_TOOLS, text=text) is True
+    assert nl.eligible(edit_turn=False, tools=PLAIN_TOOLS, text=text) is False
     assert nl.old_engine_reason(text) == text.lower()
     assert nl.old_engine_reason(text, ci_native=True) == ""
 

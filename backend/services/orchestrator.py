@@ -58,7 +58,7 @@ def startup_services():
 
     # 3C. CHECKPOINTER — persists graph state across turns, keyed by thread_id (see
     # create_workflow's reset_transient_state for how this is kept safe: only fields explicitly
-    # meant to survive across turns, like paused_clarification, are left out of the per-turn
+    # meant to survive across turns, like emotional_state, are left out of the per-turn
     # reset). db is guaranteed non-None here (the guard above already raised otherwise), so no
     # fallback-to-None-checkpointer path is needed for that reason — only for the checkpointer's
     # own setup possibly failing, mirroring how a failed workflow compile below degrades to None

@@ -26,7 +26,7 @@ with the steering in view. Each steer grants two extra steps (at most eight), an
 loop the steering was re-rendered into every prompt; here it is one more user message in the conversation, so it costs nothing to keep.
 
 WHAT IT DELIBERATELY LEAVES OUT FOR NOW (each is a measured question, not an assumption): the after-answer grounding and idiom checks, the
-redundant-repeat backstop beyond the simple repeat guard here, clarification pauses, and every write and browser tool EXCEPT propose_local_edits (a connected folder: it only proposes, and the person applies from a diff; a change request is held to the same "you must propose it" rule as in the old loop). A turn that needs something the native engine does not offer (a resumed clarification, or a resumed multi-file plan: propose_code_plan stays old-only) is handed to the old engine.
+redundant-repeat backstop beyond the simple repeat guard here, and every write and browser tool EXCEPT propose_local_edits (a connected folder: it only proposes, and the person applies from a diff; a change request is held to the same "you must propose it" rule as in the old loop). A question for the person is simply the answer: there is no pause and resume.
 """
 import asyncio
 import json
@@ -176,8 +176,8 @@ def enabled() -> bool:
 # Reading Gmail, Drive and the calendar IS native now (they only needed definitions: the dispatcher is shared by both engines). What is
 # left is MongoDB, the browser, test runs and the e-mail draft-and-confirm flow, each of which stays on the old engine only while the native engine does not offer its tool (the regexes and flags below).
 # Appending to the person's target doc is native (propose_append_target_doc, via is_unsafe): it used to be routed by wording alone, and a request that did not say "doc" ran here with no such tool (prod, 2026-10-23).
-# A multi-file "plan first" request no longer forces the old engine (2026-11-05): propose_code_plan itself stays old-only (its approval resumes through the old engine's paused_code_plan path, and a resumed turn
-# is never native), but native plan mode and propose_local_edits do that job, so a request for a plan is answered here.
+# A multi-file "plan first" request no longer forces the old engine (2026-11-05), and the pause-and-resume flows (a clarifying question, an approved multi-file plan) are gone: native plan mode and
+# propose_local_edits do that job, and a question for the person is simply the answer (docs/react-sunset-plan.md, stage C).
 # The e-mail wording (send, draft, write, compose, reply or forward an e-mail). It goes to the old engine only while the native engine does not offer propose_send_email (native_tools.REGISTRY).
 _EMAIL_SEND_RE = re.compile(
     r"\b(?:send|draft|write|compose|reply(?:\s+to)?|forward)\b[^.\n]{0,40}\be-?mails?\b",
@@ -227,7 +227,7 @@ def needs_old_engine(text: str = "", flags: Optional[Dict[str, Any]] = None, tes
     return (not test_runs_native) and bool(_TEST_RUN_RE.search(text or ""))
 
 
-def eligible(*, edit_turn: bool, resumed: bool, tools: List[Dict[str, Any]], text: str = "", flags: Optional[Dict[str, Any]] = None) -> bool:
+def eligible(*, edit_turn: bool, tools: List[Dict[str, Any]], text: str = "", flags: Optional[Dict[str, Any]] = None) -> bool:
     """Whether THIS turn may use the native engine: it is switched on, there is at least one tool it can offer, the turn is not one of
     the kinds only the old engine handles (an edit request when the edit tool is not offered here, a resumed clarification), and nothing in `text`
     (the request and the recent conversation) or `flags` (the router's reading of it) calls for a tool the native engine lacks."""
@@ -237,14 +237,14 @@ def eligible(*, edit_turn: bool, resumed: bool, tools: List[Dict[str, Any]], tex
     mongo_native = any(tool.get("name") == "run_mongo_query" for tool in tools)
     ci_native = any(tool.get("name") == "run_repo_tests" for tool in tools)
     email_native = any(tool.get("name") == "propose_send_email" for tool in tools)
-    return enabled() and bool(tools) and not edit_turn and not resumed and not needs_old_engine(text, flags, test_runs_native, looks_native, browser_native, mongo_native, ci_native, email_native)
+    return enabled() and bool(tools) and not edit_turn and not needs_old_engine(text, flags, test_runs_native, looks_native, browser_native, mongo_native, ci_native, email_native)
 
 
 # Why a turn ran on the old (ReAct) loop, as a category and never the words that matched (those are the person's text): counted per turn so the sunset of that loop (docs/react-sunset-plan.md) can see what is left.
-REACT_REASONS = ("switch_off", "no_tools", "edit_turn", "resumed", "flag", "wording")
+REACT_REASONS = ("switch_off", "no_tools", "edit_turn", "flag", "wording")
 
 
-def react_reason(*, edit_turn: bool, resumed: bool, tools: List[Dict[str, Any]], text: str = "", flags: Optional[Dict[str, Any]] = None) -> str:
+def react_reason(*, edit_turn: bool, tools: List[Dict[str, Any]], text: str = "", flags: Optional[Dict[str, Any]] = None) -> str:
     """"" when THIS turn may use the native engine (exactly when `eligible` says so), else the first reason it may not, one of REACT_REASONS. The checks run in the order `eligible` reads them."""
     if not enabled():
         return "switch_off"
@@ -252,8 +252,6 @@ def react_reason(*, edit_turn: bool, resumed: bool, tools: List[Dict[str, Any]],
         return "no_tools"
     if edit_turn:
         return "edit_turn"
-    if resumed:
-        return "resumed"
     names = {tool.get("name") for tool in tools}
     lifted = {"needs_send_email"} if "propose_send_email" in names else set()
     if any((flags or {}).get(name) and name not in lifted for name in _OLD_ENGINE_ONLY_FLAGS):

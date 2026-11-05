@@ -20,7 +20,7 @@ def native_on(monkeypatch):
 
 
 def reason(**kw):
-    base = dict(edit_turn=False, resumed=False, tools=[READ], text="how does the scheduler work?", flags=None)
+    base = dict(edit_turn=False, tools=[READ], text="how does the scheduler work?", flags=None)
     return nl.react_reason(**{**base, **kw})
 
 
@@ -28,7 +28,6 @@ def test_each_reason_is_named_by_its_category():
     assert reason() == ""
     assert reason(tools=[]) == "no_tools"
     assert reason(edit_turn=True) == "edit_turn"
-    assert reason(resumed=True) == "resumed"
     assert reason(flags={"needs_send_email": True}) == "flag"
     assert reason(text="query the mongodb users collection") == "wording"
     assert reason(text="send an email to Dana") == "wording"
@@ -50,8 +49,8 @@ def test_the_reason_is_empty_exactly_when_the_turn_is_eligible():
     tool_sets = [[], [READ], [READ, EMAIL], [READ, {"name": "run_mongo_query"}, {"name": "run_repo_tests"}, {"name": "run_local_check"}]]
     texts = ["how does it work", "send an email to Dana", "query the mongodb collection", "run ci on this", "run the tests", "navigate to the site", "make an implementation plan"]
     flag_sets = [None, {"needs_send_email": True}, {"needs_gmail_lookup": True}]
-    for tools, text, flags, edit_turn, resumed in itertools.product(tool_sets, texts, flag_sets, (False, True), (False, True)):
-        kw = dict(edit_turn=edit_turn, resumed=resumed, tools=tools, text=text, flags=flags)
+    for tools, text, flags, edit_turn in itertools.product(tool_sets, texts, flag_sets, (False, True)):
+        kw = dict(edit_turn=edit_turn, tools=tools, text=text, flags=flags)
         assert (nl.react_reason(**kw) == "") == nl.eligible(**kw), kw
         assert nl.react_reason(**kw) in ("",) + nl.REACT_REASONS
 

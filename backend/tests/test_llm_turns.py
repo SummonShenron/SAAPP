@@ -352,7 +352,6 @@ def test_the_router_notes_why_it_chose_the_tool_agent_for_every_path_into_it(mon
         ("conversational", {"needs_github_search": True, "follow_up_intent": True}, {"follow_up"}),
         ("conversational", {"needs_web_search": True, "needs_code_interpreter": True}, {"web_search", "code_or_data"}),
         ("web_search", {}, {"approval_continuation"}),
-        ("resume_tool_agent", {}, {"clarification_resume"}),
         ("conversational", {"needs_conversation": True}, set()),
     ]
     for intent, flags, expected in cases:

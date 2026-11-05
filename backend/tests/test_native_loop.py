@@ -240,12 +240,11 @@ def test_progress_is_announced_for_each_call_that_actually_runs_and_a_failing_an
 
 def test_it_is_off_by_default_and_only_for_turns_the_old_engine_does_not_need(monkeypatch):
     monkeypatch.delenv("TOOL_AGENT_ENGINE", raising=False)
-    assert not nl.enabled() and not nl.eligible(edit_turn=False, resumed=False, tools=TOOLS)
+    assert not nl.enabled() and not nl.eligible(edit_turn=False, tools=TOOLS)
     monkeypatch.setenv("TOOL_AGENT_ENGINE", "Native")
-    assert nl.enabled() and nl.eligible(edit_turn=False, resumed=False, tools=TOOLS)
-    assert not nl.eligible(edit_turn=True, resumed=False, tools=TOOLS)      # an edit request against a connected folder
-    assert not nl.eligible(edit_turn=False, resumed=True, tools=TOOLS)      # resuming a paused clarification or plan
-    assert not nl.eligible(edit_turn=False, resumed=False, tools=[])        # nothing it can offer
+    assert nl.enabled() and nl.eligible(edit_turn=False, tools=TOOLS)
+    assert not nl.eligible(edit_turn=True, tools=TOOLS)      # an edit request against a connected folder
+    assert not nl.eligible(edit_turn=False, tools=[])        # nothing it can offer
     monkeypatch.setenv("TOOL_AGENT_ENGINE", "react")
     assert not nl.enabled()
 

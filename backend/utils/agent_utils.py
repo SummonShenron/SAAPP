@@ -586,25 +586,12 @@ class _UnsafeActionRequested(Exception):
     """Raised by run_react_loop when is_unsafe() flags a step, so the calling node can
     build its own tool-specific approval-required response instead of the loop guessing.
 
-    attempts carries whatever the loop had accumulated before this step, the same way
-    _ClarificationNeeded does below — needed by any unsafe action whose approval must resume the
-    SAME investigation thread (e.g. propose_code_plan, approved then continuing on to draft the
-    real implementation) rather than dispatch a one-shot external action whose content was
-    already fully composed before the approval card (propose_append_target_doc/
-    propose_send_email don't read this field, and don't need to)."""
+    attempts carries whatever the loop had accumulated before this step. Nothing reads it now that no approval
+    resumes an investigation (propose_append_target_doc/propose_send_email never did); kept so callers
+    that pass it keep working."""
     def __init__(self, decision: dict, attempts: list | None = None):
         self.decision = decision
         self.attempts = attempts or []
-
-
-class _ClarificationNeeded(Exception):
-    """Raised by run_react_loop when the model reports genuine uncertainty (action="clarify")
-    instead of guessing — carries the question to ask and the attempts made so far, so the
-    calling node can pause for a real answer and resume the loop from where it left off
-    instead of starting over."""
-    def __init__(self, question: str, attempts: list):
-        self.question = question
-        self.attempts = attempts
 
 
 # Catches the exact shape of a real production failure: a confident, detailed "final" answer
@@ -940,9 +927,7 @@ def _format_react_attempts(attempts: list) -> str:
 
 def _format_attempts_steps(attempts: list) -> str:
     """Renders attempts as 'Step N — purpose / Result' blocks for display — used both in a
-    completed answer's footer and in a clarification pause message. Purely a display renderer:
-    resuming a paused clarification reads attempts back from real checkpointed state
-    (state["paused_clarification"]), not by re-parsing this rendered text."""
+    completed answer's footer. Purely a display renderer."""
     return "\n\n".join(
         f"**Step {i} — {a['purpose']}:**\n```\n{a['action_desc']}\n```\n"
         f"**Result:**\n```\n{_format_observation_for_footer(a['observation'])}\n```"

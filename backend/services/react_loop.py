@@ -27,7 +27,6 @@ from backend.utils.agent_utils import (
     build_earlier_context_block,
     _extract_declared_names,
     _find_unseen_existing_declarations,
-    _ClarificationNeeded,
     _UnsafeActionRequested,
     _READ_FILE_DEFAULT_LINE_WINDOW,
     _check_final_answer_grounding,
@@ -107,11 +106,9 @@ async def run_react_loop(
     "show_work": bool} — show_work is the model's own call on whether its step-by-step trace
     is worth repeating in the chat message itself, not just the live trace panel (see
     show_work's schema entry in TOOL_AGENT_PROMPT); defaults true when a "final" doesn't set it.
-    Raises _UnsafeActionRequested if is_unsafe() ever flags a proposed action, and
-    _ClarificationNeeded if the model reports genuine uncertainty instead of guessing.
-    `initial_attempts`, when given, seeds the loop with attempts already made in an earlier
-    call — the resume side of a clarification pause, so the loop continues instead of
-    starting from zero. `llm` defaults to lite_llm; deep thinking mode passes lite_llm_deep
+    Raises _UnsafeActionRequested if is_unsafe() ever flags a proposed action. A "clarify" action (a model that still
+    returns one) is treated as a final answer whose text is the question. `initial_attempts`, when given, seeds the loop
+    with attempts already made. `llm` defaults to lite_llm; deep thinking mode passes lite_llm_deep
     instead, so a wider step/nudge budget also comes with more carefully reasoned individual
     step decisions rather than just more of them.
 
@@ -538,6 +535,10 @@ async def run_react_loop(
             continue
 
         action = decision.get("action")
+        if action == "clarify":
+            # The pause-and-resume is gone (docs/react-sunset-plan.md): a question for the person is simply the answer, and their reply carries on the same conversation.
+            action = "final"
+            decision = {**decision, "action": "final", "answer": decision.get("question") or decision.get("answer") or "I need a bit more information to continue: could you clarify?"}
         # A draft rides along with a step's tool call (it costs no step); a "final" carries its answer instead, so a draft on it is not kept.
         if action != "final":
             new_draft = draft_checkpoint.take_draft(decision.get("draft"))
@@ -744,10 +745,6 @@ async def run_react_loop(
                 node_name, step + 1, len(final_answer), len(attempts),
             )
             break
-
-        if action == "clarify":
-            question_text = decision.get("question") or "I need a bit more information to continue — could you clarify?"
-            raise _ClarificationNeeded(question_text, attempts)
 
         if action != "query":
             attempts.append({

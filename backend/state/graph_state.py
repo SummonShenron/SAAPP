@@ -79,10 +79,6 @@ class GraphState(TypedDict):
     execute_model: Optional[str]                  # "claude" | "sonnet" | "gpt" | "gemini": the person's choice for the model that carries out an approved plan; None = the same as their Code model
     budget_level: Optional[str]                   # the usage budget guard's level this turn (backend/utils/budget_guard.py)
     insight_answer: Optional[str]                 # Woven into CONVERSATIONAL_PROMPT's {insight} slot
-    paused_clarification: Optional[Dict[str, Any]]  # {"original_question": str, "attempts": list[dict]} —
-    # the one field deliberately exempted from reset_transient_state's per-turn reset, so it
-    # survives across turns via the checkpointer instead of being re-derived from rendered card
-    # text (see tool_agent_node's _ClarificationNeeded handling and classify_intent's resume check)
     emotional_state: Optional[Dict[str, Any]]  # {"valence", "intensity", "updated_at", "turns_since", "need", "gist", "positive_peak", "lift_this_turn"} —
     # session-scoped, decaying read of the user's emotional state (see backend/utils/
     # emotion_utils.py); deliberately exempt from reset_transient_state so it survives across
@@ -90,11 +86,7 @@ class GraphState(TypedDict):
     safety_state: Optional[Dict[str, Any]]  # {"level": "acute"|"elevated", "updated_at", "turns_since"} — the crisis/
     # safety level carried through the conversation (backend/utils/safety_utils.py); same deliberate
     # reset_transient_state exemption as emotional_state, so a risky message is not forgotten the next turn.
-    paused_code_plan: Optional[Dict[str, Any]]  # {"original_question", "attempts", "files", "summary"} —
-    # same deliberate reset_transient_state exemption as paused_clarification, for the same
-    # reason: survives across turns via the checkpointer so approving a proposed multi-file code
-    # plan resumes the SAME investigation thread instead of starting over (see tool_agent_node's
-    # propose_code_plan handling and classify_intent's resume check)
+
 
 # def route_user_query(state: GraphState) -> str:
 #     """

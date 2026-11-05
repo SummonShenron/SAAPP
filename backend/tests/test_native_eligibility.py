@@ -18,7 +18,7 @@ TOOLS = [{"name": "search_code"}]
 
 
 def ok(text="", flags=None, **kw):
-    return nl.eligible(edit_turn=False, resumed=False, tools=TOOLS, text=text, flags=flags, **kw)
+    return nl.eligible(edit_turn=False, tools=TOOLS, text=text, flags=flags, **kw)
 
 
 @pytest.mark.parametrize("text", [
@@ -70,8 +70,8 @@ BROWSER_TOOLS = [{"name": "search_code"}, {"name": "browser_navigate"}]
     "take screenshots of the page",
 ])
 def test_page_driving_words_stay_native_when_the_browser_tools_are_offered(text):
-    assert nl.eligible(edit_turn=False, resumed=False, tools=BROWSER_TOOLS, text=text) is True
-    assert nl.eligible(edit_turn=False, resumed=False, tools=TOOLS, text=text) is False
+    assert nl.eligible(edit_turn=False, tools=BROWSER_TOOLS, text=text) is True
+    assert nl.eligible(edit_turn=False, tools=TOOLS, text=text) is False
 
 
 @pytest.mark.parametrize("text", [
@@ -80,7 +80,7 @@ def test_page_driving_words_stay_native_when_the_browser_tools_are_offered(text)
     "open the browser and send an email to Dana",
 ])
 def test_the_other_old_engine_reasons_still_apply_with_the_browser_tools_offered(text):
-    assert nl.eligible(edit_turn=False, resumed=False, tools=BROWSER_TOOLS, text=text) is False
+    assert nl.eligible(edit_turn=False, tools=BROWSER_TOOLS, text=text) is False
 
 
 def test_the_routers_reading_keeps_a_send_request_off_the_native_engine_but_lookups_may_go_native():
@@ -90,9 +90,8 @@ def test_the_routers_reading_keeps_a_send_request_off_the_native_engine_but_look
 
 
 def test_the_other_reasons_for_the_old_engine_still_apply_and_off_means_off(monkeypatch):
-    assert nl.eligible(edit_turn=True, resumed=False, tools=TOOLS) is False
-    assert nl.eligible(edit_turn=False, resumed=True, tools=TOOLS) is False
-    assert nl.eligible(edit_turn=False, resumed=False, tools=[]) is False
+    assert nl.eligible(edit_turn=True, tools=TOOLS) is False
+    assert nl.eligible(edit_turn=False, tools=[]) is False
     monkeypatch.setenv("TOOL_AGENT_ENGINE", "react")
     assert ok("how does the scheduler work?") is False
 
@@ -109,7 +108,6 @@ def test_the_pattern_covers_every_tool_the_native_engine_lacks_in_the_old_menu()
     seen = asyncio.run(be.run_tool_agent(model, "check my gmail inbox", repo=True, engine="react"))
     lacking = sorted(set(re.findall(r"^- ([a-z_]+) —", seen.menu, re.M)) - set(nt.REGISTRY))
     assert lacking == [
-        "propose_code_plan",
     ], "the old engine's menu changed: decide whether each new tool needs the old engine, and update the wording rules and flags in native_loop.py"
 
 

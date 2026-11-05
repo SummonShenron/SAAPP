@@ -65,277 +65,45 @@ def test_format_attempts_steps_renders_purpose_action_and_observation():
 
 
 # ---------------------------------------------------------------------------
-# run_react_loop: action="clarify" raises _ClarificationNeeded
+# A question for the person is simply the answer (docs/react-sunset-plan.md, stage C): there is no pause and no
+# resume. The model is no longer offered "clarify"; a model that still returns it has its question shown as the answer.
 # ---------------------------------------------------------------------------
 
 @run_async
-async def test_run_react_loop_raises_clarification_needed():
+async def test_a_clarify_action_is_shown_as_the_answer_not_raised_as_a_pause(monkeypatch):
     async def act(decision):
         return "should never be called"
 
     async def fake_ainvoke(prompt):
-        return _llm_response(action="clarify", question="Which repo did you mean — SAAPP or errAgent?")
-
-    orig = aw.lite_llm.ainvoke
-    aw.lite_llm.ainvoke = fake_ainvoke
-    try:
-        raised = None
-        try:
-            await aw.run_react_loop(
-                question="find the bug",
-                schema="repo=x",
-                prompt_template="{question} | {schema} | {attempts}",
-                act=act,
-                max_iterations=3,
-                node_name="test_node",
-            )
-        except aw._ClarificationNeeded as e:
-            raised = e
-        assert raised is not None
-        assert "SAAPP or errAgent" in raised.question
-        assert raised.attempts == []
-    finally:
-        aw.lite_llm.ainvoke = orig
-
-
-# ---------------------------------------------------------------------------
-# tool_agent_node: pauses for clarification instead of guessing, and persists
-# real resume state (not just rendered card text) into paused_clarification.
-# ---------------------------------------------------------------------------
-
-@run_async
-async def test_tool_agent_node_pauses_with_clarification(monkeypatch):
-    _setup_github_repo(monkeypatch)
-    monkeypatch.setattr(
-        aw.lite_llm, "ainvoke",
-        AsyncMock(return_value=_llm_response(
-            action="clarify", question="Which repo — SummonShenron/SAAPP or SummonShenron/errAgent?"
-        )),
-    )
-
-    question = "read the core workflow file and suggest an idea"
-    result = await aw.tool_agent_node(_state(question))
-
-    assert result["relevance_grade"] == "needs_clarification"
-    assert aw.CLARIFICATION_CARD_MARKER in result["content_to_format"]
-    assert "SummonShenron/SAAPP or SummonShenron/errAgent" in result["content_to_format"]
-    assert result["messages"][-1].content == result["content_to_format"]
-
-    # The real resume mechanism: a dedicated state field, not the rendered card text.
-    paused = result["paused_clarification"]
-    assert paused["original_question"] == question
-    assert paused["attempts"] == []
-
-
-@run_async
-async def test_tool_agent_node_clarification_includes_steps_so_far(monkeypatch):
-    _setup_github_repo(monkeypatch)
-    responses = [
-        _llm_response(action="query", purpose="List the repo tree", tool_action="list_repo_tree", args={}),
-        _llm_response(action="clarify", question="I found two files named similarly — which one did you mean?"),
-    ]
-    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
-    monkeypatch.setattr(
-        aw.requests, "get",
-        lambda url, headers=None, params=None, **kwargs: (
-            _http_response(200, {"default_branch": "main"}) if url.endswith("/repos/SummonShenron/SAAPP")
-            else _http_response(200, {"tree": [{"path": "a.py", "type": "blob"}, {"path": "b.py", "type": "blob"}]})
-        ),
-    )
-
-    result = await aw.tool_agent_node(_state())
-
-    assert "What I've checked so far" in result["content_to_format"]
-    assert "List the repo tree" in result["content_to_format"]
-    # Same attempt data is available in real state, not just the rendered footer.
-    assert result["paused_clarification"]["attempts"][0]["purpose"] == "List the repo tree"
-
-
-# ---------------------------------------------------------------------------
-# classify_intent: detects a reply to a paused clarification via real state
-# ---------------------------------------------------------------------------
-
-def test_classify_intent_detects_clarification_reply():
-    state = {
-        "messages": [
-            SimpleNamespace(type="human", content="read the workflow file"),
-            SimpleNamespace(type="ai", content="Which repo did you mean?"),
-            SimpleNamespace(type="human", content="SummonShenron/SAAPP"),
-        ],
-        "paused_clarification": {
-            "original_question": "read the workflow file",
-            "attempts": [],
-        },
-    }
-
-    intent = aw.classify_intent("SummonShenron/SAAPP", state=state)
-
-    assert intent == "resume_tool_agent"
-
-
-def test_classify_intent_resumes_on_paused_code_plan():
-    state = {
-        "messages": [
-            SimpleNamespace(type="human", content="fix the bug"),
-            SimpleNamespace(type="ai", content="Before I draft the full implementation..."),
-            SimpleNamespace(type="human", content="yes, go ahead"),
-        ],
-        "paused_code_plan": {
-            "original_question": "fix the bug",
-            "attempts": [],
-            "files": [{"path": "app.py", "reason": "fix it here"}],
-            "summary": "Patch app.py.",
-        },
-    }
-
-    intent = aw.classify_intent("yes, go ahead", state=state)
-
-    assert intent == "resume_tool_agent"
-
-
-def test_classify_intent_does_not_resume_without_paused_clarification_in_state():
-    """The old mechanism (scanning the previous message for card-marker text) is gone —
-    rendered text alone, with nothing in state, must not trigger a resume."""
-    state = {
-        "messages": [
-            SimpleNamespace(type="human", content="read the workflow file"),
-            SimpleNamespace(type="ai", content=f"**{aw.CLARIFICATION_CARD_MARKER}:**\n\nWhich repo did you mean?"),
-            SimpleNamespace(type="human", content="SummonShenron/SAAPP"),
-        ],
-    }
-
-    intent = aw.classify_intent("SummonShenron/SAAPP", state=state)
-
-    assert intent != "resume_tool_agent"
-
-
-def test_build_agent_plan_routes_resume_tool_agent():
-    plan = aw.build_agent_plan("resume_tool_agent", {"reasoner_flags": {}})
-    assert plan["agents"] == ["tool_agent", "formatter"]
-
-
-# ---------------------------------------------------------------------------
-# Full resume: a genuinely separate second turn continues instead of restarting,
-# reading real (checkpointer-carried) state rather than re-parsing message text.
-# ---------------------------------------------------------------------------
-
-@run_async
-async def test_tool_agent_node_resumes_with_recovered_attempts(monkeypatch):
-    """Mirrors the real app.py flow with a checkpointer attached: turn 2 is a brand-new state
-    dict, but paused_clarification survived via the checkpointer (reset_transient_state
-    deliberately never clears it) — the one field this whole migration is about."""
-    _setup_github_repo(monkeypatch)
-
-    original_question = "read the core workflow file and suggest an idea"
-    user_answer = HumanMessage(content="SummonShenron/SAAPP")
-
-    captured_prompts = []
-
-    async def fake_ainvoke(prompt):
-        captured_prompts.append(prompt)
-        return _llm_response(action="final", answer="Found it — here's the idea.")
+        return _llm_response(action="clarify", question="Which repo did you mean: SAAPP or errAgent?")
 
     monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
-
-    turn2_state = _state(
-        messages=[user_answer],
-        paused_clarification={
-            "original_question": original_question,
-            "attempts": [{
-                "purpose": "List the repo tree",
-                "action_desc": "list_repo_tree()",
-                "observation": "ERROR: could not fetch tree (404)",
-            }],
-        },
-    )
-    result = await aw.tool_agent_node(turn2_state)
-
-    assert result["relevance_grade"] == "tool_agent"
-    assert "Found it" in result["content_to_format"]
-    # The recovered attempt from turn 1 shows up in the very first prompt built for turn 2 —
-    # proof the loop resumed with it seeded in rather than starting from zero.
-    assert "List the repo tree" in captured_prompts[0]
-    assert "could not fetch tree" in captured_prompts[0]
-    # The original ask and the user's clarifying answer both reached the loop's question.
-    assert "read the core workflow file" in captured_prompts[0]
-    assert "SummonShenron/SAAPP" in captured_prompts[0]
-    # Consumed — must not linger into a hypothetical turn 3.
-    assert result["paused_clarification"] is None
-
-
-# ---------------------------------------------------------------------------
-# Full resume: an approved or rejected multi-file code plan resumes the SAME investigation
-# thread (paused_code_plan), mirroring paused_clarification's own resume mechanism above but
-# branching on APPROVAL_PATTERN/REJECTION_PATTERN instead of treating every reply as an answer.
-# ---------------------------------------------------------------------------
-
-@run_async
-async def test_tool_agent_node_resumes_after_code_plan_approval(monkeypatch):
-    _setup_github_repo(monkeypatch)
-
-    original_question = "fix the bug across these files"
-    user_reply = HumanMessage(content="yes, go ahead")
-
-    captured_prompts = []
-
-    async def fake_ainvoke(prompt):
-        captured_prompts.append(prompt)
-        return _llm_response(action="final", answer="Here's the real implementation.")
-
-    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
-
-    turn2_state = _state(
-        messages=[user_reply],
-        paused_code_plan={
-            "original_question": original_question,
-            "attempts": [{
-                "purpose": "Read the file", "action_desc": "read_repo_file(path=app.py)",
-                "observation": "URL: ...\nimport os\n",
-            }],
-            "files": [{"path": "app.py", "reason": "fix the bug here"}],
-            "summary": "Patch the bug in app.py.",
-        },
-    )
-    result = await aw.tool_agent_node(turn2_state)
-
-    assert result["relevance_grade"] == "tool_agent"
-    assert "Here's the real implementation" in result["content_to_format"]
-    # The recovered attempt from the proposal turn shows up in the very first resumed prompt.
-    assert "Read the file" in captured_prompts[0]
-    assert "fix the bug across these files" in captured_prompts[0]
-    assert "user approved it" in captured_prompts[0]
-    assert "Proceed to draft the complete, real implementation" in captured_prompts[0]
-    # Consumed — must not linger into a hypothetical later turn.
-    assert result["paused_code_plan"] is None
+    result = await aw.run_react_loop(question="find the bug", schema="repo=x", prompt_template="{question} | {schema} | {attempts}", act=act, max_iterations=3, node_name="test_node")
+    assert result["final_answer"] == "Which repo did you mean: SAAPP or errAgent?"
+    assert result["attempts"] == []
 
 
 @run_async
-async def test_tool_agent_node_resumes_after_code_plan_rejection(monkeypatch):
+async def test_a_tool_agent_turn_that_asks_ends_with_the_question_and_no_paused_state(monkeypatch):
     _setup_github_repo(monkeypatch)
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=[_llm_response(action="clarify", question="Which file did you mean?")]))
+    result = await aw.tool_agent_node(_state("fix that file"))
+    assert "Which file did you mean?" in result["content_to_format"]
+    assert result.get("relevance_grade") != "needs_clarification"
+    assert "paused_clarification" not in result and "paused_code_plan" not in result
 
-    original_question = "fix the bug across these files"
-    user_reply = HumanMessage(content="no, don't touch app.py, use a different approach")
 
-    captured_prompts = []
+def test_the_model_is_no_longer_offered_a_clarify_action_or_a_plan_pause():
+    from backend.components.constraints import TOOL_AGENT_PROMPT
+    assert '"query" or "final" or "clarify"' not in TOOL_AGENT_PROMPT
+    assert 'action=clarify' not in TOOL_AGENT_PROMPT
+    assert 'Ask the user a question in your "final" answer only when' in TOOL_AGENT_PROMPT
 
-    async def fake_ainvoke(prompt):
-        captured_prompts.append(prompt)
-        return _llm_response(action="final", answer="Revised plan noted.")
 
-    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
-
-    turn2_state = _state(
-        messages=[user_reply],
-        paused_code_plan={
-            "original_question": original_question,
-            "attempts": [],
-            "files": [{"path": "app.py", "reason": "fix the bug here"}],
-            "summary": "Patch the bug in app.py.",
-        },
-    )
-    result = await aw.tool_agent_node(turn2_state)
-
-    assert "did NOT approve it" in captured_prompts[0]
-    assert "no, don't touch app.py, use a different approach" in captured_prompts[0]
-    assert "do not draft the full implementation yet" in captured_prompts[0]
-    assert result["paused_code_plan"] is None
+def test_a_pause_left_in_old_state_never_resumes_anything():
+    state = {
+        "messages": [SimpleNamespace(type="human", content="read the workflow file"), SimpleNamespace(type="ai", content="Which repo did you mean?"), SimpleNamespace(type="human", content="SummonShenron/SAAPP")],
+        "paused_clarification": {"original_question": "read the workflow file", "attempts": []},
+        "paused_code_plan": {"original_question": "x", "attempts": [], "files": [], "summary": ""},
+    }
+    assert aw.classify_intent("SummonShenron/SAAPP", state=state) != "resume_tool_agent"
