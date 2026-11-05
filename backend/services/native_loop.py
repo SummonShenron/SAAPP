@@ -26,7 +26,7 @@ with the steering in view. Each steer grants two extra steps (at most eight), an
 loop the steering was re-rendered into every prompt; here it is one more user message in the conversation, so it costs nothing to keep.
 
 WHAT IT DELIBERATELY LEAVES OUT FOR NOW (each is a measured question, not an assumption): the after-answer grounding and idiom checks, the
-redundant-repeat backstop beyond the simple repeat guard here, clarification pauses, and every write and browser tool EXCEPT propose_local_edits (a connected folder: it only proposes, and the person applies from a diff; a change request is held to the same "you must propose it" rule as in the old loop). A turn that needs any of the others (a resumed clarification, an email to send) is handed to the old engine.
+redundant-repeat backstop beyond the simple repeat guard here, clarification pauses, and every write and browser tool EXCEPT propose_local_edits (a connected folder: it only proposes, and the person applies from a diff; a change request is held to the same "you must propose it" rule as in the old loop). A turn that needs something the native engine does not offer (a resumed clarification, or a resumed multi-file plan: propose_code_plan stays old-only) is handed to the old engine.
 """
 import asyncio
 import json
@@ -119,7 +119,7 @@ _REPO_TOOLS = frozenset({"read_repo_file", "search_code", "search_literal", "fin
 PAGE_TOOLS = frozenset({"browser_navigate", "browser_read_text", "browser_click", "browser_type", "browser_screenshot"})   # share one stateful page session per turn: a step runs them one at a time, in the model's order
 # The admin datastore query also runs one at a time, in the model's order, never beside another call in its step.
 _SERIAL_TOOLS = PAGE_TOOLS
-_SOLO_TOOLS = frozenset({"run_mongo_query"})      # starts only after every other call of its step has finished; several run one at a time, in the model's order
+_SOLO_TOOLS = frozenset({"run_mongo_query", "run_repo_tests", "run_snippet"})      # starts only after every other call of its step has finished; several run one at a time, in the model's order
 ACTION_TOOLS = frozenset({"propose_local_edits", "run_local_check", "run_local_command", "run_sandbox_tests", "propose_commit", "propose_git_commit", "propose_merge", "start_local_server", "look_at_local_page", "stop_local_server", "propose_steps"})
 ACTION_REFUND_CAP = int(os.getenv("TOOL_AGENT_ACTION_REFUND_CAP", "30"))
 _CHECK_TOOLS = frozenset({"run_local_check", "run_local_command"})     # what the model can run a check with on the person's computer (a claim that a check passed is held to a run: backend/utils/claim_check.py)
@@ -174,13 +174,13 @@ def enabled() -> bool:
 # So a turn goes native only when nothing in it points at a tool the native engine lacks. Matching too much is harmless (such a turn
 # just uses the old engine, as it always did); matching too little breaks the request, so this errs wide.
 # Reading Gmail, Drive and the calendar IS native now (they only needed definitions: the dispatcher is shared by both engines). What is
-# left is MongoDB, the browser, test runs, and two draft-and-confirm flows (send an email, a multi-file code plan). Appending to the person's target doc is native
-# (propose_append_target_doc, via is_unsafe): it used to be routed by wording alone, and a request that did not say "doc" ran here with no such tool (prod, 2026-10-23).
-_OLD_ENGINE_ONLY_RE = re.compile(
-    r"\b(?:"
-    r"run\s+(?:the\s+)?ci|"
-    r"(?:send|draft|write|compose|reply(?:\s+to)?|forward)\b[^.\n]{0,40}\be-?mails?|"
-    r"(?:implementation|code)\s+plan)\b",
+# left is MongoDB, the browser, test runs and the e-mail draft-and-confirm flow, each of which stays on the old engine only while the native engine does not offer its tool (the regexes and flags below).
+# Appending to the person's target doc is native (propose_append_target_doc, via is_unsafe): it used to be routed by wording alone, and a request that did not say "doc" ran here with no such tool (prod, 2026-10-23).
+# A multi-file "plan first" request no longer forces the old engine (2026-11-05): propose_code_plan itself stays old-only (its approval resumes through the old engine's paused_code_plan path, and a resumed turn
+# is never native), but native plan mode and propose_local_edits do that job, so a request for a plan is answered here.
+# The e-mail wording (send, draft, write, compose, reply or forward an e-mail). It goes to the old engine only while the native engine does not offer propose_send_email (native_tools.REGISTRY).
+_EMAIL_SEND_RE = re.compile(
+    r"\b(?:send|draft|write|compose|reply(?:\s+to)?|forward)\b[^.\n]{0,40}\be-?mails?\b",
     re.IGNORECASE,
 )
 # The Mongo words (and the plain "database" / "db") go to the old engine only while the native engine does not offer run_mongo_query (the admin datastore tool, native_tools.REGISTRY).
@@ -189,6 +189,8 @@ _MONGO_WORDS_RE = re.compile(r"\b(?:mongo(?:db)?|pymongo|database|db)\b", re.IGN
 # machine, backend/utils/runner_jobs.py), it can do that too, so these phrases keep the turn native; "run CI" above still goes to the old engine, which has the GitHub runner.
 _TEST_RUN_RE = re.compile(r"\b(?:pytest|unit\s+tests?|run\s+(?:the\s+)?tests?)\b", re.IGNORECASE)
 _OLD_ENGINE_ONLY_FLAGS = ("needs_send_email",)
+# "run CI" went to the old engine (its GitHub test runner). It stays native while run_repo_tests is offered natively (admins), and goes old otherwise.
+_CI_RUN_RE = re.compile(r"\brun\s+(?:the\s+)?ci\b", re.IGNORECASE)
 
 
 # When the native engine is offering look_at_local_page (a runner and a browser on the person's own machine), "browser" and "screenshot" no longer mean the cloud browser only the old engine has; "navigate" and
@@ -205,20 +207,20 @@ def _page_words_route_old(text: str, looks_native: bool, browser_native: bool) -
     return bool(_PAGE_WORDS_RE.search(_LOOK_WORDS_RE.sub(" ", text or "") if looks_native else (text or "")))
 
 
-def old_engine_reason(text: str = "", flags: Optional[Dict[str, Any]] = None, test_runs_native: bool = False, looks_native: bool = False, browser_native: bool = False, mongo_native: bool = False) -> str:
+def old_engine_reason(text: str = "", flags: Optional[Dict[str, Any]] = None, test_runs_native: bool = False, looks_native: bool = False, browser_native: bool = False, mongo_native: bool = False, ci_native: bool = False, email_native: bool = False) -> str:
     """The word or phrase that sent a turn to the old engine ("browser", "database", "run the tests"), or the router's flag, or "" when nothing did. For telling the person why a mode was skipped."""
     for name in _OLD_ENGINE_ONLY_FLAGS:
-        if (flags or {}).get(name):
+        if (flags or {}).get(name) and not (email_native and name == "needs_send_email"):
             return name
-    found = _OLD_ENGINE_ONLY_RE.search(text or "") or (None if mongo_native else _MONGO_WORDS_RE.search(text or "")) or (None if browser_native else _PAGE_WORDS_RE.search(_LOOK_WORDS_RE.sub(" ", text or "") if looks_native else (text or ""))) or (None if test_runs_native else _TEST_RUN_RE.search(text or ""))
+    found = (None if email_native else _EMAIL_SEND_RE.search(text or "")) or (None if ci_native else _CI_RUN_RE.search(text or "")) or (None if mongo_native else _MONGO_WORDS_RE.search(text or "")) or (None if browser_native else _PAGE_WORDS_RE.search(_LOOK_WORDS_RE.sub(" ", text or "") if looks_native else (text or ""))) or (None if test_runs_native else _TEST_RUN_RE.search(text or ""))
     return " ".join(found.group(0).split()).lower() if found else ""
 
 
-def needs_old_engine(text: str = "", flags: Optional[Dict[str, Any]] = None, test_runs_native: bool = False, looks_native: bool = False, browser_native: bool = False, mongo_native: bool = False) -> bool:
+def needs_old_engine(text: str = "", flags: Optional[Dict[str, Any]] = None, test_runs_native: bool = False, looks_native: bool = False, browser_native: bool = False, mongo_native: bool = False, ci_native: bool = False, email_native: bool = False) -> bool:
     """Whether the request, or the router's reading of it, points at a tool only the old engine has. `test_runs_native`: this turn's native tools include one that runs the person's tests."""
-    if any((flags or {}).get(name) for name in _OLD_ENGINE_ONLY_FLAGS):
+    if any((flags or {}).get(name) and not (email_native and name == "needs_send_email") for name in _OLD_ENGINE_ONLY_FLAGS):
         return True
-    if _OLD_ENGINE_ONLY_RE.search(text or "") or _page_words_route_old(text, looks_native, browser_native):
+    if (not ci_native and _CI_RUN_RE.search(text or "")) or (not email_native and _EMAIL_SEND_RE.search(text or "")) or _page_words_route_old(text, looks_native, browser_native):
         return True
     if not mongo_native and _MONGO_WORDS_RE.search(text or ""):
         return True
@@ -233,7 +235,9 @@ def eligible(*, edit_turn: bool, resumed: bool, tools: List[Dict[str, Any]], tex
     looks_native = any(tool.get("name") == "look_at_local_page" for tool in tools)
     browser_native = any(tool.get("name") == "browser_navigate" for tool in tools)
     mongo_native = any(tool.get("name") == "run_mongo_query" for tool in tools)
-    return enabled() and bool(tools) and not edit_turn and not resumed and not needs_old_engine(text, flags, test_runs_native, looks_native, browser_native, mongo_native)
+    ci_native = any(tool.get("name") == "run_repo_tests" for tool in tools)
+    email_native = any(tool.get("name") == "propose_send_email" for tool in tools)
+    return enabled() and bool(tools) and not edit_turn and not resumed and not needs_old_engine(text, flags, test_runs_native, looks_native, browser_native, mongo_native, ci_native, email_native)
 
 
 def _text(content: Any) -> str:
@@ -781,6 +785,8 @@ async def run(
             name = str(a.get("action_desc", "")).split("(", 1)[0]
             if name == "run_mongo_query":                   # counts only: never the code, a collection or the result
                 page_counts["run_mongo_query_native"] = page_counts.get("run_mongo_query_native", 0) + 1
+            if name in ("run_repo_tests", "run_snippet"):   # counts only: never the commands, the code or the result
+                page_counts[f"{name}_native"] = page_counts.get(f"{name}_native", 0) + 1
             if name in PAGE_TOOLS:
                 key = "browser_read_native" if name == "browser_read_text" else f"{name}_native"
                 page_counts[key] = page_counts.get(key, 0) + 1

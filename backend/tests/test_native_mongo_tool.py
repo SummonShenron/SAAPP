@@ -39,7 +39,6 @@ def test_mongo_words_stay_native_when_the_tool_is_offered(text):
 
 @pytest.mark.parametrize("text", [
     "send an email to Dana about the invoice",
-    "write an implementation plan for this",
 ])
 def test_other_old_engine_reasons_still_apply_with_the_mongo_tool_offered(text):
     assert nl.eligible(edit_turn=False, resumed=False, tools=MONGO_TOOLS, text=text) is False
@@ -51,7 +50,7 @@ def test_the_reason_names_the_mongo_word_only_when_the_tool_is_not_offered():
 
 
 def test_the_query_has_its_own_solo_lane_and_the_page_lane_is_unchanged():
-    assert nl._SOLO_TOOLS == frozenset({"run_mongo_query"})
+    assert nl._SOLO_TOOLS == frozenset({"run_mongo_query", "run_repo_tests", "run_snippet"})
     assert nl._SERIAL_TOOLS == nl.PAGE_TOOLS
     assert not (nl._SOLO_TOOLS & nl._SERIAL_TOOLS)
 

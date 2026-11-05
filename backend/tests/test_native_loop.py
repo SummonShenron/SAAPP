@@ -375,7 +375,7 @@ MENU = [
     "- check_deploy_status — no args; the latest Render deploy",
     "- list_app_incidents — args: since (optional), status (optional); lists incidents",
     "- propose_local_edits — args: summary, edits; changes files",          # the one write tool offered natively: it only proposes (the person applies from a diff)
-    "- run_repo_tests — args: path; runs tests",                            # a write/run tool with no schema here: never offered natively
+    "- propose_code_plan — args: summary; proposes a plan",                # a write tool with no schema here: never offered natively
     "- browser_navigate — args: url",
     "- some_future_tool — args: x",
     "- read_repo_file — a duplicate line that must be ignored",
@@ -385,7 +385,7 @@ MENU = [
 
 def test_declarations_come_from_the_live_menu_for_tools_the_engine_can_handle_only():
     decls = nt.declarations_from_menu(MENU)
-    assert [d["name"] for d in decls] == ["list_repo_tree", "read_repo_file", "check_deploy_status", "list_app_incidents", "propose_local_edits", "browser_navigate"]          # browser_navigate has a native schema now; run_repo_tests and some_future_tool still do not
+    assert [d["name"] for d in decls] == ["list_repo_tree", "read_repo_file", "check_deploy_status", "list_app_incidents", "propose_local_edits", "browser_navigate"]          # browser_navigate has a native schema now; propose_code_plan and some_future_tool still do not
     read = decls[1]
     assert read["description"] == "args: path (relative file path), start_line (optional); shows the file"          # whitespace collapsed
     assert read["parameters"]["required"] == ["path"] and set(read["parameters"]["properties"]) == {"path", "start_line", "line_count"}

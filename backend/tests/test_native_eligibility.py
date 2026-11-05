@@ -26,7 +26,6 @@ def ok(text="", flags=None, **kw):
     "what's in the database for this user?",
     "open the site in the browser and take a screenshot",
     "run the tests for this branch",
-    "write an implementation plan for this",
     "send an email to Dana about the invoice",
     "draft a reply email to the landlord",
 ])
@@ -79,7 +78,6 @@ def test_page_driving_words_stay_native_when_the_browser_tools_are_offered(text)
     "navigate to the page, then query the mongodb users collection",
     "open the browser and run ci",
     "open the browser and send an email to Dana",
-    "open the browser and write an implementation plan",
 ])
 def test_the_other_old_engine_reasons_still_apply_with_the_browser_tools_offered(text):
     assert nl.eligible(edit_turn=False, resumed=False, tools=BROWSER_TOOLS, text=text) is False
@@ -111,8 +109,8 @@ def test_the_pattern_covers_every_tool_the_native_engine_lacks_in_the_old_menu()
     seen = asyncio.run(be.run_tool_agent(model, "check my gmail inbox", repo=True, engine="react"))
     lacking = sorted(set(re.findall(r"^- ([a-z_]+) —", seen.menu, re.M)) - set(nt.REGISTRY))
     assert lacking == [
-        "propose_code_plan", "propose_send_email", "run_repo_tests", "run_snippet",
-    ], "the old engine's menu changed: decide whether each new tool needs the old engine, and update _OLD_ENGINE_ONLY_RE"
+        "propose_code_plan",
+    ], "the old engine's menu changed: decide whether each new tool needs the old engine, and update the wording rules and flags in native_loop.py"
 
 
 def test_in_the_real_tool_agent_a_gmail_request_runs_the_old_engine_and_a_repo_question_the_native_one(monkeypatch):
@@ -133,7 +131,7 @@ def test_in_the_real_tool_agent_a_gmail_request_runs_the_old_engine_and_a_repo_q
         assert turn.engine == engine, question
 
 
-def test_a_yes_after_a_send_request_stays_with_the_old_engine():
+def test_a_yes_after_a_send_request_stays_native_now_that_native_owns_the_email_tool():
     from backend.evals import behavior_eval as be
     from backend.utils import llm_turns
 
@@ -147,7 +145,7 @@ def test_a_yes_after_a_send_request_stays_with_the_old_engine():
     history = [HumanMessage(content="can you draft a reply email to the landlord?"), AIMessage(content="Want me to write it?")]
     turn = llm_turns.begin()
     asyncio.run(be.run_tool_agent(react_model, "yes, go ahead", repo=True, engine="native", tool_llm=ToolLLM(), history=history))
-    assert turn.engine == "react"
+    assert turn.engine == "native"
 
 
 def test_the_native_engine_offers_the_gmail_drive_and_calendar_tools_and_runs_them_through_the_shared_dispatcher(monkeypatch):

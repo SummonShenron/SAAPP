@@ -23,6 +23,21 @@ Fields: `id`; `month` (YYYY-MM, newest first within the list is not required); `
 
 CHANGELOG = [
     {
+        "id": "native_ci_tools",
+        "requires": [
+            "backend/services/ci_test_runner.py::def run_repo_tests",
+            "backend/services/native_loop.py::_SOLO_TOOLS",
+            "backend/services/native_tools.py::\"run_snippet\": _object(",
+        ],
+        "month": "2026-11",
+        "title": "Running the test suite and snippets on the native engine",
+        "line": (
+            "For admins, I can now run the project's full test suite and short Python snippets, and each run is a real CI run you can check."
+        ),
+        "keywords": ["run tests", "run ci", "run snippet", "test suite", "native"],
+        "volunteer": [],
+    },
+    {
         "id": "your_profile",
         "requires": [
             "backend/utils/profile_utils.py::def build_profile_block",

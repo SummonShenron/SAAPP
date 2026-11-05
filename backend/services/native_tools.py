@@ -151,6 +151,15 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
             },
         },
     }, ["tests"]),
+    # the admin's GitHub test runs (backend/services/ci_test_runner.py, through the old dispatcher's _run_tests): admin-only menu lines; they dispatch a real CI run and wait for it. Slow, so solo.
+    "run_repo_tests": _object({
+        "test_commands": {"type": "string", "description": "one or more lines, each exactly 'pytest <path>[::TestName::test_name]'"},
+        "branch": {"type": "string", "description": "optional, defaults to the resolved default branch"},
+    }, ["test_commands"]),
+    "run_snippet": _object({
+        "code": {"type": "string", "description": "a short, self-contained Python script; real imports from this repo's modules are allowed"},
+        "branch": {"type": "string", "description": "optional, defaults to the resolved default branch"},
+    }, ["code"]),
     # a runner on the person's OWN machine (backend/utils/runner_jobs.py, runner/): one of THEIR named checks, run after they press Run on a card. Offered only when one is connected.
     "run_local_check": _object({
         "check": {"type": "string", "description": "the name of one of the person's checks, as listed in this tool's description"},
@@ -281,11 +290,29 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
             },
         },
     }, ["summary", "edits"]),
+    # an email to a recipient: a draft the person approves from a card. Nothing is sent by the call; the body is the FULL text.
+    "propose_send_email": _object({
+        "to": {"type": "string", "description": "the recipient's email address"},
+        "subject": {"type": "string", "description": "the subject line"},
+        "body": {"type": "string", "description": "the FULL text of the email to send"},
+    }, ["to", "subject", "body"]),
 }
 
 # Descriptions that replace the menu line's text for the native engine. The old menu line describes the OLD engine's way of calling a tool ("as a query step ... never a field
 # inside a final answer"), which would mislead a model that makes real function calls.
 NATIVE_DESCRIPTIONS: Dict[str, str] = {
+    "propose_send_email": (
+        "Show the person an approval card for an email to one recipient. Make this a real function call, made ONCE, and only when you have the complete recipient address, subject and body, "
+        "after anything you need has been looked up. The body is the FULL text to be sent. It shows the person a card, and nothing leaves until they approve it. Say the card is waiting for their approval, never that the email was sent."
+    ),
+    "run_repo_tests": (
+        "Run this repository's own test suite for real: it dispatches the GitHub test workflow on a branch and waits for the actual pass or fail result, with a log excerpt on failure. "
+        "Slower than every other tool (a couple of minutes), so use it to verify a change works before you tell the person it does, not for routine lookups. Admin only."
+    ),
+    "run_snippet": (
+        "Run a short Python snippet against this repo's real installed dependencies in the CI runner and return what it printed, or the real traceback. "
+        "The snippet must import and call the real function you are verifying, by its actual path in this repo; a stand-in proves nothing. Slower than most tools, so use it only to verify proposed code. Admin only."
+    ),
     "propose_git_commit": (
         "Commit the person's work with REAL git on THEIR OWN computer, and optionally push it: one command line you do not write, built from your message, the files to include (paths), a new branch "
         "(new_branch) and push=true. They see a card with the exact line and press Run; because it changes things, it needs the stronger confirmation and their computer asks again. It uses their own git "

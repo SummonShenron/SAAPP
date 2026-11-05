@@ -118,7 +118,7 @@ def test_page_words_go_native_only_when_a_page_tool_is_offered():
 
 
 def test_other_old_engine_triggers_still_route_old_even_with_browser_tools():
-    for text in ("query the mongodb collection", "run ci on this", "draft an email to Sam", "write an implementation plan"):
+    for text in ("query the mongodb collection", "run ci on this", "draft an email to Sam"):
         assert native_loop.needs_old_engine(text, browser_native=True), text
     assert native_loop.old_engine_reason("navigate to the site") == "navigate"
     assert native_loop.old_engine_reason("navigate to the site", browser_native=True) == ""
