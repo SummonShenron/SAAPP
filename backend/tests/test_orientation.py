@@ -122,7 +122,7 @@ def test_it_never_raises_and_binary_or_huge_files_are_skipped(tmp_path):
 def test_the_tool_agent_gets_the_block_for_a_folder_turn_but_not_a_carried_out_plan():
     source = open(os.path.join(REPO, "backend", "services", "agent_workflow.py"), encoding="utf-8").read()
     start = source.index("if plan_phase != code_plan.EXECUTE_PHASE:\n                where_block = await asyncio.to_thread(orientation.where_to_look")
-    assert "local_workspace_handle.root, snapshot_paths(username)" in source[start:start + 600]
+    assert "local_workspace_handle.root, snapshot_paths(workspace_user)" in source[start:start + 600]
     assert "previous_human_texts(state.get(\"messages\", []))" in source[start:start + 600]
     assert "schema_parts.append(where_block)" in source[start:start + 700] and "llm_turns.note_orientation(orientation.block_paths(where_block))" in source[start:start + 800]
 

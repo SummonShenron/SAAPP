@@ -287,7 +287,8 @@ async def test_a_browser_with_no_folder_gets_no_edit_tools_even_though_the_serve
     text, captured = await _run_turn(monkeypatch, "change the greeting text in src/app.py", attempts=[], extra_state={"folder_in_browser": False})
 
     assert captured["required_action"] is None                                    # not forced to propose what cannot be applied
-    assert "propose_local_edits" not in _offered(captured) and "propose_commit" not in _offered(captured)
+    assert "propose_local_edits" not in _offered(captured)
+    assert "propose_commit" in _offered(captured)                                  # a commit needs no folder in this browser: it works from the server's copy and their GitHub token (a phone said "no tool options" without it)
     assert "THIS BROWSER HAS NO FOLDER CONNECTED" in captured["environment_note"]
     assert "do the work by calling propose_local_edits" not in captured["environment_note"]
     assert "IS connected" not in text                                              # the "it was connected and you did not propose" note would be false here
@@ -318,7 +319,7 @@ def test_the_page_says_whether_it_holds_the_folder_and_the_server_reads_it_three
     source = open("app.py", encoding="utf-8").read()
     assert "folder_expected: Optional[bool] = None" in source                      # None = an older page that does not say: keeps today's behaviour
     assert '"folder_in_browser": request.folder_expected is not False' in source
-    assert "folder_usable_here = folder_connected and request.folder_expected is not False" in source
+    assert "folder_usable_here = folder_connected and (demo_turn or request.folder_expected is not False)" in source
     assert "if folder_usable_here:\n        messages_state = scrub_stale_capability_denials" in source
     assert "if folder_usable_here and not is_guest_username(username):" in source
     assert "not (folder_usable_here and is_stale_capability_denial(full_response))" in source

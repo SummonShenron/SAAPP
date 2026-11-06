@@ -1,15 +1,15 @@
-<svg width="260" height="260" viewBox="0 0 260 260" xmlns="http://www.w3.org/2000/svg">
-<line x1="55" y1="140" x2="80" y2="95" stroke="#ffffff" stroke-width="4"/>
-<line x1="80" y1="95" x2="105" y2="165" stroke="#ffffff" stroke-width="4"/>
-<line x1="105" y1="165" x2="130" y2="80" stroke="#ffffff" stroke-width="4" stroke-dasharray="6 5"/>
-<line x1="130" y1="80" x2="155" y2="150" stroke="#ffffff" stroke-width="4"/>
-<line x1="155" y1="150" x2="180" y2="110" stroke="#ffffff" stroke-width="4"/>
-<line x1="180" y1="110" x2="205" y2="135" stroke="#ffffff" stroke-width="4"/>
-<circle cx="55" cy="140" r="9" fill="#ffffff"/>
-<circle cx="80" cy="95" r="9" fill="#ffffff"/>
-<circle cx="105" cy="165" r="9" fill="#ffffff"/>
-<circle cx="130" cy="80" r="10" fill="#ffffff"/>
-<circle cx="155" cy="150" r="9" fill="#ffffff"/>
-<circle cx="180" cy="110" r="9" fill="#ffffff"/>
-<circle cx="205" cy="135" r="9" fill="#ffffff"/>
+<svg width="176" height="111" viewBox="0 0 176 111" xmlns="http://www.w3.org/2000/svg">
+<line x1="14" y1="74" x2="50" y2="55" stroke="#ffffff" stroke-width="3.5"/>
+<line x1="50" y1="55" x2="88" y2="84" stroke="#ffffff" stroke-width="3.5"/>
+<line x1="88" y1="84" x2="126" y2="55" stroke="#ffffff" stroke-width="3.5"/>
+<line x1="126" y1="55" x2="162" y2="66" stroke="#ffffff" stroke-width="3.5"/>
+<line x1="50" y1="55" x2="88" y2="20" stroke="#ffffff" stroke-width="3.5" stroke-dasharray="6 5"/>
+<line x1="88" y1="20" x2="126" y2="55" stroke="#ffffff" stroke-width="3.5"/>
+<line x1="126" y1="55" x2="50" y2="55" stroke="#ffffff" stroke-width="3.5" stroke-dasharray="6 5"/>
+<circle cx="14" cy="74" r="6" fill="#ffffff"/>
+<circle cx="50" cy="55" r="6" fill="#ffffff"/>
+<circle cx="88" cy="20" r="9" fill="#ffffff"/>
+<circle cx="88" cy="84" r="6" fill="#ffffff"/>
+<circle cx="126" cy="55" r="6" fill="#ffffff"/>
+<circle cx="162" cy="66" r="6" fill="#ffffff"/>
 </svg>

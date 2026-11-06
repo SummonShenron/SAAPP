@@ -1,12 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="42 67 176 111">
-  <!-- The Sonic mark (src/components/logoMarkData.ts), with a heavier line and bigger dots than the full-size mark so it stays legible at 16px. -->
-  <g stroke="#f28c28" stroke-width="11" fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <polyline points="55,140 80,95 105,165"/>
-    <line x1="105" y1="165" x2="130" y2="80" stroke-dasharray="9 12"/>
-    <polyline points="130,80 155,150 180,110 205,135"/>
-  </g>
-  <g fill="#f28c28">
-    <circle cx="55" cy="140" r="13"/><circle cx="80" cy="95" r="13"/><circle cx="105" cy="165" r="13"/><circle cx="130" cy="80" r="14"/>
-    <circle cx="155" cy="150" r="13"/><circle cx="180" cy="110" r="13"/><circle cx="205" cy="135" r="13"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-4 -4 184 119">
+<!-- The Sonic mark (src/components/logoMarkData.ts), with a heavier line and bigger dots than the full-size mark so it stays legible at 16px. -->
+<line x1="14" y1="74" x2="50" y2="55" stroke="#c85a0c" stroke-width="8" stroke-linecap="round"/>
+<line x1="50" y1="55" x2="88" y2="84" stroke="#c85a0c" stroke-width="8" stroke-linecap="round"/>
+<line x1="88" y1="84" x2="126" y2="55" stroke="#c85a0c" stroke-width="8" stroke-linecap="round"/>
+<line x1="126" y1="55" x2="162" y2="66" stroke="#c85a0c" stroke-width="8" stroke-linecap="round"/>
+<line x1="50" y1="55" x2="88" y2="20" stroke="#c85a0c" stroke-width="8" stroke-dasharray="14 9"/>
+<line x1="88" y1="20" x2="126" y2="55" stroke="#c85a0c" stroke-width="8" stroke-linecap="round"/>
+<line x1="126" y1="55" x2="50" y2="55" stroke="#c85a0c" stroke-width="8" stroke-dasharray="14 9"/>
+<circle cx="14" cy="74" r="9" fill="#c85a0c"/>
+<circle cx="50" cy="55" r="9" fill="#c85a0c"/>
+<circle cx="88" cy="20" r="12" fill="#c85a0c"/>
+<circle cx="88" cy="84" r="9" fill="#c85a0c"/>
+<circle cx="126" cy="55" r="9" fill="#c85a0c"/>
+<circle cx="162" cy="66" r="9" fill="#c85a0c"/>
 </svg>

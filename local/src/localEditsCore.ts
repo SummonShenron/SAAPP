@@ -43,6 +43,8 @@ export interface EditProposal {
   autoSkipReason?: string;
   summary: string;
   folder: string;
+  /** The folder is the shared guest's demo project: nothing can be applied, and the card offers sign-up where Apply would be. */
+  demo?: boolean;
   files: EditProposalFile[];
   edits: EditOp[];
 }

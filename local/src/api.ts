@@ -2430,7 +2430,8 @@ export async function sendChatMessage(
   folderExpected = false,
   editDecisions = false,
   gitBranch: string | null = null,
-  runnerCards = false
+  runnerCards = false,
+  demoProject = false
 ): Promise<void> {
   const authHeaders = await getAuthHeaders();
   // A deliberate Stop surfaces as an AbortError and is the caller's to handle; every other failure is a ChatSendError that says what is
@@ -2458,6 +2459,8 @@ export async function sendChatMessage(
         git_branch: gitBranch,
         // This page can show a check card (Run / Cancel) for a local runner, so Sonic may ask to run one of the person's own checks.
         runner_cards: runnerCards,
+        // The shared guest chose a demo card: the folder tools work on the server's demo project (the server ignores this for anyone else).
+        demo_project: demoProject,
       }),
       signal,
     });

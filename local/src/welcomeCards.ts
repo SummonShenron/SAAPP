@@ -13,6 +13,8 @@ export interface WelcomeCard {
   detail?: string;
   /** "signup" cards only: which account feature this is, the same word the server sends in an `account_nudge` event (backend/utils/guest_nudge.py). */
   key?: 'checks' | 'fix' | 'tidy' | 'memory';
+  /** The card is about the server's demo project: the conversation works on it (the page sends `demo_project` with each turn until another kind of card is chosen). */
+  demo?: boolean;
 }
 
 // The shared guest ("guest"; strangers from a post or a search, and recruiters) gets three lanes of cards (docs/guest-mode-plan.md). The FRONT lane shows Sonic working: every card is a
@@ -28,11 +30,13 @@ export const GUEST_LANES: readonly { id: GuestLane; label: string }[] = [
   { id: 'account', label: 'With an account' },
 ];
 
+// Three of these work on the demo project, a small made-up invoicing project the server holds for the guest (backend/utils/demo_project.py): `demo: true` tells the server the conversation is
+// about it, so the folder tools read and test it and the diff card offers sign-up where Apply would be. Their wording is pinned to the three things planted in it (see test_demo_project.py).
 const DEMO_CARDS: readonly WelcomeCard[] = [
+  { label: 'Fix a bug', text: 'Invoices go overdue a day late in the demo project. Find the cause, fix it, and show me the tests pass.', demo: true },
+  { label: 'Add a feature', text: "Add a late-fee line to the demo project's report and show me the tests pass.", demo: true },
+  { label: 'Trace a setting', text: 'Find every place the demo project sets its rate limit and say which one wins.', demo: true },
   { label: 'Watch it work', text: 'What was changed in the last pull request?' },
-  { label: 'Find it in the code', text: 'Where in the code does Sonic Assistant decide which documents a person is allowed to read?' },
-  { label: 'Search the web', text: 'Search the web for what changed in the latest Python release and give me five bullet points.' },
-  { label: 'Run some code', text: 'Run some Python to find the first ten prime numbers that are also Fibonacci numbers, and show me the output.' },
 ];
 
 const BUILDER_CARDS: readonly WelcomeCard[] = [

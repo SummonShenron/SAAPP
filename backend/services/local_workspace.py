@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from backend.services.repo_checkout import CheckoutHandle
-from backend.utils import docx_edit, spreadsheet_utils
+from backend.utils import demo_project, docx_edit, spreadsheet_utils
 
 logger = logging.getLogger("SASS Logger")
 
@@ -295,7 +295,7 @@ def apply_sync(
     leaves nothing half-done (it used to wipe the working copy with the first batch). A batch whose upload was replaced by a newer one raises StaleUpload.
 
     Without an `upload_id` (a small delta of what changed since the last sync) the batch is applied to the live snapshot directly; a `reset` there wipes it first, as before."""
-    if not username or is_guest_username(username):
+    if not username or is_guest_username(username) or username == demo_project.OWNER:
         raise PermissionError("local workspaces are only available to signed-in users")
     with _user_lock(username):
         if upload_id:
@@ -366,9 +366,29 @@ def _touch(username: str) -> None:
                 pass
 
 
+def _ensure_demo() -> None:
+    """Puts the guest demo project (backend/utils/demo_project.py) on disk under its server-owned name, and puts it back if it is missing, changed or from an older version of the
+    pack. The only writer of that copy: no upload can reach it (the name is not a person's), and it never expires while the demo is switched on."""
+    owner = demo_project.OWNER
+    wanted = {path: len(text.encode("utf-8")) for path, text in demo_project.FILES.items()}
+    with _user_lock(owner):
+        manifest = _current_manifest(owner)
+        root = _files_dir(owner)
+        if manifest and manifest.get("name") == demo_project.NAME and manifest.get("files") == wanted and all((root / path).is_file() for path in wanted):
+            return
+        _apply_direct(owner, demo_project.NAME, [{"path": path, "content": text} for path, text in demo_project.FILES.items()], [], True)
+
+
 def workspace_status(username: Optional[str]) -> Dict[str, Any]:
     """{"connected": False} or the folder's name, size and sync time. An expired snapshot is
     deleted on the way past, so a stale copy of someone's code never lingers on the server."""
+    if username == demo_project.OWNER:
+        if not demo_project.enabled():
+            return {"connected": False}
+        _ensure_demo()
+        manifest = _current_manifest(username) or {}
+        files = manifest.get("files") or {}
+        return {"connected": bool(files), "name": manifest.get("name", demo_project.NAME), "file_count": len(files), "total_bytes": sum(files.values()), "synced_at": float(manifest.get("synced_at", 0))}
     if not username or is_guest_username(username):
         return {"connected": False}
     manifest = _current_manifest(username)

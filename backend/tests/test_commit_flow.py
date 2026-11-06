@@ -253,7 +253,7 @@ def test_a_commit_that_cannot_be_drafted_says_why_instead_of_showing_a_card(worl
 
 def test_the_tool_is_in_the_menu_the_native_schema_and_the_unsafe_list_and_the_folder_paragraph_tells_it_what_is_waiting(world):
     source = (ROOT / "backend" / "services" / "agent_workflow.py").read_text(encoding="utf-8")
-    assert '"- propose_commit — args: message' in source and '"propose_commit", "propose_merge"}' in source and "commit_flow.pending_line, username, state.get(\"git_branch\")" in source
+    assert '"- propose_commit — args: message' in source and '"propose_commit", "propose_merge"}' in source and "commit_flow.pending_line, workspace_user, state.get(\"git_branch\")" in source
     from backend.services import native_tools as nt
 
     declared = nt.declarations_from_menu(["- propose_commit — args: message, new_branch"])
@@ -835,3 +835,48 @@ def test_a_request_that_opens_with_a_file_change_stays_an_edit_turn():
 def test_the_tool_agent_does_not_demand_an_edit_for_a_commit_request():
     source = open(pathlib.Path(__file__).resolve().parents[2] / "backend" / "services" / "agent_workflow.py", encoding="utf-8").read()
     assert "looks_like_edit_request(state.get(\"messages\", [])) and not commit_flow.is_commit_only_request(latest_message_content)" in source
+
+
+@pytest.mark.parametrize("text", [
+    "commit and push the working tree please", "commit and push the working tree please", "push my changes to a new branch", "Commit everything", "merge feat/x into main", "please merge PR 129",
+])
+def test_a_plain_request_to_commit_push_or_merge_reaches_the_tool_agent_even_when_the_reasoner_set_no_flag(text):
+    """The real failure (2026-11-06): the message has no pull-request wording, the classifier read it as conversation and the reasoner's needs_create_pr was not set, so the turn went to the
+    answer with no tools, which said it had no terminal access and told the person to run git themselves, twice."""
+    from langchain_core.messages import HumanMessage
+
+    for flags in ({}, {"needs_create_pr": False}, {"needs_create_pr": True}):
+        state = {"reasoner_flags": flags, "messages": [HumanMessage(content=text)]}
+        assert aw.build_agent_plan(aw.classify_intent(text), state)["agents"] == ["tool_agent", "formatter"], (flags, text)
+        assert state["last_intent"] == "tool_agent"
+
+
+@pytest.mark.parametrize("text", [
+    "what did the last commit change?", "summarise the latest push", "I need to read the commit history", "hello there", "how do i commit to a plan?",
+])
+def test_talk_about_commits_that_is_not_a_request_stays_where_it_was(text):
+    from langchain_core.messages import HumanMessage
+
+    state = {"reasoner_flags": {}, "messages": [HumanMessage(content=text)]}
+    assert "tool_agent" not in aw.build_agent_plan(aw.classify_intent(text), state)["agents"] or cf.wants_commit(text) or cf.wants_merge(text), text
+
+
+def test_a_short_follow_up_still_needs_the_pull_request_reading_to_stay_with_the_tool_agent():
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    history = [HumanMessage(content="commit and push our changes"), AIMessage(content="here is the card"), HumanMessage(content="make the message shorter")]
+    assert aw.build_agent_plan("conversational", {"reasoner_flags": {}, "messages": history})["agents"] != ["tool_agent", "formatter"]
+    assert aw.build_agent_plan("create_pr", {"reasoner_flags": {}, "messages": history})["agents"] == ["tool_agent", "formatter"]
+
+
+@pytest.mark.parametrize("text", [
+    "what tools do yo uhave access to right now", "What tools do you have access to?", "which tools are available to you", "list your tools", "show me what tools sonic has", "what tools can you use here",
+])
+def test_a_question_about_sonics_own_tools_goes_to_the_tool_agent_which_holds_the_real_list(text):
+    """The real failure (2026-11-06, production, folder and runner connected): the plain answer path has no tools and told the person 'I don't have any tools active'."""
+    assert aw.classify_intent(text) == "tool_agent", text
+
+
+@pytest.mark.parametrize("text", ["what tools should I use to learn guitar", "which tool is best for sanding a deck", "hello", "thanks, that helps"])
+def test_advice_about_tools_in_general_is_not_a_question_about_sonics_tools(text):
+    assert aw.classify_intent(text) != "tool_agent", text

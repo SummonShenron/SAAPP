@@ -53,6 +53,7 @@ from backend.services import sandbox_tests
 from backend.services import commit_flow, git_commit
 from backend.utils import sonic_notes
 from backend.utils import advisor as advisor_module
+from backend.utils import demo_project
 from backend.services.local_workspace import apply_sync as apply_workspace_sync, get_workspace_handle, is_guest_username, snapshot_paths, workspace_status
 from backend.services.local_edits import validate_edit_proposal
 from backend.services.memory_search import embed_and_store_memory_chunk, recall_explicit
@@ -162,9 +163,24 @@ REASONER_HISTORY_MAX_MESSAGES = max(int(os.getenv("REASONER_HISTORY_MAX_MESSAGES
 # Menu entries that query GitHub's hosted index of the committed branch — withheld whenever the user
 # has a local folder connected, since that index can't see the folder's (often uncommitted) code.
 _GITHUB_INDEX_ACTIONS_PREFIXES = ("- search_code", "- trace_symbol")
-# What only the browser that holds the folder can finish: a diff card's Apply writes through the folder it was connected with, and a commit card reads the folder's git. The server's copy of a folder belongs to the
-# person, so a phone (which cannot connect a folder) or a second browser sees it too, and these are not offered there: a diff with no Apply button is a dead end.
-_NEEDS_THIS_BROWSERS_FOLDER = ("- propose_local_edits —", "- propose_commit —", "- propose_git_commit —")
+# What only the browser that holds the folder can finish: a diff card's Apply writes through the folder it was connected with. The server's copy of a folder belongs to the person, so a phone (which cannot
+# connect a folder) or a second browser sees it too, and a diff proposed there has no Apply button: a dead end. Commits are NOT in this list: propose_commit works from the server's copy and the person's
+# GitHub token, and propose_git_commit runs git on their own machine through the runner, so neither needs this browser to hold the folder (withholding them said "no tool options" on a commit request, 2026-11-06).
+_NEEDS_THIS_BROWSERS_FOLDER = ("- propose_local_edits —",)
+
+# Told to the model on a guest's demo turn (backend/utils/demo_project.py): the folder is a made-up project, and what the guest sees at the end is a diff card whose Apply is a sign-up button.
+DEMO_PROJECT_NOTE = (
+    "DEMO PROJECT: this folder is 'tallybox', a small made-up invoicing project the server holds so a visitor can watch you work; it is not their code and not Sonic's. Say 'the demo project' when "
+    "you name it. Work in it normally: read it, answer questions about it, propose changes with propose_local_edits, and check a change with run_sandbox_tests (its tests are unittest files in "
+    "tests/; run them with the edit applied before you propose it). A visitor cannot apply a change here: they see the diff and, where Apply would be, a button to sign up and apply it to their own "
+    "project. So never say a change was applied or ask whether to apply it; say what you proposed and what the tests showed. Keep the final answer short."
+)
+
+
+def _workspace_user(state: dict) -> str:
+    """Whose folder copy this turn reads: the person's own, or, on a guest's demo turn, the demo project's server-owned copy."""
+    username = str(state.get("username") or "")
+    return demo_project.OWNER if demo_project.applies(username, state.get("demo_project")) else username
 
 # The tools that read the repo or the connected folder: the trace's "Reading from" step is announced the first time one of them runs.
 _REPO_SOURCE_TOOLS = frozenset({
@@ -636,6 +652,10 @@ def classify_intent(message: str, state: dict = None) -> str:
         return "tool_agent"
     if any(w in msg for w in ["run code", "execute", "query db", "mongodb", "script"]):
         return "tool_agent"
+    # A question about which tools Sonic has right now can only be answered truthfully by the tool agent, which holds the real list for this turn. The plain answer has none and said "I don't have any
+    # tools active" with a connected folder and runner (2026-11-06). "what tools do yo uhave access to" counts (typos are normal); "what tools should I use to learn guitar" does not.
+    if re.search(r'\b(?:what|which|list|show)\b.{0,30}\btools?\b.{0,40}\b(?:you|yo|your|sonic|access|available)', msg) or re.search(r'\b(?:list|show)\b.{0,15}\b(?:your|sonic.s)\s+tools?\b', msg):
+        return "tool_agent"
 
     # Checked BEFORE the generic "pull request" pattern below, so natural creation phrasing
     # like "create a pull request to merge X into Y" isn't swallowed by the broader
@@ -714,7 +734,10 @@ def build_agent_plan(intent: str, state: dict) -> dict:
     # A request to commit, push or open a new branch (with or without the pull request after it) is the tool agent's propose_commit, not this drafter: the drafter only compares two
     # branches that already differ, and for "open a new branch called x and commit our changes" it invented a head branch that did not exist.
     _last = _content_of(state["messages"][-1]) if state.get("messages") else ""
-    if (intent == "create_pr" or flags.get("needs_create_pr")) and (commit_flow.wants_commit(_last) or commit_flow.wants_merge(_last) or commit_flow.continues_commit_request(state.get("messages"), _content_of)):
+    # A message that itself asks to commit, push, branch or merge goes there whatever the classifier and the reasoner said: "commit and push the working tree please" has no pull-request wording, the
+    # reasoner did not always set needs_create_pr for it, and the turn then went to the plain conversational answer, which has no tools and told the person to run git themselves (2026-11-06). A short
+    # follow-up ("make the message shorter") is still the tool agent's only when the turn was also read as a pull-request one.
+    if commit_flow.wants_commit(_last) or commit_flow.wants_merge(_last) or ((intent == "create_pr" or flags.get("needs_create_pr")) and commit_flow.continues_commit_request(state.get("messages"), _content_of)):
         llm_turns.note_route(["commit_request"])
         state["last_intent"] = "tool_agent"
         return {"agents": ["tool_agent", "formatter"], "skip": []}
@@ -1047,7 +1070,7 @@ async def reasoner_node(state: GraphState) -> GraphState:
             isinstance(flags, dict)
             and not flags.get("needs_github_search")
             and not any(flags.get(k) for k in _other_action_flags)
-            and workspace_status(state.get("username"))["connected"]
+            and workspace_status(_workspace_user(state))["connected"]
             and looks_like_edit_request(state.get("messages", []))
         ):
             logger.info("[Reasoner] Edit request with a connected local folder — routing to the tool agent.")
@@ -2028,8 +2051,12 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         # A connected local folder (backend/services/local_workspace.py) takes the tarball's place
         # for this turn's repo reads — checked once up front so the schema can tell the model its
         # reads reflect the user's live working tree rather than GitHub's default branch.
-        local_workspace_handle = get_workspace_handle(username)
-        can_apply_here = local_workspace_handle is not None and state.get("folder_in_browser", True) is not False
+        # A guest turn that starts from a demo card reads and tests the server's demo project instead (backend/utils/demo_project.py); every folder call below names that copy's owner.
+        demo_turn = demo_project.applies(username, state.get("demo_project"))
+        workspace_user = _workspace_user(state)
+        local_workspace_handle = get_workspace_handle(workspace_user)
+        # The demo needs no folder in the browser: its diff card has no Apply, only the sign-up button.
+        can_apply_here = local_workspace_handle is not None and (demo_turn or state.get("folder_in_browser", True) is not False)
         # A connected folder AND a message that asks for a change (directly, or as "do it" /
         # "why won't you just make the change" after an earlier request or refusal): the only way
         # to satisfy it is propose_local_edits, so the loop is told so mechanically — see
@@ -2068,7 +2095,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         # Always says where this turn's repo reads come from, in the trace panel, so "it didn't know
         # about my folder" can be diagnosed at a glance: the folder snapshot, or GitHub.
         if local_workspace_handle is not None:
-            ws_status = workspace_status(username)
+            ws_status = workspace_status(workspace_user)
             source_note = (
                 f"your local folder '{ws_status.get('name', 'local folder')}' "
                 f"({ws_status.get('file_count', '?')} files) — " + ("edits can be proposed" if can_apply_here else "read-only from this device")
@@ -2079,7 +2106,9 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         # an email lookup) has nothing to do with the repo, and a "Reading from GitHub" step there is just noise.
         source_announced = {"done": False}
         if local_workspace_handle is not None:
-            workspace_name = workspace_status(username).get("name", "local folder")
+            workspace_name = workspace_status(workspace_user).get("name", "local folder")
+            if demo_turn:
+                schema_parts.append(DEMO_PROJECT_NOTE)
             schema_parts.append(
                 f"LOCAL WORKSPACE: file reads, tree listings, find_file and search_literal this turn "
                 f"run against the user's connected local folder '{workspace_name}' — their live "
@@ -2102,13 +2131,13 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 )
             )
             # Sonic's own notes and tests live in the person's folder under .sonic/ (backend/utils/sonic_notes.py): the guide, and the end of its earlier notes when it has kept some.
-            schema_parts.append(await asyncio.to_thread(sonic_notes.build_context, username))
+            schema_parts.append(await asyncio.to_thread(sonic_notes.build_context, workspace_user))
             # The branch their folder is on and the applied files waiting to be committed (backend/services/commit_flow.py): what lets "commit this" work.
-            schema_parts.append(await asyncio.to_thread(commit_flow.pending_line, username, state.get("git_branch")))
+            schema_parts.append(await asyncio.to_thread(commit_flow.pending_line, workspace_user, state.get("git_branch")))
             # Where the request's words land in the folder, found by code before the first step (backend/utils/orientation.py): the model goes to the best match instead of searching its way there. A carried-out
             # plan already lists its files, so it is not repeated.
             if plan_phase != code_plan.EXECUTE_PHASE:
-                where_block = await asyncio.to_thread(orientation.where_to_look, local_workspace_handle.root, snapshot_paths(username), [latest_message_content, *previous_human_texts(state.get("messages", []))])
+                where_block = await asyncio.to_thread(orientation.where_to_look, local_workspace_handle.root, snapshot_paths(workspace_user), [latest_message_content, *previous_human_texts(state.get("messages", []))])
                 schema_parts.append(where_block)
                 llm_turns.note_orientation(orientation.block_paths(where_block))      # kept on the turn, in memory, so the loop can say whether the file it edited was one the block listed
         if state.get("conversation_summary"):
@@ -3108,6 +3137,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             )
         if not can_apply_here:
             menu_lines = [line for line in menu_lines if not line.startswith(_NEEDS_THIS_BROWSERS_FOLDER)]
+        elif demo_turn:
+            menu_lines = [line for line in menu_lines if not line.startswith(("- propose_commit —", "- propose_git_commit —"))]       # the demo has no git, and nothing in it is ever applied
         actions_menu = "\n".join(menu_lines)
         coding_preferences = await asyncio.to_thread(fetch_coding_preferences, username)
         # The connected folder's own notes on where things are (.sonic/AGENTS.md, else AGENTS.md or CLAUDE.md): read from the server's copy of the folder, about a thousand tokens, the same every turn so the
@@ -3122,7 +3153,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 await asyncio.to_thread(record_turn_counts, {"project_guidance_turns": 1})
                 # A message that follows a coding reply: the note asks for ONE proposed rule if it was a correction a rule would have prevented (backend/utils/lesson_proposals.py). It comes after the stable
                 # guidance, and only on such turns, so the cached prefix is untouched on every other one.
-                if lesson_proposals.should_offer(state.get("code_followup"), guidance):
+                if not demo_turn and lesson_proposals.should_offer(state.get("code_followup"), guidance):
                     coding_preferences = coding_preferences + lesson_proposals.note(guidance)
                     await asyncio.to_thread(record_turn_counts, {"lesson_offered": 1})
         # What memory knows about this request (saved facts and recalled notes), as untrusted background: see backend/services/tool_agent_memory.py.
@@ -3181,16 +3212,17 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 await asyncio.to_thread(record_turn_counts, {"guidance_edit_proposed": 1})      # a rule (or any change) for the project's guidance file was put in front of the person
             # The native loop waits here for the person's decision and carries on with it; the page says it can report one (edit_decisions). Anything else ends the turn with the
             # card, as it always did.
-            waiting = bool(state.get("edit_decisions")) and local_edit_decisions.enabled()
+            waiting = bool(state.get("edit_decisions")) and local_edit_decisions.enabled() and not demo_turn         # nothing is ever applied to the demo, so no turn waits on a decision
             if waiting:
                 local_edit_decisions.register(username, proposal_id)
             await safe_emit_event("local_edit_proposal", {
                 "proposal_id": proposal_id,
                 "summary": str(args.get("summary") or "")[:500],
-                "folder": workspace_status(username).get("name", "local folder"),
+                "folder": workspace_status(workspace_user).get("name", "local folder"),
                 "files": result["files"],
                 "edits": result["edits"],
                 "awaiting_decision": waiting,
+                "demo": demo_turn,           # the page shows the sign-up button where Apply would be
             })
             shown = (
                 f"Proposed {len(result['edits'])} edit(s) across {len(result['files'])} file(s): "
@@ -3481,7 +3513,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                         + "\nFix them and call run_sandbox_tests again with the complete corrected list."
                     )
                 overlay = checked.get("texts") or {}
-            outcome = await sandbox_tests.run_tests(username, args.get("tests"), overlay)
+            outcome = await sandbox_tests.run_tests(workspace_user, args.get("tests"), overlay)
             return sandbox_tests.format_result(outcome, with_edits=bool(args.get("edits")))
 
         async def _decision_result(shown: str, result: dict, decision: dict | None) -> str:
@@ -4208,7 +4240,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                         "suggest they send the request again (naming the file helps).")
             final_answer = (
                 f"{final_answer}\n\nNOTE (authoritative): the user's local folder "
-                f"'{workspace_status(username).get('name', 'local folder')}' IS connected and edits CAN be proposed — {tail}"
+                f"'{workspace_status(workspace_user).get('name', 'local folder')}' IS connected and edits CAN be proposed — {tail}"
             )
 
         # The live trace panel already shows every step in real time — repeating it in the chat
