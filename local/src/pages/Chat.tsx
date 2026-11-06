@@ -387,6 +387,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
                   onApply={proposal => localEditActionsRef.current.apply(proposal)}
                   onUndo={proposalId => localEditActionsRef.current.undo(proposalId)}
                   onDecision={(proposalId, outcome, reason) => localEditActionsRef.current.decide(proposalId, outcome, reason)}
+                  onSignUp={() => { void api.logout(); }}
                 />
               ))}
               <div className="message-text">
@@ -1100,6 +1101,8 @@ useEffect(() => {
   const [currentExampleQuestions, setCurrentExampleQuestions] = useState<WelcomeCard[]>([]);
   // The shared guest's two lanes of welcome cards (welcomeCards.ts): Sonic at work first, then the answers about the builder.
   const [guestLane, setGuestLane] = useState<GuestLane>('demo');
+  // The guest chose a demo card (a question about the demo project), so this conversation's turns work on it until the guest chooses another kind of card or starts over. The server only honours it for the shared guest.
+  const demoProjectRef = useRef(false);
   const [accountCard, setAccountCard] = useState<WelcomeCard | null>(null);        // the guest's chosen "With an account" card, shown with its sign-up button
   const [loadingCards, setLoadingCards] = useState<boolean>(false);
 
@@ -1376,6 +1379,7 @@ useEffect(() => {
     const newId = crypto.randomUUID();
     localStorage.setItem(`conversation-id-${principal}`, newId);
     setSessionId(newId);
+    demoProjectRef.current = false;
     setMessages([
       { id: genId(), sender: 'system', text: `What would you like to find out about, ${principal}?` }
     ]);
@@ -1405,6 +1409,7 @@ useEffect(() => {
     const newId = crypto.randomUUID();
     localStorage.setItem(`conversation-id-${principal}`, newId);
     setSessionId(newId);
+    demoProjectRef.current = false;
     setMessages([
       { id: genId(), sender: 'system', text: `What would you like to find out about, ${principal}?` }
     ]);
@@ -1595,6 +1600,7 @@ useEffect(() => {
       document.getElementById('file-upload')?.click();
       return;
     }
+    demoProjectRef.current = card.demo === true;
     handleSendMessage(card.text, attachmentsRef.current);
   };
 
@@ -1947,10 +1953,11 @@ useEffect(() => {
                   files: payload.files ?? [],
                   edits: payload.edits,
                   awaiting: payload.awaiting_decision === true,
+                  demo: payload.demo === true,
                 };
                 if (proposal.awaiting) awaitedProposalRef.current = proposal.proposal_id;
-                // The person's approval level may apply this one without a click (never a Word document, a large proposal, or a burst of them).
-                const decision = decideAutoApply(approvalLevelRef.current, proposal, autoAppliedAtRef.current, Date.now());
+                // The person's approval level may apply this one without a click (never a Word document, a large proposal, or a burst of them). The demo project has nothing to apply to.
+                const decision = proposal.demo ? { auto: false } : decideAutoApply(approvalLevelRef.current, proposal, autoAppliedAtRef.current, Date.now());
                 proposal.auto = decision.auto;
                 proposal.autoSkipReason = decision.auto ? undefined : decision.reason;
                 if (decision.auto) autoAppliedAtRef.current = [...autoAppliedAtRef.current.filter(t => Date.now() - t < 60_000), Date.now()];
@@ -2106,7 +2113,8 @@ useEffect(() => {
         workspace.folderExpected(),
         true,
         gitBranch,
-        true
+        true,
+        demoProjectRef.current
       );
 
       // Attachments are scoped to the turn that sent them (already durably stored server-side

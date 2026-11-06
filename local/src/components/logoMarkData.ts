@@ -1,17 +1,25 @@
-// The Sonic mark: a signal line through seven points, one stretch of it dashed. Drawn from the three files the brand supplied (assets/sonic_mark_orange.svg, _white.svg, _black.svg), which differ only in colour,
-// so the colour is not stored here: components/LogoMark.tsx paints it. Coordinates are those files' own (a 260 by 260 canvas), cropped to the mark by LOGO_VIEWBOX. To redraw it, replace these values.
-export const LOGO_ORANGE = '#f28c28';
+// The Sonic mark, drawn as a small agent graph: six nodes, solid edges for the forward steps, and dashed edges for the ones that are not a plain step forward. The line forks at the second node
+// into a crest and a trough and joins again (a signal's peak and dip, and a branch and merge in a graph); the dashed edge up to the crest is a conditional step, and the dashed line straight
+// across the middle from the fourth node back to the second is state handed back to an earlier node, out of order. The colour is not stored here: components/LogoMark.tsx paints it, and the
+// three files in src/assets/ (sonic_mark_orange, _white, _black) and public/favicon2.svg are drawn from these same values (logoMark.test.mjs checks they still agree). To redraw it, change these values.
+export const LOGO_ORANGE = '#c85a0c';             // the brand orange: the app's --accent-primary on a light page (src/index.css); on a dark page the mark follows that token's own value
 
-/** The mark's box in the supplied canvas: the points and their dots, with half a stroke of room. */
-export const LOGO_VIEWBOX = '42 67 176 111';
+/** The mark's box, with room for the line around every dot. */
+export const LOGO_VIEWBOX = '0 0 176 111';
 
-export const LOGO_STROKE = 4;
+export const LOGO_STROKE = 3.5;
 
-/** The seven points the line passes through, left to right, and the dot radius at each. The fourth is the peak and its dot is a pixel larger. */
-export const LOGO_POINTS: ReadonlyArray<readonly [number, number, number]> = [
-  [55, 140, 9], [80, 95, 9], [105, 165, 9], [130, 80, 10], [155, 150, 9], [180, 110, 9], [205, 135, 9],
+/** The six nodes, left to right, as [x, y, radius]. The third is the crest (the larger dot) and the fourth, below it, the trough; the fifth is where they join. */
+export const LOGO_NODES: ReadonlyArray<readonly [number, number, number]> = [
+  [14, 74, 6], [50, 55, 6], [88, 20, 9], [88, 84, 6], [126, 55, 6], [162, 66, 6],
 ];
 
-/** The segment drawn dashed (from point 3 to point 4, the climb to the peak), as the index of its first point, and its dash pattern. */
-export const LOGO_DASHED_FROM = 2;
+/** The edges as [from, to, dashed], by node index. Eight of them: the forward steps, and the two dashed ones. */
+export const LOGO_EDGES: ReadonlyArray<readonly [number, number, boolean]> = [
+  [0, 1, false], [1, 3, false], [3, 4, false], [4, 5, false],
+  [1, 2, true],         // the diamond's upper-left edge: the conditional step up to the crest (set `false` here and `true` on [3, 4] to put the dashes on the lower-right edge instead)
+  [2, 4, false],
+  [4, 1, true],         // across the middle of the diamond, back from the fourth node to the second: state passed back out of order
+];
+
 export const LOGO_DASH = '6 5';

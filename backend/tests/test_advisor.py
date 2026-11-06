@@ -241,3 +241,19 @@ def test_a_brief_with_every_part_at_its_largest_is_still_cut_to_the_limit():
     brief = ad.build_brief("early_answer", "r" * 5000, "s" * 2000, attempts, model_answer="a" * 3000, repeated="c" * 2000)
     assert len(brief) <= ad.BRIEF_MAX_CHARS
     assert brief.startswith("WHY YOU ARE ASKED") and "THE PERSON'S REQUEST" in brief
+
+
+def test_every_keyword_the_agent_passes_to_the_native_loop_is_one_the_loop_takes():
+    """A merge once kept the agent's `advisor=` and dropped the loop's parameter, so every tool turn on production died with a TypeError. The tests fake the loop, so only this can see it."""
+    import ast
+    import inspect
+    from backend.services import native_loop
+
+    taken = set(inspect.signature(native_loop.run).parameters)
+    tree = ast.parse(open("backend/services/agent_workflow.py", encoding="utf-8").read())
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call) and ast.unparse(node.func) == "native_loop.run"]
+    assert calls, "the agent no longer calls native_loop.run"
+    for call in calls:
+        passed = {kw.arg for kw in call.keywords if kw.arg}
+        assert passed <= taken, f"passed to native_loop.run but not taken by it: {sorted(passed - taken)}"
+        assert {"advisor", "plan_progress"} <= passed

@@ -58,8 +58,8 @@ def test_a_huge_or_unreadable_notes_file_gives_nothing_instead_of_an_error(tmp_p
 
 def test_the_notes_reach_the_tool_agent_through_the_local_workspace_paragraph_and_the_folder_is_synced_with_its_dot_directory():
     source = (ROOT / "backend" / "services" / "agent_workflow.py").read_text(encoding="utf-8")
-    assert "schema_parts.append(await asyncio.to_thread(sonic_notes.build_context, username))" in source
-    assert source.index("LOCAL WORKSPACE: file reads") < source.index("sonic_notes.build_context, username")
+    assert "schema_parts.append(await asyncio.to_thread(sonic_notes.build_context, workspace_user))" in source
+    assert source.index("LOCAL WORKSPACE: file reads") < source.index("sonic_notes.build_context, workspace_user")
     assert ".sonic" not in lw._SKIPPED_DIR_NAMES                                                       # the folder is snapshotted like any other, so a read after the notes are applied sees them
     log_hygiene = (ROOT / "backend" / "utils" / "sonic_notes.py").read_text(encoding="utf-8")
     assert "logger.info" not in log_hygiene

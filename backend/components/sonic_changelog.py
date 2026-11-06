@@ -23,6 +23,20 @@ Fields: `id`; `month` (YYYY-MM, newest first within the list is not required); `
 
 CHANGELOG = [
     {
+        "id": "guest_demo_project",
+        "requires": [
+            "backend/utils/demo_project.py::def applies",
+            "app.py::demo_project.applies",
+        ],
+        "month": "2026-11",
+        "title": "A demo project for visitors without an account",
+        "line": (
+            "A visitor without an account can now watch me work on a small demo project: I read its code, find the bug, propose the fix as a diff and run its tests with the fix in place. Applying a change to their own project takes an account."
+        ),
+        "keywords": ["demo", "demo project", "try it", "guest", "visitor", "fix a bug", "tallybox"],
+        "volunteer": [],
+    },
+    {
         "id": "native_ci_tools",
         "requires": [
             "backend/services/ci_test_runner.py::def run_repo_tests",

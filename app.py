@@ -159,7 +159,7 @@ from backend.utils import initiation as initiation_utils
 from backend.utils import proactive_gates
 from backend.utils import reach as reach_utils
 from backend.utils import budget_guard
-from backend.utils import guest_limits, guest_nudge
+from backend.utils import demo_project, guest_limits, guest_nudge
 from backend.utils import context_window, llm_turns, llm_usage, loop_watchdog
 from backend.utils import ops_digest as ops_digest_utils
 from backend.utils import ops_suggestions as ops_suggestions_utils
@@ -408,6 +408,7 @@ class ChatRequest(BaseModel):
     git_branch: str | None = None   # the git branch the connected folder is on, read by the browser from .git/HEAD (None when unknown or detached)
     edit_decisions: bool = False    # the page reports Apply / Decline back (POST /api/local-edits/{id}/decision), so the tool loop may wait for it and carry on
     runner_cards: bool = False      # the page can show a local-runner check card (Run / Cancel), so the run_local_check tool may be offered (backend/utils/runner_jobs.py)
+    demo_project: Optional[bool] = None      # the shared guest chose a demo card, so this turn works on the server's demo project (backend/utils/demo_project.py); ignored for anyone else
     folder_expected: Optional[bool] = None   # the browser has a local folder connected (and may write to it), so a turn that finds none on the server can say so (the answer then used GitHub), and so an edit is only proposed where it can be applied. None: an older page that does not say
 
 class EditDecisionRequest(BaseModel):
@@ -872,9 +873,11 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     # With a local folder connected, earlier "I can't write files" replies are false — and a thread
     # full of them teaches the model to keep saying it. Only what the model sees is changed; the
     # saved transcript is untouched.
-    folder_connected = bool(local_workspace_status(username).get("connected"))
-    # The server keeps the folder copy under the person's name, so a phone sees it too; edits, plans and the "it said it cannot edit" clean-up only make sense where this browser holds the folder.
-    folder_usable_here = folder_connected and request.folder_expected is not False
+    demo_turn = demo_project.applies(username, request.demo_project)
+    folder_connected = bool(local_workspace_status(demo_project.OWNER if demo_turn else username).get("connected"))
+    # The server keeps the folder copy under the person's name, so a phone sees it too; edits, plans and the "it said it cannot edit" clean-up only make sense where this browser holds the folder
+    # (the demo project needs none: its diff card has a sign-up button where Apply would be).
+    folder_usable_here = folder_connected and (demo_turn or request.folder_expected is not False)
     if folder_usable_here:
         messages_state = scrub_stale_capability_denials(messages_state)
 
@@ -905,6 +908,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         "edit_decisions": bool(request.edit_decisions),
         "code_followup": code_followup,
         "runner_cards": bool(request.runner_cards),
+        "demo_project": demo_turn,
         "folder_in_browser": request.folder_expected is not False,       # False: this browser (a phone, a second browser) holds no folder, so no edit can be applied from here
         "git_branch": (request.git_branch or "").strip()[:100] or None,
         "budget_level": budget_state.get("level"),

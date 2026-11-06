@@ -93,7 +93,7 @@ def test_the_app_passes_the_followup_and_the_tool_agent_adds_the_note_after_the_
     app = (ROOT / "app.py").read_text(encoding="utf-8")
     workflow = (ROOT / "backend/services/agent_workflow.py").read_text(encoding="utf-8")
     assert '"code_followup": code_followup,' in app
-    assert "if lesson_proposals.should_offer(state.get(\"code_followup\"), guidance):" in workflow
+    assert "if not demo_turn and lesson_proposals.should_offer(state.get(\"code_followup\"), guidance):" in workflow
     assert workflow.index("coding_preferences + project_guidance.block(guidance)") < workflow.index("coding_preferences = coding_preferences + lesson_proposals.note(guidance)")
     assert '{"lesson_offered": 1}' in workflow and '{"guidance_edit_proposed": 1}' in workflow
 

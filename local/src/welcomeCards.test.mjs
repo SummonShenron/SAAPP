@@ -12,14 +12,36 @@ test('only the shared portfolio guest gets the portfolio cards; the embedded gue
   assert.equal(isPortfolioGuest(null, false), false);
 });
 
-test('the front lane shows Sonic working: every card is a request that makes it call tools, and the lane about the builder is second', () => {
+test('the front lane shows Sonic working: three cards work on the demo project (fix a bug, add a feature, trace a setting) and one reads its own repository', () => {
   assert.deepEqual(GUEST_LANES.map(l => l.id), ['demo', 'builder', 'account']);
   const demo = portfolioCards();                                                             // the front lane is the default
   assert.deepEqual(demo, portfolioCards('demo'));
-  assert.deepEqual(demo.map(c => c.label), ['Watch it work', 'Find it in the code', 'Search the web', 'Run some code']);
-  const wording = [/pull request/i, /in the code/i, /search the web/i, /run some python/i];     // the tool each one needs: the repo, the code, web search, the sandbox
+  assert.deepEqual(demo.map(c => c.label), ['Fix a bug', 'Add a feature', 'Trace a setting', 'Watch it work']);
+  assert.deepEqual(demo.map(c => c.demo === true), [true, true, true, false]);              // only the demo cards tell the server to work on the demo project
+  const wording = [/overdue a day late.*fix it.*tests pass/i, /late-fee line.*tests pass/i, /rate limit.*which one wins/i, /pull request/i];
   demo.forEach((card, i) => assert.match(card.text, wording[i]));
+  assert.ok(demo.slice(0, 3).every(c => /demo project/.test(c.text)), 'each demo card says which project it is about');
   assert.ok(!demo.some(c => /Jack/.test(c.text)), 'the front lane is not about the person');
+  assert.ok(![...portfolioCards('builder'), ...portfolioCards('account')].some(c => c.demo), 'no other lane works on the demo project');
+});
+
+test('the page tells the server a conversation is about the demo project until another kind of card is chosen or a new chat starts, and the diff card offers sign-up instead of Apply', () => {
+  const chat = readFileSync(new URL('./pages/Chat.tsx', import.meta.url), 'utf8');
+  assert.match(chat, /const demoProjectRef = useRef\(false\)/);
+  assert.match(chat, /demoProjectRef\.current = card\.demo === true;\s*handleSendMessage\(card\.text/);
+  assert.equal((chat.match(/demoProjectRef\.current = false;/g) ?? []).length, 2, 'both ways of starting a new conversation reset it');
+  assert.match(chat, /true,\s*demoProjectRef\.current\s*\);/);
+  assert.match(chat, /demo: payload\.demo === true,/);
+  assert.match(chat, /proposal\.demo \? \{ auto: false \} : decideAutoApply/);        // nothing is applied to the demo, whatever the approval level says
+  assert.match(chat, /onSignUp=\{\(\) => \{ void api\.logout\(\); \}\}/);
+  const api = readFileSync(new URL('./api.ts', import.meta.url), 'utf8');
+  assert.match(api, /runnerCards = false,\s*demoProject = false/);
+  assert.match(api, /demo_project: demoProject,/);
+  const card = readFileSync(new URL('./components/LocalEditCard.tsx', import.meta.url), 'utf8');
+  assert.match(card, /\{proposal\.demo && \(/);
+  assert.match(card, /Sign up to apply this to your own project/);
+  assert.match(card, /\{!proposal\.demo && \(phase === 'pending' \|\| phase === 'applying'\) && \(/);   // Apply and Decline are not shown on the demo
+  assert.match(card, /\{!proposal\.demo && phase === 'pending' && declining && \(/);
 });
 
 test('the lane about the builder keeps the plain questions about the person and the project, and the technical one last', () => {
