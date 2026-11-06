@@ -231,7 +231,7 @@ async def _run_turn(monkeypatch, question, attempts, extra_state=None):
         return {"final_answer": "I looked around.", "attempts": attempts, "show_work": False}
 
     monkeypatch.setattr(aw.native_loop, "run", fake_native_run)
-    state = {"username": "jack", "messages": [H(content=question)], "documents": [], **(extra_state or {})}
+    state = {"username": "jack", "messages": [H(content=question)], "documents": []}
     result = await aw.tool_agent_node(state)
     return result["content_to_format"], captured
 
