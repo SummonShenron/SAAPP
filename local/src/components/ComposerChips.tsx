@@ -95,7 +95,7 @@ function ClaudeSonnetMark() {
   return <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" className="cc-mark"><ClaudeSonnetShape /></svg>;
 }
 
-const SHAPES: Record<string, () => React.JSX.Element> = { gemini: GeminiShape, claude: ClaudeShape, sonnet: ClaudeSonnetShape, gpt: GptShape };
+const SHAPES: Record<string, () => React.JSX.Element> = { gemini: GeminiShape, claude: ClaudeShape, haiku: ClaudeShape, sonnet: ClaudeSonnetShape, gpt: GptShape };
 
 /**
  * The model chip's icon: ONE svg drawn from the marks of the models in play. Two different marks are cut on a 45 degree "/" slash (the first one upper-left, the second lower-right); three are cut as thirds
@@ -160,7 +160,7 @@ const ICON_NAMES: Record<string, IconName> = { plan: 'checklist', swift: 'bolt',
 /** The icon for one state of one chip. */
 export function glyph(id: string): React.ReactNode {
   if (id === 'gemini') return <GeminiMark />;
-  if (id === 'claude') return <ClaudeMark />;
+  if (id === 'claude' || id === 'haiku') return <ClaudeMark />;
   if (id === 'sonnet') return <ClaudeSonnetMark />;
   if (id === 'gpt') return <GptMark />;
   if (id === 'agent') return <RobotMark />;

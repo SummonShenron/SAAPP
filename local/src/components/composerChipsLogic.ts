@@ -52,15 +52,17 @@ export const CHIPS: Record<ChipKey, ChipSpec> = {
 
 /**
  * The BASE model: which model writes the reply the person reads (the Tool model above does only the reasoning steps of code work). It sits in the same popup as the Tool model, as its first column
- * (components/ComposerChips.tsx ModelChoices). Auto and Lite voice are offered where the server has a priced lite model (a guest too: their choice stays in their browser), GPT where it can run GPT. Inside a safety
+ * (components/ComposerChips.tsx ModelChoices). Auto and Gemini Lite are offered where the server has flash-lite priced, Claude Haiku where it has a Claude key and a price (a guest may pick any of them: their choice stays
+ * in their browser), GPT where it can run GPT. Inside a safety
  * context the server always uses Gemini, whatever this says.
  */
 export const BASE_MODEL: ChipSpec = {
   key: 'model', title: 'Base model', ordinary: 'gemini',
   options: [
     { id: 'gemini', name: 'Gemini', hint: 'The default. Gemini writes the replies.', short: 'The default.' },
-    { id: 'auto', name: 'Auto', hint: 'A cheaper model writes the plain turns (code, documents, lookups) and Gemini writes the rest: whenever a feeling is carried over, a check-in is due, you ask about Sonic itself, or anything is in a safety context. Costs less than Gemini alone.', short: 'Cheaper on plain turns.' },
-    { id: 'lite', name: 'Lite voice', hint: 'A cheaper model writes every reply, except inside a safety context where Sonic always uses Gemini. The cheapest. Still being tested: it can be less warm and miss a check-in.', short: 'The cheapest. Being tested.' },
+    { id: 'auto', name: 'Auto', hint: 'A cheaper Gemini model writes the plain turns (code, documents, lookups) and the standard Gemini writes the rest: whenever a feeling is carried over, a check-in is due, you ask about Sonic itself, you are frustrated, or anything is in a safety context. Costs less than Gemini alone.', short: 'Cheaper on plain turns.' },
+    { id: 'lite', name: 'Gemini Lite', hint: 'Gemini flash-lite (Google) writes every reply, except inside a safety context where Sonic always uses Gemini. Cheaper. Still being tested: it can be less warm and miss a check-in.', short: 'Cheaper. Being tested.' },
+    { id: 'haiku', name: 'Claude Haiku', hint: 'Claude Haiku (Anthropic) writes every reply, except inside a safety context where Sonic always uses Gemini. The cheapest. Your messages go to Anthropic for the replies. Still being tested: it can be less warm and miss a check-in.', short: 'The cheapest. Being tested.' },
     { id: 'gpt', name: 'GPT-5.4 mini', hint: 'GPT-5.4 mini (OpenAI) writes the replies. New, and still being tested. When someone is going through something hard, Sonic uses Gemini whatever this says.', short: 'New. Still being tested.' },
   ],
 };

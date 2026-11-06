@@ -68,7 +68,7 @@ const GUEST_REPLY_MODEL_KEY = 'guest-reply-model';
 function guestReplyModelChoice(): ReplyModel {
   try {
     const stored = localStorage.getItem(GUEST_REPLY_MODEL_KEY);
-    return stored === 'lite' || stored === 'auto' ? stored : 'gemini';
+    return stored === 'lite' || stored === 'haiku' || stored === 'auto' ? stored : 'gemini';
   } catch {
     return 'gemini';
   }
@@ -765,6 +765,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [replyModelAvailable, setReplyModelAvailable] = useState<boolean>(false);
   const [replyGptAvailable, setReplyGptAvailable] = useState<boolean>(false);         // the base-model choices the server offers: GPT where it can run it, Lite voice and Auto where it has a priced lite model
   const [replyLiteAvailable, setReplyLiteAvailable] = useState<boolean>(false);
+  const [replyHaikuAvailable, setReplyHaikuAvailable] = useState<boolean>(false);
   const [replyBrowserOnly, setReplyBrowserOnly] = useState<boolean>(false);           // a guest: the choice is kept in this browser and sent with each message (the guests share one settings record)
   const [executeSetting, setExecuteSetting] = useState<ExecuteModelSetting | null>(null);      // the EXECUTE model: which model carries out an approved plan ("same" as the Tool model unless they chose one); null until loaded, or where there is no such setting
   const [budget, setBudget] = useState<BudgetView | null>(null);
@@ -1230,7 +1231,7 @@ useEffect(() => {
       .catch(() => { /* guests and embeds have no such setting */ });
     api.getReplyModel()
       .then(data => {
-        setReplyGptAvailable(data.gpt_available === true); setReplyLiteAvailable(data.lite_available === true); setReplyBrowserOnly(data.browser_only === true);
+        setReplyGptAvailable(data.gpt_available === true); setReplyLiteAvailable(data.lite_available === true); setReplyHaikuAvailable(data.haiku_available === true); setReplyBrowserOnly(data.browser_only === true);
         setReplyModel(data.browser_only ? guestReplyModelChoice() : data.reply_model);
         setReplyModelAvailable(data.available);
       })
@@ -2492,7 +2493,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
       : null,
     // The BASE model (which model writes the reply): a choice only where the server can run GPT.
     baseModel: replyModelAvailable
-      ? { value: replyModel, onChange: id => { void handleReplyModelChange(id as ReplyModel); }, hide: [...(replyGptAvailable ? [] : ['gpt']), ...(replyLiteAvailable ? [] : ['auto', 'lite'])] }
+      ? { value: replyModel, onChange: id => { void handleReplyModelChange(id as ReplyModel); }, hide: [...(replyGptAvailable ? [] : ['gpt']), ...(replyLiteAvailable ? [] : ['auto', 'lite']), ...(replyHaikuAvailable ? [] : ['haiku'])] }
       : null,
     // The EXECUTE model (who carries out an approved plan): only where plans exist (a connected folder that can be edited) and there is a provider to choose besides Gemini; each provider is left out where the server does not offer it.
     executeModel: workspace.canEdit && executeSetting?.available

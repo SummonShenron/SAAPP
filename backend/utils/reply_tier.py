@@ -1,7 +1,7 @@
 """Which model writes a turn's reply: the standard voice, or a cheaper "lite" one (docs/model-eval-plan.md, the reply-voice evals of 2026-11-02 and 2026-11-06).
 
-THE CHOICE. A person's base-model setting is "gemini" (the standard voice, the default), "gpt", "lite" (the cheaper model for every turn it is safe to use it on) or "auto" (a hybrid: lite for plain turns, the
-standard voice for the turns where the voice is the point). Pure: this module only decides; app.py runs the model it names.
+THE CHOICE. A person's base-model setting is "gemini" (the standard voice, the default), "gpt", "lite" (Gemini flash-lite for every turn it is safe to use it on), "haiku" (Claude Haiku, likewise) or "auto" (a hybrid:
+flash-lite for plain turns, the standard voice for the turns where the voice is the point). Pure: this module only decides; app.py runs the model it names.
 
 WHERE LITE IS NEVER USED, whatever the setting. A safety context (the support ladder, the listening mode, the checks around them) was built and measured on the standard voice, so it always gets it.
 
@@ -18,20 +18,22 @@ import re
 from typing import Optional, Tuple
 
 STANDARD = "standard"
-LITE = "lite"
+LITE = "lite"          # Gemini flash-lite
+HAIKU = "haiku"        # Claude Haiku
 
 # The reasons, which are also the counter keys (self_counters.py _GROUPS["reply_tier"]).
 R_STANDARD_SETTING = "standard_setting"      # their setting is the standard voice (or GPT): nothing is routed
-R_LITE_SETTING = "lite_setting"              # they chose Lite
+R_LITE_SETTING = "lite_setting"              # they chose Gemini Lite
+R_HAIKU_SETTING = "haiku_setting"            # they chose Claude Haiku
 R_AUTO_PLAIN = "auto_plain"                  # Auto, and the turn is a plain one
-R_NOT_OFFERED = "not_offered"                # Lite or Auto, but this server does not offer a lite model (no price, or no key)
+R_NOT_OFFERED = "not_offered"                # Lite, Haiku or Auto, but this server does not offer that model (no price, or no key)
 R_SAFETY = "safety"
 R_EMOTIONAL = "emotional"
 R_CHECKIN = "checkin"
 R_COMPANION = "companion"
 R_IDENTITY = "identity"
 R_FRUSTRATION = "frustration"
-REASONS = (R_STANDARD_SETTING, R_LITE_SETTING, R_AUTO_PLAIN, R_NOT_OFFERED, R_SAFETY, R_EMOTIONAL, R_CHECKIN, R_COMPANION, R_IDENTITY, R_FRUSTRATION)
+REASONS = (R_STANDARD_SETTING, R_LITE_SETTING, R_HAIKU_SETTING, R_AUTO_PLAIN, R_NOT_OFFERED, R_SAFETY, R_EMOTIONAL, R_CHECKIN, R_COMPANION, R_IDENTITY, R_FRUSTRATION)
 
 CHECKIN_MARKER = "CHECK-IN (this reply only"
 
@@ -114,14 +116,17 @@ def _message_of(prompt: str) -> str:
     return prompt[start + len("CURRENT USER INPUT:"): end if end > 0 else None].strip()
 
 
-def pick(choice: Optional[str], *, lite_ready: bool, risk_active: bool, prompt: object, question: object = "") -> Tuple[str, str]:
-    """(tier, reason): STANDARD or LITE for this turn. `choice` is the person's base-model setting ("gemini", "gpt", "lite", "auto" or None); `lite_ready` is whether this server offers a lite model."""
-    if choice not in ("lite", "auto"):
+def pick(choice: Optional[str], *, lite_ready: bool, risk_active: bool, prompt: object, question: object = "", haiku_ready: bool = False) -> Tuple[str, str]:
+    """(tier, reason): STANDARD, LITE (Gemini flash-lite) or HAIKU (Claude Haiku) for this turn. `choice` is the person's base-model setting ("gemini", "gpt", "lite", "haiku", "auto" or None); `lite_ready` and
+    `haiku_ready` are whether this server offers each model. Auto always means flash-lite: it is the model the hybrid was measured with (docs/model-eval-plan.md)."""
+    if choice not in ("lite", "haiku", "auto"):
         return STANDARD, R_STANDARD_SETTING
     if risk_active:
         return STANDARD, R_SAFETY
-    if not lite_ready:
+    if not (haiku_ready if choice == "haiku" else lite_ready):
         return STANDARD, R_NOT_OFFERED
+    if choice == "haiku":
+        return HAIKU, R_HAIKU_SETTING
     if choice == "lite":
         return LITE, R_LITE_SETTING
     reason = full_reason(prompt, question=question)

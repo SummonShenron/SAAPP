@@ -19,18 +19,21 @@ export const PrivacyPage: React.FC = () => {
 
         <h2>The short version</h2>
         <ul>
-          <li>What you type, and any photos or files you attach, are sent to Google's Gemini service so Sonic can write its replies. For tool steps (mostly code work, but also reading your email or calendar), some of it can also go to Anthropic's Claude, and if you choose GPT as a model, to OpenAI (see "Anthropic's Claude" and "OpenAI's GPT" below). Some requests also use a search, maps, browser or image service, and each is listed under "Other services that receive part of what you ask".</li>
+          <li>What you type, and any photos or files you attach, are sent to Google's Gemini service so Sonic can write its replies. For tool steps (mostly code work, but also reading your email or calendar), some of it can also go to Anthropic's Claude, and if you choose Claude Haiku or GPT as your Base model, the replies themselves go to Anthropic or OpenAI instead (see "Anthropic's Claude" and "OpenAI's GPT" below). Some requests also use a search, maps, browser or image service, and each is listed under "Other services that receive part of what you ask".</li>
           <li>Your conversations are kept until you delete them. The photos and files you attach are removed automatically after 30 days, or sooner if you delete the conversation.</li>
           <li>Sonic keeps short notes about you (preferences, plans, things you told it) so it can help you better. You can read and remove every one on the Memory page.</li>
           <li>Sonic only looks at your email, calendar or Drive when you ask. It sends an email, adds an event or edits a document only after you approve that specific action.</li>
           <li>We don't sell your data and we don't show ads.</li>
         </ul>
 
-        <h2>Anthropic's Claude (for tool steps, mostly code work)</h2>
+        <h2>Anthropic's Claude (for tool steps, mostly code work, and for replies if you choose Haiku)</h2>
         <p>
-          Sonic can use Anthropic's Claude model for the steps where it works with tools: mostly code work, but also a request that reads your email, calendar or Drive, searches, or looks at a page. Sonic's replies are still written by Gemini.
+          Sonic can use Anthropic's Claude model for the steps where it works with tools: mostly code work, but also a request that reads your email, calendar or Drive, searches, or looks at a page. Sonic's replies are written by Gemini unless you choose Claude Haiku as your Base model (the first item below).
         </p>
         <ul>
+          <li>
+            <strong>As the Base model:</strong> if you choose Claude Haiku as your Base model, what you type, the recent conversation and the notes about you that Sonic uses for that reply go to Anthropic instead of Google to write the reply. Choose Gemini, Auto or Gemini Lite and nothing goes to Anthropic for replies. Inside a safety context Sonic always uses Gemini, whatever this says. A guest's choice applies only to that guest's own messages.
+          </li>
           <li>
             <strong>If you choose it:</strong> when you set the Tool model to Claude, the tool steps of a request (your question, the code, emails, events, files or search results Sonic reads while working
             on it, and the few saved notes about you that relate to that request, if any) go to Anthropic instead of Google for those steps. Set it back to Gemini any time.

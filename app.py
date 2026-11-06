@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
-from backend.models.models import llm, get_stream_llm, get_lite_stream_llm, lite_prompt, lite_reply_available, claude_available, sonnet_available, openai_available
+from backend.models.models import llm, get_stream_llm, get_lite_stream_llm, get_haiku_stream_llm, haiku_reply_available, lite_prompt, lite_reply_available, claude_available, sonnet_available, openai_available
 from backend.models.attachment import Attachment
 from backend.services.github_service import (
     process_pr_summary, verify_and_store_github_token, GitHubTokenRejected, GitHubUnreachable,
@@ -812,7 +812,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     effective_rag_mode = _settings["rag_mode"]
     effective_deep_thinking = _settings["deep_thinking"]
     effective_tool_model = _settings.get("tool_model")      # "claude" | "sonnet" | "gpt" | "gemini" | None (never chose: the server's default)
-    reply_choice = reply_choice_for_turn(username, _settings.get("reply_model"), request.reply_model, lite_reply_available())     # "gemini" | "gpt" | "lite" | "auto" | None (backend/utils/reply_tier.py decides, per turn, who writes lite and auto)
+    reply_choice = reply_choice_for_turn(username, _settings.get("reply_model"), request.reply_model, lite_reply_available(), haiku_reply_available())     # "gemini" | "gpt" | "lite" | "haiku" | "auto" | None (backend/utils/reply_tier.py decides, per turn, who writes)
     if reply_choice == "gpt":
         response_llm = get_stream_llm(username, choice="gpt")       # the BASE model they chose, where the server offers it (otherwise the same Gemini model as above); see the safety override below
     effective_target_repo = _settings["target_repo"]
@@ -1658,9 +1658,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # always gets Gemini whatever the base-model setting says.
             turn_llm = response_llm if risk_level == RISK_NONE else get_stream_llm(username)
             # Lite and Auto (backend/utils/reply_tier.py): a cheaper model writes the turns it is safe to hand it, never inside a safety context. The decision reads the finished prompt, and only its reason is counted.
-            tier, tier_reason = reply_tier.pick(reply_choice, lite_ready=lite_reply_available(), risk_active=risk_level != RISK_NONE, prompt=prompt, question=question)
-            if tier == reply_tier.LITE:
-                lite_voice = get_lite_stream_llm(username)
+            tier, tier_reason = reply_tier.pick(reply_choice, lite_ready=lite_reply_available(), haiku_ready=haiku_reply_available(), risk_active=risk_level != RISK_NONE, prompt=prompt, question=question)
+            if tier in (reply_tier.LITE, reply_tier.HAIKU):
+                lite_voice = get_haiku_stream_llm(username) if tier == reply_tier.HAIKU else get_lite_stream_llm(username)
                 if lite_voice is None:
                     tier_reason = reply_tier.R_NOT_OFFERED
                 else:
@@ -3400,13 +3400,13 @@ async def get_reply_model_setting(current_user = Depends(get_current_user)):
     """Which model writes the reply the person reads (the BASE model): their own choice, else Gemini. `available` is whether GPT can be offered at all (an OpenAI key and a price are configured);
     guests and the embed are always Gemini."""
     username = current_user.get("sub")
-    return reply_model_view(username, openai_available(), lite_reply_available())
+    return reply_model_view(username, openai_available(), lite_reply_available(), haiku_reply_available())
 
 
 @app.put("/api/settings/reply-model")
 async def update_reply_model_setting(payload: ReplyModelUpdate, current_user = Depends(get_current_user)):
     username = current_user.get("sub")
-    view, problem = save_reply_model_choice(username, payload.reply_model, openai_available(), lite_reply_available())
+    view, problem = save_reply_model_choice(username, payload.reply_model, openai_available(), lite_reply_available(), haiku_reply_available())
     if problem:
         raise HTTPException(status_code=problem[0], detail=problem[1])
     return view

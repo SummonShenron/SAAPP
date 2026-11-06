@@ -428,54 +428,54 @@ def get_stream_llm(username: str, choice=None):
         return _openai_llms["reply"]
     return stream_llm
 
-# ---- the lite voice (backend/utils/reply_tier.py; docs/model-eval-plan.md) --------------------------------------------------------------------------------------------------------
-# A cheaper model for replies, offered as the "Lite" and "Auto" choices of the base-model setting. LITE_REPLY_MODEL names it: a Gemini model (default gemini-3.5-flash-lite) or Claude Haiku ("haiku" or its
-# full name). Like every other model option it is offered only when LLM_PRICES lists it (the budget guard counts dollars from those prices) and, for Claude, when a key is set. Never for a guest or the
-# embedded view.
+# ---- the cheaper voices (backend/utils/reply_tier.py; docs/model-eval-plan.md) ----------------------------------------------------------------------------------------------------
+# Two cheaper reply models, each its own choice in the base-model setting: Gemini flash-lite ("Lite", and what "Auto" uses for plain turns; LITE_REPLY_MODEL names another Gemini model) and Claude Haiku
+# ("Haiku": the replies go to Anthropic). Like every other model option each is offered only when LLM_PRICES lists it (the budget guard counts dollars from those prices) and, for Haiku, when a Claude key is
+# set. Never for the embedded view; a guest may pick either (their choice stays in their browser).
 LITE_REPLY_DEFAULT = "gemini-3.5-flash-lite"
 _lite_stream_llms: dict = {}
 
 
 def lite_reply_model_name() -> str:
-    """The lite reply model's name as the price table and the usage page know it."""
-    wanted = os.getenv("LITE_REPLY_MODEL", "").strip() or LITE_REPLY_DEFAULT
-    if wanted.lower() == "haiku":
-        from backend.models import claude_llm
-
-        return claude_llm.DEFAULT_MODEL
-    return wanted
-
-
-def _lite_is_claude(name: str) -> bool:
-    return name.lower().startswith("claude")
+    """The Gemini lite reply model's name as the price table and the usage page know it."""
+    return os.getenv("LITE_REPLY_MODEL", "").strip() or LITE_REPLY_DEFAULT
 
 
 def lite_reply_available() -> bool:
-    """Whether a lite voice can be offered: its price is in LLM_PRICES, and (for Claude) a key is configured."""
-    name = lite_reply_model_name()
-    if name not in llm_usage.cached_prices():
-        return False
-    if _lite_is_claude(name):
-        return claude_available()
-    return True
+    """Whether Gemini Lite (and Auto, which uses it) can be offered: the model's price is in LLM_PRICES."""
+    return lite_reply_model_name() in llm_usage.cached_prices()
+
+
+def haiku_reply_available() -> bool:
+    """Whether Claude Haiku can be offered for replies: a Claude key is configured AND its price is in LLM_PRICES."""
+    from backend.models import claude_llm
+
+    return claude_available() and claude_llm.DEFAULT_MODEL in llm_usage.cached_prices()
 
 
 def get_lite_stream_llm(username: str):
-    """The model that writes a lite reply, or None for a person who cannot have one (a guest, the embed) or a server that does not offer one. Claude Haiku is set up as the voice evals ran it: low effort,
-    thinking off, the persona sent as a system prompt with the check-in reminder last (backend/utils/claude_voice.py). Either way the standard reply model is the fallback, so a lite failure before the first
-    word is answered by the standard voice."""
+    """The Gemini model that writes a Lite or Auto reply, or None for the embedded view or a server that does not offer it. The standard reply model is its fallback, so a failure before the first word is
+    answered by the standard voice."""
     if username in ("guest_bty",) or not lite_reply_available():
         return None
     name = lite_reply_model_name()
     if name not in _lite_stream_llms:
-        if _lite_is_claude(name):
-            from backend.models import claude_llm
+        _lite_stream_llms[name] = LazyLLM(model_name=name, fallback_model=stream_llm.model_name, temperature=0.7, thinking_level="minimal")
+    return _lite_stream_llms[name]
 
-            _lite_stream_llms[name] = claude_llm.ClaudeLLM(
-                model_name=name, fallback=stream_llm, effort="low", thinking_off=True, max_tokens=2000, voice_shape=True, voice_tail="checkin",
-            )
-        else:
-            _lite_stream_llms[name] = LazyLLM(model_name=name, fallback_model=stream_llm.model_name, temperature=0.7, thinking_level="minimal")
+
+def get_haiku_stream_llm(username: str):
+    """The Claude Haiku model that writes a Haiku reply, or None for the embedded view or a server that does not offer it. Set up as the voice evals ran it: low effort, thinking off, the persona sent as a system
+    prompt with the check-in reminder last (backend/utils/claude_voice.py). The standard reply model is its fallback."""
+    if username in ("guest_bty",) or not haiku_reply_available():
+        return None
+    from backend.models import claude_llm
+
+    name = claude_llm.DEFAULT_MODEL
+    if name not in _lite_stream_llms:
+        _lite_stream_llms[name] = claude_llm.ClaudeLLM(
+            model_name=name, fallback=stream_llm, effort="low", thinking_off=True, max_tokens=2000, voice_shape=True, voice_tail="checkin",
+        )
     return _lite_stream_llms[name]
 
 

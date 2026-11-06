@@ -41,7 +41,7 @@ test('an unknown value reads as the ordinary state, and only the other state is 
 test('Sonnet is left out of the popup unless the server offers it, says what it costs, and draws the Claude mark', () => {
   const chips = readFileSync(new URL('./ComposerChips.tsx', import.meta.url), 'utf8');
   assert.match(chips, /spec\.options\.filter\(option => !control\.hide\?\.includes\(option\.id\)\)/);
-  assert.match(chips, /id === 'claude'\) return <ClaudeMark \/>/);
+  assert.match(chips, /id === 'claude' \|\| id === 'haiku'\) return <ClaudeMark \/>/);          // Claude Haiku as the base model draws the Claude mark too
   assert.match(chips, /sonnet: ClaudeSonnetShape/);
   assert.match(chips, /id === 'sonnet'\) return <ClaudeSonnetMark \/>/);                  // Sonnet's own mark wherever it is drawn whole, so the popup list and the split chip agree
   const chat = readFileSync(new URL('../pages/Chat.tsx', import.meta.url), 'utf8');
@@ -129,12 +129,14 @@ test('the settings are only in the side panel, on every screen: never under the 
 test('the model chip is two settings in one popup: the Base model (who writes the reply) and the Tool model (who does the code steps)', () => {
   assert.equal(BASE_MODEL.title, 'Base model');
   assert.equal(CHIPS.model.title, 'Tool / Planner model');
-  assert.deepEqual(BASE_MODEL.options.map(option => option.id), ['gemini', 'auto', 'lite', 'gpt']);
+  assert.deepEqual(BASE_MODEL.options.map(option => option.id), ['gemini', 'auto', 'lite', 'haiku', 'gpt']);
   assert.equal(BASE_MODEL.ordinary, 'gemini');
   for (const option of [...BASE_MODEL.options, ...CHIPS.model.options]) assert.ok(option.short && option.short.length <= 40, `${option.id} has a short line that fits a half-width column`);
   assert.equal(specOption(BASE_MODEL, 'nonsense').id, 'gemini');                                 // an unknown value reads as Gemini
   assert.match(specOption(BASE_MODEL, 'gpt').hint, /Gemini whatever this says/);                  // the safety rule is stated where the choice is made
-  assert.match(specOption(BASE_MODEL, 'lite').hint, /safety context where Sonic always uses Gemini/);   // and for Lite
+  assert.match(specOption(BASE_MODEL, 'lite').hint, /safety context where Sonic always uses Gemini/);   // and for Gemini Lite
+  assert.match(specOption(BASE_MODEL, 'haiku').hint, /safety context where Sonic always uses Gemini/);  // and for Claude Haiku, which also says where the messages go
+  assert.match(specOption(BASE_MODEL, 'haiku').hint, /go to Anthropic/);
   assert.match(specOption(BASE_MODEL, 'auto').hint, /safety context/);                                 // and for Auto, which also says what stays on Gemini
 });
 
@@ -169,7 +171,7 @@ test('the two-column popup and its wiring: ModelChoices in the column card and t
   const rail = readFileSync(new URL('./SessionRail.tsx', import.meta.url), 'utf8');
   assert.match(rail, /<ModelChoices base=\{settings\.baseModel\} code=\{settings\.model\}/);
   const chat = readFileSync(new URL('../pages/Chat.tsx', import.meta.url), 'utf8');
-  assert.match(chat, /baseModel: replyModelAvailable\s*\? \{ value: replyModel, onChange: id => \{ void handleReplyModelChange\(id as ReplyModel\); \}, hide: \[\.\.\.\(replyGptAvailable \? \[\] : \['gpt'\]\), \.\.\.\(replyLiteAvailable \? \[\] : \['auto', 'lite'\]\)\] \}\s*: null,/);      // each choice is left out where the server does not offer it
+  assert.match(chat, /baseModel: replyModelAvailable\s*\? \{ value: replyModel, onChange: id => \{ void handleReplyModelChange\(id as ReplyModel\); \}, hide: \[\.\.\.\(replyGptAvailable \? \[\] : \['gpt'\]\), \.\.\.\(replyLiteAvailable \? \[\] : \['auto', 'lite'\]\), \.\.\.\(replyHaikuAvailable \? \[\] : \['haiku'\]\)\] \}\s*: null,/);      // each choice is left out where the server does not offer it
   assert.match(chat, /setReplyModelAvailable\(data\.available\)/);
   const css = readFileSync(new URL('./__styles__/ComposerChips.css', import.meta.url), 'utf8');
   assert.match(css, /\.cc-cols \{ display: grid; grid-template-columns: repeat\(auto-fit, minmax\(120px, 1fr\)\)/);
@@ -179,7 +181,7 @@ test('the two-column popup and its wiring: ModelChoices in the column card and t
 test('the model chip draws ONE svg from the models in play: a slash for two different marks, thirds for three, one whole mark where they share one', () => {
   const chips = readFileSync(new URL('./ComposerChips.tsx', import.meta.url), 'utf8');
   assert.match(chips, /export function ModelGlyph\(\{ base, code, execute = null \}: \{ base: string \| null; code: string \| null; execute\?: string \| null \}\)/);
-  assert.match(chips, /const SHAPES: Record<string, \(\) => React\.JSX\.Element> = \{ gemini: GeminiShape, claude: ClaudeShape, sonnet: ClaudeSonnetShape, gpt: GptShape \};/);   // Sonnet has its own shape
+  assert.match(chips, /const SHAPES: Record<string, \(\) => React\.JSX\.Element> = \{ gemini: GeminiShape, claude: ClaudeShape, haiku: ClaudeShape, sonnet: ClaudeSonnetShape, gpt: GptShape \};/);   // Sonnet has its own shape; Haiku shares Claude's
   assert.match(chips, /for \(const role of \[base, code, resolvedExecute\(code, execute\)\]\)/);        // the Execute model is the Tool model unless the person chose another
   assert.match(chips, /if \(!shapes\.includes\(shape\)\) \{ shapes\.push\(shape\); names\.push\(role\); \}/);   // models that share a mark share a part
   assert.match(chips, /if \(shapes\.length <= 1\) return glyph\(names\[0\] \?\? 'gemini'\);/);               // one mark: drawn whole, never split against itself
@@ -355,14 +357,15 @@ test('the blocked banner adds the server\'s planned-paid-option sentence and no 
 test('Lite voice and Auto: a guest keeps the choice in this browser and sends it with each message, a signed-in person saves it, and the popup always lists every model', () => {
   const chat = readFileSync(new URL('../pages/Chat.tsx', import.meta.url), 'utf8');
   const api = readFileSync(new URL('../api.ts', import.meta.url), 'utf8');
-  assert.match(api, /export type ReplyModel = 'gemini' \| 'gpt' \| 'lite' \| 'auto';/);
+  assert.match(api, /export type ReplyModel = 'gemini' \| 'gpt' \| 'lite' \| 'haiku' \| 'auto';/);
+  assert.match(api, /haiku_available: boolean;/);
   assert.match(api, /lite_available: boolean;/);
   assert.match(api, /browser_only: boolean;/);
   assert.match(api, /demoProject = false,\s*guestReplyModel: ReplyModel \| null = null/);
   assert.match(api, /reply_model: guestReplyModel,/);
   assert.match(chat, /setReplyModel\(data\.browser_only \? guestReplyModelChoice\(\) : data\.reply_model\);/);       // a guest starts from what this browser remembers
   assert.match(chat, /if \(replyBrowserOnly\) \{[\s\S]*?localStorage\.setItem\(GUEST_REPLY_MODEL_KEY, next\)[\s\S]*?return;\s*\}\s*try \{\s*const result = await api\.updateReplyModel\(next\)/);        // a guest's choice returns before the settings endpoint is called
-  assert.match(chat, /return stored === 'lite' \|\| stored === 'auto' \? stored : 'gemini';/);                       // only the cheaper choices are ever remembered
+  assert.match(chat, /return stored === 'lite' \|\| stored === 'haiku' \|\| stored === 'auto' \? stored : 'gemini';/);       // only the cheaper choices are ever remembered
   const chips = readFileSync(new URL('./ComposerChips.tsx', import.meta.url), 'utf8');
   assert.match(chips, /const showRaw = true;/);
 });

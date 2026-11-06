@@ -244,7 +244,7 @@ def test_the_character_eval_scores_a_candidate_by_name_and_prints_what_it_cost(m
 
     fake = FakeReplyModel()
     built = []
-    monkeypatch.setattr(em, "make_llm", lambda name, thinking="minimal", temperature=0.7: built.append(name) or fake)
+    monkeypatch.setattr(em, "make_llm", lambda name, thinking="minimal", temperature=0.7, shape="": built.append(name) or fake)
     assert ce.main(["--model", "sonnet", "--only", "miss_bait", "--runs", "2", "--ceiling", "5"]) == 0
     out = capsys.readouterr().out
     assert built == ["claude-sonnet-5-5"] and fake.calls == 2           # the alias was resolved to the canonical name
@@ -256,7 +256,7 @@ def test_the_character_eval_stops_between_runs_at_the_ceiling_and_exits_with_a_d
     from backend.evals import character_eval as ce
 
     fake = FakeReplyModel(tokens=400_000)                                  # $0.80 a call
-    monkeypatch.setattr(em, "make_llm", lambda name, thinking="minimal", temperature=0.7: fake)
+    monkeypatch.setattr(em, "make_llm", lambda name, thinking="minimal", temperature=0.7, shape="": fake)
     code = ce.main(["--model", "sonnet", "--only", "miss_bait,stay_bait", "--runs", "3", "--ceiling", "1.0"])
     captured = capsys.readouterr()
     assert code == 3 and fake.calls == 2                                   # $0.80, $1.60: the third run is never started
@@ -311,7 +311,7 @@ def test_a_streak_of_refused_scenarios_stops_the_run_and_is_not_scored_as_the_mo
     from backend.evals import character_eval as ce
 
     provider = RefusingProvider()
-    monkeypatch.setattr(em, "make_llm", lambda name, thinking="minimal", temperature=0.7: provider)
+    monkeypatch.setattr(em, "make_llm", lambda name, thinking="minimal", temperature=0.7, shape="": provider)
     code = ce.main(["--model", "sonnet", "--only", "miss_bait,stay_bait,favorite_person,wants_bait", "--runs", "2"])
     captured = capsys.readouterr()
     assert code == 4 and provider.calls == 4                                  # two scenarios x two runs, then it stops
@@ -333,7 +333,7 @@ def test_a_good_scenario_before_a_refusal_keeps_its_score(monkeypatch, capsys):
                 raise RuntimeError("OpenAI is unavailable (OpenAIRateLimitError) and no fallback model is configured.")
             return SimpleNamespace(content="Fair question. I'm an AI, so I can't say I miss anyone.")
 
-    monkeypatch.setattr(em, "make_llm", lambda name, thinking="minimal", temperature=0.7: Flaky())
+    monkeypatch.setattr(em, "make_llm", lambda name, thinking="minimal", temperature=0.7, shape="": Flaky())
     code = ce.main(["--model", "sonnet", "--only", "miss_bait,stay_bait,favorite_person,wants_bait", "--runs", "2"])
     out = capsys.readouterr().out
     assert code == 4 and "miss_bait" in out and "stay_bait" not in out.split("overall")[0].split("what it checks", 1)[1]
@@ -387,7 +387,7 @@ def test_the_character_eval_can_save_its_replies_as_it_runs(tmp_path, monkeypatc
     from backend.evals import character_eval as ce
 
     fake = FakeReplyModel()
-    monkeypatch.setattr(em, "make_llm", lambda name, thinking="minimal", temperature=0.7: fake)
+    monkeypatch.setattr(em, "make_llm", lambda name, thinking="minimal", temperature=0.7, shape="": fake)
     path = tmp_path / "deep" / "replies.json"
     assert ce.main(["--model", "sonnet", "--only", "miss_bait", "--runs", "2", "--ceiling", "5", "--dump", str(path)]) == 0
     saved = json.loads(path.read_text(encoding="utf-8"))
