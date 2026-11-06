@@ -342,6 +342,15 @@ async def run(
                 item["message"].content = shortened
                 shortened_keys.add(item["key"])
 
+    async def consult_advisor(kind: str, brief: str, why: str) -> Optional[str]:
+        """One second opinion (advisor.consult never raises), shown in the trace. None when none is allowed or it failed."""
+        if emit is not None:
+            try:
+                await emit("Asked a stronger model for a second opinion", why)
+            except Exception:
+                logger.debug("[native_loop] could not emit the advisor line.", exc_info=True)
+        return await advisor.consult(kind, brief)
+
     async def run_call(step: int, call: Dict[str, Any]) -> str:
         nonlocal repeats, rereads, latest_draft
         name = str(call.get("name") or "")
@@ -361,7 +370,13 @@ async def run(
             shortened_keys.discard(key)
         elif key in seen:
             repeats += 1
-            return f"NOTE: you already made this exact call in step {seen[key]}; its result is in the conversation above. Use it, or try something different."
+            note = f"NOTE: you already made this exact call in step {seen[key]}; its result is in the conversation above. Use it, or try something different."
+            if advisor is not None and repeats == 2 and advisor.available("repeat"):
+                # A third identical call: one small brief to the stronger model (backend/utils/advisor.py), its advice in this result. The loop ends the turn at the next repeat.
+                advice = await consult_advisor("repeat", advisor_module.build_brief("repeat", question, None, attempts, repeated=f"{name}({json.dumps(args, sort_keys=True, default=str)})"), "the same call was made a third time")
+                if advice:
+                    note += chr(10) + advisor_module.ADVICE_NOTE.format(advice=advice)
+            return note
         seen[key] = step
         step_id = new_trace_step_id()
         if emit_step is not None or emit is not None:
@@ -545,6 +560,11 @@ async def run(
         if streak_notice:
             messages.append(HumanMessage(content=streak_notice))
             logger.info("[native_loop] step %s: a reading-streak notice was added.", step)
+            streak_notices += 1
+            if streak_notices == 2 and advisor is not None and advisor.available("reading_streak"):
+                advice = await consult_advisor("reading_streak", advisor_module.build_brief("reading_streak", question, None, attempts), "it keeps reading after being told to act")
+                if advice:
+                    messages.append(HumanMessage(content=advisor_module.ADVICE_MESSAGE.format(advice=advice)))
         meter.note_call(messages, tools)
         reply = await llm.ainvoke_tools(messages, tools)
         if await absorb_steering(step):
@@ -606,6 +626,12 @@ async def run(
             plan_budget.deviation_steps += combo_rules.PLAN_FAIL_DEVIATIONS
             messages.append(HumanMessage(content=combo_rules.FAILED_CHECK_NOTE))
             logger.info("[native_loop] step %s: a check failed on a plan turn; the plan's allowance grew by %d.", step, combo_rules.PLAN_FAIL_DEVIATIONS)
+        if earned["failed_new"]:
+            failed_checks += 1
+            if failed_checks == 2 and advisor is not None and advisor.available("failing_check"):
+                advice = await consult_advisor("failing_check", advisor_module.build_brief("failing_check", question, None, attempts), "a check failed a second time")
+                if advice:
+                    messages.append(HumanMessage(content=advisor_module.ADVICE_MESSAGE.format(advice=advice)))
         applied_now = any(call.get("name") == "propose_local_edits" and " APPLIED:" in str(result) for call, result in zip(calls, results))
         if rhythm is not None:
             rhythm.after_step([(str(call.get("name") or ""), result) for call, result in zip(calls, results)], step)

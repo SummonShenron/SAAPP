@@ -159,6 +159,7 @@ from backend.utils import initiation as initiation_utils
 from backend.utils import proactive_gates
 from backend.utils import reach as reach_utils
 from backend.utils import budget_guard
+from backend.utils import guest_limits, guest_nudge
 from backend.utils import context_window, llm_turns, llm_usage, loop_watchdog
 from backend.utils import ops_digest as ops_digest_utils
 from backend.utils import ops_suggestions as ops_suggestions_utils
@@ -407,7 +408,7 @@ class ChatRequest(BaseModel):
     git_branch: str | None = None   # the git branch the connected folder is on, read by the browser from .git/HEAD (None when unknown or detached)
     edit_decisions: bool = False    # the page reports Apply / Decline back (POST /api/local-edits/{id}/decision), so the tool loop may wait for it and carry on
     runner_cards: bool = False      # the page can show a local-runner check card (Run / Cancel), so the run_local_check tool may be offered (backend/utils/runner_jobs.py)
-    folder_expected: bool = False   # the browser has a local folder connected, so a turn that finds none on the server can say so (the answer then used GitHub)
+    folder_expected: Optional[bool] = None   # the browser has a local folder connected (and may write to it), so a turn that finds none on the server can say so (the answer then used GitHub), and so an edit is only proposed where it can be applied. None: an older page that does not say
 
 class EditDecisionRequest(BaseModel):
     outcome: str                    # "applied", "declined" or "undone" (an applied change taken back)
@@ -762,6 +763,15 @@ async def discover_documents(affiliate: str = "All", current_user = Depends(get_
 @app.post("/api/chat")
 async def secure_chat(request: ChatRequest, http_request: Request, current_user = Depends(get_current_user)):
     username = current_user.get("sub")
+    # The shared portfolio guest is many strangers: each visitor has their own small daily allowance of turns, and all guests share one spend ceiling (backend/utils/guest_limits.py; every number
+    # is an environment setting). Counted here, before any work is done, so a turn over the limit costs nothing.
+    if guest_limits.is_portfolio_guest(username):
+        guest_verdict = await asyncio.to_thread(
+            guest_limits.check_and_count, get_db(), http_request.headers.get("x-visitor-id"),
+            guest_limits.client_address(http_request.headers.get("x-forwarded-for"), http_request.client.host if http_request.client else None),
+        )
+        if not guest_verdict["allowed"]:
+            return JSONResponse(status_code=429, content={"detail": guest_verdict["message"], "code": "guest_limit", "reason": guest_verdict["reason"]})
     response_llm = get_stream_llm(username)
     question = request.question.strip()
     session_id = request.session_id.strip() if request.session_id else f"{username}_session"
@@ -863,7 +873,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     # full of them teaches the model to keep saying it. Only what the model sees is changed; the
     # saved transcript is untouched.
     folder_connected = bool(local_workspace_status(username).get("connected"))
-    if folder_connected:
+    # The server keeps the folder copy under the person's name, so a phone sees it too; edits, plans and the "it said it cannot edit" clean-up only make sense where this browser holds the folder.
+    folder_usable_here = folder_connected and request.folder_expected is not False
+    if folder_usable_here:
         messages_state = scrub_stale_capability_denials(messages_state)
 
     request_id = uuid.uuid4().hex
@@ -871,7 +883,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     working_notes = "" if is_guest_username(username) else await asyncio.to_thread(working_state_utils.load_context, username, session_id)
     # Plan mode (backend/utils/code_plan.py): the person's opt-in, held back in low-power mode (a plan turn is an extra model loop). An approved plan is carried out whatever the setting says now.
     plan_turn = {"phase": None, "context": ""}
-    if folder_connected and not is_guest_username(username):
+    if folder_usable_here and not is_guest_username(username):
         plan_turn = await asyncio.to_thread(
             code_plan_utils.prepare, get_db(), username, session_id, question,
             plan_mode=bool(_settings.get("plan_mode")) and budget_guard.allows("plan_mode", budget_state),
@@ -893,6 +905,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         "edit_decisions": bool(request.edit_decisions),
         "code_followup": code_followup,
         "runner_cards": bool(request.runner_cards),
+        "folder_in_browser": request.folder_expected is not False,       # False: this browser (a phone, a second browser) holds no folder, so no edit can be applied from here
         "git_branch": (request.git_branch or "").strip()[:100] or None,
         "budget_level": budget_state.get("level"),
         "repo": effective_target_repo,
@@ -1938,7 +1951,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             await asyncio.to_thread(save_conversation_turn, username, session_id, chat_sessions[history_key])
             # A false "I can't edit files" reply would otherwise be remembered and recalled into
             # later prompts as if it were a fact (a real memory chunk did exactly that).
-            if budget_guard.allows("memory_summaries", budget_state) and not (folder_connected and is_stale_capability_denial(full_response)):
+            if budget_guard.allows("memory_summaries", budget_state) and not (folder_usable_here and is_stale_capability_denial(full_response)):
                 spawn_background_task(index_conversation_turn(services.get("user_memory_vector_store"), username, question, full_response, session_id, previous_reply))
             # Once enough unfolded messages have piled up, the older ones are folded into the conversation's summary (one small model call, off the response path:
             # backend/utils/conversation_summary.py). The size test is plain code on what is already in memory, so an ordinary turn costs nothing here.
@@ -1994,6 +2007,10 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     ))
             # Bounds this conversation's checkpoint history right now rather than waiting for the daily pass.
             spawn_background_task(prune_thread_checkpoints_async(history_key))
+            # A guest who asked for something only an account can do gets one card under the reply saying what an account adds (backend/utils/guest_nudge.py); counted by feature.
+            nudge_feature = guest_nudge.feature_for(username, question)
+            if nudge_feature:
+                tally(turn_counts, "guest_nudge", nudge_feature)
             await asyncio.to_thread(record_turn_counts, turn_counts)
             llm_turns.finish(llm_turn)
             await asyncio.to_thread(llm_usage.flush)  # what this turn's model calls used (backend/utils/llm_usage.py)
@@ -2014,6 +2031,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     changed = {}
                 for line in (changed or {}).get("noted", []):
                     yield f"data: {json.dumps({'event': 'noted', 'text': line})}\n\n"
+            if nudge_feature:
+                yield f"data: {json.dumps({'event': 'account_nudge', 'feature': nudge_feature})}\n\n"
             if request.folder_expected and not folder_connected and code_summary:
                 # The browser has a folder connected but the server had none (it restarted, the copy expired, or the upload failed), so this answer about code came from GitHub.
                 yield f"data: {json.dumps({'event': 'noted', 'text': 'Your connected folder was not on the server for this answer, so it used GitHub instead. Open the folder button to resync.'})}\n\n"
@@ -3391,6 +3410,19 @@ async def update_execute_model_setting(payload: ExecuteModelUpdate, current_user
     if problem:
         raise HTTPException(status_code=problem[0], detail=problem[1])
     return view
+
+
+@app.get("/api/guest/allowance")
+async def get_guest_allowance(http_request: Request, current_user = Depends(get_current_user)):
+    """What this visitor may still do today, for the page (backend/utils/guest_limits.py): turns used and left, where the sign-up nudge starts, and why they are blocked when they are. Only for the
+    shared portfolio guest; anyone else has no allowance to show."""
+    if not guest_limits.is_portfolio_guest(current_user.get("sub")):
+        return {"applies": False}
+    allowance = await asyncio.to_thread(
+        guest_limits.allowance, get_db(), http_request.headers.get("x-visitor-id"),
+        guest_limits.client_address(http_request.headers.get("x-forwarded-for"), http_request.client.host if http_request.client else None),
+    )
+    return {"applies": True, **allowance}
 
 
 @app.get("/api/budget")

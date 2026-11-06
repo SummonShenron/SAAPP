@@ -11,6 +11,7 @@ export type ChatFailureKind =
   | 'forbidden'      // 403: signed in, but this request was refused
   | 'bad_request'    // 400, 413, 422: the server could not accept the message as sent
   | 'rate_limited'   // 429
+  | 'guest_limit'    // 429 with code "guest_limit": the shared guest used today's free demo turns (backend/utils/guest_limits.py)
   | 'starting'       // 502, 503, 504: the server (or the proxy in front of it) did not answer, as when it is starting up or redeploying
   | 'server'         // 500 and the other 5xx: the server failed
   | 'network'        // the request never reached the server
@@ -78,6 +79,8 @@ export interface ChatErrorView {
   retryable: boolean;
   /** One line of technical detail, safe to show on request and in a bug report: no message text, no user content. */
   details: string;
+  /** Whether to offer creating an account (the shared guest ran out of free demo turns). */
+  signUp?: boolean;
 }
 
 export function describeChatError(err: ChatSendError): ChatErrorView {
@@ -96,6 +99,9 @@ export function describeChatError(err: ChatSendError): ChatErrorView {
         retryable: false,
         details,
       };
+    case 'guest_limit':
+      // The server's own words say which limit it was (this visitor's turns, this network's, or the day's spend for all guests); the plain sentence is the fallback.
+      return { message: err.detail || "You've used today's free demo turns. A free account keeps going.", retryable: false, details, signUp: true };
     case 'rate_limited':
       return { message: 'Sonic is getting too many requests right now. Wait a minute, then try again.', retryable: true, details };
     case 'starting':

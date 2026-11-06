@@ -173,7 +173,7 @@ def test_the_endpoint_passes_the_upload_id_and_answers_a_stale_batch_with_409_an
     assert "upload_id: Optional[str] = None" in source and "commit: bool = False" in source
     assert "payload.upload_id," in source and "payload.commit," in source
     assert "except LocalWorkspaceStaleUpload:" in source and "status_code=409" in source[source.index("except LocalWorkspaceStaleUpload:"):][:500]
-    assert "folder_expected: bool = False" in source
+    assert "folder_expected: Optional[bool] = None" in source
 
 
 def test_a_code_turn_that_found_no_folder_on_the_server_says_so_but_only_when_the_browser_expected_one():

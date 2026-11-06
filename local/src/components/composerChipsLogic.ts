@@ -17,7 +17,7 @@ export interface ChipSpec {
 
 export const CHIPS: Record<ChipKey, ChipSpec> = {
   model: {
-    key: 'model', title: 'Tool model', ordinary: 'gemini',
+    key: 'model', title: 'Tool / Planner model', ordinary: 'gemini',
     options: [
       { id: 'gemini', name: 'Gemini', hint: 'The default.', short: 'The default.' },
       { id: 'claude', name: 'Claude', hint: 'Claude Haiku does the reasoning and code-writing steps. The reply is still written by your Base model.', short: 'Haiku does the code steps.' },
@@ -68,7 +68,7 @@ export const BASE_MODEL: ChipSpec = {
  * six-step plan for $0.03 where Sonnet had used $1.30 for a larger one: not the same plan, so no ratio is claimed; docs/model-eval-plan.md). Choosing a provider sends the code of those steps there, which each hint says.
  */
 export const EXECUTE_MODEL: ChipSpec = {
-  key: 'model', title: 'Execute model', ordinary: 'same',
+  key: 'model', title: 'Plan executer model', ordinary: 'same',
   options: [
     { id: 'same', name: 'Same as Tool', hint: 'Your Tool model also carries out the plans it writes. The default.', short: 'Your Tool model. The default.' },
     { id: 'gemini', name: 'Gemini', hint: 'Gemini (Google) carries out an approved plan.', short: 'Gemini does the plan steps.' },

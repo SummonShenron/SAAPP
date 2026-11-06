@@ -2,6 +2,7 @@
 import type { SessionCheck } from './utils/authReady';
 import { IDLE_LIMIT_MS, isKeepaliveLine, readOrGiveUp } from './streamWatchdog';
 import { ChatSendError, kindForStatus, safeDetail, toChatSendError } from './chatErrors';
+import type { GuestAllowance } from './guestAllowanceLogic';
 import { SyncRequestError } from './localWorkspaceCore';
 import { nameKnowledgeBases } from './pages/sonicHealthFormat';
 
@@ -32,6 +33,21 @@ function getEmbeddedMode(): boolean {
   const hash = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
   const searchParams = new URLSearchParams(window.location.search || hash);
   return searchParams.get('mode') === 'embed' || window.location.href.includes('mode=embed');
+}
+
+/** An anonymous id for this browser, made on first use and kept in its storage: the server counts a guest's free demo turns per visitor with it (backend/utils/guest_limits.py). */
+export function getVisitorId(): string {
+  try {
+    const saved = localStorage.getItem('guest_visitor_id');
+    if (saved && /^[A-Za-z0-9-]{16,64}$/.test(saved)) return saved;
+    const made = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
+    localStorage.setItem('guest_visitor_id', made);
+    return made;
+  } catch {
+    return 'no-storage-' + Math.random().toString(16).slice(2).padEnd(12, '0');      // storage is blocked: a fresh id each time, so the server counts them by network address instead
+  }
 }
 
 export function isGuestPrincipal(principal: string | null | undefined): boolean {
@@ -141,6 +157,8 @@ export const getAuthHeaders = async (): Promise<Record<string, string>> => {
 
   headers["X-Principal"] = principal;
   headers["x-user-id"] = principal;
+  // The shared guest is many strangers on one account: this anonymous id (made once, kept in this browser, never linked to a person) lets the server give each visitor their own allowance of free demo turns.
+  if (principal === 'guest') headers["x-visitor-id"] = getVisitorId();
 
   return headers;
 };
@@ -852,6 +870,14 @@ export async function requestBudgetIncrease(): Promise<BudgetView> {
     try { detail = (await res.json())?.detail ?? ''; } catch { /* no JSON body */ }
     throw new Error(typeof detail === 'string' && detail ? detail : `Could not send the request (${res.status}).`);
   }
+  return res.json();
+}
+
+/** What the shared guest may still do today (backend/utils/guest_limits.py); {applies: false} for anyone else. */
+export async function getGuestAllowance(): Promise<GuestAllowance> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/guest/allowance`, { headers: { ...authHeaders } });
+  if (!res.ok) throw new Error("Failed to fetch the guest allowance.");
   return res.json();
 }
 
@@ -2442,7 +2468,9 @@ export async function sendChatMessage(
   if (!response.ok) {
     let body: unknown;
     try { body = await response.json(); } catch { /* not JSON (a proxy's error page, say) */ }
-    throw new ChatSendError(kindForStatus(response.status), { status: response.status, detail: safeDetail(response.status, body) });
+    // A guest out of free demo turns: the server says so in its own words (a 429 with code "guest_limit"), and the page offers an account instead of "try again".
+    const guestLimit = response.status === 429 && typeof body === 'object' && body !== null && (body as { code?: unknown }).code === 'guest_limit';
+    throw new ChatSendError(guestLimit ? 'guest_limit' : kindForStatus(response.status), { status: response.status, detail: safeDetail(response.status, body) });
   }
 
   const reader = response.body?.getReader();
@@ -2614,6 +2642,7 @@ export const api = {
   getOpsDigest,
   updateOpsDigest,
   getBudget,
+  getGuestAllowance,
   getBilling,
   getBillingQuote,
   startBillingCheckout,
