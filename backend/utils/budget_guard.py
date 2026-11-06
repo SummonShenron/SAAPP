@@ -198,6 +198,10 @@ def limit_username(username: Optional[str], is_admin: bool) -> Optional[str]:
     everyone else's meter is drawn from. An admin is let off only when LLM_USER_BUDGET_EXEMPT_ADMINS is set to true."""
     if is_admin and os.getenv("LLM_USER_BUDGET_EXEMPT_ADMINS", "").strip().lower() in ("1", "true", "yes"):
         return None
+    if (username or "").strip().lower() == "guest-recruiter@example.com":
+        # The shared portfolio guest is many strangers on one account: one person's limit would be everyone's, so each visitor has their own allowance and all guests one spend ceiling instead
+        # (backend/utils/guest_limits.py). The shared budgets still apply to them like to anyone.
+        return None
     return username
 
 

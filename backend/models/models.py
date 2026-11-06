@@ -348,6 +348,19 @@ def plan_review_llm():
     return _plan_review_llm["sonnet"]
 
 
+def advisor_llm_for(loop_llm):
+    """The model that gives a second opinion to a loop running on `loop_llm` (backend/utils/advisor.py): the next tier up OF THE SAME PROVIDER, so nothing new is disclosed. Haiku has Sonnet (the plan-end
+    reader: low effort, no fallback), the default Gemini lite model has Gemini's deeper model. None when the loop already runs on a top tier (Sonnet, the deeper Gemini, GPT) or the higher tier cannot be
+    used (no Claude key or price for Sonnet)."""
+    from backend.models import claude_llm
+
+    if isinstance(loop_llm, claude_llm.ClaudeLLM):
+        return None if getattr(loop_llm, "model_name", "") == claude_llm.SONNET_MODEL else plan_review_llm()
+    if loop_llm is lite_llm:
+        return lite_llm_deep
+    return None
+
+
 _summary_llm: dict = {}
 
 

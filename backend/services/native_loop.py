@@ -38,7 +38,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
-from backend.utils import act_not_suggest, answer_checks, claim_check, combo as combo_rules, diff_review, draft_checkpoint, loop_rhythm, reading_waste
+from backend.utils import act_not_suggest, advisor as advisor_module, answer_checks, claim_check, combo as combo_rules, diff_review, draft_checkpoint, loop_rhythm, reading_waste
 from backend.utils.prompt_meter import PromptMeter
 from backend.utils.agent_utils import _UnsafeActionRequested, build_tool_facts, build_trace_subject, new_trace_step_id
 
@@ -254,6 +254,8 @@ async def run(
     reviewer: Optional[Callable[[], Awaitable[Optional[Any]]]] = None,
     capability_denial_watchlist: Optional[List[Any]] = None,
     conversation_text: str = "",
+    advisor: Optional[Any] = None,
+    plan_progress: Optional[Callable[[], Awaitable[Optional[str]]]] = None,
 ) -> Dict[str, Any]:
     """Runs the loop and returns what the old loop returns: `{"final_answer", "attempts", "show_work"}`, where each attempt is
     `{"purpose", "action_desc", "observation"}`. `llm` must offer `ainvoke_tools(messages, tools)`. `act(decision)` is the turn's
@@ -342,6 +344,15 @@ async def run(
                 item["message"].content = shortened
                 shortened_keys.add(item["key"])
 
+    async def consult_advisor(kind: str, brief: str, why: str) -> Optional[str]:
+        """One second opinion (advisor.consult never raises), shown in the trace. None when none is allowed or it failed."""
+        if emit is not None:
+            try:
+                await emit("Asked a stronger model for a second opinion", why)
+            except Exception:
+                logger.debug("[native_loop] could not emit the advisor line.", exc_info=True)
+        return await advisor.consult(kind, brief)
+
     async def run_call(step: int, call: Dict[str, Any]) -> str:
         nonlocal repeats, rereads, latest_draft
         name = str(call.get("name") or "")
@@ -361,7 +372,13 @@ async def run(
             shortened_keys.discard(key)
         elif key in seen:
             repeats += 1
-            return f"NOTE: you already made this exact call in step {seen[key]}; its result is in the conversation above. Use it, or try something different."
+            note = f"NOTE: you already made this exact call in step {seen[key]}; its result is in the conversation above. Use it, or try something different."
+            if advisor is not None and repeats == 2 and advisor.available("repeat"):
+                # A third identical call: one small brief to the stronger model (backend/utils/advisor.py), its advice in this result. The loop ends the turn at the next repeat.
+                advice = await consult_advisor("repeat", advisor_module.build_brief("repeat", question, None, attempts, repeated=f"{name}({json.dumps(args, sort_keys=True, default=str)})"), "the same call was made a third time")
+                if advice:
+                    note += chr(10) + advisor_module.ADVICE_NOTE.format(advice=advice)
+            return note
         seen[key] = step
         step_id = new_trace_step_id()
         if emit_step is not None or emit is not None:
@@ -407,6 +424,9 @@ async def run(
     act_rejections = 0                                        # an answer that wrote code out instead of editing is sent back (backend/utils/act_not_suggest.py), at most twice
     combo = combo_rules.Combo(ACTION_TOOLS, ACTION_REFUND_CAP)   # what the actions of this turn earn back (backend/utils/combo.py): a landed action earns reading room, up to ACTION_REFUND_CAP steps
     claim_rejections = 0                                      # an answer that claimed a pass no run backed is sent back once (backend/utils/claim_check.py)
+    streak_notices = 0                                        # reading-streak notices shown this turn: the second one asks the advisor (backend/utils/advisor.py)
+    failed_checks = 0                                         # checks that failed in a new way this turn: the second asks the advisor
+    keep_going_sent = 0                                       # an answer that came while an approved plan still had steps: told once, free, to do the next one (backend/utils/advisor.py)
     answer_sent_back: Dict[str, int] = {}                     # the three checks ported from the old loop (backend/utils/answer_checks.py), each at most answer_checks.MAX_SEND_BACKS times: counted by kind
     claim_checking = can_edit or bool(offered & _REPO_TOOLS)  # a coding turn
     review_rounds = 0                                         # second readings of an applied change run this turn, at most diff_review.MAX_ROUNDS
@@ -545,6 +565,11 @@ async def run(
         if streak_notice:
             messages.append(HumanMessage(content=streak_notice))
             logger.info("[native_loop] step %s: a reading-streak notice was added.", step)
+            streak_notices += 1
+            if streak_notices == 2 and advisor is not None and advisor.available("reading_streak"):
+                advice = await consult_advisor("reading_streak", advisor_module.build_brief("reading_streak", question, None, attempts), "it keeps reading after being told to act")
+                if advice:
+                    messages.append(HumanMessage(content=advisor_module.ADVICE_MESSAGE.format(advice=advice)))
         meter.note_call(messages, tools)
         reply = await llm.ainvoke_tools(messages, tools)
         if await absorb_steering(step):
@@ -590,6 +615,27 @@ async def run(
                     messages.append(HumanMessage(content=notice))
                     logger.info("[native_loop] step %s: an answer was sent back by the %s check.", step, ",".join(sorted(answer_sent_back)))
                     continue
+            if step < budget:
+                # The model answered, but the work is not done. (1) An approved plan still has a step: told once, for free, to do it; a second early answer asks the advisor (once a turn). (2) A change was asked
+                # for and never proposed, after the loop's own two send-backs above: ask the advisor. Advice that begins BLOCKED is a real blocker, so the answer stands.
+                upcoming = None
+                if plan_progress is not None:
+                    try:
+                        upcoming = await plan_progress()
+                    except Exception:
+                        upcoming = None
+                kind = "early_answer" if upcoming else ("no_proposal" if required_action and not required_done() else "")
+                if kind == "early_answer" and keep_going_sent < 1:
+                    keep_going_sent += 1
+                    messages.append(HumanMessage(content=advisor_module.KEEP_GOING.format(step=upcoming)))
+                    logger.info("[native_loop] step %s: an answer came with a plan step left; it was told to carry on.", step)
+                    continue
+                if kind and advisor is not None and advisor.available(kind):
+                    advice = await consult_advisor(kind, advisor_module.build_brief(kind, question, upcoming, attempts, model_answer=answer), "the answer came before the work was done")
+                    if advice and not advisor_module.is_blocked(advice):
+                        messages.append(HumanMessage(content=advisor_module.ADVICE_MESSAGE.format(advice=advice)))
+                        logger.info("[native_loop] step %s: a second opinion was added after an answer with the work not done (%s).", step, kind)
+                        continue
             final_text = answer
             stop_reason = "model_answered"
             break
@@ -606,6 +652,12 @@ async def run(
             plan_budget.deviation_steps += combo_rules.PLAN_FAIL_DEVIATIONS
             messages.append(HumanMessage(content=combo_rules.FAILED_CHECK_NOTE))
             logger.info("[native_loop] step %s: a check failed on a plan turn; the plan's allowance grew by %d.", step, combo_rules.PLAN_FAIL_DEVIATIONS)
+        if earned["failed_new"]:
+            failed_checks += 1
+            if failed_checks == 2 and advisor is not None and advisor.available("failing_check"):
+                advice = await consult_advisor("failing_check", advisor_module.build_brief("failing_check", question, None, attempts), "a check failed a second time")
+                if advice:
+                    messages.append(HumanMessage(content=advisor_module.ADVICE_MESSAGE.format(advice=advice)))
         applied_now = any(call.get("name") == "propose_local_edits" and " APPLIED:" in str(result) for call, result in zip(calls, results))
         if rhythm is not None:
             rhythm.after_step([(str(call.get("name") or ""), result) for call, result in zip(calls, results)], step)
@@ -735,7 +787,7 @@ async def run(
             if name in PAGE_TOOLS:
                 key = "browser_read_native" if name == "browser_read_text" else f"{name}_native"
                 page_counts[key] = page_counts.get(key, 0) + 1
-        await asyncio.to_thread(record_turn_counts, {**meter.counts(sum(len(item["text"]) for item in held)), **combo.counts(forced and stop_reason in ("", "step_limit")), **page_counts, **{f"answer_sent_back_{kind}": count for kind, count in answer_sent_back.items()}})
+        await asyncio.to_thread(record_turn_counts, {**meter.counts(sum(len(item["text"]) for item in held)), **combo.counts(forced and stop_reason in ("", "step_limit")), **page_counts, **{f"answer_sent_back_{kind}": count for kind, count in answer_sent_back.items()}, **({"keep_going_sent_back": keep_going_sent} if keep_going_sent else {}), **(advisor.counts if advisor is not None else {})})
     except Exception:
         logger.debug("[native_loop] could not record the prompt sizes.", exc_info=True)
     return {

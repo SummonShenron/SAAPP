@@ -1,7 +1,8 @@
 // Run with: node --test src/welcomeCards.test.mjs   (from local/; Node 22.18+ runs the TypeScript module directly)
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { cardsFromQuestions, isPortfolioGuest, portfolioCards } from './welcomeCards.ts';
+import { readFileSync } from 'node:fs';
+import { GUEST_LANES, accountCardFor, cardsFromQuestions, isPortfolioGuest, portfolioCards } from './welcomeCards.ts';
 
 test('only the shared portfolio guest gets the portfolio cards; the embedded guest and signed-in people do not', () => {
   assert.equal(isPortfolioGuest('guest', false), true);
@@ -11,21 +12,82 @@ test('only the shared portfolio guest gets the portfolio cards; the embedded gue
   assert.equal(isPortfolioGuest(null, false), false);
 });
 
-test('the portfolio cards lead with the plain questions about the person and the project, and the technical one is last', () => {
-  const cards = portfolioCards();
-  assert.deepEqual(cards.map(c => c.label), ['About Jack', 'About this project', 'Watch it work', 'Under the hood']);
-  assert.match(cards[0].text, /Jack Harper/);          // on a phone only the first card shows
+test('the front lane shows Sonic working: every card is a request that makes it call tools, and the lane about the builder is second', () => {
+  assert.deepEqual(GUEST_LANES.map(l => l.id), ['demo', 'builder', 'account']);
+  const demo = portfolioCards();                                                             // the front lane is the default
+  assert.deepEqual(demo, portfolioCards('demo'));
+  assert.deepEqual(demo.map(c => c.label), ['Watch it work', 'Find it in the code', 'Search the web', 'Run some code']);
+  const wording = [/pull request/i, /in the code/i, /search the web/i, /run some python/i];     // the tool each one needs: the repo, the code, web search, the sandbox
+  demo.forEach((card, i) => assert.match(card.text, wording[i]));
+  assert.ok(!demo.some(c => /Jack/.test(c.text)), 'the front lane is not about the person');
 });
 
-test('every card has a question and a label, and none is repeated', () => {
-  const cards = portfolioCards();
-  for (const card of cards) assert.ok(card.text.trim().endsWith('?') && card.label, card.text);
+test('the lane about the builder keeps the plain questions about the person and the project, and the technical one last', () => {
+  const cards = portfolioCards('builder');
+  assert.deepEqual(cards.map(c => c.label), ['About Jack', 'About this project', 'The story', 'Under the hood']);
+  assert.match(cards[0].text, /Jack Harper/);
+});
+
+test('every card in both lanes has a question and a label, and none is repeated', () => {
+  const cards = [...portfolioCards('demo'), ...portfolioCards('builder'), ...portfolioCards('account')];
+  for (const card of cards) assert.ok(card.text.trim().endsWith('?') || card.text.trim().endsWith('.'), card.text);
+  for (const card of cards) assert.ok(card.label, card.text);
   assert.equal(new Set(cards.map(c => c.text)).size, cards.length);
 });
 
-test('the portfolio cards are a copy, so a caller cannot change what the next visitor sees', () => {
+test('the lane about an account shows what a guest cannot do: every card sends nothing, says what an account adds, and no demo card is one of them', () => {
+  const cards = portfolioCards('account');
+  assert.deepEqual(cards.map(c => c.label), ['Fix a bug', 'Run your checks', 'Be remembered', 'Tidy a folder']);
+  for (const card of cards) {
+    assert.equal(card.action, 'signup', card.label);
+    assert.ok(card.detail && card.detail.length > 40 && card.detail.length < 200, card.label);
+  }
+  const ordinary = [...portfolioCards('demo'), ...portfolioCards('builder')];
+  assert.ok(ordinary.every(c => !c.action), 'the cards a guest can use send a question');
+});
+
+test('the page sends nothing for an account card: it shows the detail with a sign-up button, and changing lane clears it', () => {
+  const chat = readFileSync(new URL('./pages/Chat.tsx', import.meta.url), 'utf8');
+  assert.match(chat, /if \(card\.action === 'signup'\) \{[^}]*setAccountCard\(card\);\s*return;\s*\}/);
+  assert.match(chat, /setGuestLane\(lane\.id\); setAccountCard\(null\);/);
+  assert.match(chat, /guestLane === 'account' && accountCard && \(\s*<div className="guest-account-detail"/);
+  assert.match(chat, /\{accountCard\.detail\}[\s\S]{0,300}Create a free account/);
+});
+
+test('a word the server sends in an account_nudge event finds its card, and a word the page does not know finds none', () => {
+  for (const key of ['checks', 'fix', 'tidy', 'memory']) {
+    const card = accountCardFor(key);
+    assert.equal(card.key, key);
+    assert.equal(card.action, 'signup');
+    assert.ok(card.detail);
+  }
+  assert.deepEqual(portfolioCards('account').map(c => c.key).sort(), ['checks', 'fix', 'memory', 'tidy']);
+  for (const bad of ['', 'merge', null, undefined, 3]) assert.equal(accountCardFor(bad), null);
+  accountCardFor('fix').detail = 'changed';
+  assert.notEqual(accountCardFor('fix').detail, 'changed');
+});
+
+test('the page puts the card under the reply the server named, with a sign-up button, and only on the reply being written', () => {
+  const chat = readFileSync(new URL('./pages/Chat.tsx', import.meta.url), 'utf8');
+  assert.match(chat, /payload\.event === 'account_nudge'[\s\S]{0,200}accountCardFor\(payload\.feature\)/);
+  assert.match(chat, /updated\[lastIndex\] = \{ \.\.\.updated\[lastIndex\], accountNudge: card \};/);
+  assert.match(chat, /\{msg\.accountNudge && \([\s\S]{0,400}\{msg\.accountNudge\.detail\}[\s\S]{0,300}Create a free account/);
+});
+
+test('the cards are a copy, so a caller cannot change what the next visitor sees', () => {
   portfolioCards()[0].text = 'changed';
+  portfolioCards('builder')[0].text = 'changed';
   assert.notEqual(portfolioCards()[0].text, 'changed');
+  assert.notEqual(portfolioCards('builder')[0].text, 'changed');
+});
+
+test('the page shows the lane tabs only to the shared guest, starts on the front lane, and the guest starts with the steps shown', () => {
+  const chat = readFileSync(new URL('./pages/Chat.tsx', import.meta.url), 'utf8');
+  assert.match(chat, /useState<GuestLane>\('demo'\)/);
+  assert.match(chat, /\{!hasChatted && isPortfolioGuest\(principal, isEmbedded\) && \(\s*<div className="guest-lanes"/);
+  assert.match(chat, /isPortfolioGuest\(principal, isEmbedded\) \? portfolioCards\(guestLane\) : currentExampleQuestions/);
+  assert.match(chat, /return isGuestPrincipal\(getEffectivePrincipal\(\)\);/);                  // no saved choice: the guest sees the tool calls; a saved choice still wins above it
+  assert.match(chat, /const saved = localStorage.getItem\('showTracePanel'\);\s*if \(saved !== null\) return JSON.parse\(saved\);/);
 });
 
 test('plain questions become unlabelled cards in the same order', () => {

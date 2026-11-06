@@ -24,7 +24,8 @@ import { TURN_SENT_STATUS, budgetFromLevel, lookForNode } from '../components/pa
 import { SHOW_PATCHY_EVENT, loadShowPatchy } from '../chatPreferences';
 import OptionWheel, { type OptionWheelItem } from '../components/OptionWheel';
 import { getWelcomeCards } from '../utils/Example_List';
-import type { WelcomeCard } from '../welcomeCards';
+import { GUEST_LANES, accountCardFor, isPortfolioGuest, portfolioCards, type GuestLane, type WelcomeCard } from '../welcomeCards';
+import { GuestAllowance } from '../components/GuestAllowance';
 import { HEIC_NOTICE, isUnreadableHeic, shrinkImageFile } from '../utils/imageShrink';
 import MeetingControl from '../components/MeetingControl';
 import WorkingNotesControl from '../components/WorkingNotesControl';
@@ -91,10 +92,12 @@ interface Message {
   initiated?: boolean;
   // Set on a reply that is really a failure notice (see chatErrors.ts): the technical line for the "Details" disclosure, whether sending again is
   // worth offering, and what to resend. `userMessageId` is the message that failed, which a retry replaces instead of repeating.
-  failure?: { details: string; retryable: boolean; retryText: string; userMessageId: string };
+  failure?: { details: string; retryable: boolean; retryText: string; userMessageId: string; signUp?: boolean };
   // One or two short lines the server sends after a reply when something coming up was saved or changed ("Noted: you have a date today with Ashlyn at Tidos, time not known."),
   // so the person can see what was kept and say if it is wrong. Not part of the conversation text and not kept when the page is reloaded.
   noted?: string[];
+  // The shared guest asked for something only an account can do: the card saying what an account adds, shown under this reply with a sign-up button (the server's `account_nudge` event). Not kept on reload.
+  accountNudge?: WelcomeCard;
   // The memory a "Source: Memory" citation in this reply opens (kept with the reply, so it still works after a reload).
   memorySources?: MemorySources;
   // The steps this reply took (what the trace panel showed for it), kept so each reply can open them again (components/StepsDisclosure.tsx). Only in the open page: never cached or stored, because the read
@@ -501,6 +504,9 @@ const ChatMessageList = React.memo(function ChatMessageList({
                       Try again
                     </button>
                   )}
+                  {msg.failure.signUp && (
+                    <button type="button" className="message-failure-retry" data-help="chat.guest_signup" onClick={() => { void api.logout(); }}>Create a free account</button>
+                  )}
                   <details className="message-failure-details">
                     <summary>Details</summary>
                     <code>{msg.failure.details}</code>
@@ -520,6 +526,13 @@ const ChatMessageList = React.memo(function ChatMessageList({
               {msg.noted && msg.noted.length > 0 && (
                 <div className="message-noted" role="status">
                   {msg.noted.map((line, index) => <div key={index}>{line}</div>)}
+                </div>
+              )}
+
+              {msg.accountNudge && (
+                <div className="guest-account-detail guest-account-nudge" role="status" data-help="chat.guest_account_card">
+                  <p><strong>{msg.accountNudge.label}.</strong> {msg.accountNudge.detail}</p>
+                  <button type="button" className="guest-allowance-signup" data-help="chat.guest_signup" onClick={() => { void api.logout(); }}>Create a free account</button>
                 </div>
               )}
 
@@ -683,7 +696,8 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
       if (saved !== null) return JSON.parse(saved);
     }
     // With no saved choice the steps stay simple: one line saying what Sonic is doing now. The microscope turns on the node graph in the conversation (see showSteps).
-    return false;
+    // The shared guest starts with it ON: the visible tool calls are what a stranger came to see (docs/guest-mode-plan.md); a choice they make is remembered like anyone's.
+    return isGuestPrincipal(getEffectivePrincipal());
   });
   const isMobileView = useMediaQuery('(max-width: 768px)');
   // The session column (components/SessionColumn.tsx) beside the conversation: on by default, switched with its button in the top bar, and only where there is room for it.
@@ -1084,6 +1098,9 @@ useEffect(() => {
   const meetingStartedRef = useRef<(name: string) => void>(() => {});
   const [loading, setLoading] = useState<boolean>(false);
   const [currentExampleQuestions, setCurrentExampleQuestions] = useState<WelcomeCard[]>([]);
+  // The shared guest's two lanes of welcome cards (welcomeCards.ts): Sonic at work first, then the answers about the builder.
+  const [guestLane, setGuestLane] = useState<GuestLane>('demo');
+  const [accountCard, setAccountCard] = useState<WelcomeCard | null>(null);        // the guest's chosen "With an account" card, shown with its sign-up button
   const [loadingCards, setLoadingCards] = useState<boolean>(false);
 
   // Notify the parent window (BTY SonicWidget) so mini Patchy can animate.
@@ -1565,6 +1582,10 @@ useEffect(() => {
   // A card is a question to send, except one that needs something from the person first (a photo of a letter): that one opens the file picker, from
   // inside this click so a phone allows it, and leaves a question ready so that attaching is all that is left before sending.
   const chooseWelcomeCard = (card: WelcomeCard) => {
+    if (card.action === 'signup') {      // a guest cannot do this: say what an account adds, send nothing
+      setAccountCard(card);
+      return;
+    }
     if (card.action === 'open' && card.path) {
       routeNavigate(card.path);
       return;
@@ -1991,6 +2012,19 @@ useEffect(() => {
                   return updated;
                 });
               }
+              if (payload.event === 'account_nudge') {
+                const card = accountCardFor(payload.feature);
+                if (card) {
+                  setMessages(prev => {
+                    const updated = [...prev];
+                    const lastIndex = updated.length - 1;
+                    if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
+                      updated[lastIndex] = { ...updated[lastIndex], accountNudge: card };
+                    }
+                    return updated;
+                  });
+                }
+              }
               if (payload.event === 'regenerate_reset') {
                 // A retry (self-correction or rewrite fallback) is about to stream a fresh
                 // response — clear the in-progress bubble so its tokens don't concatenate
@@ -2110,7 +2144,7 @@ useEffect(() => {
         postPatchyStatus('error');
         const notice: Message = {
           id: aiMessageId, sender: 'ai', text: view.message, sentAt: new Date().toISOString(),
-          failure: { details: view.details, retryable: view.retryable, retryText: textToSend, userMessageId },
+          failure: { details: view.details, retryable: view.retryable, retryText: textToSend, userMessageId, signUp: view.signUp },
         };
         setMessages(prev => {
           // The empty reply placeholder this turn added becomes the notice; if the answer had already started streaming, the notice follows it.
@@ -2576,21 +2610,36 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
         )}
 
         {/* 1. INITIAL STATE / CARDS */}
+        {!hasChatted && isPortfolioGuest(principal, isEmbedded) && (
+          <div className="guest-lanes" role="tablist" aria-label="What to try">
+            {GUEST_LANES.map(lane => (
+              <button key={lane.id} type="button" role="tab" aria-selected={guestLane === lane.id} className={`guest-lane${guestLane === lane.id ? ' is-on' : ''}`} data-help="chat.guest_lane" onClick={() => { setGuestLane(lane.id); setAccountCard(null); }}>
+                {lane.label}
+              </button>
+            ))}
+          </div>
+        )}
         {!hasChatted && (
           <div className="example-cards-container">
-            {loadingCards ? (
+            {loadingCards && !isPortfolioGuest(principal, isEmbedded) ? (
               <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', padding: '1rem' }}>
                 Querying directory indices for security group context...
               </div>
             ) : (
-              currentExampleQuestions.map((card, idx) => (
+              (isPortfolioGuest(principal, isEmbedded) ? portfolioCards(guestLane) : currentExampleQuestions).map((card, idx) => (
                 <div key={idx} className="query-card" data-help="chat.suggestion" onClick={() => !loading && chooseWelcomeCard(card)}>
                   {card.label && <small className="query-card-label">{card.label}</small>}
                   <p>{card.text}</p>
-                  <span>→</span>
+                  <span>{card.action === 'signup' ? '🔒' : '→'}</span>
                 </div>
               ))
             )}
+          </div>
+        )}
+        {!hasChatted && isPortfolioGuest(principal, isEmbedded) && guestLane === 'account' && accountCard && (
+          <div className="guest-account-detail" role="status" data-help="chat.guest_account_card">
+            <p><strong>{accountCard.label}.</strong> {accountCard.detail}</p>
+            <button type="button" className="guest-allowance-signup" data-help="chat.guest_signup" onClick={() => { void api.logout(); }}>Create a free account</button>
           </div>
         )}
 
@@ -2697,6 +2746,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           )}
 
           {!isEmbedded && <BudgetBanner budget={budget} theme={theme} onExtend={async () => setBudget(await api.extendBudget())} onRequest={async () => setBudget(await api.requestBudgetIncrease())} />}
+          <GuestAllowance enabled={!isEmbedded && isPortfolioGuest(principal, isEmbedded)} refreshKey={messages.length} />
           <form onSubmit={onSubmitForm} className="chat-input-area">
             <input
               id="file-upload"

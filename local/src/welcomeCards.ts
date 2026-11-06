@@ -6,28 +6,77 @@ export interface WelcomeCard {
   label?: string;
   /** "attach": the card needs a file first, so it opens the picker (leaving `prompt` in the box) instead of sending its text.
    *  "open": the card is a way into another page (`path`) instead of a question. */
-  action?: 'attach' | 'open';
+  action?: 'attach' | 'open' | 'signup';
   prompt?: string;
   path?: string;
+  /** "signup" cards only: what Sonic does for someone with an account, shown with a sign-up button when the card is chosen (no model call, so it costs nothing). */
+  detail?: string;
+  /** "signup" cards only: which account feature this is, the same word the server sends in an `account_nudge` event (backend/utils/guest_nudge.py). */
+  key?: 'checks' | 'fix' | 'tidy' | 'memory';
 }
 
-// The portfolio visitor (the shared "guest"; mostly recruiters and hiring managers) is judging the person and the system in half a minute, so the plain
-// questions lead and the technical one comes last. The order matters: on a phone only the first card shows. Every question here has to be one the
-// portfolio knowledge base can answer.
-const PORTFOLIO_CARDS: readonly WelcomeCard[] = [
+// The shared guest ("guest"; strangers from a post or a search, and recruiters) gets three lanes of cards (docs/guest-mode-plan.md). The FRONT lane shows Sonic working: every card is a
+// request that makes it call tools (read the code, search the web, run code), so the visitor sees what an account adds before reading a word about the builder. The second lane is the
+// answers about the person and the project, for the recruiters. Every card in the second lane has to be answerable by the portfolio knowledge base; every card in the first by the tools
+// a guest has (backend/services/agent_workflow.py: a GitHub repo, web search, read a URL, a Python sandbox). The third lane is what a guest cannot do (it needs a folder, the local
+// runner or memory, none of which a guest has): its cards send nothing, they say what an account adds and offer sign-up.
+export type GuestLane = 'demo' | 'builder' | 'account';
+
+export const GUEST_LANES: readonly { id: GuestLane; label: string }[] = [
+  { id: 'demo', label: 'Watch Sonic work' },
+  { id: 'builder', label: 'About the builder' },
+  { id: 'account', label: 'With an account' },
+];
+
+const DEMO_CARDS: readonly WelcomeCard[] = [
+  { label: 'Watch it work', text: 'What was changed in the last pull request?' },
+  { label: 'Find it in the code', text: 'Where in the code does Sonic Assistant decide which documents a person is allowed to read?' },
+  { label: 'Search the web', text: 'Search the web for what changed in the latest Python release and give me five bullet points.' },
+  { label: 'Run some code', text: 'Run some Python to find the first ten prime numbers that are also Fibonacci numbers, and show me the output.' },
+];
+
+const BUILDER_CARDS: readonly WelcomeCard[] = [
   { label: 'About Jack', text: 'Who is Jack Harper, and what has he built?' },
   { label: 'About this project', text: 'What is Sonic Assistant, and why did Jack build it?' },
-  { label: 'Watch it work', text: 'What was changed in the last pull request?' },
+  { label: 'The story', text: 'What is the story of the Sonic Assistant?' },
   { label: 'Under the hood', text: "How does Sonic Assistant keep one person's data separate from another's?" },
 ];
+
+// Each one is a thing only an account can do (a guest has no folder, no runner, no memory: see `apply_sync`, `is_guest_username` in agent_workflow.py). Keep each `detail` true to what ships.
+const ACCOUNT_CARDS: readonly WelcomeCard[] = [
+  {
+    key: 'fix', label: 'Fix a bug', action: 'signup', text: 'Fix the failing test in my project and check the fix.',
+    detail: 'Connect a project folder and Sonic reads your code, proposes the fix as a diff you approve, then runs your tests to check it.',
+  },
+  {
+    key: 'checks', label: 'Run your checks', action: 'signup', text: "Run my project's tests and tell me what broke.",
+    detail: "Sonic runs your own tests and linters on your computer through a small local program, and asks you before each command that changes anything.",
+  },
+  {
+    key: 'memory', label: 'Be remembered', action: 'signup', text: "Remember that I'm learning Rust and like short answers.",
+    detail: 'Sonic keeps what you tell it between conversations and uses it quietly. Every note is on the Memory page, where you can edit or remove it.',
+  },
+  {
+    key: 'tidy', label: 'Tidy a folder', action: 'signup', text: 'Tidy up my messy Downloads folder.',
+    detail: 'Pick a folder and Sonic proposes how to sort it into tidy sub-folders. Every move can be undone.',
+  },
+];
+
+/** The account card for a feature word the server sent (an `account_nudge` event), or null for a word this page does not know. */
+export function accountCardFor(key: unknown): WelcomeCard | null {
+  const found = ACCOUNT_CARDS.find(card => card.key === key);
+  return found ? { ...found } : null;
+}
 
 /** The shared portfolio guest. The embedded guest (a different shared identity) keeps its own questions. */
 export function isPortfolioGuest(principal: string | null | undefined, embedded: boolean): boolean {
   return principal === 'guest' && !embedded;
 }
 
-export function portfolioCards(): WelcomeCard[] {
-  return PORTFOLIO_CARDS.map(card => ({ ...card }));
+/** The cards of one lane of the shared guest's welcome screen (the front lane unless asked for the other). A copy, so a caller cannot change what the next visitor sees. */
+export function portfolioCards(lane: GuestLane = 'demo'): WelcomeCard[] {
+  const cards = lane === 'builder' ? BUILDER_CARDS : lane === 'account' ? ACCOUNT_CARDS : DEMO_CARDS;
+  return cards.map(card => ({ ...card }));
 }
 
 const TIDY_CARD: WelcomeCard = { label: 'Try this', text: 'Tidy up a messy folder, like Downloads', action: 'open', path: '/tidy' };

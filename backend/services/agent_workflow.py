@@ -23,7 +23,7 @@ from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langchain_core.documents import Document
 from backend.services.search import get_secure_retriever
 from backend.models.claude_llm import ClaudeLLM
-from backend.models.models import get_chat_llm, lite_llm, lite_llm_deep, plan_review_llm, review_llm, tool_agent_llm
+from backend.models.models import advisor_llm_for, get_chat_llm, lite_llm, lite_llm_deep, plan_review_llm, review_llm, tool_agent_llm
 from backend.state import graph_db
 from backend.utils.attachment_utils import retrieve_from_session
 from backend.utils.isolation_kb_utils import load_directory, load_user_directory_groups
@@ -52,6 +52,7 @@ from backend.services import local_edit_decisions
 from backend.services import sandbox_tests
 from backend.services import commit_flow, git_commit
 from backend.utils import sonic_notes
+from backend.utils import advisor as advisor_module
 from backend.services.local_workspace import apply_sync as apply_workspace_sync, get_workspace_handle, is_guest_username, snapshot_paths, workspace_status
 from backend.services.local_edits import validate_edit_proposal
 from backend.services.memory_search import embed_and_store_memory_chunk, recall_explicit
@@ -161,6 +162,9 @@ REASONER_HISTORY_MAX_MESSAGES = max(int(os.getenv("REASONER_HISTORY_MAX_MESSAGES
 # Menu entries that query GitHub's hosted index of the committed branch — withheld whenever the user
 # has a local folder connected, since that index can't see the folder's (often uncommitted) code.
 _GITHUB_INDEX_ACTIONS_PREFIXES = ("- search_code", "- trace_symbol")
+# What only the browser that holds the folder can finish: a diff card's Apply writes through the folder it was connected with, and a commit card reads the folder's git. The server's copy of a folder belongs to the
+# person, so a phone (which cannot connect a folder) or a second browser sees it too, and these are not offered there: a diff with no Apply button is a dead end.
+_NEEDS_THIS_BROWSERS_FOLDER = ("- propose_local_edits —", "- propose_commit —", "- propose_git_commit —")
 
 # The tools that read the repo or the connected folder: the trace's "Reading from" step is announced the first time one of them runs.
 _REPO_SOURCE_TOOLS = frozenset({
@@ -2025,14 +2029,15 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         # for this turn's repo reads — checked once up front so the schema can tell the model its
         # reads reflect the user's live working tree rather than GitHub's default branch.
         local_workspace_handle = get_workspace_handle(username)
+        can_apply_here = local_workspace_handle is not None and state.get("folder_in_browser", True) is not False
         # A connected folder AND a message that asks for a change (directly, or as "do it" /
         # "why won't you just make the change" after an earlier request or refusal): the only way
         # to satisfy it is propose_local_edits, so the loop is told so mechanically — see
         # the native loop's required_action.
-        edit_turn = local_workspace_handle is not None and looks_like_edit_request(state.get("messages", [])) and not commit_flow.is_commit_only_request(latest_message_content)
+        edit_turn = can_apply_here and looks_like_edit_request(state.get("messages", [])) and not commit_flow.is_commit_only_request(latest_message_content)
         # Plan mode (backend/utils/code_plan.py). A PLAN turn is read-only and ends in submit_plan; it needs the native engine, which has that tool. An EXECUTE turn carries an approved plan
         # out: "continue" or "go ahead" counts as the edit request it is, with a fresh step budget.
-        plan_phase = state.get("code_plan_phase") if local_workspace_handle is not None and code_plan.enabled() else None
+        plan_phase = state.get("code_plan_phase") if can_apply_here and code_plan.enabled() else None
         # Asking for a plan ("make a plan for it", "use plan_mode") is the change request plan mode is for, though it has no code-shaped words of its own.
         plan_requested = plan_phase == code_plan.PLAN_PHASE and not edit_turn and looks_like_plan_request(state.get("messages", []))
         if plan_requested:
@@ -2066,7 +2071,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             ws_status = workspace_status(username)
             source_note = (
                 f"your local folder '{ws_status.get('name', 'local folder')}' "
-                f"({ws_status.get('file_count', '?')} files) — edits can be proposed"
+                f"({ws_status.get('file_count', '?')} files) — " + ("edits can be proposed" if can_apply_here else "read-only from this device")
             )
         else:
             source_note = f"GitHub {repo}@{default_branch} (no local folder connected on the server) — read-only"
@@ -2083,12 +2088,18 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 f"branch diff and pull request actions still query GitHub; search_code and "
                 f"trace_symbol are not offered because GitHub's index cannot see this folder — "
                 f"use search_literal to find where something is defined or used. "
-                f"WHEN THE USER ASKS YOU TO MAKE A CHANGE (add, edit, fix, update, rename, "
-                f"implement, move...) to files in this folder, do the work by calling "
-                f"propose_local_edits once you've read what you need — the diff card it shows, "
-                f"with its Apply button, IS the user's confirmation step. Never reply with only "
-                f"a description of the change or ask 'would you like me to apply this?' in "
-                f"chat: that leaves them with nothing to click."
+                + (
+                    f"WHEN THE USER ASKS YOU TO MAKE A CHANGE (add, edit, fix, update, rename, "
+                    f"implement, move...) to files in this folder, do the work by calling "
+                    f"propose_local_edits once you've read what you need — the diff card it shows, "
+                    f"with its Apply button, IS the user's confirmation step. Never reply with only "
+                    f"a description of the change or ask 'would you like me to apply this?' in "
+                    f"chat: that leaves them with nothing to click."
+                    if can_apply_here else
+                    # The copy on the server is theirs, but this browser holds no folder (a phone cannot connect one), so a diff card here would have no Apply button.
+                    "THIS BROWSER HAS NO FOLDER CONNECTED (a phone cannot connect one; on a computer the folder button reconnects it), so you cannot propose edits from here: there is no tool for it, and a diff could not be applied. Read and explain freely. "
+                    "If they ask for a change, say plainly that it can be made from a computer with the folder connected, and describe the change in words."
+                )
             )
             # Sonic's own notes and tests live in the person's folder under .sonic/ (backend/utils/sonic_notes.py): the guide, and the end of its earlier notes when it has kept some.
             schema_parts.append(await asyncio.to_thread(sonic_notes.build_context, username))
@@ -3095,6 +3106,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 "- submit_plan — args: goal, files (a list of {\"path\", \"why\", \"new\": true only for a file the change creates}), steps (a list of {\"text\", \"files\"}), tests, unknowns. "
                 "Hands the person your plan for the change instead of editing; call it once, after reading what you need."
             )
+        if not can_apply_here:
+            menu_lines = [line for line in menu_lines if not line.startswith(_NEEDS_THIS_BROWSERS_FOLDER)]
         actions_menu = "\n".join(menu_lines)
         coding_preferences = await asyncio.to_thread(fetch_coding_preferences, username)
         # The connected folder's own notes on where things are (.sonic/AGENTS.md, else AGENTS.md or CLAUDE.md): read from the server's copy of the folder, about a thousand tokens, the same every turn so the
@@ -3565,6 +3578,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                     return "ERROR: this turn is for the plan only; call submit_plan, and nothing is edited until the person approves it."
                 if local_workspace_handle is None:
                     return "ERROR: no local folder is connected, so there is nothing to propose edits against"
+                if not can_apply_here:
+                    return "ERROR: this browser has no folder connected (or its access needs reconnecting), so an edit could not be applied from here. Say so, and describe the change in words."
                 return await _propose_local_edits(args)
 
             if tool_action == "run_sandbox_tests":
@@ -3887,6 +3902,15 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 return ([], advisories) if advisories else None
             return findings, advisories
 
+        async def _plan_next_step():
+            """The next step of this conversation's approved plan as one line ("s2: the text [files]"), or None when there is no approved plan or every step is done: what the loop tells a model that answered too early."""
+            plan = await asyncio.to_thread(code_plan.load, get_db(), username, state.get("session_id") or "")
+            step = code_plan.next_step(plan) if plan and plan.get("state") == code_plan.APPROVED else None
+            if not step:
+                return None
+            files = ", ".join(step.get("files") or [])
+            return f"{step.get('id')}: {step.get('text', '')}" + (f" [{files}]" if files else "")
+
         async def _native_engine(**kwargs):
             async def _announce(title, detail):
                 await safe_emit_event("trace_detail", {"node": "tool_agent_node", "title": title, "detail": detail})
@@ -3897,7 +3921,11 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                     payload["subject"] = subject
                 await safe_emit_event("trace_detail", payload)
 
+            # A second opinion when a lite model is stuck (backend/utils/advisor.py), in any mode: the next tier up of the SAME provider as the loop's model (so nothing new is disclosed), never in low-power mode,
+            # and none when the loop already runs on a top tier.
+            advisor = advisor_module.for_turn(budget_guard.low_power(budget_state), advisor_llm_for(kwargs["llm"]))
             return await native_loop.run(
+                advisor=advisor, plan_progress=_plan_next_step if plan_phase == code_plan.EXECUTE_PHASE else None,
                 llm=kwargs["llm"], tools=native_tools, act=kwargs["act"], question=kwargs["question"], history=formatted_history,
                 time_line=build_agent_time_line(get_user_timezone(username)), coding_preferences=coding_preferences,
                 architecture_map=architecture_map, user_memory=user_memory, max_steps=kwargs["max_iterations"], emit=_announce,

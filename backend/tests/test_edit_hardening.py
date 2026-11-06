@@ -217,7 +217,7 @@ async def test_reasoner_does_not_override_a_request_another_node_owns(monkeypatc
 # tool_agent_node: required_action wiring + honest note when the turn ends without a proposal
 # ---------------------------------------------------------------------------
 
-async def _run_turn(monkeypatch, question, attempts):
+async def _run_turn(monkeypatch, question, attempts, extra_state=None):
     from backend.services import repo_checkout as rc
     from backend.tests.test_tool_agent_node import _setup_github_repo
 
@@ -231,7 +231,7 @@ async def _run_turn(monkeypatch, question, attempts):
         return {"final_answer": "I looked around.", "attempts": attempts, "show_work": False}
 
     monkeypatch.setattr(aw.native_loop, "run", fake_native_run)
-    state = {"username": "jack", "messages": [H(content=question)], "documents": []}
+    state = {"username": "jack", "messages": [H(content=question)], "documents": [], **(extra_state or {})}
     result = await aw.tool_agent_node(state)
     return result["content_to_format"], captured
 
@@ -273,3 +273,52 @@ async def test_edit_wording_without_a_connected_folder_is_not_an_edit_turn(monke
 
     assert captured["required_action"] is None
     assert "IS connected" not in text
+
+
+def _offered(captured):
+    return {tool["name"] for tool in captured["tools"]}
+
+
+@run_async
+async def test_a_browser_with_no_folder_gets_no_edit_tools_even_though_the_server_holds_the_folder(monkeypatch):
+    """The server's copy belongs to the person, so a phone sees it too; a diff proposed there has no Apply button (the page said folder_expected: false)."""
+    _connect_folder()
+
+    text, captured = await _run_turn(monkeypatch, "change the greeting text in src/app.py", attempts=[], extra_state={"folder_in_browser": False})
+
+    assert captured["required_action"] is None                                    # not forced to propose what cannot be applied
+    assert "propose_local_edits" not in _offered(captured) and "propose_commit" not in _offered(captured)
+    assert "THIS BROWSER HAS NO FOLDER CONNECTED" in captured["environment_note"]
+    assert "do the work by calling propose_local_edits" not in captured["environment_note"]
+    assert "IS connected" not in text                                              # the "it was connected and you did not propose" note would be false here
+
+
+@run_async
+async def test_the_browser_that_holds_the_folder_and_a_page_that_does_not_say_keep_the_edit_tools(monkeypatch):
+    _connect_folder()
+    for extra in ({"folder_in_browser": True}, {}):                               # {}: an older page that sends nothing keeps today's behaviour
+        _, captured = await _run_turn(monkeypatch, "change the greeting text in src/app.py", attempts=[], extra_state=extra)
+        assert captured["required_action"] is aw._LOCAL_EDIT_REQUIRED_ACTION, extra
+        assert "propose_local_edits" in _offered(captured), extra
+        assert "do the work by calling propose_local_edits" in captured["environment_note"], extra
+
+
+@run_async
+async def test_a_browser_with_no_folder_can_still_read_the_copy_on_the_server(monkeypatch):
+    _connect_folder()
+
+    _, captured = await _run_turn(monkeypatch, "what does the greet function do?", attempts=[], extra_state={"folder_in_browser": False})
+
+    assert "read_repo_file" in _offered(captured)
+    assert "read-only from this device" not in captured["environment_note"]       # that wording is for the trace line; the model is told in the LOCAL WORKSPACE note
+    assert "THIS BROWSER HAS NO FOLDER CONNECTED" in captured["environment_note"]
+
+
+def test_the_page_says_whether_it_holds_the_folder_and_the_server_reads_it_three_ways():
+    source = open("app.py", encoding="utf-8").read()
+    assert "folder_expected: Optional[bool] = None" in source                      # None = an older page that does not say: keeps today's behaviour
+    assert '"folder_in_browser": request.folder_expected is not False' in source
+    assert "folder_usable_here = folder_connected and request.folder_expected is not False" in source
+    assert "if folder_usable_here:\n        messages_state = scrub_stale_capability_denials" in source
+    assert "if folder_usable_here and not is_guest_username(username):" in source
+    assert "not (folder_usable_here and is_stale_capability_denial(full_response))" in source

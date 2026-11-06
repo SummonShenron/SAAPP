@@ -19,9 +19,9 @@ test('the names the person sees', () => {
   assert.deepEqual(CHIPS.answers.options.map(option => option.name), ['Grounded', 'Open']);
   assert.deepEqual(CHIPS.model.options.map(option => option.name), ['Gemini', 'Claude', 'Claude Sonnet', 'GPT-5.4 mini']);
   assert.equal(chipLabel('thinking', 'swift'), 'Thinking: Swift');
-  assert.equal(chipLabel('model', 'claude'), 'Tool model: Claude');
-  assert.equal(chipLabel('model', 'sonnet'), 'Tool model: Claude Sonnet');
-  assert.equal(chipLabel('model', 'gpt'), 'Tool model: GPT-5.4 mini');
+  assert.equal(chipLabel('model', 'claude'), 'Tool / Planner model: Claude');
+  assert.equal(chipLabel('model', 'sonnet'), 'Tool / Planner model: Claude Sonnet');
+  assert.equal(chipLabel('model', 'gpt'), 'Tool / Planner model: GPT-5.4 mini');
 });
 
 test('an unknown value reads as the ordinary state, and only the other state is "changed"', () => {
@@ -76,7 +76,7 @@ test('the message box has the four chips with Export and Help at the far right, 
   assert.match(chat, /onExport: handleExportChat,/);
   assert.doesNotMatch(chat, /Export this conversation/);                                        // no longer a button in the message box row itself
   assert.doesNotMatch(chat, /showScopePicker/);                                                 // the scope lives in the column and the phone strip's lock
-  assert.doesNotMatch(chat, /Open Answers:|Deep Thinking:|Plan first:|Tool model:/);            // those toggles are the chips now
+  assert.doesNotMatch(chat, /Open Answers:|Deep Thinking:|Plan first:|Tool \/ Planner model:/);            // those toggles are the chips now
   const chips = readFileSync(new URL('./ComposerChips.tsx', import.meta.url), 'utf8');
   assert.match(chips, /aria-label="Help"/);                                                      // Help at the far right
   assert.match(chips, /<div className="cc-right">\s*<button[^>]*aria-label="Export this conversation"[\s\S]*?aria-label="Help"/);      // with Export just before it, in the same group
@@ -128,7 +128,7 @@ test('the settings are only in the side panel, on every screen: never under the 
 
 test('the model chip is two settings in one popup: the Base model (who writes the reply) and the Tool model (who does the code steps)', () => {
   assert.equal(BASE_MODEL.title, 'Base model');
-  assert.equal(CHIPS.model.title, 'Tool model');
+  assert.equal(CHIPS.model.title, 'Tool / Planner model');
   assert.deepEqual(BASE_MODEL.options.map(option => option.id), ['gemini', 'gpt']);
   assert.equal(BASE_MODEL.ordinary, 'gemini');
   for (const option of [...BASE_MODEL.options, ...CHIPS.model.options]) assert.ok(option.short && option.short.length <= 40, `${option.id} has a short line that fits a half-width column`);
@@ -192,7 +192,7 @@ test('the model chip draws ONE svg from the models in play: a slash for two diff
 // ---- the Execute model: the third setting of the model chip ---------------------------------------------------------------------------
 
 test('the Execute model has its own spec: "same as Code" is the quiet default and every other choice names its provider', () => {
-  assert.equal(EXECUTE_MODEL.title, 'Execute model');
+  assert.equal(EXECUTE_MODEL.title, 'Plan executer model');
   assert.equal(EXECUTE_MODEL.ordinary, 'same');
   assert.deepEqual(EXECUTE_MODEL.options.map(option => option.id), ['same', 'gemini', 'claude', 'sonnet', 'gpt']);
   for (const option of EXECUTE_MODEL.options) assert.ok(option.short && option.short.length <= 40, `${option.id} has a short line that fits a column`);
