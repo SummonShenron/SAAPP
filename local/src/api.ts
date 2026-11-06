@@ -473,15 +473,17 @@ export interface ToolModelSetting {
  * The BASE model: which model writes the reply the person reads. Gemini unless they chose GPT (GPT-5.4 mini) and the server offers it (`available`/`gpt_available`: a key and a price are configured, and the person is
  * not a guest). Inside a safety context the server always uses Gemini, whatever this says.
  */
-export type ReplyModel = 'gemini' | 'gpt' | 'lite' | 'auto';
+export type ReplyModel = 'gemini' | 'gpt' | 'lite' | 'haiku' | 'auto';
 export interface ReplyModelSetting {
   reply_model: ReplyModel;
   choice: ReplyModel | null;
   default: ReplyModel;
   available: boolean;
   gpt_available: boolean;
-  /** A cheaper reply model is offered (Lite voice and Auto). */
+  /** Gemini flash-lite is offered (Gemini Lite, and Auto, which uses it). */
   lite_available: boolean;
+  /** Claude Haiku is offered for replies (a Claude key and a price are configured; the replies go to Anthropic). */
+  haiku_available: boolean;
   /** A guest: the choice is kept in the browser and sent with each message, because the guests share one settings record. */
   browser_only: boolean;
 }

@@ -92,12 +92,16 @@ def test_the_setting_decides_who_may_write_and_a_safety_context_is_never_lite():
     assert rt.pick("gemini", lite_ready=True, risk_active=False, prompt=plain) == (rt.STANDARD, rt.R_STANDARD_SETTING)
     assert rt.pick("gpt", lite_ready=True, risk_active=False, prompt=plain) == (rt.STANDARD, rt.R_STANDARD_SETTING)
     assert rt.pick("lite", lite_ready=True, risk_active=False, prompt=plain) == (rt.LITE, rt.R_LITE_SETTING)
+    assert rt.pick("haiku", lite_ready=False, haiku_ready=True, risk_active=False, prompt=plain) == (rt.HAIKU, rt.R_HAIKU_SETTING)              # Haiku needs only itself, not the Gemini lite model
+    assert rt.pick("haiku", lite_ready=True, haiku_ready=False, risk_active=False, prompt=plain) == (rt.STANDARD, rt.R_NOT_OFFERED)
+    assert rt.pick("haiku", lite_ready=True, haiku_ready=True, risk_active=False, prompt=prompt_of(emotional_context=build_block())) == (rt.HAIKU, rt.R_HAIKU_SETTING)   # like Lite, it is the person's call everywhere but safety
+    assert rt.pick("auto", lite_ready=True, haiku_ready=True, risk_active=False, prompt=plain) == (rt.LITE, rt.R_AUTO_PLAIN)                       # Auto is the measured hybrid: always flash-lite
     assert rt.pick("auto", lite_ready=True, risk_active=False, prompt=plain) == (rt.LITE, rt.R_AUTO_PLAIN)
     assert rt.pick("auto", lite_ready=True, risk_active=False, prompt=prompt_of(emotional_context=build_block())) == (rt.STANDARD, rt.R_CHECKIN)
     assert rt.pick("lite", lite_ready=True, risk_active=False, prompt=prompt_of(emotional_context=build_block())) == (rt.LITE, rt.R_LITE_SETTING)       # Lite is the person's call everywhere but safety
-    for choice in ("lite", "auto"):
-        assert rt.pick(choice, lite_ready=True, risk_active=True, prompt=plain) == (rt.STANDARD, rt.R_SAFETY)
-        assert rt.pick(choice, lite_ready=False, risk_active=False, prompt=plain) == (rt.STANDARD, rt.R_NOT_OFFERED)
+    for choice in ("lite", "haiku", "auto"):
+        assert rt.pick(choice, lite_ready=True, haiku_ready=True, risk_active=True, prompt=plain) == (rt.STANDARD, rt.R_SAFETY)
+        assert rt.pick(choice, lite_ready=False, haiku_ready=False, risk_active=False, prompt=plain) == (rt.STANDARD, rt.R_NOT_OFFERED)
 
 
 def test_the_reasons_are_the_counter_keys_and_the_turn_counts_the_one_that_applied():
@@ -115,20 +119,26 @@ def test_the_reasons_are_the_counter_keys_and_the_turn_counts_the_one_that_appli
 # ---- the setting ------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 def test_lite_and_auto_are_offered_where_a_lite_voice_exists_and_a_guest_keeps_the_choice_in_their_browser():
-    jack = usu.reply_model_view("jack", gpt_ready=False, lite_ready=True)
-    assert jack["available"] and jack["lite_available"] and not jack["gpt_available"] and not jack["browser_only"]
-    guest = usu.reply_model_view(GUEST, gpt_ready=True, lite_ready=True)
-    assert guest["lite_available"] and not guest["gpt_available"] and guest["browser_only"] and guest["reply_model"] == "gemini"
-    embed = usu.reply_model_view("guest_bty", gpt_ready=True, lite_ready=True)
-    assert not embed["available"] and not embed["lite_available"]
+    jack = usu.reply_model_view("jack", gpt_ready=False, lite_ready=True, haiku_ready=True)
+    assert jack["available"] and jack["lite_available"] and jack["haiku_available"] and not jack["gpt_available"] and not jack["browser_only"]
+    only_haiku = usu.reply_model_view("jack", gpt_ready=False, lite_ready=False, haiku_ready=True)
+    assert only_haiku["available"] and only_haiku["haiku_available"] and not only_haiku["lite_available"]            # either cheaper model can be offered without the other
+    guest = usu.reply_model_view(GUEST, gpt_ready=True, lite_ready=True, haiku_ready=True)
+    assert guest["lite_available"] and guest["haiku_available"] and not guest["gpt_available"] and guest["browser_only"] and guest["reply_model"] == "gemini"
+    embed = usu.reply_model_view("guest_bty", gpt_ready=True, lite_ready=True, haiku_ready=True)
+    assert not embed["available"] and not embed["lite_available"] and not embed["haiku_available"]
     assert not usu.reply_model_view("jack", gpt_ready=False, lite_ready=False)["available"]
 
 
 def test_saving_lite_needs_a_lite_voice_and_a_guest_save_changes_nothing_for_anyone():
     assert usu.save_reply_model_choice("jack", "lite", False, False)[1][0] == 409 and usu.get_user_reply_model("jack") is None
+    assert usu.save_reply_model_choice("jack", "haiku", False, True, False)[1][0] == 409 and usu.get_user_reply_model("jack") is None            # Haiku needs its own offer, not just a lite model
+    view, problem = usu.save_reply_model_choice("jack", "haiku", False, False, True)
+    assert problem is None and view["reply_model"] == "haiku" and usu.get_user_reply_model("jack") == "haiku"
     view, problem = usu.save_reply_model_choice("jack", "auto", False, True)
     assert problem is None and view["reply_model"] == "auto" and usu.get_user_reply_model("jack") == "auto"
     usu.save_reply_model_choice(GUEST, "lite", False, True)
+    usu.save_reply_model_choice(GUEST, "haiku", False, True, True)
     assert usu.get_user_reply_model("jack") == "auto"                                         # nobody else's record was touched
     assert usu._resolve_reply_model(usu._fetch_settings_doc(GUEST)) is None                    # and the shared guest record holds no choice
 
@@ -137,6 +147,7 @@ def test_a_turn_runs_on_the_stored_choice_and_a_guest_on_what_their_browser_sent
     turn = usu.reply_choice_for_turn
     assert turn("jack", "auto", None, True) == "auto" and turn("jack", None, "lite", True) is None            # a signed-in person: the stored choice only
     assert turn(GUEST, None, "auto", True) == "auto" and turn(GUEST, None, "lite", True) == "lite"
+    assert turn(GUEST, None, "haiku", True, True) == "haiku" and turn(GUEST, None, "haiku", True, False) == "gemini" and turn(GUEST, None, "lite", False, True) == "gemini"     # each needs its own offer
     assert turn(GUEST, None, "gpt", True) == "gemini" and turn(GUEST, None, "auto", False) == "gemini" and turn(GUEST, None, None, True) == "gemini"
     assert turn("guest_bty", "lite", "lite", True) == "gemini"                                 # the embedded view is never lite
 
@@ -147,32 +158,34 @@ def priced(monkeypatch, *names):
     monkeypatch.setattr(llm_usage, "cached_prices", lambda: {n: {"input": 0.1, "output": 0.5, "cached_input": 0.01} for n in names})
 
 
-def test_a_lite_voice_is_offered_only_when_it_is_priced_and_a_claude_one_also_needs_a_key(monkeypatch):
+def test_gemini_lite_and_claude_haiku_are_each_offered_only_when_priced_and_haiku_also_needs_a_key(monkeypatch):
     models._lite_stream_llms.clear()
     monkeypatch.delenv("LITE_REPLY_MODEL", raising=False)
+    monkeypatch.setattr(claude_llm, "api_key", lambda: None)
     priced(monkeypatch)
     assert models.lite_reply_model_name() == "gemini-3.5-flash-lite" and not models.lite_reply_available() and models.get_lite_stream_llm("jack") is None
+    assert not models.haiku_reply_available() and models.get_haiku_stream_llm("jack") is None
     priced(monkeypatch, "gemini-3.5-flash-lite")
-    assert models.lite_reply_available()
-    monkeypatch.setenv("LITE_REPLY_MODEL", "haiku")
+    assert models.lite_reply_available() and not models.haiku_reply_available()                      # the two are offered independently
     priced(monkeypatch, "claude-haiku-5-5")
-    monkeypatch.setattr(claude_llm, "api_key", lambda: None)
-    assert models.lite_reply_model_name() == claude_llm.DEFAULT_MODEL and not models.lite_reply_available()
+    assert not models.haiku_reply_available()                                                         # priced but no key
     monkeypatch.setattr(claude_llm, "api_key", lambda: "key")
-    assert models.lite_reply_available()
+    assert models.haiku_reply_available() and not models.lite_reply_available()
+    monkeypatch.setenv("LITE_REPLY_MODEL", "gemini-9-lite")
+    assert models.lite_reply_model_name() == "gemini-9-lite" and not models.lite_reply_available()    # the Gemini lite model can be changed; it still has to be priced
 
 
-def test_the_lite_voice_is_the_model_the_evals_measured_with_the_standard_voice_as_its_fallback(monkeypatch):
+def test_the_cheaper_voices_are_the_models_the_evals_measured_with_the_standard_voice_as_their_fallback(monkeypatch):
     models._lite_stream_llms.clear()
     priced(monkeypatch, "gemini-3.5-flash-lite", "claude-haiku-5-5")
     monkeypatch.delenv("LITE_REPLY_MODEL", raising=False)
+    monkeypatch.setattr(claude_llm, "api_key", lambda: "key")
     lite = models.get_lite_stream_llm("jack")
     assert lite.model_name == "gemini-3.5-flash-lite" and lite.fallback_model == models.stream_llm.model_name and lite.thinking_level == "minimal"
-    assert models.get_lite_stream_llm("guest_bty") is None
-    monkeypatch.setenv("LITE_REPLY_MODEL", "haiku")
-    monkeypatch.setattr(claude_llm, "api_key", lambda: "key")
-    haiku = models.get_lite_stream_llm("jack")
-    assert isinstance(haiku, claude_llm.ClaudeLLM) and haiku.voice_shape and haiku.voice_tail == "checkin" and haiku.thinking_off and haiku.effort == "low" and haiku.fallback is models.stream_llm
+    haiku = models.get_haiku_stream_llm("jack")
+    assert isinstance(haiku, claude_llm.ClaudeLLM) and haiku.model_name == claude_llm.DEFAULT_MODEL and haiku.voice_shape and haiku.voice_tail == "checkin"
+    assert haiku.thinking_off and haiku.effort == "low" and haiku.fallback is models.stream_llm
+    assert models.get_lite_stream_llm("guest_bty") is None and models.get_haiku_stream_llm("guest_bty") is None      # never the embedded view
     models._lite_stream_llms.clear()
 
 
@@ -273,10 +286,11 @@ def test_the_eval_hybrid_routes_by_the_apps_own_gate_and_counts_where_turns_went
 
 def test_the_app_takes_the_guests_choice_from_the_request_and_never_runs_lite_for_a_safety_turn():
     assert "reply_model: Optional[str] = None" in APP
-    assert 'reply_choice = reply_choice_for_turn(username, _settings.get("reply_model"), request.reply_model, lite_reply_available())' in APP
+    assert 'reply_choice = reply_choice_for_turn(username, _settings.get("reply_model"), request.reply_model, lite_reply_available(), haiku_reply_available())' in APP
     start = APP.index("tier, tier_reason = reply_tier.pick(")
     block = APP[start: start + 1100]
     assert "risk_active=risk_level != RISK_NONE" in block and "turn_llm = lite_voice" in block and "prompt = lite_prompt(prompt, lite_voice)" in block and "R_NOT_OFFERED" in block
+    assert "get_haiku_stream_llm(username) if tier == reply_tier.HAIKU else get_lite_stream_llm(username)" in block       # each choice runs its own model
 
 
 def test_a_conversation_that_has_been_asking_about_sonics_feelings_stays_on_the_standard_voice_through_the_pressure_turns():

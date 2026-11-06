@@ -60,6 +60,9 @@ class FakeGemini:
     def __init__(self):
         self.calls = []
 
+    def some_other_call(self):
+        return "gemini other"
+
     async def ainvoke(self, prompt, *args, **kwargs):
         self.calls.append(("ainvoke", prompt))
         return AIMessage(content="from gemini")
@@ -236,9 +239,10 @@ def test_a_failure_is_logged_by_kind_only_never_by_message(recorded, caplog):
 
 
 def test_anything_else_is_delegated_to_the_fallback_or_missing():
-    assert ClaudeLLM(fallback=FakeGemini()).astream() == "gemini stream"
+    # astream is the wrapper's own now (the lite reply voice streams through it: tests/test_reply_tier.py); anything it does not define is still the fallback's business
+    assert ClaudeLLM(fallback=FakeGemini()).some_other_call() == "gemini other"
     with pytest.raises(AttributeError):
-        ClaudeLLM().astream
+        ClaudeLLM().some_other_call
     with pytest.raises(AttributeError):
         ClaudeLLM(fallback=FakeGemini())._private
 

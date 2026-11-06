@@ -85,3 +85,11 @@ def test_a_guest_cannot_list_the_conversations_every_guest_shares():
     block = source[source.index('@app.get("/api/conversations")'):source.index('@app.get("/api/conversations/{session_id}")')]
     assert "if is_guest_username(username):" in block and "return []" in block
     assert block.index("is_guest_username(username)") < block.index("list_user_conversation_summaries")      # decided before anything is read
+
+
+def test_the_privacy_page_says_replies_go_to_anthropic_only_if_claude_haiku_is_chosen_as_the_base_model():
+    page = PRIVACY.replace("\r\n", "\n")
+    assert "if you choose Claude Haiku as your Base model" in page and "go to Anthropic instead of Google to write the reply" in page
+    assert "Choose Gemini, Auto or Gemini Lite and nothing goes to Anthropic for replies." in page
+    assert "Inside a safety context Sonic always uses Gemini" in page
+    assert "Sonic's replies are still written by Gemini." not in page             # it stopped being true the day Haiku became a choice

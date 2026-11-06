@@ -29,11 +29,11 @@ CHANGELOG = [
             "app.py::reply_tier.pick",
         ],
         "month": "2026-11",
-        "title": "A cheaper voice: Auto and Lite",
+        "title": "A cheaper voice: Auto, Gemini Lite and Claude Haiku",
         "line": (
-            "In the model menu you can now pick Auto, where a cheaper model writes plain turns like code and lookups and the standard voice keeps the ones where the voice matters, or Lite for every turn. A hard moment always gets the standard voice."
+            "In the model menu you can now pick Auto (a cheaper model writes plain turns like code, the standard voice keeps the rest), Gemini Lite, or Claude Haiku (replies go to Anthropic). A hard moment always gets the standard voice."
         ),
-        "keywords": ["lite", "auto", "cheaper", "cheap model", "base model", "model menu", "which model", "voice"],
+        "keywords": ["lite", "auto", "haiku", "cheaper", "cheap model", "base model", "model menu", "which model", "voice"],
         "volunteer": [],
     },
     {
