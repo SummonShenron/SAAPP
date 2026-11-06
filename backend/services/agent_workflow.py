@@ -2034,7 +2034,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         # "why won't you just make the change" after an earlier request or refusal): the only way
         # to satisfy it is propose_local_edits, so the loop is told so mechanically — see
         # the native loop's required_action.
-        edit_turn = local_workspace_handle is not None and looks_like_edit_request(state.get("messages", [])) and not commit_flow.is_commit_only_request(latest_message_content)
+        edit_turn = can_apply_here and looks_like_edit_request(state.get("messages", [])) and not commit_flow.is_commit_only_request(latest_message_content)
         # Plan mode (backend/utils/code_plan.py). A PLAN turn is read-only and ends in submit_plan; it needs the native engine, which has that tool. An EXECUTE turn carries an approved plan
         # out: "continue" or "go ahead" counts as the edit request it is, with a fresh step budget.
         plan_phase = state.get("code_plan_phase") if can_apply_here and code_plan.enabled() else None
