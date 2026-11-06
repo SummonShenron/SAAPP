@@ -20,7 +20,7 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from backend.utils import llm_usage
 
@@ -57,12 +57,14 @@ def _messages(prompt: Any) -> Any:
 class ClaudeLLM:
     def __init__(self, model_name: str = DEFAULT_MODEL, fallback: Any = None, max_tokens: int = MAX_TOKENS, timeout: float = TIMEOUT_SECONDS,
                  max_retries: int = 1, effort: Optional[str] = DEFAULT_EFFORT, thinking_off: bool = THINKING_OFF, cache: bool = CACHE_DEFAULT,
-                 drop_block: bool = DROP_BLOCK):
+                 drop_block: bool = DROP_BLOCK, voice_shape: bool = False, voice_tail: str = ""):
         self.model_name = model_name
         self.fallback = fallback
         self.max_tokens, self.timeout, self.max_retries = max_tokens, timeout, max_retries
         self.effort, self.thinking_off, self.cache = effort, thinking_off, cache
         self.drop_block = drop_block
+        self.voice_tail = voice_tail          # with voice_shape: "" none, "checkin" the check-in reminder, "all" the standing ones too: closing reminders at the end of the user message (backend/utils/claude_voice.py)
+        self.voice_shape = voice_shape        # a reply prompt is sent as a system prompt plus a user message (backend/utils/claude_voice.py); off for every other job
         self._chat: Any = None
         self._tool_runnables: Dict[tuple, Any] = {}
 
@@ -117,6 +119,16 @@ class ClaudeLLM:
             self._tool_runnables[key] = self._client().bind_tools(self.anthropic_tools(tools))
         return self._tool_runnables[key]
 
+    def _to_messages(self, prompt: Any) -> Any:
+        """The prompt as messages: a reply prompt split into system and user when voice_shape is on and it has the usual shape, otherwise exactly what _messages gives."""
+        if self.voice_shape and isinstance(prompt, str):
+            from backend.utils import claude_voice
+
+            parts = claude_voice.split_prompt(prompt, tail=self.voice_tail)
+            if parts:
+                return [SystemMessage(content=parts[0]), HumanMessage(content=parts[1])]
+        return _messages(prompt)
+
     def _metered(self, response: Any, label: str) -> Any:
         try:
             llm_usage.record(llm_usage.served_by(response, self.model_name), label, llm_usage.usage_of(response))
@@ -135,7 +147,7 @@ class ClaudeLLM:
         label = llm_usage.caller_label()
         if self.available():
             try:
-                return self._metered(self._client().invoke(_messages(prompt), *args, **kwargs), label)
+                return self._metered(self._client().invoke(self._to_messages(prompt), *args, **kwargs), label)
             except Exception as error:
                 self._gave_up(error)
         if self.fallback is None:
@@ -146,12 +158,43 @@ class ClaudeLLM:
         label = llm_usage.caller_label()
         if self.available():
             try:
-                return self._metered(await self._client().ainvoke(_messages(prompt), *args, **kwargs), label)
+                return self._metered(await self._client().ainvoke(self._to_messages(prompt), *args, **kwargs), label)
             except Exception as error:
                 self._gave_up(error)
         if self.fallback is None:
             raise self._no_fallback()
         return await self.fallback.ainvoke(prompt, *args, **kwargs)
+
+    async def astream(self, prompt: Any, *args: Any, **kwargs: Any):
+        """The reply as it is written, for the app's streamed answer (a reply model: backend/models/models.py get_lite_stream_llm). Metered like the other calls. A failure BEFORE the first chunk is answered
+        by the fallback model with the original prompt, so a Claude problem degrades a reply to the standard voice, never to an error; a failure after words have gone out is raised, since another model cannot
+        carry on a sentence."""
+        label = llm_usage.caller_label()
+        if self.available():
+            streamed = llm_usage.empty_usage()
+            answered_by = self.model_name
+            started = False
+            try:
+                async for chunk in self._client().astream(self._to_messages(prompt), *args, **kwargs):
+                    llm_usage.add_into(streamed, llm_usage.usage_of(chunk))
+                    answered_by = llm_usage.served_by(chunk, answered_by)
+                    started = True
+                    yield chunk
+                return
+            except Exception as error:
+                if started or self.fallback is None:
+                    raise
+                self._gave_up(error)
+            finally:
+                if streamed["input"] or streamed["output"]:           # counted even if the reader stopped early: what was reported so far was billed
+                    try:
+                        llm_usage.record(answered_by, label, streamed)
+                    except Exception:
+                        pass
+        if self.fallback is None:
+            raise self._no_fallback()
+        async for chunk in self.fallback.astream(prompt, *args, **kwargs):
+            yield chunk
 
     async def ainvoke_tools(self, messages: Any, tools: list) -> Any:
         """One step of a tool-calling conversation, the same contract as LazyLLM.ainvoke_tools: `tools` are function declarations (name, description,

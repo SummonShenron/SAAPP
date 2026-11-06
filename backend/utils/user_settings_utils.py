@@ -38,7 +38,12 @@ VALID_TOOL_MODELS = {TOOL_MODEL_GEMINI, TOOL_MODEL_CLAUDE, TOOL_MODEL_SONNET, TO
 # "gpt" is GPT-5.4 mini, offered only where the server has its key and price, never for a guest or the embedded view, and never inside a safety context (app.py: that path was built and evaluated on Gemini).
 REPLY_MODEL_GEMINI = "gemini"
 REPLY_MODEL_GPT = "gpt"
-VALID_REPLY_MODELS = {REPLY_MODEL_GEMINI, REPLY_MODEL_GPT}
+REPLY_MODEL_LITE = "lite"        # a cheaper model writes every reply except inside a safety context (backend/utils/reply_tier.py); offered where the server has a priced lite model
+REPLY_MODEL_AUTO = "auto"        # the hybrid: the cheaper model for plain turns, the standard voice for the turns where the voice is the point
+VALID_REPLY_MODELS = {REPLY_MODEL_GEMINI, REPLY_MODEL_GPT, REPLY_MODEL_LITE, REPLY_MODEL_AUTO}
+# A guest's choice lives in their browser and rides each request (the guests share one settings record, so a saved choice would change it for every visitor). Only the cheaper choices are honoured: a visitor
+# can never raise what a turn costs the shared guest budget.
+GUEST_REPLY_CHOICES = {REPLY_MODEL_GEMINI, REPLY_MODEL_LITE, REPLY_MODEL_AUTO}
 # The model that CARRIES OUT an approved plan (plan mode): "same" (the default) means the person's own Code model; otherwise one of the Code models, chosen in the model chip.
 EXECUTE_MODEL_SAME = "same"
 VALID_EXECUTE_MODELS = VALID_TOOL_MODELS | {EXECUTE_MODEL_SAME}
@@ -287,23 +292,45 @@ def set_user_reply_model(username: str, mode: str) -> Optional[str]:
     return mode
 
 
-def reply_model_view(username: str, gpt_ready: bool) -> dict:
-    """What the model chip shows for the BASE model: the model in effect, whether the person chose it, the default, and whether GPT can be offered to them at all (a key and a price are configured and they are
-    not a guest). Without that the effective model is Gemini whatever was stored."""
+def reply_model_view(username: str, gpt_ready: bool, lite_ready: bool = False) -> dict:
+    """What the model chip shows for the BASE model: the model in effect, whether the person chose it, the default, and which choices this person is offered. GPT needs a key and a price on the server and is
+    never for a guest; Lite and Auto need a priced lite model and are offered to a guest too (their choice stays in their browser: `browser_only`), never to the embedded view. Without an offer the effective
+    model is Gemini whatever was stored."""
     stored = get_user_reply_model(username)
-    offered = bool(gpt_ready) and username not in TOOL_MODEL_LOCKED_USERS
-    effective = stored if (offered and stored == REPLY_MODEL_GPT) else REPLY_MODEL_GEMINI
-    return {"reply_model": effective, "choice": stored, "default": REPLY_MODEL_GEMINI, "available": offered, "gpt_available": offered}
+    embed = username in TOGGLE_LOCKED_USERS
+    guest = username in TOOL_MODEL_LOCKED_USERS and not embed
+    gpt_offered = bool(gpt_ready) and username not in TOOL_MODEL_LOCKED_USERS
+    lite_offered = bool(lite_ready) and not embed
+    allowed = (stored == REPLY_MODEL_GPT and gpt_offered) or (stored in (REPLY_MODEL_LITE, REPLY_MODEL_AUTO) and lite_offered and not guest)
+    effective = stored if allowed else REPLY_MODEL_GEMINI
+    return {
+        "reply_model": effective, "choice": stored, "default": REPLY_MODEL_GEMINI, "available": gpt_offered or lite_offered,
+        "gpt_available": gpt_offered, "lite_available": lite_offered, "browser_only": guest,
+    }
 
 
-def save_reply_model_choice(username: str, mode: str, gpt_ready: bool):
-    """What the settings endpoint does with a request: (the view, None) when saved, or (None, (status, message)) when refused. An unknown model is a 400; GPT where it is not set up and priced is a 409."""
+def reply_choice_for_turn(username: str, stored: Optional[str], requested: Optional[str], lite_ready: bool) -> Optional[str]:
+    """The base-model choice a turn runs on. A signed-in person: their stored choice. The shared guest: what their browser sent, if it is one of the cheaper choices and a lite model is offered, else the
+    standard voice. The embedded view: always the standard voice."""
+    if username in TOGGLE_LOCKED_USERS:
+        return REPLY_MODEL_GEMINI
+    if username in TOOL_MODEL_LOCKED_USERS:
+        return requested if (requested in GUEST_REPLY_CHOICES and lite_ready) else REPLY_MODEL_GEMINI
+    return stored
+
+
+def save_reply_model_choice(username: str, mode: str, gpt_ready: bool, lite_ready: bool = False):
+    """What the settings endpoint does with a request: (the view, None) when saved, or (None, (status, message)) when refused. An unknown model is a 400; GPT or a lite voice where the server does not
+    offer it is a 409. A guest's choice is never saved (it lives in their browser): the view comes back unchanged."""
     if mode not in VALID_REPLY_MODELS:
-        return None, (400, "reply_model must be 'gemini' or 'gpt'")
+        return None, (400, "reply_model must be 'gemini', 'gpt', 'lite' or 'auto'")
     if mode == REPLY_MODEL_GPT and not gpt_ready:
         return None, (409, "GPT isn't set up on this server, so it can't be used yet.")
-    set_user_reply_model(username, mode)
-    return reply_model_view(username, gpt_ready), None
+    if mode in (REPLY_MODEL_LITE, REPLY_MODEL_AUTO) and not lite_ready:
+        return None, (409, "A lite voice isn't set up on this server, so it can't be used yet.")
+    if username not in TOOL_MODEL_LOCKED_USERS:
+        set_user_reply_model(username, mode)
+    return reply_model_view(username, gpt_ready, lite_ready), None
 
 
 def get_user_execute_model(username: str) -> Optional[str]:

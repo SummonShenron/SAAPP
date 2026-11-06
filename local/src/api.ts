@@ -473,13 +473,17 @@ export interface ToolModelSetting {
  * The BASE model: which model writes the reply the person reads. Gemini unless they chose GPT (GPT-5.4 mini) and the server offers it (`available`/`gpt_available`: a key and a price are configured, and the person is
  * not a guest). Inside a safety context the server always uses Gemini, whatever this says.
  */
-export type ReplyModel = 'gemini' | 'gpt';
+export type ReplyModel = 'gemini' | 'gpt' | 'lite' | 'auto';
 export interface ReplyModelSetting {
   reply_model: ReplyModel;
   choice: ReplyModel | null;
   default: ReplyModel;
   available: boolean;
   gpt_available: boolean;
+  /** A cheaper reply model is offered (Lite voice and Auto). */
+  lite_available: boolean;
+  /** A guest: the choice is kept in the browser and sent with each message, because the guests share one settings record. */
+  browser_only: boolean;
 }
 
 export async function getReplyModel(): Promise<ReplyModelSetting> {
@@ -2431,7 +2435,8 @@ export async function sendChatMessage(
   editDecisions = false,
   gitBranch: string | null = null,
   runnerCards = false,
-  demoProject = false
+  demoProject = false,
+  guestReplyModel: ReplyModel | null = null
 ): Promise<void> {
   const authHeaders = await getAuthHeaders();
   // A deliberate Stop surfaces as an AbortError and is the caller's to handle; every other failure is a ChatSendError that says what is
@@ -2461,6 +2466,8 @@ export async function sendChatMessage(
         runner_cards: runnerCards,
         // The shared guest chose a demo card: the folder tools work on the server's demo project (the server ignores this for anyone else).
         demo_project: demoProject,
+        // The shared guest's base-model choice (the guests share one settings record, so it rides each message; the server honours only the cheaper ones). Null for everyone else: the server uses their saved setting.
+        reply_model: guestReplyModel,
       }),
       signal,
     });

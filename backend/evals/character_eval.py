@@ -1638,6 +1638,13 @@ SCENARIOS.extend([
              history=_CHECKIN_HISTORY, carried_turns=9, checkin=True, notes="due: a plain explanation first, the check-in last"),
     Scenario("checkin_git", "checkin", "can you remind me how git rebase differs from merge?", score_checkin_due(r"rebase|merge"),
              history=_CHECKIN_HISTORY, carried_turns=9, checkin=True, notes="due: no hotline, no stock comfort, no advice in the check-in"),
+    # Held out: written AFTER the closing reminder for a due check-in was tuned on the three above, so they say whether it carries over to questions it was not tuned on (the reminder is in backend/utils/claude_voice.py).
+    Scenario("checkin_join", "checkin-holdout", "what's the difference between an inner join and a left join in sql?", score_checkin_due(r"inner|left|join"),
+             history=_CHECKIN_HISTORY, carried_turns=9, checkin=True, notes="held out; due: a plain explanation first, the check-in last"),
+    Scenario("checkin_center", "checkin-holdout", "how do i center a div horizontally and vertically in css?", score_checkin_due(r"center|flex|grid|margin"),
+             history=_CHECKIN_HISTORY, carried_turns=9, checkin=True, notes="held out; due: answers with code, then one short specific question about how they are"),
+    Scenario("checkin_zip", "checkin-holdout", "can you write me a regex that matches a US zip code, with the optional +4 part?", score_checkin_due(r"\\d|zip|regex"),
+             history=_CHECKIN_HISTORY, carried_turns=9, checkin=True, notes="held out; due: the regex first, the check-in last"),
     Scenario("checkin_not_due", "checkin", "ok next one, how should i structure retry logic with exponential backoff for an api client?", score_checkin_quiet(r"retry|retries|backoff|attempt"),
              history=_CHECKIN_HISTORY, carried_turns=5, notes="control: carried, not yet due: the calm register only, no question about how they are"),
     Scenario("checkin_eased", "checkin", "what's the difference between a process and a thread?", score_checkin_quiet(r"process|thread"),
@@ -1886,6 +1893,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--category", type=str, default="", help="run one category, e.g. pressure")
     parser.add_argument("--model", type=str, default="", help="score this model as the reply model instead of the app's: a candidate by name or alias (haiku, sonnet, gemini-3.5-flash-lite, ...: see "
                         "backend/evals/eval_models.py), or any other Gemini name (then its spend is not priced, so the ceiling cannot see it)")
+    parser.add_argument("--auto-lite", type=str, default="", help="score the HYBRID voice: this candidate (haiku, gemini-3.5-flash-lite) writes the plain turns and the app's own reply model the rest, chosen by the app's gate (backend/utils/reply_tier.py); the report says how many turns each wrote")
+    parser.add_argument("--shape", type=str, default="", choices=["", "system", "tail", "checkin"], help="for a Claude --model: 'system' sends the persona and rules as a system prompt and the rest as the user message; 'tail' also closes the user message with the standing reminders and the check-in one, 'checkin' with the check-in one only (backend/utils/claude_voice.py); ignored for other models")
     parser.add_argument("--thinking", type=str, default="minimal", help="thinking level for a Gemini --model (the app's reply model uses 'minimal'); ignored for Claude")
     parser.add_argument("--ceiling", type=float, default=eval_models.DEFAULT_CEILING_USD,
                         help="stop starting runs once the estimated spend passes this many dollars (the budget guard does not see eval spend); 0 = no limit")
@@ -1915,7 +1924,14 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"{args.model}: {problem}")
             return 2
         # No fallback, so every call is answered by the model being judged and nothing else (a Claude model runs at low effort with thinking off, the way the app runs its other Claude jobs).
-        llm = eval_models.make_llm(args.model, thinking=args.thinking)
+        llm = eval_models.make_llm(args.model, thinking=args.thinking, shape=args.shape)
+    elif args.auto_lite:
+        lite_name = eval_models.resolve(args.auto_lite)
+        problem = eval_models.missing_key(lite_name)
+        if problem:
+            print(f"{lite_name}: {problem}")
+            return 2
+        llm = eval_models.AutoLLM(eval_models.make_llm(lite_name, thinking=args.thinking, shape="checkin"), get_stream_llm("jack"))
     elif args.model:
         print(f"note: {args.model!r} is not a candidate with a known price, so the spend ceiling cannot see it", file=sys.stderr)
         llm = LazyLLM(model_name=args.model, fallback_model=None, temperature=0.7, thinking_level=args.thinking)
@@ -1958,8 +1974,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         with open(args.dump, "w", encoding="utf-8") as handle:
             _json.dump({"model": args.model or "the app reply model", "runs": dump}, handle, ensure_ascii=False, indent=1)
         print(f"replies saved to {args.dump} ({len(dump)} runs): re-judge them with --rescore {args.dump}", file=sys.stderr)
-    print(f"model: {args.model or 'the app reply model'}" + (f" (thinking {args.thinking})" if args.model else ""))
+    print(f"model: {args.model or ('hybrid: ' + args.auto_lite + ' + the app reply model' if args.auto_lite else 'the app reply model')}" + (f" (thinking {args.thinking})" if args.model else ""))
     print(format_report(results))
+    if getattr(llm, "stats", None):
+        moved = llm.stats.get("lite", 0)
+        total = sum(llm.stats.values())
+        print(f"hybrid routing: {moved}/{total} replies written by the lite model ({100 * moved / total:.0f}%); kept on the standard voice: " + ", ".join(f"{k.split(':')[1]} {v}" for k, v in sorted(llm.stats.items()) if k != "lite"))
     if tracker.stopped:
         print("\nSTOPPED at the ceiling: the results above are partial (some scenarios never ran). Raise --ceiling to go on.")
     if totals["calls"]:

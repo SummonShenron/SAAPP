@@ -63,6 +63,17 @@ import { useAuth } from '@clerk/clerk-react';
 import { describeChatError, toChatSendError } from '../chatErrors';
 import { formatMessageTime, fullMessageTime } from '../messageTime';
 
+// A guest's base-model choice, kept in this browser (the shared guest has no settings record of their own). Only the cheaper choices are ever honoured by the server.
+const GUEST_REPLY_MODEL_KEY = 'guest-reply-model';
+function guestReplyModelChoice(): ReplyModel {
+  try {
+    const stored = localStorage.getItem(GUEST_REPLY_MODEL_KEY);
+    return stored === 'lite' || stored === 'auto' ? stored : 'gemini';
+  } catch {
+    return 'gemini';
+  }
+}
+
 /** How long a message waits for the folder sync and the git branch before it is sent anyway. */
 const COMPACTION_RECHECK_MS = 6_000;      // the compaction meter is read again this long after a reply: compaction runs in the background just after a note is written
 const PRE_SEND_SYNC_MS = 20_000;
@@ -752,6 +763,9 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [gptAvailable, setGptAvailable] = useState<boolean>(false);             // GPT-5.4 mini is offered only where the server has an OpenAI key and the model's price
   const [replyModel, setReplyModel] = useState<ReplyModel>('gemini');           // the BASE model: which model writes the reply (Gemini unless they chose GPT)
   const [replyModelAvailable, setReplyModelAvailable] = useState<boolean>(false);
+  const [replyGptAvailable, setReplyGptAvailable] = useState<boolean>(false);         // the base-model choices the server offers: GPT where it can run it, Lite voice and Auto where it has a priced lite model
+  const [replyLiteAvailable, setReplyLiteAvailable] = useState<boolean>(false);
+  const [replyBrowserOnly, setReplyBrowserOnly] = useState<boolean>(false);           // a guest: the choice is kept in this browser and sent with each message (the guests share one settings record)
   const [executeSetting, setExecuteSetting] = useState<ExecuteModelSetting | null>(null);      // the EXECUTE model: which model carries out an approved plan ("same" as the Tool model unless they chose one); null until loaded, or where there is no such setting
   const [budget, setBudget] = useState<BudgetView | null>(null);
   const openingRequestedRef = useRef<string | null>(null);
@@ -1215,8 +1229,12 @@ useEffect(() => {
       })
       .catch(() => { /* guests and embeds have no such setting */ });
     api.getReplyModel()
-      .then(data => { setReplyModel(data.reply_model); setReplyModelAvailable(data.available); })
-      .catch(() => { /* guests and embeds have no such setting */ });
+      .then(data => {
+        setReplyGptAvailable(data.gpt_available === true); setReplyLiteAvailable(data.lite_available === true); setReplyBrowserOnly(data.browser_only === true);
+        setReplyModel(data.browser_only ? guestReplyModelChoice() : data.reply_model);
+        setReplyModelAvailable(data.available);
+      })
+      .catch(() => { /* the embed has no such setting */ });
     api.getExecuteModel()
       .then(data => setExecuteSetting(data))
       .catch(() => { /* guests and embeds have no such setting */ });
@@ -1284,6 +1302,10 @@ useEffect(() => {
   const handleReplyModelChange = async (next: ReplyModel) => {
     const before = replyModel;
     setReplyModel(next);
+    if (replyBrowserOnly) {         // a guest: nothing is saved on the server (the guests share one record); the choice rides each message
+      try { localStorage.setItem(GUEST_REPLY_MODEL_KEY, next); } catch { /* not remembered; it still applies for this page view */ }
+      return;
+    }
     try {
       const result = await api.updateReplyModel(next);
       setReplyModel(result.reply_model);
@@ -2114,7 +2136,8 @@ useEffect(() => {
         true,
         gitBranch,
         true,
-        demoProjectRef.current
+        demoProjectRef.current,
+        replyBrowserOnly ? replyModel : null
       );
 
       // Attachments are scoped to the turn that sent them (already durably stored server-side
@@ -2468,7 +2491,9 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
       ? { value: toolModel, onChange: id => { void handleToolModelChange(id as ToolModel); }, hide: [...(claudeAvailable ? [] : ['claude']), ...(sonnetAvailable ? [] : ['sonnet']), ...(gptAvailable ? [] : ['gpt'])] }
       : null,
     // The BASE model (which model writes the reply): a choice only where the server can run GPT.
-    baseModel: replyModelAvailable ? { value: replyModel, onChange: id => { void handleReplyModelChange(id as ReplyModel); } } : null,
+    baseModel: replyModelAvailable
+      ? { value: replyModel, onChange: id => { void handleReplyModelChange(id as ReplyModel); }, hide: [...(replyGptAvailable ? [] : ['gpt']), ...(replyLiteAvailable ? [] : ['auto', 'lite'])] }
+      : null,
     // The EXECUTE model (who carries out an approved plan): only where plans exist (a connected folder that can be edited) and there is a provider to choose besides Gemini; each provider is left out where the server does not offer it.
     executeModel: workspace.canEdit && executeSetting?.available
       ? { value: executeSetting.execute_model, onChange: id => { void handleExecuteModelChange(id as ExecuteModel); }, hide: [...(executeSetting.claude_available ? [] : ['claude']), ...(executeSetting.sonnet_available ? [] : ['sonnet']), ...(executeSetting.gpt_available ? [] : ['gpt'])] }

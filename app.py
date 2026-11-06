@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
-from backend.models.models import llm, get_stream_llm, claude_available, sonnet_available, openai_available
+from backend.models.models import llm, get_stream_llm, get_lite_stream_llm, lite_prompt, lite_reply_available, claude_available, sonnet_available, openai_available
 from backend.models.attachment import Attachment
 from backend.services.github_service import (
     process_pr_summary, verify_and_store_github_token, GitHubTokenRejected, GitHubUnreachable,
@@ -159,7 +159,7 @@ from backend.utils import initiation as initiation_utils
 from backend.utils import proactive_gates
 from backend.utils import reach as reach_utils
 from backend.utils import budget_guard
-from backend.utils import demo_project, guest_limits, guest_nudge
+from backend.utils import demo_project, guest_limits, guest_nudge, reply_tier
 from backend.utils import context_window, llm_turns, llm_usage, loop_watchdog
 from backend.utils import ops_digest as ops_digest_utils
 from backend.utils import ops_suggestions as ops_suggestions_utils
@@ -187,7 +187,7 @@ from backend.utils.shared_history import CALLBACK_MARK, build_callback_block, ca
 from backend.utils.user_settings_utils import (
     get_user_rag_mode, set_user_rag_mode, VALID_RAG_MODES,
     get_user_deep_thinking_mode, set_user_deep_thinking_mode, get_user_plan_mode, set_user_plan_mode,
-    tool_model_view, save_tool_model_choice, reply_model_view, save_reply_model_choice, execute_model_view, save_execute_model_choice,
+    tool_model_view, save_tool_model_choice, reply_model_view, save_reply_model_choice, reply_choice_for_turn, execute_model_view, save_execute_model_choice,
     get_user_target_repo, set_user_target_repo,
     get_user_settings_bundle,
     get_user_profile,
@@ -408,6 +408,7 @@ class ChatRequest(BaseModel):
     git_branch: str | None = None   # the git branch the connected folder is on, read by the browser from .git/HEAD (None when unknown or detached)
     edit_decisions: bool = False    # the page reports Apply / Decline back (POST /api/local-edits/{id}/decision), so the tool loop may wait for it and carry on
     runner_cards: bool = False      # the page can show a local-runner check card (Run / Cancel), so the run_local_check tool may be offered (backend/utils/runner_jobs.py)
+    reply_model: Optional[str] = None        # the shared guest's base-model choice ("gemini", "lite" or "auto"), kept in their browser because the guests share one settings record; honoured for the guest only (backend/utils/user_settings_utils.py reply_choice_for_turn)
     demo_project: Optional[bool] = None      # the shared guest chose a demo card, so this turn works on the server's demo project (backend/utils/demo_project.py); ignored for anyone else
     folder_expected: Optional[bool] = None   # the browser has a local folder connected (and may write to it), so a turn that finds none on the server can say so (the answer then used GitHub), and so an edit is only proposed where it can be applied. None: an older page that does not say
 
@@ -811,7 +812,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     effective_rag_mode = _settings["rag_mode"]
     effective_deep_thinking = _settings["deep_thinking"]
     effective_tool_model = _settings.get("tool_model")      # "claude" | "sonnet" | "gpt" | "gemini" | None (never chose: the server's default)
-    if _settings.get("reply_model") == "gpt":
+    reply_choice = reply_choice_for_turn(username, _settings.get("reply_model"), request.reply_model, lite_reply_available())     # "gemini" | "gpt" | "lite" | "auto" | None (backend/utils/reply_tier.py decides, per turn, who writes lite and auto)
+    if reply_choice == "gpt":
         response_llm = get_stream_llm(username, choice="gpt")       # the BASE model they chose, where the server offers it (otherwise the same Gemini model as above); see the safety override below
     effective_target_repo = _settings["target_repo"]
     user_profile = _settings.get("profile") or profile_utils.stored_profile({})  # what they set on the Account page (backend/utils/profile_utils.py)
@@ -1655,6 +1657,16 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # The model the person chose writes the reply, EXCEPT inside a safety context: that path (the support ladder, the listening mode, the checks around it) was built and evaluated on Gemini, so it
             # always gets Gemini whatever the base-model setting says.
             turn_llm = response_llm if risk_level == RISK_NONE else get_stream_llm(username)
+            # Lite and Auto (backend/utils/reply_tier.py): a cheaper model writes the turns it is safe to hand it, never inside a safety context. The decision reads the finished prompt, and only its reason is counted.
+            tier, tier_reason = reply_tier.pick(reply_choice, lite_ready=lite_reply_available(), risk_active=risk_level != RISK_NONE, prompt=prompt, question=question)
+            if tier == reply_tier.LITE:
+                lite_voice = get_lite_stream_llm(username)
+                if lite_voice is None:
+                    tier_reason = reply_tier.R_NOT_OFFERED
+                else:
+                    turn_llm = lite_voice
+                    prompt = lite_prompt(prompt, lite_voice)
+            tally(turn_counts, "reply_tier", tier_reason)
             token_stream = turn_llm.astream(prompt)
             async for chunk in token_stream:
                 # Same Stop check as the graph phase above — a user cutting off a response
@@ -3388,13 +3400,13 @@ async def get_reply_model_setting(current_user = Depends(get_current_user)):
     """Which model writes the reply the person reads (the BASE model): their own choice, else Gemini. `available` is whether GPT can be offered at all (an OpenAI key and a price are configured);
     guests and the embed are always Gemini."""
     username = current_user.get("sub")
-    return reply_model_view(username, openai_available())
+    return reply_model_view(username, openai_available(), lite_reply_available())
 
 
 @app.put("/api/settings/reply-model")
 async def update_reply_model_setting(payload: ReplyModelUpdate, current_user = Depends(get_current_user)):
     username = current_user.get("sub")
-    view, problem = save_reply_model_choice(username, payload.reply_model, openai_available())
+    view, problem = save_reply_model_choice(username, payload.reply_model, openai_available(), lite_reply_available())
     if problem:
         raise HTTPException(status_code=problem[0], detail=problem[1])
     return view

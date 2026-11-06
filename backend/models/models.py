@@ -427,3 +427,61 @@ def get_stream_llm(username: str, choice=None):
             _openai_llms["reply"] = openai_llm.OpenAILLM(model_name=openai_llm.DEFAULT_MODEL, fallback=stream_llm, effort=None)       # a reply is written at the model's own default effort (none)
         return _openai_llms["reply"]
     return stream_llm
+
+# ---- the lite voice (backend/utils/reply_tier.py; docs/model-eval-plan.md) --------------------------------------------------------------------------------------------------------
+# A cheaper model for replies, offered as the "Lite" and "Auto" choices of the base-model setting. LITE_REPLY_MODEL names it: a Gemini model (default gemini-3.5-flash-lite) or Claude Haiku ("haiku" or its
+# full name). Like every other model option it is offered only when LLM_PRICES lists it (the budget guard counts dollars from those prices) and, for Claude, when a key is set. Never for a guest or the
+# embedded view.
+LITE_REPLY_DEFAULT = "gemini-3.5-flash-lite"
+_lite_stream_llms: dict = {}
+
+
+def lite_reply_model_name() -> str:
+    """The lite reply model's name as the price table and the usage page know it."""
+    wanted = os.getenv("LITE_REPLY_MODEL", "").strip() or LITE_REPLY_DEFAULT
+    if wanted.lower() == "haiku":
+        from backend.models import claude_llm
+
+        return claude_llm.DEFAULT_MODEL
+    return wanted
+
+
+def _lite_is_claude(name: str) -> bool:
+    return name.lower().startswith("claude")
+
+
+def lite_reply_available() -> bool:
+    """Whether a lite voice can be offered: its price is in LLM_PRICES, and (for Claude) a key is configured."""
+    name = lite_reply_model_name()
+    if name not in llm_usage.cached_prices():
+        return False
+    if _lite_is_claude(name):
+        return claude_available()
+    return True
+
+
+def get_lite_stream_llm(username: str):
+    """The model that writes a lite reply, or None for a person who cannot have one (a guest, the embed) or a server that does not offer one. Claude Haiku is set up as the voice evals ran it: low effort,
+    thinking off, the persona sent as a system prompt with the check-in reminder last (backend/utils/claude_voice.py). Either way the standard reply model is the fallback, so a lite failure before the first
+    word is answered by the standard voice."""
+    if username in ("guest_bty",) or not lite_reply_available():
+        return None
+    name = lite_reply_model_name()
+    if name not in _lite_stream_llms:
+        if _lite_is_claude(name):
+            from backend.models import claude_llm
+
+            _lite_stream_llms[name] = claude_llm.ClaudeLLM(
+                model_name=name, fallback=stream_llm, effort="low", thinking_off=True, max_tokens=2000, voice_shape=True, voice_tail="checkin",
+            )
+        else:
+            _lite_stream_llms[name] = LazyLLM(model_name=name, fallback_model=stream_llm.model_name, temperature=0.7, thinking_level="minimal")
+    return _lite_stream_llms[name]
+
+
+def lite_prompt(prompt: str, llm: object) -> str:
+    """The prompt for a lite reply. A Claude model reshapes it itself (system prompt, closing reminder); a Gemini lite model reads the same flat prompt with the check-in reminder added last when a check-in
+    is due (the eval's `checkin` shape: backend/utils/claude_voice.with_tail). Nothing changes for the standard voice."""
+    from backend.utils import claude_voice
+
+    return prompt if getattr(llm, "voice_shape", False) else claude_voice.with_tail(prompt, "checkin")

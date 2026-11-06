@@ -23,6 +23,20 @@ Fields: `id`; `month` (YYYY-MM, newest first within the list is not required); `
 
 CHANGELOG = [
     {
+        "id": "lite_and_auto_voice",
+        "requires": [
+            "backend/utils/reply_tier.py::def pick",
+            "app.py::reply_tier.pick",
+        ],
+        "month": "2026-11",
+        "title": "A cheaper voice: Auto and Lite",
+        "line": (
+            "In the model menu you can now pick Auto, where a cheaper model writes plain turns like code and lookups and the standard voice keeps the ones where the voice matters, or Lite for every turn. A hard moment always gets the standard voice."
+        ),
+        "keywords": ["lite", "auto", "cheaper", "cheap model", "base model", "model menu", "which model", "voice"],
+        "volunteer": [],
+    },
+    {
         "id": "guest_demo_project",
         "requires": [
             "backend/utils/demo_project.py::def applies",

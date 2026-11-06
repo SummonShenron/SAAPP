@@ -57,21 +57,62 @@ def prices() -> Dict[str, Dict[str, float]]:
     return {**{name: dict(spec["price"]) for name, spec in CANDIDATES.items()}, **llm_usage.load_prices()}
 
 
-def make_llm(name: str, *, thinking: Optional[str] = "minimal", temperature: float = 0.7):
+def make_llm(name: str, *, thinking: Optional[str] = "minimal", temperature: float = 0.7, shape: str = ""):
     """`name` as the model for a reply or a structured job: no fallback (a failure is the candidate's failure, never another model's success). Claude runs at low effort with thinking off, the way the app runs
     its other Claude jobs; Gemini takes `thinking` ('minimal' is what the reply model uses)."""
     name = resolve(name)
     if CANDIDATES[name]["provider"] == "claude":
         from backend.models.claude_llm import ClaudeLLM
 
-        return ClaudeLLM(model_name=name, fallback=None, effort="low", thinking_off=True, max_tokens=2000)
+        return ClaudeLLM(model_name=name, fallback=None, effort="low", thinking_off=True, max_tokens=2000, voice_shape=(shape in ("system", "tail", "checkin")), voice_tail={"tail": "all", "checkin": "checkin"}.get(shape, ""))
     if CANDIDATES[name]["provider"] == "openai":
         from backend.models.openai_llm import OpenAILLM
 
         return OpenAILLM(model_name=name, fallback=None, effort=None, max_tokens=2000, max_retries=OPENAI_EVAL_RETRIES)      # the model's own default effort (none), as a reply is written
     from backend.models.models import LazyLLM
 
-    return LazyLLM(model_name=name, fallback_model=None, temperature=temperature, thinking_level=thinking)
+    llm = LazyLLM(model_name=name, fallback_model=None, temperature=temperature, thinking_level=thinking)
+    tail = {"tail": "all", "checkin": "checkin"}.get(shape, "")
+    return TailedLLM(llm, tail) if tail else llm
+
+
+class TailedLLM:
+    """An eval-only wrapper: the same model, with closing reminders added to the end of each reply prompt (backend/utils/claude_voice.with_tail). Used to ask whether a cheaper Gemini model also follows a rule better when it is the last thing it reads."""
+
+    def __init__(self, inner: Any, tail: str):
+        self.inner, self.tail = inner, tail
+
+    def invoke(self, prompt: Any, *args: Any, **kwargs: Any) -> Any:
+        from backend.utils import claude_voice
+
+        return self.inner.invoke(claude_voice.with_tail(prompt, self.tail) if isinstance(prompt, str) else prompt, *args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_") or name in ("inner", "tail"):
+            raise AttributeError(name)
+        return getattr(self.inner, name)
+
+
+class AutoLLM:
+    """An eval-only stand-in for the hybrid reply voice (backend/utils/reply_tier.py): each prompt goes to the lite model unless the same gate the app uses keeps the turn on the standard one. `stats` counts
+    where turns went and why, so a run can say how much of the traffic the hybrid moved."""
+
+    def __init__(self, lite: Any, standard: Any):
+        self.lite, self.standard = lite, standard
+        self.stats: Dict[str, int] = {}
+
+    def invoke(self, prompt: Any, *args: Any, **kwargs: Any) -> Any:
+        from backend.utils import reply_tier
+
+        reason = reply_tier.full_reason(prompt) if isinstance(prompt, str) else reply_tier.R_COMPANION
+        key = "lite" if reason is None else f"standard:{reason}"
+        self.stats[key] = self.stats.get(key, 0) + 1
+        return (self.standard if reason else self.lite).invoke(prompt, *args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_") or name in ("lite", "standard", "stats"):
+            raise AttributeError(name)
+        return getattr(self.standard, name)
 
 
 def make_tool_llm(name: str, fallback: Any = None):

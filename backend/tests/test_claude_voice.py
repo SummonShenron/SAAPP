@@ -1,0 +1,109 @@
+"""How a reply prompt is shaped for a Claude reply model (backend/utils/claude_voice.py). Claude only: Gemini's prompt is the same flat string it always was."""
+import re
+from pathlib import Path
+
+from langchain_core.messages import HumanMessage, SystemMessage
+
+from backend.components import constraints as c
+from backend.models.claude_llm import ClaudeLLM
+from backend.utils import claude_voice as cv
+
+
+def reply_prompt(**kwargs):
+    return c.build_voice_prompt(c.GROUNDING_BLOCKS["conversational"], kwargs.pop("data", ""), kwargs.pop("history", "User: hi\nAssistant: hello"), kwargs.pop("question", "can you help me plan my week?"), **kwargs)
+
+
+def test_a_reply_prompt_splits_into_the_stable_rules_and_this_turn_without_losing_a_word():
+    prompt = reply_prompt(emotional_context="\nEMOTIONAL CONTEXT: a check-in is due.\n", time_context="\nIt is Friday.\n")
+    system, user = cv.split_prompt(prompt)
+    assert system.startswith(c.SONIC_ASSISTANT_PERSONA.strip()[:80]) and system.endswith(c.ACTION_HONESTY.strip())
+    assert user.startswith("DATA:") and "EMOTIONAL CONTEXT: a check-in is due." in user and "can you help me plan my week?" in user
+    assert "EMOTIONAL CONTEXT" not in system and "CONVERSATION HISTORY" not in system          # what changes every turn stays out of the stable part
+    assert (system + "\n" + user).split() == prompt.split()                                      # the same words, in the same order
+
+
+def test_the_split_is_stable_across_turns_so_the_system_part_can_be_cached():
+    first = cv.split_prompt(reply_prompt(question="one thing", history="")) [0]
+    second = cv.split_prompt(reply_prompt(question="something else entirely", history="User: x\nAssistant: y", data="web results", emotional_context="\nEMOTIONAL CONTEXT: x\n"))[0]
+    assert first == second
+
+
+def test_a_prompt_that_is_not_a_reply_prompt_is_left_whole():
+    for text in ("just a question", "", "DATA:\nsome data", "\nDATA:\nwithout the persona before it", None, ["a", "b"], 42):
+        assert cv.split_prompt(text) is None, text
+
+
+def test_the_claude_wrapper_shapes_a_reply_only_when_asked_and_everything_else_is_one_user_message():
+    prompt = reply_prompt()
+    shaped = ClaudeLLM(model_name="claude-haiku-5-5", fallback=None, voice_shape=True)._to_messages(prompt)
+    assert [type(m) for m in shaped] == [SystemMessage, HumanMessage]
+    plain = ClaudeLLM(model_name="claude-haiku-5-5", fallback=None)._to_messages(prompt)           # the tool agent's wiring: voice_shape stays off
+    assert len(plain) == 1 and isinstance(plain[0], HumanMessage) and plain[0].content == prompt
+    odd = ClaudeLLM(model_name="claude-haiku-5-5", fallback=None, voice_shape=True)._to_messages("a different job's prompt")
+    assert len(odd) == 1 and isinstance(odd[0], HumanMessage)
+
+
+def test_only_the_claude_wrapper_uses_it_so_gemini_and_the_app_are_untouched():
+    users = []
+    for path in Path("backend").rglob("*.py"):
+        if "tests" in path.parts or "evals" in path.parts or path.name == "claude_voice.py":
+            continue
+        if re.search(r"\bclaude_voice\b", path.read_text(encoding="utf-8")):
+            users.append(path.as_posix())
+    assert users == ["backend/models/claude_llm.py", "backend/models/models.py"]          # the wrapper, and the lite voice's prompt helper; nothing in app.py or the standard voice
+    assert "claude_voice" not in Path("app.py").read_text(encoding="utf-8")
+
+
+def test_the_eval_passes_the_shape_to_a_claude_reply_model_and_to_nothing_else():
+    from backend.evals import eval_models
+
+    assert eval_models.make_llm("haiku", shape="system").voice_shape is True
+    assert eval_models.make_llm("haiku").voice_shape is False
+    assert "--shape" in Path("backend/evals/character_eval.py").read_text(encoding="utf-8")
+
+
+def test_the_closing_reminders_go_last_and_the_checkin_one_only_when_a_checkin_is_due():
+    from backend.utils.emotion_checkin import build_block
+
+    plain = cv.split_prompt(reply_prompt(), tail="all")[1]
+    assert plain.endswith(cv.STANDING_REMINDER.strip()) and cv.CHECKIN_REMINDER.strip() not in plain
+    assert plain.index("When in doubt, leave it out.") < plain.index("REMINDERS")                       # after the follow-up rule, which is the last thing the flat prompt says
+    due = cv.split_prompt(reply_prompt(emotional_context=build_block()), tail="all")[1]
+    assert due.endswith(cv.CHECKIN_REMINDER.strip()) and cv.STANDING_REMINDER.strip() in due
+    assert cv.CHECKIN_MARKER in build_block()                                                         # the marker is the check-in section's own opening words
+    assert cv.split_prompt(reply_prompt(), tail="")[1] == cv.split_prompt(reply_prompt())[1]       # without the tail the split adds nothing
+    assert "REMINDERS" not in cv.split_prompt(reply_prompt())[1]
+
+
+def test_the_wrapper_adds_the_reminders_only_with_voice_tail():
+    shaped = ClaudeLLM(model_name="claude-haiku-5-5", fallback=None, voice_shape=True, voice_tail="all")._to_messages(reply_prompt())
+    assert shaped[1].content.rstrip().endswith(cv.STANDING_REMINDER.strip())
+    assert "REMINDERS" not in ClaudeLLM(model_name="claude-haiku-5-5", fallback=None, voice_shape=True)._to_messages(reply_prompt())[1].content
+    from backend.evals import eval_models
+
+    assert eval_models.make_llm("haiku", shape="tail").voice_tail == "all" and eval_models.make_llm("haiku", shape="system").voice_tail == "" and eval_models.make_llm("haiku", shape="checkin").voice_tail == "checkin"
+
+
+def test_the_check_in_only_tail_adds_one_reminder_and_only_when_a_check_in_is_due():
+    from backend.utils.emotion_checkin import build_block
+
+    none_due = cv.split_prompt(reply_prompt(), tail="checkin")[1]
+    assert none_due == cv.split_prompt(reply_prompt())[1]                                              # no check-in due: nothing added, not even the standing rules
+    due = cv.split_prompt(reply_prompt(emotional_context=build_block()), tail="checkin")[1]
+    assert due.endswith(cv.CHECKIN_ONLY_REMINDER.strip()) and cv.STANDING_REMINDER.strip() not in due and "outranks the follow-up rule" in due
+
+
+def test_with_tail_is_pure_and_the_eval_wrapper_adds_it_for_a_gemini_model_without_touching_the_app():
+    from backend.evals import eval_models
+    from backend.utils.emotion_checkin import build_block
+
+    due = reply_prompt(emotional_context=build_block())
+    assert cv.with_tail(due, "") == due and cv.with_tail(due, "checkin") == due + cv.CHECKIN_ONLY_REMINDER
+    quiet = reply_prompt()
+    assert cv.with_tail(quiet, "checkin") == quiet and cv.with_tail(quiet, "all").endswith(cv.STANDING_REMINDER)
+    seen = []
+    inner = type("Fake", (), {"invoke": lambda self, prompt, *a, **k: seen.append(prompt) or "ok", "other": 7})()
+    wrapped = eval_models.TailedLLM(inner, "checkin")
+    assert wrapped.invoke(due) == "ok" and seen[-1].endswith(cv.CHECKIN_ONLY_REMINDER.strip()) and wrapped.other == 7
+    assert isinstance(eval_models.make_llm("gemini-3.5-flash-lite", shape="checkin"), eval_models.TailedLLM)
+    assert not isinstance(eval_models.make_llm("gemini-3.5-flash-lite"), eval_models.TailedLLM)

@@ -155,7 +155,7 @@ function RobotMark() {
   );
 }
 
-const ICON_NAMES: Record<string, IconName> = { plan: 'checklist', swift: 'bolt', deep: 'brain', grounded: 'book', open: 'globe' };
+const ICON_NAMES: Record<string, IconName> = { plan: 'checklist', swift: 'bolt', deep: 'brain', grounded: 'book', open: 'globe', lite: 'bolt', auto: 'brain' };
 
 /** The icon for one state of one chip. */
 export function glyph(id: string): React.ReactNode {
@@ -239,7 +239,9 @@ function PresetRow({ code, execute, custom, onCustom, onDone }: { code: ChipCont
 export function ModelChoices({ base, code, execute = null, onDone, className }: { base: ChipControl | null; code: ChipControl | null; execute?: ChipControl | null; onDone: () => void; className: string }) {
   const [custom, setCustom] = useState(false);
   const hasPresets = code !== null && PRESETS.some(preset => presetAvailable(preset, code.hide, execute !== null, execute?.hide));
-  const showRaw = !hasPresets || custom || presetOf(code ? code.value : null, execute ? execute.value : null) === 'custom';
+  // Every model the person can choose is always listed: the Tool and Execute columns stay open under the presets row (a preset is a shortcut for them, never a way to hide them), so a change of model never leaves a
+  // person looking at a popup that no longer shows what else they could pick.
+  const showRaw = true;
   return (
     <div className={`${className} cc-cols`} role="menu" aria-label="Models">
       {code && hasPresets && <PresetRow code={code} execute={execute} custom={custom} onCustom={() => setCustom(true)} onDone={onDone} />}
