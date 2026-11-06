@@ -66,7 +66,7 @@ def test_guests_and_the_embed_always_get_gemini_as_the_base_model(who):
 
 def test_the_base_model_view_offers_gpt_only_where_the_server_can():
     usu.set_user_reply_model("jack", "gpt")
-    assert usu.reply_model_view("jack", gpt_ready=False) == {"reply_model": "gemini", "choice": "gpt", "default": "gemini", "available": False, "gpt_available": False}
+    assert usu.reply_model_view("jack", gpt_ready=False) == {"reply_model": "gemini", "choice": "gpt", "default": "gemini", "available": False, "gpt_available": False, "lite_available": False, "browser_only": False}
     on = usu.reply_model_view("jack", gpt_ready=True)
     assert on["reply_model"] == "gpt" and on["available"] is True and on["gpt_available"] is True
     assert usu.reply_model_view("alice", gpt_ready=True)["reply_model"] == "gemini"                 # never chose: the default
@@ -74,7 +74,7 @@ def test_the_base_model_view_offers_gpt_only_where_the_server_can():
 
 
 def test_saving_a_base_model_refuses_what_cannot_be_offered():
-    assert usu.save_reply_model_choice("jack", "gpt-9", True) == (None, (400, "reply_model must be 'gemini' or 'gpt'"))
+    assert usu.save_reply_model_choice("jack", "gpt-9", True) == (None, (400, "reply_model must be 'gemini', 'gpt', 'lite' or 'auto'"))
     view, problem = usu.save_reply_model_choice("jack", "gpt", gpt_ready=False)
     assert view is None and problem[0] == 409 and usu.get_user_reply_model("jack") is None              # nothing saved
     view, problem = usu.save_reply_model_choice("jack", "gpt", gpt_ready=True)
@@ -168,15 +168,16 @@ def test_the_app_has_signed_in_endpoints_for_the_base_model_and_offers_gpt_only_
     for route in ('@app.get("/api/settings/reply-model")', '@app.put("/api/settings/reply-model")'):
         start = APP.index(route)
         assert "Depends(get_current_user)" in APP[start: start + 260], route
-    assert "reply_model_view(username, openai_available())" in APP
-    assert "save_reply_model_choice(username, payload.reply_model, openai_available())" in APP
+    assert "reply_model_view(username, openai_available(), lite_reply_available())" in APP
+    assert "save_reply_model_choice(username, payload.reply_model, openai_available(), lite_reply_available())" in APP
     assert "save_tool_model_choice(username, payload.tool_model, claude_available(), sonnet_available(), openai_available())" in APP
     assert "tool_model_view(username, claude_available(), sonnet_available(), openai_available())" in APP
     assert "class ReplyModelUpdate(BaseModel):\n    reply_model: str" in APP
 
 
 def test_the_chosen_base_model_writes_the_reply_except_inside_a_safety_context():
-    assert 'if _settings.get("reply_model") == "gpt":\n        response_llm = get_stream_llm(username, choice="gpt")' in APP
+    assert 'if reply_choice == "gpt":\n        response_llm = get_stream_llm(username, choice="gpt")' in APP
     assert "turn_llm = response_llm if risk_level == RISK_NONE else get_stream_llm(username)" in APP
+    assert "tier, tier_reason = reply_tier.pick(reply_choice, lite_ready=lite_reply_available(), risk_active=risk_level != RISK_NONE, prompt=prompt, question=question)" in APP     # a safety context is never lite
     assert "response_llm.astream" not in APP                                                      # every stream, a rewrite and a correction included, goes through turn_llm
     assert APP.count("turn_llm.astream(") == 3

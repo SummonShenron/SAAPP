@@ -129,11 +129,13 @@ test('the settings are only in the side panel, on every screen: never under the 
 test('the model chip is two settings in one popup: the Base model (who writes the reply) and the Tool model (who does the code steps)', () => {
   assert.equal(BASE_MODEL.title, 'Base model');
   assert.equal(CHIPS.model.title, 'Tool / Planner model');
-  assert.deepEqual(BASE_MODEL.options.map(option => option.id), ['gemini', 'gpt']);
+  assert.deepEqual(BASE_MODEL.options.map(option => option.id), ['gemini', 'auto', 'lite', 'gpt']);
   assert.equal(BASE_MODEL.ordinary, 'gemini');
   for (const option of [...BASE_MODEL.options, ...CHIPS.model.options]) assert.ok(option.short && option.short.length <= 40, `${option.id} has a short line that fits a half-width column`);
   assert.equal(specOption(BASE_MODEL, 'nonsense').id, 'gemini');                                 // an unknown value reads as Gemini
   assert.match(specOption(BASE_MODEL, 'gpt').hint, /Gemini whatever this says/);                  // the safety rule is stated where the choice is made
+  assert.match(specOption(BASE_MODEL, 'lite').hint, /safety context where Sonic always uses Gemini/);   // and for Lite
+  assert.match(specOption(BASE_MODEL, 'auto').hint, /safety context/);                                 // and for Auto, which also says what stays on Gemini
 });
 
 test('the model chip shows the first model that is not the ordinary one, Base first, and is highlighted when either differs', () => {
@@ -167,7 +169,7 @@ test('the two-column popup and its wiring: ModelChoices in the column card and t
   const rail = readFileSync(new URL('./SessionRail.tsx', import.meta.url), 'utf8');
   assert.match(rail, /<ModelChoices base=\{settings\.baseModel\} code=\{settings\.model\}/);
   const chat = readFileSync(new URL('../pages/Chat.tsx', import.meta.url), 'utf8');
-  assert.match(chat, /baseModel: replyModelAvailable \? \{ value: replyModel, onChange: id => \{ void handleReplyModelChange\(id as ReplyModel\); \} \} : null,/);
+  assert.match(chat, /baseModel: replyModelAvailable\s*\? \{ value: replyModel, onChange: id => \{ void handleReplyModelChange\(id as ReplyModel\); \}, hide: \[\.\.\.\(replyGptAvailable \? \[\] : \['gpt'\]\), \.\.\.\(replyLiteAvailable \? \[\] : \['auto', 'lite'\]\)\] \}\s*: null,/);      // each choice is left out where the server does not offer it
   assert.match(chat, /setReplyModelAvailable\(data\.available\)/);
   const css = readFileSync(new URL('./__styles__/ComposerChips.css', import.meta.url), 'utf8');
   assert.match(css, /\.cc-cols \{ display: grid; grid-template-columns: repeat\(auto-fit, minmax\(120px, 1fr\)\)/);
@@ -330,7 +332,7 @@ test('the popup shows the presets row, applies a preset to both controls, and ke
   assert.match(chips, /presetAvailable\(preset, code\.hide, execute !== null, execute\?\.hide\)/);
   assert.match(chips, /if \(next\.code !== code\.value\) code\.onChange\(next\.code\);/);
   assert.match(chips, /if \(execute && next\.execute !== null && next\.execute !== execute\.value\) execute\.onChange\(next\.execute\);/);
-  assert.match(chips, /const showRaw = !hasPresets \|\| custom \|\| presetOf\(code \? code\.value : null, execute \? execute\.value : null\) === 'custom';/);
+  assert.match(chips, /const showRaw = true;/);                                                      // every model the person can choose is always listed: a preset is a shortcut, never a way to hide them
   assert.match(chips, /\{showRaw && code && <OptionList spec=\{CHIPS\.model\}/);
   assert.match(chips, /\{showRaw && execute && <OptionList spec=\{EXECUTE_MODEL\}/);
   assert.match(chips, /\{base && <OptionList spec=\{BASE_MODEL\}/);                                  // the Base model is never part of a preset
@@ -348,4 +350,19 @@ test('the blocked banner adds the server\'s planned-paid-option sentence and no 
   assert.match(api, /upgrade_note\?: string;/);
   const help = readFileSync(new URL('./helpContent.tsx', import.meta.url), 'utf8');
   assert.match(help, /A paid option for people who want more is planned, but it isn't available yet\./);
+});
+
+test('Lite voice and Auto: a guest keeps the choice in this browser and sends it with each message, a signed-in person saves it, and the popup always lists every model', () => {
+  const chat = readFileSync(new URL('../pages/Chat.tsx', import.meta.url), 'utf8');
+  const api = readFileSync(new URL('../api.ts', import.meta.url), 'utf8');
+  assert.match(api, /export type ReplyModel = 'gemini' \| 'gpt' \| 'lite' \| 'auto';/);
+  assert.match(api, /lite_available: boolean;/);
+  assert.match(api, /browser_only: boolean;/);
+  assert.match(api, /demoProject = false,\s*guestReplyModel: ReplyModel \| null = null/);
+  assert.match(api, /reply_model: guestReplyModel,/);
+  assert.match(chat, /setReplyModel\(data\.browser_only \? guestReplyModelChoice\(\) : data\.reply_model\);/);       // a guest starts from what this browser remembers
+  assert.match(chat, /if \(replyBrowserOnly\) \{[\s\S]*?localStorage\.setItem\(GUEST_REPLY_MODEL_KEY, next\)[\s\S]*?return;\s*\}\s*try \{\s*const result = await api\.updateReplyModel\(next\)/);        // a guest's choice returns before the settings endpoint is called
+  assert.match(chat, /return stored === 'lite' \|\| stored === 'auto' \? stored : 'gemini';/);                       // only the cheaper choices are ever remembered
+  const chips = readFileSync(new URL('./ComposerChips.tsx', import.meta.url), 'utf8');
+  assert.match(chips, /const showRaw = true;/);
 });

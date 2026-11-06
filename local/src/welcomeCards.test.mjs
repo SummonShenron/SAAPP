@@ -30,7 +30,7 @@ test('the page tells the server a conversation is about the demo project until a
   assert.match(chat, /const demoProjectRef = useRef\(false\)/);
   assert.match(chat, /demoProjectRef\.current = card\.demo === true;\s*handleSendMessage\(card\.text/);
   assert.equal((chat.match(/demoProjectRef\.current = false;/g) ?? []).length, 2, 'both ways of starting a new conversation reset it');
-  assert.match(chat, /true,\s*demoProjectRef\.current\s*\);/);
+  assert.match(chat, /true,\s*demoProjectRef\.current,\s*replyBrowserOnly \? replyModel : null\s*\);/);
   assert.match(chat, /demo: payload\.demo === true,/);
   assert.match(chat, /proposal\.demo \? \{ auto: false \} : decideAutoApply/);        // nothing is applied to the demo, whatever the approval level says
   assert.match(chat, /onSignUp=\{\(\) => \{ void api\.logout\(\); \}\}/);
