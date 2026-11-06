@@ -25,6 +25,12 @@ CHECKIN_ONLY_REMINDER = (
     "\n\nREMINDER (this restates the CHECK-IN section above, and it outranks the follow-up rule): a CHECK-IN is due this reply. It is not an optional follow-up. Answer fully first, then END the reply with "
     "one short, warm question to them about how they are doing, in plain words, specific to what they went through earlier."
 )
+# The cheaper Gemini model writes replies about 43% as long as the standard voice (mean 257 characters against 594 on the 24 voice scenarios, 2026-11-06), most of all on advice and code explanations. This asks for
+# the depth the question deserves, and only that: it restates how the persona already treats a real question, and leaves a casual remark short.
+FULLER_REMINDER = (
+    "\n\nREMINDER ON DEPTH: match the depth of the question. A how-to, a plan, a flaw you are pointing out or a code question gets the complete answer: the steps or the code, the reason behind them, and the one "
+    "thing most likely to go wrong. A casual remark, a thanks or a plain acknowledgement stays short."
+)
 CHECKIN_REMINDER = (
     "- A CHECK-IN is due this reply (the CHECK-IN section above). It is not an optional follow-up and the follow-up rule does not apply to it: answer fully first, then END the reply with one short, warm "
     "question to them about how they are doing, in plain words, specific to what they went through earlier.\n"
@@ -37,12 +43,14 @@ def with_tail(text: str, tail: str = "") -> str:
         return text + STANDING_REMINDER + (CHECKIN_REMINDER if CHECKIN_MARKER in text else "")
     if tail == "checkin" and CHECKIN_MARKER in text:
         return text + CHECKIN_ONLY_REMINDER
+    if tail == "fuller":
+        return text + (CHECKIN_ONLY_REMINDER if CHECKIN_MARKER in text else "") + FULLER_REMINDER
     return text
 
 
 def split_prompt(prompt: object, tail: str = "") -> Optional[Tuple[str, str]]:
     """(system, user) for a reply prompt built by build_voice_prompt, or None when it is not one (then it is sent whole, as it always was). The system part must end with the honesty rules,
-    which is how the usual shape is recognised; a prompt that merely contains the word DATA is not split. `tail` adds closing reminders to the end of the user part: "checkin" only the check-in one (and only when a check-in is due), "all" the standing ones as well."""
+    which is how the usual shape is recognised; a prompt that merely contains the word DATA is not split. `tail` adds closing reminders to the end of the user part: "checkin" only the check-in one (and only when a check-in is due), "all" the standing ones as well, "fuller" the check-in one and a reminder to match the depth of the question."""
     from backend.components.constraints import ACTION_HONESTY, SONIC_ASSISTANT_PERSONA
 
     if not isinstance(prompt, str):

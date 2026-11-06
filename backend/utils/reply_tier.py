@@ -1,7 +1,7 @@
 """Which model writes a turn's reply: the standard voice, or a cheaper "lite" one (docs/model-eval-plan.md, the reply-voice evals of 2026-11-02 and 2026-11-06).
 
 THE CHOICE. A person's base-model setting is "gemini" (the standard voice, the default), "gpt", "lite" (Gemini flash-lite for every turn it is safe to use it on), "haiku" (Claude Haiku, likewise) or "auto" (a hybrid:
-flash-lite for plain turns, the standard voice for the turns where the voice is the point). Pure: this module only decides; app.py runs the model it names.
+Claude Haiku, or flash-lite where Haiku is not offered, for plain turns; the standard voice for the turns where the voice is the point). Pure: this module only decides; app.py runs the model it names.
 
 WHERE LITE IS NEVER USED, whatever the setting. A safety context (the support ladder, the listening mode, the checks around them) was built and measured on the standard voice, so it always gets it.
 
@@ -118,16 +118,17 @@ def _message_of(prompt: str) -> str:
 
 def pick(choice: Optional[str], *, lite_ready: bool, risk_active: bool, prompt: object, question: object = "", haiku_ready: bool = False) -> Tuple[str, str]:
     """(tier, reason): STANDARD, LITE (Gemini flash-lite) or HAIKU (Claude Haiku) for this turn. `choice` is the person's base-model setting ("gemini", "gpt", "lite", "haiku", "auto" or None); `lite_ready` and
-    `haiku_ready` are whether this server offers each model. Auto always means flash-lite: it is the model the hybrid was measured with (docs/model-eval-plan.md)."""
+    `haiku_ready` are whether this server offers each model. Auto writes its plain turns with Claude Haiku where the server offers it (it writes replies as long as the standard voice, where flash-lite writes under
+    half as much: docs/model-eval-plan.md) and with flash-lite where only that is offered."""
     if choice not in ("lite", "haiku", "auto"):
         return STANDARD, R_STANDARD_SETTING
     if risk_active:
         return STANDARD, R_SAFETY
-    if not (haiku_ready if choice == "haiku" else lite_ready):
+    if not ((lite_ready or haiku_ready) if choice == "auto" else haiku_ready if choice == "haiku" else lite_ready):
         return STANDARD, R_NOT_OFFERED
     if choice == "haiku":
         return HAIKU, R_HAIKU_SETTING
     if choice == "lite":
         return LITE, R_LITE_SETTING
     reason = full_reason(prompt, question=question)
-    return (STANDARD, reason) if reason else (LITE, R_AUTO_PLAIN)
+    return (STANDARD, reason) if reason else ((HAIKU if haiku_ready else LITE), R_AUTO_PLAIN)

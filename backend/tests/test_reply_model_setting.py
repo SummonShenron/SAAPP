@@ -66,7 +66,7 @@ def test_guests_and_the_embed_always_get_gemini_as_the_base_model(who):
 
 def test_the_base_model_view_offers_gpt_only_where_the_server_can():
     usu.set_user_reply_model("jack", "gpt")
-    assert usu.reply_model_view("jack", gpt_ready=False) == {"reply_model": "gemini", "choice": "gpt", "default": "gemini", "available": False, "gpt_available": False, "lite_available": False, "haiku_available": False, "browser_only": False}
+    assert usu.reply_model_view("jack", gpt_ready=False) == {"reply_model": "gemini", "choice": "gpt", "default": "gemini", "available": False, "gpt_available": False, "lite_available": False, "haiku_available": False, "auto_available": False, "browser_only": False}
     on = usu.reply_model_view("jack", gpt_ready=True)
     assert on["reply_model"] == "gpt" and on["available"] is True and on["gpt_available"] is True
     assert usu.reply_model_view("alice", gpt_ready=True)["reply_model"] == "gemini"                 # never chose: the default

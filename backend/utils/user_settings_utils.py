@@ -295,7 +295,7 @@ def set_user_reply_model(username: str, mode: str) -> Optional[str]:
 
 def reply_model_view(username: str, gpt_ready: bool, lite_ready: bool = False, haiku_ready: bool = False) -> dict:
     """What the model chip shows for the BASE model: the model in effect, whether the person chose it, the default, and which choices this person is offered. GPT needs a key and a price on the server and is
-    never for a guest; Lite and Auto need a priced lite model and are offered to a guest too (their choice stays in their browser: `browser_only`), never to the embedded view. Without an offer the effective
+    never for a guest; Gemini Lite needs flash-lite priced, Claude Haiku a Claude key and a price, and Auto either one; all are offered to a guest too (their choice stays in their browser: `browser_only`), never to the embedded view. Without an offer the effective
     model is Gemini whatever was stored."""
     stored = get_user_reply_model(username)
     embed = username in TOGGLE_LOCKED_USERS
@@ -303,13 +303,15 @@ def reply_model_view(username: str, gpt_ready: bool, lite_ready: bool = False, h
     gpt_offered = bool(gpt_ready) and username not in TOOL_MODEL_LOCKED_USERS
     lite_offered = bool(lite_ready) and not embed
     haiku_offered = bool(haiku_ready) and not embed
+    auto_offered = lite_offered or haiku_offered                       # Auto uses Haiku where it is offered and flash-lite where only that is
     allowed = (
-        (stored == REPLY_MODEL_GPT and gpt_offered) or (stored in (REPLY_MODEL_LITE, REPLY_MODEL_AUTO) and lite_offered and not guest) or (stored == REPLY_MODEL_HAIKU and haiku_offered and not guest)
+        (stored == REPLY_MODEL_GPT and gpt_offered) or (stored == REPLY_MODEL_LITE and lite_offered and not guest) or (stored == REPLY_MODEL_HAIKU and haiku_offered and not guest)
+        or (stored == REPLY_MODEL_AUTO and auto_offered and not guest)
     )
     effective = stored if allowed else REPLY_MODEL_GEMINI
     return {
         "reply_model": effective, "choice": stored, "default": REPLY_MODEL_GEMINI, "available": gpt_offered or lite_offered or haiku_offered,
-        "gpt_available": gpt_offered, "lite_available": lite_offered, "haiku_available": haiku_offered, "browser_only": guest,
+        "gpt_available": gpt_offered, "lite_available": lite_offered, "haiku_available": haiku_offered, "auto_available": auto_offered, "browser_only": guest,
     }
 
 
@@ -319,7 +321,7 @@ def reply_choice_for_turn(username: str, stored: Optional[str], requested: Optio
     if username in TOGGLE_LOCKED_USERS:
         return REPLY_MODEL_GEMINI
     if username in TOOL_MODEL_LOCKED_USERS:
-        offered = haiku_ready if requested == REPLY_MODEL_HAIKU else lite_ready
+        offered = haiku_ready if requested == REPLY_MODEL_HAIKU else (lite_ready or haiku_ready) if requested == REPLY_MODEL_AUTO else lite_ready
         return requested if (requested in GUEST_REPLY_CHOICES and offered) else REPLY_MODEL_GEMINI
     return stored
 
@@ -331,8 +333,10 @@ def save_reply_model_choice(username: str, mode: str, gpt_ready: bool, lite_read
         return None, (400, "reply_model must be 'gemini', 'gpt', 'lite', 'haiku' or 'auto'")
     if mode == REPLY_MODEL_GPT and not gpt_ready:
         return None, (409, "GPT isn't set up on this server, so it can't be used yet.")
-    if mode in (REPLY_MODEL_LITE, REPLY_MODEL_AUTO) and not lite_ready:
+    if mode == REPLY_MODEL_LITE and not lite_ready:
         return None, (409, "A lite voice isn't set up on this server, so it can't be used yet.")
+    if mode == REPLY_MODEL_AUTO and not (lite_ready or haiku_ready):
+        return None, (409, "No cheaper voice is set up on this server, so Auto can't be used yet.")
     if mode == REPLY_MODEL_HAIKU and not haiku_ready:
         return None, (409, "Claude Haiku isn't set up on this server, so it can't be used yet.")
     if username not in TOOL_MODEL_LOCKED_USERS:

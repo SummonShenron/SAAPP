@@ -244,10 +244,11 @@ export function ModelChoices({ base, code, execute = null, onDone, className }: 
   const showRaw = true;
   return (
     <div className={`${className} cc-cols`} role="menu" aria-label="Models">
-      {code && hasPresets && <PresetRow code={code} execute={execute} custom={custom} onCustom={() => setCustom(true)} onDone={onDone} />}
       {base && <OptionList spec={BASE_MODEL} control={base} onDone={onDone} compact />}
       {showRaw && code && <OptionList spec={CHIPS.model} control={code} onDone={onDone} compact />}
       {showRaw && execute && <OptionList spec={EXECUTE_MODEL} control={execute} onDone={onDone} compact />}
+      {/* The presets are a shortcut for the Tool and Execute columns above, so they sit last: the models come first, the one-press settings under them. */}
+      {code && hasPresets && <PresetRow code={code} execute={execute} custom={custom} onCustom={() => setCustom(true)} onDone={onDone} />}
     </div>
   );
 }

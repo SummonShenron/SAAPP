@@ -2493,7 +2493,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
       : null,
     // The BASE model (which model writes the reply): a choice only where the server can run GPT.
     baseModel: replyModelAvailable
-      ? { value: replyModel, onChange: id => { void handleReplyModelChange(id as ReplyModel); }, hide: [...(replyGptAvailable ? [] : ['gpt']), ...(replyLiteAvailable ? [] : ['auto', 'lite']), ...(replyHaikuAvailable ? [] : ['haiku'])] }
+      ? { value: replyModel, onChange: id => { void handleReplyModelChange(id as ReplyModel); }, hide: [...(replyGptAvailable ? [] : ['gpt']), ...(replyLiteAvailable || replyHaikuAvailable ? [] : ['auto']), ...(replyLiteAvailable ? [] : ['lite']), ...(replyHaikuAvailable ? [] : ['haiku'])] }
       : null,
     // The EXECUTE model (who carries out an approved plan): only where plans exist (a connected folder that can be edited) and there is a provider to choose besides Gemini; each provider is left out where the server does not offer it.
     executeModel: workspace.canEdit && executeSetting?.available

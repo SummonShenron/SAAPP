@@ -32,7 +32,7 @@ export const PrivacyPage: React.FC = () => {
         </p>
         <ul>
           <li>
-            <strong>As the Base model:</strong> if you choose Claude Haiku as your Base model, what you type, the recent conversation and the notes about you that Sonic uses for that reply go to Anthropic instead of Google to write the reply. Choose Gemini, Auto or Gemini Lite and nothing goes to Anthropic for replies. Inside a safety context Sonic always uses Gemini, whatever this says. A guest's choice applies only to that guest's own messages.
+            <strong>As the Base model:</strong> if you choose Claude Haiku as your Base model (or Auto, for its plain turns), what you type, the recent conversation and the notes about you that Sonic uses for that reply go to Anthropic instead of Google to write the reply. If you choose Auto, the plain turns (code, documents and lookups, never a turn where you are carrying a feeling or have asked about Sonic itself) are written by Claude Haiku where the server offers it, so those go to Anthropic too; Gemini writes the rest. Choose Gemini or Gemini Lite and nothing goes to Anthropic for replies. Inside a safety context Sonic always uses Gemini, whatever this says. A guest's choice applies only to that guest's own messages.
           </li>
           <li>
             <strong>If you choose it:</strong> when you set the Tool model to Claude, the tool steps of a request (your question, the code, emails, events, files or search results Sonic reads while working

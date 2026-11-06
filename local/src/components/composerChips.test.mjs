@@ -138,6 +138,8 @@ test('the model chip is two settings in one popup: the Base model (who writes th
   assert.match(specOption(BASE_MODEL, 'haiku').hint, /safety context where Sonic always uses Gemini/);  // and for Claude Haiku, which also says where the messages go
   assert.match(specOption(BASE_MODEL, 'haiku').hint, /go to Anthropic/);
   assert.match(specOption(BASE_MODEL, 'auto').hint, /safety context/);                                 // and for Auto, which also says what stays on Gemini
+  assert.match(specOption(BASE_MODEL, 'auto').hint, /Claude Haiku \(Anthropic\) writes the plain turns/);   // Auto's plain turns are Haiku's, and the hint says where they go
+  assert.match(specOption(BASE_MODEL, 'auto').hint, /Plain turns go to Anthropic/);
 });
 
 test('the model chip shows the first model that is not the ordinary one, Base first, and is highlighted when either differs', () => {
@@ -171,7 +173,7 @@ test('the two-column popup and its wiring: ModelChoices in the column card and t
   const rail = readFileSync(new URL('./SessionRail.tsx', import.meta.url), 'utf8');
   assert.match(rail, /<ModelChoices base=\{settings\.baseModel\} code=\{settings\.model\}/);
   const chat = readFileSync(new URL('../pages/Chat.tsx', import.meta.url), 'utf8');
-  assert.match(chat, /baseModel: replyModelAvailable\s*\? \{ value: replyModel, onChange: id => \{ void handleReplyModelChange\(id as ReplyModel\); \}, hide: \[\.\.\.\(replyGptAvailable \? \[\] : \['gpt'\]\), \.\.\.\(replyLiteAvailable \? \[\] : \['auto', 'lite'\]\), \.\.\.\(replyHaikuAvailable \? \[\] : \['haiku'\]\)\] \}\s*: null,/);      // each choice is left out where the server does not offer it
+  assert.match(chat, /baseModel: replyModelAvailable\s*\? \{ value: replyModel, onChange: id => \{ void handleReplyModelChange\(id as ReplyModel\); \}, hide: \[\.\.\.\(replyGptAvailable \? \[\] : \['gpt'\]\), \.\.\.\(replyLiteAvailable \|\| replyHaikuAvailable \? \[\] : \['auto'\]\), \.\.\.\(replyLiteAvailable \? \[\] : \['lite'\]\), \.\.\.\(replyHaikuAvailable \? \[\] : \['haiku'\]\)\] \}\s*: null,/);      // each choice is left out where the server does not offer it; Auto needs only one of the two cheaper models
   assert.match(chat, /setReplyModelAvailable\(data\.available\)/);
   const css = readFileSync(new URL('./__styles__/ComposerChips.css', import.meta.url), 'utf8');
   assert.match(css, /\.cc-cols \{ display: grid; grid-template-columns: repeat\(auto-fit, minmax\(120px, 1fr\)\)/);
@@ -368,4 +370,14 @@ test('Lite voice and Auto: a guest keeps the choice in this browser and sends it
   assert.match(chat, /return stored === 'lite' \|\| stored === 'haiku' \|\| stored === 'auto' \? stored : 'gemini';/);       // only the cheaper choices are ever remembered
   const chips = readFileSync(new URL('./ComposerChips.tsx', import.meta.url), 'utf8');
   assert.match(chips, /const showRaw = true;/);
+});
+
+test('the presets row is the last thing in the model popup: the models come first and the one-press shortcuts sit under them', () => {
+  const chips = readFileSync(new URL('./ComposerChips.tsx', import.meta.url), 'utf8');
+  const popup = chips.slice(chips.indexOf('export function ModelChoices('), chips.indexOf('export function modelChip('));
+  const at = (needle) => popup.indexOf(needle);
+  assert.ok(at('<OptionList spec={BASE_MODEL}') > 0 && at('<OptionList spec={BASE_MODEL}') < at('<OptionList spec={CHIPS.model}'));
+  assert.ok(at('<OptionList spec={CHIPS.model}') < at('<OptionList spec={EXECUTE_MODEL}'));
+  assert.ok(at('<OptionList spec={EXECUTE_MODEL}') < at('<PresetRow '), 'the presets come after every model column');
+  assert.equal(popup.split('<PresetRow ').length - 1, 1, 'and appear once');
 });

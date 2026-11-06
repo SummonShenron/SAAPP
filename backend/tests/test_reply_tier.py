@@ -95,7 +95,12 @@ def test_the_setting_decides_who_may_write_and_a_safety_context_is_never_lite():
     assert rt.pick("haiku", lite_ready=False, haiku_ready=True, risk_active=False, prompt=plain) == (rt.HAIKU, rt.R_HAIKU_SETTING)              # Haiku needs only itself, not the Gemini lite model
     assert rt.pick("haiku", lite_ready=True, haiku_ready=False, risk_active=False, prompt=plain) == (rt.STANDARD, rt.R_NOT_OFFERED)
     assert rt.pick("haiku", lite_ready=True, haiku_ready=True, risk_active=False, prompt=prompt_of(emotional_context=build_block())) == (rt.HAIKU, rt.R_HAIKU_SETTING)   # like Lite, it is the person's call everywhere but safety
-    assert rt.pick("auto", lite_ready=True, haiku_ready=True, risk_active=False, prompt=plain) == (rt.LITE, rt.R_AUTO_PLAIN)                       # Auto is the measured hybrid: always flash-lite
+    assert rt.pick("auto", lite_ready=True, haiku_ready=True, risk_active=False, prompt=plain) == (rt.HAIKU, rt.R_AUTO_PLAIN)                      # Auto writes plain turns with Haiku (full-length replies) where it is offered
+    assert rt.pick("auto", lite_ready=True, haiku_ready=False, risk_active=False, prompt=plain) == (rt.LITE, rt.R_AUTO_PLAIN)                     # and with flash-lite where only that is
+    assert rt.pick("auto", lite_ready=False, haiku_ready=True, risk_active=False, prompt=plain) == (rt.HAIKU, rt.R_AUTO_PLAIN)                    # Auto needs only ONE of the two
+    assert rt.pick("auto", lite_ready=False, haiku_ready=False, risk_active=False, prompt=plain) == (rt.STANDARD, rt.R_NOT_OFFERED)
+    assert rt.pick("auto", lite_ready=True, haiku_ready=True, risk_active=False, prompt=prompt_of(emotional_context=build_block())) == (rt.STANDARD, rt.R_CHECKIN)    # the gate is the same whichever model writes the plain turns
+    assert rt.pick("auto", lite_ready=True, haiku_ready=True, risk_active=True, prompt=plain) == (rt.STANDARD, rt.R_SAFETY)
     assert rt.pick("auto", lite_ready=True, risk_active=False, prompt=plain) == (rt.LITE, rt.R_AUTO_PLAIN)
     assert rt.pick("auto", lite_ready=True, risk_active=False, prompt=prompt_of(emotional_context=build_block())) == (rt.STANDARD, rt.R_CHECKIN)
     assert rt.pick("lite", lite_ready=True, risk_active=False, prompt=prompt_of(emotional_context=build_block())) == (rt.LITE, rt.R_LITE_SETTING)       # Lite is the person's call everywhere but safety
@@ -123,6 +128,8 @@ def test_lite_and_auto_are_offered_where_a_lite_voice_exists_and_a_guest_keeps_t
     assert jack["available"] and jack["lite_available"] and jack["haiku_available"] and not jack["gpt_available"] and not jack["browser_only"]
     only_haiku = usu.reply_model_view("jack", gpt_ready=False, lite_ready=False, haiku_ready=True)
     assert only_haiku["available"] and only_haiku["haiku_available"] and not only_haiku["lite_available"]            # either cheaper model can be offered without the other
+    assert only_haiku["auto_available"] and jack["auto_available"] and usu.reply_model_view("jack", gpt_ready=False, lite_ready=True)["auto_available"]       # Auto needs only one of them
+    assert not usu.reply_model_view("jack", gpt_ready=True, lite_ready=False, haiku_ready=False)["auto_available"]
     guest = usu.reply_model_view(GUEST, gpt_ready=True, lite_ready=True, haiku_ready=True)
     assert guest["lite_available"] and guest["haiku_available"] and not guest["gpt_available"] and guest["browser_only"] and guest["reply_model"] == "gemini"
     embed = usu.reply_model_view("guest_bty", gpt_ready=True, lite_ready=True, haiku_ready=True)
@@ -133,6 +140,9 @@ def test_lite_and_auto_are_offered_where_a_lite_voice_exists_and_a_guest_keeps_t
 def test_saving_lite_needs_a_lite_voice_and_a_guest_save_changes_nothing_for_anyone():
     assert usu.save_reply_model_choice("jack", "lite", False, False)[1][0] == 409 and usu.get_user_reply_model("jack") is None
     assert usu.save_reply_model_choice("jack", "haiku", False, True, False)[1][0] == 409 and usu.get_user_reply_model("jack") is None            # Haiku needs its own offer, not just a lite model
+    assert usu.save_reply_model_choice("jack", "auto", False, False, False)[1][0] == 409 and usu.get_user_reply_model("jack") is None            # Auto needs at least one cheaper model
+    view, problem = usu.save_reply_model_choice("jack", "auto", False, False, True)
+    assert problem is None and view["reply_model"] == "auto"                                                                                    # and is fine with Haiku alone
     view, problem = usu.save_reply_model_choice("jack", "haiku", False, False, True)
     assert problem is None and view["reply_model"] == "haiku" and usu.get_user_reply_model("jack") == "haiku"
     view, problem = usu.save_reply_model_choice("jack", "auto", False, True)
@@ -148,6 +158,7 @@ def test_a_turn_runs_on_the_stored_choice_and_a_guest_on_what_their_browser_sent
     assert turn("jack", "auto", None, True) == "auto" and turn("jack", None, "lite", True) is None            # a signed-in person: the stored choice only
     assert turn(GUEST, None, "auto", True) == "auto" and turn(GUEST, None, "lite", True) == "lite"
     assert turn(GUEST, None, "haiku", True, True) == "haiku" and turn(GUEST, None, "haiku", True, False) == "gemini" and turn(GUEST, None, "lite", False, True) == "gemini"     # each needs its own offer
+    assert turn(GUEST, None, "auto", False, True) == "auto" and turn(GUEST, None, "auto", True, False) == "auto" and turn(GUEST, None, "auto", False, False) == "gemini"       # Auto needs either
     assert turn(GUEST, None, "gpt", True) == "gemini" and turn(GUEST, None, "auto", False) == "gemini" and turn(GUEST, None, None, True) == "gemini"
     assert turn("guest_bty", "lite", "lite", True) == "gemini"                                 # the embedded view is never lite
 
