@@ -381,15 +381,16 @@ _NUMBER_RE = re.compile(r"\d[\d,.]*")
 _URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
 
 
-def summary_issue(summary: str, page_text: str) -> Optional[str]:
-    """What is wrong with a written summary, or None. Pure and fixed: the model never decides whether its own summary is acceptable."""
+def summary_issue(summary: str, page_text: str, *, min_words: int = SUMMARY_MIN_WORDS, max_words: int = SUMMARY_MAX_WORDS, max_chars: int = SUMMARY_MAX_CHARS) -> Optional[str]:
+    """What is wrong with a written summary, or None. Pure and fixed: the model never decides whether its own summary is acceptable. The length limits are the shelf's own unless the
+    caller says otherwise (the knowledge base's cards are longer: backend/utils/knowledge_base.py); every other rule is the same for both."""
     from backend.services.tool_agent_memory import reads_as_an_order
     from backend.utils.interest_anchor import is_sensitive
 
     text = (summary or "").strip()
     words = text.split()
-    if not (SUMMARY_MIN_WORDS <= len(words) <= SUMMARY_MAX_WORDS) or len(text) > SUMMARY_MAX_CHARS:
-        return f"not {SUMMARY_MIN_WORDS}-{SUMMARY_MAX_WORDS} words"
+    if not (min_words <= len(words) <= max_words) or len(text) > max_chars:
+        return f"not {min_words}-{max_words} words"
     if "\n" in text or _URL_RE.search(text):
         return "not one plain passage"
     if _FIRST_PERSON_RE.search(text):

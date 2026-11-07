@@ -1451,6 +1451,56 @@ export function refreshReadingShelf(): Promise<ReadingShelf> {
   return adminRequest('/api/admin/reading-shelf/refresh', 'POST');
 }
 
+/** A card of Sonic's own knowledge base that is live: written from a public page, approved by an admin, readable by every user's Sonic (backend/utils/knowledge_base.py). */
+export interface LearnedCard {
+  key: string;
+  url: string;
+  domain: string;
+  title: string;
+  kind: string;
+  body: string;
+  approved_at: string | null;
+  expires_at: string | null;
+  expired: boolean;
+  /** How many times a search returned it to the model: what the ceiling's eviction reads. */
+  uses: number;
+  last_used_at: string | null;
+}
+
+/** A card Sonic proposed that nobody can read until an admin approves it. */
+export interface PendingCard {
+  key: string;
+  url: string;
+  domain: string;
+  title: string;
+  kind: string;
+  body: string;
+  proposed_at: string | null;
+  /** Who asked Sonic to learn the page: a member (look hardest) or an admin. Never which person. */
+  by?: 'admin' | 'member';
+}
+
+export interface LearnedKnowledge {
+  live: LearnedCard[];
+  pending: PendingCard[];
+  tombstones: number;
+  max_cards: number;
+  proposals_left_today: number;
+  member_proposals_per_day: number;
+  min_score: number;
+  expiry_days: Record<string, number>;
+  worst_case_mb: number;
+  never_used: number;
+}
+
+export function getLearnedKnowledge(): Promise<LearnedKnowledge> {
+  return adminRequest<LearnedKnowledge>('/api/admin/knowledge', 'GET');
+}
+
+export function decideLearnedCard(key: string, action: 'approve' | 'reject' | 'remove'): Promise<LearnedKnowledge> {
+  return adminRequest(`/api/admin/knowledge/${encodeURIComponent(key)}/${action}`, 'POST');
+}
+
 export interface OpsSuggestion {
   key: string;
   kind: 'recurring' | 'stale' | 'review';
@@ -2751,6 +2801,8 @@ export const api = {
   removeShelfItem,
   unblockShelfSource,
   refreshReadingShelf,
+  getLearnedKnowledge,
+  decideLearnedCard,
   writeShelfReflections,
   decideShelfReflection,
   getOpsSuggestions,

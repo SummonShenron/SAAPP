@@ -20,8 +20,8 @@ test('a group id never collides with a section id of another group (their elemen
   }
 });
 
-test('the menu shrinks fifteen flat tabs to six items, with Home and Safety opening directly', () => {
-  assert.equal(TABS.length, 15);
+test('the menu shrinks sixteen flat tabs to six items, with Home and Safety opening directly', () => {
+  assert.equal(TABS.length, 16);
   assert.equal(GROUPS.length, 6);
   assert.deepEqual(GROUPS.filter(g => g.tabs.length === 1).map(g => g.id), ['home', 'safety']);
   assert.equal(GROUPS[0].id, 'home');

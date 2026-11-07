@@ -63,7 +63,7 @@ Removing the follow-up removes a consent step, so replace what it did:
 
 0. **Finish moving off the old engine** (planned for 2026-11-04): the browser tools only exist there, and Sonic itself said the pipeline waits on "the browser tool running natively".
 1. **Grounded-mode rework** (tools plus web by default, follow-up removed, citations, the "I couldn't find it" rule, privacy text). Valuable on its own and needed before anything is stored from the web. Write the grounded-behaviour eval first.
-2. **Global base v1:** a public library (for example `Sonic_Global`), appended to every signed-in user's scope in grounded mode, written only by the pipeline. One tool, `propose_kb_entry`: fetch one URL, guess the type, write the card, show it for an admin to approve (the Apply-card pattern), then ingest with provenance. Two types.
+2. **Global base v1 (with the bounded-growth rules at the end of this document: ceiling, eviction by use, tombstones, use counters first):** a public library (for example `Sonic_Global`), appended to every signed-in user's scope in grounded mode, written only by the pipeline. One tool, `propose_kb_entry`: fetch one URL, guess the type, write the card, show it for an admin to approve (the Apply-card pattern), then ingest with provenance. Two types.
 3. **Shelf to base:** promote chosen reading-shelf items into the base as `article` cards, after the same checks, with admin approval at first.
 4. **Entity cards and graph edges; refresh and expiry; allowlisted sources that can ingest without approval; per-domain limits.** Only then anything like crawling.
 5. Throughout: counters in `self_counters.py` first, Sonic Health rows, a retrieval/grounding eval (answers from the base, cites it, does not inject irrelevant hits, resists a poisoned card), a changelog entry at each step that ships.
@@ -100,3 +100,59 @@ Consequence for the build: v1 needs a trigger-phrase detector (a router flag or 
 5. **Cost:** the embedding and the second-model check per card; bounded by the daily cap.
 
 **Where it sits in the order:** after the first-ten-minutes experience for new signed-in users and the funnel counters; it pays off only with repeat topics and more than one regular user. Before building: add a counter for how often a web read repeats a domain Sonic has read before, so the value is measured, not guessed.
+
+## Bounded growth: the base is a cache of the web, with a hard ceiling (Jack asked, 2026-11-07)
+
+**The question:** how does the base never fill up? Jack's first idea was decaying embeddings. **Decision:** not decay alone. Decay makes size depend on time, so a burst of ingestion can fill the tier long before anything decays; it deletes stable facts nobody asked about lately; and an embedding itself does not change (only a card's score, or the card, can decay). The base is treated as a CACHE of the web instead: forgetting is cheap, because Sonic can fetch the page again if it is asked again.
+
+**Real numbers (measured read-only 2026-11-07, Mongo free tier M0, 512 MB):**
+- The database holds about 158 MB of storage today (142 MB data, 5 MB indexes); the largest collection is `fs.chunks` (uploads, 87 MB), then memory chunks (22 MB) and their archive (18 MB).
+- An embedded document is about **10.3 to 11 KB** (768-dimension `gemini-embedding-001` vectors: 10,315 bytes for one archived memory chunk; `documents` averages 10,964 bytes). So a card costs about 11 KB.
+- **2,000 cards is about 22 MB typically**, about 4% of the tier. The TESTED worst case (every character counted as four bytes, a full waiting queue and full tombstones) is about 43 MB, 8.5% of the tier (`knowledge_base.worst_case_bytes`, pinned below 10%). `KB_MAX_CARDS` cannot be set above 3,000.
+- **The free tier allows 3 search indexes and 2 are used** (`documents.vector_index`, `user_memory_chunks.user_memory_vector_index`). So the base reuses the `documents` collection and its existing vector index (a public library scope, as in the plan above) and must NOT add a third index for itself.
+
+**The rules**
+1. **Hard ceiling on cards.** An env value (`KB_MAX_CARDS`, default 2,000), checked on every write, with the existing per-day ingest cap beside it. A `worst_case_bytes` function and test like the reading shelf's (`reading_shelf.py`: `MAX_LIVE_ITEMS`, `MAX_TOMBSTONES`, `worst_case_bytes`), so the ceiling in bytes is a tested number, not a hope.
+2. **Evict by use, not age.** At the ceiling, the card that goes is a never-used one first (oldest first), then the one used longest ago. "Used" means the card was retrieved AND reached the model for the answer, not merely appeared in a search. Plain code, no model call. The write that triggered the eviction is the one that lands, so the base never refuses to learn.
+3. **Tombstones.** An evicted or expired card shrinks to a few fields (canonical URL, content hash, when, why), no text and no vector, capped in number. A tombstone stops the page being re-ingested the same day and still lets a later, deliberate request bring it back.
+4. **Freshness expiry by type, separate from the ceiling.** Time still matters for facts that go stale: news and articles expire (the shelf uses 180 days), reference pages are re-checked, evergreen pages last longest. An expired card is not served until it is refreshed. Expiry is about being right; the ceiling is about size.
+5. **Dedupe on the way in:** canonical URL plus content hash, so one page cannot take two slots.
+6. **Retrieval stays small:** a score threshold and at most a few base hits per turn (plan point 6), so a bigger base does not mean noisier answers.
+
+**Counters first (`self_counters.py`, counts only, letters-only keys):** `kb_card_used` (a card reached the model), `kb_card_written`, `kb_evicted`, `kb_expired`, and a repeat-read count (the same page fetched again within the window: it measures demand and tells us whether the cache is thrashing). Sonic Health rows follow. If `kb_evicted` climbs while `kb_card_used` is flat, the ceiling is too small or Sonic is learning things nobody asks about.
+
+**Not decided:** the exact ceiling (2,000 is a start, to be raised only after real use data); the per-type expiry days; whether memory and uploads growth, which share the same 512 MB, needs a similar ceiling of its own (`fs.chunks` is already more than half of what is used, and is not part of this change).
+
+
+## Build status (v1 BUILT, uncommitted, 2026-11-07; Jack: "do option 1")
+
+**What exists**
+- `backend/utils/knowledge_base.py`: the store and every size rule (ceiling `KB_MAX_CARDS` default 2000 / hard max 3000, eviction by use, tombstones, expiry by kind, dedupe on canonical address and content hash, daily proposal cap `KB_DAILY_PROPOSALS` 10, waiting queue cap 50 / 30 days, search with `KB_MIN_SCORE` 0.80, `worst_case_bytes`). Approved cards are documents in `documents` with `affiliate = Sonic_Global` (the existing `vector_index`; no third search index).
+- `backend/services/knowledge_cards.py`: `propose_for_agent`: fixed address rules, daily cap, one safe fetch, duplicate check, a model writes the card, the reading shelf's fixed checks (names and numbers must be in the page; no link, order, first person or sensitive ground) with card-length limits, then a second model call must confirm the page supports it. The card is stored PENDING only.
+- Tools in the tool agent: `search_my_knowledge` (everyone, guests included; offered only once a card exists, from a 5-minute cached check) and `propose_kb_entry` (any signed-in member; guests refused by a menu gate plus a dispatcher check; ONLY an admin can approve a card, see "Members may ask" below). Native schemas, trace subject and excerpt, and both untrusted-content lists name them.
+- Admin endpoints (`/api/admin/knowledge`, `/approve`, `/reject`, `/remove`) and the Sonic Health section **Learned knowledge** (Knowledge group); a counters card on the Turns tab. The upload path refuses the `Sonic_Global` affiliate for everyone, admins included.
+- Counters (`self_counters.KB_KEYS`, all recorded): `kb_proposed`, `kb_proposal_refused`, `kb_approved`, `kb_rejected`, `kb_removed`, `kb_evicted`, `kb_expired`, `kb_searches`, `kb_search_empty`, `kb_card_used`. A changelog entry (`own_knowledge_base`).
+- Tests: `test_knowledge_base.py`, `test_knowledge_cards.py`, `test_knowledge_tools.py`, `test_knowledge_admin.py`, `sonicHealthLearned.test.mjs`, and additions to `sonicHealthGuest.test.mjs`.
+
+**Decisions I made that Jack may want to change**
+- A card is read through a TOOL (`search_my_knowledge`), not injected into the prompt, as the 2026-11-07 revision says. So it is used only when the model decides to search; the menu line says when.
+- "Used" for eviction means a search returned the card to the model, not that the final answer cited it.
+- Only removed and rejected pages are blocked from being proposed again; an evicted or expired one can be learned again.
+- `reddit.com` is on the base's blocked-source list (the reading shelf's list also blocks Wikipedia and Medium; the base allows both).
+- The model that writes and checks cards is `lite_llm` (the shelf's summary model), twice per proposal.
+
+**Not done / not checked**
+- Never run against a real model, a real page or the real Atlas index. The `$vectorSearch` pipeline is checked for its shape (library filter, existing index, no vector pulled back), not run. `KB_MIN_SCORE` 0.80 is a guess: read `kb_search_empty` against `kb_card_used` after real use.
+- The Sonic Health section was type-checked and its wiring pinned by tests, but not opened on a real signed-in admin screen (no Clerk sign-in from the tooling).
+- Not built: the grounded-mode rework (the base is NOT part of grounded answers; only the tool reads it), "learn this" trigger phrases beyond the model choosing the tool, refresh of a stale page (an expired card just expires), promoting reading-shelf items, a pending-count badge on the tab, the repeat-read counter (needs a record of pages read, with its own privacy question), and a guard that refuses to write from a turn with an emotional or safety context (a member names the address, and every card is approved by an admin).
+- The Privacy page was not changed: a question put to `search_my_knowledge` is embedded like a library search already is.
+
+
+## Members may ask, only an admin approves (2026-11-07; Jack: "anyone can tell sonic to learn something but only an admin approves the card to prevent poisoning")
+
+- **Who can ask:** every signed-in member (`propose_kb_entry` is on the menu for anyone who is not a shared guest identity, and the dispatcher refuses a guest even if the menu were bypassed). Guests stay out because they are shared identities, so a per-person limit would mean nothing for them.
+- **Who can decide:** admins only. The three decision endpoints are `require_global_admin`; nothing in the tool agent or the proposal service calls `approve` (a test scans for it). A card is not embedded, so not searchable by anyone, until then.
+- **Why that is the poisoning defence:** the member, the model and the page can all be hostile; only a person who reads the card against the page makes it live for everyone. The fixed checks (every name and number must be in the page, no links or orders, a second model must confirm support) reduce what an admin has to catch, they do not replace the admin. A page can still be wrong or slanted; the card carries its source and date.
+- **Spam and spend:** each proposal costs one fetch and two cheap model calls. A member gets `KB_USER_DAILY_PROPOSALS` (default 3) a day and the whole base `KB_DAILY_PROPOSALS` (default 10); an admin is held to neither, so a crowd cannot lock an admin out. All proposals share the queue cap of 50, which also bounds the worst-case size (unchanged: about 43 MB).
+- **What is stored about who asked:** nothing that names anyone. A card says only `by: "member"` or `by: "admin"`, and Learned knowledge shows a stronger "read the page itself" warning for a member's card. A member's count for the day is kept under a one-way hash (`sonic_kb_state`, replaced the next day).
+- **Not done:** the member is not told when their card is approved or turned down (the reply says it waits for an admin and that Sonic cannot say when); no way to see "my pending requests"; no per-domain reputation; no block on a member whose cards keep being rejected; a hostile crowd of NEW accounts could still fill the queue of 50 until an admin clears it (they expire after 30 days). Not run against a real model.

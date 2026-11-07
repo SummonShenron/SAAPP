@@ -49,6 +49,12 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
         "max_results": {"type": "integer", "description": "default 6, max 12"},
     }, ["query"]),
     "list_library_files": _object({}),
+    # Sonic's own knowledge base (backend/utils/knowledge_base.py): cards written from public pages an admin approved, shared by everyone; and the admin-only proposal of one more page (backend/services/knowledge_cards.py)
+    "search_my_knowledge": _object({
+        "query": {"type": "string", "description": "the topic or name to look for, in plain words"},
+        "max_results": {"type": "integer", "description": "default 4, max 6"},
+    }, ["query"]),
+    "propose_kb_entry": _object({"url": {"type": "string", "description": "an https address of one public page"}}, ["url"]),
     # what Sonic remembers about the current person (backend/services/tool_agent_memory.py): their facts and notes of earlier conversations, never anyone else's
     "search_memory": _object({
         "query": {"type": "string", "description": "what to look for, in plain words: a project, a preference, a decision, a name, something they did or planned"},
