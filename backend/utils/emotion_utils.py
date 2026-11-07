@@ -197,6 +197,12 @@ NO_REFERRAL_RULE = (
     "mention a helpline, unless they ask for that or say something about hurting themselves. Staying with what they told you is the help. If they mention a particular person, you may refer to "
     "that person naturally.\n"
 )
+# The second half of the same trouble (2026-11-07, a real reply): asked "what do I do in the meantime", a Claude model answered with a bold four-item to-do list, named a friend to lean on, and closed with
+# "call emergency services right away" about chest pressure that came from older context, not from this message. Nobody talks like that. Same placement and same exception handling as the rule above.
+PLAIN_TALK_RULE = (
+    "- Talk the way a friend would. If they ask what to do, give at most one or two small things, in ordinary sentences: no list, no bold, no step-by-step plan. Do not bring up a physical symptom or health detail from earlier "
+    "conversations or recalled context, only one they have just mentioned (this outranks any callback or recalled context), and do not add a medical or emergency warning (call emergency services, see a doctor) unless they describe something severe, sudden or new.\n"
+)
 _LOW_NEED = {
     "venting": (
         "- They mainly want to be heard right now. Stay with what they're feeling and don't jump "
@@ -353,7 +359,7 @@ def build_emotional_context(state: Optional[Dict[str, Any]], now: datetime, *, s
         # "Fresh" because this message carried a (positive) reading, but the carried feeling is still
         # negative: that's a lift, not new distress, so it takes the ceiling block below.
         if fresh and not state.get("lift_this_turn"):
-            return _CONTEXT_HEADER + _LOW_BASE.format(valence=valence, referral="" if safety else NO_REFERRAL_RULE) + _LOW_NEED[need]
+            return _CONTEXT_HEADER + _LOW_BASE.format(valence=valence, referral="" if safety else NO_REFERRAL_RULE + PLAIN_TALK_RULE) + _LOW_NEED[need]
         gist = str(state.get("gist") or "").strip()
         about = f" ({gist})" if gist else ""
         turns = int(state.get("turns_since", 0) or 0)

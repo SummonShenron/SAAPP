@@ -35,8 +35,9 @@ FULLER_REMINDER = (
 # little low, and in the first read of the rule mid-prompt that habit won. Only when the block carrying the rule is in the prompt (a safety turn's block leaves it out, a carried or positive block never had it).
 REFERRAL_MARKER = "Don't send them elsewhere."
 REFERRAL_REMINDER = (
-    "\n\nREMINDER (this restates \"Don't send them elsewhere\" above): do not suggest they reach out to or talk to a friend, family member, therapist or other professional, and do not mention a "
-    "helpline, unless they ask for that or say something about hurting themselves. Stay with what they told you."
+    "\n\nREMINDER (this restates \"Don't send them elsewhere\" and \"Talk the way a friend would\" above): do not suggest they reach out to or talk to a friend, family member, therapist or other professional, "
+    "and do not mention a helpline, unless they ask for that or say something about hurting themselves. Stay with what they told you. Plain sentences, no list and no bold; at most one or two small suggestions; "
+    "no symptom or health detail from earlier or recalled context, only one they have just mentioned, and no emergency or medical warning unless they describe something severe, sudden or new."
 )
 CHECKIN_REMINDER = (
     "- A CHECK-IN is due this reply (the CHECK-IN section above). It is not an optional follow-up and the follow-up rule does not apply to it: answer fully first, then END the reply with one short, warm "

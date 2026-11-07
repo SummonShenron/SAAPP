@@ -136,3 +136,8 @@ def test_a_haiku_reply_to_a_mildly_low_message_ends_on_the_reminder_and_the_chec
     shaped = ClaudeLLM(model_name="claude-haiku-5-5", fallback=None, voice_shape=True, voice_tail="checkin")._to_messages(prompt)           # how the app builds the Haiku voice (models.get_haiku_stream_llm)
     last = shaped[1].content.rstrip()
     assert last.endswith(cv.REFERRAL_REMINDER.strip()) and last.index(cv.CHECKIN_ONLY_REMINDER.strip()) < last.index(cv.REFERRAL_REMINDER.strip())
+
+
+def test_the_closing_reminder_also_restates_the_plain_talk_rule_so_a_claude_reply_ends_on_it():
+    assert "Talk the way a friend would" in cv.REFERRAL_REMINDER and "no list and no bold" in cv.REFERRAL_REMINDER
+    assert "no symptom or health detail from earlier or recalled context" in cv.REFERRAL_REMINDER and "severe, sudden or new" in cv.REFERRAL_REMINDER

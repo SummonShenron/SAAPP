@@ -696,3 +696,13 @@ def test_the_app_passes_the_safety_flag_from_the_plan_and_nowhere_else_builds_th
     source = pathlib.Path("app.py").read_text(encoding="utf-8").replace("\r\n", "\n")
     assert "final_state.get(\"emotional_state\"), datetime.now(timezone.utc), safety=safety_plan.active" in source
     assert source.count("build_emotional_context(") == 1
+
+
+def test_the_fresh_low_mood_block_also_asks_for_plain_talk_and_leaves_symptoms_and_warnings_to_what_they_just_said():
+    context = eu.build_emotional_context(_fresh("low", 0.6, "solving"), NOW)
+    assert eu.PLAIN_TALK_RULE in context and "Talk the way a friend would." in context
+    for part in ("no list, no bold, no step-by-step plan", "a physical symptom or health detail from earlier conversations or recalled context", "only one they have just mentioned",
+                 "outranks any callback or recalled context", "(call emergency services, see a doctor) unless they describe something severe, sudden or new"):
+        assert part in context, part
+    assert eu.PLAIN_TALK_RULE not in eu.build_emotional_context(_fresh("low", 0.6, "solving"), NOW, safety=True)                      # a safety plan shapes its own reply
+    assert eu.PLAIN_TALK_RULE not in eu.build_emotional_context(_carried(turns_since=2), NOW)
