@@ -29,9 +29,17 @@ def enabled() -> bool:
     return os.getenv("GUEST_DEMO_PROJECT", "1").strip().lower() not in {"0", "off", "false", "no"}
 
 
-def applies(username: Optional[str], requested: object) -> bool:
-    """Whether this turn works on the demo: the shared guest, the page said the visitor is on a demo card, and the demo is switched on."""
-    return bool(requested) and enabled() and (username or "").strip().lower() == GUEST
+def applies(username: Optional[str], requested: object, has_folder: bool = False) -> bool:
+    """Whether this turn works on the demo: the page said the person is on a demo card and the demo is switched on, AND either they are the shared guest, or they are a signed-in person with NO folder of their own
+    (a new account trying it before connecting a project: their own folder always wins, so it is never replaced). The embedded view never gets it."""
+    if not (bool(requested) and enabled()):
+        return False
+    name = (username or "").strip().lower()
+    if name == GUEST:
+        return True
+    from backend.services.local_workspace import is_guest_username
+
+    return bool(name) and name != OWNER and not is_guest_username(name) and not has_folder
 
 
 FILES: Dict[str, str] = {

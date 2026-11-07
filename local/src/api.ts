@@ -1486,7 +1486,21 @@ export async function getExampleCards(affiliate: string): Promise<ExampleCard[]>
   return cards.length ? cards : questions.map(text => ({ text }));
 }
 
-export interface ExampleCard { text: string; label?: string; action?: 'attach'; prompt?: string }
+/** A welcome card the server builds (backend/utils/example_questions.py). `prefill` leaves `prompt` in the message box to edit; `open` goes to the page at `path`; `demo` says the conversation works on the demo project; `kind` is counted when
+ *  the card is pressed (a new-account card). */
+export interface ExampleCard { text: string; label?: string; action?: 'attach' | 'open' | 'prefill'; prompt?: string; path?: string; demo?: boolean; kind?: string }
+
+/** A press of a new-account welcome card, counted by kind (counts only: backend/utils/activation.py). Never throws and never waits: a card must work whether or not the count does. */
+export function trackWelcomeCard(kind: string): void {
+  void (async () => {
+    try {
+      const authHeaders = await getAuthHeaders();
+      await fetch(`${BASE_URL}/api/welcome-click`, { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json', ...authHeaders }, body: JSON.stringify({ kind }) });
+    } catch {
+      // not counted
+    }
+  })();
+}
 
 async function fetchExamplePayload(affiliate: string): Promise<{ questions: string[]; cards: ExampleCard[] }> {
   const authHeaders = await getAuthHeaders();
@@ -2673,6 +2687,7 @@ export const api = {
   getBudget,
   getGuestAllowance,
   guestSignUp,
+  trackWelcomeCard,
   getBilling,
   getBillingQuote,
   startBillingCheckout,

@@ -13,8 +13,11 @@ interface LocalEditCardProps {
   onUndo: (proposalId: string) => Promise<UndoResult>;
   /** Reports Apply (after the files were written) or Decline to the turn that is waiting on this proposal. */
   onDecision?: (proposalId: string, outcome: 'applied' | 'declined' | 'undone', reason: string) => void;
-  /** The demo project's card only: what the "Sign up" button does (the page's own sign-up path). */
+  /** The demo project's card only: what its button does (a guest signs up; a signed-in person connects their own project). */
   onSignUp?: () => void;
+  /** The demo project's card only: the button's words where they are not the guest's "Sign up to apply this to your own project", and whether it can be pressed here. */
+  demoLabel?: string;
+  demoDisabled?: boolean;
 }
 
 function diffLineClass(line: string): string {
@@ -29,7 +32,7 @@ function diffLineClass(line: string): string {
  * A change Sonic proposes to the user's connected local folder, shown as a diff. Nothing is
  * written until Apply is pressed, and an applied change can be undone in one click.
  */
-export default function LocalEditCard({ proposal, canApply, onApply, onUndo, onDecision, onSignUp }: LocalEditCardProps) {
+export default function LocalEditCard({ proposal, canApply, onApply, onUndo, onDecision, onSignUp, demoLabel, demoDisabled }: LocalEditCardProps) {
   const [phase, setPhase] = useState<Phase>('pending');
   const [declining, setDeclining] = useState(false);
   const [reason, setReason] = useState('');
@@ -147,7 +150,7 @@ export default function LocalEditCard({ proposal, canApply, onApply, onUndo, onD
         {proposal.demo && (
           // The demo project is the server's made-up project: there is nothing to write to, so the choice is to sign up and ask for this on a project of their own.
           <>
-            <button type="button" className="led-btn led-btn-primary" data-help="chat.guest_signup" onClick={() => onSignUp?.()}>Sign up to apply this to your own project</button>
+            <button type="button" className="led-btn led-btn-primary" data-help="chat.guest_signup" onClick={() => onSignUp?.()} disabled={demoDisabled}>{demoLabel ?? 'Sign up to apply this to your own project'}</button>
             <span className="led-note">This is a demo project, so nothing was changed.</span>
           </>
         )}

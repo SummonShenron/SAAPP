@@ -59,3 +59,27 @@ export const voiceTotal = (totals: Totals): number => voiceRows(totals).reduce((
 export const cheaperWrote = (totals: Totals): number => VOICE_REASONS.filter(([, , cheaper]) => cheaper).reduce((sum, [reason]) => sum + count(totals, `reply_tier_${reason}`), 0);
 
 export const share = (part: number, whole: number): string => (whole > 0 ? `${Math.round((part / whole) * 100)}%` : '-');
+
+
+// ---- new accounts (backend/utils/activation.py) ----------------------------------------------------------------------------------------------------------------------------------------
+/** The first steps to value, each counted once per signed-in person (EVENTS), in the order a new account is led through them. */
+export const ACTIVATION_STEPS: ReadonlyArray<readonly [string, string]> = [
+  ['folder', 'Connected a project folder'],
+  ['applied', 'Had a proposed change applied'],
+  ['memory', 'Saved a first memory'],
+  ['runner', 'Connected a runner'],
+  ['document', 'Added a document to their knowledge base'],
+];
+
+/** Which new-account welcome card was pressed (KINDS), worded as the card is on the screen. */
+export const WELCOME_KINDS: ReadonlyArray<readonly [string, string]> = [
+  ['demo', 'Watch Sonic fix a bug in the demo project'],
+  ['remember', 'Tell Sonic something to remember'],
+  ['runner', "Run my project's checks on my own computer"],
+  ['document', 'Add a document to your own knowledge base'],
+];
+
+export const activationRows = (totals: Totals): Row[] => ACTIVATION_STEPS.map(([key, label]) => ({ key, label, count: count(totals, `activation_${key}`) }));
+export const welcomeRows = (totals: Totals): Row[] => WELCOME_KINDS.map(([key, label]) => ({ key, label, count: count(totals, `welcome_card_${key}`) }));
+export const activationTotal = (totals: Totals): number => activationRows(totals).reduce((sum, row) => sum + row.count, 0);
+export const welcomeTotal = (totals: Totals): number => welcomeRows(totals).reduce((sum, row) => sum + row.count, 0);

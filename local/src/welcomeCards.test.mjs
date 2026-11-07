@@ -33,7 +33,8 @@ test('the page tells the server a conversation is about the demo project until a
   assert.match(chat, /true,\s*demoProjectRef\.current,\s*replyBrowserOnly \? replyModel : null\s*\);/);
   assert.match(chat, /demo: payload\.demo === true,/);
   assert.match(chat, /proposal\.demo \? \{ auto: false \} : decideAutoApply/);        // nothing is applied to the demo, whatever the approval level says
-  assert.match(chat, /onSignUp=\{\(\) => \{ void api\.guestSignUp\('demo_diff'\); \}\}/);          // counted as the demo diff card's button, then the same sign-up path
+  assert.match(chat, /onSignUp=\{\(\) => \{ if \(isGuestPrincipal\(getEffectivePrincipal\(\)\)\) void api\.guestSignUp\('demo_diff'\); else void localEditActionsRef\.current\.connect\(\); \}\}/);   // a guest: counted, then sign-up; a signed-in person: connect their own project
+  assert.match(chat, /demoLabel=\{isGuestPrincipal\(getEffectivePrincipal\(\)\) \? undefined : localEditActionsRef\.current\.canConnect \? 'Connect your own project to apply this' : 'Connecting a project needs Chrome or Edge on a computer'\}/);
   const api = readFileSync(new URL('./api.ts', import.meta.url), 'utf8');
   assert.match(api, /runnerCards = false,\s*demoProject = false/);
   assert.match(api, /demo_project: demoProject,/);

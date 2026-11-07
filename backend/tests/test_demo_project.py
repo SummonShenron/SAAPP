@@ -82,12 +82,14 @@ def test_no_file_in_the_pack_looks_like_a_secret_or_a_real_address():
 
 # --- who gets it ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-def test_only_the_shared_guest_on_a_demo_card_gets_the_demo():
+def test_the_guest_and_a_signed_in_person_with_no_folder_get_the_demo_when_they_are_on_a_demo_card():
     assert dp.applies(GUEST, True)
     assert dp.applies(GUEST.upper(), True)
     assert not dp.applies(GUEST, False) and not dp.applies(GUEST, None)       # a recruiter-lane question keeps reading Sonic's own repository
-    for other in ("jack@example.com", "guest_bty", "guest", "", None, dp.OWNER):
-        assert not dp.applies(other, True), other
+    assert dp.applies("jack@example.com", True) and not dp.applies("jack@example.com", False)         # a new account trying it before it has connected a project
+    assert not dp.applies("jack@example.com", True, has_folder=True)                                   # their own folder always wins: it is never replaced by the demo
+    for other in ("guest_bty", "guest", "", None, dp.OWNER):
+        assert not dp.applies(other, True), other                                                       # the embedded view, the other shared names, nobody, and the demo's own owner name
 
 
 def test_the_switch_turns_the_demo_off_without_a_deploy(monkeypatch):
@@ -149,8 +151,26 @@ async def test_the_same_guest_without_a_demo_card_reads_github_and_gets_no_edit_
 
 
 @run_async
-async def test_someone_else_cannot_ask_for_the_demo(monkeypatch):
+async def test_a_signed_in_person_with_no_folder_gets_the_demo_and_is_told_the_way_forward_is_to_connect_their_own(monkeypatch):
     _, captured = await _run_turn(monkeypatch, "Why do invoices go overdue a day late?", attempts=[], extra_state={"username": "jack", "demo_project": True})
+    note = captured["environment_note"]
+    assert "DEMO PROJECT" in note and "connect their own project" in note and "sign up" not in note.split("DEMO PROJECT")[1][:900]
+    assert {"propose_local_edits", "run_sandbox_tests"} <= _offered(captured)
+
+
+@run_async
+async def test_a_signed_in_person_who_has_their_own_folder_never_gets_the_demo_in_its_place(monkeypatch):
+    from backend.tests.test_local_edits import _connect_folder
+
+    _connect_folder()
+    _, captured = await _run_turn(monkeypatch, "Why do invoices go overdue a day late?", attempts=[], extra_state={"username": "jack", "demo_project": True})
+    assert "DEMO PROJECT" not in captured["environment_note"]
+    assert "tallybox" not in captured["environment_note"]
+
+
+@run_async
+async def test_the_embedded_view_cannot_ask_for_the_demo(monkeypatch):
+    _, captured = await _run_turn(monkeypatch, "Why do invoices go overdue a day late?", attempts=[], extra_state={"username": "guest_bty", "demo_project": True})
     assert "DEMO PROJECT" not in captured["environment_note"]
 
 
@@ -212,7 +232,9 @@ def test_every_key_the_chat_endpoint_puts_in_the_graph_state_is_declared_in_it()
 def test_the_request_field_exists_and_the_turn_uses_the_demo_owner_for_the_folder_status():
     source = open("app.py", encoding="utf-8").read()
     assert "demo_project: Optional[bool] = None" in source
-    assert "demo_turn = demo_project.applies(username, request.demo_project)" in source
+    assert "demo_turn = demo_project.applies(username, request.demo_project, has_folder=has_own_folder)" in source
+    assert 'has_own_folder = bool(local_workspace_status(username).get("connected")) if request.demo_project else False' in source
+    assert "if folder_usable_here and not is_guest_username(username) and not demo_turn:\n        plan_turn" in source          # plan mode never runs on the demo project
     assert "local_workspace_status(demo_project.OWNER if demo_turn else username)" in source
     assert '"demo_project": demo_turn,' in source
 

@@ -56,7 +56,8 @@ def test_the_globals_are_fresh_each_time_so_one_snippet_cannot_leave_something_f
 
 
 def test_the_read_only_query_uses_the_helper_and_the_write_path_is_not_widened():
-    assert "exec(code, mongo_query_globals(exec_builtins), local_scope)" in SOURCE
+    assert "snippet_globals = mongo_query_globals(exec_builtins)" in SOURCE
+    assert "exec(code, snippet_globals, local_scope)" in SOURCE
     assert SOURCE.count('exec(code, {"__builtins__": exec_builtins}, local_scope)') == 1  # the approved-write path keeps its original, smaller globals
 
 

@@ -175,12 +175,22 @@ DEMO_PROJECT_NOTE = (
     "tests/; run them with the edit applied before you propose it). A visitor cannot apply a change here: they see the diff and, where Apply would be, a button to sign up and apply it to their own "
     "project. So never say a change was applied or ask whether to apply it; say what you proposed and what the tests showed. Keep the final answer short."
 )
+# The same demo for a signed-in person who has no project connected yet: nothing can be applied to it either, and the way forward is to connect their own.
+DEMO_PROJECT_NOTE_MEMBER = DEMO_PROJECT_NOTE.replace(
+    "a button to sign up and apply it to their own project", "a button to connect their own project and ask for it there",
+)
+
+
+def _has_own_folder(username: str) -> bool:
+    """Whether a signed-in person has a project folder connected (a guest never does): their own folder always wins over the demo project."""
+    return bool(username) and not is_guest_username(username) and bool(workspace_status(username).get("connected"))
 
 
 def _workspace_user(state: dict) -> str:
-    """Whose folder copy this turn reads: the person's own, or, on a guest's demo turn, the demo project's server-owned copy."""
+    """Whose folder copy this turn reads: the person's own, or, on a demo turn, the demo project's server-owned copy."""
     username = str(state.get("username") or "")
-    return demo_project.OWNER if demo_project.applies(username, state.get("demo_project")) else username
+    asked = bool(state.get("demo_project"))
+    return demo_project.OWNER if demo_project.applies(username, asked, has_folder=asked and _has_own_folder(username)) else username
 
 # The tools that read the repo or the connected folder: the trace's "Reading from" step is announced the first time one of them runs.
 _REPO_SOURCE_TOOLS = frozenset({
@@ -2052,7 +2062,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         # for this turn's repo reads — checked once up front so the schema can tell the model its
         # reads reflect the user's live working tree rather than GitHub's default branch.
         # A guest turn that starts from a demo card reads and tests the server's demo project instead (backend/utils/demo_project.py); every folder call below names that copy's owner.
-        demo_turn = demo_project.applies(username, state.get("demo_project"))
+        demo_turn = demo_project.applies(username, state.get("demo_project"), has_folder=bool(state.get("demo_project")) and _has_own_folder(username))
         workspace_user = _workspace_user(state)
         local_workspace_handle = get_workspace_handle(workspace_user)
         # The demo needs no folder in the browser: its diff card has no Apply, only the sign-up button.
@@ -2108,7 +2118,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         if local_workspace_handle is not None:
             workspace_name = workspace_status(workspace_user).get("name", "local folder")
             if demo_turn:
-                schema_parts.append(DEMO_PROJECT_NOTE)
+                schema_parts.append(DEMO_PROJECT_NOTE if is_guest_username(username) else DEMO_PROJECT_NOTE_MEMBER)
             schema_parts.append(
                 f"LOCAL WORKSPACE: file reads, tree listings, find_file and search_literal this turn "
                 f"run against the user's connected local folder '{workspace_name}' — their live "
@@ -2249,8 +2259,11 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 await safe_emit_event("browser_live_view", {"url": session.live_url})
 
         def _run_mongo_code(code: str):
-            local_scope = {"db": db, "username": username, "result": None}
-            exec(code, mongo_query_globals(exec_builtins), local_scope)
+            snippet_globals = mongo_query_globals(exec_builtins)
+            snippet_globals["db"] = db
+            snippet_globals["username"] = username
+            local_scope = {"result": None}
+            exec(code, snippet_globals, local_scope)
             return local_scope.get("result", None)
 
         _CHECKOUT_EXCLUDE_DIR_NAMES = ("node_modules", "dist", "__pycache__")

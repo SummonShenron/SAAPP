@@ -30,7 +30,7 @@ import { WhoSpentTable } from './SonicHealthWhoSpent';
 import { BarRow, BudgetBars, StatTile } from './sonicHealthParts';
 import { budgetAmount, pct, shortDate, tokens, usd } from './sonicHealthFormat';
 import { loopTraceRows } from './sonicHealthLoopTrace';
-import { cheaperWrote, nudgesShown, share, signupAfterRows, signupRows, signupTotal, voiceRows, voiceTotal } from './sonicHealthGuest';
+import { activationRows, activationTotal, cheaperWrote, nudgesShown, share, signupAfterRows, signupRows, signupTotal, voiceRows, voiceTotal, welcomeRows, welcomeTotal } from './sonicHealthGuest';
 import CounterCharts from '../components/CounterCharts';
 import './__styles__/SelfService.css';
 import './__styles__/SonicHealth.css';
@@ -397,7 +397,7 @@ export const SonicHealthPage: React.FC = () => {
             <UsersCard users={health.users} />
           </div>
         ) : noData('model usage'))}
-        {tab === 'turns' && <>{health.usage?.turns && health.usage.turns.turns > 0 ? <TurnsCard turns={health.usage.turns} /> : noData('chat turns')}{health.counters && <PromptCard totals={health.counters.totals} />}{health.counters && <LeaningsCard totals={health.counters.totals} />}{health.counters && <ReplyVoicesCard totals={health.counters.totals} previous={health.counters.previous_totals} />}{health.counters && <GuestFunnelCard totals={health.counters.totals} previous={health.counters.previous_totals} />}<ServerMemoryCard /></>}
+        {tab === 'turns' && <>{health.usage?.turns && health.usage.turns.turns > 0 ? <TurnsCard turns={health.usage.turns} /> : noData('chat turns')}{health.counters && <PromptCard totals={health.counters.totals} />}{health.counters && <LeaningsCard totals={health.counters.totals} />}{health.counters && <ReplyVoicesCard totals={health.counters.totals} previous={health.counters.previous_totals} />}{health.counters && <GuestFunnelCard totals={health.counters.totals} previous={health.counters.previous_totals} />}{health.counters && <NewAccountsCard totals={health.counters.totals} previous={health.counters.previous_totals} />}<ServerMemoryCard /></>}
         {tab === 'budget' && (health.budget ? <><BudgetCard budget={health.budget} /><BudgetRequestsPanel /></> : noData('budget'))}
         {tab === 'behavior' && <><CounterCharts counters={health.counters} /><CountersCard counters={health.counters} /></>}
         {tab === 'goals' && <GoalsTab goals={health.goals} busyId={busyKey} onApprove={handleGoalApproval} />}
@@ -674,6 +674,29 @@ const GuestFunnelCard: React.FC<{ totals: Record<string, number>; previous: Reco
         <tbody>
           {rows.map(row => (<tr key={row.key}><td>{row.label}</td><td>{row.count} ({share(row.count, pressed)})</td></tr>))}
           {after.length > 0 && <tr><td><strong>Free turns used when they pressed</strong></td><td>{after.map(row => `${row.label}: ${row.count}`).join(', ')}</td></tr>}
+        </tbody>
+      </table>
+    </section>
+  );
+};
+
+/** What new signed-in accounts do on their first screen: which welcome card was pressed, and how many people reached each first step (a project folder, a change applied, a memory, a runner, a document), once each (backend/utils/activation.py). Counts only. */
+const NewAccountsCard: React.FC<{ totals: Record<string, number>; previous: Record<string, number> }> = ({ totals, previous }) => {
+  const steps = activationTotal(totals);
+  const presses = welcomeTotal(totals);
+  if (steps <= 0 && presses <= 0) return null;
+  return (
+    <section className="service-card sh-card">
+      <div className="card-badge">{steps} FIRST STEPS</div>
+      <h2>New accounts: the first ten minutes</h2>
+      <p className="card-description">
+        {steps} people reached one of the first steps to value this period ({activationTotal(previous)} in the period before), and the new-account cards were pressed {presses} times ({welcomeTotal(previous)} before).
+        A step is counted once per person, the first time Sonic sees it done. Counts only: never a file, a path or what a memory says.
+      </p>
+      <table className="sh-table">
+        <tbody>
+          {welcomeRows(totals).map(row => (<tr key={`card-${row.key}`}><td>Card pressed: {row.label}</td><td>{row.count}</td></tr>))}
+          {activationRows(totals).map(row => (<tr key={`step-${row.key}`}><td>First step: {row.label}</td><td>{row.count}</td></tr>))}
         </tbody>
       </table>
     </section>

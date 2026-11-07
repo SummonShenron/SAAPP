@@ -277,13 +277,20 @@ def test_the_endpoint_sends_the_labelled_cards_and_still_the_plain_list():
     assert '"questions": build_example_questions(inputs)' in body and '"cards": build_welcome_cards(inputs)' in body
 
 
-def test_the_photo_card_is_always_the_first_thing_to_try_and_the_only_one_that_opens_the_file_picker():
-    for seed in range(20):
-        for inputs in (ExampleInputs(owns_scope=True), ExampleInputs(**FULL)):
-            out = cards(inputs, seed)
+def test_the_photo_card_is_the_last_thing_to_try_never_what_leads_and_when_it_shows_it_is_the_only_one_that_opens_the_file_picker():
+    """Photographing a letter is something every free chat tool does (Jack, 2026-11-07), so it sits last among the things to try."""
+    shown = 0
+    for seed in range(40):
+        for inputs in (ExampleInputs(owns_scope=True), ExampleInputs(**FULL), ExampleInputs(**FULL, shelf_available=True)):
+            out = cards(inputs, seed, limit=8)
             tries = [c for c in out if c["label"] == eq.LABEL_TRY]
-            assert tries[0] == eq.ATTACH_CARD
-            assert [c for c in out if c.get("action")] == [eq.ATTACH_CARD]
+            assert eq.ATTACH_CARD not in tries[:-1] if tries else True
+            if eq.ATTACH_CARD in out:
+                shown += 1
+                assert tries[-1] == eq.ATTACH_CARD and [c for c in out if c.get("action")] == [eq.ATTACH_CARD]
+    assert shown > 0                                                              # still offered where there is room
+    for seed in range(40):
+        assert cards(ExampleInputs(**FULL, shelf_available=True), seed)[0] != eq.ATTACH_CARD
 
 
 def test_the_photo_card_leaves_a_question_ready_and_does_not_pretend_the_text_is_the_message():

@@ -159,7 +159,7 @@ from backend.utils import initiation as initiation_utils
 from backend.utils import proactive_gates
 from backend.utils import reach as reach_utils
 from backend.utils import budget_guard
-from backend.utils import demo_project, guest_limits, guest_nudge, guest_signup, reply_tier
+from backend.utils import activation, demo_project, guest_limits, guest_nudge, guest_signup, reply_tier
 from backend.utils import context_window, llm_turns, llm_usage, loop_watchdog
 from backend.utils import ops_digest as ops_digest_utils
 from backend.utils import ops_suggestions as ops_suggestions_utils
@@ -732,6 +732,10 @@ async def get_example_questions(affiliate: str = Query("All"), current_user = De
     if affiliate != "All" and affiliate not in accessible:
         raise HTTPException(status_code=403, detail="Unauthorized affiliate scope requested.")
     inputs = await asyncio.to_thread(gather_example_inputs, username, affiliate, directory)
+    if inputs.onboarding:
+        # What they have done, seen from their real state and counted once each (backend/utils/activation.py): counts only. A step that was done is not offered again.
+        done = [event for event, flag in (("folder", inputs.folder_done), ("memory", inputs.memory_done), ("runner", inputs.runner_done), ("document", inputs.documents_done)) if flag]
+        await asyncio.to_thread(activation.observe, get_db(), username, done)
     # `questions` is the older plain list, kept so a page loaded before this deploy still works; `cards` are the labelled ones.
     return {"questions": build_example_questions(inputs), "cards": build_welcome_cards(inputs)}
 
@@ -875,7 +879,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     # With a local folder connected, earlier "I can't write files" replies are false — and a thread
     # full of them teaches the model to keep saying it. Only what the model sees is changed; the
     # saved transcript is untouched.
-    demo_turn = demo_project.applies(username, request.demo_project)
+    has_own_folder = bool(local_workspace_status(username).get("connected")) if request.demo_project else False
+    demo_turn = demo_project.applies(username, request.demo_project, has_folder=has_own_folder)
     folder_connected = bool(local_workspace_status(demo_project.OWNER if demo_turn else username).get("connected"))
     # The server keeps the folder copy under the person's name, so a phone sees it too; edits, plans and the "it said it cannot edit" clean-up only make sense where this browser holds the folder
     # (the demo project needs none: its diff card has a sign-up button where Apply would be).
@@ -888,7 +893,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     working_notes = "" if is_guest_username(username) else await asyncio.to_thread(working_state_utils.load_context, username, session_id)
     # Plan mode (backend/utils/code_plan.py): the person's opt-in, held back in low-power mode (a plan turn is an extra model loop). An approved plan is carried out whatever the setting says now.
     plan_turn = {"phase": None, "context": ""}
-    if folder_usable_here and not is_guest_username(username):
+    if folder_usable_here and not is_guest_username(username) and not demo_turn:
         plan_turn = await asyncio.to_thread(
             code_plan_utils.prepare, get_db(), username, session_id, question,
             plan_mode=bool(_settings.get("plan_mode")) and budget_guard.allows("plan_mode", budget_state),
@@ -4152,6 +4157,17 @@ async def retire_observation(key: str, admin = Depends(require_global_admin)):
         raise HTTPException(status_code=404, detail="No such observation.")
     return {"observations": await asyncio.to_thread(list_observations, db)}
 
+class WelcomeClick(BaseModel):
+    kind: str         # which new-account welcome card (backend/utils/activation.py KINDS)
+
+
+@app.post("/api/welcome-click")
+async def post_welcome_click(payload: WelcomeClick, current_user = Depends(get_current_user)):
+    """Counts a press of a new-account welcome card: which kind, never anything else (backend/utils/activation.py). Signed-in people only; the answer is always the same."""
+    await asyncio.to_thread(activation.count_card, current_user.get("sub"), payload.kind)
+    return {"ok": True}
+
+
 @app.post("/api/local-edits/{proposal_id}/decision")
 async def report_local_edit_decision(proposal_id: str, payload: EditDecisionRequest, current_user = Depends(get_current_user)):
     """The diff card's Apply or Decline, reported to the tool loop that is waiting on it (backend/services/local_edit_decisions.py). Applying itself happens in the browser."""
@@ -4167,6 +4183,7 @@ async def report_local_edit_decision(proposal_id: str, payload: EditDecisionRequ
     if counted:
         await asyncio.to_thread(record_turn_counts, code_outcomes.outcome_counts(payload.outcome, {p: v for p, v in counted.items() if p}))
     if payload.outcome == "applied":
+        await asyncio.to_thread(activation.mark, get_db(), username, "applied")        # their first applied change, counted once (backend/utils/activation.py)
         # Whether or not a turn was waiting: these files are now changed work that a commit may include (backend/utils/applied_changes.py).
         applied_changes.record(username, local_edit_decisions.changes_for(username, proposal_id))
         # An approved plan (backend/utils/code_plan.py): the steps these files finish are done now, whether or not a turn is waiting.

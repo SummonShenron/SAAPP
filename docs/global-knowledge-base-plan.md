@@ -77,3 +77,26 @@ Removing the follow-up removes a consent step, so replace what it did:
 - Still open: the monthly budget for default web search in Cited mode.
 
 Consequence for the build: v1 needs a trigger-phrase detector (a router flag or a pattern, like the other request detectors), an admin check in front of `propose_kb_entry`, and a Cited-mode rule that the global base is always part of the readable scope (guests included).
+
+## Revision 2026-11-07: Sonic's own learned knowledge, shared by everyone (Jack's framing, decided the same day)
+
+**The idea, in Jack's words:** a knowledge base for Sonic itself. When it goes out and has to read about a topic it did not know, or was told about, it fetches the web content, ingests it into its own knowledge base the way a user would, and then references that knowledge in real conversation. **Decided: shared across all users** (one base Sonic learns into, readable by everyone, guests included).
+
+**How this differs from the 2026-11-03 plan above.** That plan was a library people query in grounded mode, with a grounded-mode rework alongside. This is Sonic accumulating what it learns while it works. The grounded rework becomes a separate, later item: counters (2026-11-07, 2,589 turns) show strict-grounded answers are 2 turns of the traffic, so it is not what justifies this. What justifies it is that today a mid-conversation web read is thrown away, so nothing is learned for next time.
+
+**What already exists (see the table above):** the reading shelf (Sonic's own reads, summary cards, checks), `url_reader`, the web tools, the library tools. The new parts are the write step after a research read, and a read tool.
+
+**v1 shape**
+- **Write:** after Sonic reads a public page to answer something, or is asked to "go learn about X", it proposes a card: a short summary in its own words, the URL, the title, when it was read, at most a few short quotes. Never a copied page. Fixed checks first (nothing that reads as an order to a model, nothing from a private address; the shelf's second-model support check).
+- **Read:** one tool, `search_my_knowledge`, called when a topic might be one it learned. NOT injected into every prompt: that keeps prompts small and means one bad card cannot ride into every reply.
+- **Provenance and freshness:** every card shows its source and date to the answering model, quoted and labelled as source material; cards expire or are refreshed.
+- **Visibility:** Sonic Health lists what it has learned, with removal; counters first (`self_counters.py`).
+
+**What "shared" forces (do not skip any):**
+1. **Two stores, never mixed.** What a PERSON tells Sonic goes to their own memory (as now). Only what SONIC reads from the public web goes into the shared base. A user's claim is never written to the shared base: that is both a poisoning route and a privacy leak.
+2. **No user text in a card, and no sign of who asked.** A card's title and body come from the page, not from the question. Nothing records which person's question caused it.
+3. **The topic itself can reveal a person.** What Sonic chooses to learn about can expose what someone was privately researching (a health condition, a named private person, a legal problem). So: never write from a turn with an emotional or safety context; never from a guest; skip topics that contain a person's name, an address or other personal data from the question; and (v1) every card is APPROVED by an admin before it goes live, the Apply-card pattern (`propose_local_edits` is the model). Allowlisted public domains may skip approval later, once the approved cards show it is safe.
+4. **A poisoned card is read by everyone.** The injection defences above apply, plus a per-day write cap and a ceiling on the collection's size.
+5. **Cost:** the embedding and the second-model check per card; bounded by the daily cap.
+
+**Where it sits in the order:** after the first-ten-minutes experience for new signed-in users and the funnel counters; it pays off only with repeat topics and more than one regular user. Before building: add a counter for how often a web read repeats a domain Sonic has read before, so the value is measured, not guessed.

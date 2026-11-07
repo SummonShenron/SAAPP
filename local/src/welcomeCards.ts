@@ -6,13 +6,15 @@ export interface WelcomeCard {
   label?: string;
   /** "attach": the card needs a file first, so it opens the picker (leaving `prompt` in the box) instead of sending its text.
    *  "open": the card is a way into another page (`path`) instead of a question. */
-  action?: 'attach' | 'open' | 'signup';
+  action?: 'attach' | 'open' | 'signup' | 'prefill';
   prompt?: string;
   path?: string;
   /** "signup" cards only: what Sonic does for someone with an account, shown with a sign-up button when the card is chosen (no model call, so it costs nothing). */
   detail?: string;
   /** "signup" cards only: which account feature this is, the same word the server sends in an `account_nudge` event (backend/utils/guest_nudge.py). */
   key?: 'checks' | 'fix' | 'tidy' | 'memory';
+  /** A new-account card (the server's `kind`): pressing it is counted by that name (backend/utils/activation.py KINDS). */
+  kind?: string;
   /** The card is about the server's demo project: the conversation works on it (the page sends `demo_project` with each turn until another kind of card is chosen). */
   demo?: boolean;
 }

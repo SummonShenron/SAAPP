@@ -241,6 +241,9 @@ interface ChatMessageListProps {
     undo: (proposalId: string) => Promise<UndoResult>;
     getFolderHandle: () => FsDirectoryHandle | null;
     decide: (proposalId: string, outcome: 'applied' | 'declined' | 'undone', reason: string) => void;
+    /** Opens the folder picker (a signed-in person on the demo project connects their own project from its diff card); false where this browser has no picker. */
+    connect: () => Promise<void>;
+    canConnect: boolean;
   }>;
 }
 
@@ -398,7 +401,10 @@ const ChatMessageList = React.memo(function ChatMessageList({
                   onApply={proposal => localEditActionsRef.current.apply(proposal)}
                   onUndo={proposalId => localEditActionsRef.current.undo(proposalId)}
                   onDecision={(proposalId, outcome, reason) => localEditActionsRef.current.decide(proposalId, outcome, reason)}
-                  onSignUp={() => { void api.guestSignUp('demo_diff'); }}
+                  // The demo project's diff has nothing to apply to: a guest is offered sign-up, a signed-in person is offered the way to connect their own project (where Apply works).
+                  onSignUp={() => { if (isGuestPrincipal(getEffectivePrincipal())) void api.guestSignUp('demo_diff'); else void localEditActionsRef.current.connect(); }}
+                  demoLabel={isGuestPrincipal(getEffectivePrincipal()) ? undefined : localEditActionsRef.current.canConnect ? 'Connect your own project to apply this' : 'Connecting a project needs Chrome or Edge on a computer'}
+                  demoDisabled={!isGuestPrincipal(getEffectivePrincipal()) && !localEditActionsRef.current.canConnect}
                 />
               ))}
               <div className="message-text">
@@ -1610,6 +1616,12 @@ useEffect(() => {
   // A card is a question to send, except one that needs something from the person first (a photo of a letter): that one opens the file picker, from
   // inside this click so a phone allows it, and leaves a question ready so that attaching is all that is left before sending.
   const chooseWelcomeCard = (card: WelcomeCard) => {
+    if (card.kind) api.trackWelcomeCard(card.kind);      // a new-account card: counted by name, never waited for
+    if (card.action === 'prefill') {      // leave the words in the box to edit, and put the cursor there: the person finishes the sentence
+      setInput(card.prompt ?? card.text);
+      window.setTimeout(() => inputRef.current?.focus(), 0);
+      return;
+    }
     if (card.action === 'signup') {      // a guest cannot do this: say what an account adds, send nothing
       setAccountCard(card);
       return;
@@ -2303,14 +2315,14 @@ const decideOnProposal = (proposalId: string, outcome: 'applied' | 'declined' | 
     }
   });
 };
-const localEditActionsRef = useRef({ apply: workspace.applyEdits, undo: workspace.undoEdits, getFolderHandle: workspace.getFolderHandle, decide: decideOnProposal });
+const localEditActionsRef = useRef({ apply: workspace.applyEdits, undo: workspace.undoEdits, getFolderHandle: workspace.getFolderHandle, decide: decideOnProposal, connect: workspace.connect, canConnect: workspace.supported });
 useEffect(() => {
   // Pressing Start office hours is the person saying "let's begin": the first line goes in for them, and Sonic opens the meeting.
   meetingStartedRef.current = (name: string) => { void handleSendMessageRef.current(`Let's start our ${name}.`, []); };
   handleSendMessageRef.current = handleSendMessage;
   handleFeedbackRef.current = handleFeedback;
   getTokenRef.current = getToken;
-  localEditActionsRef.current = { apply: workspace.applyEdits, undo: workspace.undoEdits, getFolderHandle: workspace.getFolderHandle, decide: decideOnProposal };
+  localEditActionsRef.current = { apply: workspace.applyEdits, undo: workspace.undoEdits, getFolderHandle: workspace.getFolderHandle, decide: decideOnProposal, connect: workspace.connect, canConnect: workspace.supported };
 });
 
 // Re-sends deferred steers one at a time, only once the previous turn has fully finished. Declared

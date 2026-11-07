@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { SIGNUP_AFTER, SIGNUP_SOURCES, VOICE_REASONS, cheaperWrote, nudgesShown, share, signupAfterRows, signupRows, signupTotal, voiceRows, voiceTotal } from './sonicHealthGuest.ts';
+import { ACTIVATION_STEPS, SIGNUP_AFTER, SIGNUP_SOURCES, VOICE_REASONS, WELCOME_KINDS, activationRows, activationTotal, cheaperWrote, nudgesShown, share, signupAfterRows, signupRows, signupTotal, voiceRows, voiceTotal, welcomeRows, welcomeTotal } from './sonicHealthGuest.ts';
 
 const counters = readFileSync(new URL('../../../backend/utils/self_counters.py', import.meta.url), 'utf8');
 const group = name => {
@@ -50,4 +50,18 @@ test('the Turns tab shows both cards from the raw totals, and each shows nothing
   assert.match(page, /const total = voiceTotal\(totals\);\s*if \(total <= 0\) return null;/);
   assert.match(page, /if \(pressed <= 0 && nudges <= 0\) return null;/);
   assert.match(page, /never what they wrote/);                                                  // the card says plainly what is and is not recorded
+});
+
+test('the new-accounts card lists exactly the first steps and welcome cards the server counts, summed once each', () => {
+  assert.deepEqual(ACTIVATION_STEPS.map(([key]) => key), group('activation'));
+  assert.deepEqual(WELCOME_KINDS.map(([key]) => key), group('welcome_card'));
+  const totals = { activation_folder: 3, activation_memory: 2, welcome_card_demo: 5, welcome_card_document: 1, turns_total: 40 };
+  assert.equal(activationTotal(totals), 5);
+  assert.equal(welcomeTotal(totals), 6);
+  assert.deepEqual(activationRows(totals).filter(row => row.count).map(row => [row.key, row.count]), [['folder', 3], ['memory', 2]]);
+  assert.deepEqual(welcomeRows(totals).filter(row => row.count).map(row => [row.key, row.count]), [['demo', 5], ['document', 1]]);
+  assert.equal(activationTotal({}), 0);
+  const page = readFileSync(new URL('./SonicHealth.tsx', import.meta.url), 'utf8');
+  assert.match(page, /<NewAccountsCard totals=\{health\.counters\.totals\} previous=\{health\.counters\.previous_totals\} \/>/);
+  assert.match(page, /if \(steps <= 0 && presses <= 0\) return null;/);
 });
