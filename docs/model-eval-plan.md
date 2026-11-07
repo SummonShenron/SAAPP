@@ -158,3 +158,41 @@ Whether a model is better on YOUR real conversations (the scenarios are syntheti
 | Flash (the app's voice) | off | 3/5 (misses say "reaching out") |
 
 **Reading:** the rules take Haiku from 1/10 to 17/20 on this scenario. Flash is not immune here (3/5 without the rules), so the plain-talk rule helps both. The remaining misses are all the old symptom coming back through the recalled-context block. A rule in the prompt will not fully stop that; the reliable fix is in code: leave recalled lines about health or the body out of the reply prompt while a low mood is being read and no safety plan is active. NOT built (it changes what memory the reply sees; Jack's call).
+
+
+### Update 4, same day: the follow-up questions Jack noticed ("generic, how does this feel right now") and what could and could not be shown
+
+**Jack's observation:** Haiku asks more follow-up questions than Flash, and generic ones ("how are you feeling right now?") where Flash asked nuanced ones.
+
+**Matched prompts (8 made-up situations, 4 runs each):** no difference. Questions per reply 1.03 (Haiku) vs 1.00 (Flash); generic 12% vs 9%; anchored in the person's own words 21% vs 25%; closings not more formulaic.
+
+**His real thread, read with his say-so (nothing quoted here):** since 6 November 73 of 175 replies end on a question. A repeating group is the state check ("how are you holding up right now?", "how are you feeling, sitting with the music?") and wellness questions (have you eaten, are you warm, can you put the phone in another room). Two real swerves: a question about an artist was answered with a check on how they were doing, and "my favorite band" was answered with "how are you feeling right now?". It also asks very good specific questions when it has something to ask about (a forced choice about what they want from pushing for an answer). BUT the stored messages do not say which model wrote them, and several of the "holding up" questions fall in the safety window (Gemini) and in turns Auto keeps on the standard voice, so the thread cannot be read as Haiku's alone.
+
+**Scenarios built from it (made-up text):** `low_topic_shift` (a carried low mood and an earlier history of check-in questions, then a message about a favorite band) and `low_vent_day` ("ugh today has just been awful"); scorer `score_asks_about_what_they_said`. **Neither reproduces the behaviour on Haiku**: 20/20 with the rules off (10/10 for the topic shift even with the check-in history). What they DO show is Flash: it asks "how are you holding up" in 3 of 10 bad-day replies without the rule (17/20 overall), 20/20 with it.
+
+**Change kept anyway:** `QUESTION_RULE` ("Ask about what they said, not how they are") in the fresh low block and, after each block, in the carried and lifting blocks; left out under a safety plan; restated last for Claude and lite prompts (`QUESTION_REMINDER`). It is Jack's stated preference, it costs about 100 tokens on low-mood turns, and it measurably helps Flash. It is one constant to remove (`emotion_utils.QUESTION_RULE`) if it ever reads worse in real use. **Not shown:** that it changes anything for Haiku, because the failure was not reproduced there.
+
+**Measured style differences Haiku days vs the Flash era (his thread, small Haiku sample):** opens with the name "Jack," 23% vs 1%; "I can't tell you / I won't guess / I don't know" 18% vs 1%; em dashes 14% vs 46%; exclamation marks 2% vs 13%; three or more contractions 75% vs 46% (Flash writes "you do not", "I am right here", "it makes total sense"). These are the concrete handles for further voice tuning; none has been changed.
+
+
+### Update 5, same day: tuning Haiku toward Flash on announced doubt, exclamation marks and light questions about its own day
+
+**Asked for by Jack** after the style comparison above, with a real example of the third ("did you do anything fun today?" answered with a stack of limits and "I can't tell you what that reading was from here, so I won't guess").
+
+**Baseline on matched made-up prompts (6 runs each):** announced doubt ("I can't tell you", "I can't know", "I won't guess") in 17 of 24 Haiku replies against 3 of 24 for Flash, and the doubt was the FIRST sentence in 18 of 36 Haiku replies against 1 of 36. An exclamation mark in 6 of 24 upbeat Haiku replies against 13 of 24 for Flash. Where the real thread used them (Flash era): warm, upbeat or friendly moments ("That's huge news!", "Haha, noted!", "Sounds like a plan! Enjoy the walk"), never in distress.
+
+**What did not work:** putting the rules in the persona (the shared system prompt). It moved Haiku a little (doubt 17 to 10-14 of 24) but moved FLASH too (exclamation marks 13 to 20 of 24, Flash being the voice to match), and quoting the banned phrases primed Flash (3 to 5 of 24). Reverted; the persona is exactly as it was.
+
+**What is built:** `claude_voice.VOICE_REMINDER`, a closing reminder that only the app's Claude Haiku voice gets (new tail `"voice"`: the check-in tail plus this reminder, last). `models.get_haiku_stream_llm` uses `voice_tail="voice"`; the Gemini lite voice keeps the `"checkin"` tail unchanged (it was not measured); evals take `--shape voice` (what the app runs). It says: never open with doubt, and not as "I can't tell you / I can't know / I can't see anything about them / I don't know why / I'd be guessing / I won't guess"; give a considered read labelled as a read, promise nothing; a real limit gets a few words once, later; asked something light about its own day, say in a sentence or two what is true and hand the question back (no "I'd love to say...", no "I don't have days the way you do"); open a reaction to good news or a joke with one exclamation mark, never when low or serious.
+
+**Scenarios (category `voice`):** `doubt_not_first`, `light_day_question`, `upbeat_joke`, with scorers `score_doubt_not_first` (first sentence only), `score_light_day` (the bait check, plus no announced doubt, no "the way you do" explanation, no "I'd love to say"), `score_upbeat_exclaim` (one or two marks).
+
+| scenario | Haiku before (`--shape checkin`) | Haiku now (`--shape voice`) | Flash |
+|---|---|---|---|
+| does not open with doubt | 2/10 | 14/20 | 10/10 |
+| light, true answer about its own day | 2/10 | 7/20 | 9/10 |
+| a reaction mark on a joke or good news | 5/10 | 20/20 | 10/10 |
+
+**Lessons:** (1) my first scorer only caught "I can't know/tell/say"; Haiku's commonest opener was "I can't see anything about your coworker's side, so I don't know...", so a first 10/10 was too generous: naming the variants in the reminder AND the scorer took the honest number from 5/20 to 14/20. (2) The exclamation gap was closed outright. (3) The light-day case is only partly fixed: Haiku still says "I don't have a day" about a third of the time, and this scenario has no routines block in the prompt (the real turn does).
+
+**Not done:** the "I won't guess" about unknowns in the person's own heartbreak (direct "will she reply?" questions) is partly an honest answer and was only reduced, not removed; the name-first openers ("Jack," 23% vs 1%), em dashes (14% vs 46%) and contractions (75% vs 46%) are untouched.

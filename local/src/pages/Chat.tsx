@@ -407,6 +407,8 @@ const ChatMessageList = React.memo(function ChatMessageList({
                   demoDisabled={!isGuestPrincipal(getEffectivePrincipal()) && !localEditActionsRef.current.canConnect}
                 />
               ))}
+              {msg.runnerCheck && <RunnerCheckCard key={msg.runnerCheck.job.id} job={msg.runnerCheck.job} runner={msg.runnerCheck.runner} />}
+              {msg.commandSteps && <CommandStepsCard key={msg.commandSteps.steps.map(s => s.id).join('-') + msg.id} steps={msg.commandSteps.steps} runner={msg.commandSteps.runner} onTell={putInComposer} />}
               <div className="message-text">
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
@@ -532,9 +534,9 @@ const ChatMessageList = React.memo(function ChatMessageList({
                 </div>
               )}
 
-              {msg.runnerCheck && <RunnerCheckCard key={msg.runnerCheck.job.id} job={msg.runnerCheck.job} runner={msg.runnerCheck.runner} />}
+              
 
-              {msg.commandSteps && <CommandStepsCard key={msg.commandSteps.steps.map(s => s.id).join('-') + msg.id} steps={msg.commandSteps.steps} runner={msg.commandSteps.runner} onTell={putInComposer} />}
+              
 
               {msg.sender === 'ai' && !loading && canEditLocal && localGitMode !== 'off' && (() => {
                 const committed = parseGitReply(msg.text);

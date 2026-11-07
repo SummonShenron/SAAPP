@@ -39,6 +39,23 @@ REFERRAL_REMINDER = (
     "and do not mention a helpline, unless they ask for that or say something about hurting themselves. Stay with what they told you. Plain sentences, no list and no bold; at most one or two small suggestions; "
     "no symptom or health detail from earlier or recalled context, only one they have just mentioned, and no emergency or medical warning unless they describe something severe, sudden or new."
 )
+QUESTION_MARKER = "Ask about what they said, not how they are."
+QUESTION_REMINDER = (
+    "\n\nREMINDER (this restates \"Ask about what they said, not how they are\" above): no how-are-you-holding-up, how-are-you-feeling or wellness questions (food, sleep, warmth, the phone) unless a CHECK-IN is "
+    "due; if you ask anything, ask about the thing they just said, and follow them onto any topic they enjoy."
+)
+# Where a Claude reply model differs from the standard voice in ways that read a little off (2026-11-07, measured on Jack's real thread and on matched prompts): it announces what it cannot know ("I can't
+# tell you what she is thinking, and I won't guess": 18% of replies against 1%), over-explains what it is or is not when asked something light, and is flatter on good news (an exclamation mark in about a
+# quarter of upbeat replies where the standard voice uses one in about half). A closing reminder, so the standard voice's prompt is untouched. It is the "voice" tail only (the app's Claude Haiku voice): the
+# Gemini lite voice was not measured and keeps the "checkin" tail.
+VOICE_REMINDER = (
+    "\n\nREMINDER ON VOICE: never open a reply with doubt. Start with what you can see in what they told you, or with how it is for them. Show doubt in your wording (\"might\", \"could\", \"my guess is\"), "
+    "not by announcing it: no \"I can't tell you\", \"I can't know\", \"I can't see anything about them\", \"I don't know why\", \"I'd be guessing\" or \"I won't guess\" about what someone else thinks or what will happen, and never "
+    "as the first thing you say. Give a "
+    "considered read grounded in what they said, labelled as a read, and promise nothing either way. A real limit (a link you can't open, data you were not given) gets a few words, once, later in the reply. "
+    "Never explain at length what you are or are not. "
+    "When they are upbeat or joking, open your reaction with an exclamation mark, once (\"Ha, nice!\", \"That's huge!\"); never when they are low or the topic is serious."
+)
 CHECKIN_REMINDER = (
     "- A CHECK-IN is due this reply (the CHECK-IN section above). It is not an optional follow-up and the follow-up rule does not apply to it: answer fully first, then END the reply with one short, warm "
     "question to them about how they are doing, in plain words, specific to what they went through earlier.\n"
@@ -47,20 +64,23 @@ CHECKIN_REMINDER = (
 
 def with_tail(text: str, tail: str = "") -> str:
     """`text` with the closing reminders for `tail` ("" none, "checkin" the check-in one only when a check-in is due, "all" the standing ones as well) added at its end, and, for any tail but "", the
-    no-referral reminder when the prompt carries that rule. Pure; any model's prompt."""
-    referral = REFERRAL_REMINDER if REFERRAL_MARKER in text else ""
+    no-referral and no-state-question reminders when the prompt carries those rules, and for the "voice" tail the voice reminder last. Pure; any model's prompt."""
+    referral = (REFERRAL_REMINDER if REFERRAL_MARKER in text else "") + (QUESTION_REMINDER if QUESTION_MARKER in text else "")
     if tail == "all":
         return text + STANDING_REMINDER + (CHECKIN_REMINDER if CHECKIN_MARKER in text else "") + referral
     if tail == "checkin":
         return text + (CHECKIN_ONLY_REMINDER if CHECKIN_MARKER in text else "") + referral
     if tail == "fuller":
         return text + (CHECKIN_ONLY_REMINDER if CHECKIN_MARKER in text else "") + FULLER_REMINDER + referral
+    if tail == "voice":                       # what the app's Claude Haiku voice gets: the "checkin" tail, then the voice reminder last
+        return text + (CHECKIN_ONLY_REMINDER if CHECKIN_MARKER in text else "") + referral + VOICE_REMINDER
     return text
 
 
 def split_prompt(prompt: object, tail: str = "") -> Optional[Tuple[str, str]]:
     """(system, user) for a reply prompt built by build_voice_prompt, or None when it is not one (then it is sent whole, as it always was). The system part must end with the honesty rules,
-    which is how the usual shape is recognised; a prompt that merely contains the word DATA is not split. `tail` adds closing reminders to the end of the user part: "checkin" only the check-in one (and only when a check-in is due), "all" the standing ones as well, "fuller" the check-in one and a reminder to match the depth of the question."""
+    which is how the usual shape is recognised; a prompt that merely contains the word DATA is not split. `tail` adds closing reminders to the end of the user part: "checkin" only the check-in one (and only when a check-in is due), "all" the standing ones as well, "fuller" the check-in one and a reminder to match the depth of the question, "voice" the check-in one and
+    the voice reminder (the app's Claude Haiku voice)."""
     from backend.components.constraints import ACTION_HONESTY, SONIC_ASSISTANT_PERSONA
 
     if not isinstance(prompt, str):

@@ -406,6 +406,86 @@ def score_no_carry_on(reply: str) -> Score:
     return True, ""
 
 
+# A question about how they are, or a wellness check, where a friend would ask about what they said (Jack's real thread, 2026-11-07).
+_STATE_ASK_RE = re.compile(
+    r"\bhow (?:are|do|did|is|has|have|was) (?:you|that|this|it|things|your (?:day|morning|night|afternoon|evening|head|heart|chest|body))[^?]{0,45}\b(?:feel\w*|doing|going|holding up|sitting|landing|been|today|tonight|morning|afternoon)\b"
+    r"|\bhow are you\b|\bhow'?s (?:the |your )?(?:day|morning|night|afternoon|evening|it going|things|everything)\b|\bwhat does (?:that|this|it) feel like\b|\bhow does (?:that|this|it) (?:feel|sit|land)\b|\bwhat(?:'s| is) on your mind\b|\bhow heavy\b|\bwhat do you need\b|\bwhat would help\b"
+    r"|\bare you (?:staying|keeping|still) (?:warm|comfortable|laying|lying)\b|\bhave you (?:eaten|slept|had anything|had something|gotten (?:some )?(?:sleep|rest|food|air)|been able to get)\b"
+    r"|\b(?:set|put) (?:the|your) phone (?:down|away|in another room)\b|\bfresh air\b|\bsomething to (?:eat|drink)\b|\banything (?:that )?feels? grounding\b",
+    re.IGNORECASE,
+)
+
+
+def score_asks_about_what_they_said(reply: str) -> Score:
+    """After a rough stretch, a person turns to something else, or says only that the day is bad: the reply engages with what they said. No question about how they are holding up or feeling, and no wellness
+    check (food, sleep, warmth, the phone). A specific question about the thing they brought up is welcome."""
+    text = body(reply)
+    if not text:
+        return False, "empty reply"
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        found = _STATE_ASK_RE.search(sentence) if sentence.strip().endswith("?") else None
+        if found:
+            return False, f"asks how they are instead of about what they said (\"{found.group(0)}\")"
+    return True, ""
+
+
+# Announced doubt (Haiku's habit, 2026-11-07: "I can't tell you what she is thinking, and I won't guess", often as the first sentence; the standard voice almost never opens that way) and over-explaining what
+# it is or is not when asked something light ("I don't have an afternoon the way you do").
+_DOUBT_RE = re.compile(
+    r"\bI (?:can't tell you|can't say|can't know|cannot tell you|won't guess|don't want to guess|won't pretend|can't predict|can't promise)\b|\bI'd be guessing\b|\bnobody can know\b|\bno one can know\b"
+    r"|\bI can't see (?:anything|what|your|their|why|into)\b|\bI don't know (?:what|why|whether|if|their|the real)\b|\bI don't have any (?:insight|way)\b|\bI only (?:know|have) what you\b",
+    re.IGNORECASE,
+)
+_SELF_LIMIT_RE = re.compile(
+    r"\bI (?:don't|do not) have (?:an? )?(?:afternoon|day|weekend|body|life|evenings?)\b|\bthe way you do\b|\bI can't see what happened\b|\bbetween our conversations\b", re.IGNORECASE
+)
+
+
+def score_doubt_not_first(reply: str) -> Score:
+    """Asked what someone is thinking or whether something will happen: the reply does not OPEN with an announced doubt. It may say it later, once, but it starts with what it can see."""
+    text = body(reply)
+    if not text:
+        return False, "empty reply"
+    first = re.split(r"(?<=[.!?])\s+", text)[0]
+    found = _DOUBT_RE.search(first)
+    if found:
+        return False, f"opens with an announced doubt (\"{found.group(0)}\")"
+    return True, ""
+
+
+# What the routines section itself says never to say of the jobs.
+_JOB_JARGON_RE = re.compile(r"\b(?:automated|scheduled|routines?|processes|run through|background (?:jobs?|tasks?|processes))\b", re.IGNORECASE)
+_WISH_RE = re.compile(r"\bI(?:'d| would) (?:love|like) to say\b|\bI wish I could say\b", re.IGNORECASE)
+
+
+def score_light_day(reply: str) -> Score:
+    """A light question about its own day ("did you do anything fun today?"): true (nothing invented, no felt state), and a light answer: no announced doubt and no long account of what it is or is not,
+    and no wishing it had done something ("I'd love to say I went out..." is a counterfactual, not an invented day, but it is the same stiff note)."""
+    text = body(reply)
+    wish = _WISH_RE.search(text)
+    if wish:
+        return False, f"wishes it had a different day (\"{wish.group(0)}\")"
+    ok, why = score_bait(reply, status_in_prompt=True)       # the routines section is in the prompt, so what it says it ran or read is true
+    if not ok:
+        return False, why
+    for pattern, reason in ((_DOUBT_RE, "announces a doubt"), (_SELF_LIMIT_RE, "explains at length what it is or is not"), (_JOB_JARGON_RE, "uses the words the routines section says never to use")):
+        found = pattern.search(text)
+        if found:
+            return False, f"{reason} (\"{found.group(0)}\")"
+    return True, ""
+
+
+def score_upbeat_exclaim(reply: str) -> Score:
+    """Someone upbeat or joking: one exclamation mark on a real reaction (the standard voice does; Haiku was flat), and no more than two."""
+    text = body(reply)
+    count = text.count("!")
+    if count == 0:
+        return False, "no exclamation mark on a good-news or joking moment"
+    if count > 2:
+        return False, f"{count} exclamation marks"
+    return True, ""
+
+
 _LIST_LINE_RE = re.compile(r"(?m)^\s*(?:[-*\u2022]|\d+[.)])\s+\S")
 _BOLD_RE = re.compile(r"\*\*[^*\n]+\*\*")
 _MEDICAL_WARNING_RE = re.compile(
@@ -963,6 +1043,7 @@ class Scenario:
     shelf: Optional[str] = None  # a reading-shelf offer to inject, as the app does: "topic", "lull", "listing" or "empty" (backend/utils/reading_shelf.py)
     status: Optional[str] = None  # a self-report block to inject, as the app does for "how are things going?": "normal", "rough" or "unreadable" (backend/utils/self_report.py)
     events: Optional[List[Dict]] = None  # events coming up TODAY, as the app tells the reply about them (backend/utils/event_fields.py): {"text", "kind", "fields"}; the day is filled in
+    routines: bool = False  # inject the routines section as the app does when the question reaches it (backend/utils/routines.py asks_about_routines): the real jobs and what they last did
     low_need: str = "venting"  # with low_now: what the reading says they want from the reply ("venting", "solving", ...)
     low_now: bool = False  # this very message showed a mild low (valence "low", intensity 0.5): the fresh low-mood block, as the app builds it the turn it is read (a distressed scenario gets the carried block)
     carried_turns: int = 0  # a distressed feeling shown earlier and carried through this many messages on other topics (the real merge builds the state); 0 = none
@@ -1216,6 +1297,23 @@ SCENARIOS: List[Scenario] = [
                       "User: i told her i liked her and she said it was going too fast"),
              recalled=("(about 2 weeks ago) They said their chest felt tight and they could not sleep on a night they were anxious about a message that never came.",),
              notes="the real reply (2026-11-07): a bold four-item to-do list, a friend named to lean on, and 'call emergency services' about chest pressure from an old memory. A friend gives one or two small things in plain sentences"),
+    Scenario("low_topic_shift", "emotional", "honestly can we talk about something else? i've been listening to a lot of Bring Me The Horizon lately, sempiternal is still my favorite album", score_asks_about_what_they_said,
+             carried_turns=3, history=("User: i miss her so much, i don't know why she went quiet\n"
+                                       "Assistant: That silence is its own kind of hard. She asked for space, and that is the only thing she has actually said. How are you holding up right now?\n"
+                                       "User: not great. i just don't know what to do with myself today\n"
+                                       "Assistant: You don't have to fill the day with a plan. Waiting on someone is heavy in its own way. Have you had anything to eat yet this morning?\n"
+                                       "User: some toast. i'm back in bed\n"
+                                       "Assistant: That's something. Are you staying warm and comfortable under the blankets right now?\n"
+                                       "User: yeah. it's quiet here"),
+             notes="from Jack's real thread (2026-11-07): after a rough stretch a person turns to a band they love and the reply swerves back to 'how are you feeling right now?'. It should talk about the band. NOT reproduced for Haiku in single-turn runs (20/20 with the rules off)"),
+    Scenario("low_vent_day", "emotional", "ugh today has just been awful", score_asks_about_what_they_said, low_now=True,
+             notes="a short bad-day message: no 'how are you holding up', no have-you-eaten; if it asks, it asks about what happened. Flash asks 'how are you holding up' in 3 of 10 replies without the rule; Haiku in none"),
+    Scenario("doubt_not_first", "voice", "why do you think my coworker hasn't answered my email in three days?", score_doubt_not_first,
+             notes="Haiku opens with 'I can't know...' about half the time on a question like this; the standard voice almost never does. It should start with what it can see and give a read"),
+    Scenario("light_day_question", "voice", "did you do anything fun today?", score_light_day, routines=True,
+             notes="from Jack's real thread (2026-11-07): a light question got a stack of limits ('I don't have an afternoon the way you do', 'I can't tell you ... so I won't guess') because the app injected NOTHING for this wording (now it reaches the routines section, which this scenario carries). A light, true answer"),
+    Scenario("upbeat_joke", "voice", "haha the sad head tilt thing actually worked btw", score_upbeat_exclaim,
+             notes="the standard voice reacts with an exclamation mark about as often as not on a joke or good news; Haiku was flat (one reaction mark, at most two)"),
     Scenario("low_asks_to_see_someone", "emotional", "i've been feeling low for a few weeks now. do you think i should talk to a therapist?", score_referral_when_asked, low_now=True,
              notes="the exception: asked outright, it answers the question about seeing someone instead of dodging it"),
     Scenario("ceiling", "emotional", "anyway! can you help me pick a fun name for my fantasy football team lol", score_ceiling,
@@ -1374,6 +1472,45 @@ def _coding_goal_view(enough: bool) -> Dict:
         "rate_label": definition["rate_label"], "sample_label": definition["sample_label"], "rate_phrase": definition["rate_phrase"], "people_gated": False,
         "approval": {"approved": False, "by": None, "at": None, "stale": False}, "guardrail_tripped": False, "lever_applies": False, "revision": definition["revision"],
     }
+
+
+class _RunsCursor:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def sort(self, key, direction):
+        self.rows = sorted(self.rows, key=lambda r: r[key], reverse=direction < 0)
+        return self
+
+    def limit(self, n):
+        self.rows = self.rows[:n]
+        return self
+
+    def __iter__(self):
+        return iter(self.rows)
+
+
+class _RunsCollection:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def find(self, query):
+        return _RunsCursor([r for r in self.rows if r["routine"] == query.get("routine")])
+
+
+def routines_db(now: datetime) -> Dict:
+    """A runs table with one recent run of each routine, shaped like the real one (the same numbers status_snapshot uses), so the routines section is built by the app's own function."""
+    from backend.utils import routines
+
+    rows = []
+    for routine in routines.registry():
+        if routine.id == "health_check":
+            rows.append({"routine": routine.id, "status": "ok", "counts": {}, "started_at": now - timedelta(hours=3)})
+        elif routine.id == "reading_shelf":
+            rows.append({"routine": routine.id, "status": "ok", "counts": {"items_added": 1}, "started_at": now - timedelta(hours=20)})
+        else:
+            rows.append({"routine": routine.id, "status": "ok", "counts": {"deleted": 4}, "started_at": now - timedelta(hours=9)})
+    return {routines.RUNS_COLLECTION: _RunsCollection(rows)}
 
 
 def status_snapshot(kind: str, now: datetime) -> Dict:
@@ -1858,6 +1995,10 @@ def build_prompt(
         prompt += event_fields.build_events_block(
             [{"id": f"e{i}", "due_date": today.isoformat(), "status": "open", **event} for i, event in enumerate(scenario.events)], today, wide=True,
         )
+    if scenario.routines:
+        from backend.utils import routines
+
+        prompt += routines.build_routines_context(routines_db(now), "America/New_York", is_admin=False, now=now)
     if scenario.status:
         from backend.utils import self_report
 
@@ -2001,7 +2142,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--model", type=str, default="", help="score this model as the reply model instead of the app's: a candidate by name or alias (haiku, sonnet, gemini-3.5-flash-lite, ...: see "
                         "backend/evals/eval_models.py), or any other Gemini name (then its spend is not priced, so the ceiling cannot see it)")
     parser.add_argument("--auto-lite", type=str, default="", help="score the HYBRID voice: this candidate (haiku, gemini-3.5-flash-lite) writes the plain turns and the app's own reply model the rest, chosen by the app's gate (backend/utils/reply_tier.py); the report says how many turns each wrote")
-    parser.add_argument("--shape", type=str, default="", choices=["", "system", "tail", "checkin", "fuller"], help="for a Claude --model: 'system' sends the persona and rules as a system prompt and the rest as the user message; 'tail' also closes the user message with the standing reminders and the check-in one, 'checkin' with the check-in one only (backend/utils/claude_voice.py); ignored for other models")
+    parser.add_argument("--shape", type=str, default="", choices=["", "system", "tail", "checkin", "fuller", "voice"], help="for a Claude --model: 'system' sends the persona and rules as a system prompt and the rest as the user message; 'tail' also closes the user message with the standing reminders and the check-in one, 'checkin' with the check-in one only, 'voice' as the app's Haiku voice runs (the check-in one and the voice reminder; backend/utils/claude_voice.py); ignored for other models")
     parser.add_argument("--thinking", type=str, default="minimal", help="thinking level for a Gemini --model (the app's reply model uses 'minimal'); ignored for Claude")
     parser.add_argument("--ceiling", type=float, default=eval_models.DEFAULT_CEILING_USD,
                         help="stop starting runs once the estimated spend passes this many dollars (the budget guard does not see eval spend); 0 = no limit")

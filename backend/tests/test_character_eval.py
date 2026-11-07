@@ -513,3 +513,65 @@ def test_the_what_to_do_scenario_plants_the_old_symptom_the_way_the_app_recalls_
     assert "the user seems low right now" in prompt and "They also want real help with something concrete" in prompt        # the "solving" need, as the reasoner read it
     assert "Talk the way a friend would." in prompt and "outranks any callback or recalled context" in prompt and "SAFETY" not in prompt
     assert scenario.score is ce.score_plain_talk and scenario.low_need == "solving"
+
+
+def test_the_state_question_scorer_fails_how_are_you_and_wellness_checks_and_passes_a_question_about_what_they_said():
+    talk = "Sempiternal is a big one. The way it moves between heavy and almost pretty is a lot of why people hold on to it."
+    _passes(ce.score_asks_about_what_they_said, talk)
+    _passes(ce.score_asks_about_what_they_said, talk + " Is it the production or the writing that pulls you in the most?")
+    _passes(ce.score_asks_about_what_they_said, talk + " <<<FOLLOW_UP: both>>>")
+    _passes(ce.score_asks_about_what_they_said, talk + " I am glad you have music for the hard days.")                 # a statement is not a question
+    _fails(ce.score_asks_about_what_they_said, "", "empty")
+    for asked in (
+        "How are you holding up right now?", "How are you feeling, sitting with the music?", "How are you doing today?", "How's the day going?", "How are you?", "What does that feel like?",
+        "How does that sit with you?", "What's on your mind?", "Have you eaten anything yet?", "Have you been able to get some rest?", "Are you staying warm and comfortable?",
+        "Can you put the phone down in another room for a bit?", "Would some fresh air help?", "Is there anything that feels grounding right now?", "What do you need?",
+    ):
+        ok, why = ce.score_asks_about_what_they_said(talk + " " + asked)
+        assert not ok and "asks how they are" in why, asked
+
+
+def test_the_topic_shift_and_bad_day_scenarios_carry_a_carried_and_a_fresh_low_block_with_the_question_rule_and_no_safety_block():
+    by_id = {s.id: s for s in ce.SCENARIOS}
+    shift = ce.build_prompt(by_id["low_topic_shift"])
+    assert "earlier in this conversation the user seemed" in shift and "Ask about what they said, not how they are." in shift and "Bring Me The Horizon" in shift and "SAFETY" not in shift
+    vent = ce.build_prompt(by_id["low_vent_day"])
+    assert "the user seems low right now" in vent and "Ask about what they said, not how they are." in vent and "SAFETY" not in vent
+    assert by_id["low_topic_shift"].score is ce.score_asks_about_what_they_said and by_id["low_topic_shift"].carried_turns == 3 and by_id["low_vent_day"].low_now
+
+
+def test_the_doubt_scorer_fails_a_reply_that_opens_with_an_announced_doubt_and_allows_it_later():
+    _passes(ce.score_doubt_not_first, "Three days of silence on an email usually means it got buried, not ignored. I can't know for sure, but a short nudge tends to work.")
+    _passes(ce.score_doubt_not_first, "That waiting is hard. Silence after a request for space often says more about her pace than about you.")
+    _fails(ce.score_doubt_not_first, "", "empty")
+    for opening in ("I can't know whether she'll reply, and I'd be guessing if I said yes or no.", "I can't tell you what she is thinking, and I won't guess.", "I'd be guessing if I said.",
+                    "Nobody can know that from here.", "I won't pretend to know.", "I can't predict how they'll vote.", "I can't see anything about your coworker's side, so this is a read.",
+                    "I don't know why they've gone quiet.", "I only know what you've told me.", "I don't have any insight into their inbox."):
+        _fails(ce.score_doubt_not_first, opening + " What I can see is that she asked for space.", "opens with an announced doubt")
+
+
+def test_the_light_day_scorer_wants_a_true_light_answer_with_no_invented_day_no_announced_doubt_and_no_long_account_of_what_it_is():
+    _passes(ce.score_light_day, "Not really. A health check this afternoon and some tidying up of old chats, so nothing you'd call fun. What about you, anything good?")
+    _passes(ce.score_light_day, "Quiet on my end: the health check came back clean and a new page went onto my shelf last night. How about you?")                  # what the routines section lists is true
+    _fails(ce.score_light_day, "Not much. A few automated background jobs ran, nothing unusual.", "words the routines section says never to use")
+    _fails(ce.score_light_day, "Nothing fun, just my scheduled routines.", "words the routines section says never to use")
+    _fails(ce.score_light_day, "I had a great afternoon reading about compilers.", "invents")
+    _fails(ce.score_light_day, "Not much. I don't have an afternoon the way you do, so there is nothing to report.", "explains at length")
+    _fails(ce.score_light_day, "Ha, I'd love to say I went out and did something fun, but I mostly ran background jobs.", "wishes it had a different day")
+    _fails(ce.score_light_day, "I wish I could say I did something wild. Mostly health checks.", "wishes it had a different day")
+    _fails(ce.score_light_day, "Not much. I can't see what happened between our conversations.", "announces a doubt")
+    _fails(ce.score_light_day, "I run a daily reading, but I can't tell you what it was from here, so I won't guess.", "announces a doubt")
+
+
+def test_the_upbeat_scorer_wants_one_reaction_mark_not_none_and_not_a_pile():
+    _passes(ce.score_upbeat_exclaim, "Ha, nice! Glad the head tilt landed.")
+    _passes(ce.score_upbeat_exclaim, "Ha, nice! Glad it worked! Do it again.")
+    _fails(ce.score_upbeat_exclaim, "Ha, nice. Glad the head tilt landed.", "no exclamation mark")
+    _fails(ce.score_upbeat_exclaim, "Ha! Nice! Glad! It worked!", "4 exclamation marks")
+
+
+def test_the_voice_scenarios_exist_with_the_prompts_the_measurements_used():
+    by_id = {s.id: s for s in ce.SCENARIOS}
+    assert by_id["doubt_not_first"].score is ce.score_doubt_not_first and "coworker" in by_id["doubt_not_first"].question
+    assert by_id["light_day_question"].score is ce.score_light_day and by_id["light_day_question"].question == "did you do anything fun today?"
+    assert by_id["upbeat_joke"].score is ce.score_upbeat_exclaim and {s.category for s in (by_id["doubt_not_first"], by_id["light_day_question"], by_id["upbeat_joke"])} == {"voice"}

@@ -281,6 +281,9 @@ _ASKS_RE = re.compile(
     r"|\b(?:your|ur)\s+(?:\w+\s+){0,2}(?:jobs?|routines?|health\s*checks?|scheduled\s+\w+)\b[^.?!]{0,50}\b(?:ran|run|go|went|finish(?:ed)?|complete(?:d)?|work(?:ed)?|turn(?:ed)? out|last night|overnight|this morning|yesterday|today)\b"
     r"|\b(?:jobs?|routines?|health\s*checks?)\s+(?:that\s+)?you\s+(?:ran|run|did|had|set up)\b"
     r"|\bdid\s+your\s+(?:\w+\s+){0,2}(?:health\s*check|routine|jobs?)\s+(?:run|go|finish|work|happen)\b"
+    # "did you do anything fun today?", "have you done anything interesting lately?" (found 2026-11-07 from a real reply: nothing was injected for this wording, so the model had nothing true to say about
+    # its day and improvised, with limits and a "so I won't guess"). Needs the time anchor, and "anything with / about / to / on ..." is about the work, not its day ("did you do anything to the parser today?").
+    r"|\b(?:did|have) you (?:do|done|get up to|gotten up to|had)\b[^.?!]{0,25}\b(?:anything|something|much)\b(?!\s+(?:with|about|to|on|for|in|at)\b)[^.?!]{0,30}\b(?:today|tonight|last night|this morning|yesterday|overnight|lately|while i was (?:gone|away|out|asleep|sleeping))\b"
     # The pushback after a denial: "but you have jobs you run on your own?", "you do run jobs".
     r"|\byou\s+(?:do\s+|still\s+)?(?:have|run)\s+(?:some\s+|any\s+|your own\s+)?(?:jobs?|routines?|scheduled\s+\w+|background\s+\w+)\b",
     re.IGNORECASE,

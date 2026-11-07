@@ -118,11 +118,12 @@ def test_the_no_referral_reminder_goes_last_only_where_the_low_mood_rule_is_and_
     low = reply_prompt(emotional_context=build_emotional_context(state, now))
     assert cv.REFERRAL_MARKER in NO_REFERRAL_RULE and cv.REFERRAL_MARKER in low                       # the marker is the rule's own opening words
     for tail in ("checkin", "all", "fuller"):
-        assert cv.with_tail(low, tail).endswith(cv.REFERRAL_REMINDER), tail
+        assert cv.with_tail(low, tail).endswith(cv.REFERRAL_REMINDER + cv.QUESTION_REMINDER), tail           # the fresh low block carries both rules
     assert cv.with_tail(low, "") == low                                                               # no tail, nothing added
     safety = reply_prompt(emotional_context=build_emotional_context(state, now, safety=True))
     assert cv.REFERRAL_MARKER not in safety and cv.REFERRAL_REMINDER not in cv.with_tail(safety, "checkin")
-    assert cv.REFERRAL_REMINDER not in cv.with_tail(reply_prompt(), "all")                              # an ordinary turn carries none
+    assert cv.QUESTION_MARKER not in safety and cv.QUESTION_REMINDER not in cv.with_tail(safety, "checkin")      # the ladder asks on purpose
+    assert cv.REFERRAL_REMINDER not in cv.with_tail(reply_prompt(), "all") and cv.QUESTION_REMINDER not in cv.with_tail(reply_prompt(), "all")      # an ordinary turn carries none
 
 
 def test_a_haiku_reply_to_a_mildly_low_message_ends_on_the_reminder_and_the_checkin_one_still_comes_first_when_due():
@@ -135,9 +136,53 @@ def test_a_haiku_reply_to_a_mildly_low_message_ends_on_the_reminder_and_the_chec
     prompt = reply_prompt(emotional_context=build_emotional_context(state, now) + build_block())
     shaped = ClaudeLLM(model_name="claude-haiku-5-5", fallback=None, voice_shape=True, voice_tail="checkin")._to_messages(prompt)           # how the app builds the Haiku voice (models.get_haiku_stream_llm)
     last = shaped[1].content.rstrip()
-    assert last.endswith(cv.REFERRAL_REMINDER.strip()) and last.index(cv.CHECKIN_ONLY_REMINDER.strip()) < last.index(cv.REFERRAL_REMINDER.strip())
+    assert last.endswith(cv.QUESTION_REMINDER.strip()) and last.index(cv.CHECKIN_ONLY_REMINDER.strip()) < last.index(cv.REFERRAL_REMINDER.strip()) < last.index(cv.QUESTION_REMINDER.strip())
 
 
 def test_the_closing_reminder_also_restates_the_plain_talk_rule_so_a_claude_reply_ends_on_it():
     assert "Talk the way a friend would" in cv.REFERRAL_REMINDER and "no list and no bold" in cv.REFERRAL_REMINDER
     assert "no symptom or health detail from earlier or recalled context" in cv.REFERRAL_REMINDER and "severe, sudden or new" in cv.REFERRAL_REMINDER
+
+
+def test_a_carried_low_mood_gets_the_no_state_question_reminder_last_and_not_the_no_referral_one():
+    from backend.evals.character_eval import _carried_state
+    from backend.utils.emotion_utils import build_emotional_context
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc)
+    carried = reply_prompt(emotional_context=build_emotional_context(_carried_state(now, 3), now))
+    assert cv.QUESTION_MARKER in carried and cv.REFERRAL_MARKER not in carried                         # the carried blocks carry the question rule only
+    assert cv.with_tail(carried, "checkin").endswith(cv.QUESTION_REMINDER) and cv.REFERRAL_REMINDER not in cv.with_tail(carried, "checkin")
+    assert cv.with_tail(carried, "") == carried
+    for text in ("no how-are-you-holding-up", "food, sleep, warmth, the phone", "unless a CHECK-IN is due", "follow them onto any topic they enjoy"):
+        assert text.lower() in cv.QUESTION_REMINDER.lower() or text in cv.QUESTION_REMINDER, text
+
+
+def test_the_voice_reminder_is_the_last_thing_a_haiku_reply_reads_and_only_the_voice_tail_carries_it():
+    from backend.utils.emotion_checkin import build_block
+
+    quiet = reply_prompt()
+    assert cv.with_tail(quiet, "voice") == quiet + cv.VOICE_REMINDER                                      # an ordinary turn: just the voice reminder
+    due = reply_prompt(emotional_context=build_block())
+    voiced = cv.with_tail(due, "voice")
+    assert voiced.endswith(cv.VOICE_REMINDER) and voiced.index(cv.CHECKIN_ONLY_REMINDER) < voiced.index(cv.VOICE_REMINDER)       # the check-in one still comes first
+    for tail in ("", "checkin", "all", "fuller"):
+        assert cv.VOICE_REMINDER not in cv.with_tail(due, tail) and cv.VOICE_REMINDER not in cv.with_tail(quiet, tail), tail        # the Gemini lite voice and the evals' other shapes are unchanged
+    system, user = cv.split_prompt(quiet, tail="voice")
+    assert user.endswith(cv.VOICE_REMINDER.strip()) and cv.VOICE_REMINDER.strip() not in system
+
+
+def test_the_voice_reminder_says_what_the_measured_gaps_were_and_the_app_and_the_eval_both_use_the_voice_tail():
+    import pathlib
+
+    text = cv.VOICE_REMINDER
+    for part in ("never open a reply with doubt", "\"I can't see anything about them\", \"I don't know why\", \"I'd be guessing\" or \"I won't guess\"", "labelled as a read, and promise nothing either way",
+                 "Never explain at length what you are or are not", "open your reaction with an exclamation mark, once", "never when they are low or the topic is serious"):
+        assert part in text, part
+    models = pathlib.Path("backend/models/models.py").read_text(encoding="utf-8")
+    assert 'voice_shape=True, voice_tail="voice"' in models
+    from backend.evals import eval_models
+
+    llm = eval_models.make_llm("haiku", shape="voice")
+    assert llm.voice_shape is True and llm.voice_tail == "voice"
+    assert '"voice"' in pathlib.Path("backend/evals/character_eval.py").read_text(encoding="utf-8")                  # the --shape choice

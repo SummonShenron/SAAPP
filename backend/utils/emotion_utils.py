@@ -203,6 +203,14 @@ PLAIN_TALK_RULE = (
     "- Talk the way a friend would. If they ask what to do, give at most one or two small things, in ordinary sentences: no list, no bold, no step-by-step plan. Do not bring up a physical symptom or health detail from earlier "
     "conversations or recalled context, only one they have just mentioned (this outranks any callback or recalled context), and do not add a medical or emergency warning (call emergency services, see a doctor) unless they describe something severe, sudden or new.\n"
 )
+# The third part of the same trouble (2026-11-07, read from Jack's real thread): once a heavy feeling was carried, a Claude reply model closed on a state check-in almost every turn ("how are you holding up
+# right now?", "how are you feeling, sitting with the music?"), added wellness questions (have you eaten, are you warm, can you put the phone in another room), and answered a question about a band or an artist
+# with a check on how they were doing. It does ask good specific questions when it has something to ask about; the generic one is what it falls back on. Left out under a safety plan, whose ladder asks on purpose.
+QUESTION_RULE = (
+    "- Ask about what they said, not how they are. Do not ask how they are holding up, doing or feeling, and do not ask whether they have eaten, slept, are warm or can put the phone down, unless a CHECK-IN "
+    "section below says one is due or they raised it. If a question would help, make it a specific one about the thing they just told you. If they have turned to something they enjoy (music, a film, code, "
+    "a project), engage with that and leave the mood alone.\n"
+)
 _LOW_NEED = {
     "venting": (
         "- They mainly want to be heard right now. Stay with what they're feeling and don't jump "
@@ -352,6 +360,7 @@ def build_emotional_context(state: Optional[Dict[str, Any]], now: datetime, *, s
     valence = str(state.get("valence", "neutral"))
     fresh = bool(state.get("read_this_turn"))
     need = state.get("need") if state.get("need") in VALID_NEEDS else "none"
+    questions = "" if safety else QUESTION_RULE            # carried and lifting blocks; the fresh low block carries it in its own slot
 
     if valence == "frustrated":
         return _CONTEXT_HEADER + (_FRUSTRATED_NOW if fresh else _FRUSTRATED_CARRIED)
@@ -359,15 +368,15 @@ def build_emotional_context(state: Optional[Dict[str, Any]], now: datetime, *, s
         # "Fresh" because this message carried a (positive) reading, but the carried feeling is still
         # negative: that's a lift, not new distress, so it takes the ceiling block below.
         if fresh and not state.get("lift_this_turn"):
-            return _CONTEXT_HEADER + _LOW_BASE.format(valence=valence, referral="" if safety else NO_REFERRAL_RULE + PLAIN_TALK_RULE) + _LOW_NEED[need]
+            return _CONTEXT_HEADER + _LOW_BASE.format(valence=valence, referral="" if safety else NO_REFERRAL_RULE + PLAIN_TALK_RULE + QUESTION_RULE) + _LOW_NEED[need]
         gist = str(state.get("gist") or "").strip()
         about = f" ({gist})" if gist else ""
         turns = int(state.get("turns_since", 0) or 0)
         ceiling = (_CEILING_SMALL_LIFT if _lift(state) >= EMOTION_LIFT_FLOOR else _CEILING_NO_LIFT) + _CEILING_EXCEPTION
         if state.get("lift_this_turn"):
-            return _CONTEXT_HEADER + _LOW_LIFTING.format(valence=valence, about=about) + ceiling
+            return _CONTEXT_HEADER + _LOW_LIFTING.format(valence=valence, about=about) + questions + ceiling
         block = _LOW_CARRIED_TOUCH if turns <= EMOTION_TOUCH_MAX_TURNS else _LOW_CARRIED_REGISTER
-        return _CONTEXT_HEADER + block.format(valence=valence, about=about) + ceiling
+        return _CONTEXT_HEADER + block.format(valence=valence, about=about) + questions + ceiling
     if fresh and need == "celebration":
         gist = str(state.get("gist") or "").strip()
         return _CONTEXT_HEADER + _POSITIVE_CELEBRATION.format(about=f" ({gist})" if gist else "")

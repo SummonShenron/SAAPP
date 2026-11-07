@@ -194,7 +194,7 @@ def test_the_cheaper_voices_are_the_models_the_evals_measured_with_the_standard_
     lite = models.get_lite_stream_llm("jack")
     assert lite.model_name == "gemini-3.5-flash-lite" and lite.fallback_model == models.stream_llm.model_name and lite.thinking_level == "minimal"
     haiku = models.get_haiku_stream_llm("jack")
-    assert isinstance(haiku, claude_llm.ClaudeLLM) and haiku.model_name == claude_llm.DEFAULT_MODEL and haiku.voice_shape and haiku.voice_tail == "checkin"
+    assert isinstance(haiku, claude_llm.ClaudeLLM) and haiku.model_name == claude_llm.DEFAULT_MODEL and haiku.voice_shape and haiku.voice_tail == "voice"
     assert haiku.thinking_off and haiku.effort == "low" and haiku.fallback is models.stream_llm
     assert models.get_lite_stream_llm("guest_bty") is None and models.get_haiku_stream_llm("guest_bty") is None      # never the embedded view
     models._lite_stream_llms.clear()

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getEffectivePrincipal, isGuestPrincipal } from '../api';
 import ChatSettingsCard from '../components/ChatSettingsCard';
@@ -6,6 +6,10 @@ import ProfileCard from '../components/ProfileCard';
 import RunnerSettingsCard from '../components/RunnerSettingsCard';
 import BillingCard from '../components/BillingCard';
 import './__styles__/Account.css';
+import './__styles__/Integrations.css';
+
+// Sidebar sections, one shown at a time (same pattern as Integrations.tsx).
+type AccountTab = 'profile' | 'chat' | 'runner' | 'billing' | 'appearance' | 'data';
 
 /**
  * Account settings: where the user chip in the rail leads. For now it shows who you are signed in as, lets you pick the theme, and points to the
@@ -16,11 +20,36 @@ export const AccountPage: React.FC<{ theme: string; toggleTheme: () => void }> =
   const principal = getEffectivePrincipal();
   const guest = isGuestPrincipal(principal);
   const dark = theme === 'shadow';
+  const [activeTab, setActiveTab] = useState<AccountTab>('profile');
+
+  const tabs: { id: AccountTab; label: string }[] = [
+    { id: 'profile', label: 'Profile' },
+    { id: 'chat', label: 'Chat' },
+    ...(guest ? [] : [{ id: 'runner' as AccountTab, label: 'Runner' }, { id: 'billing' as AccountTab, label: 'Billing' }]),
+    { id: 'appearance', label: 'Appearance' },
+    ...(guest ? [] : [{ id: 'data' as AccountTab, label: 'Your data' }]),
+  ];
 
   return (
     <div className="account-page">
       <h2 className="account-heading">Account settings</h2>
 
+      <div className="integrations-layout">
+        <nav className="integrations-sidebar" aria-label="Account sections">
+          {tabs.map(t => (
+            <button
+              key={t.id}
+              type="button"
+              className={`integrations-tab ${activeTab === t.id ? 'active' : ''}`}
+              onClick={() => setActiveTab(t.id)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </nav>
+        <div className="integrations-main">
+
+      {activeTab === 'profile' && (
       <section className="account-card" data-help="account.profile">
         <h3>Profile</h3>
         <dl className="account-rows">
@@ -30,14 +59,17 @@ export const AccountPage: React.FC<{ theme: string; toggleTheme: () => void }> =
         {guest && <p className="account-note">Guests share one temporary identity, so nothing here is personal. Sign in to keep your own conversations, memory, and settings.</p>}
       </section>
 
-      {!guest && <ProfileCard />}
+      )}
 
-      <ChatSettingsCard mascotAllowed={principal !== 'guest_bty'} />
+      {activeTab === 'profile' && !guest && <ProfileCard />}
 
-      {!guest && <RunnerSettingsCard />}
+      {activeTab === 'chat' && <ChatSettingsCard mascotAllowed={principal !== 'guest_bty'} />}
 
-      {!guest && <BillingCard />}
+      {activeTab === 'runner' && <>{!guest && <RunnerSettingsCard />}</>}
 
+      {activeTab === 'billing' && <>{!guest && <BillingCard />}</>}
+
+      {activeTab === 'appearance' && (
       <section className="account-card" data-help="account.theme">
         <h3>Appearance</h3>
         <div className="account-row-action">
@@ -48,8 +80,9 @@ export const AccountPage: React.FC<{ theme: string; toggleTheme: () => void }> =
           <button type="button" className="account-btn" onClick={toggleTheme}>{dark ? 'Switch to light' : 'Switch to dark'}</button>
         </div>
       </section>
+      )}
 
-      {!guest && (
+      {activeTab === 'data' && !guest && (
         <section className="account-card" data-help="account.data">
           <h3>Your data</h3>
           <p className="account-note">
@@ -79,6 +112,9 @@ export const AccountPage: React.FC<{ theme: string; toggleTheme: () => void }> =
           </div>
         </section>
       )}
+
+        </div>
+      </div>
 
       <p className="account-note"><a href="#/terms">Terms of Service</a></p>
     </div>

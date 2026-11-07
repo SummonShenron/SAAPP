@@ -474,7 +474,7 @@ def get_haiku_stream_llm(username: str):
     name = claude_llm.DEFAULT_MODEL
     if name not in _lite_stream_llms:
         _lite_stream_llms[name] = claude_llm.ClaudeLLM(
-            model_name=name, fallback=stream_llm, effort="low", thinking_off=True, max_tokens=2000, voice_shape=True, voice_tail="checkin",
+            model_name=name, fallback=stream_llm, effort="low", thinking_off=True, max_tokens=2000, voice_shape=True, voice_tail="voice",
         )
     return _lite_stream_llms[name]
 

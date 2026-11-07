@@ -36,5 +36,5 @@ SAAPP is a FastAPI backend (`app.py`, `backend/`) with a React frontend (`local/
 - **Every name you use is imported or defined.** A new call whose import sits elsewhere is the commonest slip; the proposal check refuses it.
 - **Every counter you add is recorded and tested.** A key nothing increments, or a test of only its name, is dead.
 - **A test must fail without your change.** Undo the change, watch it fail, restore it.
-- **Tools that share state (page tools, the datastore) run in order**, never at once.
+- Grep *.test.mjs for a line's exact JSX before editing it; tests assert it.
 - **End by saying what you checked and what you did not.**

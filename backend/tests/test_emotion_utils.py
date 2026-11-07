@@ -706,3 +706,23 @@ def test_the_fresh_low_mood_block_also_asks_for_plain_talk_and_leaves_symptoms_a
         assert part in context, part
     assert eu.PLAIN_TALK_RULE not in eu.build_emotional_context(_fresh("low", 0.6, "solving"), NOW, safety=True)                      # a safety plan shapes its own reply
     assert eu.PLAIN_TALK_RULE not in eu.build_emotional_context(_carried(turns_since=2), NOW)
+
+
+def test_every_low_mood_block_but_a_safety_plans_asks_about_what_they_said_and_not_how_they_are():
+    rule = eu.QUESTION_RULE
+    assert "Ask about what they said, not how they are." in rule and "unless a CHECK-IN section below says one is due or they raised it" in rule
+    assert "engage with that and leave the mood alone" in rule and "whether they have eaten, slept, are warm or can put the phone down" in rule
+    assert rule in eu.build_emotional_context(_fresh("low", 0.6, "venting"), NOW)                                   # the fresh low block
+    assert rule in eu.build_emotional_context(_carried(turns_since=1), NOW)                                          # carried, touch window
+    assert rule in eu.build_emotional_context(_carried(turns_since=3), NOW)                                          # carried, register only
+    for context in (eu.build_emotional_context(_fresh("low", 0.6, "venting"), NOW, safety=True), eu.build_emotional_context(_carried(turns_since=2), NOW, safety=True)):
+        assert rule not in context and context                                                                        # the ladder asks on purpose; the rest of the block stays
+    assert rule not in eu.build_emotional_context(_fresh("frustrated", 0.7), NOW) and rule not in eu.build_emotional_context(_fresh("positive", 0.7), NOW)
+    assert eu.build_emotional_context(_carried(turns_since=2), NOW).index(rule) < eu.build_emotional_context(_carried(turns_since=2), NOW).index("Keep your own energy")        # before the ceiling, which stays last
+
+
+def test_the_block_for_a_small_lift_also_asks_about_what_they_said_and_not_how_they_are():
+    state = {**_carried(turns_since=1), "read_this_turn": True, "lift_this_turn": True, "positive_peak": 0.2}
+    context = eu.build_emotional_context(state, NOW)
+    assert "just now they've shown a small lift" in context and eu.QUESTION_RULE in context
+    assert eu.QUESTION_RULE not in eu.build_emotional_context(state, NOW, safety=True)

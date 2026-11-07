@@ -64,7 +64,7 @@ def make_llm(name: str, *, thinking: Optional[str] = "minimal", temperature: flo
     if CANDIDATES[name]["provider"] == "claude":
         from backend.models.claude_llm import ClaudeLLM
 
-        return ClaudeLLM(model_name=name, fallback=None, effort="low", thinking_off=True, max_tokens=2000, voice_shape=(shape in ("system", "tail", "checkin", "fuller")), voice_tail={"tail": "all", "checkin": "checkin", "fuller": "fuller"}.get(shape, ""))
+        return ClaudeLLM(model_name=name, fallback=None, effort="low", thinking_off=True, max_tokens=2000, voice_shape=(shape in ("system", "tail", "checkin", "fuller", "voice")), voice_tail={"tail": "all", "checkin": "checkin", "fuller": "fuller", "voice": "voice"}.get(shape, ""))
     if CANDIDATES[name]["provider"] == "openai":
         from backend.models.openai_llm import OpenAILLM
 

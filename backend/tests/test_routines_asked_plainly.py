@@ -77,3 +77,21 @@ def test_the_routines_answer_says_it_is_about_its_own_day_and_not_the_persons():
 def test_the_coordinator_sends_such_a_question_to_conversation_and_not_to_the_calendar_tool():
     source = open("backend/services/agent_workflow.py", encoding="utf-8").read()
     assert "self_report.kind_of(_content_of(_messages[-1])) or routines.asks_about_routines(_content_of(_messages[-1]))" in source
+
+
+# ---- "did you do anything fun today?": a light question about ITS day (a real reply, 2026-11-07, got no routines block and improvised) ----
+
+@pytest.mark.parametrize("message", [
+    "did you do anything fun today?", "Did you do anything fun today", "did you do anything interesting last night", "have you done anything fun today?", "did you get up to anything today?",
+    "did you do much today", "did you do something fun this morning?", "have you done anything cool lately", "did you do anything fun while i was away",
+])
+def test_a_light_question_about_whether_it_did_anything_today_reaches_the_routines_answer(message):
+    assert rt.asks_about_routines(message), message
+
+
+@pytest.mark.parametrize("message", [
+    "did you do anything to the parser today?", "did you do anything with the readme today", "did you do anything about the failing test today?", "did you do anything in that file yesterday",
+    "did you do any work on the PR today", "did you do anything fun", "did you do your homework today", "have you done anything for my account lately", "do anything fun today",
+])
+def test_the_same_words_about_the_work_or_with_no_time_anchor_are_left_alone(message):
+    assert not rt.asks_about_routines(message), message
