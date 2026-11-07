@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { ACTIVATION_STEPS, SIGNUP_AFTER, SIGNUP_SOURCES, VOICE_REASONS, WELCOME_KINDS, activationRows, activationTotal, cheaperWrote, nudgesShown, share, signupAfterRows, signupRows, signupTotal, voiceRows, voiceTotal, welcomeRows, welcomeTotal } from './sonicHealthGuest.ts';
+import { ACTIVATION_STEPS, KB_ROWS, SIGNUP_AFTER, SIGNUP_SOURCES, VOICE_REASONS, WELCOME_KINDS, activationRows, activationTotal, cheaperWrote, nudgesShown, share, signupAfterRows, signupRows, signupTotal, voiceRows, voiceTotal, welcomeRows, welcomeTotal, kbRows, kbTotal } from './sonicHealthGuest.ts';
 
 const counters = readFileSync(new URL('../../../backend/utils/self_counters.py', import.meta.url), 'utf8');
 const group = name => {
@@ -64,4 +64,18 @@ test('the new-accounts card lists exactly the first steps and welcome cards the 
   const page = readFileSync(new URL('./SonicHealth.tsx', import.meta.url), 'utf8');
   assert.match(page, /<NewAccountsCard totals=\{health\.counters\.totals\} previous=\{health\.counters\.previous_totals\} \/>/);
   assert.match(page, /if \(steps <= 0 && presses <= 0\) return null;/);
+});
+
+test('the knowledge-base card lists exactly the counters the server records, and sums them', () => {
+  const found = counters.match(/KB_KEYS = \(([^)]*)\)/);
+  assert.ok(found, 'KB_KEYS is a counter list');
+  const server = [...found[1].matchAll(/"([a-z_]+)"/g)].map(m => m[1]);
+  assert.deepEqual([...KB_ROWS.map(([key]) => key)].sort(), [...server].sort());
+  const totals = { kb_searches: 7, kb_search_empty: 4, kb_card_used: 3, turns_total: 50 };
+  assert.equal(kbTotal(totals), 14);
+  assert.deepEqual(kbRows(totals).filter(row => row.count).map(row => [row.key, row.count]), [['kb_searches', 7], ['kb_search_empty', 4], ['kb_card_used', 3]]);
+  assert.equal(kbTotal({}), 0);
+  const page = readFileSync(new URL('./SonicHealth.tsx', import.meta.url), 'utf8');
+  assert.match(page, /<KnowledgeCountsCard totals=\{health\.counters\.totals\} previous=\{health\.counters\.previous_totals\} \/>/);
+  assert.match(page, /const events = kbTotal\(totals\);\s+if \(events <= 0\) return null;/);
 });

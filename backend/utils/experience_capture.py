@@ -43,7 +43,7 @@ MIN_WORDS, MAX_WORDS, MAX_CHARS = 6, 40, 220
 EXCERPT_CHARS = 420
 UNTRUSTED_TOOLS = frozenset({
     "web_search", "read_url", "search_gmail", "read_gmail_message", "get_gmail_attachment", "search_outlook_mail", "read_outlook_message", "get_outlook_attachment",
-    "search_drive_files", "read_drive_file", "search_onedrive_files", "read_onedrive_file", "search_library", "read_library_file", "list_app_incidents", "read_app_incident", "read_app_logs",
+    "search_drive_files", "read_drive_file", "search_onedrive_files", "read_onedrive_file", "search_library", "read_library_file", "search_my_knowledge", "list_app_incidents", "read_app_incident", "read_app_logs",
     "browser_navigate", "browser_click", "browser_read_text", "browser_screenshot",
     "run_local_check",          # output from a command on someone's machine: anything it printed is text someone else wrote
     "run_local_command",

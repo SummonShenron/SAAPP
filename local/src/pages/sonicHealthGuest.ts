@@ -83,3 +83,22 @@ export const activationRows = (totals: Totals): Row[] => ACTIVATION_STEPS.map(([
 export const welcomeRows = (totals: Totals): Row[] => WELCOME_KINDS.map(([key, label]) => ({ key, label, count: count(totals, `welcome_card_${key}`) }));
 export const activationTotal = (totals: Totals): number => activationRows(totals).reduce((sum, row) => sum + row.count, 0);
 export const welcomeTotal = (totals: Totals): number => welcomeRows(totals).reduce((sum, row) => sum + row.count, 0);
+
+
+// ---- Sonic's own knowledge base (backend/utils/knowledge_base.py) -------------------------------------------------------------------------------------------------------------------
+/** Every knowledge-base counter the server records (self_counters.KB_KEYS), in the order a card's life runs: proposed, approved or turned away, searched, used, pushed out. */
+export const KB_ROWS: ReadonlyArray<readonly [string, string]> = [
+  ['kb_proposed', 'Pages Sonic wrote a card from (waiting for approval)'],
+  ['kb_proposal_refused', 'Pages not proposed (a rule, the daily limit, an unreadable page or a card that failed its checks)'],
+  ['kb_approved', 'Cards approved: now readable by everyone'],
+  ['kb_rejected', 'Cards turned away before approval'],
+  ['kb_removed', 'Live cards removed by an admin'],
+  ['kb_searches', 'Searches of the knowledge base'],
+  ['kb_search_empty', 'Searches that found nothing close enough'],
+  ['kb_card_used', 'Cards returned to a model for an answer'],
+  ['kb_evicted', 'Cards pushed out because the base was full'],
+  ['kb_expired', 'Cards that expired'],
+];
+
+export const kbRows = (totals: Totals): Row[] => KB_ROWS.map(([key, label]) => ({ key, label, count: count(totals, key) }));
+export const kbTotal = (totals: Totals): number => kbRows(totals).reduce((sum, row) => sum + row.count, 0);

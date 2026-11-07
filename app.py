@@ -169,6 +169,7 @@ from backend.utils import paperwork_utils
 from backend.utils import profile_utils
 from backend.services import local_edit_decisions
 from backend.utils import reading_shelf as shelf_utils
+from backend.utils import knowledge_base as knowledge_base_utils
 from backend.services import shelf_refresh
 from backend.utils.self_history_utils import SELF_HISTORY_MARK, build_self_history_block, select_self_history
 from backend.utils import routines as routines_utils
@@ -4454,6 +4455,45 @@ async def refresh_reading_shelf(admin = Depends(require_global_admin)):
     db = _admin_db()
     result = await shelf_refresh.refresh_shelf(db, shelf_llm.ainvoke, force=True)
     return {"result": result, **(await asyncio.to_thread(shelf_utils.admin_view, db))}
+
+
+@app.get("/api/admin/knowledge")
+async def get_learned_knowledge(admin = Depends(require_global_admin)):
+    """Sonic's own knowledge base (backend/utils/knowledge_base.py): the cards waiting for approval and the live ones, with the limits. Global_Admins only."""
+    return await asyncio.to_thread(knowledge_base_utils.admin_view, _admin_db())
+
+
+@app.post("/api/admin/knowledge/{key}/approve")
+async def approve_learned_knowledge(key: str, admin = Depends(require_global_admin)):
+    """Approves a waiting card: it is embedded and everyone's Sonic can read it from now on. If the ceiling is reached, the card least worth keeping is evicted to make room."""
+    from backend.utils.embedding_utils import embed_text
+
+    db = _admin_db()
+    outcome = await asyncio.to_thread(knowledge_base_utils.approve, db, key, embed_text, str(admin.get("sub") or "admin"))
+    if not outcome["ok"]:
+        raise HTTPException(status_code=400, detail=outcome["problem"])
+    logger.info("[knowledge base] an admin approved a card.")
+    return await asyncio.to_thread(knowledge_base_utils.admin_view, db)
+
+
+@app.post("/api/admin/knowledge/{key}/reject")
+async def reject_learned_knowledge(key: str, admin = Depends(require_global_admin)):
+    """Turns a waiting card away. The page is not proposed again."""
+    db = _admin_db()
+    if not await asyncio.to_thread(knowledge_base_utils.reject, db, key):
+        raise HTTPException(status_code=404, detail="No such waiting card.")
+    logger.info("[knowledge base] an admin rejected a card.")
+    return await asyncio.to_thread(knowledge_base_utils.admin_view, db)
+
+
+@app.post("/api/admin/knowledge/{key}/remove")
+async def remove_learned_knowledge(key: str, admin = Depends(require_global_admin)):
+    """Takes a live card out for good (its text and vector are deleted). The page is not proposed again."""
+    db = _admin_db()
+    if not await asyncio.to_thread(knowledge_base_utils.remove, db, key):
+        raise HTTPException(status_code=404, detail="No such card.")
+    logger.info("[knowledge base] an admin removed a card.")
+    return await asyncio.to_thread(knowledge_base_utils.admin_view, db)
 
 
 @app.post("/api/synthetic/ask")

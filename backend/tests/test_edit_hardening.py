@@ -321,5 +321,5 @@ def test_the_page_says_whether_it_holds_the_folder_and_the_server_reads_it_three
     assert '"folder_in_browser": request.folder_expected is not False' in source
     assert "folder_usable_here = folder_connected and (demo_turn or request.folder_expected is not False)" in source
     assert "if folder_usable_here:\n        messages_state = scrub_stale_capability_denials" in source
-    assert "if folder_usable_here and not is_guest_username(username):" in source
+    assert "if folder_usable_here and not is_guest_username(username) and not demo_turn:" in source          # plan mode is never offered on the demo project
     assert "not (folder_usable_here and is_stale_capability_denial(full_response))" in source

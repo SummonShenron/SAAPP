@@ -19,6 +19,7 @@ import { HomeTab } from './SonicHealthHome';
 import SonicHealthMenu from './SonicHealthMenu';
 import { isTab, labelOf, type Badges, type TabId } from './sonicHealthTabs';
 import { ShelfTab } from './SonicHealthShelf';
+import { LearnedTab } from './SonicHealthLearned';
 import { ExperiencesTab } from './SonicHealthExperiences';
 import { SelfModelTab } from './SonicHealthSelfModel';
 import { FeedbackTab, KnowledgeTab } from './SonicHealthFeedback';
@@ -30,7 +31,7 @@ import { WhoSpentTable } from './SonicHealthWhoSpent';
 import { BarRow, BudgetBars, StatTile } from './sonicHealthParts';
 import { budgetAmount, pct, shortDate, tokens, usd } from './sonicHealthFormat';
 import { loopTraceRows } from './sonicHealthLoopTrace';
-import { activationRows, activationTotal, cheaperWrote, nudgesShown, share, signupAfterRows, signupRows, signupTotal, voiceRows, voiceTotal, welcomeRows, welcomeTotal } from './sonicHealthGuest';
+import { activationRows, activationTotal, cheaperWrote, kbRows, kbTotal, nudgesShown, share, signupAfterRows, signupRows, signupTotal, voiceRows, voiceTotal, welcomeRows, welcomeTotal } from './sonicHealthGuest';
 import CounterCharts from '../components/CounterCharts';
 import './__styles__/SelfService.css';
 import './__styles__/SonicHealth.css';
@@ -397,7 +398,7 @@ export const SonicHealthPage: React.FC = () => {
             <UsersCard users={health.users} />
           </div>
         ) : noData('model usage'))}
-        {tab === 'turns' && <>{health.usage?.turns && health.usage.turns.turns > 0 ? <TurnsCard turns={health.usage.turns} /> : noData('chat turns')}{health.counters && <PromptCard totals={health.counters.totals} />}{health.counters && <LeaningsCard totals={health.counters.totals} />}{health.counters && <ReplyVoicesCard totals={health.counters.totals} previous={health.counters.previous_totals} />}{health.counters && <GuestFunnelCard totals={health.counters.totals} previous={health.counters.previous_totals} />}{health.counters && <NewAccountsCard totals={health.counters.totals} previous={health.counters.previous_totals} />}<ServerMemoryCard /></>}
+        {tab === 'turns' && <>{health.usage?.turns && health.usage.turns.turns > 0 ? <TurnsCard turns={health.usage.turns} /> : noData('chat turns')}{health.counters && <PromptCard totals={health.counters.totals} />}{health.counters && <LeaningsCard totals={health.counters.totals} />}{health.counters && <ReplyVoicesCard totals={health.counters.totals} previous={health.counters.previous_totals} />}{health.counters && <GuestFunnelCard totals={health.counters.totals} previous={health.counters.previous_totals} />}{health.counters && <NewAccountsCard totals={health.counters.totals} previous={health.counters.previous_totals} />}{health.counters && <KnowledgeCountsCard totals={health.counters.totals} previous={health.counters.previous_totals} />}<ServerMemoryCard /></>}
         {tab === 'budget' && (health.budget ? <><BudgetCard budget={health.budget} /><BudgetRequestsPanel /></> : noData('budget'))}
         {tab === 'behavior' && <><CounterCharts counters={health.counters} /><CountersCard counters={health.counters} /></>}
         {tab === 'goals' && <GoalsTab goals={health.goals} busyId={busyKey} onApprove={handleGoalApproval} />}
@@ -418,6 +419,7 @@ export const SonicHealthPage: React.FC = () => {
           />
         )}
         {tab === 'shelf' && <ShelfTab />}
+        {tab === 'learned' && <LearnedTab />}
         {tab === 'experiences' && <ExperiencesTab />}
         {tab === 'selfmodel' && <SelfModelTab />}
         {tab === 'suggestions' && (
@@ -697,6 +699,27 @@ const NewAccountsCard: React.FC<{ totals: Record<string, number>; previous: Reco
         <tbody>
           {welcomeRows(totals).map(row => (<tr key={`card-${row.key}`}><td>Card pressed: {row.label}</td><td>{row.count}</td></tr>))}
           {activationRows(totals).map(row => (<tr key={`step-${row.key}`}><td>First step: {row.label}</td><td>{row.count}</td></tr>))}
+        </tbody>
+      </table>
+    </section>
+  );
+};
+
+/** What happened to Sonic's own knowledge base this period (backend/utils/knowledge_base.py): pages proposed, cards approved, searched and used, and cards pushed out by the ceiling or by age. Counts only. */
+const KnowledgeCountsCard: React.FC<{ totals: Record<string, number>; previous: Record<string, number> }> = ({ totals, previous }) => {
+  const events = kbTotal(totals);
+  if (events <= 0) return null;
+  return (
+    <section className="service-card sh-card">
+      <div className="card-badge">{events} EVENTS</div>
+      <h2>Sonic's knowledge base</h2>
+      <p className="card-description">
+        {events} knowledge-base events this period ({kbTotal(previous)} in the period before). Many searches that find nothing, or evictions while cards sit unused, mean the base is too small or is learning things nobody asks about.
+        Counts only: never a page, a topic or a word of a card.
+      </p>
+      <table className="sh-table">
+        <tbody>
+          {kbRows(totals).map(row => (<tr key={row.key}><td>{row.label}</td><td>{row.count}</td></tr>))}
         </tbody>
       </table>
     </section>

@@ -172,6 +172,14 @@ def _library_search_excerpt(observation: str) -> dict | None:
     return _list_excerpt("search_library", [line for line in observation.splitlines() if _LIBRARY_HIT_RE.match(line.strip())], TRACE_EXCERPT_MAX_MATCHES)
 
 
+_KB_HIT_RE = re.compile(r"^\[\d+\] \S")                           # search_my_knowledge prints "[n] Title" above each card's source line
+
+
+def _knowledge_excerpt(observation: str) -> dict | None:
+    """Which cards of Sonic's knowledge base a search returned: the "[n] Title" line of each, not the card text."""
+    return _list_excerpt("search_my_knowledge", [line for line in observation.splitlines() if _KB_HIT_RE.match(line.strip())], TRACE_EXCERPT_MAX_MATCHES)
+
+
 _NUMBERED_RE = re.compile(r"^\d+\. ")                                  # search_memory numbers each remembered item: "1. ..."
 
 
@@ -198,6 +206,8 @@ def build_tool_excerpt(tool_name: str, args: dict | None, observation) -> dict |
         return _web_search_excerpt(observation)
     if tool_name == "search_library":
         return _library_search_excerpt(observation)
+    if tool_name == "search_my_knowledge":
+        return _knowledge_excerpt(observation)
     if tool_name == "list_library_files":
         return _list_excerpt(tool_name, [line for line in observation.splitlines() if line.startswith("- ")], TRACE_EXCERPT_MAX_MATCHES)
     if tool_name == "search_memory":
@@ -241,6 +251,8 @@ TRACE_SUBJECT_MAX_CHARS = 40
 _TRACE_SUBJECT_ARGS = {
     "search_code": ("query",),
     "search_library": ("query",),
+    "search_my_knowledge": ("query",),
+    "propose_kb_entry": ("url",),
     "web_search": ("query",),
     "read_repo_file": ("path", "query"),
     "find_file": ("path", "query"),

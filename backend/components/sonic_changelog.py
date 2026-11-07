@@ -1515,4 +1515,19 @@ CHANGELOG = [
         "keywords": ["safety", "crisis", "hotline", "support", "mental health"],
         "volunteer": [],
     },
+    {
+        "id": "own_knowledge_base",
+        "requires": [
+            "backend/utils/knowledge_base.py::def search_for_agent",
+            "backend/services/knowledge_cards.py::async def propose_for_agent",
+            "backend/services/agent_workflow.py::search_my_knowledge",
+        ],
+        "month": "2026-11",
+        "title": "A knowledge base of my own",
+        "line": (
+            "I can now keep a small knowledge base of my own: when you ask me to learn a public page, I write a sourced card and an admin approves it. After that I can search it and name the source."
+        ),
+        "keywords": ["knowledge base", "your own knowledge", "what have you learned", "learn a page", "learn this", "your sources"],
+        "volunteer": [],
+    },
 ]

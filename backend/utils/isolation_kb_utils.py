@@ -165,6 +165,8 @@ def resolve_kb_display_names(directory: dict) -> dict:
 
 def verify_user_ingest_access(username: str, affiliate: str) -> bool:
     """Validates if the user's groups contain the designated administrative Ingesters role."""
+    if affiliate == "Sonic_Global":          # Sonic's own knowledge base (backend/utils/knowledge_base.py AFFILIATE) is written only by its approval step, never by an upload, not even an admin's
+        return False
     user_groups = load_user_directory_groups(username) 
     # Global Admins can bypass individual tenant restrictions
     if "Global_Admins" in user_groups:
