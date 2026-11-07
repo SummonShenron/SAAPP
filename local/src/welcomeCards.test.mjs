@@ -33,7 +33,7 @@ test('the page tells the server a conversation is about the demo project until a
   assert.match(chat, /true,\s*demoProjectRef\.current,\s*replyBrowserOnly \? replyModel : null\s*\);/);
   assert.match(chat, /demo: payload\.demo === true,/);
   assert.match(chat, /proposal\.demo \? \{ auto: false \} : decideAutoApply/);        // nothing is applied to the demo, whatever the approval level says
-  assert.match(chat, /onSignUp=\{\(\) => \{ void api\.logout\(\); \}\}/);
+  assert.match(chat, /onSignUp=\{\(\) => \{ void api\.guestSignUp\('demo_diff'\); \}\}/);          // counted as the demo diff card's button, then the same sign-up path
   const api = readFileSync(new URL('./api.ts', import.meta.url), 'utf8');
   assert.match(api, /runnerCards = false,\s*demoProject = false/);
   assert.match(api, /demo_project: demoProject,/);

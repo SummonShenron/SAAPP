@@ -20,7 +20,7 @@ export function GuestAllowance({ enabled, refreshKey }: { enabled: boolean; refr
     <div className={`guest-allowance is-${note.tone}`} data-help="chat.guest_allowance" role="status">
       <span>{note.text}</span>
       {note.tone !== 'info' && (
-        <button type="button" className="guest-allowance-signup" data-help="chat.guest_signup" onClick={() => { void api.logout(); }}>Create a free account</button>
+        <button type="button" className="guest-allowance-signup" data-help="chat.guest_signup" onClick={() => { void api.guestSignUp('banner'); }}>Create a free account</button>
       )}
     </div>
   );

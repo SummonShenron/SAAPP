@@ -159,7 +159,7 @@ from backend.utils import initiation as initiation_utils
 from backend.utils import proactive_gates
 from backend.utils import reach as reach_utils
 from backend.utils import budget_guard
-from backend.utils import demo_project, guest_limits, guest_nudge, reply_tier
+from backend.utils import demo_project, guest_limits, guest_nudge, guest_signup, reply_tier
 from backend.utils import context_window, llm_turns, llm_usage, loop_watchdog
 from backend.utils import ops_digest as ops_digest_utils
 from backend.utils import ops_suggestions as ops_suggestions_utils
@@ -3439,6 +3439,21 @@ async def get_guest_allowance(http_request: Request, current_user = Depends(get_
         guest_limits.client_address(http_request.headers.get("x-forwarded-for"), http_request.client.host if http_request.client else None),
     )
     return {"applies": True, **allowance}
+
+
+class SignupClick(BaseModel):
+    source: str       # which sign-up button (backend/utils/guest_signup.py SOURCES)
+
+
+@app.post("/api/guest/signup-click")
+async def post_guest_signup_click(payload: SignupClick, http_request: Request, current_user = Depends(get_current_user)):
+    """Counts a press of a sign-up button on a guest page: which button and how many free turns the visitor had used, never anything they wrote (backend/utils/guest_signup.py). Only the shared portfolio
+    guest is counted; the answer is always the same, so the page never waits on or learns anything from it."""
+    await asyncio.to_thread(
+        guest_signup.count_click, get_db(), current_user.get("sub"), payload.source, http_request.headers.get("x-visitor-id"),
+        guest_limits.client_address(http_request.headers.get("x-forwarded-for"), http_request.client.host if http_request.client else None),
+    )
+    return {"ok": True}
 
 
 @app.get("/api/budget")

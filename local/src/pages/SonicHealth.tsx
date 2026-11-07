@@ -30,6 +30,7 @@ import { WhoSpentTable } from './SonicHealthWhoSpent';
 import { BarRow, BudgetBars, StatTile } from './sonicHealthParts';
 import { budgetAmount, pct, shortDate, tokens, usd } from './sonicHealthFormat';
 import { loopTraceRows } from './sonicHealthLoopTrace';
+import { cheaperWrote, nudgesShown, share, signupAfterRows, signupRows, signupTotal, voiceRows, voiceTotal } from './sonicHealthGuest';
 import CounterCharts from '../components/CounterCharts';
 import './__styles__/SelfService.css';
 import './__styles__/SonicHealth.css';
@@ -396,7 +397,7 @@ export const SonicHealthPage: React.FC = () => {
             <UsersCard users={health.users} />
           </div>
         ) : noData('model usage'))}
-        {tab === 'turns' && <>{health.usage?.turns && health.usage.turns.turns > 0 ? <TurnsCard turns={health.usage.turns} /> : noData('chat turns')}{health.counters && <PromptCard totals={health.counters.totals} />}{health.counters && <LeaningsCard totals={health.counters.totals} />}<ServerMemoryCard /></>}
+        {tab === 'turns' && <>{health.usage?.turns && health.usage.turns.turns > 0 ? <TurnsCard turns={health.usage.turns} /> : noData('chat turns')}{health.counters && <PromptCard totals={health.counters.totals} />}{health.counters && <LeaningsCard totals={health.counters.totals} />}{health.counters && <ReplyVoicesCard totals={health.counters.totals} previous={health.counters.previous_totals} />}{health.counters && <GuestFunnelCard totals={health.counters.totals} previous={health.counters.previous_totals} />}<ServerMemoryCard /></>}
         {tab === 'budget' && (health.budget ? <><BudgetCard budget={health.budget} /><BudgetRequestsPanel /></> : noData('budget'))}
         {tab === 'behavior' && <><CounterCharts counters={health.counters} /><CountersCard counters={health.counters} /></>}
         {tab === 'goals' && <GoalsTab goals={health.goals} busyId={busyKey} onApprove={handleGoalApproval} />}
@@ -625,6 +626,54 @@ const PromptCard: React.FC<{ totals: Record<string, number> }> = ({ totals }) =>
           <tr><td>Model calls per tool turn</td><td>{calls}</td></tr>
           <tr><td>Tool results read during the turn</td><td>{avg('native_chars_results').toLocaleString()} chars ({tokens(avg('native_chars_results'))})</td></tr>
           <tr><td><strong>Sent in total per tool turn, all calls added up</strong></td><td><strong>{sent.toLocaleString()} chars ({tokens(sent)})</strong></td></tr>
+        </tbody>
+      </table>
+    </section>
+  );
+};
+
+/** Which voice wrote each reply, and why a turn stayed on the standard voice when the person had chosen Lite, Haiku or Auto (backend/utils/reply_tier.py). Counts only. */
+const ReplyVoicesCard: React.FC<{ totals: Record<string, number>; previous: Record<string, number> }> = ({ totals, previous }) => {
+  const total = voiceTotal(totals);
+  if (total <= 0) return null;
+  const rows = voiceRows(totals).filter(row => row.count > 0);
+  const before = voiceTotal(previous);
+  return (
+    <section className="service-card sh-card">
+      <div className="card-badge">{total} REPLIES</div>
+      <h2>Which voice wrote the replies</h2>
+      <p className="card-description">
+        A cheaper model wrote {cheaperWrote(totals)} of {total} replies ({share(cheaperWrote(totals), total)}); it was {share(cheaperWrote(previous), before)} in the period before. Auto keeps a turn on the standard voice
+        when a feeling is carried over, a check-in is due, the person asks about Sonic itself, or they are frustrated; a safety context always does. Counts only, never any text.
+      </p>
+      <table className="sh-table">
+        <tbody>
+          {rows.map(row => (<tr key={row.key}><td>{row.label}</td><td>{row.count} ({share(row.count, total)})</td></tr>))}
+        </tbody>
+      </table>
+    </section>
+  );
+};
+
+/** What guests do before they sign up: how many were shown an account card because of what they asked, and which sign-up button was pressed and after how many free turns (backend/utils/guest_signup.py). Counts only. */
+const GuestFunnelCard: React.FC<{ totals: Record<string, number>; previous: Record<string, number> }> = ({ totals, previous }) => {
+  const pressed = signupTotal(totals);
+  const nudges = nudgesShown(totals);
+  if (pressed <= 0 && nudges <= 0) return null;
+  const rows = signupRows(totals).filter(row => row.count > 0);
+  const after = signupAfterRows(totals).filter(row => row.count > 0);
+  return (
+    <section className="service-card sh-card">
+      <div className="card-badge">{pressed} SIGN-UP PRESSES</div>
+      <h2>Guests and the sign-up buttons</h2>
+      <p className="card-description">
+        {nudges} replies showed a guest an account card because of what they asked; {pressed} presses of a sign-up button ({signupTotal(previous)} in the period before). A press is the button, not a finished sign-up.
+        Counts only: which button, and how many of the day's free turns the visitor had used; never what they wrote.
+      </p>
+      <table className="sh-table">
+        <tbody>
+          {rows.map(row => (<tr key={row.key}><td>{row.label}</td><td>{row.count} ({share(row.count, pressed)})</td></tr>))}
+          {after.length > 0 && <tr><td><strong>Free turns used when they pressed</strong></td><td>{after.map(row => `${row.label}: ${row.count}`).join(', ')}</td></tr>}
         </tbody>
       </table>
     </section>

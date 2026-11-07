@@ -887,6 +887,23 @@ export async function getGuestAllowance(): Promise<GuestAllowance> {
   return res.json();
 }
 
+/**
+ * A guest presses a sign-up button: count which one (counts only; the server also notes how many free turns they had used), then take them to sign up. The count is sent with `keepalive` so it survives the page
+ * leaving, and waited for at most a moment, so a slow or failed count can never get in the way of signing up.
+ */
+export async function guestSignUp(source: string): Promise<void> {
+  try {
+    const authHeaders = await getAuthHeaders();
+    const sent = fetch(`${BASE_URL}/api/guest/signup-click`, {
+      method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json', ...authHeaders }, body: JSON.stringify({ source }),
+    }).catch(() => undefined);
+    await Promise.race([sent, new Promise(resolve => setTimeout(resolve, 800))]);
+  } catch {
+    // not counted; signing up goes ahead regardless
+  }
+  await api.logout();
+}
+
 export async function getBudget(): Promise<BudgetView> {
   const authHeaders = await getAuthHeaders();
   const res = await fetch(`${BASE_URL}/api/budget`, { headers: { ...authHeaders } });
@@ -2655,6 +2672,7 @@ export const api = {
   updateOpsDigest,
   getBudget,
   getGuestAllowance,
+  guestSignUp,
   getBilling,
   getBillingQuote,
   startBillingCheckout,

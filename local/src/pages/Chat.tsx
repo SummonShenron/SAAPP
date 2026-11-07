@@ -398,7 +398,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
                   onApply={proposal => localEditActionsRef.current.apply(proposal)}
                   onUndo={proposalId => localEditActionsRef.current.undo(proposalId)}
                   onDecision={(proposalId, outcome, reason) => localEditActionsRef.current.decide(proposalId, outcome, reason)}
-                  onSignUp={() => { void api.logout(); }}
+                  onSignUp={() => { void api.guestSignUp('demo_diff'); }}
                 />
               ))}
               <div className="message-text">
@@ -517,7 +517,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
                     </button>
                   )}
                   {msg.failure.signUp && (
-                    <button type="button" className="message-failure-retry" data-help="chat.guest_signup" onClick={() => { void api.logout(); }}>Create a free account</button>
+                    <button type="button" className="message-failure-retry" data-help="chat.guest_signup" onClick={() => { void api.guestSignUp('limit'); }}>Create a free account</button>
                   )}
                   <details className="message-failure-details">
                     <summary>Details</summary>
@@ -544,7 +544,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
               {msg.accountNudge && (
                 <div className="guest-account-detail guest-account-nudge" role="status" data-help="chat.guest_account_card">
                   <p><strong>{msg.accountNudge.label}.</strong> {msg.accountNudge.detail}</p>
-                  <button type="button" className="guest-allowance-signup" data-help="chat.guest_signup" onClick={() => { void api.logout(); }}>Create a free account</button>
+                  <button type="button" className="guest-allowance-signup" data-help="chat.guest_signup" onClick={() => { void api.guestSignUp(`nudge_${msg.accountNudge?.key ?? 'fix'}`); }}>Create a free account</button>
                 </div>
               )}
 
@@ -2673,7 +2673,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
         {!hasChatted && isPortfolioGuest(principal, isEmbedded) && guestLane === 'account' && accountCard && (
           <div className="guest-account-detail" role="status" data-help="chat.guest_account_card">
             <p><strong>{accountCard.label}.</strong> {accountCard.detail}</p>
-            <button type="button" className="guest-allowance-signup" data-help="chat.guest_signup" onClick={() => { void api.logout(); }}>Create a free account</button>
+            <button type="button" className="guest-allowance-signup" data-help="chat.guest_signup" onClick={() => { void api.guestSignUp(`card_${accountCard.key ?? 'fix'}`); }}>Create a free account</button>
           </div>
         )}
 

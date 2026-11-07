@@ -64,6 +64,9 @@ _GROUPS: Dict[str, tuple] = {
     # Why a turn brought nothing up on Sonic's own (backend/utils/proactive_gates.py): the first thing that held it back, or "nothing_matched" when every gate was open and nothing overlapped.
     # The account card the shared guest was shown under a reply (backend/utils/guest_nudge.py): which feature their message asked for. Counts only.
     "guest_nudge": ("checks", "fix", "tidy", "memory"),
+    # Which sign-up button a guest pressed, and how many of their free turns they had used that day (backend/utils/guest_signup.py SOURCES and BUCKETS; counts only).
+    "guest_signup": ("banner", "limit", "demo_diff", "card_checks", "card_fix", "card_tidy", "card_memory", "nudge_checks", "nudge_fix", "nudge_tidy", "nudge_memory"),
+    "guest_signup_after": ("none", "one_or_two", "three_to_five", "six_plus"),
     # Which voice wrote each reply and why (backend/utils/reply_tier.py REASONS; counts only): lite_setting and auto_plain are lite replies, the rest stayed on the standard voice.
     "reply_tier": ("standard_setting", "lite_setting", "haiku_setting", "auto_plain", "not_offered", "safety", "emotional", "checkin", "companion", "identity", "frustration"),
     "proactive_quiet": ("guest", "risk", "closing", "energy", "route", "rate_limit", "nothing_matched"),
