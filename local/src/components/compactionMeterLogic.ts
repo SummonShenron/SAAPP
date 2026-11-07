@@ -117,9 +117,13 @@ export function isOverloaded(view: CompactionView): boolean {
   return view.uncompacted > view.threshold;
 }
 
-/** The colour level of the ring: quiet until it is nearly full, then the warm "notice" colour (the same levels as the usage ring's). */
+/** How full each ring is when it turns the warm "notice" colour. Memory is quiet until it is nearly full (90 of 100 notes, the usage ring's level); the conversation turns yellow at three quarters (15 of 20 messages),
+ *  early enough to see a fold coming. */
+export const NOTICE_FRACTION: Record<MeterKind, number> = { memory: 0.9, conversation: 0.75 };
+
+/** The colour level of the ring: quiet until it reaches its own notice level, then the warm "notice" colour. */
 export function meterLevel(view: CompactionView): 'ok' | 'notice' {
-  return markerFraction(view) >= 0.9 ? 'notice' : 'ok';
+  return markerFraction(view) >= NOTICE_FRACTION[kindOf(view)] ? 'notice' : 'ok';
 }
 
 /** Whether a new reading means a compaction just happened: the count fell. The first reading (nothing before it), an unchanged or rising count, and a switch between the two readings are not. */

@@ -38,6 +38,16 @@ test('the colour is quiet until the ring is nearly full', () => {
   assert.equal(meterLevel(view(100)), 'notice');
 });
 
+test('the conversation ring turns yellow at 15 of 20 messages, three quarters full, while the memory ring keeps its own level', () => {
+  assert.equal(meterLevel(convo(0, 20)), 'ok');
+  assert.equal(meterLevel(convo(14, 20)), 'ok');
+  assert.equal(meterLevel(convo(15, 20)), 'notice');
+  assert.equal(meterLevel(convo(20, 20)), 'notice');
+  assert.equal(meterLevel(view(74)), 'ok');                                                      // memory (no kind) is unchanged: quiet until 90 of 100
+  assert.equal(meterLevel(view(75)), 'ok');
+  assert.equal(meterLevel(view(90)), 'notice');
+});
+
 test('a count that falls is a compaction; the first reading, an unchanged count and a rising one are not', () => {
   assert.equal(didCompact(view(99), view(12)), true);
   assert.equal(didCompact(view(101), view(0)), true);
@@ -125,33 +135,33 @@ test('the page reads the meter on load, after each reply and once more a few sec
 
 import { canSwitchMeter, conversationMeter, meterName, otherMeterMode, pickMeter, readMeterMode, writeMeterMode } from './compactionMeterLogic.ts';
 
-const convo = (uncompacted, threshold = 14) => ({ uncompacted, threshold, kind: 'conversation' });
+const convo = (uncompacted, threshold = 20) => ({ uncompacted, threshold, kind: 'conversation' });
 const memory = (uncompacted, threshold = 100) => ({ uncompacted, threshold });
 
 test('the conversation reading comes from the summary endpoint and is refused when it is not two real counts', () => {
-  assert.deepEqual(conversationMeter({ unfolded: 9, fold_at: 14, keep: 6, sections: [] }), { ...convo(9), foldable: true });
-  assert.equal(conversationMeter({ unfolded: 7, fold_at: 14, keep: 6 }).foldable, false, 'one message beyond the newest six is not worth a fold');
-  assert.equal(conversationMeter({ unfolded: 8, fold_at: 14, keep: 6 }).foldable, true);
-  assert.equal(conversationMeter({ unfolded: 300, fold_at: 14 }).foldable, false, 'no keep count from the server: no button');
+  assert.deepEqual(conversationMeter({ unfolded: 9, fold_at: 20, keep: 6, sections: [] }), { ...convo(9), foldable: true });
+  assert.equal(conversationMeter({ unfolded: 7, fold_at: 20, keep: 6 }).foldable, false, 'one message beyond the newest six is not worth a fold');
+  assert.equal(conversationMeter({ unfolded: 8, fold_at: 20, keep: 6 }).foldable, true);
+  assert.equal(conversationMeter({ unfolded: 300, fold_at: 20 }).foldable, false, 'no keep count from the server: no button');
   assert.equal(conversationMeter({ unfolded: 9, fold_at: 0 }), null);
-  assert.equal(conversationMeter({ unfolded: -1, fold_at: 14 }), null);
-  assert.equal(conversationMeter({ fold_at: 14 }), null);
+  assert.equal(conversationMeter({ unfolded: -1, fold_at: 20 }), null);
+  assert.equal(conversationMeter({ fold_at: 20 }), null);
   assert.equal(conversationMeter(null), null);
 });
 
 test('the words say notes for memory and messages for the conversation, and name the ring', () => {
-  assert.equal(meterText(convo(9)), '9 of 14 messages');
-  assert.equal(meterText(convo(16)), '16 messages: they are folded into the summary after the next reply');
-  assert.equal(meterCaption(convo(16)), 'Overloaded: folding into the summary');
+  assert.equal(meterText(convo(9)), '9 of 20 messages');
+  assert.equal(meterText(convo(24)), '24 messages: they are folded into the summary after the next reply');
+  assert.equal(meterCaption(convo(24)), 'Overloaded: folding into the summary');
   assert.equal(meterCaption(memory(120)), 'Overloaded: folding notes together');
   assert.equal(meterText(memory(37)), '37 of 100 notes');
   assert.equal(meterName(convo(1)), 'Chat');
   assert.equal(meterName(memory(1)), 'Memory');
-  assert.equal(meterSummary(convo(9)), 'Chat 9/14');
+  assert.equal(meterSummary(convo(9)), 'Chat 9/20');
   assert.equal(meterSummary(memory(37)), 'Memory 37/100');
-  assert.match(meterTitle(convo(9)), /^Messages waiting to be folded into this conversation's summary: 9 of 14 messages/);
+  assert.match(meterTitle(convo(9)), /^Messages waiting to be folded into this conversation's summary: 9 of 20 messages/);
   assert.match(meterTitle(memory(37)), /^Memory notes waiting to be folded together/);
-  assert.equal(markerFraction(convo(7)), 0.5);
+  assert.equal(markerFraction(convo(10)), 0.5);
 });
 
 test('a fold traces the conversation ring back, but switching readings never looks like a fold', () => {

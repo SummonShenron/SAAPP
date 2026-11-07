@@ -165,3 +165,22 @@
   color: var(--text-muted);
   font-size: 0.78rem;
 }
+
+/* Phone: centre the notes panel on screen, not under its topbar button, and make the text easier to read. */
+@media (max-width: 600px) {
+  .working-notes-panel {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    right: auto;
+    transform: translate(-50%, -50%);
+    width: min(380px, calc(100vw - 32px));
+    max-height: min(70vh, 560px);
+    font-size: 0.95rem;
+  }
+
+  .working-notes-intro,
+  .working-notes-msg {
+    font-size: 0.85rem;
+  }
+}

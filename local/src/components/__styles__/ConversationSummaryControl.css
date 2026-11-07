@@ -194,10 +194,21 @@
   font-size: 0.78rem;
 }
 
-/* On phones the top bar sits near the left edge, so the panel anchors to the button's left side and opens rightward. */
+/* Phone: centre the summary panel on screen, not under its topbar button, and make the text easier to read. */
 @media (max-width: 600px) {
   .convo-summary-panel {
-    left: -1rem;
+    position: fixed;
+    top: 50%;
+    left: 50%;
     right: auto;
+    transform: translate(-50%, -50%);
+    width: min(380px, calc(100vw - 32px));
+    max-height: min(70vh, 560px);
+    font-size: 0.95rem;
+  }
+
+  .convo-summary-intro,
+  .convo-summary-msg {
+    font-size: 0.85rem;
   }
 }

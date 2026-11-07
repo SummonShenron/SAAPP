@@ -15,6 +15,15 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 NOW = (datetime.now(timezone.utc) - timedelta(days=1)).replace(hour=15, minute=0, second=0, microsecond=0)
 
 
+@pytest.fixture(autouse=True)
+def mechanics_at_the_old_threshold(monkeypatch):
+    """These tests exercise the folding mechanics at a fixed 14 messages or 8,000 characters: their conversations are sized to it (chat(16) is "just past the threshold"). The shipped default (20 messages,
+    12,000 characters, raised 2026-11-06) and what it does to the window are pinned in test_conversation_summary_defaults.py, so a change of the default cannot quietly rewrite these."""
+    monkeypatch.setattr(cs, "FOLD_AT_MESSAGES", 14)
+    monkeypatch.setattr(cs, "FOLD_AT_CHARS", 8000)
+    monkeypatch.setattr(cs, "HARD_MAX_MESSAGES", 16)
+
+
 def run(coro):
     return asyncio.run(coro)
 
@@ -342,7 +351,7 @@ def test_a_full_summary_stays_well_under_the_cost_ceiling():
     summary = cs.empty_summary()
     summary["items"] = [{"id": f"i{n}", "kind": cs.KINDS[n % 4], "text": "x" * cs.MAX_TEXT_CHARS, "by": "model"} for n in range(cs.MAX_ITEMS)]
     assert len(cs.build_context(summary)) < 2300
-    assert cs.MAX_ITEMS == 10 and cs.FOLD_AT_MESSAGES == 14 and cs.KEEP_TAIL_MESSAGES == 6 and cs.FOLD_AT_CHARS == 8000
+    assert cs.MAX_ITEMS == 10 and cs.KEEP_TAIL_MESSAGES == 6
 
 
 def test_the_prompt_for_the_model_lists_the_ids_the_messages_and_the_rules():

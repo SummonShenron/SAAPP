@@ -58,8 +58,10 @@ MAX_PROMPT_CHARS = 1800
 PERSON = "person"
 MODEL = "model"
 
-FOLD_AT_MESSAGES = max(int(os.getenv("CONVERSATION_FOLD_AT_MESSAGES", "14")), 6)
-FOLD_AT_CHARS = max(int(os.getenv("CONVERSATION_FOLD_AT_CHARS", "8000")), 2000)
+# Raised from 14 messages / 8,000 characters on 2026-11-06 (Jack), because the cheaper reply voices make a longer verbatim window affordable. The characters scale with the messages (about 600 a reply): left at 8,000, a
+# chatty conversation would still fold near 13 messages while the page's ring said "of 20". The ring's denominator is this number (page_view); it turns yellow at three quarters (local/src/components/compactionMeterLogic.ts).
+FOLD_AT_MESSAGES = max(int(os.getenv("CONVERSATION_FOLD_AT_MESSAGES", "20")), 6)
+FOLD_AT_CHARS = max(int(os.getenv("CONVERSATION_FOLD_AT_CHARS", "12000")), 2000)
 KEEP_TAIL_MESSAGES = max(int(os.getenv("CONVERSATION_KEEP_TAIL_MESSAGES", "6")), 2)
 HARD_MAX_MESSAGES = FOLD_AT_MESSAGES + 2          # what a turn sends word for word at most, so a fold that is paused or failing cannot let the prompt grow
 PLAIN_WINDOW = 10                                 # the old fixed window, still used when the feature is off for this turn
