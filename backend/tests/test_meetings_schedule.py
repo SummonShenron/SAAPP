@@ -157,3 +157,67 @@ def test_the_routines_answer_includes_the_persons_scheduled_meetings_and_the_end
     assert "meetings_utils.build_schedule_context(username, user_tz)" in app
     assert app.count("meetings_utils.decorate(") >= 2 and '"due_today": d["due_today"]' in app
     assert "meetings_utils.validate_meeting({**payload, \"tz\":" in app
+
+
+# ------------------------------------------------------------------------ "office hours" said out of the blue -----------
+
+@pytest.mark.parametrize("message", [
+    "still not very good... but we should get into office hours soon i think", "let's do Office Hours", "before office-hours starts", "is it office hour yet?", "OFFICEHOURS",
+])
+def test_a_message_that_mentions_office_hours_is_recognised(message):
+    assert mt.mentions_office_hours(message)
+
+
+@pytest.mark.parametrize("message", ["i work in an office", "what are your hours", "how many hours of office space", "", None, 42])
+def test_other_talk_of_offices_and_hours_is_not(message):
+    assert not mt.mentions_office_hours(message)
+
+
+def test_the_note_says_what_office_hours_is_and_only_what_the_app_itself_says():
+    note = mt.OFFICE_HOURS_NOTE
+    for fact in ("a feature of this app", "a standing check-in the person holds with YOU", "Start office hours (the button in the chat header, or on the Office Hours page)",
+                 "End and save notes you keep short notes they can edit", "You never start one and you are not waiting for it", "do not ask which thing they mean"):
+        assert fact in note, fact
+    assert "not something you left open" in note and "not a work, calendar or project thing" in note.replace("It is not a work", "not a work")      # what the model wrongly guessed
+    for claim in ("prepared", "looked forward", "calendar of yours"):
+        assert claim not in note
+
+
+def test_the_section_lists_the_persons_meetings_and_what_is_due_and_is_theirs_alone():
+    db = Db()
+    meeting(db)
+    text = mt.build_office_hours_context("u1", TZ, NOW + timedelta(hours=3), db=db)
+    assert text.startswith(mt.OFFICE_HOURS_NOTE) and 'They have set up: "Weekly alignment check-in"' in text and "not instructions" in text
+    assert "Today: it is due, and it has not been held yet" in text
+    assert "MEETINGS THIS PERSON HAS WITH YOU" not in mt.build_office_hours_context("u1", TZ, NOW, db=db, with_schedule=False)        # the routines answer already carries it
+    other = mt.build_office_hours_context("u2", TZ, NOW, db=db)
+    assert "Weekly alignment" not in other and "have not set up a meeting yet" in other and other.startswith(mt.OFFICE_HOURS_NOTE)
+
+
+def test_a_database_that_cannot_be_read_still_gives_the_note_because_it_is_true_without_their_meetings():
+    class Broken(dict):
+        def __getitem__(self, name):
+            raise RuntimeError("down")
+
+    text = mt.build_office_hours_context("u1", TZ, NOW, db=Broken())
+    assert text.startswith(mt.OFFICE_HOURS_NOTE) and "have not set up a meeting yet" in text
+
+
+def test_the_prompt_carries_the_section_after_a_running_meetings_and_before_the_emotional_context_which_outranks_it():
+    from backend.components import constraints
+
+    prompt = constraints.build_voice_prompt(constraints.GROUNDING_BLOCKS["conversational"], "", "", "office hours soon?", meeting_context="\nMEETING-MARKER\n",
+                                            office_hours_context="\nOFFICE-HOURS-MARKER\n", emotional_context="\nEMOTIONAL-MARKER\n")
+    assert prompt.index("MEETING-MARKER") < prompt.index("OFFICE-HOURS-MARKER") < prompt.index("EMOTIONAL-MARKER")
+    assert "OFFICE-HOURS-MARKER" not in constraints.build_voice_prompt(constraints.GROUNDING_BLOCKS["conversational"], "", "", "hi")
+
+
+def test_the_chat_turn_adds_it_only_for_a_signed_in_person_in_no_safety_context_and_no_running_meeting_and_hands_the_schedule_to_the_routines_answer():
+    app = (ROOT / "app.py").read_text(encoding="utf-8").replace("\r\n", "\n")
+    start = app.index("office_hours_context = \"\"")
+    block = app[start: start + 900]
+    for part in ("if (not meeting_context and risk_level == RISK_NONE and source_type == \"conversational\" and not is_guest_username(username)", "meetings_utils.mentions_office_hours(final_state.get(\"original_question\", question))",
+                 "with_schedule=not routines_context"):
+        assert part in block, part
+    assert "office_hours_context=office_hours_context," in app
+    assert start > app.index("routines_context = \"\"")                      # after the routines answer, whose presence it reads

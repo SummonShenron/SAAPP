@@ -31,6 +31,13 @@ FULLER_REMINDER = (
     "\n\nREMINDER ON DEPTH: match the depth of the question. A how-to, a plan, a flaw you are pointing out or a code question gets the complete answer: the steps or the code, the reason behind them, and the one "
     "thing most likely to go wrong. A casual remark, a thanks or a plain acknowledgement stays short."
 )
+# The low-mood block's "Don't send them elsewhere" rule (backend/utils/emotion_utils.py NO_REFERRAL_RULE), restated last: Claude models reach for "have you talked to someone?" when a person says they are a
+# little low, and in the first read of the rule mid-prompt that habit won. Only when the block carrying the rule is in the prompt (a safety turn's block leaves it out, a carried or positive block never had it).
+REFERRAL_MARKER = "Don't send them elsewhere."
+REFERRAL_REMINDER = (
+    "\n\nREMINDER (this restates \"Don't send them elsewhere\" above): do not suggest they reach out to or talk to a friend, family member, therapist or other professional, and do not mention a "
+    "helpline, unless they ask for that or say something about hurting themselves. Stay with what they told you."
+)
 CHECKIN_REMINDER = (
     "- A CHECK-IN is due this reply (the CHECK-IN section above). It is not an optional follow-up and the follow-up rule does not apply to it: answer fully first, then END the reply with one short, warm "
     "question to them about how they are doing, in plain words, specific to what they went through earlier.\n"
@@ -38,13 +45,15 @@ CHECKIN_REMINDER = (
 
 
 def with_tail(text: str, tail: str = "") -> str:
-    """`text` with the closing reminders for `tail` ("" none, "checkin" the check-in one only when a check-in is due, "all" the standing ones as well) added at its end. Pure; any model's prompt."""
+    """`text` with the closing reminders for `tail` ("" none, "checkin" the check-in one only when a check-in is due, "all" the standing ones as well) added at its end, and, for any tail but "", the
+    no-referral reminder when the prompt carries that rule. Pure; any model's prompt."""
+    referral = REFERRAL_REMINDER if REFERRAL_MARKER in text else ""
     if tail == "all":
-        return text + STANDING_REMINDER + (CHECKIN_REMINDER if CHECKIN_MARKER in text else "")
-    if tail == "checkin" and CHECKIN_MARKER in text:
-        return text + CHECKIN_ONLY_REMINDER
+        return text + STANDING_REMINDER + (CHECKIN_REMINDER if CHECKIN_MARKER in text else "") + referral
+    if tail == "checkin":
+        return text + (CHECKIN_ONLY_REMINDER if CHECKIN_MARKER in text else "") + referral
     if tail == "fuller":
-        return text + (CHECKIN_ONLY_REMINDER if CHECKIN_MARKER in text else "") + FULLER_REMINDER
+        return text + (CHECKIN_ONLY_REMINDER if CHECKIN_MARKER in text else "") + FULLER_REMINDER + referral
     return text
 
 

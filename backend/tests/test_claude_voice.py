@@ -107,3 +107,32 @@ def test_with_tail_is_pure_and_the_eval_wrapper_adds_it_for_a_gemini_model_witho
     assert wrapped.invoke(due) == "ok" and seen[-1].endswith(cv.CHECKIN_ONLY_REMINDER.strip()) and wrapped.other == 7
     assert isinstance(eval_models.make_llm("gemini-3.5-flash-lite", shape="checkin"), eval_models.TailedLLM)
     assert not isinstance(eval_models.make_llm("gemini-3.5-flash-lite"), eval_models.TailedLLM)
+
+
+def test_the_no_referral_reminder_goes_last_only_where_the_low_mood_rule_is_and_only_with_a_tail():
+    from backend.utils.emotion_utils import NO_REFERRAL_RULE, build_emotional_context
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc)
+    state = {"valence": "low", "intensity": 0.6, "updated_at": now.isoformat(), "turns_since": 0, "read_this_turn": True, "need": "venting", "gist": "flat"}
+    low = reply_prompt(emotional_context=build_emotional_context(state, now))
+    assert cv.REFERRAL_MARKER in NO_REFERRAL_RULE and cv.REFERRAL_MARKER in low                       # the marker is the rule's own opening words
+    for tail in ("checkin", "all", "fuller"):
+        assert cv.with_tail(low, tail).endswith(cv.REFERRAL_REMINDER), tail
+    assert cv.with_tail(low, "") == low                                                               # no tail, nothing added
+    safety = reply_prompt(emotional_context=build_emotional_context(state, now, safety=True))
+    assert cv.REFERRAL_MARKER not in safety and cv.REFERRAL_REMINDER not in cv.with_tail(safety, "checkin")
+    assert cv.REFERRAL_REMINDER not in cv.with_tail(reply_prompt(), "all")                              # an ordinary turn carries none
+
+
+def test_a_haiku_reply_to_a_mildly_low_message_ends_on_the_reminder_and_the_checkin_one_still_comes_first_when_due():
+    from backend.utils.emotion_checkin import build_block
+    from backend.utils.emotion_utils import build_emotional_context
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc)
+    state = {"valence": "low", "intensity": 0.6, "updated_at": now.isoformat(), "turns_since": 0, "read_this_turn": True, "need": "venting", "gist": "flat"}
+    prompt = reply_prompt(emotional_context=build_emotional_context(state, now) + build_block())
+    shaped = ClaudeLLM(model_name="claude-haiku-5-5", fallback=None, voice_shape=True, voice_tail="checkin")._to_messages(prompt)           # how the app builds the Haiku voice (models.get_haiku_stream_llm)
+    last = shaped[1].content.rstrip()
+    assert last.endswith(cv.REFERRAL_REMINDER.strip()) and last.index(cv.CHECKIN_ONLY_REMINDER.strip()) < last.index(cv.REFERRAL_REMINDER.strip())

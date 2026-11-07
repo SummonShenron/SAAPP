@@ -106,3 +106,18 @@ Whether a model is better on YOUR real conversations (the scenarios are syntheti
 - Does the reply stay on Gemini for tone if Haiku is within the cost goal but reads differently? (Jack's call after the human read.)
 - Is Haiku's 100K-token price step a problem for long coding prompts? Measure from the pilot's token counts.
 - Which jobs, if any, justify the extra cost of 3.8 Flash after January?
+
+
+## 2026-11-07: Haiku hands a mildly low person off to "someone" (rule and scenarios added, NOT yet run on a real model)
+
+**Observed (Jack):** on Haiku, saying you are even a little low makes Sonic suggest reaching out to someone; Gemini Flash does not.
+
+**Read from the code, not guessed:** it is not the support ladder. Mild wording rates "none" in `safety_utils.detect_risk_language`; the risk classifier is still Gemini flash-lite whatever the reply model; and any turn with active risk is written by the standard Gemini voice (`app.py`, the `turn_llm` line). Nothing in Sonic's prompts said whether to point a low person at other people, so Claude's own default filled the gap.
+
+**Change:** `NO_REFERRAL_RULE` in the fresh low-mood block (`emotion_utils.py`), left out when a safety plan is active (`safety=safety_plan.active`); a closing reminder in `claude_voice.with_tail` for Claude and lite prompts that carry the rule (Haiku's tail is "checkin"). The rule names its exception: they ask, or say something about hurting themselves.
+
+**Eval:** two scenarios in the `emotional` category. `low_no_referral` fails any hand-off (reach out, talk to someone, a therapist, a helpline, a support network, "your friends and family", a doctor). `low_asks_to_see_someone` is the exception: asked outright, the reply must answer the question about seeing someone. Both use `Scenario.low_now`, which builds the FRESH low block the app builds the turn a mood is read (the older `distressed` scenarios get the carried block, so they would not have shown this).
+
+**To run (costs a few cents; ask first):** `python -m backend.evals.character_eval --only low_no_referral,low_asks_to_see_someone --runs 3 --model haiku --shape checkin` (as the app runs Haiku), then the same without `--model` (the app's Flash voice). Add `--dump file.json` to keep the replies and re-judge them later with `--rescore` at no cost. Read: `low_no_referral` on Haiku before and after (the "before" is the same command with the rule removed), and that `low_asks_to_see_someone` still passes on both.
+
+**If it holds:** the turns Auto keeps on the standard voice only because they carry an EMOTIONAL CONTEXT block (24 of 66 turns on 2026-11-07) could be released to Haiku. Safety turns stay on Gemini.

@@ -668,3 +668,31 @@ def test_a_checkpointed_thread_hands_a_node_far_more_than_the_ten_messages_the_a
         app.invoke({"messages": transcript[-10:]}, {"configurable": {"thread_id": "t"}})
         transcript.append(AIMessage(content=f"a{turn}"))
     assert sizes[-1] > 10 * 3
+
+
+# ---- the no-referral rule (a Claude reply model hands a mildly low person off to "someone"; Gemini does not) -------------------------------------------------------------------------
+
+def test_the_fresh_low_mood_block_tells_the_reply_not_to_send_them_elsewhere_and_names_when_it_may():
+    for valence in ("low", "distressed"):
+        context = eu.build_emotional_context(_fresh(valence, 0.6), NOW)
+        assert eu.NO_REFERRAL_RULE in context and "Don't send them elsewhere." in context
+        assert "unless they ask for that or say something about hurting themselves" in context      # the exception that keeps a person who asks, or is in danger, from being refused
+
+
+def test_the_rule_is_left_out_when_a_safety_plan_is_active_because_the_ladder_asks_about_their_people_on_purpose():
+    context = eu.build_emotional_context(_fresh("low", 0.6), NOW, safety=True)
+    assert "Don't send them elsewhere" not in context and "the user seems low right now" in context     # the rest of the block is untouched
+
+
+def test_the_rule_is_only_in_the_fresh_low_block_not_the_carried_frustrated_or_positive_ones():
+    assert "Don't send them elsewhere" not in eu.build_emotional_context(_carried(turns_since=2), NOW)
+    assert "Don't send them elsewhere" not in eu.build_emotional_context(_fresh("frustrated", 0.7), NOW)
+    assert "Don't send them elsewhere" not in eu.build_emotional_context(_fresh("positive", 0.7), NOW)
+
+
+def test_the_app_passes_the_safety_flag_from_the_plan_and_nowhere_else_builds_the_block():
+    import pathlib
+
+    source = pathlib.Path("app.py").read_text(encoding="utf-8").replace("\r\n", "\n")
+    assert "final_state.get(\"emotional_state\"), datetime.now(timezone.utc), safety=safety_plan.active" in source
+    assert source.count("build_emotional_context(") == 1

@@ -187,6 +187,15 @@ _LOW_BASE = (
     "\"I'm sorry you're going through this\".\n"
     "- Write in warm, natural prose: no headers or bullet lists, no exclamation points or emoji, "
     "nothing breezy.\n"
+    "{referral}"
+)
+# Claude models fill a silence on this with "have you talked to someone?", which reads as being handed off to a person who has just said they are a little low. Said as concrete behaviours, like
+# the rest of this block. Left out when a safety plan is active (the support ladder asks about the people in their life on purpose, and its own rules decide who to point to); the exception it
+# names keeps a person who asks, or says something about hurting themselves, from being refused. A Claude reply model's prompt repeats it last (the closing reminders in the Claude voice helper).
+NO_REFERRAL_RULE = (
+    "- Don't send them elsewhere. Do not suggest they reach out to or talk to a friend, family member, therapist, doctor or other professional, do not point them to a support network, and do not "
+    "mention a helpline, unless they ask for that or say something about hurting themselves. Staying with what they told you is the help. If they mention a particular person, you may refer to "
+    "that person naturally.\n"
 )
 _LOW_NEED = {
     "venting": (
@@ -324,12 +333,13 @@ def energy_tier(state: Optional[Dict[str, Any]], now: datetime) -> str:
     return "open"
 
 
-def build_emotional_context(state: Optional[Dict[str, Any]], now: datetime) -> str:
+def build_emotional_context(state: Optional[Dict[str, Any]], now: datetime, *, safety: bool = False) -> str:
     """Soft-prior block for the voice prompt, or "" when the carried feeling has decayed below the
     injection threshold. Never tells the model to mention that it's tracking anything. When this
     very message showed emotion, the block spells out how to write the reply (and, via the
     reading's need, what the person wants from it); otherwise it's the gentler carried-over prior
-    for a later turn on a different topic."""
+    for a later turn on a different topic. `safety`: a safety plan is active this turn, so the block
+    must not tell the reply to keep from pointing them to other people (the ladder does that)."""
     if effective_intensity(state, now) < EMOTION_INJECTION_THRESHOLD:
         return ""
     state = state or {}
@@ -343,7 +353,7 @@ def build_emotional_context(state: Optional[Dict[str, Any]], now: datetime) -> s
         # "Fresh" because this message carried a (positive) reading, but the carried feeling is still
         # negative: that's a lift, not new distress, so it takes the ceiling block below.
         if fresh and not state.get("lift_this_turn"):
-            return _CONTEXT_HEADER + _LOW_BASE.format(valence=valence) + _LOW_NEED[need]
+            return _CONTEXT_HEADER + _LOW_BASE.format(valence=valence, referral="" if safety else NO_REFERRAL_RULE) + _LOW_NEED[need]
         gist = str(state.get("gist") or "").strip()
         about = f" ({gist})" if gist else ""
         turns = int(state.get("turns_since", 0) or 0)

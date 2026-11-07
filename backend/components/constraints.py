@@ -269,6 +269,7 @@ def build_voice_prompt(
     task_results_context: str = "",
     progress_notes_context: str = "",
     meeting_context: str = "",
+    office_hours_context: str = "",
     headsup_context: str = "",
     working_notes_context: str = "",
     conversation_summary_context: str = "",
@@ -303,6 +304,8 @@ def build_voice_prompt(
         sections.append(progress_notes_context)
     if meeting_context:
         sections.append(meeting_context)
+    if office_hours_context:
+        sections.append(office_hours_context)
     if headsup_context:
         sections.append(headsup_context)
     if duration_context:

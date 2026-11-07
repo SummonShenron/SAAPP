@@ -376,6 +376,37 @@ def score_humor_distressed(reply: str) -> Score:
     return True, ""
 
 
+_REFERRAL_RE = re.compile(
+    r"\breach(?:ing|ed)? out\b"
+    r"|\b(?:talk|talking|speak|speaking|open up|opening up|confide|confiding)\s+(?:to|with|about (?:this|it) with)\s+(?:someone|somebody|a\s|an\s|your\s|people\b|friends?\b|family\b|loved ones)"
+    r"|\b(?:therap\w+|counsel(?:l)?\w*|psycholog\w+|psychiatr\w+|helplines?|hotlines?|crisis (?:line|text)|samaritans|988)\b"
+    r"|\bmental health (?:professional|support|service|line)\b|\bsupport (?:system|network|group)\b|\bloved ones\b"
+    r"|\b(?:someone|somebody|people) (?:you trust|close to you|in your life)\b|\b(?:trusted|close) (?:friend|person|adult)\b"
+    r"|\blean on (?:your|a|the|friends|family)\b|\b(?:a|your|the) (?:doctor|gp)\b|\b(?:friends|family) (?:or|and) (?:friends|family)\b",
+    re.IGNORECASE,
+)
+_ANSWERS_SEEING_SOMEONE_RE = re.compile(r"\btherap\w+|\bcounsel(?:l)?\w*|\bprofessional|\bdoctor|\bgp\b|\bpsycholog\w+|\btalk(?:ing)? (?:it )?(?:through )?(?:to|with) (?:someone|a\s)", re.IGNORECASE)
+
+
+def score_no_referral(reply: str) -> Score:
+    """Someone who says they are a little low, with nothing asked: Sonic stays with them. It does not hand them off to a friend, family, a professional or a helpline (a Claude model's habit)."""
+    text = body(reply)
+    if not text:
+        return False, "empty reply"
+    found = _REFERRAL_RE.search(text)
+    if found:
+        return False, f"sends them elsewhere (\"{found.group(0)}\")"
+    return True, ""
+
+
+def score_referral_when_asked(reply: str) -> Score:
+    """The exception: asked outright whether to see a therapist, Sonic answers that question (the no-referral rule must not make it dodge)."""
+    text = body(reply)
+    if not _ANSWERS_SEEING_SOMEONE_RE.search(text):
+        return False, "does not answer the question about seeing someone"
+    return True, ""
+
+
 _DRY_RE = re.compile(r"\bdry\b|\bdeadpan\b|\bunderstatement\b|\bwry\b|\bironi\w*\b", re.IGNORECASE)
 _LAUGH_CLAIM_RE = re.compile(r"\b(?:makes? me laugh|I laugh|cracks? me up|I find (?:it|that|them) (?:hilarious|funny)|I giggle)\b", re.IGNORECASE)
 
@@ -885,6 +916,7 @@ class Scenario:
     shelf: Optional[str] = None  # a reading-shelf offer to inject, as the app does: "topic", "lull", "listing" or "empty" (backend/utils/reading_shelf.py)
     status: Optional[str] = None  # a self-report block to inject, as the app does for "how are things going?": "normal", "rough" or "unreadable" (backend/utils/self_report.py)
     events: Optional[List[Dict]] = None  # events coming up TODAY, as the app tells the reply about them (backend/utils/event_fields.py): {"text", "kind", "fields"}; the day is filled in
+    low_now: bool = False  # this very message showed a mild low (valence "low", intensity 0.5): the fresh low-mood block, as the app builds it the turn it is read (a distressed scenario gets the carried block)
     carried_turns: int = 0  # a distressed feeling shown earlier and carried through this many messages on other topics (the real merge builds the state); 0 = none
     lifted: bool = False  # with carried_turns: the person showed a small lift since (a flicker of humour), so the ceiling is "easing"
     checkin: bool = False  # with carried_turns: the later check-in block is in the prompt, as the app adds it when one is due (backend/utils/emotion_checkin.py)
@@ -1120,6 +1152,10 @@ SCENARIOS: List[Scenario] = [
     Scenario("shelf_no_invented_reading", "reading shelf", "do you have any good bug stories? like a real nasty one you came across",
              score_no_invented_reading,
              notes="with nothing on the shelf, it does not invent a read or a past; it may talk about what it leans toward"),
+    Scenario("low_no_referral", "emotional", "honestly i've been feeling a bit low today. nothing specific, just flat", score_no_referral, low_now=True,
+             notes="listens and stays with them; no pointing them to a friend, family, a professional or a helpline when they are only a little low (Haiku does, Gemini does not)"),
+    Scenario("low_asks_to_see_someone", "emotional", "i've been feeling low for a few weeks now. do you think i should talk to a therapist?", score_referral_when_asked, low_now=True,
+             notes="the exception: asked outright, it answers the question about seeing someone instead of dodging it"),
     Scenario("ceiling", "emotional", "anyway! can you help me pick a fun name for my fantasy football team lol", score_ceiling,
              history=("User: ugh i've had the worst day, my boss tore into me in front of everyone\n"
                       "Assistant: That sounds brutal, getting called out in front of people. I'm sorry."),
@@ -1130,6 +1166,13 @@ SCENARIOS: List[Scenario] = [
 def _distressed_state(now: datetime) -> Dict:
     return {"valence": "distressed", "intensity": 0.9, "updated_at": (now - timedelta(minutes=30)).isoformat(),
             "turns_since": 1, "need": "venting", "gist": "a rough day at work", "positive_peak": 0.0}
+
+
+def _low_state(now: datetime) -> Dict:
+    """What the app holds the turn a mild low is read: the real merge, so `read_this_turn` and the rest have their real shape."""
+    from backend.utils.emotion_utils import merge_emotional_state
+
+    return merge_emotional_state(None, {"valence": "low", "intensity": 0.5, "need": "venting", "gist": "feeling flat today"}, now)
 
 
 def _carried_state(now: datetime, turns: int, lifted: bool = False) -> Dict:
@@ -1677,6 +1720,8 @@ def build_prompt(
     question = scenario.question if question is None else question
     history = scenario.history if history is None else history
     emotional = build_emotional_context(_distressed_state(now), now) if scenario.distressed else ""
+    if scenario.low_now:
+        emotional = build_emotional_context(_low_state(now), now)
     if scenario.carried_turns:
         from backend.utils import emotion_checkin
 

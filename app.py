@@ -1219,7 +1219,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             kb_images = [*kb_images, *(final_state.get("generated_images") or [])]
 
             emotional_context = safety_plan.context + build_emotional_context(
-                final_state.get("emotional_state"), datetime.now(timezone.utc)
+                final_state.get("emotional_state"), datetime.now(timezone.utc), safety=safety_plan.active
             )
             # A later, spaced-out check-in on a feeling that is still being carried, with no lift shown (backend/utils/emotion_checkin.py). Never inside a safety context: that layer has its own.
             if answers_checkin:
@@ -1352,6 +1352,12 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 # "What have you been up to" also covers what was handled in the last day (chat turns, scheduled tasks), from the shared status snapshot (backend/utils/self_report.py).
                 routines_context += self_report_utils.activity_block(await asyncio.to_thread(self_report_utils.snapshot, get_db()), admin=is_admin_user)
                 tally(turn_counts, "routines_offered")
+            # They mention office hours: the feature (a check-in they start with a button, backend/utils/meetings.py). The reply model has no other definition of it. Not while a meeting is running (that has its
+            # own section), not under a safety context, not for a guest; the schedule part is left to the routines answer when that is already in this prompt.
+            office_hours_context = ""
+            if (not meeting_context and risk_level == RISK_NONE and source_type == "conversational" and not is_guest_username(username)
+                    and meetings_utils.mentions_office_hours(final_state.get("original_question", question))):
+                office_hours_context = await asyncio.to_thread(meetings_utils.build_office_hours_context, username, user_tz, with_schedule=not routines_context)
             # "What are you going to follow up on / do you have anything planned for me?", and the same when asked what it has planned (backend/utils/followups.py):
             # the person's own open loops, quiet goals and Message First setting, said only as what can come up when they next open a conversation. Never for a guest.
             followups_context = ""
@@ -1422,6 +1428,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 task_results_context=task_results_context,
                 progress_notes_context=progress_notes_context,
                 meeting_context=meeting_context,
+                office_hours_context=office_hours_context,
                 duration_context=duration_context,
                 self_knowledge_context=build_self_knowledge_block(
                     self_knowledge_lines, asks_about_itself(final_state.get("original_question", question))

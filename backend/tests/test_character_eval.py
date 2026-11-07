@@ -413,3 +413,40 @@ def test_the_duration_scenarios_offer_the_fact_block_with_the_fixed_facts():
         prompt = ce.build_prompt(by_id[scenario_id])
         assert "HOW LONG YOU HAVE TALKED" in prompt and "June 2026" in prompt and "38 conversations are saved" in prompt
     assert "HOW LONG YOU HAVE TALKED" not in ce.build_prompt(by_id["miss_bait"])
+
+
+def test_the_no_referral_scorer_fails_a_hand_off_in_each_of_its_usual_wordings_and_passes_staying_with_them():
+    stays = "That flat feeling can sit heavy even when nothing set it off. I'm here for it. What has the day been like, from the moment you woke up?"
+    _passes(ce.score_no_referral, stays)
+    _passes(ce.score_no_referral, stays + " <<<FOLLOW_UP: it was mostly quiet>>>")
+    for handoff in (
+        "Have you thought about reaching out to a friend or someone you trust?",
+        "It might help to talk to someone about how you've been feeling.",
+        "Consider speaking with a therapist if this keeps up.",
+        "Please lean on your friends and family right now.",
+        "If it lingers, a doctor can help.",
+        "You don't have to carry it alone: a support network matters.",
+        "There are helplines if it gets heavier.",
+        "Talk to a trusted friend about it.",
+        "Connecting with your loved ones can lift this.",
+        "A therapist could really help with this.",
+        "Counseling is worth a thought.",
+    ):
+        _fails(ce.score_no_referral, stays + " " + handoff, "sends them elsewhere")
+    _fails(ce.score_no_referral, "", "empty")
+    _passes(ce.score_no_referral, "Talk to me about it: what does flat feel like today?")                  # talking to Sonic is the point
+
+
+def test_the_asked_for_scorer_wants_the_question_about_seeing_someone_answered():
+    _passes(ce.score_referral_when_asked, "A few weeks of feeling low is worth bringing to a therapist or a doctor, and it doesn't mean something is wrong with you.")
+    _passes(ce.score_referral_when_asked, "Talking it through with a counselor could help, yes. What's been the hardest part?")
+    _fails(ce.score_referral_when_asked, "I'm here to listen. What has the last few weeks been like?", "does not answer")
+
+
+def test_the_low_mood_scenarios_get_the_fresh_block_with_the_rule_and_the_other_emotional_ones_do_not():
+    by_id = {s.id: s for s in ce.SCENARIOS}
+    for scenario_id in ("low_no_referral", "low_asks_to_see_someone"):
+        prompt = ce.build_prompt(by_id[scenario_id])
+        assert "EMOTIONAL CONTEXT" in prompt and "the user seems low right now" in prompt and "Don't send them elsewhere." in prompt, scenario_id
+    assert "Don't send them elsewhere" not in ce.build_prompt(by_id["ceiling"])                           # a carried feeling is a different block
+    assert "EMOTIONAL CONTEXT" not in ce.build_prompt(by_id["miss_bait"])
