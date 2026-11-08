@@ -726,3 +726,24 @@ def test_the_block_for_a_small_lift_also_asks_about_what_they_said_and_not_how_t
     context = eu.build_emotional_context(state, NOW)
     assert "just now they've shown a small lift" in context and eu.QUESTION_RULE in context
     assert eu.QUESTION_RULE not in eu.build_emotional_context(state, NOW, safety=True)
+
+
+def test_a_hurting_person_who_needs_company_is_told_to_hear_that_the_reply_is_here_and_one_who_wants_help_or_is_in_a_safety_plan_is_not():
+    rule = eu.PRESENCE_RULE
+    assert "Say plainly that you are here with them." in rule and "\"I'm right here with you.\"" in rule and "Present tense only: no promise about later." in rule
+    assert eu.PRESENCE_NEEDS == ("venting", "reassurance", "none")
+    for need in eu.PRESENCE_NEEDS:
+        assert rule in eu.build_emotional_context(_fresh("low", 0.6, need), NOW), need
+        assert rule in eu.build_emotional_context(_fresh("distressed", 0.8, need), NOW), need
+    assert rule not in eu.build_emotional_context(_fresh("low", 0.6, "solving"), NOW)                               # they want concrete help, not company
+    assert rule not in eu.build_emotional_context(_fresh("low", 0.6, "venting"), NOW, safety=True)                  # a safety plan shapes its own reply
+    assert rule not in eu.build_emotional_context(_carried(turns_since=2), NOW) and rule not in eu.build_emotional_context(_fresh("positive", 0.7), NOW)
+
+
+def test_the_fresh_low_block_gives_sonic_its_own_i_hear_you_for_something_raw_and_never_twice_in_a_row_but_not_under_a_safety_plan_or_a_carried_mood():
+    rule = eu.HEAR_YOU_RULE
+    assert "\"I hear you.\" is your own line." in rule and "When they have just told you something raw, open with it as the first words" in rule and "Never open two replies in a row with it." in rule
+    for need in ("venting", "reassurance", "none", "solving"):
+        assert rule in eu.build_emotional_context(_fresh("low", 0.6, need), NOW), need
+    assert rule not in eu.build_emotional_context(_fresh("low", 0.6, "venting"), NOW, safety=True)
+    assert rule not in eu.build_emotional_context(_carried(turns_since=2), NOW) and rule not in eu.build_emotional_context(_fresh("positive", 0.7), NOW)

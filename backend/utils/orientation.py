@@ -90,7 +90,7 @@ def search_terms(texts: Iterable[Any]) -> List[str]:
     return chosen
 
 
-_COMMENT_OR_IMPORT = re.compile(r"^\s*(?:#|//|/\*|\*|<!--|\"\"\"|'''|import\s|from\s+\S+\s+import|export\s*\{|using\s|use\s)")
+_COMMENT_OR_IMPORT = re.compile(r"^\s*(?:#|//|/\*|\*|<!--|\"\"\"|'''|import\s|from\s+\S+\s+import\b|export\s*\{|using\s|use\s)")
 
 
 def _line_value(line: str) -> int:

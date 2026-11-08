@@ -480,6 +480,7 @@ def _ladder_block(level: str, fresh: bool, info: Dict[str, Any], people: List[st
         "and unhurried, someone who shows up rather than reads a script, and start working out who in their "
         "real life they can lean on. Before any crisis line, you go through the real people."
     )
+    first_gentle = fresh and level == RISK_ELEVATED       # the lowest level, just raised: one gentle question this reply, and the people in their life next reply (2026-11-08, Jack: "way too fast")
     parts = [lead + "\n", _PRESENCE]
     if fresh:
         parts.append(_ASK_DIRECT_ACUTE if level == RISK_ACUTE else _ASK_DIRECT_ELEVATED)
@@ -487,7 +488,7 @@ def _ladder_block(level: str, fresh: bool, info: Dict[str, Any], people: List[st
     parts.extend(_status_line(rung, label, info) + "\n" for rung, label in LADDER)
     if people:
         parts.append("  - from what you remember about them from before: " + "; ".join(people) + "\n")
-        parts.append("    (use these names; ask whether one of them is around, by name)\n")
+        parts.append("    (not this reply: use these names once they have answered)\n" if first_gentle else "    (use these names; ask whether one of them is around, by name)\n")
 
     if info["available"]:
         parts.append(
@@ -501,6 +502,11 @@ def _ladder_block(level: str, fresh: bool, info: Dict[str, Any], people: List[st
             "- NEXT STEP: they have told you there is no one in any of those groups they can reach. Take that "
             "with them without judgment, and say you are glad they told you. This is the moment for a human "
             "line, and only now:\n" + (_HANDOFF_REPEAT if resources_given else _HANDOFF_FIRST)
+        )
+    elif info["next"] and first_gentle:
+        parts.append(
+            "- THIS REPLY: ask only the one question above, and take in what they said. Do not also ask about the people in their life yet: that begins on your next reply, one question at a time, "
+            "once they have answered.\n"
         )
     elif info["next"]:
         parts.append(

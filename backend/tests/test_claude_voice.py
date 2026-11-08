@@ -177,7 +177,8 @@ def test_the_voice_reminder_says_what_the_measured_gaps_were_and_the_app_and_the
 
     text = cv.VOICE_REMINDER
     for part in ("never open a reply with doubt", "\"I can't see anything about them\", \"I don't know why\", \"I'd be guessing\" or \"I won't guess\"", "labelled as a read, and promise nothing either way",
-                 "Never explain at length what you are or are not", "open your reaction with an exclamation mark, once", "never when they are low or the topic is serious"):
+                 "Never explain at length what you are or are not", "open your reaction with an exclamation mark, once", "never when they are low or the topic is serious",
+                 "ask one pointed question about it", "this outranks the rule about not adding a question", "never how they feel about it", "If they are wrapping up or saying goodbye, ask nothing."):
         assert part in text, part
     models = pathlib.Path("backend/models/models.py").read_text(encoding="utf-8")
     assert 'voice_shape=True, voice_tail="voice"' in models

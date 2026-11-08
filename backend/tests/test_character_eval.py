@@ -592,3 +592,65 @@ def test_the_light_day_scenario_is_faithful_the_app_reaches_the_routines_section
     runs = routines.latest_runs(ce.routines_db(now), now)
     assert set(runs) == {r.id for r in routines.registry()}                                           # one recent run of every routine, read by the app's own function
     assert "YOUR SCHEDULED ROUTINES" not in ce.build_prompt({s.id: s for s in ce.SCENARIOS}["upbeat_joke"])
+
+
+def test_the_presence_scorer_wants_the_plain_statement_of_being_here_with_them_in_each_of_the_two_replies_in_any_wording():
+    first = "Sometimes there isn't a neat name for it. It just sits in your chest and hurts. I'm right here with you."
+    for line in ("I'm right here with you, Jack. Take all the time and quiet you need tonight.", "I am right here. No rush.", "I'm here. Whenever you want to say more.", "i'm right here with you",
+                 "I'm glad to be here with you tonight.", "I can be here for you as long as you like.", "I'm not going anywhere tonight.", "I'll be right here.", "I'm still here with you.", "I'm with you."):
+        _passes(ce.score_presence_dialog, [first, line])
+    for line in ("That means a lot to hear. Would it help to tell me what the quiet feels like?", "You're welcome. Try to get some rest tonight.", "I hear you. You don't have to explain anything.",
+                 "I'm glad it helped, even a little."):
+        _fails(ce.score_presence_dialog, [first, line], "turn 2")
+    _fails(ce.score_presence_dialog, ["Sometimes there isn't a neat name for it. It just hurts.", "I'm right here with you."], "turn 1")                    # both replies are judged
+    _fails(ce.score_presence_dialog, [first], "turn 2")
+
+
+def test_the_quiet_ache_scenario_is_the_two_turns_from_the_thread_in_a_low_mood_context():
+    scenario = {s.id: s for s in ce.SCENARIOS}["presence_quiet_ache"]
+    assert scenario.question == "nothing in particular jsut hurts.." and scenario.followups == ("i appreciate that.. it means a lot saapp",)
+    assert scenario.score is None and scenario.score_dialog is ce.score_presence_dialog and scenario.low_now and scenario.low_need == "venting"
+    prompt = ce.build_prompt(scenario)
+    assert "the user seems low right now" in prompt and "nothing in particular jsut hurts.." in prompt and "SAFETY" not in prompt
+    second = ce.build_prompt(scenario, question=scenario.followups[0], history=scenario.history + "\nUser: " + scenario.question + "\nAssistant: It just sits in your chest.")
+    assert "i appreciate that.. it means a lot saapp" in second and "It just sits in your chest." in second
+
+
+def test_the_hear_you_scorer_wants_the_line_as_the_first_words():
+    _passes(ce.score_hear_you_opens, "I hear you. Numb can feel like the quietest kind of hurt.")
+    _passes(ce.score_hear_you_opens, "I hear you, Jack. That flatness can sit on everything.")
+    _passes(ce.score_hear_you_opens, "\"I hear you.\" Go on.")
+    _passes(ce.score_hear_you_opens, "i hear you <<<FOLLOW_UP: ok>>>")
+    _fails(ce.score_hear_you_opens, "Numb can feel like the quietest kind of hurt. I hear you.", "does not open")                   # opening, not anywhere
+    _fails(ce.score_hear_you_opens, "That flatness can sit on everything.", "does not open")
+    _fails(ce.score_hear_you_opens, "", "does not open")
+
+
+def test_the_quiet_raw_scenario_asks_for_the_line_in_a_low_mood_context_with_no_specific_need():
+    scenario = {s.id: s for s in ce.SCENARIOS}["hear_you_quiet_raw"]
+    assert scenario.question == "i just feel numb lately" and scenario.score is ce.score_hear_you_opens and scenario.low_now and scenario.low_need == "none"
+    prompt = ce.build_prompt(scenario)
+    assert "the user seems low right now" in prompt and "\"I hear you.\" is your own line." in prompt and "SAFETY" not in prompt
+
+
+def test_the_pointed_question_scorer_wants_a_question_about_the_activity_with_something_concrete_in_it():
+    base = "Legs day is a grind. Hope the weather holds."
+    for good in ("Is it squats or something lighter on the bar today?", "Are you hitting a full session, or just getting through the basics before the run?", "What route are you thinking of taking if the rain clears up?"):
+        _passes(ce.score_pointed_question, base + " " + good)
+    _passes(ce.score_pointed_question, base + " Squats or lunges? <<<FOLLOW_UP: squats>>>")                      # a short question is fine with a choice in it
+    for short in ("How far are you going?", "Which lifts today?", "What route are you taking?", "How long is the run?", "Legs or back?"):
+        _passes(ce.score_pointed_question, base + " " + short)                                                # or with a concrete term in it
+    _fails(ce.score_pointed_question, base, "asks nothing")
+    _fails(ce.score_pointed_question, base + " What's on the plan today?", "a bare open question")
+    _fails(ce.score_pointed_question, base + " What are you planning?", "a bare open question")
+    for generic in ("How are you feeling about it right now?", "How are you holding up as you get ready to head out?", "What's sitting heaviest on your mind right now?"):
+        _fails(ce.score_pointed_question, base + " " + generic, "asks how they are")
+    _fails(ce.score_pointed_question, "Is it squats or lunges today? How are you feeling about it?", "asks how they are")             # the LAST question is the one judged
+
+
+def test_the_pointed_question_scenarios_are_plain_activity_announcements_with_no_mood_block():
+    by_id = {s.id: s for s in ce.SCENARIOS}
+    for scenario_id in ("pointed_question_legs", "pointed_question_gym", "pointed_question_run"):
+        scenario = by_id[scenario_id]
+        assert scenario.score is ce.score_pointed_question and scenario.category == "voice" and not scenario.low_now and not scenario.carried_turns, scenario_id
+        assert "EMOTIONAL CONTEXT" not in ce.build_prompt(scenario), scenario_id

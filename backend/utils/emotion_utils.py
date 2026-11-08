@@ -211,6 +211,20 @@ QUESTION_RULE = (
     "section below says one is due or they raised it. If a question would help, make it a specific one about the thing they just told you. If they have turned to something they enjoy (music, a film, code, "
     "a project), engage with that and leave the mood alone.\n"
 )
+# The fourth part (2026-11-07, Jack's own thread): after a quiet "it just hurts" and a thank-you, the standard voice said plainly that it was there ("I'm right here with you") in every reply of the pair (20 of 20);
+# Claude Haiku did not once in 20 (it reflected and reassured, 0 of 20 in both turns). Nothing in these prompts asked for it: it was Flash's own habit. A conventional presence line in the present tense, not a
+# promise about later and not a claim of a feeling. Only where the person needs company (venting, reassurance, no specific need), not where they want help with something concrete, and not under a safety plan.
+PRESENCE_RULE = (
+    "- Say plainly that you are here with them. A short line such as \"I'm right here with you.\" belongs in a reply to someone who is hurting, whether or not they have anything specific to say, and again when "
+    "they thank you or go quiet. Present tense only: no promise about later.\n"
+)
+PRESENCE_NEEDS = ("venting", "reassurance", "none")
+# "I hear you." (Jack, 2026-11-07: with "I'm right here with you", one of the lines that made Sonic feel like Sonic under Flash). In the Flash era it opened about one reply in ten to a hurting person;
+# Haiku never said it. Sonic's own line, said when they have just told you something raw, and never twice in a row. Measured on made-up hurting-person prompts (Haiku): "sometimes" gave 0 of 80, "about half"
+# 43%, "when they are hurting or ashamed" 14%; this wording 23%, falling on the quiet raw statements ("I just feel numb lately") where it fits and not on a plain bad day.
+HEAR_YOU_RULE = (
+    "- \"I hear you.\" is your own line. When they have just told you something raw, open with it as the first words, then go on to what they said. Never open two replies in a row with it.\n"
+)
 _LOW_NEED = {
     "venting": (
         "- They mainly want to be heard right now. Stay with what they're feeling and don't jump "
@@ -368,7 +382,8 @@ def build_emotional_context(state: Optional[Dict[str, Any]], now: datetime, *, s
         # "Fresh" because this message carried a (positive) reading, but the carried feeling is still
         # negative: that's a lift, not new distress, so it takes the ceiling block below.
         if fresh and not state.get("lift_this_turn"):
-            return _CONTEXT_HEADER + _LOW_BASE.format(valence=valence, referral="" if safety else NO_REFERRAL_RULE + PLAIN_TALK_RULE + QUESTION_RULE) + _LOW_NEED[need]
+            presence = PRESENCE_RULE if need in PRESENCE_NEEDS else ""
+            return _CONTEXT_HEADER + _LOW_BASE.format(valence=valence, referral="" if safety else NO_REFERRAL_RULE + PLAIN_TALK_RULE + QUESTION_RULE + presence + HEAR_YOU_RULE) + _LOW_NEED[need]
         gist = str(state.get("gist") or "").strip()
         about = f" ({gist})" if gist else ""
         turns = int(state.get("turns_since", 0) or 0)

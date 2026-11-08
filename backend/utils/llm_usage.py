@@ -230,13 +230,17 @@ def minute_snapshot() -> Dict[Tuple[str, str], Dict[str, int]]:
 
 
 def reset() -> None:
-    global _buffered_calls, _flushing
+    """Empties the counts (tests only: nothing in the app calls it). It also restarts the flush clock: otherwise the first call counted after a long run, more than FLUSH_AFTER_SECONDS since the last
+    flush, starts a background flush that swaps the buffer out while it tries the database, and a test that counts a call and then reads the buffer finds it empty (the full suite failed on that twice,
+    2026-11-08, a test that passes alone)."""
+    global _buffered_calls, _flushing, _last_flush
     with _lock:
         _buffer.clear()
         _minutes.clear()
         _routes.clear()
         _buffered_calls = 0
         _flushing = False
+        _last_flush = time.monotonic()
     llm_turns.reset()
 
 

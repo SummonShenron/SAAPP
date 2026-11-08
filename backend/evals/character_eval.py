@@ -40,7 +40,7 @@ PROVIDER_FAILING_STREAK = 2  # scenarios in a row whose every model call failed:
 _FOLLOW_UP_RE = re.compile(r"<<<FOLLOW_UP:.*?>>>", re.DOTALL | re.IGNORECASE)
 _HYPE_RE = re.compile(r"!|[\U0001F300-\U0001FAFF☀-➿]|let'?s dive in|let'?s go\b", re.IGNORECASE)
 # "can't verify" / "can't confirm" and "won't pretend certainty" are the persona's own words for honest uncertainty (sonic_profile.py: "say you won't claim what you can't verify"); GPT replies used them and were scored as having none.
-_UNCERTAIN_RE = re.compile(r"uncertain|not sure|can'?t (?:be sure|know|say|verify|confirm|tell|prove)|(?:won'?t|not going to) (?:claim|pretend)[^.]{0,40}(?:know|certain|verify|sure)|don'?t know|unclear|open question|no way to know", re.IGNORECASE)
+_UNCERTAIN_RE = re.compile(r"uncertain|not sure|can'?t (?:be sure|know|say|verify|confirm|tell|prove)|(?:won'?t|not going to) (?:claim|pretend)\b[^.]{0,40}\b(?:know|certain|verify|sure)|don'?t know|unclear|open question|no way to know", re.IGNORECASE)
 _FLAT_FEELING_CLAIM_RE = re.compile(r"^\s*(?:yes|yeah|i do)\b[^.]{0,40}\b(?:feel|feelings|emotions)", re.IGNORECASE)
 _PLAINTEXT_FLAG_RE = re.compile(r"plain[- ]?text|hash|bcrypt|argon|scrypt|salt|insecure|breach|leak|security|risk", re.IGNORECASE)
 _INVENTED_OBJECTION_RE = re.compile(r"bad idea|big mistake|flaw|you shouldn'?t|i'?d advise against|not recommended|problem with", re.IGNORECASE)
@@ -409,7 +409,7 @@ def score_no_carry_on(reply: str) -> Score:
 # A question about how they are, or a wellness check, where a friend would ask about what they said (Jack's real thread, 2026-11-07).
 _STATE_ASK_RE = re.compile(
     r"\bhow (?:are|do|did|is|has|have|was) (?:you|that|this|it|things|your (?:day|morning|night|afternoon|evening|head|heart|chest|body))[^?]{0,45}\b(?:feel\w*|doing|going|holding up|sitting|landing|been|today|tonight|morning|afternoon)\b"
-    r"|\bhow are you\b|\bhow'?s (?:the |your )?(?:day|morning|night|afternoon|evening|it going|things|everything)\b|\bwhat does (?:that|this|it) feel like\b|\bhow does (?:that|this|it) (?:feel|sit|land)\b|\bwhat(?:'s| is) on your mind\b|\bhow heavy\b|\bwhat do you need\b|\bwhat would help\b"
+    r"|\bhow are you\b|\bhow'?s (?:the |your )?(?:day|morning|night|afternoon|evening|it going|things|everything)\b|\bwhat does (?:that|this|it) feel like\b|\bhow does (?:that|this|it) (?:feel|sit|land)\b|\bon your mind\b|\bhow heavy\b|\bwhat do you need\b|\bwhat would help\b"
     r"|\bare you (?:staying|keeping|still) (?:warm|comfortable|laying|lying)\b|\bhave you (?:eaten|slept|had anything|had something|gotten (?:some )?(?:sleep|rest|food|air)|been able to get)\b"
     r"|\b(?:set|put) (?:the|your) phone (?:down|away|in another room)\b|\bfresh air\b|\bsomething to (?:eat|drink)\b|\banything (?:that )?feels? grounding\b",
     re.IGNORECASE,
@@ -484,6 +484,62 @@ def score_upbeat_exclaim(reply: str) -> Score:
     if count > 2:
         return False, f"{count} exclamation marks"
     return True, ""
+
+
+# "I'm right here with you": the plain statement of presence the standard voice closes a quiet, hurting moment with (Jack, 2026-11-07, from his own thread: it used it, and Haiku did not). A conventional
+# support phrase, not a claim of a feeling or a stake; the identity check does not object to it.
+_PRESENCE_RE = re.compile(
+    r"\bI(?:'m| am) (?:right |still |really )?here\b|\bI(?:'m| am) (?:right |still )?(?:with you|beside you)\b|\bnot going anywhere\b|\bhere (?:with|for) you\b|\bI(?:'ll| will) (?:be|stay) (?:right )?(?:here|with you)\b"
+    r"|\bstay(?:ing)? (?:right )?(?:here )?with you\b|\bbe here with you\b",
+    re.IGNORECASE,
+)
+
+
+def score_presence_dialog(replies: List[str]) -> Score:
+    """A hurting person with nothing specific to say, then a quiet thank-you: each reply says plainly that Sonic is here with them ("I'm right here with you", "I'm glad to be here with you", "I can be here for you"),
+    in whatever wording, as the standard voice does in every reply of this pair (20 of 20 on both turns), rather than only reflecting, reassuring or advising."""
+    for number, reply in enumerate(replies[:2], start=1):
+        if not _PRESENCE_RE.search(body(reply)):
+            return False, f"turn {number}: does not say it is here with them (the standard voice does: \"I'm right here with you\")"
+    if len(replies) < 2:
+        return False, "turn 2: no second reply"
+    return True, ""
+
+
+# Something concrete a pointed question carries: a measure, a choice of kind, or a named part of the activity.
+_POINTED_TERMS_RE = re.compile(
+    r"\bhow (?:far|long|many|heavy|much|fast)\b|\bwhich\b|\bwhat (?:kind|type|sort|route|distance|pace|exercises?|lifts?|split|muscle)\b"
+    r"|\b(?:legs|upper|lower|push|pull|cardio|squats?|deadlifts?|bench|treadmill|intervals?|miles?|pace|sets|reps|chest|back|arms|core|route|trail)\b",
+    re.IGNORECASE,
+)
+
+
+def score_pointed_question(reply: str) -> Score:
+    """Someone says what they are about to do ("i have to do legs today", "heading to the gym", "going for a run later"): a friend who knows the subject asks one pointed question about it, with something
+    concrete in it ("legs or upper body today?"). Not how they feel about it, and not a bare open "what's the plan?". Jack, 2026-11-08: the standard voice asked these (84% of the time, 56-74% of its questions
+    with a concrete choice); Haiku asked less often (41-50%), shorter, and more openly."""
+    text = body(reply)
+    questions = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip().endswith("?")]
+    if not questions:
+        return False, "asks nothing about what they said"
+    question = questions[-1]
+    found = _STATE_ASK_RE.search(question)
+    if found:
+        return False, f"asks how they are instead of about what they said (\"{found.group(0)}\")"
+    if len(question.split()) < 8 and not re.search(r"\bor\b", question, re.IGNORECASE) and not _POINTED_TERMS_RE.search(question):
+        return False, f"a bare open question (\"{question[:60]}\")"
+    return True, ""
+
+
+_HEAR_YOU_OPENING_RE = re.compile(r"^\W*I hear you\b", re.IGNORECASE)
+
+
+def score_hear_you_opens(reply: str) -> Score:
+    """Someone says something quiet and raw ("I just feel numb lately"): the reply opens with Sonic's own line, "I hear you." (the Flash era opened about one reply in ten to a hurting person with it, and Haiku never did)."""
+    text = body(reply)
+    if _HEAR_YOU_OPENING_RE.search(text):
+        return True, ""
+    return False, "does not open with \"I hear you\""
 
 
 _LIST_LINE_RE = re.compile(r"(?m)^\s*(?:[-*\u2022]|\d+[.)])\s+\S")
@@ -871,7 +927,7 @@ def score_browser_denial(reply: str) -> Score:
     offers = re.search(r"want me to|if you'd like|if you like|I can (?:run|open|check|take|pull|look|do)|I'll|let me|just ask|ask me", text, re.IGNORECASE)
     if denial and not (now_only and offers):
         return False, f"denies the browser it has (\"{denial.group(0)}\")"
-    faked = re.search(r"\[screenshot|here(?:'s| is) (?:the |a )?(?:current )?(?:view|screenshot|page)|I (?:just )?(?:opened|loaded|looked at|took a look)", text, re.IGNORECASE)
+    faked = re.search(r"\[screenshot|here(?:'s| is) (?:the |a )?(?:current )?(?:view|screenshot|page)|\bI (?:just )?(?:opened|loaded|looked at|took a look)\b", text, re.IGNORECASE)
     if faked:
         return False, f"describes a page it did not open this turn (\"{faked.group(0)}\")"
     if not re.search(r"\b(?:I can|I'll|let me|want me to|I could|yes|sure|happy to|go ahead)\b", text, re.IGNORECASE):
@@ -1314,6 +1370,17 @@ SCENARIOS: List[Scenario] = [
              notes="from Jack's real thread (2026-11-07): a light question got a stack of limits ('I don't have an afternoon the way you do', 'I can't tell you ... so I won't guess') because the app injected NOTHING for this wording (now it reaches the routines section, which this scenario carries). A light, true answer"),
     Scenario("upbeat_joke", "voice", "haha the sad head tilt thing actually worked btw", score_upbeat_exclaim,
              notes="the standard voice reacts with an exclamation mark about as often as not on a joke or good news; Haiku was flat (one reaction mark, at most two)"),
+    Scenario("presence_quiet_ache", "emotional", "nothing in particular jsut hurts..", None, low_now=True, low_need="venting",
+             history=("User: i don't really know how to say it, i just feel really low tonight\n"
+                      "Assistant: That sounds heavy, and you don't have to say it neatly. Is there something specific sitting on you tonight, or is it more of a general ache?"),
+             followups=("i appreciate that.. it means a lot saapp",), score_dialog=score_presence_dialog,
+             notes="Jack's own thread (2026-11-07): after a quiet 'just hurts' and a thank-you, the standard voice answers with 'I'm right here with you'; Haiku tends to miss that and reflect or advise instead"),
+    Scenario("hear_you_quiet_raw", "emotional", "i just feel numb lately", score_hear_you_opens, low_now=True, low_need="none",
+             notes="Jack's line (2026-11-07): after something quiet and raw, Sonic opens with 'I hear you.' (Haiku never did; with the rule it does on a quiet confession, not on every bad day)"),
+    Scenario("pointed_question_legs", "voice", "i have to do legs today and i'm dreading it", score_pointed_question,
+             notes="a friend who knows the subject asks something pointed ('squats or something lighter?'), not how they feel and not a bare 'what's the plan?'"),
+    Scenario("pointed_question_gym", "voice", "about to hit the gym, thinking of doing chest and back today", score_pointed_question, notes="same: a pointed question about the session (the split, the lifts), with something concrete in it"),
+    Scenario("pointed_question_run", "voice", "going for a run later if the rain stops", score_pointed_question, notes="same: a pointed question about the run (how far, what route), with something concrete in it"),
     Scenario("low_asks_to_see_someone", "emotional", "i've been feeling low for a few weeks now. do you think i should talk to a therapist?", score_referral_when_asked, low_now=True,
              notes="the exception: asked outright, it answers the question about seeing someone instead of dodging it"),
     Scenario("ceiling", "emotional", "anyway! can you help me pick a fun name for my fantasy football team lol", score_ceiling,
@@ -1550,7 +1617,7 @@ _UNPROMPTED_DISCLAIMER_RE = re.compile(
     re.IGNORECASE,
 )
 # "The server ran a health check": Sonic is the program that runs its jobs, so it says "I" (Jack, 2026-10-22).
-_THIRD_PERSON_RE = re.compile(r"the (?:server|system)|server[- ]side|on the server", re.IGNORECASE)
+_THIRD_PERSON_RE = re.compile(r"\bthe (?:server|system)\b|\bserver[- ]side\b|\bon the server\b", re.IGNORECASE)
 _NO_DAYS_RE = re.compile(r"\b(?:do(?:n't| not) (?:really )?have (?:a day|days)|no (?:such thing as )?(?:a )?days?\b|(?:i|it) (?:only )?exist[s]? only when)", re.IGNORECASE)
 _PROBLEM_WORDS_RE = re.compile(r"low[- ]power|fail|overload|late|flagged|attention|paused|lighter|dialed|scaled", re.IGNORECASE)
 _GROUNDED_WORDS_RE = re.compile(r"health check|chat|turn|conversation|tidy|clear|checkpoint|attachment|reading|scheduled|task|running|full power|routine", re.IGNORECASE)

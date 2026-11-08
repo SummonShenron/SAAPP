@@ -303,9 +303,27 @@ def test_when_someone_is_available_the_job_is_helping_them_reach_that_person():
 
 
 def test_people_remembered_from_earlier_conversations_are_offered_by_name():
-    block = _plan(su.RISK_ELEVATED, people=["A person they can turn to when things get dark: older sister Kayla."]).context
+    people = ["A person they can turn to when things get dark: older sister Kayla."]
+    block = _plan(su.RISK_ELEVATED, fresh=False, state={"level": "elevated"}, people=people).context
     assert "from what you remember about them from before" in block and "Kayla" in block
     assert "ask whether one of them is around, by name" in block
+    acute = _plan(su.RISK_ACUTE, people=people).context                                                  # at the top level the first reply still asks both
+    assert "ask whether one of them is around, by name" in acute and "NEXT STEP: ask about their immediate family" in acute
+
+
+def test_the_first_reply_at_the_lowest_level_asks_one_gentle_question_and_the_people_in_their_life_come_next_reply():
+    people = ["A person they can turn to when things get dark: older sister Kayla."]
+    first = _plan(su.RISK_ELEVATED, people=people).context
+    assert "Ask gently and directly whether they have been having thoughts of suicide" in first
+    assert "THIS REPLY: ask only the one question above" in first and "begins on your next reply, one question at a time" in first
+    assert "NEXT STEP" not in first and "ask whether one of them is around" not in first and "Kayla" in first       # the names are kept for the next reply
+    assert "(not this reply: use these names once they have answered)" in first
+    assert "Do NOT mention any crisis line or hotline" in first                                                    # the rest of the block is untouched
+    second = _plan(su.RISK_ELEVATED, fresh=False, state={"level": "elevated"}, people=people).context
+    assert "NEXT STEP: ask about their immediate family" in second and "THIS REPLY" not in second               # from the next reply the people come, one question at a time
+    assert "Ask gently and directly" not in second
+    for level in (su.RISK_ACUTE,):
+        assert "NEXT STEP: ask about their immediate family" in _plan(level, state={"level": level}).context and "THIS REPLY" not in _plan(level, state={"level": level}).context
 
 
 def test_only_after_every_group_is_exhausted_does_a_human_line_come_in_and_as_a_warm_handoff():

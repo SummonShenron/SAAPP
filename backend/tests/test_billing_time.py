@@ -93,3 +93,21 @@ def test_reading_back_starts_from_the_billing_day(monkeypatch):
     llm_usage.fetch_route_docs(DB(), 7, moment)
     llm_turns.fetch_turn_docs(DB(), 7, moment)
     assert seen == ["2026-10-05"] * 3
+
+
+def test_a_reset_restarts_the_flush_clock_so_the_first_call_after_a_long_run_does_not_start_a_flush_that_empties_the_buffer(monkeypatch):
+    # The race the full suite hit twice (2026-11-08): more than FLUSH_AFTER_SECONDS since the last flush, then record() starts a background flush that swaps the buffer out while it tries the database.
+    import time
+
+    started = []
+    monkeypatch.setattr(llm_usage, "flush_in_background", lambda: started.append(1))
+    monkeypatch.setattr(llm_usage, "_last_flush", time.monotonic() - 10 * llm_usage.FLUSH_AFTER_SECONDS)
+    llm_usage.record("m", "x.y", {"input": 1, "output": 1})
+    assert started == [1]                                                  # the premise: after a long quiet stretch a call does start a flush
+    try:
+        llm_usage.reset()
+        started.clear()
+        llm_usage.record("m", "x.y", {"input": 1, "output": 1})
+        assert started == [] and len(llm_usage.snapshot()) == 1            # after a reset it does not, and the count is still there to read
+    finally:
+        llm_usage.reset()
