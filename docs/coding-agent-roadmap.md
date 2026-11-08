@@ -2045,3 +2045,15 @@ correctly bound) and missed the one that actually caused the recurrence
 (all-time thread-COUNT growth, which no flat per-thread count can ever bound).
 See "Recurrence (second incident)" above for the actual fix — a real age-based
 cutoff alongside the per-thread floor, not just a bigger N.
+
+## 2026-11-08: a real thread where it took six turns to propose one edit
+
+Jack asked for a small change (show the admin's +25% at the 80% notice line) and Sonic took about ten minutes and about 42 Haiku calls (roughly six turns of the default 7-step cap) before an edit landed, while its replies said "nothing has changed" and "I can't open your folder". What the review found (step counts are inferred from per-minute usage; the trace is not stored):
+
+1. **Follow-ups were not edit turns.** "it should show at the 80% mark...", "come on just find the files" and "so find it!" were read as plain messages. In the native loop the proposal tool is part of the choice only on an edit turn (`can_propose = bool(required_action)`), so those turns could only read and search, and were never nudged to propose after reading. Fixed: `agent_utils.continues_unfinished_edit` (an explicit change request among the last 8 of the person's messages; Sonic's last reply left it unfinished or asked about it; a short non-question that shares a word with that question or has a concrete task word). A question, a feeling ("I just feel so empty", "I don't want to do this anymore") and another topic are never one.
+2. **Each turn started over.** Earlier turns reach the next one as text only, with no tool results, and the working notes hold decisions, not places. Fixed: `backend/utils/read_log.py`, a per-conversation list of reads and searches (path, search term, line range, and the first few `path:line` places a search found; never contents), shown as data on later turns and cleared with the conversation. One write per read, serialized per turn.
+3. **The edit itself** (made by Sonic) added `or level == NOTICE` to `public_view`, which offered the admin button when only the admin's OWN limit was at 80% and the endpoint then refused (409). Removed; `extendable_scopes` already covers the shared budgets at their notice line. Tests added for the 80% case, the line itself, only the scopes at the line being extended, and the own-limit case; docstrings and the banner comment updated.
+4. **Not fixed:** "add some code to cope?" (said while upset) was read as a code request and cost 4 steps and an advisor call; the explicit-edit regex fires on "add ... code". Sonic also made three statements about its own state that were false (it "can't open files", "nothing has changed", a 409 check it had not read), and 25 replies were sent back today for denying a capability.
+5. **A cost to remember:** the shared day budget read 94% because the probe and eval scripts used in the voice work were not labelled `eval:`, so the guard counted them (about $4 of today's spend). Label any script that calls a model with `llm_usage.mark_as_eval()` (`backend/utils/llm_usage.py`).
+
+Unmeasured on a live model: items 1 and 2 are unit-tested only.

@@ -191,3 +191,27 @@ def test_the_voice_reminder_says_what_the_measured_gaps_were_and_the_app_and_the
     llm = eval_models.make_llm("haiku", shape="voice")
     assert llm.voice_shape is True and llm.voice_tail == "voice"
     assert '"voice"' in pathlib.Path("backend/evals/character_eval.py").read_text(encoding="utf-8")                  # the --shape choice
+
+
+def test_a_running_meeting_gets_the_voice_reminder_without_the_pointed_question_sentence_and_with_the_agenda_line():
+    from backend.utils import meetings
+
+    meeting = {"name": "Weekly Check-in", "purpose": "A short weekly look.", "agenda": ["What did you work on?", "How many applications?"], "coaching": "supportive"}
+    section = meetings.build_meeting_context(meeting, [], {"goals": [], "goal_ids": [], "task_findings": [], "progress_notes": []}, "America/Chicago")
+    assert cv.MEETING_MARKER in section                                          # the marker is the real first line of the meeting section
+    in_meeting = cv.with_tail("PROMPT " + section, "voice")
+    assert in_meeting.endswith(cv.MEETING_REMINDER) and "ask one pointed question about it" not in in_meeting and "In a meeting, ask at most one question in a reply" in in_meeting
+    assert "ends on a statement, never on a question" in in_meeting and "Start every reply with the substance" in in_meeting       # the rest of the voice reminder is unchanged
+    plain = cv.with_tail("PROMPT with no meeting", "voice")
+    assert plain.endswith(cv.VOICE_REMINDER) and "ask one pointed question about it" in plain and cv.MEETING_REMINDER not in plain
+    assert cv.voice_reminder_for("no meeting here") == cv.VOICE_REMINDER
+
+
+def test_the_meeting_section_says_to_move_on_after_one_follow_up_never_go_back_and_believe_the_person_who_says_it_is_looping():
+    from backend.utils import meetings
+
+    meeting = {"name": "Weekly Check-in", "purpose": "", "agenda": ["One?", "Two?"], "coaching": "supportive"}
+    section = meetings.build_meeting_context(meeting, [], {"goals": [], "goal_ids": [], "task_findings": [], "progress_notes": []}, "America/Chicago")
+    for part in ("Ask at most one follow-up on an item, then move on.", "Never go back to an item they have answered, even after a detour", "do not restart or recap the meeting from the top",
+                 "If they say you are looping or that something was already covered, believe them", "Stay on the agenda: do not raise anything outside it"):
+        assert part in section, part

@@ -364,6 +364,11 @@ def active_run(db, username: str, session_id: str) -> Optional[Dict[str, Any]]:
     return docs[0] if docs else None
 
 
+def run_started_at(run: Optional[Dict[str, Any]]) -> Optional[datetime]:
+    """When a running meeting began (UTC), or None when there is no run. The conversation keeps the whole meeting word for word from this moment (backend/utils/conversation_summary.py). Pure."""
+    return _utc(run.get("started_at")) if run else None
+
+
 def get_run(db, username: str, run_id: str) -> Optional[Dict[str, Any]]:
     docs = list(db[RUNS_COLLECTION].find({"username": username, "id": run_id}, {"_id": 0}))
     return docs[0] if docs else None
@@ -670,6 +675,7 @@ def build_meeting_context(meeting: Dict[str, Any], notes: List[Dict[str, Any]], 
         "How to run it: it is OUR meeting, so say \"our\" and use its name. If you have not opened it yet in this conversation, open it in a line (\"this is our check-in\") and ask the first agenda item. "
         "Ask one question at a time, follow what they say, and move on when an item is covered; skip or reorder if they ask, and if what they say already answers a later item, say so and do not ask it again. If they want to talk about something else, follow them and come back "
         "to the agenda when they are ready. When every item is covered, say so and tell them they can press \"End and save notes\"; never end the meeting yourself and never say you saved anything. "
+        "Ask at most one follow-up on an item, then move on. Never go back to an item they have answered, even after a detour: after one, go to the first item you have not asked, and do not restart or recap the meeting from the top. If they say you are looping or that something was already covered, believe them, treat it as covered and go to the next item you have not asked. Stay on the agenda: do not raise anything outside it (files, screenshots, other projects) unless they bring it up or the coaching section below asks you to. "
         "Only use what is listed above about last time, their goals and their tasks: if there are no notes, say there are none, and never invent what was said before. You may say you have the notes "
         "from last time only when they are listed. If progress notes are listed, you may open the first agenda item by mentioning two or three of them, in their own words, and ask whether "
         "anything is missing or which mattered most; do not rank them, praise beyond what a note says, add detail a note does not have, or point out patterns, and mention only notes that are listed. A note marked [blocker] is something in their way, not something they got done, and a [win] is a win: say each as what it is. "

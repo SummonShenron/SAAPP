@@ -40,6 +40,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 # The text checks are working notes' own (the same quote, "nothing new" and duplicate rules), shared rather than copied.
 from backend.utils.working_state import _URL_RE, _duplicate, _flat, _norm, _response_text, _specifics, parse_patch
+from backend.utils.time_utils import sent_at
 
 logger = logging.getLogger("SASS Logger")
 
@@ -64,6 +65,10 @@ FOLD_AT_MESSAGES = max(int(os.getenv("CONVERSATION_FOLD_AT_MESSAGES", "20")), 6)
 FOLD_AT_CHARS = max(int(os.getenv("CONVERSATION_FOLD_AT_CHARS", "12000")), 2000)
 KEEP_TAIL_MESSAGES = max(int(os.getenv("CONVERSATION_KEEP_TAIL_MESSAGES", "6")), 2)
 HARD_MAX_MESSAGES = FOLD_AT_MESSAGES + 2          # what a turn sends word for word at most, so a fold that is paused or failing cannot let the prompt grow
+# While a meeting (Office Hours) is running in the conversation, the whole meeting stays word for word and no fold runs, up to this many messages: where the agenda stands is read off the visible history, and a fold
+# keeps only the last few messages plus a short summary that has no agenda progress (2026-11-08: a 60-message meeting lost its opening, went back to item 1 and re-asked items it had covered). About 450 characters
+# a message, so the cap is roughly 9,000 tokens a call: about $0.001 a turn on Haiku.
+MEETING_MAX_MESSAGES = max(int(os.getenv("CONVERSATION_MEETING_MAX_MESSAGES", "80")), 20)
 PLAIN_WINDOW = 10                                 # the old fixed window, still used when the feature is off for this turn
 FOLD_INPUT_MESSAGES = 24                          # the most a single fold reads (a first fold of an old, long conversation covers only its recent end)
 FOLD_MESSAGE_CHARS = 600
@@ -134,14 +139,35 @@ def is_current(summary: Optional[Dict[str, Any]], messages: Any) -> bool:
     return bool(summary.get("anchor")) and anchor_of(messages[index]) == summary.get("anchor")
 
 
-def history_window(messages: Any, summary: Optional[Dict[str, Any]], *, active: bool) -> List[Any]:
+def meeting_start(messages: Any, since: Optional[datetime]) -> Optional[int]:
+    """The position, in the loaded list, of the first message sent at or after `since` (when the meeting's run began); None when there is no meeting or no message that late. Pure."""
+    if since is None:
+        return None
+    for position, message in enumerate(list(messages or [])):
+        moment = sent_at(message)
+        if moment is not None and moment >= since:
+            return position
+    return None
+
+
+def meeting_count(messages: Any, since: Optional[datetime]) -> int:
+    """How many loaded messages belong to the running meeting (0 when there is none). Pure."""
+    start = meeting_start(messages, since)
+    return 0 if start is None else len(list(messages or [])) - start
+
+
+def history_window(messages: Any, summary: Optional[Dict[str, Any]], *, active: bool, meeting_since: Optional[datetime] = None) -> List[Any]:
     """The messages a turn sends word for word. With the feature on: every message the summary does not cover, never more than HARD_MAX_MESSAGES. Off (a guest, low-power mode, the kill switch):
-    the old last-PLAIN_WINDOW. Pure."""
+    the old last-PLAIN_WINDOW. While a meeting is running (`meeting_since`, when its run began) the window also reaches back to the meeting's first message, up to MEETING_MAX_MESSAGES. Pure."""
     items = list(messages or [])
     if not active:
         return items[-PLAIN_WINDOW:]
     start = max(covered(summary, messages) - base_of(messages), 0)
-    return items[start:][-HARD_MAX_MESSAGES:]
+    normal_start = max(start, len(items) - HARD_MAX_MESSAGES)           # where the ordinary window begins
+    held = meeting_start(messages, meeting_since)
+    if held is not None:
+        return items[min(held, normal_start):][-MEETING_MAX_MESSAGES:]
+    return items[normal_start:]
 
 
 def unfolded_count(summary: Optional[Dict[str, Any]], messages: Any) -> int:
@@ -162,11 +188,13 @@ def fold_range(summary: Optional[Dict[str, Any]], messages: Any) -> Tuple[int, i
     return start, end
 
 
-def due(summary: Optional[Dict[str, Any]], messages: Any, *, force: bool = False) -> bool:
+def due(summary: Optional[Dict[str, Any]], messages: Any, *, force: bool = False, meeting_since: Optional[datetime] = None) -> bool:
     """Whether a fold is worth a model call now: the unfolded messages reached FOLD_AT_MESSAGES or about FOLD_AT_CHARS, and at least MIN_FOLD_MESSAGES can be folded while the tail stays. A person's
-    request (`force`) skips the size test. Pure."""
+    request (`force`) skips the size test. While a meeting is running a fold waits until the meeting itself passes MEETING_MAX_MESSAGES (the person's own request still folds). Pure."""
     start, end = fold_range(summary, messages)
     if end - start < MIN_FOLD_MESSAGES:
+        return False
+    if not force and meeting_since is not None and 0 < meeting_count(messages, meeting_since) < MEETING_MAX_MESSAGES:
         return False
     if not force and total_of(messages) < int((summary or {}).get("retry_at", 0) or 0):
         return False
@@ -454,7 +482,7 @@ def load_cached(username: str, session_id: str, get_db_fn: Optional[Callable[[],
 
 
 def prepare_turn(username: str, session_id: str, messages: Any, *, guest: bool = False, low_power: bool = False,
-                 get_db_fn: Optional[Callable[[], Any]] = None) -> Dict[str, Any]:
+                 get_db_fn: Optional[Callable[[], Any]] = None, meeting_since: Optional[datetime] = None) -> Dict[str, Any]:
     """What a turn needs from the summary, in one read: {"window": the messages to send word for word, "context": the prompt block ("" when none), "history_max": how many messages the window
     holds, "summary": the stored summary (None when there is none or it no longer matches)}. A guest, low-power mode and the kill switch keep the old fixed window (the block, if there is one, is
     still read: reading is free). Blocking."""
@@ -462,7 +490,7 @@ def prepare_turn(username: str, session_id: str, messages: Any, *, guest: bool =
     if summary is not None and not is_current(summary, messages):
         summary = None
     active = enabled() and not guest and not low_power
-    window = history_window(messages, summary, active=active)
+    window = history_window(messages, summary, active=active, meeting_since=meeting_since)
     return {"window": window, "context": build_context(summary), "history_max": len(window), "summary": summary}
 
 
@@ -595,6 +623,7 @@ async def capture(
     invoke: Optional[Callable[[str], Awaitable[Any]]] = None,
     get_db_fn: Optional[Callable[[], Any]] = None,
     now: Optional[datetime] = None,
+    meeting_since: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """Folds the older part of the conversation into its summary when one is due (or when the person asked: `force`). Never raises (it runs as a background task); returns
     {"ran", "folded", "added", "removed", "dropped"} for tests, counters and the compact button. An automatic fold waits while a safety context is in force."""
@@ -615,7 +644,7 @@ async def capture(
         if summary is not None and not is_current(summary, messages):
             await asyncio.to_thread(clear, db, username, session_id)         # the conversation was cleared or rewritten under it
             summary = None
-        if not due(summary, messages, force=force):
+        if not due(summary, messages, force=force, meeting_since=meeting_since):
             return result
         start, end = fold_range(summary, messages)
         window = fold_window(messages, start, end)

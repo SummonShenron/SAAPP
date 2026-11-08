@@ -1170,6 +1170,48 @@ def previous_human_texts(messages) -> list:
     return [text for text in earlier if text.strip()]
 
 
+# A follow-up that CONTINUES a change request Sonic has not finished (2026-11-08, Jack's budget request): after "ran out of steps" and a question about which version, "it should show at the 80% mark just like the others", "come on
+# just find the files" and "so find it!" were each read as a plain message, so the turn was not an edit turn: it was never offered propose_local_edits (the native loop offers it only on an edit turn), was not nudged to
+# propose after reading, and spent its steps reading again, six times in ten minutes. A continuation needs ALL of: an explicit change request among the person's last few messages; Sonic's last reply left it
+# unfinished (it said so) or asked something about the change; and a short message that is not a question and either answers that question (it shares a word with it) or says to get on with it (a task word).
+# "I just feel so empty" after such a reply shares nothing and has no task word, so it stays a plain message; a question ("what did you change?") is never one.
+_UNFINISHED_EDIT_RE = re.compile(
+    r"ran out of (?:tool )?steps|out of steps|nothing (?:has )?(?:been )?(?:changed|edited)|(?:haven'?t|have not|hadn'?t|didn'?t|did not) (?:read|changed|made|proposed|edited|found|looked|opened)"
+    r"|not (?:yet )?(?:changed|proposed|edited|made)|before i (?:propose|change|edit|make)|i need to know|which (?:file|version|one)|name the file|send (?:me )?the request again"
+    r"|(?:paste|send me) (?:the|those|that)|the next step is",
+    re.IGNORECASE,
+)
+_TASK_WORD_RE = re.compile(
+    r"\b(?:find|locate|search|read|open|check|apply|fix|update|add|file|files|button|page|line|lines|function|code|tests?)\b"        # concrete task words only: "just", "do", "want", "keep going" are in feelings too
+    r"|\d+\s*%|\b[\w-]+\.[a-z]{1,4}\b",
+    re.IGNORECASE,
+)
+_FOLLOW_UP_TAG_RE = re.compile(r"<<<.*?>>>", re.DOTALL)
+_STOP_WORDS = frozenset("that this with have what your about from they them then than there their would could should just like when where which while been being into over only some more most very much does did doing "
+                        "you the and for are but not was were has had how why can will it's i'm you're don't want going need today".split())
+CONTINUATION_MAX_WORDS = 25
+CONTINUATION_LOOKBACK = 8
+
+
+def _content_words(text: str) -> set:
+    return {w for w in re.findall(r"[a-z0-9_']+", str(text or "").lower()) if len(w) >= 4 and w not in _STOP_WORDS}
+
+
+def continues_unfinished_edit(last: str, previous_ai: str, humans: list) -> bool:
+    """Whether `last` (the person's newest message) carries on a change request that is still unfinished. See the comment above. Pure."""
+    if "?" in last or len(last.split()) > CONTINUATION_MAX_WORDS:
+        return False
+    if not any(_is_explicit_edit(_message_text(m)) for m in humans[-(CONTINUATION_LOOKBACK + 1):-1]):
+        return False
+    reply = _FOLLOW_UP_TAG_RE.sub("", str(previous_ai or "")).strip()
+    asked = reply.endswith("?") and bool(_CODE_TARGET_RE.search(reply) or _EDIT_VERB_RE.search(reply))
+    unfinished = bool(_UNFINISHED_EDIT_RE.search(reply)) or reply == _SCRUBBED_DENIAL_PLACEHOLDER
+    if not (asked or unfinished):
+        return False
+    answers_it = asked and bool(_content_words(last) & _content_words(reply[-300:]))
+    return answers_it or bool(_TASK_WORD_RE.search(last))
+
+
 def looks_like_edit_request(messages) -> bool:
     """True when the user's latest message is asking for a code/file change — either directly
     (an edit verb plus a code-shaped target: "change the header text in Chat.tsx") or as a
@@ -1211,7 +1253,9 @@ def looks_like_edit_request(messages) -> bool:
         return True
     # A longer complaint at a refusal ("you CAN apply the change but are refusing to") right after
     # the assistant offered or refused an edit that the user had explicitly asked for.
-    return ai_offered_or_denied and recent_explicit and bool(_EDIT_VERB_RE.search(last))
+    if ai_offered_or_denied and recent_explicit and bool(_EDIT_VERB_RE.search(last)):
+        return True
+    return continues_unfinished_edit(last, previous_ai, humans)
 
 
 def is_stale_capability_denial(text: str) -> bool:

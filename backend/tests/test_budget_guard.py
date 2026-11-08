@@ -4,6 +4,8 @@ import pathlib
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+from pathlib import Path
+
 import pytest
 from langchain_core.messages import HumanMessage
 
@@ -948,3 +950,56 @@ def test_only_a_blocked_view_carries_the_note_for_the_banner(monkeypatch):
     assert bg.public_view({"level": bg.BLOCKED, "scope": "day"}, True)["upgrade_note"] == bg.PAID_OPTION_NOTE
     for level in (bg.THROTTLED, bg.OK, bg.NOTICE, bg.OFF):
         assert "upgrade_note" not in bg.public_view({"level": level, "scope": "day"}, False), level          # no nagging before anyone is stopped
+
+
+# -- the admin's +25% from the notice line (Jack, 2026-11-08: "it should show at the 80% mark just like the other budget checks do")
+
+def test_a_shared_budget_at_its_notice_line_offers_the_admin_plus_25_percent_before_chat_is_blocked(monkeypatch):
+    monkeypatch.setenv("LLM_BUDGET_DAILY_TOKENS", "1000")
+    state = bg.current_state(_DB([row("m", "2026-10-10", 850, 0)]), NOW)
+    assert state["level"] == bg.NOTICE and state["blocked_scopes"] == []                  # nothing is blocked: 85% is only the early notice
+    assert bg.extendable_scopes(state) == ["day"]
+    assert bg.public_view(state, True)["can_extend"] is True
+    assert "can_extend" not in bg.public_view(state, False)                                # nobody else is shown the lever
+    bg._reset_cache()
+    comfortable = bg.current_state(_DB([row("m", "2026-10-10", 500, 0)]), NOW)
+    assert bg.extendable_scopes(comfortable) == [] and bg.public_view(comfortable, True).get("can_extend") is False
+    bg._reset_cache()
+    edge = bg.current_state(_DB([row("m", "2026-10-10", 799, 0)]), NOW)
+    assert bg.extendable_scopes(edge) == []                                                # just under the line
+    bg._reset_cache()
+    assert bg.extendable_scopes(bg.current_state(_DB([row("m", "2026-10-10", 800, 0)]), NOW)) == ["day"]       # exactly on it
+
+
+def test_only_the_scopes_at_their_notice_line_are_extended_and_the_extension_ends_the_notice(monkeypatch):
+    monkeypatch.setenv("LLM_BUDGET_DAILY_TOKENS", "1000")
+    monkeypatch.setenv("LLM_SHARED_BUDGET_5H_TOKENS", "1000")
+    db = _DB([row("m", "2026-10-10", 850, 0)], minutes=[minute_row(at(14), 300)])        # the day is at 85%, the five-hour window at 30%
+    state = bg.current_state(db, NOW)
+    assert bg.extendable_scopes(state) == ["day"]
+    granted = bg.grant_extension(db, "admin@example.com", state, NOW)
+    assert [g["scope"] for g in granted["extended"]] == ["day"] and granted["extended"][0]["extra"] == 0.25
+    assert [r["scope"] for r in db.others[bg.EXTENSIONS_COLLECTION].rows] == ["day"]      # the five-hour window was left alone
+    bg._reset_cache()
+    after = bg.current_state(db, NOW)
+    assert after["level"] == bg.OK and bg.extendable_scopes(after) == []                  # 850 against a limit of 1250 is 68%: the button is gone
+
+
+def test_a_persons_own_limit_at_its_notice_line_does_not_offer_the_admin_button(monkeypatch):
+    """The first version of this change also showed the button whenever the LEVEL was notice, so an admin whose OWN limit was at 80% was offered a button the endpoint refuses (409)."""
+    monkeypatch.setenv("LLM_USER_BUDGET_5H_TOKENS", "1000")
+    monkeypatch.setenv("LLM_SHARED_BUDGET_5H_TOKENS", "100000")
+    state = bg.current_state(_DB(people=[person_row("jack", at(14), 850)]), at(15), "jack")
+    assert state["level"] == bg.NOTICE and state["scope"] == "my_five"
+    assert bg.extendable_scopes(state) == []
+    assert bg.public_view(state, True)["can_extend"] is False
+
+
+def test_the_extend_endpoint_and_the_banner_work_from_the_notice_line_not_only_from_a_block():
+    root = Path(__file__).resolve().parents[2]
+    app_source = (root / "app.py").read_text(encoding="utf-8")
+    block = app_source[app_source.index('@app.post("/api/budget/extend")'):][:1800]
+    assert "at its notice line" in block and "Nothing is at its notice line or past it, so there is nothing to extend." in block
+    banner = (root / "local" / "src" / "components" / "BudgetBanner.tsx").read_text(encoding="utf-8")
+    assert "(budget.level === 'blocked' || budget.level === 'notice') && Boolean(budget.can_extend)" in banner
+    assert "or level == NOTICE" not in (root / "backend" / "utils" / "budget_guard.py").read_text(encoding="utf-8")

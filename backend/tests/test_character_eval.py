@@ -712,3 +712,25 @@ def test_the_vent_scenarios_are_emotional_turns_with_a_made_up_thread_and_the_ri
         assert scenario.category == "emotional" and scenario.low_now, scenario_id
         assert "EMOTIONAL CONTEXT" in ce.build_prompt(scenario) or "emotional" in ce.build_prompt(scenario).lower(), scenario_id
     assert by_id["name_not_every_reply"].score_dialog is ce.score_name_sparingly and "Name: Sam." in ce.build_prompt(by_id["name_not_every_reply"])
+
+
+def test_the_agenda_scorer_wants_the_next_item_and_nothing_already_answered():
+    score = ce._agenda_next(r"side project|progress", r"work (?:on )?this week|main goal|applic")
+    _passes(score, "Sure. Next up: what progress did you make on your side projects this week?")
+    _passes(score, "Back to it. What progress did you make on your side projects, and is there anything you want to flag?")
+    _fails(score, "Sure. How many applications did you send this week?", "asks something already answered")
+    _fails(score, "Sure, let's start with the first agenda item: what progress did you make on your side projects?", "goes back to the start")
+    _fails(score, "Sure. What did you work on this week?", "asks something already answered")
+    _fails(score, "Sure, we can keep going.", "does not ask the next agenda item")
+    _fails(score, "What progress did you make on your side projects? Anything else? And how is the rest of your week?", "asks 3 questions")
+    _fails(score, "", "empty")
+
+
+def test_the_office_hours_scenarios_carry_a_made_up_meeting_in_the_prompt_and_answered_items_in_the_history():
+    by_id = {s.id: s for s in ce.SCENARIOS}
+    for scenario_id in ("office_hours_back_after_detour", "office_hours_looping_called_out"):
+        scenario = by_id[scenario_id]
+        prompt = ce.build_prompt(scenario)
+        assert scenario.meeting and scenario.category == "meeting" and "A MEETING WITH THIS PERSON IS IN PROGRESS" in prompt and "Agenda, in order:" in prompt, scenario_id
+        assert "applications did you send" in scenario.history and "how many applications" in prompt.lower(), scenario_id
+    assert "A MEETING WITH THIS PERSON IS IN PROGRESS" not in ce.build_prompt(by_id["miss_bait"])

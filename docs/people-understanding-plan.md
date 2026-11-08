@@ -1,6 +1,6 @@
 # Letting Sonic learn how people go through things ("people notes")
 
-Status: PROPOSED, not started (2026-11-08). Jack's idea, said after the last hour of his real thread showed Haiku interviewing a hurting person. Phase 0 (the behaviour fix and its eval) is done; everything else here waits for Jack's answers in "Decisions".
+Status: PHASES 0, 1 AND 2 BUILT, UNAPPROVED AND UNMEASURED (2026-11-08). Jack's idea, said after the last hour of his real thread showed Haiku interviewing a hurting person. The behaviour fix and its eval (phase 0), the twenty drafts and the registry check (phase 1), and the retrieval and the reply-voice block (phase 2) are built. No note is approved, so nothing reaches a prompt yet. Not done: calibrating the match threshold on real embeddings, any eval with notes in the prompt (Jack ruled out more evals on 2026-11-08), the reading source (phase 3) and the conversation source (phase 4).
 
 ## What Jack asked for
 
@@ -105,14 +105,31 @@ The feelings policy in full (`docs/feelings-policy.md`): a note is about people 
 3. **Reading source** (shelf reflections of kind `people`).
 4. **Conversation source,** only if 1 and 2 earn it.
 
-## Decisions for Jack
+## Decisions (Jack, 2026-11-08)
 
-1. Should I draft the first twenty notes for his approval, or does he want to write them?
-2. May a note be derived from his own thread (worded as a pattern, no text from it), or should the first set come only from general writing?
-3. Do the notes apply to Flash as well as Haiku? (Flash interviews less, but the same note helps it too.)
-4. Name: "people notes" is working; he may prefer something in Sonic's own voice.
-5. Should guests get them? (They add no risk the rest of the voice lacks.)
+1. **I draft the first twenty notes** for his approval; he flips `approved` on each.
+2. **Notes may be derived from user text.** The reflection pass may read conversations to propose a note. What it writes is still only the abstract pattern: no quote, no name, no date of anyone's event. It stays pending until a person approves it, and the de-identification check still runs.
+3. **They apply to every base model** (Haiku, Flash, Flash-Lite, Sonnet). The block goes in the shared reply prompt, not in one model's closing reminder.
+4. The name "people notes" is fine.
+5. **Guests too, both ways:** guests receive the notes, and Sonic may learn from guest conversations. Guests are anonymous and the same rules apply, so a note from guest conversations still needs at least three independent sources and approval, and nothing from a guest's text is stored in it.
+
+The Office Hours problem found the same evening was dealt with first (`docs/model-eval-plan.md`, Update 13), then phases 1 and 2 were built.
 
 ## What this does not do
 
 It does not make Sonic feel anything or claim to. It does not remember a person's story (memory does that). It does not replace asking when a question is what the person needs, only the reflex of asking when nothing has been understood.
+
+## What is built (2026-11-08)
+
+- `backend/components/sonic_people_notes.py`: twenty draft notes, all unapproved, and `APPROVED_IDS` (add an id to approve a note).
+- `backend/utils/people_notes.py`: `select` (by meaning, reusing the leanings' index and ranking; gates: off under a safety plan, on a closing message, off conversational replies, for a short message), `build_block`, `warm`, `tally_turn`, and `check_registry` (first person, quotations, labels and diagnoses, the identity check, sizes, evidence, three independent people for a `record` note).
+- `backend/components/constraints.py`: `build_voice_prompt(people_notes_context=...)`, placed just before the emotional context, so every base model gets it.
+- `app.py`: the question embedding already computed for memory is reused; the notes are selected for each conversational reply, counted (`people_notes_offered`, `people_note_used_<id>` in `self_counters.py`), and the index is built in the background at startup.
+- `backend/tests/test_people_notes.py`: 10 tests, including a fake embedder, every gate, and mutation checks.
+
+## What is owed before it is switched on
+
+1. Jack reads and approves notes (adds ids to `APPROVED_IDS`). Reword any he does not like first.
+2. Calibrate `PEOPLE_NOTES_MIN_SCORE` (0.70 now, deliberately high) with real messages against the approved notes: a cheap run of embeddings only, no reply model.
+3. A line in `sonic_changelog.py` for the first approved note.
+4. When evals are allowed again: the scenarios in "Evals" above, with and without notes, and Jack's reading of the replies.
