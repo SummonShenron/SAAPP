@@ -145,6 +145,8 @@ from backend.utils import conversation_summary as conversation_summary_utils
 from backend.utils import code_plan as code_plan_utils
 from backend.utils import server_memory
 from backend.utils import leanings as leanings_utils
+from backend.utils import people_notes as people_notes_utils
+from backend.utils import read_log as read_log_utils
 from backend.utils import character as character_utils
 from backend.utils import experiences as experiences_utils
 from backend.utils import experience_capture
@@ -326,6 +328,7 @@ async def lifespan(app: FastAPI):
         from backend.utils import leanings as leanings_utils
 
         leanings_utils.warm(get_db(), embed_text)
+        people_notes_utils.warm(get_db(), embed_text)     # the index of people notes (approved ones only), built the same way
         experiences_utils.warm(get_db(), embed_text)      # the index of real cases from its own record, built the same way
     except Exception:
         logger.warning("Could not start the leanings index build.", exc_info=True)
@@ -871,9 +874,16 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
 
     # The messages this turn sends word for word, and the summary of the older ones (backend/utils/conversation_summary.py): every message the summary does not cover, or the old last 10 for a
     # guest or in low-power mode.
+    # While a meeting (Office Hours) is running here, the whole meeting stays word for word and is not folded, so where the agenda stands is still visible (2026-11-08).
+    meeting_since = None
+    if not is_guest_username(username):
+        try:
+            meeting_since = meetings_utils.run_started_at(await asyncio.to_thread(meetings_utils.active_run, get_db(), username, session_id))
+        except Exception:
+            logger.warning("[meetings] could not read the running meeting for the history window.", exc_info=True)
     convo_turn = await asyncio.to_thread(
         conversation_summary_utils.prepare_turn, username, session_id, chat_sessions[history_key],
-        guest=is_guest_username(username), low_power=budget_guard.low_power(budget_state),
+        guest=is_guest_username(username), low_power=budget_guard.low_power(budget_state), meeting_since=meeting_since,
     )
     messages_state = convo_turn["window"]
     conversation_summary = convo_turn["context"]
@@ -1297,6 +1307,13 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 tally(turn_counts, "relatable_offered")
                 if relatable_entry.get("match") == "meaning":
                     tally(turn_counts, "relatable_by_meaning")
+            # What people commonly go through in the situation they just described, from the approved people notes (backend/utils/people_notes.py): found by meaning with the embedding computed above, for every base model.
+            # Silent under a safety plan and on a closing message; an emotional context does not turn it off (those are the turns it is for).
+            people_note_entries = await asyncio.to_thread(
+                people_notes_utils.select, final_state.get("original_question", question), get_db(), embed_text,
+                source_type=source_type, risk_active=risk_level != RISK_NONE, closing=is_closing_message(question), vector=question_embedding,
+            )
+            people_notes_utils.tally_turn(turn_counts, people_note_entries, tally)
             # Sonic's own measured track record (backend/utils/self_observations.py): only the approved observations
             # that apply to this turn, and only a few. Nothing under a safety context.
             self_knowledge_lines = await asyncio.to_thread(
@@ -1417,6 +1434,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 insight=payload.get("insight") or "",
                 emotional_context=emotional_context,
                 relatable_context=build_relatable_block(relatable_entry),
+                people_notes_context=people_notes_utils.build_block(people_note_entries),
                 encouragement_context=build_encouragement_block(encouragement_entry),
                 open_loop_context=open_loops_utils.build_open_loop_block(open_loop_entry, today_local) + events_context,
                 headsup_context=headsups_utils.build_headsup_block(headsup_entry, bool(headsup_entry and headsup_entry.get("discreet"))),
@@ -1985,8 +2003,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # Once enough unfolded messages have piled up, the older ones are folded into the conversation's summary (one small model call, off the response path:
             # backend/utils/conversation_summary.py). The size test is plain code on what is already in memory, so an ordinary turn costs nothing here.
             if (not is_guest_username(username) and budget_guard.allows("folding long conversations into a summary", budget_state) and conversation_summary_utils.enabled()
-                    and conversation_summary_utils.due(convo_turn["summary"], chat_sessions[history_key])):
-                spawn_background_task(conversation_summary_utils.capture(username, session_id, chat_sessions[history_key], risk_active=risk_level != RISK_NONE))
+                    and conversation_summary_utils.due(convo_turn["summary"], chat_sessions[history_key], meeting_since=meeting_since)):
+                spawn_background_task(conversation_summary_utils.capture(username, session_id, chat_sessions[history_key], risk_active=risk_level != RISK_NONE, meeting_since=meeting_since))
             # After a coding turn, the conversation's working notes are brought up to date when enough has passed (one small model call, off the response path: backend/utils/working_state.py).
             if code_summary and working_notes:
                 tally(turn_counts, "working_notes_injected")      # a coding turn that was given the conversation's notes
@@ -2165,6 +2183,7 @@ async def clear_chat(request: Request, user = Depends(get_current_user)):
         await _delete_checkpoint_thread(username, session_id)
         await asyncio.to_thread(delete_session_attachments, username, session_id)
         await asyncio.to_thread(conversation_summary_utils.clear, get_db(), username, session_id)
+        await asyncio.to_thread(read_log_utils.clear, get_db(), username, session_id)
         return {"status": "cleared", "count": 1}
 
     # No specific conversation given: wipe every conversation this user has.
@@ -2174,6 +2193,7 @@ async def clear_chat(request: Request, user = Depends(get_current_user)):
         await _delete_checkpoint_thread(username, convo["session_id"])
         await asyncio.to_thread(delete_session_attachments, username, convo["session_id"])
     await asyncio.to_thread(conversation_summary_utils.clear_all, get_db(), username)
+    await asyncio.to_thread(read_log_utils.clear_all, get_db(), username)
     return {"status": "cleared", "count": len(conversations)}
 
 @app.post("/api/upload-attachment")
@@ -2461,6 +2481,7 @@ async def remove_conversation(session_id: str, current_user = Depends(get_curren
     await _delete_checkpoint_thread(username, session_id)
     await asyncio.to_thread(delete_session_attachments, username, session_id)
     await asyncio.to_thread(conversation_summary_utils.clear, get_db(), username, session_id)
+    await asyncio.to_thread(read_log_utils.clear, get_db(), username, session_id)
     return {"status": "deleted", "session_id": session_id}
 
 @app.post("/api/chat/feedback")
@@ -2898,6 +2919,7 @@ async def clear_memory(current_user = Depends(get_current_user)):
     await asyncio.to_thread(clarify_utils.forget_all, username)
     await asyncio.to_thread(working_state_utils.clear_all, get_db(), username)
     await asyncio.to_thread(conversation_summary_utils.clear_all, get_db(), username)
+    await asyncio.to_thread(read_log_utils.clear_all, get_db(), username)
     await asyncio.to_thread(code_plan_utils.clear_all, get_db(), username)
     if result["failed"]:
         # Never report a partial wipe as success: the page says it permanently deletes everything.
@@ -3514,14 +3536,14 @@ async def request_budget_increase(current_user = Depends(get_current_user)):
 
 @app.post("/api/budget/extend")
 async def extend_budget(current_user = Depends(get_current_user)):
-    """A global admin raises the block line of whatever shared budget has paused chat by another 25%, until that budget resets
-    (backend/utils/budget_guard.py). Each click adds another 25%; nothing happens if nothing is blocking. Each grant is saved with who and when."""
+    """A global admin raises the limit of whatever shared budget is at its notice line (80% by default) or past it by another 25%, until that budget resets
+    (backend/utils/budget_guard.py). Each click adds another 25%; nothing happens if no shared budget is that far along. Each grant is saved with who and when."""
     username = current_user.get("sub")
     if not is_global_admin(load_directory(), username):
         raise HTTPException(status_code=403, detail="Admins only.")
     state = await asyncio.to_thread(budget_guard.current_state)
     if not budget_guard.extendable_scopes(state):
-        raise HTTPException(status_code=409, detail="Nothing is blocking chat, so there is nothing to extend.")
+        raise HTTPException(status_code=409, detail="Nothing is at its notice line or past it, so there is nothing to extend.")
     try:
         await asyncio.to_thread(budget_guard.grant_extension, get_db(), username, state)
     except Exception:
