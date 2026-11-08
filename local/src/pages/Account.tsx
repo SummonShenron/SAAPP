@@ -110,13 +110,18 @@ export const AccountPage: React.FC<{ theme: string; toggleTheme: () => void }> =
             </div>
             <button type="button" className="account-btn" onClick={() => navigate('/privacy')}>Read</button>
           </div>
+          <div className="account-row-action">
+            <div>
+              <div className="account-label">Terms of Service</div>
+              <div className="account-hint">The terms for using SAAPP.</div>
+            </div>
+            <button type="button" className="account-btn" onClick={() => navigate('/terms')}>Read</button>
+          </div>
         </section>
       )}
 
         </div>
       </div>
-
-      <p className="account-note"><a href="#/terms">Terms of Service</a></p>
     </div>
   );
 };

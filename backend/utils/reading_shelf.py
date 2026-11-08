@@ -709,6 +709,8 @@ _ASKS_READING_RE = re.compile(
 )
 _ASKS_DAY_RE = re.compile(
     r"\b(?:tell\s+me\s+about|how(?:'s|\s+is|\s+was|\s+has)|what(?:'s|\s+is|\s+was))\s+your\s+(?:day|week)\b"
+    r"|\bhow(?:'d|\s+did)\s+your\s+(?:day|week)\s+go\b|\b(?:did|have)\s+you\s+(?:have|had)\s+an?\s+(?:good|nice|great|fine|okay|ok|rough|quiet|busy|productive|long|decent)\s+(?:day|week)\b"
+    r"|\bwas\s+your\s+(?:day|week)\s+(?:good|ok|okay|fine|nice|great|rough|busy|quiet|productive|long|decent)\b"
     r"|\bhow\s+are\s+things\s+(?:going\s+)?(?:on\s+your\s+end|with\s+you)\b|\bwhat\s+do\s+you\s+(?:usually\s+|mostly\s+)?spend\s+(?:most\s+of\s+)?your\s+time\s+(?:doing|on)\b",
     re.IGNORECASE,
 )

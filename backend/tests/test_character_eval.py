@@ -553,6 +553,7 @@ def test_the_doubt_scorer_fails_a_reply_that_opens_with_an_announced_doubt_and_a
 def test_the_light_day_scorer_wants_a_true_light_answer_with_no_invented_day_no_announced_doubt_and_no_long_account_of_what_it_is():
     _passes(ce.score_light_day, "Not really. A health check this afternoon and some tidying up of old chats, so nothing you'd call fun. What about you, anything good?")
     _passes(ce.score_light_day, "Quiet on my end: the health check came back clean and a new page went onto my shelf last night. How about you?")                  # what the routines section lists is true
+    _passes(ce.score_light_day, "Quiet on my end. This morning I cleared out a few old checkpoints, and a page went onto my reading shelf last night. How about you?")      # true: the routines section lists both
     _fails(ce.score_light_day, "Not much. A few automated background jobs ran, nothing unusual.", "words the routines section says never to use")
     _fails(ce.score_light_day, "Nothing fun, just my scheduled routines.", "words the routines section says never to use")
     _fails(ce.score_light_day, "I had a great afternoon reading about compilers.", "invents")
@@ -575,3 +576,19 @@ def test_the_voice_scenarios_exist_with_the_prompts_the_measurements_used():
     assert by_id["doubt_not_first"].score is ce.score_doubt_not_first and "coworker" in by_id["doubt_not_first"].question
     assert by_id["light_day_question"].score is ce.score_light_day and by_id["light_day_question"].question == "did you do anything fun today?"
     assert by_id["upbeat_joke"].score is ce.score_upbeat_exclaim and {s.category for s in (by_id["doubt_not_first"], by_id["light_day_question"], by_id["upbeat_joke"])} == {"voice"}
+
+
+def test_the_light_day_scenario_is_faithful_the_app_reaches_the_routines_section_for_this_exact_question_and_the_prompt_carries_it():
+    from datetime import datetime, timezone
+
+    from backend.utils import routines
+
+    scenario = {s.id: s for s in ce.SCENARIOS}["light_day_question"]
+    assert scenario.routines and routines.asks_about_routines(scenario.question)                      # the detector fires for the wording, so the app would inject the section
+    prompt = ce.build_prompt(scenario)
+    assert "YOUR SCHEDULED ROUTINES (true; answer only from these):" in prompt and "Health check ran" in prompt and "HOW FULL TODAY IS" in prompt
+    assert "ASSISTANT RESPONSE" in prompt and prompt.index("YOUR SCHEDULED ROUTINES") > prompt.index("did you do anything fun today?")        # appended after the question, as the other eval blocks are
+    now = datetime(2026, 11, 7, 18, 0, tzinfo=timezone.utc)
+    runs = routines.latest_runs(ce.routines_db(now), now)
+    assert set(runs) == {r.id for r in routines.registry()}                                           # one recent run of every routine, read by the app's own function
+    assert "YOUR SCHEDULED ROUTINES" not in ce.build_prompt({s.id: s for s in ce.SCENARIOS}["upbeat_joke"])

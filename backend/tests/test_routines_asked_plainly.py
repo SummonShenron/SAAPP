@@ -95,3 +95,13 @@ def test_a_light_question_about_whether_it_did_anything_today_reaches_the_routin
 ])
 def test_the_same_words_about_the_work_or_with_no_time_anchor_are_left_alone(message):
     assert not rt.asks_about_routines(message), message
+
+
+@pytest.mark.parametrize("message", ["got up to anything today?", "you got up to anything fun today", "anything fun happen on your end today?", "has anything new happened on your end yesterday", "anything going on on your end today?"])
+def test_got_up_to_anything_and_anything_happening_on_its_end_reach_the_routines_answer(message):
+    assert rt.asks_about_routines(message), message
+
+
+@pytest.mark.parametrize("message", ["got up to anything with the parser today?", "anything new on your end?", "anything happen in the file today", "i got up to nothing today", "got up to the third floor today"])
+def test_the_same_words_without_its_own_day_or_a_time_anchor_are_left_alone(message):
+    assert not rt.asks_about_routines(message), message

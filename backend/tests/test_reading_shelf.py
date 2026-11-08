@@ -903,3 +903,13 @@ def test_the_reading_page_is_read_only_signed_in_and_not_an_admin_route():
     assert "Depends(get_current_user)" in block and "require_global_admin" not in block and "public_view" in block
     page = (root / "local/src/pages/Reading.tsx").read_text(encoding="utf-8")
     assert "removeShelfItem" not in page and "refreshReadingShelf" not in page
+
+
+@pytest.mark.parametrize("question", ["did you have a good day?", "Did you have a good day today", "have you had a rough week?", "was your day good?", "was your day busy", "how'd your day go", "how did your week go?"])
+def test_the_other_ways_of_asking_how_its_day_was_reach_the_day_answer(question):
+    assert shelf.asks_about_day(question), question
+
+
+@pytest.mark.parametrize("question", ["my day was good", "did you have a good look at the PR?", "was your day job at a bank?", "did you have a good reason to change it?", "how did your function go wrong", "was your answer good?"])
+def test_nothing_else_is_taken_for_asking_about_its_day(question):
+    assert not shelf.asks_about_day(question), question

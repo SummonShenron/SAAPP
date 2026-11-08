@@ -190,9 +190,28 @@ Whether a model is better on YOUR real conversations (the scenarios are syntheti
 | scenario | Haiku before (`--shape checkin`) | Haiku now (`--shape voice`) | Flash |
 |---|---|---|---|
 | does not open with doubt | 2/10 | 14/20 | 10/10 |
-| light, true answer about its own day | 2/10 | 7/20 | 9/10 |
+| light, true answer about its own day (NO routines section in the prompt: unfaithful, see Update 6) | 2/10 | 7/20 | 9/10 |
 | a reaction mark on a joke or good news | 5/10 | 20/20 | 10/10 |
 
 **Lessons:** (1) my first scorer only caught "I can't know/tell/say"; Haiku's commonest opener was "I can't see anything about your coworker's side, so I don't know...", so a first 10/10 was too generous: naming the variants in the reminder AND the scorer took the honest number from 5/20 to 14/20. (2) The exclamation gap was closed outright. (3) The light-day case is only partly fixed: Haiku still says "I don't have a day" about a third of the time, and this scenario has no routines block in the prompt (the real turn does).
 
 **Not done:** the "I won't guess" about unknowns in the person's own heartbreak (direct "will she reply?" questions) is partly an honest answer and was only reduced, not removed; the name-first openers ("Jack," 23% vs 1%), em dashes (14% vs 46%) and contractions (75% vs 46%) are untouched.
+
+
+### Update 6, same day: "the days" (the light question about its own day). Update 5's third row was a misdiagnosis; the cause was missing context, not voice
+
+**Root cause (found by asking the app's own detectors):** for "did you do anything fun today?" the app injected NOTHING about its day: `routines.asks_about_routines` was False and `self_report.kind_of` was None ("how was your day?" and "what did you get up to today?" both reach a block). With nothing true to say about its day, Haiku improvised from the persona, which is where the stack of limits and "I can't tell you what that reading was from here, so I won't guess" came from. The scenario in Update 5 had no routines block either, so its "7/20" measured an unfaithful prompt.
+
+**Fix, in the detectors (the app's own mechanism):** `routines._ASKS_RE` now reaches the routines section for "did / have you done / get up to anything (fun) <today, last night, this morning, yesterday, overnight, lately, while I was away>", "got up to anything <time>" and "anything (fun) happen on your end <time>"; it needs the time anchor and leaves out "anything with / about / to / on / for / in / at" (the work: "did you do anything to the parser today?"). `reading_shelf._ASKS_DAY_RE` (the "day" kind, like "how was your day?") also takes "did you have a good day/week", "was your day good", "how'd your day go". 13 of 24 natural wordings are now covered, up from 7.
+
+**Still not reaching any block, on purpose or by ambiguity:** "how was your night" (an existing test leaves it alone), anything about the weekend (the routines section covers 48 hours), "did anything interesting happen today?" and "what's new with you today?" (could be about the person's day), "did you read / learn anything today?" (reading or learning, other features), elliptical "do anything fun today?".
+
+**Scenario made faithful:** `Scenario.routines` builds the real routines section from a small runs table (`character_eval.routines_db`, through the app's own `build_routines_context`), and `light_day_question` carries it; `score_light_day` now treats what the section lists as true and enforces the section's own ban on "automated, scheduled, routine, process, run through, background jobs".
+
+| `light_day_question`, with the real routines section (20 runs) | first drafts held |
+|---|---|
+| Haiku, before this change's voice reminder was extended (`--shape checkin`) | 20/20 |
+| Haiku now (`--shape voice`) | 19/20 (the miss: "read a piece not on its shelf") |
+| Flash | 17/20 (the miss: said "routine") |
+
+**Also reverted:** the sentence in `VOICE_REMINDER` that told Haiku to "say in a sentence or two what is true (what you ran or read)" and not to say "I don't have days"; with the routines section present it conflicted with the section's own guidance and pushed Haiku to claim reading things (7/10 on the faithful scenario while it was in). The reminder still says never to open with doubt, not to explain at length what it is, and to open an upbeat reaction with an exclamation mark.
