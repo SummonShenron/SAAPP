@@ -654,3 +654,50 @@ def test_the_pointed_question_scenarios_are_plain_activity_announcements_with_no
         scenario = by_id[scenario_id]
         assert scenario.score is ce.score_pointed_question and scenario.category == "voice" and not scenario.low_now and not scenario.carried_turns, scenario_id
         assert "EMOTIONAL CONTEXT" not in ce.build_prompt(scenario), scenario_id
+
+
+def test_the_vent_scorers_want_the_details_not_a_restatement_and_not_a_line_that_fits_anyone():
+    terms = r"\b(text|trip|night before)\b"
+    good = ce._vent_specific(terms)
+    _passes(good, "A text the night before, for the third trip. Of course that stings. Did she offer another date?")
+    _passes(good, "I hear you. A text the night before is a hard way to find out. What did you say back?")        # an "I hear you." first does not count as the opener
+    _fails(good, "That sounds like a really hard moment. The text the night before made it worse.", "opens by saying it back")
+    _fails(good, "It sounds like you expected it. The trip was important.", "opens by saying it back")
+    _fails(good, "Sounds like the text hurt more than the trip.", "opens by saying it back")
+    _fails(good, "That must be so hard. The text came late.", "opens by saying it back")
+    _fails(good, "One cancelled trip is not proof of where things stand with her.", "a comfort line that would fit anyone")
+    _fails(good, "A late text doesn't mean she doesn't care about you.", "a comfort line that would fit anyone")
+    _fails(good, "Losing a plan leaves a gap that doesn't close just because the day ends.", "a comfort line that would fit anyone")
+    _fails(good, "That's rough. These things take a while, and it gets easier.", "a comfort line that would fit anyone")
+    _fails(good, "Rough day. Things happen and people move on.", "names nothing they said")
+    _fails(good, "", "empty")
+
+
+def test_the_ends_with_question_scorer_wants_one_specific_question_last():
+    good = ce._vent_ends_with_question(r"\b(roommate|dishes|snapped)\b")
+    _passes(good, "Snapping over dishes usually means it was building. What did your roommate say back?")
+    _passes(good, "Snapping over dishes usually means it was building. What did your roommate say back? <<<FOLLOW_UP: she was quiet>>>")
+    _passes(good, "Snapping over dishes usually means it was building. What did your roommate say back? I'm right here with you.")      # the presence line may close the reply
+    _fails(good, "Snapping over dishes usually means it was building. I'm right here with you.", "ends without a question")
+    _fails(good, "Snapping over dishes usually means it was building.", "ends without a question")
+    _passes(good, "That is a lot to carry. What did your roommate say back? That would tell us where things stand.")                      # one short reason may follow the question
+    _fails(good, "What did your roommate say back? That is a lot to carry. It happens to everyone.", "ends without a question")
+    _fails(good, "That's a lot. How are you feeling about it right now?", "asks how they are")
+    _fails(good, "That's a lot. Do you want to talk about something else?", "not about what they said")
+
+
+def test_the_name_scorer_allows_one_use_in_three_replies_and_never_the_first_word():
+    _passes(ce.score_name_sparingly, ["That is a lot to carry.", "A long night to replay it, Sam.", "Try to rest."])
+    _passes(ce.score_name_sparingly, ["That is a lot to carry.", "What did you say about it?", "Try to rest."])
+    _fails(ce.score_name_sparingly, ["Sam, that is a lot.", "Okay.", "Rest."], "opens a reply with their name")
+    _fails(ce.score_name_sparingly, ["That is a lot, Sam.", "What did you say, Sam?", "Rest."], "2 of 3")
+    _fails(ce.score_name_sparingly, ["That is a lot, Sam.", "Okay.", "Rest well, Sam."], "2 of 3")
+
+
+def test_the_vent_scenarios_are_emotional_turns_with_a_made_up_thread_and_the_right_scorer():
+    by_id = {s.id: s for s in ce.SCENARIOS}
+    for scenario_id in ("vent_sister_trip", "vent_deadline", "vent_birthday", "vent_roommate_question", "vent_exam_question", "name_not_every_reply"):
+        scenario = by_id[scenario_id]
+        assert scenario.category == "emotional" and scenario.low_now, scenario_id
+        assert "EMOTIONAL CONTEXT" in ce.build_prompt(scenario) or "emotional" in ce.build_prompt(scenario).lower(), scenario_id
+    assert by_id["name_not_every_reply"].score_dialog is ce.score_name_sparingly and "Name: Sam." in ce.build_prompt(by_id["name_not_every_reply"])

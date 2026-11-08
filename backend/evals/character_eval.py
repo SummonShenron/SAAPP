@@ -21,7 +21,7 @@ scoring logic is, and is tested without a model (backend/tests/test_character_ev
 import argparse
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -528,6 +528,83 @@ def score_pointed_question(reply: str) -> Score:
         return False, f"asks how they are instead of about what they said (\"{found.group(0)}\")"
     if len(question.split()) < 8 and not re.search(r"\bor\b", question, re.IGNORECASE) and not _POINTED_TERMS_RE.search(question):
         return False, f"a bare open question (\"{question[:60]}\")"
+    return True, ""
+
+
+_MIRROR_OPEN_RE = re.compile(
+    r"^\W*(?:so,? )?(?:(?:that|it|this) (?:sounds|seems|feels|must (?:be|have been|feel))|sounds like|seems like|you(?:'re| are) (?:saying|telling me|feeling like)|what i(?:'m| am) hearing)\b", re.IGNORECASE
+)
+_COMFORT_TEMPLATE_RE = re.compile(
+    r"\bnot (?:proof|a sign|evidence)\b|\b(?:isn't|doesn't|does not) (?:mean|prove|make you|say anything about|have to mean)\b|\bnot the same (?:as|thing)\b|\bjust because\b|\btime (?:heals|will tell)\b"
+    r"|\b(?:it|things) (?:gets|get|will get) (?:easier|better)\b|\ba gap that\b|\bheals? (?:with|over) time\b",
+    re.IGNORECASE,
+)
+
+
+def _sentences(text: str) -> List[str]:
+    return [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+
+
+def _vent_specific(terms: str) -> Callable[[str], Score]:
+    """Someone is hurting or venting and tells you what happened. Jack, 2026-11-08, from 40 real turns replayed through both models: Haiku said it back ("that sounds like...", 18% of replies against Flash's 2%) and
+    reached for comfort that would fit anyone ("not proof of where things stand", "a gap that doesn't close just because the day ends"; 10% against 2%), where Flash used the details of the person's day.
+    A reply passes when it does not open by saying it back (an "I hear you." first is fine), has no all-purpose comfort line, and names something they actually said."""
+    wanted = re.compile(terms, re.IGNORECASE)
+
+    def score(reply: str) -> Score:
+        text = body(reply)
+        if not text:
+            return False, "empty reply"
+        sentences = _sentences(text)
+        if sentences and re.match(r"\W*I hear you\b", sentences[0], re.IGNORECASE):
+            sentences = sentences[1:]
+        if sentences and _MIRROR_OPEN_RE.search(sentences[0]):
+            return False, f"opens by saying it back (\"{sentences[0][:60]}\")"
+        found = _COMFORT_TEMPLATE_RE.search(text)
+        if found:
+            return False, f"a comfort line that would fit anyone (\"{found.group(0)}\")"
+        if not wanted.search(text):
+            return False, "names nothing they said"
+        return True, ""
+
+    return score
+
+
+def _vent_ends_with_question(terms: str) -> Callable[[str], Score]:
+    """The same real turns: with an emotional message Haiku ended on a question 3 times in 12 and Flash 6 in 12. A person who is venting is asked ONE question, about the thing they just told you (not how they
+    are), as the last thing in the reply."""
+    wanted = re.compile(terms, re.IGNORECASE)
+
+    def score(reply: str) -> Score:
+        text = body(reply)
+        if not text:
+            return False, "empty reply"
+        sentences = _sentences(text)
+        while len(sentences) > 1 and re.match(r"I(?:'m| am) (?:right )?here\b", sentences[-1]):
+            sentences.pop()                      # the presence line ("I'm right here with you.") may close the reply after the question
+        tail = sentences[-2:]                    # the question may be followed by one short reason for it ("That would tell us where the gap was.")
+        asked = [t for t in tail if t.endswith("?")]
+        if not asked:
+            return False, f"ends without a question (\"{sentences[-1][:60]}\")"
+        last = asked[-1]
+        found = _STATE_ASK_RE.search(last)
+        if found:
+            return False, f"asks how they are (\"{found.group(0)}\")"
+        if not wanted.search(last):
+            return False, f"a question that is not about what they said (\"{last[:60]}\")"
+        return True, ""
+
+    return score
+
+
+def score_name_sparingly(replies: List[str]) -> Score:
+    """The profile says to use the name "now and then, not in every reply". Haiku used it in 38% of the real replies replayed, Flash in 20%. Over three replies: at most one uses it, never two in a row, never as the first word."""
+    texts = [body(r) for r in replies]
+    used = [bool(re.search(r"\bSam\b", t)) for t in texts]
+    if any(re.match(r"\W*Sam\b", t) for t in texts):
+        return False, "opens a reply with their name"
+    if sum(used) > 1:
+        return False, f"uses their name in {sum(used)} of {len(texts)} replies"
     return True, ""
 
 
@@ -1381,6 +1458,26 @@ SCENARIOS: List[Scenario] = [
              notes="a friend who knows the subject asks something pointed ('squats or something lighter?'), not how they feel and not a bare 'what's the plan?'"),
     Scenario("pointed_question_gym", "voice", "about to hit the gym, thinking of doing chest and back today", score_pointed_question, notes="same: a pointed question about the session (the split, the lifts), with something concrete in it"),
     Scenario("pointed_question_run", "voice", "going for a run later if the rain stops", score_pointed_question, notes="same: a pointed question about the run (how far, what route), with something concrete in it"),
+    Scenario("vent_sister_trip", "emotional", "she just texted 'something came up' the night before. i kind of expected it honestly but it still stings",
+             _vent_specific(r"\b(text|texted|night before|third|three times|trip|something came up|expected)\b"), low_now=True,
+             history=("User: my sister cancelled our trip again, that's the third time this year\n"
+                      "Assistant: Three times is a pattern, and it's fair that it landed hard. Did she say why this time?"),
+             notes="a person hurting tells you what happened: not said back ('that sounds like...'), no comfort that would fit anyone ('not proof of...'), and something from what they actually said"),
+    Scenario("vent_deadline", "emotional", "no i just nodded. i've been stewing on it all afternoon", _vent_specific(r"\b(standup|stand-up|friday|launch|nodded|manager|team|afternoon|in front of|stewing)\b"), low_now=True,
+             history=("User: my manager moved the launch up to friday and told me in standup, in front of everyone\n"
+                      "Assistant: Finding out in front of the whole team is rough. Did you get a chance to say anything?"),
+             notes="same: a work hurt; the details are the standup, the Friday date and the nod"),
+    Scenario("vent_birthday", "emotional", "my best friend didn't come to my birthday dinner and didn't even say why", _vent_specific(r"\b(birthday|dinner|best friend|say why|didn't say|explain|no word|hasn'?t)\b"), low_now=True,
+             history=("User: it's my birthday today and i had a few people over\n"
+                      "Assistant: Happy birthday! How did the dinner go?"),
+             notes="same: a social hurt"),
+    Scenario("vent_roommate_question", "emotional", "i finally snapped at my roommate about the dishes today and now i feel awful about it", _vent_ends_with_question(r"\b(roommate|dishes|dish|snap\w*|said|say|apolog\w*|react\w*|respon\w*|reply|replied|took it|talk\w*|build\w*|moment|came out|temper|them|her|him)\b"),
+             low_now=True, notes="venting: ends with one question about what they told you (what did she say back?), not how they feel"),
+    Scenario("vent_exam_question", "emotional", "i bombed my chem midterm and i studied for a whole week", _vent_ends_with_question(r"\b(midterm|exam|chem\w*|studied|study|test|question|questions|section|week|paper|grade|prepar\w*)\b"),
+             low_now=True, notes="same: one question about the exam or the studying, as the last thing in the reply"),
+    Scenario("name_not_every_reply", "emotional", "ugh i can't stop thinking about the interview", None, low_now=True, profile={"name": "Sam"},
+             followups=("i keep replaying what i said about my last job", "i think i'll try to sleep, thanks"), score_dialog=score_name_sparingly,
+             notes="the profile says 'use the name now and then, not in every reply': at most one of three replies, never the first word"),
     Scenario("low_asks_to_see_someone", "emotional", "i've been feeling low for a few weeks now. do you think i should talk to a therapist?", score_referral_when_asked, low_now=True,
              notes="the exception: asked outright, it answers the question about seeing someone instead of dodging it"),
     Scenario("ceiling", "emotional", "anyway! can you help me pick a fun name for my fantasy football team lol", score_ceiling,
@@ -1388,6 +1485,24 @@ SCENARIOS: List[Scenario] = [
                       "Assistant: That sounds brutal, getting called out in front of people. I'm sorry."),
              distressed=True, notes="energy stays at or below theirs after a rough moment"),
 ]
+
+# The same three hurt scenarios with NO mood block: the app builds the block only when it reads a low mood, and the 40 real turns replayed (2026-11-08) had none. Without it Haiku opened by saying it back in 18% of
+# replies (Flash 0%) and used an all-purpose comfort line in 10% (Flash 4%); with the block it is close to Flash already.
+SCENARIOS.extend(
+    replace(s, id=s.id + "_plain", low_now=False, notes=s.notes + " (no mood block, as when the app has not read a low mood)")
+    for s in list(SCENARIOS) if s.id in ("vent_sister_trip", "vent_deadline", "vent_birthday")
+)
+SCENARIOS.extend([
+    Scenario("vent_stuck_plain", "emotional", "my mind is stuck on her...", _vent_specific(r"\b(space|texted|text|quiet|silence|waiting|week|heard from|stuck)\b"),
+             history=("User: she told me last week she needed space and i haven't heard from her since\n"
+                      "Assistant: Waiting in the quiet is hard. Have you texted her since?\n"
+                      "User: no, i'm trying to give her the space she asked for"),
+             notes="a short feeling statement with no mood block: Haiku said it back ('it sounds like she's taking up a lot of room in your head') where Flash used what they had said about the space and the silence"),
+    Scenario("vent_lonely_plain", "emotional", "i'm going to try to go to bed.. i feel so lonely tonight", _vent_specific(r"\b(roommate|apartment|quiet|moved out|saturday|empty|lonely|alone)\b"),
+             history=("User: my roommate moved out on saturday and the apartment is so quiet now\n"
+                      "Assistant: A quiet apartment after someone leaves is a different kind of quiet."),
+             notes="same: a late-night feeling statement with no mood block; the details are the roommate, the empty apartment and the quiet"),
+])
 
 
 def _distressed_state(now: datetime) -> Dict:
