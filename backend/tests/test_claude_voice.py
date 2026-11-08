@@ -180,7 +180,8 @@ def test_the_voice_reminder_says_what_the_measured_gaps_were_and_the_app_and_the
                  "Never explain at length what you are or are not", "open your reaction with an exclamation mark, once", "never when they are low or the topic is serious",
                  "ask one pointed question about it", "this outranks the rule about not adding a question", "never how they feel about it", "If they are wrapping up or saying goodbye, ask nothing.",
                  "open with the thing itself in plain words", "never with a label for it", "Then say one thing they did not say, as a read, using their own details", "never comfort that would fit anyone",
-                 "end with one specific question about what they told you, asked as a question", "Start every reply with the substance (\"I hear you.\" counts, when the rules above ask for it), never with their name",
+                 "ends on a statement, never on a question", "Do not ask them to tell you more, what happened, what was said, what they wish had happened, or why",
+                 "is a statement and is fine", "never as reassurance about what the other person feels or means", "Start every reply with the substance (\"I hear you.\" counts, when the rules above ask for it), never with their name",
                  "use their name at most once in three replies"):
         assert part in text, part
     models = pathlib.Path("backend/models/models.py").read_text(encoding="utf-8")

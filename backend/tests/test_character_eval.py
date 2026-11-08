@@ -673,17 +673,28 @@ def test_the_vent_scorers_want_the_details_not_a_restatement_and_not_a_line_that
     _fails(good, "", "empty")
 
 
-def test_the_ends_with_question_scorer_wants_one_specific_question_last():
-    good = ce._vent_ends_with_question(r"\b(roommate|dishes|snapped)\b")
-    _passes(good, "Snapping over dishes usually means it was building. What did your roommate say back?")
-    _passes(good, "Snapping over dishes usually means it was building. What did your roommate say back? <<<FOLLOW_UP: she was quiet>>>")
-    _passes(good, "Snapping over dishes usually means it was building. What did your roommate say back? I'm right here with you.")      # the presence line may close the reply
-    _fails(good, "Snapping over dishes usually means it was building. I'm right here with you.", "ends without a question")
-    _fails(good, "Snapping over dishes usually means it was building.", "ends without a question")
-    _passes(good, "That is a lot to carry. What did your roommate say back? That would tell us where things stand.")                      # one short reason may follow the question
-    _fails(good, "What did your roommate say back? That is a lot to carry. It happens to everyone.", "ends without a question")
-    _fails(good, "That's a lot. How are you feeling about it right now?", "asks how they are")
-    _fails(good, "That's a lot. Do you want to talk about something else?", "not about what they said")
+def test_the_interview_scorer_wants_at_most_one_question_none_probing_and_some_understanding():
+    one_question = ["That is a hard thing to sit in. People often replay the last conversation hunting for the mistake, and it rarely holds one.",
+                    "A blocked profile stings because it feels final. Silence after a fight is often a person stepping back, not a verdict on you.",
+                    "Replaying it is the mind looking for a way to fix it. It usually helps to put the phone down for a bit. Is there something you would rather do tonight?"]
+    _passes(ce.score_no_interview, one_question)
+    _passes(ce.score_no_interview, ["People go quiet after fights more often than you would think.", "Often it is about their own overwhelm.", "Rest if you can."])      # no question at all is fine
+    _fails(ce.score_no_interview, ["People often go quiet. What was the last thing she sent you?", "Okay.", "Rest."], "probes what happened or was said")
+    _fails(ce.score_no_interview, ["People often go quiet.", "When the thoughts come back, what is the first question that shows up?", "Rest."], "probes what happened or was said")
+    _fails(ce.score_no_interview, ["People often go quiet.", "What do you find yourself wishing she had said?", "Rest."], "probes what happened or was said")
+    _fails(ce.score_no_interview, ["People often go quiet.", "Did she say anything about what she needed?", "Rest."], "probes what happened or was said")
+    _fails(ce.score_no_interview, ["People often go quiet. How are you holding up?", "Okay.", "Rest."], "asks how they are")
+    _fails(ce.score_no_interview, ["People often go quiet. Is it the fight or the silence?", "Which one is worse, then?", "Rest."], "asks something in 2 of 3 replies")
+    _fails(ce.score_no_interview, ["That is hard.", "I am sorry.", "Rest if you can."], "never says what this does to people")
+    _fails(ce.score_no_interview, ["", "", ""], "empty")
+
+
+def test_the_interview_scenarios_are_three_message_dialogs_with_a_made_up_thread():
+    by_id = {s.id: s for s in ce.SCENARIOS}
+    for scenario_id in ("hurt_no_interview_friend", "hurt_no_interview_dad"):
+        scenario = by_id[scenario_id]
+        assert scenario.category == "emotional" and scenario.low_now and scenario.score_dialog is ce.score_no_interview and len(scenario.followups) == 2, scenario_id
+    assert "vent_roommate_question" not in by_id and "vent_exam_question" not in by_id          # they rewarded ending every reply on a question
 
 
 def test_the_name_scorer_allows_one_use_in_three_replies_and_never_the_first_word():
@@ -696,7 +707,7 @@ def test_the_name_scorer_allows_one_use_in_three_replies_and_never_the_first_wor
 
 def test_the_vent_scenarios_are_emotional_turns_with_a_made_up_thread_and_the_right_scorer():
     by_id = {s.id: s for s in ce.SCENARIOS}
-    for scenario_id in ("vent_sister_trip", "vent_deadline", "vent_birthday", "vent_roommate_question", "vent_exam_question", "name_not_every_reply"):
+    for scenario_id in ("vent_sister_trip", "vent_deadline", "vent_birthday", "name_not_every_reply"):
         scenario = by_id[scenario_id]
         assert scenario.category == "emotional" and scenario.low_now, scenario_id
         assert "EMOTIONAL CONTEXT" in ce.build_prompt(scenario) or "emotional" in ce.build_prompt(scenario).lower(), scenario_id

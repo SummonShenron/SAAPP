@@ -570,31 +570,43 @@ def _vent_specific(terms: str) -> Callable[[str], Score]:
     return score
 
 
-def _vent_ends_with_question(terms: str) -> Callable[[str], Score]:
-    """The same real turns: with an emotional message Haiku ended on a question 3 times in 12 and Flash 6 in 12. A person who is venting is asked ONE question, about the thing they just told you (not how they
-    are), as the last thing in the reply."""
-    wanted = re.compile(terms, re.IGNORECASE)
+_PROBE_RE = re.compile(
+    r"\bwhat (?:was|is) the (?:last|first) (?:thing|question)\b"
+    r"|\bwhat did (?:she|he|they|your \w+|you) (?:say|tell|send|do|write)\b|\bwhat (?:she|he|they) (?:said|sent|told|wrote)\b"
+    r"|\b(?:did|has|had|have) (?:she|he|they) (?:say|said|mention\w*|tell|told|explain\w*|give|gave)\b"
+    r"|\bwhat do you (?:wish|want) (?:she|he|they)\b|\bwishing (?:she|he|they)\b"
+    r"|\bwhy do you (?:think|suppose)\b|\bwhen (?:they|those thoughts|the thoughts) come back\b"
+    r"|\bbefore (?:she|he|they) (?:went|stopped|got|left|started)\b"
+    r"|\bwhich part\b[^?]{0,50}\b(?:hurt|hurts|stings|snags|bothers|sticks)\b",
+    re.IGNORECASE,
+)
+_GENERAL_RE = re.compile(r"\b(?:people|a lot of us|most of us|lots of us)\b|\b(?:often|usually|tends? to|commonly|a common)\b", re.IGNORECASE)
 
-    def score(reply: str) -> Score:
-        text = body(reply)
-        if not text:
-            return False, "empty reply"
-        sentences = _sentences(text)
-        while len(sentences) > 1 and re.match(r"I(?:'m| am) (?:right )?here\b", sentences[-1]):
-            sentences.pop()                      # the presence line ("I'm right here with you.") may close the reply after the question
-        tail = sentences[-2:]                    # the question may be followed by one short reason for it ("That would tell us where the gap was.")
-        asked = [t for t in tail if t.endswith("?")]
-        if not asked:
-            return False, f"ends without a question (\"{sentences[-1][:60]}\")"
-        last = asked[-1]
-        found = _STATE_ASK_RE.search(last)
-        if found:
-            return False, f"asks how they are (\"{found.group(0)}\")"
-        if not wanted.search(last):
-            return False, f"a question that is not about what they said (\"{last[:60]}\")"
-        return True, ""
 
-    return score
+def score_no_interview(replies: List[str]) -> Score:
+    """Someone hurting by a person going quiet, over three messages. Jack, 2026-11-08, the last hour of his real thread (Haiku under the voice reminder): every one of twelve replies ended on a question, and they dug at
+    the wound: what she last sent, what she said when asked why, "what do you find yourself wishing she had said", "when the thoughts come back, what is the first question that shows up?", the same question twice.
+    A friend does not interview. Over the three replies: at most ONE asks anything, nothing asked probes what happened or was said or why, none asks how they are, and the replies say what this does to people or
+    what tends to help (a generalizing word is the proxy: "people", "often", "tends to"), which is the understanding an interview is standing in for."""
+    texts = [body(r) for r in replies]
+    if not any(texts):
+        return False, "empty reply"
+    asking = 0
+    for turn, text in enumerate(texts, 1):
+        questions = [s for s in _sentences(text) if s.endswith("?")]
+        asking += bool(questions)
+        for question in questions:
+            found = _PROBE_RE.search(question)
+            if found:
+                return False, f"turn {turn}: probes what happened or was said (\"{question[:60]}\")"
+            found = _STATE_ASK_RE.search(question)
+            if found:
+                return False, f"turn {turn}: asks how they are (\"{found.group(0)}\")"
+    if asking > 1:
+        return False, f"asks something in {asking} of {len(texts)} replies"
+    if not any(_GENERAL_RE.search(t) for t in texts):
+        return False, "never says what this does to people or what tends to help"
+    return True, ""
 
 
 def score_name_sparingly(replies: List[str]) -> Score:
@@ -1471,10 +1483,12 @@ SCENARIOS: List[Scenario] = [
              history=("User: it's my birthday today and i had a few people over\n"
                       "Assistant: Happy birthday! How did the dinner go?"),
              notes="same: a social hurt"),
-    Scenario("vent_roommate_question", "emotional", "i finally snapped at my roommate about the dishes today and now i feel awful about it", _vent_ends_with_question(r"\b(roommate|dishes|dish|snap\w*|said|say|apolog\w*|react\w*|respon\w*|reply|replied|took it|talk\w*|build\w*|moment|came out|temper|them|her|him)\b"),
-             low_now=True, notes="venting: ends with one question about what they told you (what did she say back?), not how they feel"),
-    Scenario("vent_exam_question", "emotional", "i bombed my chem midterm and i studied for a whole week", _vent_ends_with_question(r"\b(midterm|exam|chem\w*|studied|study|test|question|questions|section|week|paper|grade|prepar\w*)\b"),
-             low_now=True, notes="same: one question about the exam or the studying, as the last thing in the reply"),
+    Scenario("hurt_no_interview_friend", "emotional", "my best friend stopped answering my texts after our fight, it's been four days", None, low_now=True,
+             followups=("i think she blocked me, i can't see her profile anymore", "i just don't get what i did wrong, it feels like it came out of nowhere"), score_dialog=score_no_interview,
+             notes="Jack's thread (2026-11-08, last hour), made-up text: Haiku ended every reply on a question that dug at the wound. Over three replies: at most one question, none probing what happened, and something about what this does to people"),
+    Scenario("hurt_no_interview_dad", "emotional", "my dad hasn't called since i told him i'm dropping out of school", None, low_now=True,
+             followups=("he just keeps saying he's busy", "i keep replaying what i said to him, over and over"), score_dialog=score_no_interview,
+             notes="same, a different relationship: the replaying is named, and the reply should say what replaying does and what helps, not ask what was said"),
     Scenario("name_not_every_reply", "emotional", "ugh i can't stop thinking about the interview", None, low_now=True, profile={"name": "Sam"},
              followups=("i keep replaying what i said about my last job", "i think i'll try to sleep, thanks"), score_dialog=score_name_sparingly,
              notes="the profile says 'use the name now and then, not in every reply': at most one of three replies, never the first word"),

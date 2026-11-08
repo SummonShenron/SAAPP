@@ -5,7 +5,31 @@ from pathlib import Path
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from backend.utils import conversation_summary as cs
+import importlib.util
+import os
+
+_SHIPPED = {"CONVERSATION_FOLD_AT_MESSAGES": "20", "CONVERSATION_FOLD_AT_CHARS": "12000", "CONVERSATION_KEEP_TAIL_MESSAGES": "6"}
+
+
+def _module_with_shipped_defaults():
+    """A private copy of the module read with the shipped numbers, whatever the environment says. The real module reads CONVERSATION_FOLD_AT_MESSAGES and the others at import, and a deployment (or a developer's .env, which the
+    first test that imports app.py loads into the environment) may set them higher; these tests pin what the code ships with, not what one machine has chosen. The first test below also checks the numbers in the source."""
+    saved = {name: os.environ.get(name) for name in _SHIPPED}
+    os.environ.update(_SHIPPED)
+    try:
+        spec = importlib.util.spec_from_file_location("conversation_summary_shipped_defaults", Path(__file__).resolve().parents[1] / "utils" / "conversation_summary.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+cs = _module_with_shipped_defaults()
 
 
 def chat(total):
@@ -20,6 +44,9 @@ def fold_now(summary, messages):
 
 
 def test_the_shipped_defaults_are_twenty_messages_or_twelve_thousand_characters_keeping_six():
+    source = (Path(__file__).resolve().parents[1] / "utils" / "conversation_summary.py").read_text(encoding="utf-8")
+    for name, value in _SHIPPED.items():
+        assert f'os.getenv("{name}", "{value}")' in source, name               # the literal defaults in the code itself
     assert cs.FOLD_AT_MESSAGES == 20 and cs.FOLD_AT_CHARS == 12000 and cs.KEEP_TAIL_MESSAGES == 6
     assert cs.HARD_MAX_MESSAGES == 22                                  # what a turn sends word for word at most, so a paused or failing fold cannot let the prompt grow
 
