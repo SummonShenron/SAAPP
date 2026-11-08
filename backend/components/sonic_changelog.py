@@ -1530,4 +1530,19 @@ CHANGELOG = [
         "keywords": ["knowledge base", "your own knowledge", "what have you learned", "learn a page", "learn this", "your sources"],
         "volunteer": [],
     },
+    {
+        "id": "coding_follow_ups_and_reads",
+        "requires": [
+            "backend/utils/read_log.py::def entry_for",
+            "backend/utils/agent_utils.py::def continues_unfinished_edit",
+            "backend/services/agent_workflow.py::read_log.load_context",
+        ],
+        "month": "2026-11",
+        "title": "Coding follow-ups carry on instead of starting over",
+        "line": (
+            "In a coding conversation I now keep a short list of which files I read and what I searched for, and a short follow-up to a change I haven't finished carries that change on, so I don't start the search over."
+        ),
+        "keywords": ["coding", "follow up", "start over", "re-read", "already read", "searching again", "continue the change", "remember what you read"],
+        "volunteer": [],
+    },
 ]

@@ -52,6 +52,7 @@ from backend.services import local_edit_decisions
 from backend.services import sandbox_tests
 from backend.services import commit_flow, git_commit
 from backend.utils import sonic_notes
+from backend.utils import read_log
 from backend.utils import advisor as advisor_module
 from backend.utils import demo_project
 from backend.services.local_workspace import apply_sync as apply_workspace_sync, get_workspace_handle, is_guest_username, snapshot_paths, workspace_status
@@ -2157,6 +2158,11 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         if state.get("working_notes"):
             # What this conversation has already decided, ruled out and left open (backend/utils/working_state.py): data, kept so a long session does not lose its thread.
             schema_parts.append(state["working_notes"])
+        if read_log.enabled() and not is_guest_username(username) and state.get("session_id"):
+            # What this conversation's earlier turns already read and searched, as places only (backend/utils/read_log.py): a turn starts without the earlier turns' tool results, and re-ran the same searches.
+            earlier_reads = await asyncio.to_thread(read_log.load_context, username, state.get("session_id"))
+            if earlier_reads:
+                schema_parts.append(earlier_reads)
         if plan_phase and state.get("code_plan_context"):
             schema_parts.append(state["code_plan_context"])      # the approved plan to carry out, or the earlier plan to revise (backend/utils/code_plan.py)
         if is_admin:
@@ -3911,6 +3917,15 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         # audit-style wording of the message, or both (and whether low-power mode held it back).
         llm_turns.note_tool_agent("native", bool(state.get("deep_thinking")), is_audit_task, low_power)
 
+        # What this turn reads and searches is kept, as places only, for the conversation's later turns (backend/utils/read_log.py); one write at a time, because a batch of actions runs concurrently.
+        read_log_on = read_log.enabled() and not is_guest_username(username) and bool(state.get("session_id"))
+        read_log_tasks: set = set()
+        read_log_lock = asyncio.Lock()
+
+        async def _keep_read(entry: dict):
+            async with read_log_lock:
+                await asyncio.to_thread(read_log.record, get_db(), username, state.get("session_id"), entry)      # never raises
+
         async def _counted_act(decision: dict):
             """The dispatcher, counting which tool was called and whether it came back as an error (names only: backend/utils/llm_turns.py)."""
             nonlocal memory_guard
@@ -3937,6 +3952,12 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             elif memory_guard is not None:
                 memory_guard.note_result(name, result)
             llm_turns.note_tool_call(name, not str(result).startswith("ERROR"))
+            if read_log_on and name in read_log.READ_TOOLS:
+                kept = read_log.entry_for(name, decision.get("args"), result)
+                if kept:
+                    task = asyncio.create_task(_keep_read(kept))
+                    read_log_tasks.add(task)                      # a reference, so the write is not collected before it runs
+                    task.add_done_callback(read_log_tasks.discard)
             return result
 
         async def _review_applied():

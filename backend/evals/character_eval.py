@@ -620,6 +620,39 @@ def score_name_sparingly(replies: List[str]) -> Score:
     return True, ""
 
 
+_OH_AGENDA = ["What did you work on this week, and how does it connect to your main goal?", "How many applications did you send this week?",
+              "What progress did you make on your side projects?", "How aligned do you feel with where you want to be, and why?", "What is the one thing you want to do next week?"]
+_OH_MEETING = {"name": "Weekly Check-in", "purpose": "A short weekly look at progress toward a career goal.", "agenda": _OH_AGENDA, "coaching": "supportive"}
+_OH_PREP = {"goals": [], "goal_ages": [], "task_findings": [], "progress_notes": []}
+_OH_BACK_AGAIN_RE = re.compile(r"\b(?:first (?:agenda )?item|item (?:1|one)|from the top|start(?:ing)? over|back to the beginning)\b", re.IGNORECASE)
+
+
+def _agenda_next(expected: str, forbidden: str) -> Callable[[str], Score]:
+    """Office Hours, a made-up meeting whose earlier items are already answered in the history. Jack, 2026-11-08, his real meeting: after a detour Sonic said "we're on the first agenda item", then re-asked items 2 and 3 (and he had
+    to say "we're looping", "we've already been over these steps", "we already covered this!"). The reply must ask the NEXT item and none already answered, must not go back to the first item, and asks at most two questions."""
+    want, never = re.compile(expected, re.IGNORECASE), re.compile(forbidden, re.IGNORECASE)
+
+    def score(reply: str) -> Score:
+        text = body(reply)
+        if not text:
+            return False, "empty reply"
+        questions = [s for s in _sentences(text) if s.endswith("?")]
+        found = _OH_BACK_AGAIN_RE.search(text)
+        if found:
+            return False, f"goes back to the start (\"{found.group(0)}\")"
+        for question in questions:
+            again = never.search(question)
+            if again:
+                return False, f"asks something already answered (\"{question[:70]}\")"
+        if not any(want.search(q) for q in questions):
+            return False, "does not ask the next agenda item"
+        if len(questions) > 2:
+            return False, f"asks {len(questions)} questions"
+        return True, ""
+
+    return score
+
+
 _HEAR_YOU_OPENING_RE = re.compile(r"^\W*I hear you\b", re.IGNORECASE)
 
 
@@ -1188,6 +1221,7 @@ class Scenario:
     shelf: Optional[str] = None  # a reading-shelf offer to inject, as the app does: "topic", "lull", "listing" or "empty" (backend/utils/reading_shelf.py)
     status: Optional[str] = None  # a self-report block to inject, as the app does for "how are things going?": "normal", "rough" or "unreadable" (backend/utils/self_report.py)
     events: Optional[List[Dict]] = None  # events coming up TODAY, as the app tells the reply about them (backend/utils/event_fields.py): {"text", "kind", "fields"}; the day is filled in
+    meeting: bool = False  # a made-up Office Hours is in progress (backend/utils/meetings.py build_meeting_context), as the app adds it while a run is active
     routines: bool = False  # inject the routines section as the app does when the question reaches it (backend/utils/routines.py asks_about_routines): the real jobs and what they last did
     low_need: str = "venting"  # with low_now: what the reading says they want from the reply ("venting", "solving", ...)
     low_now: bool = False  # this very message showed a mild low (valence "low", intensity 0.5): the fresh low-mood block, as the app builds it the turn it is read (a distressed scenario gets the carried block)
@@ -1492,6 +1526,27 @@ SCENARIOS: List[Scenario] = [
     Scenario("name_not_every_reply", "emotional", "ugh i can't stop thinking about the interview", None, low_now=True, profile={"name": "Sam"},
              followups=("i keep replaying what i said about my last job", "i think i'll try to sleep, thanks"), score_dialog=score_name_sparingly,
              notes="the profile says 'use the name now and then, not in every reply': at most one of three replies, never the first word"),
+    Scenario("office_hours_back_after_detour", "meeting", "ok back to the check-in", _agenda_next(r"side project|progress", r"work (?:on )?this week|main goal|applic"), meeting=True,
+             history=("User: let's start our weekly check-in\n"
+                      "Assistant: Good timing, this is our Weekly Check-in. First question: what did you work on this week, and how does it connect to your main goal?\n"
+                      "User: mostly the backend migration and some code reviews\n"
+                      "Assistant: Backend migration plus code reviews is a solid week. Next: how many applications did you send this week?\n"
+                      "User: none, i had one interview on monday\n"
+                      "Assistant: One interview is real movement. Next item: what progress did you make on your side projects?\n"
+                      "User: actually, before that, do people really use that many exclamation marks in chats?\n"
+                      "Assistant: Ha, it varies a lot by group and platform. Some people use them to sound warm in text, others find them loud.\n"
+                      "User: makes sense. anyway"),
+             notes="Jack's real meeting (2026-11-08), made-up text: after a detour Sonic went back to the first item. It should ask the next unanswered item (side projects) and nothing already answered"),
+    Scenario("office_hours_looping_called_out", "meeting", "we already covered that, let's move on", _agenda_next(r"align|where you want to be", r"work (?:on )?this week|main goal|applic|side project"), meeting=True,
+             history=("User: let's start our weekly check-in\n"
+                      "Assistant: Good timing, this is our Weekly Check-in. First question: what did you work on this week, and how does it connect to your main goal?\n"
+                      "User: mostly the backend migration and some code reviews\n"
+                      "Assistant: Solid week. Next: how many applications did you send this week?\n"
+                      "User: none, i had one interview on monday\n"
+                      "Assistant: One interview is real movement. Next item: what progress did you make on your side projects?\n"
+                      "User: i added a settings page and fixed a bunch of bugs\n"
+                      "Assistant: Nice. Which of those took the most of your time this week?"),
+             notes="the same meeting: the person says it is looping; the reply moves to item 4 and re-asks none of items 1 to 3"),
     Scenario("low_asks_to_see_someone", "emotional", "i've been feeling low for a few weeks now. do you think i should talk to a therapist?", score_referral_when_asked, low_now=True,
              notes="the exception: asked outright, it answers the question about seeing someone instead of dodging it"),
     Scenario("ceiling", "emotional", "anyway! can you help me pick a fun name for my fantasy football team lol", score_ceiling,
@@ -2191,6 +2246,10 @@ def build_prompt(
         prompt += event_fields.build_events_block(
             [{"id": f"e{i}", "due_date": today.isoformat(), "status": "open", **event} for i, event in enumerate(scenario.events)], today, wide=True,
         )
+    if scenario.meeting:
+        from backend.utils import meetings as _meetings
+
+        prompt += "\n" + _meetings.build_meeting_context(_OH_MEETING, [], _OH_PREP, "America/Chicago", now)
     if scenario.routines:
         from backend.utils import routines
 

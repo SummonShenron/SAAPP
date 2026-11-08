@@ -1,0 +1,82 @@
+"""A follow-up that carries on a change request Sonic has not finished is an edit turn (backend/utils/agent_utils.py continues_unfinished_edit).
+
+Why (2026-11-08, a real thread; the text below is made up): after "ran out of steps" and a question about which version, three follow-ups in a row were read as plain messages, so the turn was never offered
+propose_local_edits (the native loop offers it only on an edit turn), was not nudged to propose after reading, and spent its steps reading again. The rule is narrow on purpose: it must not turn "I just feel so
+empty" or "what did you change?" into an edit."""
+from langchain_core.messages import AIMessage, HumanMessage
+
+from backend.utils import agent_utils as au
+
+ASK = HumanMessage(content="add a dark mode toggle to the settings page")
+LEFT_UNFINISHED = AIMessage(content="Nothing has changed yet, because my search ran out of steps before I could propose an edit. Send the request again and name the file.")
+ASKED = AIMessage(content="Before I propose anything: should the toggle go in the header or on the settings page <<<FOLLOW_UP: In the header>>>?")
+
+
+def thread(*pairs):
+    messages = []
+    for human, ai in pairs:
+        messages.append(HumanMessage(content=human) if isinstance(human, str) else human)
+        if ai is not None:
+            messages.append(ai)
+    return messages
+
+
+def edit_turn(text, *earlier):
+    return au.looks_like_edit_request(thread(*earlier) + [HumanMessage(content=text)])
+
+
+def test_the_request_itself_is_an_edit_and_a_plain_chat_message_is_not():
+    assert au.looks_like_edit_request([ASK]) is True
+    assert au.looks_like_edit_request([HumanMessage(content="i'm having a rough day")]) is False
+
+
+def test_getting_on_with_it_after_a_reply_that_ran_out_of_steps_continues_the_request():
+    earlier = [(ASK, LEFT_UNFINISHED)]
+    assert edit_turn("go find the files", *earlier) is True
+    assert edit_turn("come on just find the files", *earlier) is True
+    assert edit_turn("so find it!", *earlier) is True
+    assert edit_turn("just make the change in settings.tsx", *earlier) is True
+
+
+def test_answering_the_question_it_asked_about_the_change_continues_the_request():
+    earlier = [(ASK, ASKED)]
+    assert edit_turn("in the header like the other toggles", *earlier) is True          # no verb in it, but it shares "header" with the question
+    assert edit_turn("settings page", *earlier) is True
+
+
+def test_a_question_a_feeling_or_another_topic_is_never_a_continuation():
+    earlier = [(ASK, LEFT_UNFINISHED)]
+    assert edit_turn("what did you just change?", *earlier) is False                      # a question about the past
+    assert edit_turn("can you find it?", *earlier) is False                              # question form: left to the existing confirmation rules
+    assert edit_turn("i'm so sad about everything today", *earlier) is False             # no task word, and nothing was asked
+    assert edit_turn("thanks", *earlier) is False
+    asked = [(ASK, ASKED)]
+    assert edit_turn("i just feel so empty tonight", *asked) is False                    # it asked, but this answers nothing it asked and has no task word
+    for feeling in ("i don't want to do this anymore", "i can't keep going like this", "i just need to stop thinking about her", "i want to be left alone"):
+        assert edit_turn(feeling, *earlier) is False, feeling                            # "want", "do", "keep", "just" and "need" are feelings' words too
+
+
+def test_it_needs_an_open_explicit_request_and_a_reply_that_left_it_unfinished_or_asked():
+    assert edit_turn("go find the files", ("good morning", AIMessage(content="Good morning!"))) is False                      # nothing was ever asked to change
+    finished = [(ASK, AIMessage(content="Done: I applied the change to the settings page."))]
+    assert edit_turn("it should be in the header", *finished) is False                                                       # the reply finished the work
+    old = [(ASK, LEFT_UNFINISHED)] + [(f"message {i}", AIMessage(content="ok")) for i in range(au.CONTINUATION_LOOKBACK + 1)] + [("something else", LEFT_UNFINISHED)]
+    assert edit_turn("go find the files", *old) is False                                                                     # the request is too far back to be the one being continued
+    long = "go find the files " + "and then keep looking at it " * 6
+    assert len(long.split()) > au.CONTINUATION_MAX_WORDS and edit_turn(long.strip(), (ASK, LEFT_UNFINISHED)) is False       # a long message is its own request
+
+
+def test_the_scrubbed_denial_placeholder_counts_as_unfinished_and_the_follow_up_tag_is_ignored():
+    earlier = [(ASK, AIMessage(content=au._SCRUBBED_DENIAL_PLACEHOLDER))]
+    assert edit_turn("go find the files", *earlier) is True
+    tagged = [(ASK, AIMessage(content="Here is what I found. <<<FOLLOW_UP: Apply it?>>>"))]
+    assert edit_turn("go find the files", *tagged) is False                                  # a follow-up suggestion is not a question Sonic asked; with nothing unfinished it is not a continuation
+
+
+def test_the_agent_decides_an_edit_turn_from_this_detector_so_the_proposal_tool_is_offered_on_a_continuation():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "services" / "agent_workflow.py").read_text(encoding="utf-8")
+    assert "looks_like_edit_request(state.get(\"messages\", []))" in source and "can_apply_here" in source
+    loop = (Path(__file__).resolve().parents[1] / "services" / "native_loop.py").read_text(encoding="utf-8")
+    assert "can_propose = bool(required_action)" in loop                                     # the proposal tool is part of the choice only on an edit turn: why a continuation must be one

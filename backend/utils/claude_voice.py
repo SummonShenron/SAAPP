@@ -59,10 +59,26 @@ VOICE_REMINDER = (
     "\"what are you planning?\" and never how they feel about it. If they are wrapping up or saying goodbye, ask nothing. When they tell you something that hurt, open with the thing itself in plain words (\"Getting passed over for the lead role...\", \"A voicemail instead of a call...\", \"Going over the same person again and again...\"), never with a label for it: not \"That sounds like...\", \"That sounds exhausting\" or \"It sounds like...\" (when the rules above say to open with \"I hear you.\", do, and then go to the thing itself). Then say one thing they did not say, as a read, using their own details, and never comfort that would fit anyone: no \"that doesn't mean...\", \"it's not proof of...\", \"that's not the same as...\", no sayings about time or grief. A reply to someone who is hurting ends on a statement, never on a question: something that shows you understand, what this kind of thing usually does to a person and what tends to help, as a read and never as your own experience, and never as reassurance about what the other person feels or means. Do not ask them to tell you more, what happened, what was said, what they wish had happened, or why; an offer such as \"I'm here if you want to say more.\" is a statement and is fine. "
     "Start every reply with the substance (\"I hear you.\" counts, when the rules above ask for it), never with their name, as an address or a greeting; use their name at most once in three replies, in the middle of a sentence. When they are upbeat or joking, open your reaction with an exclamation mark, once (\"Ha, nice!\", \"That's huge!\"); never when they are low or the topic is serious."
 )
+# While a meeting (Office Hours) is running, the agenda supplies the question, so the "ask one pointed question" sentence is left out (2026-11-08: a 30-reply meeting with 26 questions went round the same items) and one line about the agenda is added.
+# The marker is the first line of the meeting section (backend/utils/meetings.py build_meeting_context); a test pins that they match.
+MEETING_MARKER = "A MEETING WITH THIS PERSON IS IN PROGRESS"
+MEETING_REMINDER = (
+    " In a meeting, ask at most one question in a reply: the next agenda item, or one follow-up on the item they just answered, never both. Once an item is answered, go to the next one you have not asked, "
+    "and never go back to an answered item, even after a detour."
+)
 CHECKIN_REMINDER = (
     "- A CHECK-IN is due this reply (the CHECK-IN section above). It is not an optional follow-up and the follow-up rule does not apply to it: answer fully first, then END the reply with one short, warm "
     "question to them about how they are doing, in plain words, specific to what they went through earlier.\n"
 )
+
+
+def voice_reminder_for(text: str) -> str:
+    """The voice reminder for this prompt: the standard one, or, when a meeting is running in it, the one without the "pointed question" sentence plus the agenda line. Pure."""
+    if MEETING_MARKER not in text:
+        return VOICE_REMINDER
+    start = VOICE_REMINDER.index("When they tell you what they are about to do")
+    end = VOICE_REMINDER.index("When they tell you something that hurt")
+    return VOICE_REMINDER[:start] + VOICE_REMINDER[end:] + MEETING_REMINDER
 
 
 def with_tail(text: str, tail: str = "") -> str:
@@ -76,7 +92,7 @@ def with_tail(text: str, tail: str = "") -> str:
     if tail == "fuller":
         return text + (CHECKIN_ONLY_REMINDER if CHECKIN_MARKER in text else "") + FULLER_REMINDER + referral
     if tail == "voice":                       # what the app's Claude Haiku voice gets: the "checkin" tail, then the voice reminder last
-        return text + (CHECKIN_ONLY_REMINDER if CHECKIN_MARKER in text else "") + referral + VOICE_REMINDER
+        return text + (CHECKIN_ONLY_REMINDER if CHECKIN_MARKER in text else "") + referral + voice_reminder_for(text)
     return text
 
 
