@@ -9,7 +9,7 @@ import './__styles__/BudgetBanner.css';
  * - The early "notice" step is for admins only (the server only sends it amounts and percentages). The percentage itself is shown beside the
  *   "..." button, not part of this line.
  * - Nothing at all is shown when no budget is configured or the budget is comfortable.
- * - When the shared budget has paused chat, an admin also gets a button that raises the block line by 25% (`onExtend`).
+ * - When a shared budget is at its notice line (80% by default) or past it, an admin also gets a button that raises its limit by 25% (`onExtend`).
  */
 function when(iso: string | null | undefined): string {
   if (!iso) return 'it resets';
@@ -40,7 +40,7 @@ const BudgetBanner: React.FC<{
   if (budget.level === 'throttled') text = `Low-power mode until ${when(budget.resets_at)}: ${budget.message.replace(/^Low-power mode( for you)?:\s*/, '')}`;
   if (budget.level === 'blocked') text = `Paused until ${when(budget.resets_at)}: ${own ? 'you have reached your usage limit' : 'the usage budget has been reached'}.${budget.upgrade_note ? ` ${budget.upgrade_note}` : ''}`;
   const paused = budget.paused.length ? `Paused: ${budget.paused.join(', ')}.` : undefined;
-  const canExtend = Boolean(onExtend) && budget.level === 'blocked' && Boolean(budget.can_extend);
+  const canExtend = Boolean(onExtend) && (budget.level === 'blocked' || budget.level === 'notice') && Boolean(budget.can_extend);
   const className = budget.level === 'ok' ? 'notice' : budget.level;
 
   const extend = async () => {

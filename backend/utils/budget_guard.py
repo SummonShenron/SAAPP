@@ -539,12 +539,16 @@ def current_state(db: Any = None, now: Optional[datetime] = None, username: Opti
 # ---------------------------------------------------------------------------------------------------------------
 
 def extendable_scopes(state: Optional[Dict[str, Any]]) -> List[str]:
-    """The global scopes that are blocking chat right now, i.e. the ones an admin's +25% would apply to. A per-person block is not one."""
-    return [scope for scope in (state or {}).get("blocked_scopes", []) if scope in GLOBAL_SCOPES]
+    """The global scopes an admin's +25% would apply to: the shared budgets that are at their notice line (80% by default) or past it, whether or not chat is blocked yet. A person's OWN limit is never one,
+    so nothing about it makes the button appear (the endpoint would refuse it)."""
+    notice_at, _ = thresholds()
+    scopes = list((state or {}).get("blocked_scopes", []))
+    scopes += [item["scope"] for item in (state or {}).get("detail", []) if item.get("fraction", 0) >= notice_at and item.get("scope") not in scopes]
+    return [scope for scope in scopes if scope in GLOBAL_SCOPES]
 
 
 def grant_extension(db: Any, admin: str, state: Optional[Dict[str, Any]], now: Optional[datetime] = None) -> Dict[str, Any]:
-    """Adds EXTENSION_STEP to every global scope that is blocking chat, until that scope resets (the end of the window in progress for the five-hour one,
+    """Adds EXTENSION_STEP to every global scope that is at its notice line or past it (extendable_scopes), until that scope resets (the end of the window in progress for the five-hour one,
     the end of the day or month otherwise). Each grant is recorded with who and when. Nothing blocked, nothing changed. Blocking: call it off the event
     loop. Raises on a database error, so the caller can say it did not work."""
     moment = now or datetime.now(timezone.utc)
@@ -818,7 +822,7 @@ def public_view(state: Optional[Dict[str, Any]], admin: bool) -> Dict[str, Any]:
             "fraction": state.get("fraction"), "scope": scope, "unit": state.get("unit"),
             "spent": state.get("spent"), "limit": state.get("limit"), "detail": state.get("detail", []),
             "unpriced_tokens": state.get("unpriced_tokens", 0),
-            # An admin sees whether +25% is on offer (the global budget is what is blocking) and how far it has already been raised.
+            # An admin sees whether +25% is on offer (a shared budget is at its notice line or past it) and how far it has already been raised.
             "can_extend": bool(extendable_scopes(state)), "extended_by": state.get("extended_by", 0.0),
         })
     return view
