@@ -1,5 +1,5 @@
 /* Account settings (pages/Account.tsx). Cards on the theme's own colours. */
-.account-page { width: 100%; max-width: 720px; margin: 0 auto; padding: 1.5rem 1.25rem 3rem; box-sizing: border-box; color: var(--text-main); }
+.account-page { width: 100%; max-width: none; margin: 0 auto; padding: 1.5rem 1.25rem 3rem; box-sizing: border-box; color: var(--text-main); }
 .account-heading { margin: 0 0 1.25rem; font-size: 1.35rem; }
 .account-card { background: var(--bg-main); border: 1px solid var(--border-color); border-radius: 12px; padding: 1rem 1.25rem; margin-bottom: 1rem; }
 .account-card h3 { margin: 0 0 0.75rem; font-size: 0.95rem; }

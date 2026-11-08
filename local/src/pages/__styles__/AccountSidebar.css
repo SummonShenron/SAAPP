@@ -1,0 +1,12 @@
+/* Account settings: wider side menu with roomier tabs. Scoped so Integrations keeps its own sidebar. */
+.account-page .account-sidebar {
+  width: 260px;
+  min-width: 220px;
+  gap: 8px;
+}
+
+.account-page .account-sidebar .integrations-tab {
+  padding: 12px 16px;
+  text-align: left;
+  white-space: nowrap;
+}

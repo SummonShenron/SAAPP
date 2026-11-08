@@ -79,6 +79,7 @@ BLOCKING_WHY = (REMOVED, REJECTED)          # a page an admin turned away is nev
 KINDS = ("article", "entity")               # an article (what a piece says) and an entity profile (a band, a person, a product)
 EXPIRY_DAYS = {"article": 180, "entity": 90}
 
+SENSITIVE_PAGE_TERMS = 3                    # distinct sensitive words in a page's opening that make it a page about sensitive ground (the shelf's rule is one; "separates" alone refused a repo's README, 2026-11-07)
 TITLE_MAX_CHARS = 120
 BODY_MIN_WORDS, BODY_MAX_WORDS, BODY_MAX_CHARS = 25, 150, 1100
 MIN_PAGE_CHARS = shelf.MIN_PAGE_CHARS
@@ -295,7 +296,7 @@ def card_issue(title: str, body: str, page_text: str) -> Optional[str]:
 
     if reads_as_an_order(flat_title):
         return "a title that reads as an instruction"
-    return shelf.summary_issue(body, page_text, min_words=BODY_MIN_WORDS, max_words=BODY_MAX_WORDS, max_chars=BODY_MAX_CHARS)
+    return shelf.summary_issue(body, page_text, min_words=BODY_MIN_WORDS, max_words=BODY_MAX_WORDS, max_chars=BODY_MAX_CHARS, sensitive_terms=SENSITIVE_PAGE_TERMS, sensitive_summary=False)
 
 
 def parse_card(raw: Any) -> Optional[Dict[str, str]]:

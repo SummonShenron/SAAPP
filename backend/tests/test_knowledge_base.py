@@ -426,3 +426,36 @@ def test_the_admin_view_lists_live_and_waiting_cards_without_vectors_and_says_wh
 def test_every_knowledge_base_counter_is_a_known_key_so_none_is_silently_dropped():
     assert set(self_counters.KB_KEYS) <= self_counters.KEYS
     assert all(key.replace("_", "").isalpha() for key in self_counters.KB_KEYS)          # letters and underscores only: no digits in a counter key
+
+
+# ---- the sensitive-ground check is about the PAGE'S TOPIC, not a single word (a repo's README was refused for "separate", 2026-11-07) ----
+
+BODY_SEPARATE = BODY[:-1] + ", and the council keeps its ferry timetable separate from the tide table."
+
+
+def test_a_card_that_happens_to_say_separate_or_health_is_not_refused_for_it():
+    assert kb.card_issue("Harbour tides", BODY_SEPARATE, BODY_SEPARATE + PAGE) is None
+    assert kb.card_issue("Harbour tides", BODY[:-1] + ", and the page has a section on health and safety rules for the pier.", BODY + " health and safety rules for the pier. " + PAGE) is None
+
+
+def test_a_page_whose_opening_is_about_sensitive_ground_is_refused_but_one_or_two_stray_words_are_not():
+    about = "Health, therapy and depression: what to know. " + PAGE
+    assert "not Sonic's to bring up" in kb.card_issue("Harbour tides", BODY, about)                       # three different words: the page is about it
+    assert kb.card_issue("Harbour tides", BODY, "Health and therapy notes. " + PAGE) is None            # two
+    assert kb.card_issue("Harbour tides", BODY, "Health health health. " + PAGE) is None                 # one word said three times is still one word
+    late = PAGE + " filler" * 400 + " health therapy depression"
+    assert kb.card_issue("Harbour tides", BODY, late) is None                                            # only the first 2000 characters are read
+
+
+def test_the_threshold_is_the_knowledge_bases_and_the_reading_shelfs_own_rule_is_unchanged():
+    from backend.utils import reading_shelf as shelf
+
+    assert kb.SENSITIVE_PAGE_TERMS == 3
+    assert shelf.page_is_sensitive("Notes on health only.") and not shelf.page_is_sensitive("Notes on bridges only.")          # the shelf: one word is enough
+    assert not shelf.page_is_sensitive("Health and therapy.", terms_needed=3) and shelf.page_is_sensitive("Health, therapy and depression.", terms_needed=3)
+    assert shelf.summary_issue(BODY, "Health notes. " + PAGE, min_words=kb.BODY_MIN_WORDS, max_words=kb.BODY_MAX_WORDS, max_chars=kb.BODY_MAX_CHARS) is not None      # the shelf's default still refuses on one word
+    assert shelf.summary_issue(BODY, PAGE, min_words=kb.BODY_MIN_WORDS, max_words=kb.BODY_MAX_WORDS, max_chars=kb.BODY_MAX_CHARS, sensitive_summary=True) is None
+    sensitive_summary = BODY[:-1] + ", and it covers therapy."
+    args = dict(min_words=kb.BODY_MIN_WORDS, max_words=kb.BODY_MAX_WORDS, max_chars=kb.BODY_MAX_CHARS)
+    assert shelf.summary_issue(sensitive_summary, PAGE, **args) is not None                                  # the shelf judges the summary's own words too
+    assert shelf.summary_issue(sensitive_summary, PAGE, sensitive_summary=False, **args) is None             # the knowledge base does not

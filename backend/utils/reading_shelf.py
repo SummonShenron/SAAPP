@@ -381,9 +381,20 @@ _NUMBER_RE = re.compile(r"\d[\d,.]*")
 _URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
 
 
-def summary_issue(summary: str, page_text: str, *, min_words: int = SUMMARY_MIN_WORDS, max_words: int = SUMMARY_MAX_WORDS, max_chars: int = SUMMARY_MAX_CHARS) -> Optional[str]:
+def page_is_sensitive(page_text: str, terms_needed: int = 1) -> bool:
+    """Whether the opening of a page (its first 2000 characters) is about ground that is not Sonic's to bring up: at least `terms_needed` DISTINCT words from the sensitive list
+    (backend/utils/interest_anchor.py). One is the shelf's own rule; a page that only says "separates" or "dead" once is not about anything sensitive (2026-11-07)."""
+    from backend.utils.interest_anchor import _SENSITIVE_RE
+
+    return len({m.group(0).lower() for m in _SENSITIVE_RE.finditer((page_text or "")[:2000])}) >= max(1, terms_needed)
+
+
+def summary_issue(summary: str, page_text: str, *, min_words: int = SUMMARY_MIN_WORDS, max_words: int = SUMMARY_MAX_WORDS, max_chars: int = SUMMARY_MAX_CHARS,
+                  sensitive_terms: int = 1, sensitive_summary: bool = True) -> Optional[str]:
     """What is wrong with a written summary, or None. Pure and fixed: the model never decides whether its own summary is acceptable. The length limits are the shelf's own unless the
-    caller says otherwise (the knowledge base's cards are longer: backend/utils/knowledge_base.py); every other rule is the same for both."""
+    caller says otherwise (the knowledge base's cards are longer: backend/utils/knowledge_base.py); every other rule is the same for both, except that the caller may say how many different
+    sensitive words make a page sensitive (`sensitive_terms`) and may stop judging the summary's own words by that list (`sensitive_summary`): the knowledge base does both, because its cards are
+    only read when asked for and an admin approves each, while the shelf's items can be offered unprompted."""
     from backend.services.tool_agent_memory import reads_as_an_order
     from backend.utils.interest_anchor import is_sensitive
 
@@ -395,7 +406,7 @@ def summary_issue(summary: str, page_text: str, *, min_words: int = SUMMARY_MIN_
         return "not one plain passage"
     if _FIRST_PERSON_RE.search(text):
         return "in the first person"
-    if is_sensitive(text) or is_sensitive(page_text[:2000]):
+    if (sensitive_summary and is_sensitive(text)) or page_is_sensitive(page_text, sensitive_terms):
         return "touches ground that is not Sonic's to bring up"
     if reads_as_an_order(text):
         return "reads as an instruction"

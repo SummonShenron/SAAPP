@@ -233,3 +233,16 @@ def test_every_knowledge_base_counter_is_recorded_by_the_code_not_just_named():
 
     for key in self_counters.KB_KEYS:
         assert f'"{key}"' in sources, key
+
+
+def test_a_page_that_says_separate_gets_its_card_instead_of_a_coin_flip_refusal(db):
+    body = BODY[:-1] + ", and the council keeps its ferry timetable separate from the tide table."
+    reply = propose(db, Model(card={"title": "Harbour tides", "kind": "article", "body": body}), fetch=page(text=body + " " + PAGE))
+    assert reply.startswith("PROPOSED:") and len(db[kb.PENDING].docs) == 1
+
+
+def test_a_page_that_is_about_sensitive_ground_still_gets_no_card_and_the_model_is_not_asked_to_support_it(db, counts):
+    model = Model()
+    reply = propose(db, model, fetch=page(text="Health, therapy and depression: what to know. " + PAGE))
+    assert "did not pass the checks" in reply and "not Sonic's to bring up" in reply
+    assert db[kb.PENDING].docs == [] and counts == {"kb_proposal_refused": 1} and len(model.prompts) == 1

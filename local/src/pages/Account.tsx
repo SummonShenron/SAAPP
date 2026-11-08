@@ -15,6 +15,8 @@ type AccountTab = 'profile' | 'chat' | 'runner' | 'billing' | 'appearance' | 'da
  * Account settings: where the user chip in the rail leads. For now it shows who you are signed in as, lets you pick the theme, and points to the
  * pages that already hold your data. The chat box's "..." menu keeps only what acts on the conversation you are in (scope, answers, thinking, help, export, delete); the choices about how Sonic behaves live here.
  */
+import './__styles__/AccountSidebar.css';
+
 export const AccountPage: React.FC<{ theme: string; toggleTheme: () => void }> = ({ theme, toggleTheme }) => {
   const navigate = useNavigate();
   const principal = getEffectivePrincipal();
@@ -35,7 +37,7 @@ export const AccountPage: React.FC<{ theme: string; toggleTheme: () => void }> =
       <h2 className="account-heading">Account settings</h2>
 
       <div className="integrations-layout">
-        <nav className="integrations-sidebar" aria-label="Account sections">
+        <nav className="integrations-sidebar account-sidebar" aria-label="Account sections">
           {tabs.map(t => (
             <button
               key={t.id}
