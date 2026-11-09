@@ -146,6 +146,7 @@ from backend.utils import code_plan as code_plan_utils
 from backend.utils import server_memory
 from backend.utils import leanings as leanings_utils
 from backend.utils import people_notes as people_notes_utils
+from backend.utils import voice_examples as voice_examples_utils
 from backend.utils import read_log as read_log_utils
 from backend.utils import character as character_utils
 from backend.utils import experiences as experiences_utils
@@ -329,6 +330,7 @@ async def lifespan(app: FastAPI):
 
         leanings_utils.warm(get_db(), embed_text)
         people_notes_utils.warm(get_db(), embed_text)     # the index of people notes (approved ones only), built the same way
+        voice_examples_utils.warm(get_db(), embed_text)   # and the index of voice examples
         experiences_utils.warm(get_db(), embed_text)      # the index of real cases from its own record, built the same way
     except Exception:
         logger.warning("Could not start the leanings index build.", exc_info=True)
@@ -1314,6 +1316,13 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 source_type=source_type, risk_active=risk_level != RISK_NONE, closing=is_closing_message(question), vector=question_embedding,
             )
             people_notes_utils.tally_turn(turn_counts, people_note_entries, tally)
+            # Two invented examples of Sonic's voice in a similar moment, from the approved voice examples (backend/utils/voice_examples.py), for every base model: what a rule cannot carry. Silent under a safety plan;
+            # the light ones are never served in an emotional context.
+            voice_example_entries = await asyncio.to_thread(
+                voice_examples_utils.select, final_state.get("original_question", question), get_db(), embed_text,
+                source_type=source_type, risk_active=risk_level != RISK_NONE, emotional_active=bool(emotional_context), vector=question_embedding,
+            )
+            voice_examples_utils.tally_turn(turn_counts, voice_example_entries, tally)
             # Sonic's own measured track record (backend/utils/self_observations.py): only the approved observations
             # that apply to this turn, and only a few. Nothing under a safety context.
             self_knowledge_lines = await asyncio.to_thread(
@@ -1435,6 +1444,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 emotional_context=emotional_context,
                 relatable_context=build_relatable_block(relatable_entry),
                 people_notes_context=people_notes_utils.build_block(people_note_entries),
+                voice_examples_context=voice_examples_utils.build_block(voice_example_entries),
                 encouragement_context=build_encouragement_block(encouragement_entry),
                 open_loop_context=open_loops_utils.build_open_loop_block(open_loop_entry, today_local) + events_context,
                 headsup_context=headsups_utils.build_headsup_block(headsup_entry, bool(headsup_entry and headsup_entry.get("discreet"))),

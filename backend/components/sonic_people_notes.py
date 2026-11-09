@@ -8,7 +8,7 @@ experience ("I know how that feels" and "I've seen this" are blocked by backend/
 another person feels or means.
 
 NOTHING IS USED UNTIL IT IS APPROVED. `approved: True` marks a note a person has agreed to, and every other note is a draft that is never put in a prompt (the same rule as the leanings, backend/components/sonic_leanings.py). The twenty below are
-drafts written by Claude Code on 2026-11-08 from the situations Sonic actually met; Jack approves a note by adding its id to APPROVED_IDS at the bottom of this file (one place, one line each). A test holds every note, approved or not, to the checks in backend/utils/people_notes.py check_registry.
+drafts written by Claude Code on 2026-11-08 from the situations Sonic actually met; Jack approves a note by adding its id to APPROVED_IDS at the bottom of this file (one place, one line each); he approved all twenty on 2026-11-08. A test holds every note, approved or not, to the checks in backend/utils/people_notes.py check_registry.
 
 FIELDS: `id` (also its counter's name); `situation` (what someone is in, in plain words); `asks` (3 or 4 short example messages in the words people use: a request is scored against the best of them and the situation, which is much sharper than the
 situation alone); `pattern` (what people commonly go through); `helps` (what tends to help, concrete); `avoid` (what not to ask or say); `evidence` (where it comes from: `kind` "hand" for a note written by a person or by Claude Code for a person's approval,
@@ -193,9 +193,30 @@ NOTES = [
 ]
 
 
-# A note is approved by adding its id here (Jack, 2026-11-08: none yet). Everything not listed stays a draft and is never put in a prompt. When the first one is approved, a line for it is owed in
-# backend/components/sonic_changelog.py ("I can now...", true, at most 260 characters), because from then on a reply can draw on it.
-APPROVED_IDS = ()
+# A note is approved by adding its id here (Jack approved all twenty on 2026-11-08, unread, to try them: he can remove any id, or reword a note, at any time). Everything not listed stays a draft and is never put in a prompt.
+# The changelog line for them is `people_notes` in backend/components/sonic_changelog.py.
+APPROVED_IDS = (
+    "went_quiet_after_something_vulnerable",
+    "blocked_or_cut_off",
+    "waiting_for_a_reply",
+    "replaying_a_conversation",
+    "anger_after_being_hurt",
+    "loneliness_at_night",
+    "same_story_again",
+    "loss_of_something_built",
+    "waiting_on_a_decision",
+    "bombed_after_preparing",
+    "family_silence_after_big_news",
+    "repeated_cancellations",
+    "feeling_numb",
+    "urge_to_reach_out",
+    "what_did_i_do_wrong",
+    "after_a_big_push",
+    "comparison_and_falling_behind",
+    "dread_of_the_workday",
+    "after_saying_something_awkward",
+    "end_of_a_relationship_first_weeks",
+)
 
 for _note_entry in NOTES:
     _note_entry["approved"] = _note_entry["id"] in APPROVED_IDS

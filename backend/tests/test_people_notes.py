@@ -23,7 +23,10 @@ def clean_cache(monkeypatch):
 
 
 def by_id(note_id):
-    return copy.deepcopy(next(n for n in registry.NOTES if n["id"] == note_id))
+    """A copy of one shipped note as a DRAFT, whatever the registry's approvals are now: the tests choose what is approved."""
+    note = copy.deepcopy(next(n for n in registry.NOTES if n["id"] == note_id))
+    note["approved"] = False
+    return note
 
 
 def approved(note_id):

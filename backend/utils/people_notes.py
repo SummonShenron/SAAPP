@@ -27,8 +27,10 @@ from backend.utils.identity_checks import identity_reply_issue
 logger = logging.getLogger("SASS Logger")
 
 COLLECTION = "sonic_people_note_index"
-# Not yet calibrated on real embeddings (the leanings' 0.66 was, on 2026-10-25): set above it on purpose, because a miss is better than a forced fit. Calibrate on the approved notes with real messages before relying on it.
-MIN_SCORE = float(os.getenv("PEOPLE_NOTES_MIN_SCORE", "0.70"))
+# Calibrated 2026-11-08 on real embeddings (gemini-embedding-001) with 60 made-up messages worded fresh for the notes and 25 unrelated or merely adjacent ones: the intended note ranked first for all 60 (scores 0.67 to 0.91); the
+# best unrelated scores were vague low-mood messages ("I'm a bit sad today" 0.719 against the night note, "I'm so tired" 0.710 against the after-a-push note). At 0.72 the intended note is served for 56 of 60 (93%), no unrelated message and no
+# wrong note; 0.70 serves 58 but lets three vague messages through; 0.74 serves 51. High on purpose: a miss is better than a forced fit, and a vague mood has no situation to be understood.
+MIN_SCORE = float(os.getenv("PEOPLE_NOTES_MIN_SCORE", "0.72"))
 PER_TURN = max(int(os.getenv("PEOPLE_NOTES_PER_TURN", "2")), 1)
 MIN_REQUEST_CHARS = 12
 MAX_REQUEST_CHARS = 700

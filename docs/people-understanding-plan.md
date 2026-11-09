@@ -1,6 +1,6 @@
 # Letting Sonic learn how people go through things ("people notes")
 
-Status: PHASES 0, 1 AND 2 BUILT, UNAPPROVED AND UNMEASURED (2026-11-08). Jack's idea, said after the last hour of his real thread showed Haiku interviewing a hurting person. The behaviour fix and its eval (phase 0), the twenty drafts and the registry check (phase 1), and the retrieval and the reply-voice block (phase 2) are built. No note is approved, so nothing reaches a prompt yet. Not done: calibrating the match threshold on real embeddings, any eval with notes in the prompt (Jack ruled out more evals on 2026-11-08), the reading source (phase 3) and the conversation source (phase 4).
+Status: PHASES 0, 1 AND 2 BUILT, ALL 20 NOTES APPROVED (Jack, 2026-11-08, unread, to try them), THRESHOLD CALIBRATED, UNMEASURED ON REPLIES. The behaviour fix and its eval (phase 0), the twenty notes and the registry check (phase 1), and the retrieval and the reply-voice block (phase 2) are built and live after a restart. Not done: any eval with notes in the prompt, the reading source (phase 3) and the conversation source (phase 4).
 
 ## What Jack asked for
 
@@ -127,9 +127,14 @@ It does not make Sonic feel anything or claim to. It does not remember a person'
 - `app.py`: the question embedding already computed for memory is reused; the notes are selected for each conversational reply, counted (`people_notes_offered`, `people_note_used_<id>` in `self_counters.py`), and the index is built in the background at startup.
 - `backend/tests/test_people_notes.py`: 10 tests, including a fake embedder, every gate, and mutation checks.
 
-## What is owed before it is switched on
+## What happened after the build (2026-11-08)
 
-1. Jack reads and approves notes (adds ids to `APPROVED_IDS`). Reword any he does not like first.
-2. Calibrate `PEOPLE_NOTES_MIN_SCORE` (0.70 now, deliberately high) with real messages against the approved notes: a cheap run of embeddings only, no reply model.
-3. A line in `sonic_changelog.py` for the first approved note.
-4. When evals are allowed again: the scenarios in "Evals" above, with and without notes, and Jack's reading of the replies.
+- Jack approved all twenty notes (`APPROVED_IDS` in `backend/components/sonic_people_notes.py`), unread. To turn one off, remove its id; to turn them all off, set `PEOPLE_NOTES_ENABLED=false`. A changelog line (`people_notes`) was added.
+- **Calibrated** with real embeddings (gemini-embedding-001) on 60 made-up messages worded fresh for the notes and 25 unrelated or merely adjacent ones. The intended note ranked first for all 60 (scores 0.67 to 0.91). The best unrelated scores were vague low-mood messages ("I'm a bit sad today" 0.719 against the night note, "I'm so tired" 0.710 against the after-a-big-push note). The default is now 0.72: the intended note is served for 56 of 60 (93%), with no unrelated message and no wrong note. 0.70 would serve 58 but let three vague messages through; 0.74 would serve 51.
+- Smoke test of the real path: a hurting message gets the matching note (and the matching voice example); a vague mood, a code request, a safety context, a closing message and a non-conversational route get none.
+
+## What is owed
+
+1. **Measure**, when evals are allowed: the interview scenarios and Jack's blind reading, with and without notes. For a hurting message the note and the voice example overlap in content (both say that people replay the last exchange), so copying is most likely there: watch for lifted phrases.
+2. Reword any note Jack does not like. They are drafts written by Claude Code from general understanding, not his.
+3. Phases 3 and 4 (a reading source, and a conversation source needing at least three independent people and an admin's approval) only if 1 earns them.

@@ -274,6 +274,7 @@ def build_voice_prompt(
     working_notes_context: str = "",
     conversation_summary_context: str = "",
     people_notes_context: str = "",
+    voice_examples_context: str = "",
 ) -> str:
     """Composes the single unified final-answer prompt used by every response path (RAG,
     conversational, web search, code interpreter, GitHub search, PR summary) — one persona,
@@ -321,6 +322,8 @@ def build_voice_prompt(
         sections.append("\n" + working_notes_context + "\n")
     if people_notes_context:
         sections.append("\n" + people_notes_context)          # understanding of what people commonly go through (backend/utils/people_notes.py), for every base model, just before the emotional context
+    if voice_examples_context:
+        sections.append("\n" + voice_examples_context)        # two invented examples of the voice in a similar moment (backend/utils/voice_examples.py), for every base model
     if emotional_context:
         sections.append(emotional_context)
     if conversation_summary_context:

@@ -1545,4 +1545,34 @@ CHANGELOG = [
         "keywords": ["coding", "follow up", "start over", "re-read", "already read", "searching again", "continue the change", "remember what you read"],
         "volunteer": [],
     },
+    {
+        "id": "voice_examples",
+        "requires": [
+            "backend/utils/voice_examples.py::def select",
+            "backend/components/sonic_voice_examples.py::APPROVED_IDS",
+            "app.py::voice_examples_utils.select",
+        ],
+        "month": "2026-11",
+        "title": "Examples of my own voice",
+        "line": (
+            "Before I answer, I now look at a couple of short examples of how I like to sound in a similar moment (good news, a goodnight, a hard night), so my reply can match the moment's energy."
+        ),
+        "keywords": ["voice", "tone", "how you sound", "personality", "energy", "examples", "match my mood", "style"],
+        "volunteer": [],
+    },
+    {
+        "id": "people_notes",
+        "requires": [
+            "backend/utils/people_notes.py::def select",
+            "backend/components/sonic_people_notes.py::APPROVED_IDS",
+            "app.py::people_notes_utils.select",
+        ],
+        "month": "2026-11",
+        "title": "Notes on what people go through",
+        "line": (
+            "When you tell me about something hard (a friend gone quiet, a bad night, waiting on news), I now draw on short notes about what people commonly go through, and say it as a read, never as my own experience."
+        ),
+        "keywords": ["what people go through", "understanding", "people notes", "support", "hard time", "how people feel", "why do i feel"],
+        "volunteer": [],
+    },
 ]

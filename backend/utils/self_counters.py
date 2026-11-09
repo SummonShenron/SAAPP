@@ -32,6 +32,7 @@ REWARD_TAGS = ("hallucination", "incorrect_filter", "formatting", "incomplete", 
 FAILURE_KINDS = ("quota", "overloaded", "other")
 from backend.components.sonic_leanings import LEANINGS  # noqa: E402  (plain data)
 from backend.components.sonic_people_notes import NOTES as PEOPLE_NOTES  # noqa: E402  (plain data)
+from backend.components.sonic_voice_examples import EXAMPLES as VOICE_EXAMPLES  # noqa: E402  (plain data)
 from backend.utils.feeling_questions import KINDS as FEELING_KINDS  # noqa: E402  (a plain tuple of names; that module imports nothing from here)
 from backend.utils.code_plan import PLAN_STOP_REASONS  # noqa: E402  (a plain tuple of names)
 from backend.utils.reading_waste import OPENING_KINDS, ORIENT_RANKS  # noqa: E402  (plain tuples of names)
@@ -47,6 +48,8 @@ _GROUPS: Dict[str, tuple] = {
     "leaning_used": tuple(entry["id"] for entry in LEANINGS),
     # Which people notes were put in a reply's prompt (backend/utils/people_notes.py): one count per note, so one that never matches can be reworded or removed.
     "people_note_used": tuple(note["id"] for note in PEOPLE_NOTES),
+    # Which voice examples were put in a reply's prompt (backend/utils/voice_examples.py): one count per example, so one that never matches can be reworded or removed.
+    "voice_example_used": tuple(example["id"] for example in VOICE_EXAMPLES),
     # What happened after a reply that used a leaning (backend/utils/leanings.py): a message followed, it read as pushback, it praised, or the turn hit its step limit. Evidence of which leanings earn their place, never a target.
     "leaning_followed": tuple(entry["id"] for entry in LEANINGS),
     "leaning_pushback": tuple(entry["id"] for entry in LEANINGS),
@@ -135,6 +138,8 @@ STEPS_KEYS = ("steps_proposed", "steps_in_lists", "steps_refused")
 PROACTIVE_KEYS = ("relatable_by_meaning",
                   # Replies that were given a people note (backend/utils/people_notes.py): a share of turns_total. Counts only.
                   "people_notes_offered",
+                  # Replies that were shown voice examples (backend/utils/voice_examples.py): a share of turns_total. Counts only.
+                  "voice_examples_offered",
                   # Later check-ins on a feeling still being carried (backend/utils/emotion_checkin.py): turns that were told to end with one, replies that really did, and on the next message whether the person's
                   # ceiling had eased or they were still low. Counts only.
                   "emotion_checkin_offered", "emotion_checkin_asked", "emotion_checkin_eased", "emotion_checkin_still_low")
