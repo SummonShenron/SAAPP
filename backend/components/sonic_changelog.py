@@ -1575,4 +1575,20 @@ CHANGELOG = [
         "keywords": ["what people go through", "understanding", "people notes", "support", "hard time", "how people feel", "why do i feel"],
         "volunteer": [],
     },
+    {
+        "id": "ask_choice",
+        "requires": [
+            "backend/services/choice_cards.py::def validate_card",
+            "backend/services/native_tools.py::ask_choice",
+            "backend/services/agent_workflow.py::_ask_choice",
+            "app.py::/api/chat/choice/",
+        ],
+        "month": "2026-11",
+        "title": "Asking you to pick, mid-task",
+        "line": (
+            "When I can't tell which of a few things you mean while working on code, I can now ask one question with two to four tap-to-answer options (or your own words) and carry on in the same turn, instead of ending with an open question."
+        ),
+        "keywords": ["multiple choice", "options", "ask me", "which one", "clarify", "choose", "question", "pick one", "coding"],
+        "volunteer": [],
+    },
 ]

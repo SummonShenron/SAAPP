@@ -2189,6 +2189,12 @@ export const requestRunnerUpdate = (id: string): Promise<{ update: RunnerUpdate 
   taskRequest(`/api/runner/runners/${encodeURIComponent(id)}/update`, { method: 'POST' }, 'Failed to ask the runner to update.');
 export const removeRunner = (id: string): Promise<{ status: string }> =>
   taskRequest(`/api/runner/keys/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'Failed to remove that runner.');
+/**
+ * The person's answer to a choice card (POST /api/chat/choice/{id}): an option by its position, or their own words. "recorded" means Sonic's turn was waiting and has the answer;
+ * "no_waiter" means nobody is waiting any more (the turn timed out or ended); "invalid" is neither a valid option nor any words.
+ */
+export const answerChoice = (choiceId: string, answer: { index: number } | { other: string }): Promise<{ status: 'recorded' | 'no_waiter' | 'invalid' }> =>
+  taskRequest(`/api/chat/choice/${encodeURIComponent(choiceId)}`, { method: 'POST', body: JSON.stringify(answer) }, 'Could not send your answer.');
 export const getRunnerJob = (id: string): Promise<RunnerJob> => taskRequest(`/api/runner/jobs/${encodeURIComponent(id)}`, {}, 'Failed to load that check.');
 /** One row of the Terminal card's history: a command job for this runner and project, newest first. output_tail is not in the list; fetch it with getRunnerJob when a row is opened. */
 export interface CommandJobRow {
@@ -2554,6 +2560,8 @@ export async function sendChatMessage(
         git_branch: gitBranch,
         // This page can show a check card (Run / Cancel) for a local runner, so Sonic may ask to run one of the person's own checks.
         runner_cards: runnerCards,
+        // This page can show a choice card (one question, a few options) and send the answer back, so Sonic may ask to be told which of a few things is meant (backend/services/choice_cards.py).
+        choice_cards: true,
         // The shared guest chose a demo card: the folder tools work on the server's demo project (the server ignores this for anyone else).
         demo_project: demoProject,
         // The shared guest's base-model choice (the guests share one settings record, so it rides each message; the server honours only the cheaper ones). Null for everyone else: the server uses their saved setting.
@@ -2784,6 +2792,7 @@ export const api = {
   requestRunnerUpdate,
   removeRunner,
   getRunnerJob,
+  answerChoice,
   listCommandJobs,
   createRunnerCommand,
   approveRunnerJob,

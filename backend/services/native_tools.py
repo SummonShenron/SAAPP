@@ -238,6 +238,15 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
         "unknowns": {"type": "array", "items": _STRING, "description": "what you could not tell from reading, instead of guessing"},
     }, ["goal", "files", "steps"]),
     # a connected local folder: a proposal the person applies (or not) from a diff card. Nothing is written by the call.
+    # asking the person to choose (backend/services/choice_cards.py): one question, two to four options, the answer comes back as this call's result
+    "ask_choice": _object({
+        "question": {"type": "string", "description": "one short question"},
+        "options": {
+            "type": "array", "description": "two to four distinct choices",
+            "items": {"type": "object", "properties": {"label": {"type": "string", "description": "a few words"}, "description": {"type": "string", "description": "one short sentence: what choosing it means"}}, "required": ["label"]},
+        },
+        "recommended": {"type": "integer", "description": "the number (1 to 4) of the option you recommend"},
+    }, ["question", "options"]),
     "propose_local_edits": _object({
         "summary": {"type": "string", "description": "one or two sentences on what the edits do and why"},
         "edits": {
@@ -378,6 +387,12 @@ NATIVE_DESCRIPTIONS: Dict[str, str] = {
         "Hand the person your plan for the change they asked for, instead of editing. It changes nothing: they see the plan as a card and approve it, change a step, or cancel. Call it ONCE, "
         "after reading what you need: the goal, every file the change touches with why (an existing file must exist in the folder, exactly as you read it; mark a file you create with new), "
         "ordered steps that each name their files, behaviour tests written as small specs (setup, call, assertion; a step of the plan writes them), and what you could not tell from reading. If it returns an error, fix what it names and call it again."
+    ),
+    "ask_choice": (
+        "Ask the person to choose between a few concrete approaches. The page shows ONE question with a button for each option (and a box for something else), and the call WAITS for their answer and returns it, so you carry on in this turn with "
+        "everything you have read. Use it when you cannot tell which of several things they mean and reading or searching would not settle it: a design choice, which of two behaviours they want, which of a few files or places is meant. Give two to four "
+        "options with a short label and one sentence saying what choosing it means, and set `recommended` to the number of the one you would pick (it is shown first). One question only; never ask something a search or a read could answer, never "
+        "ask permission to continue, never ask twice for the same thing, and do not add an 'other' option (the card has a box). It returns what they chose or wrote; carry on with it. If no answer comes, say what you were going to ask and stop."
     ),
     "propose_local_edits": (
         "Make a change to the person's connected local folder. It changes nothing by itself: the person sees a diff with an Apply button, which is their confirmation, and can undo it. "

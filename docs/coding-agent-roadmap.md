@@ -2057,3 +2057,15 @@ Jack asked for a small change (show the admin's +25% at the 80% notice line) and
 5. **A cost to remember:** the shared day budget read 94% because the probe and eval scripts used in the voice work were not labelled `eval:`, so the guard counted them (about $4 of today's spend). Label any script that calls a model with `llm_usage.mark_as_eval()` (`backend/utils/llm_usage.py`).
 
 Unmeasured on a live model: items 1 and 2 are unit-tested only.
+
+## 2026-11-08: Sonic can ask you to pick, mid-turn (`ask_choice`, built, unmeasured on a live model)
+
+Jack: "it should work similar to how yours does" (Claude Code's AskUserQuestion). The failure it answers: an open question in the reply ended the turn, the answer started a new turn without the old tool results, and the search began again.
+
+- **What it is.** One tool, `ask_choice`: ONE question, two to four options (label, one-sentence meaning), `recommended` = the option's number (it is moved first and badged). The page shows a card with a button per option and a "Something else" box. The turn WAITS (asyncio.Event, 600 s, heartbeat ticks in the trace, no model calls) and the answer comes back as the tool result, so the loop carries on with everything it had read. Same pattern as `propose_local_edits` + `local_edit_decisions`.
+- **Where.** `backend/services/choice_cards.py` (validation, registry, wait, result text), `agent_workflow.py` (`_ask_choice`, menu line, dispatch, allowed on plan turns), `native_tools.py` (schema + description), `app.py` (`ChatRequest.choice_cards`, SSE `choice_card`, `POST /api/chat/choice/{id}`), `local/src/components/ChoiceCard.tsx` + `choiceCardLogic.ts`, `Chat.tsx`, `api.ts`.
+- **Rules.** Offered only when the page sends `choice_cards: true` (an old page could never answer) and `CHOICE_CARDS` is not off. At most 2 asks a turn (a third is refused with a reason). No "other" option of its own, no duplicate labels, short labels. Only the person it was shown to can answer. No answer in 10 minutes means nothing was decided: the tool result tells Sonic not to guess, to say what it was going to ask, and to stop. Nothing the person wrote is logged (one fixed log line: how a wait ended).
+- **Counters** (Sonic Health data, no card yet): `choice_asked`, `choice_picked`, `choice_other`, `choice_timeout`, `choice_refused`.
+- **Checked.** 24 backend tests (`test_choice_cards.py`) incl. eight mutations each caught; 4 frontend logic tests; the card looked at in the browser pane in light and dark, at phone width (no sideways scroll), open / answered by a tap / answered in words / "no longer waiting".
+- **Not done / not known.** Never run against a real model: whether Haiku or Flash asks at the right moments (or too often) is unknown. The card is not saved with the conversation, so after a reload it is gone (an unanswered one has already timed out by then). A timed-out question answered in the NEXT message is not specially recognised as continuing an edit (`continues_unfinished_edit` does not look for it). Guests can use it (not restricted). No Sonic Health card for the counters.
+
