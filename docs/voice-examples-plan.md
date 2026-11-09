@@ -33,3 +33,13 @@ An example shows that better than a sentence about it.
 1. **Measure**, when evals are allowed: Haiku with the examples against Haiku without and against Flash, on held-out real turns, read blind by Jack. Watch for COPYING (phrases lifted from an example, the same example every time).
 2. The "I'm right here" and "I hear you" rules overshoot outside hurting moments. Tighten them (leave them out of a light or practical reply) and measure it with the examples in place; not changed yet because it could not be measured the same night and the presence scenario expects the line in both turns of a hurting pair.
 3. Reword any example that does not sound like the original voice: they are my rewrites of a pattern, not his.
+
+## Attributing feedback: the reply stamp (2026-11-08)
+
+Jack runs a mix of the standard voice and Haiku and rates turns to keep tuning. A feedback record had no model on it, so a rating could not be traced to a voice, an example or a note. Each streamed reply is now stamped (`backend/utils/reply_stamp.py`): `label` (flash, gpt, haiku, lite or other), `tier` (the tier that actually wrote it, so a Haiku or Lite voice that was not offered counts as standard), `reason` (why the reply tier was chosen), `choice` (the person's setting), and the ids of the voice examples and people notes it was shown (at most two of each). Labels and ids only: no text.
+
+- The stamp is saved with the reply (`_serialize_messages` / `_deserialize_messages`), so it survives a restart.
+- When a reply is rated, `/api/chat/feedback` finds the reply by its text among the person's conversations held in memory (`reply_stamp.find`: most recent first, only the last 80 messages of each, only that person's) and copies the stamp onto the feedback record (`corrections.voice`). A reply written before this, or one no longer in memory, has no stamp: its thumb is counted as "not stamped".
+- Sonic Health, Feedback tab, "By voice": a person's thumbs by voice, by voice example and by people note (the answer checker's redos are left out, because they are not a reading of the voice).
+
+Not done: the stamp is only set on the streamed voice path (every ordinary reply); a reply written another way has none. Feedback given before 2026-11-08 stays unattributed.

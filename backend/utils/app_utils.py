@@ -15,7 +15,7 @@ from backend.services.memory_search import embed_and_store_memory_chunk
 from backend.services.memory_compaction import maybe_trigger_compaction
 from backend.utils.db_utils import get_db, resolve_service_registry_repo
 from backend.utils.embedding_utils import embed_text, cosine_similarity
-from backend.utils import correction_kinds, date_resolve, memory_grounding
+from backend.utils import correction_kinds, date_resolve, memory_grounding, reply_stamp
 from backend.utils.time_utils import SENT_AT_KEY, history_gap_marker
 from fastapi import HTTPException
 import subprocess
@@ -70,6 +70,9 @@ def _serialize_messages(messages: list) -> list:
                 entry["memory_sources"] = additional_kwargs["memory_sources"]      # what the "Source: Memory" citation opens (backend/utils/memory_sources.py)
             if additional_kwargs.get(SENT_AT_KEY):
                 entry[SENT_AT_KEY] = additional_kwargs[SENT_AT_KEY]
+            stamp = reply_stamp.clean(additional_kwargs.get(reply_stamp.KEY))
+            if stamp:
+                entry[reply_stamp.KEY] = stamp      # which voice wrote this reply and which examples and notes it was shown (ids and labels only: backend/utils/reply_stamp.py)
             if additional_kwargs.get("initiated"):
                 # Sonic wrote this on its own when the conversation was opened (backend/utils/initiation.py).
                 entry["initiated"] = True
@@ -202,6 +205,9 @@ def _deserialize_messages(raw_messages: list) -> list:
             extra["kb_images"] = msg["kb_images"]       # so a card made earlier is still known as one after a restart (backend/services/photo_cards.py)
         if msg.get("memory_sources"):
             extra["memory_sources"] = msg["memory_sources"]
+        stamp = reply_stamp.clean(msg.get(reply_stamp.KEY))
+        if stamp:
+            extra[reply_stamp.KEY] = stamp
         # The files this message carried. Messages saved before names were kept have only their photos' references, which carry the file name too.
         names = msg.get("attachment_names") or [a.get("filename") for a in (msg.get("attachments") or []) if isinstance(a, dict) and a.get("filename")]
         if names:
@@ -404,14 +410,16 @@ def format_history_as_text(messages) -> str:
             formatted.append(f"Assistant: {msg.content}")
     return "\n".join(formatted)
 
-def save_correction(username: str, user_prompt: str, bad_response: str, reason: str, tag: str, rating: str = "negative", source: str = "user") -> None:
+def save_correction(username: str, user_prompt: str, bad_response: str, reason: str, tag: str, rating: str = "negative", source: str = "user", voice: Optional[Dict[str, Any]] = None) -> None:
     """Writes a correction/feedback record, shared by the manual feedback endpoint and the
     reward evaluator's self-correction path. The rating is stored as "positive" or "negative"
     (the page sends "like"/"dislike"; see backend/utils/correction_kinds.py) and `source` says who
-    gave it ("user", or "evaluator" for the answer checker) so the Sonic Health page can tell them apart."""
+    gave it ("user", or "evaluator" for the answer checker) so the Sonic Health page can tell them apart. `voice` is the stamp of the reply being rated (which voice wrote it and which examples and notes
+    it was shown: backend/utils/reply_stamp.py), kept so feedback can be counted by voice; ids and labels only."""
     db = get_db()
     if db is None:
         return
+    stamp = reply_stamp.clean(voice)
     db["corrections"].insert_one({
         "id": str(uuid.uuid4()),
         "username": username,
@@ -423,6 +431,7 @@ def save_correction(username: str, user_prompt: str, bad_response: str, reason: 
         "source": source if source in (correction_kinds.USER, correction_kinds.EVALUATOR) else correction_kinds.USER,
         "embedding": embed_text(user_prompt),
         "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        **({reply_stamp.KEY: stamp} if stamp else {}),
     })
 
 

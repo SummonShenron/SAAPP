@@ -1113,6 +1113,13 @@ export interface FeedbackSummary {
     positives_old_rule_misread: number;
   };
   applied: { turns: number; share: number | null };
+  /** People's thumbs by the voice that wrote the reply and by the voice examples and people notes it was shown (ids and labels only). Absent from an older server. */
+  by_voice?: {
+    stamped: number; unstamped: number;
+    labels: { label: string; positive: number; negative: number }[];
+    examples: { id: string; positive: number; negative: number }[];
+    notes: { id: string; positive: number; negative: number }[];
+  };
 }
 
 export interface GraphAffiliateRow {

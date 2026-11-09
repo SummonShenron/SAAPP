@@ -148,6 +148,7 @@ from backend.utils import leanings as leanings_utils
 from backend.utils import people_notes as people_notes_utils
 from backend.utils import voice_examples as voice_examples_utils
 from backend.utils import read_log as read_log_utils
+from backend.utils import reply_stamp
 from backend.utils import character as character_utils
 from backend.utils import experiences as experiences_utils
 from backend.utils import experience_capture
@@ -1708,6 +1709,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     turn_llm = lite_voice
                     prompt = lite_prompt(prompt, lite_voice)
             tally(turn_counts, "reply_tier", tier_reason)
+            written_tier = reply_tier.STANDARD if (turn_llm is response_llm or risk_level != RISK_NONE) else tier         # the tier that actually writes it: a lite or Haiku voice that was not offered falls back to the standard one
             token_stream = turn_llm.astream(prompt)
             async for chunk in token_stream:
                 # Same Stop check as the graph phase above — a user cutting off a response
@@ -1913,6 +1915,12 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 yield f"data: {json.dumps({'event': 'context', **context_view})}\n\n"
             yield f"data: {json.dumps({'event': 'final_generation', 'text': full_response})}\n\n"
             ai_message = stamp(AIMessage(content=full_response))
+            try:
+                ai_message.additional_kwargs[reply_stamp.KEY] = reply_stamp.build(
+                    written_tier, tier_reason, reply_choice, [e["id"] for e in voice_example_entries], [n["id"] for n in people_note_entries],
+                )   # which voice wrote it and what it was shown (ids and labels only), so a thumb can be counted by voice: backend/utils/reply_stamp.py
+            except Exception:
+                logger.warning("[reply_stamp] could not stamp the reply.", exc_info=True)
             if relatable_entry:
                 ai_message.additional_kwargs[RELATABLE_MARK] = True  # the rate limit reads this on later turns
             if encouragement_entry:
@@ -2505,6 +2513,11 @@ async def store_feedback(
 
     username = current_user.get("sub")
 
+    voice = None
+    try:
+        voice = reply_stamp.find(chat_sessions, username, payload.bad_response)      # which voice wrote the rated reply, from the conversation held in memory (None for an older or unloaded one)
+    except Exception:
+        logger.warning("[reply_stamp] could not find the rated reply's stamp.", exc_info=True)
     save_correction(
         username,
         user_prompt=payload.user_prompt,
@@ -2513,6 +2526,7 @@ async def store_feedback(
         tag=payload.tag,
         rating=payload.rating or "negative",   # the page sends "like" or "dislike"; save_correction stores positive or negative
         source="user",
+        voice=voice,
     )
     logger.info(f"[+] Correction stored for {username} (Tag: {payload.tag}).")
     return {"status": "success", "message": "Feedback indexed for dynamic self-correction."}

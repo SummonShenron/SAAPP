@@ -21,7 +21,7 @@ from collections import Counter
 from datetime import timezone
 from typing import Any, Dict, Iterable, List, Optional
 
-from backend.utils import billing_time, correction_kinds
+from backend.utils import billing_time, correction_kinds, reply_stamp
 
 CORRECTIONS_COLLECTION = "corrections"
 GRAPH_EDGES_COLLECTION = "graph_edges"
@@ -55,7 +55,7 @@ def _tag(raw: Any) -> str:
 def fetch_corrections(db: Any) -> List[Dict[str, Any]]:
     """Every feedback record, without its text or its embedding (only whether it has one). Blocking: call off the event loop."""
     pipeline = [{"$project": {
-        "_id": 0, "username": 1, "tag": 1, "rating": 1, "source": 1, "created_at": 1,
+        "_id": 0, "username": 1, "tag": 1, "rating": 1, "source": 1, "created_at": 1, "voice": 1,
         "has_embedding": {"$cond": [{"$isArray": "$embedding"}, True, False]},
     }}]
     return list(db[CORRECTIONS_COLLECTION].aggregate(pipeline))
@@ -73,9 +73,13 @@ def summarize_feedback(rows: Iterable[Dict[str, Any]], applied_turns: int = 0, t
     people = set()
     stored_people = set()
     old_rule_misread = 0
+    voiced = []
+    rows = list(rows)
     for row in rows:
         kind = correction_kinds.polarity(row)
         who = correction_kinds.source(row)
+        if who == correction_kinds.USER:
+            voiced.append({"kind": kind, "voice": row.get("voice")})      # a person's thumb only: the answer checker's redos are not a reading of the voice
         stored[kind] += 1
         stored["with_embedding" if row.get("has_embedding") else "without_embedding"] += 1
         if row.get("username"):
@@ -124,6 +128,8 @@ def summarize_feedback(rows: Iterable[Dict[str, Any]], applied_turns: int = 0, t
             "positives_old_rule_misread": old_rule_misread,
         },
         "applied": {"turns": applied_turns, "share": round(applied_turns / turns_total, 3) if turns_total else None},
+        # People's thumbs by the voice that wrote the reply and by the voice examples and people notes it was shown (backend/utils/reply_stamp.py): all stored feedback, because stamping began recently.
+        "by_voice": reply_stamp.summarize(voiced),
     }
 
 

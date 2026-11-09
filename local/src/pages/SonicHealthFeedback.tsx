@@ -17,6 +17,15 @@ const TAG_LABELS: Record<string, string> = {
   other: 'Other',
 };
 
+const VOICE_LABELS: Record<string, string> = { flash: 'Standard voice (Flash)', haiku: 'Claude Haiku', lite: 'Gemini Lite', gpt: 'GPT', other: 'Other' };
+
+const VoiceTable: React.FC<{ rows: { id?: string; label?: string; positive: number; negative: number }[]; first: string; name: (row: { id?: string; label?: string }) => string }> = ({ rows, first, name }) => (
+  <table className="sh-table sh-table-tight">
+    <thead><tr><th>{first}</th><th>Up</th><th>Down</th></tr></thead>
+    <tbody>{rows.map(row => <tr key={row.id ?? row.label}><td>{name(row)}</td><td>{row.positive}</td><td className={row.negative > row.positive ? 'sh-err' : undefined}>{row.negative}</td></tr>)}</tbody>
+  </table>
+);
+
 export const FeedbackTab: React.FC<{ feedback: FeedbackSummary | null | undefined }> = ({ feedback }) => {
   if (!feedback) return <div className="sh-hint">Feedback could not be read just now.</div>;
   const { period, stored, applied, by_tag: byTag, daily } = feedback;
@@ -64,6 +73,34 @@ export const FeedbackTab: React.FC<{ feedback: FeedbackSummary | null | undefine
           </div>
         )}
       </section>
+
+      {feedback.by_voice && (
+        <section className="service-card sh-card">
+          <h2>By voice</h2>
+          <div className="sh-hint">
+            Each reply is stamped with the voice that wrote it and the voice examples and people notes it was shown (labels and ids only, no text), and a thumb you give is counted against that stamp. Thumbs on
+            replies written before stamping began have no stamp and are only counted here as "not stamped".
+          </div>
+          <div className="sh-stat-grid">
+            <StatTile value={feedback.by_voice.stamped} label="thumbs on a stamped reply" />
+            <StatTile value={feedback.by_voice.unstamped} label="thumbs with no stamp (older replies)" />
+          </div>
+          {feedback.by_voice.stamped === 0 ? <div className="sh-hint">No stamped feedback yet. Give a thumb on a new reply and it will show here.</div> : (
+            <div className="sh-two">
+              <div>
+                <h3 className="sh-subhead">By voice</h3>
+                <VoiceTable rows={feedback.by_voice.labels} first="Voice" name={row => VOICE_LABELS[row.label ?? ''] ?? row.label ?? ''} />
+              </div>
+              <div>
+                <h3 className="sh-subhead">By voice example</h3>
+                {feedback.by_voice.examples.length === 0 ? <div className="sh-hint">No example was shown on a rated reply yet.</div> : <VoiceTable rows={feedback.by_voice.examples} first="Example" name={row => row.id ?? ''} />}
+                <h3 className="sh-subhead">By people note</h3>
+                {feedback.by_voice.notes.length === 0 ? <div className="sh-hint">No note was shown on a rated reply yet.</div> : <VoiceTable rows={feedback.by_voice.notes} first="Note" name={row => row.id ?? ''} />}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="service-card sh-card sh-two">
         <div>
