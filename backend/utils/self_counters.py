@@ -125,7 +125,8 @@ BROWSER_KEYS = ("browser_navigate_native", "browser_read_native", "browser_click
 MONGO_KEYS = ("run_mongo_query_native",)
 # Sonic's own knowledge base (backend/utils/knowledge_base.py), counts only: pages proposed and refused, cards approved / rejected / removed, cards pushed out by the ceiling or by age, searches (and the ones
 # that found nothing), and cards returned to the model, which is what eviction reads.
-KB_KEYS = ("kb_proposed", "kb_proposal_refused", "kb_approved", "kb_rejected", "kb_removed", "kb_evicted", "kb_expired", "kb_searches", "kb_search_empty", "kb_card_used")
+KB_KEYS = ("kb_proposed", "kb_proposal_refused", "kb_approved", "kb_rejected", "kb_removed", "kb_evicted", "kb_expired", "kb_searches", "kb_search_empty", "kb_card_used",
+           "kb_candidate_seen", "kb_candidate_repeat", "kb_candidate_skipped", "kb_candidate_learned", "kb_candidate_dismissed")
 # The admin's test runs on the native engine (run_repo_tests, run_snippet): calls made. Counts only: no command, code or result.
 CI_KEYS = ("run_repo_tests_native", "run_snippet_native")
 # Final answers the native loop sent back once, by which check (backend/utils/answer_checks.py): a capability denied while the tool was offered, a diff that no real read backed, code with nothing real read. Counts only.

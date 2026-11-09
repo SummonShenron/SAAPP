@@ -4536,6 +4536,32 @@ async def get_learned_knowledge(admin = Depends(require_global_admin)):
     return await asyncio.to_thread(knowledge_base_utils.admin_view, _admin_db())
 
 
+@app.post("/api/admin/knowledge/candidates/{key}/learn")
+async def learn_knowledge_candidate(key: str, admin = Depends(require_global_admin)):
+    """An admin says Learn on a page Sonic read on its own (backend/utils/kb_candidates.py): the page is fetched and a card written, which then WAITS for approval like any other. 400 with the reason when it cannot be learned."""
+    from backend.models.models import lite_llm as card_llm
+    from backend.services import knowledge_cards
+
+    db = _admin_db()
+    outcome = await knowledge_cards.learn_candidate(db, key, card_llm.ainvoke, admin_name=str(admin.get("sub") or "admin"))
+    if not outcome["ok"]:
+        raise HTTPException(status_code=400, detail=outcome["message"])
+    logger.info("[knowledge base] an admin learned a candidate page.")
+    return await asyncio.to_thread(knowledge_base_utils.admin_view, db)
+
+
+@app.post("/api/admin/knowledge/candidates/{key}/dismiss")
+async def dismiss_knowledge_candidate(key: str, admin = Depends(require_global_admin)):
+    """Turns a candidate page away without fetching it; it is not suggested again for a while."""
+    from backend.utils import kb_candidates
+
+    db = _admin_db()
+    if not await asyncio.to_thread(kb_candidates.dismiss, db, key):
+        raise HTTPException(status_code=404, detail="No such candidate page.")
+    logger.info("[knowledge base] an admin dismissed a candidate page.")
+    return await asyncio.to_thread(knowledge_base_utils.admin_view, db)
+
+
 @app.post("/api/admin/knowledge/{key}/approve")
 async def approve_learned_knowledge(key: str, admin = Depends(require_global_admin)):
     """Approves a waiting card: it is embedded and everyone's Sonic can read it from now on. If the ceiling is reached, the card least worth keeping is evicted to make room."""

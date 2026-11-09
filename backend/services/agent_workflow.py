@@ -115,7 +115,7 @@ from backend.utils.library_allowance import LibraryAllowance
 from backend.utils import memory_sources
 from backend.services import steering
 from backend.services import image_gen, knowledge_cards, library_search, native_loop, ops_incidents, photo_cards
-from backend.utils import knowledge_base
+from backend.utils import kb_candidates, knowledge_base
 from backend.services import native_tools as native_tools_module
 from backend.utils import loop_rhythm
 from backend.utils import diff_review, lesson_proposals, place_questions, project_guidance
@@ -250,6 +250,12 @@ TOOL_AGENT_CAPABILITY_DENIAL_WATCHLIST = [
     (
         re.compile(r'\b(writ(?:e|ing)|edit(?:ing)?|modif(?:y|ying)|chang(?:e|es|ing)|apply|updat(?:e|ing)|files?)\b', re.IGNORECASE),
         "- propose_local_edits —",
+    ),
+    # 2026-11-08, a real coding thread: "I can't open your connected folder in this reply" and "I can't open these files inside this reply", twice, on turns whose menu had read_repo_file, search_literal and
+    # list_repo_tree the whole time (the model had lost its earlier reads, not its tools, and later said so itself). The entry above only guards a change request; this one guards a plain look at the code, and only where the denial is attached to the verb ("I can't open the folder", not "I can only read and search your files").
+    (
+        re.compile(r"\b(?:can'?t|cannot|can not|unable to|not able to|no way to|(?:don'?t|do not) have (?:a way|the ability) to)\s+(?:\w+\s+){0,2}(?:open|read|see|view|look (?:at|into|through)|access|search|browse|check)\b[^.?!]{0,60}\b(?:files?|folders?|repo(?:sitory)?|codebase|source code|your code|the code)\b|\b(?:(?:don'?t|do not) have access to|no access to)\b[^.?!]{0,40}\b(?:files?|folders?|repo(?:sitory)?|codebase|source code|your code|the code)\b", re.IGNORECASE),
+        "- read_repo_file —",
     ),
 ]
 
@@ -3644,6 +3650,18 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         ops_state = {"data_seen": False}
         untrusted_used: set = set()      # names of tools used this turn whose results are text written by someone else (see _UNTRUSTED_CONTENT_TOOLS)
 
+        async def _note_candidate(url: Any, result: Any) -> None:
+            """A public page Sonic just read on its own becomes a CANDIDATE for its knowledge base (backend/utils/kb_candidates.py): only the cleaned address is kept, nothing is fetched or summarised, and an admin
+            decides later. Not for a shared guest identity, not on a turn with any safety concern, and not for a read that failed. Never raises; nothing about the page or the person is logged."""
+            try:
+                if not url or (isinstance(result, str) and result.lstrip().startswith("ERROR")):
+                    return
+                if is_guest_username(username) or effective_risk(state.get("safety_state"), datetime.now(timezone.utc)) != RISK_NONE:
+                    return
+                await asyncio.to_thread(kb_candidates.record, get_db(), url)
+            except Exception:
+                logger.debug("[tool_agent_node] could not note a candidate page.", exc_info=True)
+
         async def _act(decision: dict):
             tool_action = decision.get("tool_action")
             args = decision.get("args") or {}
@@ -3738,7 +3756,9 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                     return WEB_SEARCH_UNAVAILABLE   # every provider is down or resting: say so once, so the model does not retry with reworded queries
                 return [r for r in results if isinstance(r, dict)] if results else []
             if tool_action == "read_url":
-                return await read_url(args.get("url"), _get_browser_session, browser_fallback_lock, _announce_live_view_once)
+                page_text = await read_url(args.get("url"), _get_browser_session, browser_fallback_lock, _announce_live_view_once)
+                await _note_candidate(args.get("url"), page_text)
+                return page_text
             if tool_action in {
                 "browser_navigate", "browser_read_text", "browser_click", "browser_type", "browser_screenshot"
             }:
@@ -3749,6 +3769,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 if tool_action == "browser_navigate":
                     result = await browser_navigate(session, args.get("url"))
                     await _announce_live_view_once(session)
+                    await _note_candidate(args.get("url"), result)
                     return result
                 if tool_action == "browser_read_text":
                     return await browser_read_text(session)

@@ -45,3 +45,30 @@ test('the admin is told that a card is read by everyone before approving, and th
   assert.match(page, /anyone signed in can say "learn this page"/);                    // anyone may ask; the approval buttons are on the admin-only screen
   assert.match(api, /by\?: 'admin' \| 'member';/);
 });
+
+test('pages Sonic read on its own are listed most-read first with Learn and Dismiss, which call the two candidate endpoints and show the server\'s new view', () => {
+  const start = api.indexOf('export function decideCandidate(');
+  const body = api.slice(start, api.indexOf('\n}', start));
+  assert.match(body, /action: 'learn' \| 'dismiss'/);
+  assert.match(body, /`\/api\/admin\/knowledge\/candidates\/\$\{encodeURIComponent\(key\)\}\/\$\{action\}`, 'POST'/);
+  assert.match(api, /decideLearnedCard,\r?\n\s+decideCandidate,/);
+  assert.match(api, /candidates: CandidatePage\[\];/);
+  assert.match(page, /onClick=\{\(\) => decideCandidate\(page\.key, 'learn'\)\}/);
+  assert.match(page, /onClick=\{\(\) => decideCandidate\(page\.key, 'dismiss'\)\}[^]*?do not suggest it again/);
+  assert.match(page, /setData\(await api\.decideCandidate\(key, action\)\)/);
+  assert.match(page, /data\.candidates\.map\(candidate\)/);
+});
+
+test('a candidate shows only an address, a read count and dates, says nothing was fetched yet, and says the card still needs approval', () => {
+  assert.match(page, /read \{page\.seen\} time\{page\.seen === 1 \? '' : 's'\}/);
+  assert.match(page, /Nothing has been fetched or written yet\./);
+  assert.match(page, /the card that comes out still has to be approved below before anyone's Sonic can read it/);
+  assert.match(page, /Could not be learned: \$\{page\.problem\}/);
+  assert.doesNotMatch(page, /page\.(?:user|username|by|question)\b/);                           // never who read it or why
+});
+
+test('a failed Learn shows the reason and reloads, because a page that was already known is gone from the list', () => {
+  const start = page.indexOf('const decideCandidate = async');
+  const body = page.slice(start, page.indexOf('};', start));
+  assert.match(body, /catch \(err\)[^]*?setNotice\(err instanceof Error \? err\.message[^]*?await load\(\)/);
+});

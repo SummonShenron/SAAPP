@@ -531,6 +531,13 @@ def _describe_pending(doc: Dict[str, Any]) -> Dict[str, Any]:
     return {key: doc.get(key) for key in ("url", "domain", "title", "kind", "body", "proposed_at", "by")} | {"key": doc["_id"]}
 
 
+def kb_candidates_list(db, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    """Pages Sonic read on its own and an admin has not yet decided on (backend/utils/kb_candidates.py), most-read first."""
+    from backend.utils import kb_candidates
+
+    return kb_candidates.open_list(db, now)
+
+
 def admin_view(db, now: Optional[datetime] = None) -> Dict[str, Any]:
     now = now or _now()
     prune_pending(db, now)
@@ -548,4 +555,5 @@ def admin_view(db, now: Optional[datetime] = None) -> Dict[str, Any]:
         "expiry_days": dict(EXPIRY_DAYS),
         "worst_case_mb": round(worst_case_bytes() / 1_000_000, 1),
         "never_used": sum(1 for c in live if int((c.get("kb") or {}).get("uses") or 0) == 0),
+        "candidates": kb_candidates_list(db, now),
     }

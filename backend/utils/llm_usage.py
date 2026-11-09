@@ -152,6 +152,31 @@ def mark_as_eval() -> None:
     os.environ[SOURCE_ENV] = "eval"
 
 
+# A script that calls a model and never says so is counted as the app's own spend, and the budget guard cannot tell it from a person's chat: on 2026-11-08 the probe scripts used in the voice work were about $4 of a $4.71
+# day and pushed the shared budget to its 94% notice. The server always has uvicorn loaded and a test run always has pytest loaded; a process with neither that makes a model call without mark_as_eval() is a script, and
+# it is told once, on stderr (a warning, never a change to the label: wrongly calling a real chat an eval would blind the guard, which is the worse mistake).
+_warned_unlabelled_script = False
+
+
+def is_unlabelled_script(source: str, modules: Any) -> bool:
+    """True when a model call is being made by a script that did not mark itself an eval: no eval source set, and neither the server (uvicorn) nor a test run (pytest) is loaded. Pure."""
+    return str(source or "").strip().lower() != "eval" and "uvicorn" not in modules and "pytest" not in modules
+
+
+def _warn_unlabelled_script_once() -> None:
+    global _warned_unlabelled_script
+    if _warned_unlabelled_script or not is_unlabelled_script(os.getenv(SOURCE_ENV, ""), sys.modules):
+        return
+    _warned_unlabelled_script = True
+    message = ("This process is making model calls without llm_usage.mark_as_eval(), so they are counted against the shared day and month budget "
+               "(backend/utils/llm_usage.py). If it is a probe, an eval or any script, call mark_as_eval() before the first model call.")
+    logger.warning("[llm_usage] %s", message)
+    try:
+        print("WARNING: " + message, file=sys.stderr)
+    except Exception:
+        pass
+
+
 def is_eval_label(label: Any) -> bool:
     return str(label or "").startswith(EVAL_PREFIX)
 
@@ -177,6 +202,7 @@ def record(model: str, label: str, usage: Dict[str, int], day: Optional[str] = N
     """Counts one call. Cheap, in memory, and silent on any failure."""
     global _buffered_calls
     try:
+        _warn_unlabelled_script_once()
         from_eval = os.getenv(SOURCE_ENV, "").strip().lower() == "eval"
         label = EVAL_PREFIX + str(label or "unknown") if from_eval and not is_eval_label(label) else label
         turn = llm_turns.current()
