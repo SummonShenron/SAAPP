@@ -146,3 +146,40 @@ def test_the_counter_keys_are_registered_and_the_turn_hands_the_loop_what_it_nee
     assert set(sc.ANSWER_CHECK_KEYS) == {"answer_sent_back_denial", "answer_sent_back_diff", "answer_sent_back_no_read"} and set(sc.ANSWER_CHECK_KEYS) <= sc.KEYS
     source = open(aw.__file__, encoding="utf-8").read()
     assert 'capability_denial_watchlist=kwargs.get("capability_denial_watchlist"), conversation_text=kwargs.get("conversation_text") or ""' in source
+
+
+# ---- "I can't open your files" on a turn that had the read tools (2026-11-08: twice in one thread, the wording below is paraphrased) -----------------------------------------------------------------
+
+LOOK_DENIALS = (
+    "I can't open your connected folder in this reply, so I haven't looked at anything yet.",
+    "Sorry, I can't open these files inside this reply. Paste the code around line 640.",
+    "I cannot read the repository from here.",
+    "I'm not able to look at your code right now.",
+    "I don't have access to your files in this chat.",
+    "I can't actually search the codebase this turn.",
+)
+NOT_DENIALS = (
+    DENIAL,                                                              # "only able to read and search your files, I cannot write": it affirms reading
+    "I can't read what she wrote unless you share it with me.",          # not a file
+    "I can't see output from a run in this reply, so I won't report a result.",
+    "I looked in the folder and found three files; I read backend/app.py.",
+    "I can edit files here, and I can read them too.",
+)
+
+
+def test_a_denial_of_looking_at_the_code_is_found_when_a_read_tool_is_offered_and_only_then():
+    for text in LOOK_DENIALS:
+        assert ac.denied_capability(text, {"read_repo_file", "search_literal"}, WATCHLIST) == "read_repo_file", text
+        assert ac.denied_capability(text, {"search_literal"}, WATCHLIST) is None, text                     # no read tool offered: the denial may be true
+    for text in NOT_DENIALS:
+        assert ac.denied_capability(text, {"read_repo_file", "search_literal"}, WATCHLIST) in (None, "propose_local_edits"), text
+        assert ac.denied_capability(text, {"read_repo_file"}, WATCHLIST) is None, text
+
+
+def test_such_a_denial_in_the_loop_is_sent_back_once_naming_the_tool_then_the_next_answer_stands():
+    llm = ToolLLM(answers(LOOK_DENIALS[0]), answers("Here is what I found after reading the file."))
+    result = go(llm, READ_TOOLS)
+    assert len(llm.calls) == 2 and result["final_answer"].startswith("Here is what I found")
+    assert any("'read_repo_file' is among your tools" in text for text in notices(llm))
+    again = ToolLLM(answers(LOOK_DENIALS[0]), answers(LOOK_DENIALS[0]))
+    assert len(again.calls) == 0 and go(again, READ_TOOLS)["final_answer"] == LOOK_DENIALS[0] and len(again.calls) == 2      # once only, then it stands

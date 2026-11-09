@@ -1487,9 +1487,21 @@ export interface PendingCard {
   by?: 'admin' | 'member';
 }
 
+/** A page Sonic read on its own that an admin has not decided on (backend/utils/kb_candidates.py): its address, how many times it was read, and why learning it failed, if it did. Never who read it. */
+export interface CandidatePage {
+  key: string;
+  url: string;
+  domain: string;
+  seen: number;
+  first_seen: string | null;
+  last_seen: string | null;
+  problem?: string | null;
+}
+
 export interface LearnedKnowledge {
   live: LearnedCard[];
   pending: PendingCard[];
+  candidates: CandidatePage[];
   tombstones: number;
   max_cards: number;
   proposals_left_today: number;
@@ -1506,6 +1518,11 @@ export function getLearnedKnowledge(): Promise<LearnedKnowledge> {
 
 export function decideLearnedCard(key: string, action: 'approve' | 'reject' | 'remove'): Promise<LearnedKnowledge> {
   return adminRequest(`/api/admin/knowledge/${encodeURIComponent(key)}/${action}`, 'POST');
+}
+
+/** Learn runs the proposal on a page Sonic read (the card then WAITS for approval like any other); dismiss turns it away without fetching it. A page that cannot be learned is a 400 whose message says why. */
+export function decideCandidate(key: string, action: 'learn' | 'dismiss'): Promise<LearnedKnowledge> {
+  return adminRequest(`/api/admin/knowledge/candidates/${encodeURIComponent(key)}/${action}`, 'POST');
 }
 
 export interface OpsSuggestion {
@@ -2819,6 +2836,7 @@ export const api = {
   refreshReadingShelf,
   getLearnedKnowledge,
   decideLearnedCard,
+  decideCandidate,
   writeShelfReflections,
   decideShelfReflection,
   getOpsSuggestions,

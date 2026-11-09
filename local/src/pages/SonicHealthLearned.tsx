@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { api, type LearnedCard, type LearnedKnowledge, type PendingCard } from '../api';
+import { api, type CandidatePage, type LearnedCard, type LearnedKnowledge, type PendingCard } from '../api';
 import { shortDate } from './sonicHealthFormat';
 
 /**
@@ -36,6 +36,20 @@ export const LearnedTab: React.FC = () => {
     }
   };
 
+  const decideCandidate = async (key: string, action: 'learn' | 'dismiss') => {
+    setBusyKey(key);
+    setNotice('');
+    try {
+      setData(await api.decideCandidate(key, action));
+      if (action === 'learn') setNotice('The card was written and is now under Waiting for approval. Check it against the page before you approve it.');
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Could not save that.');
+      await load();                       // a page that turned out to be known already is gone from the list; one that would not read now shows why
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
   if (error) return <div className="error-message" role="alert">{error}</div>;
   if (!data) return <div className="empty-manifest-notice">Loading...</div>;
 
@@ -56,6 +70,25 @@ export const LearnedTab: React.FC = () => {
           {busyKey === card.key ? 'Working...' : 'Approve'}
         </button>
         <button type="button" className="delete-row-btn" disabled={busyKey === card.key} onClick={() => decide(card.key, 'reject')}>Reject (never propose this page again)</button>
+      </div>
+    </div>
+  );
+
+  const candidate = (page: CandidatePage) => (
+    <div key={page.key} className="sh-row">
+      <div className="sh-row-title">
+        <a href={page.url} target="_blank" rel="noopener noreferrer">{page.url}</a>
+        <span className="sh-pill">read {page.seen} time{page.seen === 1 ? '' : 's'}</span>
+      </div>
+      <div className="sh-row-meta">
+        {page.domain}. First read {shortDate(page.first_seen)}, last {shortDate(page.last_seen)}.
+        {page.problem ? ` Could not be learned: ${page.problem}.` : ' Nothing has been fetched or written yet.'}
+      </div>
+      <div className="sh-row-buttons">
+        <button type="button" className="sh-btn sh-btn-primary" disabled={busyKey === page.key} onClick={() => decideCandidate(page.key, 'learn')}>
+          {busyKey === page.key ? 'Reading the page...' : 'Learn this page'}
+        </button>
+        <button type="button" className="delete-row-btn" disabled={busyKey === page.key} onClick={() => decideCandidate(page.key, 'dismiss')}>Dismiss (do not suggest it again)</button>
       </div>
     </div>
   );
@@ -82,7 +115,7 @@ export const LearnedTab: React.FC = () => {
 
   return (
     <section className="service-card sh-card">
-      <div className="card-badge">{data.pending.length} WAITING · {data.live.length} LEARNED</div>
+      <div className="card-badge">{data.candidates.length} TO CONSIDER · {data.pending.length} WAITING · {data.live.length} LEARNED</div>
       <h2>Learned knowledge</h2>
       <p className="card-description">
         Short cards Sonic wrote from public pages that someone asked it to learn (anyone signed in can say "learn this page" with an address in a chat). A card waits here until an admin approves it;
@@ -96,6 +129,17 @@ export const LearnedTab: React.FC = () => {
         </span>
       </div>
       {notice && <div className="sh-notice" role="status">{notice}</div>}
+
+      <div className="sh-group">
+        <h3>Pages Sonic read on its own</h3>
+        <p className="card-description">
+          Public pages Sonic read while answering, most-read first (a page it keeps going back to is something it does not know). Only the address is kept here: nothing is fetched or written until you say Learn,
+          and the card that comes out still has to be approved below before anyone's Sonic can read it.
+        </p>
+        {data.candidates.length === 0
+          ? <div className="empty-manifest-notice">No pages to consider yet. They appear here when Sonic reads a public page in a chat.</div>
+          : data.candidates.map(candidate)}
+      </div>
 
       <div className="sh-group">
         <h3>Waiting for approval</h3>

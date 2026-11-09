@@ -1110,9 +1110,29 @@ def _is_human(message) -> bool:
     return getattr(message, "type", "") == "human"
 
 
+# "can you help me add some code to cope?" (2026-11-08, said right after "it just breaks my heart"): an edit verb and the bare word "code", but the person is asking for help with a feeling, not for a change to a file. It was
+# read as an edit request, so the turn searched the repo for four steps, asked a stronger model, and answered with "nothing has changed". The rule is narrow on purpose: the ask must be to cope / feel better / get through
+# something personal, AND the only thing "code-shaped" in the message must be the bare word "code" (nothing named: no file, no screen element). "add a retry to the upload code so it can cope with
+# timeouts" and "add a journal page so I can cope" name a target or a technical object, so they stay edit requests.
+_COPING_ASK_RE = re.compile(
+    r"\b(?:to|help me|so (?:that )?i can|so i could)\s+(?:feel better|get through|calm down|calm myself|stop crying|sleep|deal with (?:this|it|that|the (?:pain|grief|loss|hurt)|my (?:feelings|emotions|grief|pain|anxiety)))\b"
+    r"|\bcope(?!\s+with\s+(?!it\b|this\b|that\b|my\b|the (?:pain|grief|loss|hurt)\b))\b",
+    re.IGNORECASE,
+)
+_BARE_CODE_WORDS = frozenset({"code"})                     # the only generic word in _CODE_TARGET_RE that names nothing in particular
+
+
+def _only_bare_code_target(text: str) -> bool:
+    """True when every code-shaped thing in `text` is a bare, unnamed word like "code": no file name, component, page, button, setting or other named target. Pure."""
+    found = [m.group(0).strip().lower() for m in _CODE_TARGET_RE.finditer(text)]
+    return bool(found) and all(word in _BARE_CODE_WORDS for word in found)
+
+
 def _is_explicit_edit(text: str) -> bool:
-    """An edit verb plus something code-shaped to act on."""
-    return bool(_EDIT_VERB_RE.search(text) and _CODE_TARGET_RE.search(text))
+    """An edit verb plus something code-shaped to act on. Not a request for help with a feeling that happens to say "some code" (see _COPING_ASK_RE)."""
+    if not (_EDIT_VERB_RE.search(text) and _CODE_TARGET_RE.search(text)):
+        return False
+    return not (_COPING_ASK_RE.search(text) and _only_bare_code_target(text))
 
 
 # A bare yes ("yes", "yes please.", "finish it!!!", "keep going") answers whatever Sonic offered last. In a coding thread that is usually "should I apply this edit?", and a yes to it was not read as an

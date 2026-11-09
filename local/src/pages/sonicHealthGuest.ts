@@ -86,8 +86,13 @@ export const welcomeTotal = (totals: Totals): number => welcomeRows(totals).redu
 
 
 // ---- Sonic's own knowledge base (backend/utils/knowledge_base.py) -------------------------------------------------------------------------------------------------------------------
-/** Every knowledge-base counter the server records (self_counters.KB_KEYS), in the order a card's life runs: proposed, approved or turned away, searched, used, pushed out. */
+/** Every knowledge-base counter the server records (self_counters.KB_KEYS), in the order a card's life runs: a page noted as a candidate, learned or dismissed, proposed, approved or turned away, searched, used, pushed out. */
 export const KB_ROWS: ReadonlyArray<readonly [string, string]> = [
+  ['kb_candidate_seen', 'Pages Sonic read on its own and noted as candidates (new)'],
+  ['kb_candidate_repeat', 'Candidate pages read again'],
+  ['kb_candidate_skipped', 'Pages read but not kept as candidates (not public, already known or turned away)'],
+  ['kb_candidate_learned', 'Candidates an admin said Learn on (a card then waits for approval)'],
+  ['kb_candidate_dismissed', 'Candidates an admin dismissed'],
   ['kb_proposed', 'Pages Sonic wrote a card from (waiting for approval)'],
   ['kb_proposal_refused', 'Pages not proposed (a rule, the daily limit, an unreadable page or a card that failed its checks)'],
   ['kb_approved', 'Cards approved: now readable by everyone'],

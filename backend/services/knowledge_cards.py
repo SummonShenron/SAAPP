@@ -17,6 +17,7 @@ import logging
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Optional
 
+from backend.utils import kb_candidates
 from backend.utils import knowledge_base as kb
 from backend.utils import reading_shelf as shelf
 
@@ -96,3 +97,39 @@ async def propose_for_agent(
     except Exception:
         logger.warning("[knowledge base] a proposal failed.", exc_info=True)
         return "ERROR: the page could not be proposed right now; nothing was saved."
+
+
+# A refusal that means the page is not a candidate any more (it is in the base, waiting, or was turned away) rather than "try again later".
+_FINAL_REFUSALS = ("already in the knowledge base", "already waiting", "turned that page away", "the same text is already")
+
+
+async def learn_candidate(
+    db: Any,
+    key: Any,
+    invoke: Callable[[str], Awaitable[Any]],
+    *,
+    admin_name: str = "admin",
+    fetch: Callable[[str], Any] = default_fetch,
+    now: Optional[datetime] = None,
+) -> dict:
+    """An admin says Learn on a candidate page (backend/utils/kb_candidates.py): the same proposal as `propose_kb_entry` (one safe fetch, a card written and checked), as an admin, so it lands PENDING and
+    needs the second approval before anyone can read it. Returns {"ok": bool, "message": str}. On success the candidate is removed; when the page is already known or was turned away it is removed too; when the page would
+    not read or the card failed its checks it stays, with the reason, so the admin can see why or dismiss it. Never raises."""
+    try:
+        candidate = await asyncio.to_thread(kb_candidates.get, db, key) if db is not None else None
+        if candidate is None:
+            return {"ok": False, "message": "No such candidate page."}
+        result = await propose_for_agent(db, candidate["url"], invoke, fetch=fetch, now=now, who=admin_name, admin=True)
+        if result.startswith("PROPOSED"):
+            await asyncio.to_thread(kb_candidates.forget, db, candidate["_id"])
+            kb.count("kb_candidate_learned")
+            return {"ok": True, "message": "The card is waiting for your approval under Waiting for approval."}
+        reason = result.replace("ERROR: that page was not proposed: ", "").replace("ERROR: ", "").strip().rstrip(".")
+        if any(marker in reason for marker in _FINAL_REFUSALS):
+            await asyncio.to_thread(kb_candidates.forget, db, candidate["_id"])
+        else:
+            await asyncio.to_thread(kb_candidates.note_problem, db, candidate["_id"], reason)
+        return {"ok": False, "message": f"Not learned: {reason}."}
+    except Exception:
+        logger.warning("[knowledge base] learning a candidate failed.", exc_info=True)
+        return {"ok": False, "message": "Could not learn that page right now; nothing was saved."}

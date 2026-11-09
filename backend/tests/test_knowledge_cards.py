@@ -227,7 +227,7 @@ def test_every_knowledge_base_counter_is_recorded_by_the_code_not_just_named():
 
     sources = "".join(
         pathlib.Path(__file__).resolve().parents[1].joinpath(*parts).read_text(encoding="utf-8")
-        for parts in (("utils", "knowledge_base.py"), ("services", "knowledge_cards.py"))
+        for parts in (("utils", "knowledge_base.py"), ("services", "knowledge_cards.py"), ("utils", "kb_candidates.py"))
     )
     from backend.utils import self_counters
 
