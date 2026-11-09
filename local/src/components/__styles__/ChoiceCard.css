@@ -1,0 +1,79 @@
+/* The card for a question from Sonic with a few options (ChoiceCard.tsx). Same look as the check and edit cards beside it. */
+.chc-card {
+  margin: 0.5rem 0;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 25%, transparent);
+  border-left: 4px solid var(--accent-primary);
+  border-radius: 10px;
+  padding: 0.7rem 0.8rem;
+  background: color-mix(in srgb, var(--card-bg) 96%, transparent);
+  color: var(--text-main);
+  font-size: 0.88rem;
+}
+
+.chc-card[data-state="answered"] { border-left-color: var(--accent-success); }
+.chc-card[data-state="expired"] { border-left-color: color-mix(in srgb, var(--text-muted) 45%, transparent); }
+
+.chc-question { font-weight: 600; margin-bottom: 0.55rem; overflow-wrap: anywhere; }
+
+.chc-options { display: flex; flex-direction: column; gap: 0.45rem; }
+
+.chc-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 35%, transparent);
+  background: transparent;
+  color: var(--text-main);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chc-option:hover:not(:disabled) { border-color: var(--accent-primary); background: color-mix(in srgb, var(--accent-primary) 8%, transparent); }
+.chc-option:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
+.chc-option[data-recommended="true"] { border-color: color-mix(in srgb, var(--accent-primary) 55%, transparent); }
+.chc-option[data-chosen="true"] { border-color: var(--accent-success); background: color-mix(in srgb, var(--accent-success) 10%, transparent); }
+.chc-option:disabled { cursor: default; opacity: 0.7; }
+.chc-option[data-chosen="true"]:disabled { opacity: 1; }
+
+.chc-label { font-weight: 600; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; overflow-wrap: anywhere; }
+.chc-badge {
+  font-weight: 500;
+  font-size: 0.7rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  color: var(--accent-primary);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 55%, transparent);
+}
+.chc-description { color: var(--text-muted); font-size: 0.8rem; overflow-wrap: anywhere; }
+
+.chc-other { display: flex; gap: 0.5rem; margin-top: 0.55rem; }
+.chc-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 40%, transparent);
+  background: transparent;
+  color: var(--text-main);
+  font: inherit;
+}
+.chc-input:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 1px; }
+.chc-send {
+  padding: 0.4rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 40%, transparent);
+  background: transparent;
+  color: var(--text-main);
+  font: inherit;
+  cursor: pointer;
+}
+.chc-send:disabled { opacity: 0.55; cursor: default; }
+
+.chc-status { margin-top: 0.5rem; color: var(--text-muted); font-size: 0.82rem; }
+.chc-answered { color: var(--text-main); font-weight: 600; }
+.chc-error { color: var(--accent-danger); }

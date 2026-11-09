@@ -76,6 +76,7 @@ class GraphState(TypedDict):
     code_followup: Optional[str]                  # "redo" | "followed" when this message follows a coding reply of Sonic's, else None (backend/utils/code_outcomes.py): the cue for proposing a lesson (backend/utils/lesson_proposals.py)
     folder_in_browser: Optional[bool]             # this browser holds the connected folder and may write to it; False on a phone or a second browser, where an edit could not be applied (app.py sets it every turn)
     demo_project: Optional[bool]                  # the shared guest's turn started from a demo card, so the folder tools work on the server's demo project (backend/utils/demo_project.py); set fresh each turn
+    choice_cards: Optional[bool]                  # the page can show a choice card and report the answer (POST /api/chat/choice/{id}), so the ask_choice tool may be offered (backend/services/choice_cards.py)
     runner_cards: Optional[bool]                # the page can show a local-runner check card (Run / Cancel), so the run_local_check tool may be offered (backend/utils/runner_jobs.py)
     tool_model: Optional[str]                     # "claude" | "sonnet" | "gpt" | "gemini": the person's choice for the tool agent's reasoning steps; None = the server's default
     execute_model: Optional[str]                  # "claude" | "sonnet" | "gpt" | "gemini": the person's choice for the model that carries out an approved plan; None = the same as their Code model

@@ -436,7 +436,8 @@ def test_the_switch_turns_the_feature_off(monkeypatch):
 def test_a_plan_turn_offers_only_read_tools_and_the_plan_tool():
     from backend.services import agent_workflow as aw
 
-    assert aw._PLAN_TURN_TOOLS == {"read_repo_file", "find_file", "search_literal", "list_repo_tree", "submit_plan"}
+    # ask_choice is read-only in effect (it changes nothing, it shows a question and waits for the answer), and a plan is where the clarity is needed (backend/services/choice_cards.py)
+    assert aw._PLAN_TURN_TOOLS == {"read_repo_file", "find_file", "search_literal", "list_repo_tree", "submit_plan", "ask_choice"}
     assert not {"propose_local_edits", "run_sandbox_tests", "propose_commit", "propose_merge", "run_python", "web_search"} & aw._PLAN_TURN_TOOLS
     assert aw._PLAN_REQUIRED_ACTION["tool_action"] == "submit_plan"
 

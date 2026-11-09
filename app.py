@@ -171,6 +171,7 @@ from backend.utils import duration_utils
 from backend.utils import curiosity as curiosity_utils
 from backend.utils import paperwork_utils
 from backend.utils import profile_utils
+from backend.services import choice_cards
 from backend.services import local_edit_decisions
 from backend.utils import reading_shelf as shelf_utils
 from backend.utils import knowledge_base as knowledge_base_utils
@@ -414,6 +415,7 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
     git_branch: str | None = None   # the git branch the connected folder is on, read by the browser from .git/HEAD (None when unknown or detached)
     edit_decisions: bool = False    # the page reports Apply / Decline back (POST /api/local-edits/{id}/decision), so the tool loop may wait for it and carry on
+    choice_cards: bool = False      # the page can show a choice card (one question, a few options) and report the answer (POST /api/chat/choice/{id}), so the tool loop may ask and wait (backend/services/choice_cards.py)
     runner_cards: bool = False      # the page can show a local-runner check card (Run / Cancel), so the run_local_check tool may be offered (backend/utils/runner_jobs.py)
     reply_model: Optional[str] = None        # the shared guest's base-model choice ("gemini", "lite" or "auto"), kept in their browser because the guests share one settings record; honoured for the guest only (backend/utils/user_settings_utils.py reply_choice_for_turn)
     demo_project: Optional[bool] = None      # the shared guest chose a demo card, so this turn works on the server's demo project (backend/utils/demo_project.py); ignored for anyone else
@@ -929,6 +931,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         "edit_decisions": bool(request.edit_decisions),
         "code_followup": code_followup,
         "runner_cards": bool(request.runner_cards),
+        "choice_cards": bool(request.choice_cards),
         "demo_project": demo_turn,
         "folder_in_browser": request.folder_expected is not False,       # False: this browser (a phone, a second browser) holds no folder, so no edit can be applied from here
         "git_branch": (request.git_branch or "").strip()[:100] or None,
@@ -1137,6 +1140,11 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     # Plan first was on and this change request still could not be a plan turn: one line under the reply, saying why (the same "noted" line the page already shows).
                     if kind == "on_custom_event" and event.get("name") == "plan_skipped":
                         yield f"data: {json.dumps({'event': 'noted', 'text': str(event.get('data', {}).get('text', ''))})}\n\n"
+                        await asyncio.sleep(0.01)
+
+                    # One question with a few options (backend/services/choice_cards.py): the page shows a card, and the answer goes back to the loop that is waiting for it.
+                    if kind == "on_custom_event" and event.get("name") == "choice_card":
+                        yield f"data: {json.dumps({'event': 'choice_card', **event.get('data', {})})}\n\n"
                         await asyncio.sleep(0.01)
 
                     # A check Sonic asks to run on the person's own machine (backend/utils/runner_jobs.py): the page shows a card with the exact command and Run / Cancel buttons.
@@ -2501,6 +2509,18 @@ async def remove_conversation(session_id: str, current_user = Depends(get_curren
     await asyncio.to_thread(conversation_summary_utils.clear, get_db(), username, session_id)
     await asyncio.to_thread(read_log_utils.clear, get_db(), username, session_id)
     return {"status": "deleted", "session_id": session_id}
+
+class ChoiceAnswer(BaseModel):
+    index: Optional[int] = None      # the option chosen (0 is the first card button), or
+    other: Optional[str] = None      # the person's own words
+
+
+@app.post("/api/chat/choice/{choice_id}")
+async def answer_choice(choice_id: str, payload: ChoiceAnswer, current_user = Depends(get_current_user)):
+    """The person's answer to a choice card, reported to the tool loop that is waiting on it (backend/services/choice_cards.py). "no_waiter" means nobody is waiting (the turn ended or timed out)."""
+    status = choice_cards.answer(current_user.get("sub"), choice_id.strip(), payload.index, payload.other)
+    return {"status": status}
+
 
 @app.post("/api/chat/feedback")
 async def store_feedback(

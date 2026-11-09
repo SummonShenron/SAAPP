@@ -6,6 +6,8 @@ import { useLocalWorkspace } from '../hooks/useLocalWorkspace';
 import { useRunnerPing } from '../hooks/useRunnerPing';
 import LocalEditCard from '../components/LocalEditCard';
 import RunnerCheckCard from '../components/RunnerCheckCard';
+import ChoiceCard from '../components/ChoiceCard';
+import { parseChoiceCard, type ChoiceCardData } from '../components/choiceCardLogic';
 import CommandStepsCard from '../components/CommandStepsCard';
 import type { CommandStep } from '../stepsLogic';
 import ApprovalButtons from '../components/ApprovalButtons';
@@ -96,6 +98,7 @@ interface Message {
   liveBrowserUrl?: string; // view-only browserless.io LiveURL — see browser_live_view handling
   editProposals?: EditProposal[]; // diff cards for edits proposed to the connected local folder: one per proposal, in the order they came (a reply can carry several)
   runnerCheck?: { job: RunnerJob; runner?: { name?: string | null; root_name?: string | null } }; // a check Sonic asked to run on the person's own machine (Run / Cancel card)
+  choiceCard?: ChoiceCardData; // one question from Sonic with a few options (its ask_choice tool): the card answers it straight back to the turn that is waiting
   commandSteps?: { steps: CommandStep[]; runner: { id: string; name?: string | null; root_name?: string | null; project_id?: string | null } }; // a list of steps Sonic proposed, run one click at a time (components/CommandStepsCard.tsx)
   // A message sent while Sonic was already working, meant to change what it does next.
   steer?: 'queued' | 'applied' | 'deferred' | 'dropped';
@@ -407,6 +410,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
                   demoDisabled={!isGuestPrincipal(getEffectivePrincipal()) && !localEditActionsRef.current.canConnect}
                 />
               ))}
+              {msg.choiceCard && <ChoiceCard key={msg.choiceCard.choice_id} card={msg.choiceCard} />}
               {msg.runnerCheck && <RunnerCheckCard key={msg.runnerCheck.job.id} job={msg.runnerCheck.job} runner={msg.runnerCheck.runner} />}
               {msg.commandSteps && <CommandStepsCard key={msg.commandSteps.steps.map(s => s.id).join('-') + msg.id} steps={msg.commandSteps.steps} runner={msg.commandSteps.runner} onTell={putInComposer} />}
               <div className="message-text">
@@ -2006,6 +2010,20 @@ useEffect(() => {
                   }
                   return updated;
                 });
+              }
+              if (payload.event === 'choice_card') {
+                // One question with a few options: a card on the in-progress AI bubble. Sonic's turn is waiting for the answer, which the card sends straight back.
+                const card = parseChoiceCard(payload);
+                if (card) {
+                  setMessages(prev => {
+                    const updated = [...prev];
+                    const lastIndex = updated.length - 1;
+                    if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
+                      updated[lastIndex] = { ...updated[lastIndex], choiceCard: card };
+                    }
+                    return updated;
+                  });
+                }
               }
               if (payload.event === 'command_steps' && Array.isArray(payload.steps) && payload.runner?.id) {
                 // Sonic proposed a short list of steps: one card, a Run button each. Nothing runs until the person presses one.

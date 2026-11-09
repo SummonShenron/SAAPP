@@ -48,6 +48,7 @@ from backend.utils.safety_utils import (
     detect_risk_language, detect_denial, normalize_risk, normalize_support, merge_safety_state, effective_risk, log_safety_event,
     remember_support, is_acknowledgement, RISK_NONE, KIND_LADDER_ANSWER, _ORDER as _RISK_ORDER,
 )
+from backend.services import choice_cards
 from backend.services import local_edit_decisions
 from backend.services import sandbox_tests
 from backend.services import commit_flow, git_commit
@@ -314,7 +315,7 @@ _LOCAL_EDIT_REQUIRED_ACTION = {
     ),
 }
 # A plan turn (plan mode, backend/utils/code_plan.py) offers these and nothing else: it reads, then submits the plan. No edit, test run, commit or web tool is among them.
-_PLAN_TURN_TOOLS = frozenset({"read_repo_file", "find_file", "search_literal", "list_repo_tree", "submit_plan"})
+_PLAN_TURN_TOOLS = frozenset({"read_repo_file", "find_file", "search_literal", "list_repo_tree", "submit_plan", "ask_choice"})
 _PLAN_REQUIRED_ACTION = {
     "tool_action": "submit_plan",
     "nudge_after_step": 2,
@@ -3165,6 +3166,12 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 "- submit_plan — args: goal, files (a list of {\"path\", \"why\", \"new\": true only for a file the change creates}), steps (a list of {\"text\", \"files\"}), tests, unknowns. "
                 "Hands the person your plan for the change instead of editing; call it once, after reading what you need."
             )
+        if state.get("choice_cards") and choice_cards.enabled():
+            # The page can show a choice card and report the answer (backend/services/choice_cards.py), so a question with a few concrete answers can be a tap, inside this turn, with everything read so far still in hand.
+            menu_lines.append(
+                "- ask_choice — args: question, options (two to four of {\"label\", \"description\"}), recommended (the number of the option you recommend). Shows the person ONE question as a card with a button per option and "
+                "WAITS for their answer; use it only when you cannot tell which of a few concrete things they mean and reading would not settle it, and never for something you can look up."
+            )
         if not can_apply_here:
             menu_lines = [line for line in menu_lines if not line.startswith(_NEEDS_THIS_BROWSERS_FOLDER)]
         elif demo_turn:
@@ -3277,6 +3284,36 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             finally:
                 local_edit_decisions.forget(proposal_id)
             return await _decision_result(shown, result, decision)
+
+        choice_asks = {"n": 0}
+
+        async def _ask_choice(args: dict) -> str:
+            """Shows the person one question with a few options and WAITS for their answer, returning it to the loop (backend/services/choice_cards.py). Counts only: nothing of the question or the answer is logged."""
+            from backend.utils.self_counters import record_turn_counts
+
+            if not (state.get("choice_cards") and choice_cards.enabled()):
+                return "ERROR: this page cannot show a choice, so ask your question in plain words in your answer instead."
+            if choice_asks["n"] >= choice_cards.MAX_ASKS_PER_TURN:
+                await asyncio.to_thread(record_turn_counts, {"choice_refused": 1})
+                return f"ERROR: you have already asked {choice_cards.MAX_ASKS_PER_TURN} times this turn. Decide with what you know, say what you assumed, and carry on."
+            card, problem = choice_cards.validate_card(args)
+            if card is None:
+                await asyncio.to_thread(record_turn_counts, {"choice_refused": 1})
+                return "ERROR: the question was not shown, because " + problem
+            choice_asks["n"] += 1
+            choice_cards.register(username, card)               # before the card is streamed, so a very quick tap cannot arrive first
+            await safe_emit_event("choice_card", card)
+            await asyncio.to_thread(record_turn_counts, {"choice_asked": 1})
+
+            async def _still_waiting(seconds: int) -> None:
+                await safe_emit_event("trace_detail", {"node": "tool_agent_node", "title": "Waiting for your choice...", "detail": f"{seconds // 60}m {seconds % 60:02d}s so far. Nothing is decided until you answer."})
+
+            try:
+                given = await choice_cards.wait_for(card["choice_id"], on_tick=_still_waiting)
+            finally:
+                choice_cards.forget(card["choice_id"])
+            await asyncio.to_thread(record_turn_counts, {"choice_picked" if given and given["kind"] == "picked" else "choice_other" if given else "choice_timeout": 1})
+            return choice_cards.result_text(card, given)
 
         async def _run_local_check(args: dict) -> str:
             """Asks the person to run one of their own checks on their machine, waits for their answer and the run, and returns the real result (backend/utils/runner_jobs.py). The card is streamed to
@@ -3631,6 +3668,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                     f"see the user's connected local folder — use search_literal (exact text or "
                     f"identifier) or find_file (file names) instead."
                 )
+            if tool_action == "ask_choice":
+                return await _ask_choice(args)
             if tool_action == "submit_plan":
                 if plan_phase != code_plan.PLAN_PHASE:
                     return "ERROR: submit_plan is only available when the person asked for a plan first."
