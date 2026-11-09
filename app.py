@@ -2535,7 +2535,9 @@ async def store_feedback(
 
     voice = None
     try:
-        voice = reply_stamp.find(chat_sessions, username, payload.bad_response)      # which voice wrote the rated reply, from the conversation held in memory (None for an older or unloaded one)
+        voice = reply_stamp.find(chat_sessions, username, payload.bad_response)      # which voice wrote the rated reply, from the conversation held in memory ...
+        if voice is None:
+            voice = await asyncio.to_thread(reply_stamp.find_saved, db, username, payload.bad_response)      # ... or, when the server has not loaded it since a restart, from the saved conversation (None for an older, unstamped reply)
     except Exception:
         logger.warning("[reply_stamp] could not find the rated reply's stamp.", exc_info=True)
     save_correction(

@@ -81,6 +81,27 @@ def find(sessions: Dict[str, Any], username: str, text: str) -> Optional[Dict[st
     return None
 
 
+SEARCH_SAVED_CONVERSATIONS = 10
+
+
+def find_saved(db: Any, username: str, text: str) -> Optional[Dict[str, Any]]:
+    """The stamp of the person's most recent saved reply whose text starts the way `text` does, read from their SAVED conversations (their most recently updated few, the last SEARCH_LAST_MESSAGES messages of each),
+    or None. The fallback for `find`: the server holds a conversation in memory only after it has been used since the last restart, and on 2026-11-09 six of Jack's nine thumbs (on replies that were stamped and saved)
+    found nothing there, so the stamp was lost. Blocking (a database read); never raises."""
+    wanted = _head(text)
+    if db is None or not wanted or not username:
+        return None
+    try:
+        rows = db["conversations"].find({"username": username}, {"_id": 0, "updated_at": 1, "messages": {"$slice": -SEARCH_LAST_MESSAGES}}).sort("updated_at", -1).limit(SEARCH_SAVED_CONVERSATIONS)
+        for row in rows:
+            for message in reversed(list(row.get("messages") or [])):
+                if message.get("type") == "ai" and message.get(KEY) and _head(message.get("content")) == wanted:
+                    return clean(message[KEY])
+    except Exception:
+        return None
+    return None
+
+
 def summarize(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     """Counts of a person's thumbs by voice, by example and by note, from feedback rows that carry a stamp (`voice`) and a polarity ("positive" or "negative", already read by correction_kinds). Rows
     without a stamp are only counted. Counts and ids only. Pure."""

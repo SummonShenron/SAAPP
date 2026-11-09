@@ -2385,7 +2385,11 @@ const sendFeedbackPayload = async (
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {})
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        // The same identity headers every other call sends. Without them the server files the thumb under the raw Clerk id instead of the account (2026-11-09: 150 of one person's thumbs sat under
+        // a Clerk id no conversation uses, so no rating could be matched to its reply or its voice).
+        'X-Principal': principal,
+        'x-user-id': principal
       },
       body: JSON.stringify({
         username: principal,

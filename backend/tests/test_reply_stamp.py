@@ -149,3 +149,98 @@ def test_the_app_stamps_every_streamed_reply_with_the_tier_that_actually_wrote_i
     assert "from backend.utils import reply_stamp\n" in source
     page = (ROOT / "local" / "src" / "pages" / "SonicHealthFeedback.tsx").read_text(encoding="utf-8")
     assert "feedback.by_voice" in page and "By voice example" in page and "By people note" in page
+
+
+# ---- the saved-conversation fallback (2026-11-09: six of nine thumbs found no stamp because the server had not loaded the conversation since a restart) -----------------------------------------------------------
+
+class _SavedConversations:
+    """Just what find_saved asks of the database: find(query, projection).sort(...).limit(n) over saved conversations, which keep messages as plain dicts."""
+
+    def __init__(self, docs):
+        self.docs = docs
+        self.calls = []
+
+    def find(self, query, projection=None):
+        self.calls.append((query, projection))
+        rows = [dict(d) for d in self.docs if d.get("username") == query.get("username")]
+        outer = self
+
+        class Cursor:
+            def sort(self, key, direction):
+                rows.sort(key=lambda d: d.get(key, ""), reverse=direction < 0)
+                outer.calls.append(("sort", key, direction))
+                return self
+
+            def limit(self, n):
+                outer.calls.append(("limit", n))
+                del rows[n:]
+                return self
+
+            def __iter__(self):
+                for d in rows:
+                    yield {**d, "messages": d["messages"][projection["messages"]["$slice"]:]}
+
+        return Cursor()
+
+
+class _Db(dict):
+    def __getitem__(self, name):
+        assert name == "conversations"
+        return dict.__getitem__(self, name)
+
+
+def saved(*conversations):
+    return _Db(conversations=_SavedConversations(list(conversations)))
+
+
+def saved_ai(text, stamp=None):
+    return {"type": "ai", "content": text, **({rs.KEY: stamp} if stamp else {})}
+
+
+def test_a_rated_reply_the_server_no_longer_holds_is_found_in_the_saved_conversation_newest_first():
+    other = {**STAMP, "label": "flash", "tier": "standard"}
+    db = saved(
+        {"username": "jack", "updated_at": "2026-11-08", "messages": [saved_ai("That is huge! Nice work.", other)]},
+        {"username": "jack", "updated_at": "2026-11-09", "messages": [saved_ai("older"), saved_ai("That is huge! Nice work.", STAMP)]},
+        {"username": "kim", "updated_at": "2026-11-09", "messages": [saved_ai("Kim's private reply", STAMP)]},
+    )
+    assert rs.find_saved(db, "jack", "  That is   huge!\nNice work. <<<FOLLOW_UP: more>>>") == STAMP         # the newest conversation, spacing and tag ignored
+    assert rs.find_saved(db, "jack", "Kim's private reply") is None                                          # another person's conversation is never read
+    assert rs.find_saved(db, "jack", "never sent") is None and rs.find_saved(db, "jack", "") is None and rs.find_saved(db, "", "x") is None and rs.find_saved(None, "jack", "x") is None
+    assert rs.find_saved(saved({"username": "jack", "updated_at": "1", "messages": [saved_ai("an old unstamped reply")]}), "jack", "an old unstamped reply") is None
+    assert rs.find_saved(saved({"username": "jack", "updated_at": "1", "messages": [{"type": "human", "content": "That is huge!", rs.KEY: STAMP}]}), "jack", "That is huge!") is None   # only a reply
+
+
+def test_the_saved_search_is_bounded_to_the_newest_few_conversations_and_their_last_messages_and_a_stored_junk_stamp_is_dropped():
+    db = saved({"username": "jack", "updated_at": "1", "messages": [saved_ai("x")]})
+    rs.find_saved(db, "jack", "x")
+    query, projection = db["conversations"].calls[0]
+    assert query == {"username": "jack"} and projection["messages"] == {"$slice": -rs.SEARCH_LAST_MESSAGES} and projection["updated_at"] == 1
+    assert ("sort", "updated_at", -1) in db["conversations"].calls and ("limit", rs.SEARCH_SAVED_CONVERSATIONS) in db["conversations"].calls
+    assert rs.find_saved(saved({"username": "jack", "updated_at": "1", "messages": [saved_ai("a reply", {"label": "junk"})]}), "jack", "a reply") is None
+
+
+def test_a_failing_database_never_breaks_the_rating():
+    class Boom:
+        def __getitem__(self, name):
+            raise RuntimeError("down")
+
+    assert rs.find_saved(Boom(), "jack", "a reply") is None
+
+
+def test_the_feedback_endpoint_asks_memory_first_and_the_saved_conversation_second():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    first = source.index("voice = reply_stamp.find(chat_sessions, username, payload.bad_response)")
+    second = source.index("voice = await asyncio.to_thread(reply_stamp.find_saved, db, username, payload.bad_response)")
+    assert first < second < source.index("save_correction(", second) and "if voice is None:" in source[first:second]
+
+
+def test_the_page_sends_its_identity_headers_with_a_thumb_so_the_server_files_it_under_the_account_not_the_clerk_id():
+    """2026-11-09: the feedback call sent only the login token, so get_current_user (which turns a token into the account only when the X-Principal email header is present) saved 150 thumbs under the raw Clerk id,
+    where no conversation, stamp or per-person count could find them."""
+    chat = (ROOT / "local" / "src" / "pages" / "Chat.tsx").read_text(encoding="utf-8")
+    start = chat.index("await fetch(`${BASE_URL}/api/chat/feedback`")
+    headers = chat[start: chat.index("body: JSON.stringify", start)]
+    assert "'X-Principal': principal" in headers and "'x-user-id': principal" in headers and "Authorization: `Bearer ${token}`" in headers
+    auth = (ROOT / "backend" / "auth" / "isolation_auth.py").read_text(encoding="utf-8")
+    assert 'if "@" in normalized_principal:' in auth and 'return {**payload, "sub": verified_email, "email": verified_email}' in auth and "    return payload" in auth     # the header is what maps a token to the account
