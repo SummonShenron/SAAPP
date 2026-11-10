@@ -622,9 +622,9 @@ async def run(
                 elif not can_edit and answer_sent_back.get("no_read", 0) < answer_checks.MAX_SEND_BACKS and answer_checks.code_without_reading(answer, attempts, conversation_text):
                     answer_sent_back["no_read"] = answer_sent_back.get("no_read", 0) + 1
                     notice = answer_checks.NO_READ_NOTICE
-                elif claim_checking and not any(answer_sent_back.get(f"handback_{k}", 0) for k in ("offer", "verify")) and (handed_back := handback_check.kind(
+                elif claim_checking and not any(answer_sent_back.get(f"handback_{k}", 0) for k in ("offer", "verify", "failed")) and (handed_back := handback_check.kind(
                         answer, coding_turn=claim_checking, edited=edited_this_turn(), offered=offered, steps_left=budget - step,
-                        checked=any(str(a.get("action_desc", "")).startswith(("run_local_check(", "run_local_command(", "run_sandbox_tests(")) for a in attempts))):
+                        checked=any(str(a.get("action_desc", "")).startswith(("run_local_check(", "run_local_command(", "run_sandbox_tests(")) for a in attempts), check_failed=handback_check.last_check_failed(attempts))):
                     # The answer ends by offering to carry on, or by telling the person to run it themselves, with steps left and the tools to do it (backend/utils/handback_check.py): sent back once.
                     answer_sent_back[f"handback_{handed_back}"] = 1
                     notice = handback_check.notice(handed_back, budget - step, offered)

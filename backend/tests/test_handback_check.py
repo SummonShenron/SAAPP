@@ -165,7 +165,7 @@ def test_nothing_is_sent_back_when_the_budget_is_used_up(monkeypatch):
 def test_the_keys_are_registered_and_the_trace_note_is_emitted_and_counted_for_a_coding_turn_with_a_folder():
     from backend.utils import self_counters
 
-    assert {"answer_sent_back_handback_offer", "answer_sent_back_handback_verify"} <= set(self_counters.ANSWER_CHECK_KEYS)
+    assert {"answer_sent_back_handback_offer", "answer_sent_back_handback_verify", "answer_sent_back_handback_failed"} <= set(self_counters.ANSWER_CHECK_KEYS)
     assert set(self_counters.VERIFY_KEYS) == {"coding_turns_can_verify", "coding_turns_no_runner"} and set(self_counters.VERIFY_KEYS) <= set(self_counters.KEYS)
     source = (ROOT / "backend" / "services" / "agent_workflow.py").read_text(encoding="utf-8")
     start = source.index("# Whether this coding turn can run checks itself")
@@ -181,3 +181,43 @@ def test_the_module_logs_nothing_and_touches_nothing():
     tree = ast.parse(source)
     assert not [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ("info", "warning", "error", "exception", "debug")]
     assert "get_db" not in source and "open(" not in source
+
+
+# ---- an answer right after a check that failed ---------------------------------------------------------------------------------------------
+
+FAILED = {"action_desc": "run_local_check(check=tests, files=['page.test.mjs'])", "observation": "LOCAL CHECK tests FAILED (exit code 4, 1.6 s).\nOutput: ERROR: not found: page.test.mjs"}
+
+
+def test_the_last_check_failed_only_when_it_is_the_last_thing_the_turn_did():
+    assert hb.last_check_failed([FAILED]) is True
+    assert hb.last_check_failed([{"action_desc": "run_local_command(line=npm test)", "observation": "LOCAL COMMAND npm FAILED (exit code 1, 3 s)."}]) is True
+    assert hb.last_check_failed([{**FAILED, "observation": "LOCAL CHECK tests PASSED (exit code 0, 1 s)."}]) is False
+    assert hb.last_check_failed([{**FAILED, "observation": "LOCAL CHECK tests COULD NOT RUN: the runner went away."}]) is False       # not a failure of the code: another message
+    assert hb.last_check_failed([FAILED, {"action_desc": "read_repo_file(path=a.py)", "observation": "x"}]) is False                  # it read something after: the failure was looked at
+    assert hb.last_check_failed([]) is False and hb.last_check_failed(None) is False
+
+
+def test_an_answer_right_after_a_failed_check_is_a_failed_hand_back_whatever_it_says_and_a_note_names_the_way_out():
+    assert kind("All done, the edits are in.", check_failed=True, checked=True) == "failed"
+    assert kind("All done.", check_failed=True, coding_turn=False) is None and kind("All done.", check_failed=True, steps_left=0) is None
+    note = hb.notice("failed", 17)
+    assert "17 tool steps left" in note and "pytest cannot run a JavaScript test file" in note and "run_local_command" in note and "fix it and run the check again" in note and "Do not hand the person commands" in note
+
+
+def test_a_failed_check_followed_by_an_answer_is_sent_back_once_and_the_retry_stands(monkeypatch):
+    class Act:
+        async def __call__(self, decision):
+            name = decision["tool_action"]
+            if name == "run_local_check":
+                return "LOCAL CHECK tests FAILED (exit code 4, 1.6 s).\nOutput: ERROR: not found"
+            if name == "run_local_command":
+                return "LOCAL COMMAND npm PASSED (exit code 0, 3 s)."
+            return "Proposed 1 change: APPLIED: a.tsx"
+
+    llm = ToolLLM(asks(call("propose_local_edits", {"summary": "s", "edits": []})), asks(call("run_local_check", {"check": "tests", "files": ["page.test.mjs"]})), answers("The check failed because the file was not found."),
+                  asks(call("run_local_command", {"line": "npm test"})), answers("I ran the page tests with npm test: they pass."))
+    recorded = []
+    monkeypatch.setattr("backend.utils.self_counters.record_turn_counts", lambda counts, *a, **k: recorded.append(dict(counts)))
+    result = asyncio.run(nl.run(llm=llm, tools=EDIT_TOOLS + [{"name": "run_local_command", "description": "run a command"}], act=Act(), question="add the badge", max_steps=8))
+    assert result["final_answer"].startswith("I ran the page tests") and sum(c.get("answer_sent_back_handback_failed", 0) for c in recorded) == 1
+    assert any("Your last check FAILED" in t for t in sent_texts(llm))

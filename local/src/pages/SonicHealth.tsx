@@ -212,6 +212,12 @@ export const SonicHealthPage: React.FC = () => {
   const [notice, setNotice] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<OpsSuggestions | null>(null);
   const [suggestionsFailed, setSuggestionsFailed] = useState<boolean>(false);
+  const [learnedWaiting, setLearnedWaiting] = useState<number>(0);
+  useEffect(() => {
+    let cancelled = false;
+    api.getLearnedKnowledge().then((data) => { if (!cancelled) setLearnedWaiting(data.pending.length); }).catch(() => { /* the tab shows its own error */ });
+    return () => { cancelled = true; };
+  }, []);
   const [suggestionBusy, setSuggestionBusy] = useState<string | null>(null);
   const navigate = useNavigate();
   const { tab: tabParam } = useParams();
@@ -355,6 +361,7 @@ export const SonicHealthPage: React.FC = () => {
   const badges: Badges = {};
   if (awaiting.length > 0) badges.observations = { text: String(awaiting.length), tone: 'info' };
   if (suggestionsWaiting > 0) badges.suggestions = { text: String(suggestionsWaiting), tone: 'info' };
+  if (learnedWaiting > 0) badges.learned = { text: String(learnedWaiting), tone: 'info' };
   if (budgetLevel === 'notice') badges.budget = { text: '80%+', tone: 'info' };
   if (budgetLevel === 'throttled' || budgetLevel === 'blocked') badges.budget = { text: budgetLevel === 'blocked' ? 'PAUSED' : 'LOW', tone: 'warn' };
   if (health.safety.last_resort_line > 0) badges.safety = { text: '!', tone: 'warn' };

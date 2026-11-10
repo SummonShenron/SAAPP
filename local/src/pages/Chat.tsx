@@ -1163,6 +1163,18 @@ useEffect(() => {
   }, [attachments]);
 
   const chatWindowRef = useRef<HTMLDivElement>(null);
+  // True while the user is within ~50px of the bottom of the chat window. Status polls must not pull a user who scrolled up back down.
+  const nearBottomRef = useRef(true);
+  useEffect(() => {
+    const win = chatWindowRef.current;
+    if (!win) return;
+    const onScroll = () => {
+      nearBottomRef.current = win.scrollHeight - win.scrollTop - win.clientHeight <= 50;
+    };
+    onScroll();
+    win.addEventListener('scroll', onScroll, { passive: true });
+    return () => win.removeEventListener('scroll', onScroll);
+  }, []);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const prevMessageCountRef = useRef(0);
   const prevLoadingRef = useRef(false);
@@ -1770,9 +1782,12 @@ useEffect(() => {
     // follow restarted from wherever the last one had got to (on a phone, with a long thread, it read as the screen scrolling through the conversation before the answer came). These
     // pins are instant; only a brand-new message scrolls smoothly, once.
     const pinToBottom = (win: HTMLElement) => win.scrollTo({ top: win.scrollHeight, behavior: 'instant' as ScrollBehavior });
-    if (isNewMessage) {
+    // Only the user's own new message pulls the view down. A poll that adds a message (e.g. a pending edit card) must not move the viewport.
+    const newestIsUser = messages[messages.length - 1]?.sender === 'user';
+    if (isNewMessage && newestIsUser) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-    } else if (loading && chatWindowRef.current) {
+    } else if (loading && chatWindowRef.current && nearBottomRef.current) {
+      // Follow a running turn only while the user is already at the bottom; a poll must not move a user who scrolled up.
       pinToBottom(chatWindowRef.current);
     } else if (justFinishedLoading && chatWindowRef.current) {
       // The spinner/loader row between the messages and the bottom anchor unmounts the instant

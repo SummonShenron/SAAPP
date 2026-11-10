@@ -136,6 +136,18 @@ def clean_check_name(name: Any) -> str:
     return text
 
 
+_PYTEST_RE = re.compile(r"\bpytest\b", re.IGNORECASE)
+
+
+def files_the_check_cannot_run(command: Any, paths: List[str]) -> List[str]:
+    """The files a check's command cannot run: pytest runs Python test files (or a folder, which has no dot in its last part), nothing else. 2026-11-09: Sonic asked for the check `tests` (pytest) on a JavaScript test file,
+    the person pressed Run on the card, and pytest answered "not found ... (no match in any of ...)" for a file that was there, which Sonic read as the file not having been saved. Refused here, before any card, with the way
+    out. Only pytest is known; any other command is left alone. Pure."""
+    if not paths or not _PYTEST_RE.search(str(command or "")):
+        return []
+    return [p for p in paths if "." in p.rsplit("/", 1)[-1] and not p.lower().endswith(".py")]
+
+
 def clean_files(files: Any) -> List[str]:
     """The files a check is asked to run on, as plain relative forward-slash paths, or a RunnerError saying what is wrong. Pure."""
     if files in (None, "", []):
@@ -620,6 +632,10 @@ def create_job(db: Any, username: str, runner_id: str, check: Any, files: Any = 
     paths = clean_files(files)
     if paths and "{files}" not in command:
         raise RunnerError("no_placeholder", f"The check {name} does not take files, so it cannot be limited to them.")
+    cannot = files_the_check_cannot_run(command, paths)
+    if cannot:
+        raise RunnerError("wrong_files", f"The check {name} runs pytest, which only runs Python test files, so it cannot run {', '.join(cannot[:3])} (a file that is there would still be reported as not found). "
+                                         "For a test or check in another language use run_local_command with the project's own command (for example its test script, run from the folder that has the package.json), and no card is shown for this one.")
     if db[JOBS].find_one({"runner_id": runner_id, "status": {"$in": list(OPEN_STATES)}}):
         raise RunnerError("busy", "A check is already waiting or running on that runner. Finish or cancel it first.")
     job_id = uuid.uuid4().hex

@@ -136,7 +136,7 @@ CHOICE_KEYS = ("choice_asked", "choice_picked", "choice_other", "choice_timeout"
 PROGRESS_KEYS = ("turn_end_answered", "turn_end_ran_out_progress", "turn_end_ran_out_lost", "turn_end_looped", "last_step_progressing", "last_step_stalled")
 # An answer that handed the next step back (offered to carry on, or told the person to run it themselves) with steps left, and was sent back once to do it (backend/utils/handback_check.py); and, per coding turn
 # with a folder, whether the turn could run checks itself or had no test runner.
-ANSWER_CHECK_KEYS = ("answer_sent_back_denial", "answer_sent_back_diff", "answer_sent_back_no_read", "answer_sent_back_handback_offer", "answer_sent_back_handback_verify")
+ANSWER_CHECK_KEYS = ("answer_sent_back_denial", "answer_sent_back_diff", "answer_sent_back_no_read", "answer_sent_back_handback_offer", "answer_sent_back_handback_verify", "answer_sent_back_handback_failed")
 VERIFY_KEYS = ("coding_turns_can_verify", "coding_turns_no_runner")
 # Plan turns where the model answered with a step left: told once to carry on (free), and the second opinions the next tier up gave when a lite model was stuck (backend/utils/advisor.py), by what it was stuck on (an early answer, a third identical call, no proposal for a change, a reading streak, a check failing twice), and the ones that failed. Counts only.
 ADVISOR_KEYS = ("keep_going_sent_back", "advisor_early_answer", "advisor_repeat", "advisor_no_proposal", "advisor_reading_streak", "advisor_failing_check", "advisor_failed")

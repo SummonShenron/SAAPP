@@ -6,7 +6,8 @@ online in all of them, with a check named `tests` that takes files (so it can be
 
 THE FIX, mechanical (the same shape as the other answer send-backs, backend/utils/answer_checks.py): on a coding turn, an answer whose ENDING
 - OFFERS TO CARRY ON ("Should I read X?", "Want me to update Y?") with something the model can do itself (read, search, update, add, run...), or
-- TELLS THE PERSON TO RUN SOMETHING THEMSELVES ("on your end", "to verify, run pytest ...") after an edit was applied, when the model has a check tool,
+- TELLS THE PERSON TO RUN SOMETHING THEMSELVES ("on your end", "to verify, run pytest ...") after an edit was applied, when the model has a check tool, or
+- ANSWERS RIGHT AFTER A CHECK THAT FAILED (2026-11-09: pytest was asked to run a JavaScript test file, answered "not found", and the turn ended with 17 steps left on a wrong reading of why),
 is sent back ONCE, while a step remains, with the step count and the way to do it: do it now, and if it is a real choice only the person can make, put it with ask_choice instead of asking in the answer. A turn
 that really cannot do the thing (no tool offered) is not sent back for the "run it yourself" kind. Pure: no model call, no I/O.
 
@@ -35,6 +36,18 @@ _HANDOFF_RE = re.compile(
 )
 _COMMANDISH_RE = re.compile(r"\b(?:pytest|npm (?:run )?test|npx tsc|tsc -b|python -m|node --test|the tests?|the type ?check|the checks?)\b", re.IGNORECASE)
 CHECK_TOOLS = ("run_local_check", "run_local_command")
+_CHECK_CALL_PREFIXES = ("run_local_check(", "run_local_command(", "run_sandbox_tests(")
+_FAILED_RE = re.compile(r"^LOCAL (?:CHECK|COMMAND)\b[^\n]*\bFAILED \(exit code", re.IGNORECASE)
+
+
+def last_check_failed(attempts) -> bool:
+    """Whether the most recent thing the turn did was a check that FAILED (a check, a command or sandbox tests whose result says "FAILED (exit code ..."). If it did anything else after the check (read, edited) the
+    check has been dealt with. Pure."""
+    for attempt in reversed(list(attempts or [])):
+        if not str(attempt.get("action_desc", "")).startswith(_CHECK_CALL_PREFIXES):
+            return False
+        return bool(_FAILED_RE.match(str(attempt.get("observation", "")).strip()))
+    return False
 
 
 def tail_of(answer: str) -> str:
@@ -43,11 +56,13 @@ def tail_of(answer: str) -> str:
     return text[-TAIL_CHARS:]
 
 
-def kind(answer: str, *, coding_turn: bool, edited: bool, offered: Iterable[str], steps_left: int, checked: bool = False) -> Optional[str]:
-    """"offer", "verify" or None. `edited` is whether an edit was applied this turn, `checked` whether the turn already ran a check, `offered` the tool names this turn has, `steps_left` the tool steps
-    still available. Pure."""
+def kind(answer: str, *, coding_turn: bool, edited: bool, offered: Iterable[str], steps_left: int, checked: bool = False, check_failed: bool = False) -> Optional[str]:
+    """"failed", "offer", "verify" or None. `edited` is whether an edit was applied this turn, `checked` whether the turn already ran a check, `check_failed` whether the last thing it did was a failed check, `offered`
+    the tool names this turn has, `steps_left` the tool steps still available. Pure."""
     if not coding_turn or steps_left < 1:
         return None
+    if check_failed:
+        return "failed"
     tail = tail_of(answer)
     if not tail:
         return None
@@ -61,6 +76,10 @@ def kind(answer: str, *, coding_turn: bool, edited: bool, offered: Iterable[str]
 def notice(which: str, steps_left: int, offered: Iterable[str] = ()) -> str:
     """The note put in front of the model when its answer is sent back. Pure."""
     left = f"{steps_left} tool step{'s' if steps_left != 1 else ''}"
+    if which == "failed":
+        return (f"Your last check FAILED and you have {left} left, but you answered without dealing with it. Read what it printed. If the command was wrong for what you ran it on (pytest cannot run a JavaScript test file, "
+                "and a check can be reported as not found when it simply cannot run that kind of file: use run_local_command with the project's own command for those), run the right one. If your code is wrong, fix it and run "
+                "the check again. If the failure is not yours or cannot be fixed, say exactly why in your answer. Do not hand the person commands to run.")
     if which == "verify":
         available = set(offered)
         how = ("run_local_check, with `files` set to the test files you changed or added" if "run_local_check" in available else "run_local_command") if available & set(CHECK_TOOLS) else "your check tool"

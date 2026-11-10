@@ -960,3 +960,25 @@ def test_list_command_jobs_leaves_out_jobs_run_on_another_runner_of_the_same_per
     jobs.docs["elsewhere"] = {"_id": "elsewhere", "username": "jack@example.com", "runner_id": other["_id"], "project_id": PA, "kind": rj.KIND_COMMAND, "created_at": later(minutes=2), "status": "done", "command_shown": "pytest -q {files}", "exit_code": 0, "duration": 1, "output_tail": "", "truncated": False}
     rows = rj.list_command_jobs(db, "jack@example.com", runner_id, PA, later(minutes=30))
     assert [row["id"] for row in rows] == ["here"]
+
+
+# ---- a check that runs pytest is not asked to run a file pytest cannot run (2026-11-09: the page's test file, "not found" for a file that was there) ---------------------------------------------------------------------
+
+def test_a_pytest_check_refuses_files_that_are_not_python_before_any_card_exists_and_says_what_to_use_instead():
+    db = FakeDB()
+    record, _ = connected(db)
+    with pytest.raises(rj.RunnerError) as error:
+        rj.create_job(db, "jack@example.com", record["_id"], "tests", ["local/src/pages/page.test.mjs", "tests/test_a.py"], NOW)
+    assert error.value.code == "wrong_files" and "page.test.mjs" in error.value.message and "tests/test_a.py" not in error.value.message
+    assert "run_local_command" in error.value.message and "only runs Python test files" in error.value.message
+    assert db[rj.JOBS].docs == {}                                                                  # no card, so the person is never asked to press Run on a command that cannot work
+
+
+def test_python_files_and_folders_are_still_run_by_a_pytest_check_and_other_commands_are_left_alone(monkeypatch):
+    db = FakeDB()
+    record, _ = connected(db)
+    job = rj.create_job(db, "jack@example.com", record["_id"], "tests", ["tests/test_a.py", "backend/tests", "tests/Test_B.PY"], NOW)
+    assert job["files"] == ["tests/test_a.py", "backend/tests", "tests/Test_B.PY"]
+    assert rj.files_the_check_cannot_run("pytest -q {files}", ["a.py", "docs", "x.mjs", "notes.md"]) == ["x.mjs", "notes.md"]
+    assert rj.files_the_check_cannot_run("C:\proj\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider {files}", ["x.tsx"]) == ["x.tsx"]
+    assert rj.files_the_check_cannot_run("npm test {files}", ["x.mjs"]) == [] and rj.files_the_check_cannot_run("pytest -q", []) == [] and rj.files_the_check_cannot_run(None, ["x.mjs"]) == []
