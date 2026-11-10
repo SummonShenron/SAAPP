@@ -636,7 +636,76 @@ def build_coaching_text(level: str, signals: List[str]) -> str:
     )
 
 
-def build_meeting_text(meeting: Dict[str, Any], notes: List[Dict[str, Any]], prep: Dict[str, Any], tz_name: Optional[str] = None, now: Optional[datetime] = None) -> str:
+def covered_indexes(run: Optional[Dict[str, Any]]) -> List[int]:
+    """The agenda positions (0-based) already covered in this run, in order, without repeats. Pure."""
+    seen: List[int] = []
+    for value in (run or {}).get("covered") or []:
+        try:
+            index = int(value)
+        except (TypeError, ValueError):
+            continue
+        if index not in seen:
+            seen.append(index)
+    return seen
+
+
+def mark_covered(db, username: str, run_id: str, index: int) -> bool:
+    """Records one agenda item as covered in a running meeting, so later prompts do not ask it again. True only when the run is still active."""
+    result = db[RUNS_COLLECTION].update_one({"username": username, "id": run_id, "status": ACTIVE}, {"$addToSet": {"covered": int(index)}})
+    return getattr(result, "matched_count", 0) > 0
+
+
+_REPLY_STOPWORDS = frozenset("the and for with that this what your you are was were have has our about from into will would could should how why when where which their they them its not but can just more some than then also".split())
+
+
+def _match_words(text: Any) -> set:
+    return {w for w in "".join(c if c.isalnum() else " " for c in str(text or "").lower()).split() if len(w) > 3 and w not in _REPLY_STOPWORDS}
+
+
+def match_asked_item(agenda: List[Any], covered: List[int], asked_text: Any) -> Optional[int]:
+    """The agenda position (0-based) that Sonic's last question was about: the uncovered item sharing the most words with it, and at least 2 words. None when no item fits. Pure."""
+    asked = _match_words(asked_text)
+    best, best_score = None, 1
+    for i, item in enumerate(agenda or []):
+        if i in (covered or []):
+            continue
+        score = len(asked & _match_words(item))
+        if score > best_score:
+            best, best_score = i, score
+    return best
+
+
+def record_reply_from_history(username: str, session_id: str, history: List[Any], reply_text: Any, db: Any = None) -> Optional[int]:
+    """When the person replies to a question Sonic asked an agenda item, that item is covered. `history` is the conversation's messages so far; the last AI message is the question. Records it on the active run and returns the index, or None. Never raises. Blocking."""
+    try:
+        if not str(reply_text or "").strip():
+            return None
+        asked = next((getattr(m, "content", "") for m in reversed(history or []) if getattr(m, "type", "") == "ai"), "")
+        if not asked:
+            return None
+        if db is None:
+            from backend.utils.db_utils import get_db
+
+            db = get_db()
+        if db is None:
+            return None
+        run = active_run(db, username, session_id)
+        if run is None:
+            return None
+        meeting = get_meeting(db, username, run["meeting_id"])
+        if meeting is None:
+            return None
+        index = match_asked_item(meeting.get("agenda") or [], covered_indexes(run), asked)
+        if index is None or not mark_covered(db, username, run["id"], index):
+            return None
+        logger.info("[meetings] an agenda item was matched to the reply and marked covered.")
+        return index
+    except Exception:
+        logger.warning("[meetings] could not match the reply to an agenda item.", exc_info=True)
+        return None
+
+
+def build_meeting_text(meeting: Dict[str, Any], notes: List[Dict[str, Any]], prep: Dict[str, Any], tz_name: Optional[str] = None, now: Optional[datetime] = None, covered: Optional[List[int]] = None) -> str:
     """The prompt section for a meeting in progress. Pure. Everything quoted is the person's own words or a stored note, so it is fenced as data."""
     from backend.utils.time_utils import local_now
 
@@ -664,11 +733,14 @@ def build_meeting_text(meeting: Dict[str, Any], notes: List[Dict[str, Any]], pre
         lines.append("Goals and projects they have told you about: " + "; ".join(prep["goals"]))
     for finding in prep.get("task_findings") or []:
         lines.append(f"Their task \"{finding['task']}\" found {finding['count']} new thing(s) since the last meeting: {finding['headline']}")
+    done = [i for i in (covered or []) if 0 <= i < len(agenda)]
+    if done:
+        lines.append("ALREADY COVERED in this meeting, do not ask these again: " + "; ".join(f"{i + 1}. {_flat(agenda[i], MAX_AGENDA_ITEM_CHARS)}" for i in done))
     return "\n".join(lines)
 
 
-def build_meeting_context(meeting: Dict[str, Any], notes: List[Dict[str, Any]], prep: Dict[str, Any], tz_name: Optional[str] = None, now: Optional[datetime] = None, coaching: str = "") -> str:
-    body = build_meeting_text(meeting, notes, prep, tz_name, now)
+def build_meeting_context(meeting: Dict[str, Any], notes: List[Dict[str, Any]], prep: Dict[str, Any], tz_name: Optional[str] = None, now: Optional[datetime] = None, coaching: str = "", covered: Optional[List[int]] = None) -> str:
+    body = build_meeting_text(meeting, notes, prep, tz_name, now, covered)
     return (
         "\nA MEETING WITH THIS PERSON IS IN PROGRESS (they pressed Start office hours, so this conversation is the meeting; true, and answer only from this):\n"
         f"{body}\n"
@@ -709,7 +781,7 @@ def build_context_for_session(username: str, session_id: str, tz_name: Optional[
         coaching = build_coaching_text(level, coaching_signals(past, prep)) if coaching_allowed else ""
         if coaching:
             logger.info("[meetings] a coaching meeting is raising signals found in stored records.")
-        return build_meeting_context(meeting, notes, prep, tz_name, now, coaching)
+        return build_meeting_context(meeting, notes, prep, tz_name, now, coaching, covered=covered_indexes(run))
     except Exception:
         logger.warning("[meetings] could not build the meeting section.", exc_info=True)
         return ""
