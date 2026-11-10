@@ -17,7 +17,8 @@ VERDICT (how a turn that used tools ended):
 - "answered": the model chose to answer (nothing was cut short);
 - "ran_out_progress": the limit forced the answer and the last steps were still finding things;
 - "ran_out_lost": the limit forced the answer and the last steps found nothing new;
-- "looped": it made the same call over and over until the loop stopped it.
+- "looped": it made the same call over and over until the loop stopped it;
+- "stopped_early": it answered, but its own answer hands the work back or says what is left, with steps unused (set by the loop, which asks backend/utils/handback_check.py; 2026-11-09: "Finished: chose to answer" was wrong for a turn that said it was not finished).
 A turn that made no tool call has no verdict. Pure: no clock, no I/O."""
 import re
 from typing import Any, Dict, List, Optional, Set
@@ -27,7 +28,7 @@ from backend.utils import reading_waste
 STALL_WINDOW = 3
 MIN_STEPS_FOR_STATUS = 2
 STATUSES = ("progressing", "stalled", "unknown")
-VERDICTS = ("answered", "ran_out_progress", "ran_out_lost", "looped")
+VERDICTS = ("answered", "ran_out_progress", "ran_out_lost", "looped", "stopped_early")
 READ_TOOLS = reading_waste.READ_TOOLS
 LOOKUP_TOOLS = frozenset({"search_literal", "search_code", "find_file", "list_repo_tree", "search_library", "list_library_files", "search_memory", "search_my_knowledge"})
 EMPTY_PREFIXES = reading_waste.EMPTY_PREFIXES
@@ -130,6 +131,9 @@ def explain(kind: str, steps_left: int = 0, budget: int = 0, stalled: int = 0) -
         return {"title": "Finished: chose to answer", "detail": f"It answered on its own{left}; the step limit did not stop it."}
     if kind == "ran_out_progress":
         return {"title": "Stopped: ran out of steps", "detail": f"It used all {budget} steps and was still finding new material, so more steps would probably have helped."}
+    if kind == "stopped_early":
+        left = f"{steps_left} step{'s' if steps_left != 1 else ''}"
+        return {"title": "Stopped early: work left, steps unused", "detail": f"It ended its turn with {left} unused, while its own answer hands the work back or says what is left to do."}
     if kind == "ran_out_lost":
         recent = f"The last {stalled} step{'s' if stalled != 1 else ''}" if stalled else "Its recent steps"
         return {"title": "Stopped: out of steps and going in circles", "detail": f"{recent} found nothing new (repeats, empty searches or places already read), so more steps would probably not have helped."}

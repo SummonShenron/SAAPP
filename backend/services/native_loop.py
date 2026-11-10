@@ -531,6 +531,11 @@ async def run(
         """An edit was proposed this turn and did not come back as an error."""
         return any(str(a.get("action_desc", "")).startswith("propose_local_edits(") and not str(a.get("observation", "")).startswith("ERROR") for a in attempts)
 
+    def handback_in_scope() -> bool:
+        """The hand-back checks (backend/utils/handback_check.py) apply to a turn that is making a change: one that must propose an edit (an edit request, or a plan turn), or that already did. A question about code
+        that ends "want me to update X?" is a good answer, not a hand-back: forcing the work there would be over-correcting."""
+        return claim_checking and (required_action is not None or plan_budget is not None or edited_this_turn())
+
     def required_done() -> bool:
         """The required tool (propose_local_edits on a change request) has been called and did not come back as an error."""
         tool = (required_action or {}).get("tool_action") or ""
@@ -622,7 +627,7 @@ async def run(
                 elif not can_edit and answer_sent_back.get("no_read", 0) < answer_checks.MAX_SEND_BACKS and answer_checks.code_without_reading(answer, attempts, conversation_text):
                     answer_sent_back["no_read"] = answer_sent_back.get("no_read", 0) + 1
                     notice = answer_checks.NO_READ_NOTICE
-                elif claim_checking and not any(answer_sent_back.get(f"handback_{k}", 0) for k in ("offer", "verify", "failed")) and (handed_back := handback_check.kind(
+                elif handback_in_scope() and not any(answer_sent_back.get(f"handback_{k}", 0) for k in handback_check.KINDS) and (handed_back := handback_check.kind(
                         answer, coding_turn=claim_checking, edited=edited_this_turn(), offered=offered, steps_left=budget - step,
                         checked=any(str(a.get("action_desc", "")).startswith(("run_local_check(", "run_local_command(", "run_sandbox_tests(")) for a in attempts), check_failed=handback_check.last_check_failed(attempts))):
                     # The answer ends by offering to carry on, or by telling the person to run it themselves, with steps left and the tools to do it (backend/utils/handback_check.py): sent back once.
@@ -632,6 +637,15 @@ async def run(
                     messages.append(HumanMessage(content=notice))
                     logger.info("[native_loop] step %s: an answer was sent back by the %s check.", step, ",".join(sorted(answer_sent_back)))
                     continue
+                if handback_in_scope() and advisor is not None and advisor.available("handback") and any(answer_sent_back.get(f"handback_{k}", 0) for k in handback_check.KINDS) and handback_check.kind(
+                        answer, coding_turn=claim_checking, edited=edited_this_turn(), offered=offered, steps_left=budget - step, checked=True,
+                        check_failed=handback_check.last_check_failed(attempts)):
+                    # It handed the work back AGAIN after the free send-back: one small brief to the stronger model (backend/utils/advisor.py), whose advice goes back in as one message.
+                    advice = await consult_advisor("handback", advisor_module.build_brief("handback", question, None, attempts, model_answer=answer), "it handed the work back again with steps left")
+                    if advice and not advisor_module.is_blocked(advice):
+                        messages.append(HumanMessage(content=advisor_module.ADVICE_MESSAGE.format(advice=advice)))
+                        logger.info("[native_loop] step %s: a second opinion was added after the work was handed back twice.", step)
+                        continue
             if step < budget:
                 # The model answered, but the work is not done. (1) An approved plan still has a step: told once, for free, to do it; a second early answer asks the advisor (once a turn). (2) A change was asked
                 # for and never proposed, after the loop's own two send-backs above: ask the advisor. Advice that begins BLOCKED is a real blocker, so the answer stands.
@@ -782,6 +796,9 @@ async def run(
 
     # How the turn ended, in words the trace shows (only through the step announcer, which can carry the marker the page styles): it chose to answer, or the limit stopped it and either the last steps were still finding things or they were going in circles.
     ended = loop_progress.verdict(progress, stop_reason, forced)
+    if ended == "answered" and handback_in_scope() and handback_check.kind(
+            final_text or "", coding_turn=True, edited=edited_this_turn(), offered=offered, steps_left=max(budget - step + 1, 0), checked=True, check_failed=handback_check.last_check_failed(attempts)):
+        ended = "stopped_early"          # it answered on its own, but the answer hands the work back or says what is left: not a finished turn
     if ended:
         said = loop_progress.explain(ended, steps_left=max(budget - step + (0 if forced else 1), 0), budget=budget, stalled=progress.stalled_for())      # an answer is given on a step of its own, which used no tool
         words = f"{said['title']}. {said['detail']}"

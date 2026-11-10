@@ -230,7 +230,7 @@ def test_the_loop_records_what_it_did_by_kind(monkeypatch):
 
 
 def test_the_counters_are_registered_and_the_turn_wires_the_advisor_the_loop_and_the_plan_step():
-    assert set(sc.ADVISOR_KEYS) == {"keep_going_sent_back", "advisor_early_answer", "advisor_repeat", "advisor_no_proposal", "advisor_reading_streak", "advisor_failing_check", "advisor_failed"} and set(sc.ADVISOR_KEYS) <= sc.KEYS
+    assert set(sc.ADVISOR_KEYS) == {"keep_going_sent_back", "advisor_early_answer", "advisor_repeat", "advisor_no_proposal", "advisor_reading_streak", "advisor_failing_check", "advisor_handback", "advisor_failed"} and set(sc.ADVISOR_KEYS) <= sc.KEYS
     source = open(aw.__file__, encoding="utf-8").read()
     assert 'advisor_module.for_turn(budget_guard.low_power(budget_state), advisor_llm_for(kwargs["llm"]))' in source
     assert "plan_progress=_plan_next_step if plan_phase == code_plan.EXECUTE_PHASE else None" in source

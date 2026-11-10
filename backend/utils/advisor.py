@@ -14,6 +14,7 @@ Signals, each used at most once a turn, and at most MAX_CONSULTS a turn:
 - NO PROPOSAL: a change was asked for, a folder is connected, and the model still answers in words after the loop's own two send-backs.
 - READING STREAK: told twice to stop reading and act, and it keeps reading.
 - FAILING CHECK: a check fails a second time.
+- HANDBACK: the answer hands the work back or says what is left (backend/utils/handback_check.py) after the loop already sent it back once for free.
 - REPEAT: the same call made a third time (the loop force-ends a turn at the fourth).
 Every function here is pure except Advisor.consult, which makes the one call and never raises.
 """
@@ -31,7 +32,7 @@ STEP_RESULT_CHARS = 600
 RECENT_STEPS = 3
 ADVICE_MAX_CHARS = 900
 
-KINDS = ("early_answer", "repeat", "no_proposal", "reading_streak", "failing_check")
+KINDS = ("early_answer", "repeat", "no_proposal", "reading_streak", "failing_check", "handback")
 
 PROMPT = """You are a senior engineer giving a second opinion to a faster, cheaper coding assistant that has stalled while working in someone's project. You see only the brief below, not the whole conversation.
 
@@ -64,6 +65,7 @@ def build_brief(kind: str, request: str, next_step: Optional[str], attempts: Lis
         "no_proposal": "The person asked for a change and the assistant keeps answering in words instead of proposing the edit, though it was told twice to propose it.",
         "reading_streak": "The assistant has been told twice to stop reading and act, and keeps reading.",
         "failing_check": "A check failed a second time while the assistant was working on the change.",
+        "handback": "The assistant ended its turn handing work back (an offer to carry on, a list of what still needs doing, or the next step promised in words) while it still had steps, and kept doing so after it was told once to carry on.",
     }.get(kind, "The assistant is stuck.")
     parts = [f"WHY YOU ARE ASKED: {why}", f"THE PERSON'S REQUEST: {_clip(request, REQUEST_MAX_CHARS)}"]
     if next_step:

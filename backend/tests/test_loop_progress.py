@@ -223,8 +223,8 @@ def test_the_markers_travel_from_the_loop_through_the_server_to_the_page_as_fixe
     assert 'payload["last_step"] = last_step' in workflow and 'payload["turn_end"] = turn_end' in workflow
     app_source = (ROOT / "app.py").read_text(encoding="utf-8")
     assert 'if data.get("last_step") in ("progressing", "stalled", "unknown"):' in app_source and 'node_progress_payload["last_step"] = data["last_step"]' in app_source
-    assert 'if data.get("turn_end") in ("answered", "ran_out_progress", "ran_out_lost", "looped"):' in app_source and 'node_progress_payload["turn_end"] = data["turn_end"]' in app_source
-    assert tuple(lp.VERDICTS) == ("answered", "ran_out_progress", "ran_out_lost", "looped")
+    assert 'if data.get("turn_end") in ("answered", "ran_out_progress", "ran_out_lost", "looped", "stopped_early"):' in app_source and 'node_progress_payload["turn_end"] = data["turn_end"]' in app_source
+    assert tuple(lp.VERDICTS) == ("answered", "ran_out_progress", "ran_out_lost", "looped", "stopped_early")
 
 
 def test_the_progress_module_logs_and_stores_nothing():

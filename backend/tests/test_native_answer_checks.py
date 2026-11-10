@@ -143,7 +143,7 @@ def test_each_send_back_is_counted_by_kind(monkeypatch):
 
 
 def test_the_counter_keys_are_registered_and_the_turn_hands_the_loop_what_it_needs():
-    assert set(sc.ANSWER_CHECK_KEYS) == {"answer_sent_back_denial", "answer_sent_back_diff", "answer_sent_back_no_read", "answer_sent_back_handback_offer", "answer_sent_back_handback_verify", "answer_sent_back_handback_failed"} and set(sc.ANSWER_CHECK_KEYS) <= sc.KEYS      # the last two: backend/utils/handback_check.py
+    assert set(sc.ANSWER_CHECK_KEYS) == {"answer_sent_back_denial", "answer_sent_back_diff", "answer_sent_back_no_read", "answer_sent_back_handback_offer", "answer_sent_back_handback_verify", "answer_sent_back_handback_failed", "answer_sent_back_handback_unfinished", "answer_sent_back_handback_choice"} and set(sc.ANSWER_CHECK_KEYS) <= sc.KEYS      # the last two: backend/utils/handback_check.py
     source = open(aw.__file__, encoding="utf-8").read()
     assert 'capability_denial_watchlist=kwargs.get("capability_denial_watchlist"), conversation_text=kwargs.get("conversation_text") or ""' in source
 

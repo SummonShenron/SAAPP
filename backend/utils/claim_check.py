@@ -97,6 +97,27 @@ def unproven(text: str, status: Dict[str, str]) -> List[str]:
     return [kind for kind in KINDS if kind in claimed and (status or {}).get(kind) != PASSED]
 
 
+# A reply that says it CHANGED something when no edit was proposed this turn (2026-11-10, the Office Hours run: "I passed `covered` into build_meeting_context ... I also added unit tests", on a turn that had no edit tool and
+# changed nothing). A pass claimed without a run is already held to the run (above); this is the same rule for the edit itself, said in code under the reply so no rewording can drop it.
+_EDIT_CLAIM_RE = re.compile(
+    r"\bI(?:'ve| have)?\s+(?:also |now |just |already |successfully )?(?:added|changed|updated|edited|wired|passed|created|written|wrote|fixed|implemented|modified|removed|renamed|moved|replaced|built|hooked|forwarded|applied)"
+    r"(?!\s+(?:the |all |every |both )?(?:tests?|checks?|type ?check))\b",
+    re.IGNORECASE,
+)
+NO_EDIT_NOTE = "_Nothing was changed in this turn: no edit was proposed or applied, so anything above described as added, changed or wired has not been done._"
+
+
+def claims_edit(text: str) -> bool:
+    """Whether a reply says, in the first person and past tense, that it changed something. Pure."""
+    return bool(_EDIT_CLAIM_RE.search(str(text or "")[:4000]))
+
+
+def edit_made(tools: Dict[str, Dict[str, int]]) -> bool:
+    """Whether this turn proposed at least one edit that did not come back as an error (`tools` is the turn's {name: {"calls", "errors"}}). Pure."""
+    used = (tools or {}).get("propose_local_edits") or {}
+    return int(used.get("calls", 0) or 0) - int(used.get("errors", 0) or 0) > 0
+
+
 def note_for(kinds: Iterable[str], status: Dict[str, str]) -> str:
     """One plain line for the end of a reply, or "". Pure."""
     parts = [f"{LABEL[kind]} " + ("failed" if (status or {}).get(kind) == FAILED else ("were" if kind in _PLURAL else "was") + " not run") + " in this turn" for kind in KINDS if kind in set(kinds)]

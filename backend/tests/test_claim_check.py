@@ -199,3 +199,41 @@ def test_a_claim_backed_by_a_real_passing_run_in_the_same_turn_is_left_alone():
 def test_a_turn_with_no_repo_tools_is_not_held_to_it():
     final, shown, turn = _drive(["The tests pass, I am told."], [{"name": "web_search", "description": "w"}], {})
     assert final == "The tests pass, I am told." and turn.claim_sent_back is False
+
+
+# ---- a reply that says it changed something when no edit was proposed (2026-11-10, the Office Hours run; the wording is a made-up copy) ------------------------------------------------------------------------------------
+
+def test_a_reply_that_says_in_the_first_person_that_it_changed_something_is_an_edit_claim():
+    from backend.utils import claim_check as cc
+
+    for text in (
+        "I passed `covered` into `build_meeting_context` so it pulls the indexes. I also added unit tests.",
+        "I've updated the helper and wired it into the page.",
+        "I have now created the file and fixed the import.",
+        "Done. I added a badge to the tab.",
+    ):
+        assert cc.claims_edit(text), text
+    for text in (
+        "I passed the tests.", "I haven't added anything yet.", "I could not change the file in this mode.", "I'll add the badge next.", "You added a badge earlier.",
+        "The helper was added in an earlier turn.", "", None,
+    ):
+        assert not cc.claims_edit(text), text
+
+
+def test_a_turn_made_an_edit_only_if_a_proposal_went_through_without_an_error():
+    from backend.utils import claim_check as cc
+
+    assert cc.edit_made({"propose_local_edits": {"calls": 1, "errors": 0}}) is True and cc.edit_made({"propose_local_edits": {"calls": 3, "errors": 1}}) is True
+    assert cc.edit_made({"propose_local_edits": {"calls": 2, "errors": 2}}) is False and cc.edit_made({"read_repo_file": {"calls": 5, "errors": 0}}) is False and cc.edit_made({}) is False and cc.edit_made(None) is False
+
+
+def test_the_reply_is_given_a_plain_line_in_code_when_it_claims_an_edit_nothing_backs_and_the_wiring_is_in_the_app():
+    import pathlib
+    from backend.utils import claim_check as cc, self_counters
+
+    assert "no edit was proposed or applied" in cc.NO_EDIT_NOTE and cc.NO_EDIT_NOTE.startswith("_") and cc.NO_EDIT_NOTE.endswith("_")
+    source = (pathlib.Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
+    block = source[source.index("if claim_check.claims_edit(full_response)"): source.index("if claim_check.claims_edit(full_response)") + 400]
+    assert "not claim_check.edit_made(llm_turn.tools)" in block and "claim_check.NO_EDIT_NOTE" in block and 'tally(turn_counts, "claim_edit_unbacked")' in block
+    assert source.index("claim_check.unproven(full_response, llm_turn.checks)") < source.index("if claim_check.claims_edit(full_response)")       # inside the coding-turn block, after the pass-claim line
+    assert "claim_edit_unbacked" in self_counters.KEYS
