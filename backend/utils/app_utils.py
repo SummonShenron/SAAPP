@@ -28,6 +28,14 @@ LEGACY_INGEST_SECRET = os.getenv("ERRAGENT_INGEST_SECRET", "")
 # DEFAULT_RECALL_SIMILARITY_THRESHOLD, independently tunable since this matches a whole past
 # question against a new one rather than a fact/chunk against a question.
 CORRECTION_SIMILARITY_THRESHOLD = float(os.getenv("CORRECTION_SIMILARITY_THRESHOLD", "0.75"))
+# A bare reply ("yes", "ok", "go on") says nothing by itself: what it means is in the message before it. Matching one against a past correction by meaning only finds other bare replies (2026-11-09: "yes" matched 7 stored
+# rows, every one from a prompt of one or two words), so it injected a quote of some unrelated earlier reply as something NOT to say. A question shorter than this is not looked up, and a correction whose own prompt was shorter is
+# not offered.
+MIN_WORDS_FOR_CORRECTIONS = 3
+
+
+def _too_bare(text) -> bool:
+    return len(str(text or "").split()) < MIN_WORDS_FOR_CORRECTIONS
 
 # def sync_run_script(script_path):
 #     """Synchronous function to run the script via subprocess."""
@@ -472,7 +480,7 @@ def _fetch_relevant_corrections_by_embedding(db, username: str, question_embeddi
             if not rating_filter(corr):
                 continue
             embedding = corr.get("embedding")
-            if not embedding:
+            if not embedding or _too_bare(corr.get("user_prompt")):
                 continue
             sim = cosine_similarity(question_embedding, embedding)
             if sim >= CORRECTION_SIMILARITY_THRESHOLD:
@@ -487,7 +495,7 @@ def _fetch_relevant_corrections_by_embedding(db, username: str, question_embeddi
 
 def fetch_relevant_corrections(username: str, question: str) -> str:
     db = get_db()
-    if db is None or not question:
+    if db is None or not question or _too_bare(question):
         return ""
 
     try:

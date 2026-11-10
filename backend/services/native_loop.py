@@ -38,7 +38,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
-from backend.utils import act_not_suggest, advisor as advisor_module, answer_checks, claim_check, combo as combo_rules, diff_review, draft_checkpoint, loop_progress, loop_rhythm, reading_waste
+from backend.utils import act_not_suggest, advisor as advisor_module, answer_checks, claim_check, combo as combo_rules, diff_review, draft_checkpoint, handback_check, loop_progress, loop_rhythm, reading_waste
 from backend.utils.prompt_meter import PromptMeter
 from backend.utils.agent_utils import _UnsafeActionRequested, build_tool_facts, build_trace_subject, new_trace_step_id
 
@@ -622,6 +622,12 @@ async def run(
                 elif not can_edit and answer_sent_back.get("no_read", 0) < answer_checks.MAX_SEND_BACKS and answer_checks.code_without_reading(answer, attempts, conversation_text):
                     answer_sent_back["no_read"] = answer_sent_back.get("no_read", 0) + 1
                     notice = answer_checks.NO_READ_NOTICE
+                elif claim_checking and not any(answer_sent_back.get(f"handback_{k}", 0) for k in ("offer", "verify")) and (handed_back := handback_check.kind(
+                        answer, coding_turn=claim_checking, edited=edited_this_turn(), offered=offered, steps_left=budget - step,
+                        checked=any(str(a.get("action_desc", "")).startswith(("run_local_check(", "run_local_command(", "run_sandbox_tests(")) for a in attempts))):
+                    # The answer ends by offering to carry on, or by telling the person to run it themselves, with steps left and the tools to do it (backend/utils/handback_check.py): sent back once.
+                    answer_sent_back[f"handback_{handed_back}"] = 1
+                    notice = handback_check.notice(handed_back, budget - step, offered)
                 if notice:
                     messages.append(HumanMessage(content=notice))
                     logger.info("[native_loop] step %s: an answer was sent back by the %s check.", step, ",".join(sorted(answer_sent_back)))

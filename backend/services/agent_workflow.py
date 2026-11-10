@@ -115,7 +115,7 @@ from backend.utils.library_allowance import LibraryAllowance
 from backend.utils import memory_sources
 from backend.services import steering
 from backend.services import image_gen, knowledge_cards, library_search, native_loop, ops_incidents, photo_cards
-from backend.utils import kb_candidates, knowledge_base
+from backend.utils import handback_check, kb_candidates, knowledge_base
 from backend.services import native_tools as native_tools_module
 from backend.utils import loop_rhythm
 from backend.utils import diff_review, lesson_proposals, place_questions, project_guidance
@@ -3137,6 +3137,15 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 "listed; propose_commit is for when no runner is connected, or to open a pull request. It is ONE click for a plain commit (and push) on the current branch or one new branch, and nothing else: if "
                 "they ask for the steps or the commands, or the job also needs a branch to be checked out or switched, a pull, or a merge, use propose_steps instead. It waits for them and for the run and returns the real exit code and output."
             )
+        # Whether this coding turn can run checks itself, said in the trace and counted (backend/utils/handback_check.py): a hand-back ("run the tests on your end") cannot be told from "no tool was offered" without it.
+        if local_workspace_handle is not None and can_apply_here:
+            from backend.utils.self_counters import record_turn_counts
+
+            check_names = [c.get("name") for c in runner_jobs.runnable_checks(runner_for_checks)] if runner_for_checks is not None else []
+            commands_ok = bool(runner_for_checks is not None and runner_jobs.commands_supported(runner_for_checks) and runner_commands.AVAILABLE)
+            verify_title, verify_detail, verify_key = handback_check.verify_note(check_names, commands_ok)
+            await safe_emit_event("trace_detail", {"node": "tool_agent_node", "title": verify_title, "detail": verify_detail})
+            await asyncio.to_thread(record_turn_counts, {verify_key: 1})
         # A hidden browser on the person's own machine (runner/, backend/utils/runner_jobs.py): the project's own server kept running for a preview session, and a look at one of its pages. Offered only
         # when a connected runner is new enough and found a Chrome or Edge. The menu names the servers the runner reported, so the model asks for one by name and never supplies a command.
         if runner_for_checks is not None and runner_jobs.can_look(runner_for_checks):

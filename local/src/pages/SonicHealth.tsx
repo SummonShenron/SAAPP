@@ -1071,6 +1071,12 @@ const CountersCard: React.FC<{ counters: CountersSummary }> = ({ counters }) => 
               <td><span className="sh-flat">count</span></td>
             </tr>
           ))}
+          <tr><td>Turns that ended still finding things</td><td>{pct(rates.turn_ran_out_progress)}</td><td>{pct(previous.turn_ran_out_progress)}</td><td>{change(changes.turn_ran_out_progress)}</td></tr>
+          <tr><td>Turns that ran out going in circles</td><td>{pct(rates.turn_ran_out_lost)}</td><td>{pct(previous.turn_ran_out_lost)}</td><td>{change(changes.turn_ran_out_lost)}</td></tr>
+          <tr><td>Last step before running out was still progressing</td><td>{pct(rates.last_step_progressing)}</td><td>{pct(previous.last_step_progressing)}</td><td>{change(changes.last_step_progressing)}</td></tr>
+          <tr><td>Last step before running out was stalled</td><td>{pct(rates.last_step_stalled)}</td><td>{pct(previous.last_step_stalled)}</td><td>{change(changes.last_step_stalled)}</td></tr>
+          <tr><td>Turns that put a choice card to the person</td><td>{pct(rates.choice_asked)}</td><td>{pct(previous.choice_asked)}</td><td>{change(changes.choice_asked)}</td></tr>
+          <tr><td>Choice cards answered with a pick</td><td>{pct(rates.choice_picked)}</td><td>{pct(previous.choice_picked)}</td><td>{change(changes.choice_picked)}</td></tr>
           <tr><td>Turns that asked how something went</td><td>{pct(rates.open_loop_offered)}</td><td>{pct(previous.open_loop_offered)}</td><td>{change(changes.open_loop_offered)}</td></tr>
           <tr><td>Turns where the reply mentioned a leaning of its own</td><td>{pct(rates.self_mention)}</td><td>{pct(previous.self_mention)}</td><td>{change(changes.self_mention)}</td></tr>
           <tr><td>Coding turns that ran out of steps ({totals.code_turns ?? 0} coding turns)</td><td>{pct(rates.code_cap_hit)}</td><td>{pct(previous.code_cap_hit)}</td><td>{change(changes.code_cap_hit)}</td></tr>

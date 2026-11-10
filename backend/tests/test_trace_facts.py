@@ -182,6 +182,8 @@ async def test_native_loop_emits_a_step_id_then_facts_and_counts_retries():
     tools_seen = []
 
     async def emit_step(title, detail, step_id, tool=None, subject=None):
+        if tool is None:
+            return          # the line that says how the turn ended (backend/utils/loop_progress.py) is a step with no tool and no facts
         steps.append(step_id)
         tools_seen.append((tool, subject))
 

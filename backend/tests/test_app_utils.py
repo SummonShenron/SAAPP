@@ -267,3 +267,38 @@ def test_fetch_relevant_corrections_returns_empty_when_nothing_matches(monkeypat
     monkeypatch.setattr(app_utils, "embed_text", _fake_embed)
 
     assert fetch_relevant_corrections("jack", "Completely unrelated question about weather") == ""
+
+
+# ---- a bare reply is not looked up, and a correction made on one is not offered (2026-11-09) ------------------------------------------------------------------------------------------------
+
+def _same_vector(text):
+    return [1.0, 0.0]          # every text means the same thing: only the rule about bare replies can keep a correction from matching
+
+
+def test_a_bare_reply_is_not_matched_against_past_corrections_even_when_the_embeddings_agree(monkeypatch):
+    fake_db = _FakeDB()
+    monkeypatch.setattr(app_utils, "get_db", lambda: fake_db)
+    monkeypatch.setattr(app_utils, "embed_text", _same_vector)
+    save_correction("jack", "Can I send back something I bought a month ago?", "We never offer refunds.", "Contradicts the policy.", "hallucination", rating="negative")
+
+    assert "CRITICAL GUARDRAILS" in fetch_relevant_corrections("jack", "What is the refund policy for orders?")          # the control: a real question matches
+    for bare in ("yes", "yes please", "ok", "  go on  "):
+        assert fetch_relevant_corrections("jack", bare) == "", bare
+
+
+def test_a_correction_made_on_a_bare_reply_is_never_offered_for_a_real_question(monkeypatch):
+    fake_db = _FakeDB()
+    monkeypatch.setattr(app_utils, "get_db", lambda: fake_db)
+    monkeypatch.setattr(app_utils, "embed_text", _same_vector)
+    save_correction("jack", "yes", "Sure, here is some unrelated earlier reply.", "Not what I wanted.", "other", rating="negative")
+    save_correction("jack", "ok sounds good", "Another earlier reply.", "", "other", rating="positive")
+
+    context = fetch_relevant_corrections("jack", "Add the new counters to the Sonic Health page")
+    assert "unrelated earlier reply" not in context                                      # the one-word prompt's correction is skipped
+    assert "PREFERRED EXAMPLES" in context and "Another earlier reply" in context          # a three-word prompt is still a prompt
+
+
+def test_the_word_floor_is_three_and_counts_words_not_characters():
+    assert app_utils.MIN_WORDS_FOR_CORRECTIONS == 3
+    assert app_utils._too_bare("yes") and app_utils._too_bare("go on") and app_utils._too_bare("") and app_utils._too_bare(None)
+    assert not app_utils._too_bare("fix it please") and not app_utils._too_bare("a b c")

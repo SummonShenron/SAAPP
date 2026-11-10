@@ -80,3 +80,25 @@ def test_the_agent_decides_an_edit_turn_from_this_detector_so_the_proposal_tool_
     assert "looks_like_edit_request(state.get(\"messages\", []))" in source and "can_apply_here" in source
     loop = (Path(__file__).resolve().parents[1] / "services" / "native_loop.py").read_text(encoding="utf-8")
     assert "can_propose = bool(required_action)" in loop                                     # the proposal tool is part of the choice only on an edit turn: why a continuation must be one
+
+
+# ---- a bare yes to an offer to carry on (2026-11-09, Jack's real run: the wording below is made up) ------------------------------------------------------------------------------------------
+
+OFFER_TO_READ = AIMessage(content="The backend side is in. Whether the page shows it is still open: I haven't read the dashboard file. Should I read dashboard.tsx next to see how the page picks up the rates?")
+
+
+def test_a_bare_yes_to_a_question_about_carrying_on_with_the_change_continues_it():
+    for yes in ("yes", "yes please", "yep", "go on", "sure, keep going", "ok"):
+        assert edit_turn(yes, (ASK, OFFER_TO_READ)) is True, yes
+
+
+def test_a_bare_yes_continues_nothing_without_an_open_request_a_question_about_the_change_or_a_short_enough_message():
+    assert edit_turn("yes", ("add a dark mode toggle to the settings page", LEFT_UNFINISHED)) is False         # the reply left it unfinished but asked nothing: a yes answers nothing
+    assert edit_turn("yes", ("i'm having a rough day", AIMessage(content="That sounds heavy. Do you want to tell me what happened with the code review today?"))) is False   # no open change request
+    assert edit_turn("yes", ("add a dark mode toggle to the settings page", AIMessage(content="Are you doing alright?"))) is False                  # a question, but not about the change
+    assert edit_turn("yes i think so but let me look at it properly first and get back to you later", (ASK, OFFER_TO_READ)) is False             # not a bare yes
+
+
+def test_a_bare_no_or_a_question_back_is_still_not_a_continuation():
+    assert edit_turn("no", (ASK, OFFER_TO_READ)) is False
+    assert edit_turn("yes?", (ASK, OFFER_TO_READ)) is False

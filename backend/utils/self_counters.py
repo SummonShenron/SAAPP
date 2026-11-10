@@ -134,7 +134,10 @@ CI_KEYS = ("run_repo_tests_native", "run_snippet_native")
 CHOICE_KEYS = ("choice_asked", "choice_picked", "choice_other", "choice_timeout", "choice_refused")
 # How a tool turn ended and what its last step looked like (backend/utils/loop_progress.py): ran out of steps while still finding things, ran out going in circles, answered on its own, repeated itself.
 PROGRESS_KEYS = ("turn_end_answered", "turn_end_ran_out_progress", "turn_end_ran_out_lost", "turn_end_looped", "last_step_progressing", "last_step_stalled")
-ANSWER_CHECK_KEYS = ("answer_sent_back_denial", "answer_sent_back_diff", "answer_sent_back_no_read")
+# An answer that handed the next step back (offered to carry on, or told the person to run it themselves) with steps left, and was sent back once to do it (backend/utils/handback_check.py); and, per coding turn
+# with a folder, whether the turn could run checks itself or had no test runner.
+ANSWER_CHECK_KEYS = ("answer_sent_back_denial", "answer_sent_back_diff", "answer_sent_back_no_read", "answer_sent_back_handback_offer", "answer_sent_back_handback_verify")
+VERIFY_KEYS = ("coding_turns_can_verify", "coding_turns_no_runner")
 # Plan turns where the model answered with a step left: told once to carry on (free), and the second opinions the next tier up gave when a lite model was stuck (backend/utils/advisor.py), by what it was stuck on (an early answer, a third identical call, no proposal for a change, a reading streak, a check failing twice), and the ones that failed. Counts only.
 ADVISOR_KEYS = ("keep_going_sent_back", "advisor_early_answer", "advisor_repeat", "advisor_no_proposal", "advisor_reading_streak", "advisor_failing_check", "advisor_failed")
 # Step lists Sonic put on a card for the person to run themselves (backend/utils/command_steps.py): lists shown, steps in them, and lists refused because a step was not allowed. Counts only.
@@ -148,7 +151,7 @@ PROACTIVE_KEYS = ("relatable_by_meaning",
                   # Later check-ins on a feeling still being carried (backend/utils/emotion_checkin.py): turns that were told to end with one, replies that really did, and on the next message whether the person's
                   # ceiling had eased or they were still low. Counts only.
                   "emotion_checkin_offered", "emotion_checkin_asked", "emotion_checkin_eased", "emotion_checkin_still_low")
-_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS + LESSON_KEYS + APPLY_WAIT_KEYS + CONVSUM_KEYS + LOOK_KEYS + BROWSER_KEYS + MONGO_KEYS + KB_KEYS + CI_KEYS + CHOICE_KEYS + PROGRESS_KEYS + ANSWER_CHECK_KEYS + ADVISOR_KEYS + STEPS_KEYS + PROACTIVE_KEYS
+_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS + LESSON_KEYS + APPLY_WAIT_KEYS + CONVSUM_KEYS + LOOK_KEYS + BROWSER_KEYS + MONGO_KEYS + KB_KEYS + CI_KEYS + CHOICE_KEYS + PROGRESS_KEYS + ANSWER_CHECK_KEYS + VERIFY_KEYS + ADVISOR_KEYS + STEPS_KEYS + PROACTIVE_KEYS
 KEYS = frozenset(
     list(_PLAIN_KEYS) + [f"{group}_{name}" for group, names in _GROUPS.items() for name in names]
 )
@@ -278,6 +281,16 @@ def _rates(totals: Dict[str, int]) -> Dict[str, Optional[float]]:
     rates["code_plan_approved"] = _rate(totals.get("code_plan_approved", 0), totals.get("code_plan_submitted", 0))
     rates["code_plan_exec_cap_hit"] = _rate(totals.get("code_plan_exec_cap_hit", 0), totals.get("code_plan_exec_turns", 0))
     rates["code_plan_turn_cap_hit"] = _rate(totals.get("code_plan_turn_cap_hit", 0), totals.get("code_plan_turns", 0))
+    # How tool turns end (backend/utils/loop_progress.py): the share that ran out of steps while still finding things, and the share that ran out going in circles, of all turns that ended.
+    turn_ends = sum(totals.get(f"turn_end_{k}", 0) for k in ("answered", "ran_out_progress", "ran_out_lost", "looped"))
+    rates["turn_ran_out_progress"] = _rate(totals.get("turn_end_ran_out_progress", 0), turn_ends)
+    rates["turn_ran_out_lost"] = _rate(totals.get("turn_end_ran_out_lost", 0), turn_ends)
+    # The last step of a turn that ran out: still progressing, or stalled (backend/utils/loop_progress.py), against all turns that ended.
+    rates["last_step_progressing"] = _rate(totals.get("last_step_progressing", 0), turn_ends)
+    rates["last_step_stalled"] = _rate(totals.get("last_step_stalled", 0), turn_ends)
+    # How often Sonic put a choice card to the person (backend/services/choice_cards.py): asks per turn, and the share of asks answered with a pick.
+    rates["choice_asked"] = _rate(totals.get("choice_asked", 0), turns)
+    rates["choice_picked"] = _rate(totals.get("choice_picked", 0), totals.get("choice_asked", 0))
     # The stall guard and the claim check (backend/utils/code_plan.py after_turn, backend/utils/claim_check.py): plan turns that finished no step against turns that carried out a plan, and replies that
     # claimed a passing check no run backed (and answers sent back once to run it) against coding turns.
     rates["code_plan_stalled"] = _rate(totals.get("code_plan_stalled", 0), totals.get("code_plan_exec_turns", 0))

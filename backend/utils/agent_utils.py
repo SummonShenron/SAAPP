@@ -1229,7 +1229,11 @@ def continues_unfinished_edit(last: str, previous_ai: str, humans: list) -> bool
     if not (asked or unfinished):
         return False
     answers_it = asked and bool(_content_words(last) & _content_words(reply[-300:]))
-    return answers_it or bool(_TASK_WORD_RE.search(last))
+    # A bare yes ("yes", "yes please", "go on") to a question that offered to carry on with the change ("Should I read SonicHealth.tsx next?"): 2026-11-09, Jack's real run, Sonic stopped with most of its steps left and asked;
+    # the yes shares no word with the question and has no task word, so the follow-up was not an edit turn and could read but not edit. Only when the reply BOTH says the change is unfinished and asks about carrying on: a yes to
+    # "Should I run the tests to verify?" after a finished change is not a change request (test_plan_and_confirm_routing.py), and a yes after an unfinished reply that asked nothing answers nothing.
+    says_yes = asked and unfinished and len(last.split()) <= BARE_YES_MAX_WORDS and bool(_BARE_YES_RE.match(last))
+    return answers_it or says_yes or bool(_TASK_WORD_RE.search(last))
 
 
 def looks_like_edit_request(messages) -> bool:
