@@ -232,9 +232,9 @@ test('the final-step header says what the work looked like by then, and says not
   assert.equal(cleanLastStep('whatever'), undefined);
 });
 
-test('only the four endings the server names reach a step, and an ending splits into a title and what it means', async () => {
+test('only the five endings the server names reach a step, and an ending splits into a title and what it means', async () => {
   const { cleanTurnEnd, endingWords } = await import('./traceFacts.ts');
-  for (const kind of ['answered', 'ran_out_progress', 'ran_out_lost', 'looped']) assert.equal(cleanTurnEnd(kind), kind);
+  for (const kind of ['answered', 'ran_out_progress', 'ran_out_lost', 'looped', 'stopped_early']) assert.equal(cleanTurnEnd(kind), kind);
   assert.equal(cleanTurnEnd('ran_out'), undefined);
   assert.equal(cleanTurnEnd(7), undefined);
   assert.deepEqual(endingWords('Stopped: ran out of steps. It used all 6 steps and was still finding new material.'), { title: 'Stopped: ran out of steps', detail: 'It used all 6 steps and was still finding new material.' });

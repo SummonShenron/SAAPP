@@ -9,7 +9,8 @@ from datetime import datetime
 from urllib.parse import urlsplit
 
 from langchain_core.callbacks.manager import adispatch_custom_event
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage
+from backend.utils import handback_check
 
 logger = logging.getLogger("SASS Logger")
 
@@ -1202,7 +1203,7 @@ _UNFINISHED_EDIT_RE = re.compile(
     re.IGNORECASE,
 )
 _TASK_WORD_RE = re.compile(
-    r"\b(?:find|locate|search|read|open|check|apply|fix|update|add|file|files|button|page|line|lines|function|code|tests?)\b"        # concrete task words only: "just", "do", "want", "keep going" are in feelings too
+    r"\b(?:find|locate|search|read|open|check|apply|fix|update|add|file|files|button|page|line|lines|function|code|tests?|finish|complete|wire|hook up|the task|the rest)\b"        # concrete task words only: "just", "do", "want", "keep going" are in feelings too
     r"|\d+\s*%|\b[\w-]+\.[a-z]{1,4}\b",
     re.IGNORECASE,
 )
@@ -1224,8 +1225,9 @@ def continues_unfinished_edit(last: str, previous_ai: str, humans: list) -> bool
     if not any(_is_explicit_edit(_message_text(m)) for m in humans[-(CONTINUATION_LOOKBACK + 1):-1]):
         return False
     reply = _FOLLOW_UP_TAG_RE.sub("", str(previous_ai or "")).strip()
-    asked = reply.endswith("?") and bool(_CODE_TARGET_RE.search(reply) or _EDIT_VERB_RE.search(reply))
-    unfinished = bool(_UNFINISHED_EDIT_RE.search(reply)) or reply == _SCRUBBED_DENIAL_PLACEHOLDER
+    # A question that lists options ("1. Match on reply ... 2. Judge the turn ... Which approach?") is about the change even when it names no file: the answer "try match on reply" carries the request on (2026-11-10).
+    asked = reply.endswith("?") and bool(_CODE_TARGET_RE.search(reply) or _EDIT_VERB_RE.search(reply) or len(handback_check._OPTION_LINE_RE.findall(reply)) >= 2)
+    unfinished = bool(_UNFINISHED_EDIT_RE.search(reply)) or handback_check.says_unfinished(reply) or reply == _SCRUBBED_DENIAL_PLACEHOLDER
     if not (asked or unfinished):
         return False
     answers_it = asked and bool(_content_words(last) & _content_words(reply[-300:]))

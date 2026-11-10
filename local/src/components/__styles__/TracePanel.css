@@ -121,7 +121,7 @@
 .trace-final-header[data-status="stalled"] { color: var(--accent-danger); border-color: color-mix(in srgb, var(--accent-danger) 55%, transparent); }
 .trace-node-end .trace-node-title { font-weight: 700; }
 .trace-end-ran_out_progress .trace-node-title { color: var(--accent-success); }
-.trace-end-ran_out_lost .trace-node-title, .trace-end-looped .trace-node-title { color: var(--accent-danger); }
+.trace-end-ran_out_lost .trace-node-title, .trace-end-looped .trace-node-title, .trace-end-stopped_early .trace-node-title { color: var(--accent-danger); }
 .theme-shadow .trace-final-header[data-status="progressing"], .theme-shadow .trace-end-ran_out_progress .trace-node-title { color: var(--accent-success); }
 .trace-batch { font-size: 0.66rem; font-weight: 600; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border-color); color: var(--accent-primary); }
 

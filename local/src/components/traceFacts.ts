@@ -212,7 +212,7 @@ export function stepWords(step: { title: string; detail: string }): { title: str
 /** The last tool step a turn can take (backend/utils/loop_progress.py), and what the work looked like by then. */
 export type LastStepStatus = 'progressing' | 'stalled' | 'unknown';
 /** How a turn that used tools ended. */
-export type TurnEnd = 'answered' | 'ran_out_progress' | 'ran_out_lost' | 'looped';
+export type TurnEnd = 'answered' | 'ran_out_progress' | 'ran_out_lost' | 'looped' | 'stopped_early';
 
 /** The words on the final-step header; unknown values get none, so the page never prints what the server did not say. */
 export function finalStepLabel(status: unknown): string {
@@ -222,9 +222,9 @@ export function finalStepLabel(status: unknown): string {
   return '';
 }
 
-/** Only the four endings the server names are kept (anything else is dropped before it reaches a step). */
+/** Only the five endings the server names are kept (anything else is dropped before it reaches a step). */
 export function cleanTurnEnd(value: unknown): TurnEnd | undefined {
-  return value === 'answered' || value === 'ran_out_progress' || value === 'ran_out_lost' || value === 'looped' ? value : undefined;
+  return value === 'answered' || value === 'ran_out_progress' || value === 'ran_out_lost' || value === 'looped' || value === 'stopped_early' ? value : undefined;
 }
 
 export function cleanLastStep(value: unknown): LastStepStatus | undefined {

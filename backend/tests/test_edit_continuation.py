@@ -102,3 +102,28 @@ def test_a_bare_yes_continues_nothing_without_an_open_request_a_question_about_t
 def test_a_bare_no_or_a_question_back_is_still_not_a_continuation():
     assert edit_turn("no", (ASK, OFFER_TO_READ)) is False
     assert edit_turn("yes?", (ASK, OFFER_TO_READ)) is False
+
+
+# ---- finishing the task, and answering Sonic's own options in words (2026-11-10, the Office Hours run: the wording is made up) --------------------------------------------------------------------------------------
+
+UNFINISHED_STATEMENT = AIMessage(content="I've laid the foundation, but it's not fully wired into the live flow yet.\nWhat needs to be finished:\n1. Pass coverage to the prompt context.\n\nI'll read build_context_for_session next.")
+OPTIONS = AIMessage(content="The open piece is the trigger itself:\n1. Match on reply: when Sonic asks agenda item N and you reply, mark it covered. Simple and cheap.\n2. Judge the turn: run a lightweight model call after each turn. More flexible.\n\nWhich approach do you want to go with?")
+REQUEST = "make the meeting keep track of which agenda items are covered, with tests"
+
+
+def test_finish_it_after_a_reply_that_says_what_is_not_wired_or_promises_the_next_step_continues_the_change():
+    for follow in ("okay finish the task please", "please finish wiring it up", "finish it", "go on and complete the rest", "hook up the trigger"):
+        assert edit_turn(follow, (REQUEST, UNFINISHED_STATEMENT)) is True, follow
+
+
+def test_an_answer_in_words_to_a_question_that_lists_options_continues_the_change_even_when_it_names_no_file():
+    assert edit_turn("try match on reply", (REQUEST, UNFINISHED_STATEMENT), ("okay finish the task please", OPTIONS)) is True
+    assert edit_turn("judge the turn", (REQUEST, OPTIONS)) is True                                    # it names an option
+    assert edit_turn("the second one", (REQUEST, OPTIONS)) is False                                  # no shared word and no task word: an ordinal is not guessed at
+
+
+def test_a_feeling_or_a_question_after_such_a_reply_is_still_not_an_edit_request():
+    for follow in ("honestly i am just so tired today", "what did you change so far?", "thanks, that makes sense", "i can't keep going like this"):
+        assert edit_turn(follow, (REQUEST, UNFINISHED_STATEMENT)) is False, follow
+        assert edit_turn(follow, (REQUEST, OPTIONS)) is False, follow
+    assert edit_turn("okay finish the task please", ("how was your day", AIMessage(content="Pretty quiet. I'll look into that book next."))) is False      # no open change request
