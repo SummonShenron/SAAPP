@@ -1094,7 +1094,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                         # The last tool step a turn can take, and how a turn that used tools ended (backend/utils/loop_progress.py): fixed words only, so the page can style them.
                         if data.get("last_step") in ("progressing", "stalled", "unknown"):
                             node_progress_payload["last_step"] = data["last_step"]
-                        if data.get("turn_end") in ("answered", "ran_out_progress", "ran_out_lost", "looped"):
+                        if data.get("turn_end") in ("answered", "ran_out_progress", "ran_out_lost", "looped", "stopped_early"):
                             node_progress_payload["turn_end"] = data["turn_end"]
                         yield f"data: {json.dumps(node_progress_payload)}\n\n"
                         await asyncio.sleep(0.01)
@@ -1262,6 +1262,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # A meeting the person started in THIS conversation with the Start office hours button (backend/utils/meetings.py): its agenda, last notes and prep, for as long as it runs.
             # Never for a guest, and set aside under a safety context (the person comes first); one indexed read when no meeting is running.
             meeting_context = ""
+            if not is_guest_username(username) and risk_level == RISK_NONE and source_type == "conversational":
+                await asyncio.to_thread(meetings_utils.record_reply_from_history, username, session_id, list(chat_sessions[history_key]), question)
             if not is_guest_username(username) and risk_level == RISK_NONE and source_type == "conversational":
                 meeting_context = await asyncio.to_thread(meetings_utils.build_context_for_session, username, session_id, user_tz,
                                                          coaching_allowed=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)) == "open")
@@ -1923,6 +1925,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     tally(turn_counts, "claim_unproven")
                 if llm_turn.claim_sent_back:
                     tally(turn_counts, "claim_sent_back")
+                if claim_check.claims_edit(full_response) and not claim_check.edit_made(llm_turn.tools):
+                    full_response = f"{full_response}\n\n{claim_check.NO_EDIT_NOTE}"                    # it says it changed something and nothing was proposed this turn: said plainly, in code
+                    tally(turn_counts, "claim_edit_unbacked")
             context_view = context_window.view(llm_turn.peak_input, llm_turn.peak_model)      # how full the biggest request of this turn was (counts only): the session column's context ring
             if context_view:
                 yield f"data: {json.dumps({'event': 'context', **context_view})}\n\n"
