@@ -1091,6 +1091,11 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                             node_progress_payload["tool"] = data["tool"]
                         if isinstance(data.get("subject"), str) and data.get("subject"):
                             node_progress_payload["subject"] = data["subject"]
+                        # The last tool step a turn can take, and how a turn that used tools ended (backend/utils/loop_progress.py): fixed words only, so the page can style them.
+                        if data.get("last_step") in ("progressing", "stalled", "unknown"):
+                            node_progress_payload["last_step"] = data["last_step"]
+                        if data.get("turn_end") in ("answered", "ran_out_progress", "ran_out_lost", "looped"):
+                            node_progress_payload["turn_end"] = data["turn_end"]
                         yield f"data: {json.dumps(node_progress_payload)}\n\n"
                         await asyncio.sleep(0.01)
 

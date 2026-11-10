@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import Icon from './icons';
-import { searchSummary, splitAroundTerm, stepWords, toggleExpanded, type SearchExcerpt, type TraceExcerpt } from './traceFacts';
+import { endingWords, finalStepLabel, searchSummary, splitAroundTerm, stepWords, toggleExpanded, type LastStepStatus, type SearchExcerpt, type TraceExcerpt, type TurnEnd } from './traceFacts';
 import './__styles__/TracePanel.css';
 
 export interface TraceStep {
@@ -12,6 +12,10 @@ export interface TraceStep {
   status: 'active' | 'complete';
   batchIndex?: number;
   batchSize?: number;
+  /** Set on the steps of the last tool turn this request can take, with what the work looked like by then (the header above them says it). */
+  lastStep?: LastStepStatus;
+  /** Set on the step that says how a turn that used tools ended: it chose to answer, it ran out of steps while still finding things, it ran out going in circles, or it repeated itself. */
+  turnEnd?: TurnEnd;
   /** Measured values about what the step did (never content), shown when the step is expanded. */
   facts?: string[];
   /** A capped, redacted excerpt of what a read step read (the live trace only: it is not stored). Shown as plain text, never HTML. */
@@ -63,7 +67,8 @@ const TraceSteps: React.FC<{ steps: TraceStep[]; running: boolean; idPrefix?: st
         const hasDetails = hasFacts || hasExcerpt;
         const expanded = hasDetails && open.has(step.id);
         const panelId = `${idPrefix}-facts-${step.id}`;
-        const words = stepWords(step);
+        const words = step.turnEnd ? endingWords(step.detail) : stepWords(step);
+        const finalLabel = step.lastStep && !(i > 0 && steps[i - 1].lastStep) ? finalStepLabel(step.lastStep) : '';       // one header above the first step of the last turn
         const main = (
           <span className="trace-node-main">
             <span className="trace-node-title">
@@ -80,12 +85,13 @@ const TraceSteps: React.FC<{ steps: TraceStep[]; running: boolean; idPrefix?: st
         return (
           <li
             key={step.id}
-            className={`trace-node ${done ? 'trace-node-done' : 'trace-node-active'}${last ? ' trace-node-last' : ''}${last && running ? ' trace-node-running' : ''}${expanded ? ' trace-node-open' : ''}${ring ? ' trace-node-spinning' : ''}`}
+            className={`trace-node ${done ? 'trace-node-done' : 'trace-node-active'}${last ? ' trace-node-last' : ''}${step.turnEnd ? ` trace-node-end trace-end-${step.turnEnd}` : ''}${last && running ? ' trace-node-running' : ''}${expanded ? ' trace-node-open' : ''}${ring ? ' trace-node-spinning' : ''}`}
           >
             <span className="trace-node-dot" aria-hidden="true">
               {done ? <Icon name="check" size={11} /> : ring ? <span className="trace-node-ring" /> : <span className="trace-node-core" />}
             </span>
             <div className="trace-node-text">
+              {finalLabel && <div className="trace-final-header" data-status={step.lastStep}>{finalLabel}</div>}
               {hasDetails ? (
                 <button
                   type="button"

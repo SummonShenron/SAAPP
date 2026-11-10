@@ -209,6 +209,34 @@ export function stepWords(step: { title: string; detail: string }): { title: str
   return untitled ? { title: step.detail, detail: '' } : { title: step.title, detail: step.detail };
 }
 
+/** The last tool step a turn can take (backend/utils/loop_progress.py), and what the work looked like by then. */
+export type LastStepStatus = 'progressing' | 'stalled' | 'unknown';
+/** How a turn that used tools ended. */
+export type TurnEnd = 'answered' | 'ran_out_progress' | 'ran_out_lost' | 'looped';
+
+/** The words on the final-step header; unknown values get none, so the page never prints what the server did not say. */
+export function finalStepLabel(status: unknown): string {
+  if (status === 'progressing') return 'Final step: still finding new material';
+  if (status === 'stalled') return 'Final step: the recent steps found nothing new';
+  if (status === 'unknown') return 'Final step';
+  return '';
+}
+
+/** Only the four endings the server names are kept (anything else is dropped before it reaches a step). */
+export function cleanTurnEnd(value: unknown): TurnEnd | undefined {
+  return value === 'answered' || value === 'ran_out_progress' || value === 'ran_out_lost' || value === 'looped' ? value : undefined;
+}
+
+export function cleanLastStep(value: unknown): LastStepStatus | undefined {
+  return value === 'progressing' || value === 'stalled' || value === 'unknown' ? value : undefined;
+}
+
+/** The ending's words come as "Title. What it means." (backend loop_progress.explain): the title is bold, the rest sits under it. */
+export function endingWords(detail: string): { title: string; detail: string } {
+  const at = detail.indexOf('. ');
+  return at > 0 ? { title: detail.slice(0, at), detail: detail.slice(at + 2) } : { title: detail, detail: '' };
+}
+
 /** "1 step" or "7 steps": what the line under a reply says before it is opened. */
 export function stepsLabel(count: number): string {
   return `${count} ${count === 1 ? 'step' : 'steps'}`;

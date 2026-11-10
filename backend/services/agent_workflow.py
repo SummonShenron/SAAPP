@@ -4058,10 +4058,14 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             async def _announce(title, detail):
                 await safe_emit_event("trace_detail", {"node": "tool_agent_node", "title": title, "detail": detail})
 
-            async def _announce_step(title, detail, step_id, tool=None, subject=None):
+            async def _announce_step(title, detail, step_id, tool=None, subject=None, last_step=None, turn_end=None):
                 payload = {"node": "tool_agent_node", "title": title, "detail": detail, "step_id": step_id, "tool": tool}
                 if subject:
                     payload["subject"] = subject
+                if last_step:
+                    payload["last_step"] = last_step            # the last tool step this turn can take, and how the work looked by then (backend/utils/loop_progress.py)
+                if turn_end:
+                    payload["turn_end"] = turn_end              # how the turn ended
                 await safe_emit_event("trace_detail", payload)
 
             # A second opinion when a lite model is stuck (backend/utils/advisor.py), in any mode: the next tier up of the SAME provider as the loop's model (so nothing new is disclosed), never in low-power mode,

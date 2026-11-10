@@ -48,6 +48,7 @@ import { answersId, answersValue, modeId, modeValue, thinkingId, thinkingValue }
 import { RUNNER_NUDGE_KEY, RUNNER_START_LINK, RUNNER_START_WAIT_MS, canStartRunnerFromLink, nudgeDismissedUntil, parseNudgeDismissed, runnerNudgeVisible, runnerStartPhase, scopeChoices } from '../components/sessionColumnLogic';
 import { ringView } from '../components/budgetText';
 import { type TraceStep } from '../components/TracePanel';
+import { cleanLastStep, cleanTurnEnd, type LastStepStatus, type TurnEnd } from '../components/traceFacts';
 import { finishedSteps, mergeExcerpts, mergeFacts, recordExcerpt, recordFacts, toolStepLabel, type TraceExcerptsById, type TraceFactsById } from '../components/traceFacts';
 import StepsDisclosure from '../components/StepsDisclosure';
 import { useMediaQuery } from '../hooks/useMediaQuery';
@@ -917,7 +918,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [conversationsRefreshKey, setConversationsRefreshKey] = useState(0);
   const [isMobileTraceOpen, setIsMobileTraceOpen] = useState(false);
   const [latestStepTitle, setLatestStepTitle] = useState("");
-  const nodeQueueRef = useRef<{ node: string; detail?: string; batchIndex?: number; batchSize?: number; stepId?: string; tool?: string; subject?: string }[]>([]);
+  const nodeQueueRef = useRef<{ node: string; detail?: string; batchIndex?: number; batchSize?: number; stepId?: string; tool?: string; subject?: string; lastStep?: LastStepStatus; turnEnd?: TurnEnd }[]>([]);
   const isProcessingQueue = useRef<boolean>(false);
   // Cheap alternative to full mid-thought steering (see docs/coding-agent-roadmap.md): lets the
   // user cut a turn short the moment it's clearly going down the wrong path, rather than waiting
@@ -1798,6 +1799,7 @@ useEffect(() => {
         id, title, detail, status: payload?.status === "complete" ? "complete" : "active",
         stepId: payload?.stepId,
         batchIndex: payload?.batchIndex, batchSize: payload?.batchSize,
+        lastStep: payload?.lastStep, turnEnd: payload?.turnEnd,
       }
     ]);
   };
@@ -1849,6 +1851,8 @@ useEffect(() => {
       batchIndex: item.batchIndex,
       batchSize: item.batchSize,
       stepId: item.stepId,
+      lastStep: item.lastStep,
+      turnEnd: item.turnEnd,
     });
 
     setTimeout(() => {
@@ -1933,6 +1937,7 @@ useEffect(() => {
                 nodeQueueRef.current.push({
                   node: payload.node, detail: payload.detail,
                   batchIndex: payload.batch_index, batchSize: payload.batch_size, stepId: payload.step_id, tool: payload.tool, subject: payload.subject,
+                  lastStep: cleanLastStep(payload.last_step), turnEnd: cleanTurnEnd(payload.turn_end),      // the last tool step and how the turn ended: fixed words only (backend/utils/loop_progress.py)
                 });
                 if (!isProcessingQueue.current) {
                   processNodeQueue();

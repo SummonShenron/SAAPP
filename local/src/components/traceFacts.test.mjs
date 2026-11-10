@@ -218,3 +218,37 @@ test('the first step of a running turn is the full-size ring, and nodes begin at
   assert.match(source, /steps\.length === 0 \|\| \(steps\.length === 1 && steps\[0\]\.status !== 'complete'\)/);
   assert.match(source, /sonic-ring-loader/);
 });
+
+// ---- the last tool step and how a turn ended (backend/utils/loop_progress.py) --------------------------------------------------------------
+
+test('the final-step header says what the work looked like by then, and says nothing for a value the server did not send', async () => {
+  const { finalStepLabel, cleanLastStep } = await import('./traceFacts.ts');
+  assert.equal(finalStepLabel('progressing'), 'Final step: still finding new material');
+  assert.equal(finalStepLabel('stalled'), 'Final step: the recent steps found nothing new');
+  assert.equal(finalStepLabel('unknown'), 'Final step');
+  assert.equal(finalStepLabel('<b>hi</b>'), '');
+  assert.equal(finalStepLabel(undefined), '');
+  assert.equal(cleanLastStep('stalled'), 'stalled');
+  assert.equal(cleanLastStep('whatever'), undefined);
+});
+
+test('only the four endings the server names reach a step, and an ending splits into a title and what it means', async () => {
+  const { cleanTurnEnd, endingWords } = await import('./traceFacts.ts');
+  for (const kind of ['answered', 'ran_out_progress', 'ran_out_lost', 'looped']) assert.equal(cleanTurnEnd(kind), kind);
+  assert.equal(cleanTurnEnd('ran_out'), undefined);
+  assert.equal(cleanTurnEnd(7), undefined);
+  assert.deepEqual(endingWords('Stopped: ran out of steps. It used all 6 steps and was still finding new material.'), { title: 'Stopped: ran out of steps', detail: 'It used all 6 steps and was still finding new material.' });
+  assert.deepEqual(endingWords('Finished'), { title: 'Finished', detail: '' });
+});
+
+test('the page carries the markers from the stream to the step to the header, with one header above the first step of the last turn', () => {
+  const chat = readFileSync(new URL('../pages/Chat.tsx', import.meta.url), 'utf8');
+  assert.match(chat, /lastStep: cleanLastStep\(payload\.last_step\), turnEnd: cleanTurnEnd\(payload\.turn_end\)/);
+  assert.match(chat, /lastStep: payload\?\.lastStep, turnEnd: payload\?\.turnEnd/);
+  assert.match(chat, /lastStep: item\.lastStep,\s+turnEnd: item\.turnEnd,/);
+  const steps = readFileSync(new URL('./TraceSteps.tsx', import.meta.url), 'utf8');
+  assert.match(steps, /step\.lastStep && !\(i > 0 && steps\[i - 1\]\.lastStep\) \? finalStepLabel\(step\.lastStep\) : ''/);
+  assert.match(steps, /\{finalLabel && <div className="trace-final-header" data-status=\{step\.lastStep\}>\{finalLabel\}<\/div>\}/);
+  assert.match(steps, /step\.turnEnd \? endingWords\(step\.detail\) : stepWords\(step\)/);
+  assert.match(steps, /trace-node-end trace-end-\$\{step\.turnEnd\}/);
+});

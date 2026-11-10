@@ -38,7 +38,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
-from backend.utils import act_not_suggest, advisor as advisor_module, answer_checks, claim_check, combo as combo_rules, diff_review, draft_checkpoint, loop_rhythm, reading_waste
+from backend.utils import act_not_suggest, advisor as advisor_module, answer_checks, claim_check, combo as combo_rules, diff_review, draft_checkpoint, loop_progress, loop_rhythm, reading_waste
 from backend.utils.prompt_meter import PromptMeter
 from backend.utils.agent_utils import _UnsafeActionRequested, build_tool_facts, build_trace_subject, new_trace_step_id
 
@@ -306,6 +306,9 @@ async def run(
     from backend.utils import llm_turns as _lt    # aliased: `llm_turns` is imported further down in this function
 
     reading.set_orientation(_lt.orientation_paths())
+    # Did the work get anywhere, or go in circles? (backend/utils/loop_progress.py): marks the last tool step in the trace and says how the turn ended (ran out of steps while still finding things, or ran out lost).
+    progress = loop_progress.ProgressLog()
+    last_step_status: Optional[str] = None
 
     async def absorb_steering(step_number: int) -> bool:
         """Folds newly arrived steering into the conversation as a user message and widens the budget. True when there was any."""
@@ -354,7 +357,7 @@ async def run(
         return await advisor.consult(kind, brief)
 
     async def run_call(step: int, call: Dict[str, Any]) -> str:
-        nonlocal repeats, rereads, latest_draft
+        nonlocal repeats, rereads, latest_draft, last_step_status
         name = str(call.get("name") or "")
         args = call.get("args") if isinstance(call.get("args"), dict) else {}
         if name == "save_draft" and name in offered:
@@ -381,10 +384,17 @@ async def run(
             return note
         seen[key] = step
         step_id = new_trace_step_id()
+        # The last tool step the loop can take (the budget may still grow: an applied edit earns steps back): the trace marks it, with what the work looked like by then.
+        final_marker = progress.status() if budget - step + 1 <= 1 else None
+        if final_marker in ("progressing", "stalled"):
+            last_step_status = final_marker
         if emit_step is not None or emit is not None:
             try:
                 if emit_step is not None:
-                    await emit_step(f"Running {name}...", _describe(name, args), step_id, name, build_trace_subject(name, args))
+                    try:
+                        await emit_step(f"Running {name}...", _describe(name, args), step_id, name, build_trace_subject(name, args), **({"last_step": final_marker} if final_marker else {}))
+                    except TypeError:       # an emitter that does not know the marker (an older caller): the step is still shown
+                        await emit_step(f"Running {name}...", _describe(name, args), step_id, name, build_trace_subject(name, args))
                 else:
                     await emit(f"Running {name}...", _describe(name, args))
             except Exception:
@@ -450,6 +460,7 @@ async def run(
         for index, (call, result) in enumerate(zip(calls, results)):
             args = call.get("args") if isinstance(call.get("args"), dict) else {}
             if call.get("name") != "save_draft":      # keeping a draft is not a step worth listing in the receipt
+                progress.note(step_number, str(call.get("name") or ""), args, result)
                 attempts.append({"purpose": f"Run {call.get('name')}", "action_desc": _describe(str(call.get("name")), args), "observation": result})
             clipped = _clip(result)
             message = ToolMessage(content=clipped, tool_call_id=str(call.get("id") or f"call_{step_number}_{index}"), name=str(call.get("name")))
@@ -763,6 +774,19 @@ async def run(
         meter.note_call(messages, [])
         final_text = _text(getattr(await llm.ainvoke_tools(messages, []), "content", "")) or draft_checkpoint.fallback_answer(latest_draft)
 
+    # How the turn ended, in words the trace shows (only through the step announcer, which can carry the marker the page styles): it chose to answer, or the limit stopped it and either the last steps were still finding things or they were going in circles.
+    ended = loop_progress.verdict(progress, stop_reason, forced)
+    if ended:
+        said = loop_progress.explain(ended, steps_left=max(budget - step + (0 if forced else 1), 0), budget=budget, stalled=progress.stalled_for())      # an answer is given on a step of its own, which used no tool
+        words = f"{said['title']}. {said['detail']}"
+        try:
+            if emit_step is not None:
+                try:
+                    await emit_step(said["title"], words, new_trace_step_id(), None, None, turn_end=ended)
+                except TypeError:
+                    await emit_step(said["title"], words, new_trace_step_id(), None, None)
+        except Exception:
+            logger.debug("[native_loop] could not emit how the turn ended.", exc_info=True)
     had_error = any(str(a["observation"]).startswith("ERROR") for a in attempts)
     # Counted per turn (backend/utils/llm_turns.py): how many steps the loop used, and whether it ended without deciding to answer (the limit, or repeating itself).
     from backend.utils import llm_turns
@@ -787,7 +811,7 @@ async def run(
             if name in PAGE_TOOLS:
                 key = "browser_read_native" if name == "browser_read_text" else f"{name}_native"
                 page_counts[key] = page_counts.get(key, 0) + 1
-        await asyncio.to_thread(record_turn_counts, {**meter.counts(sum(len(item["text"]) for item in held)), **combo.counts(forced and stop_reason in ("", "step_limit")), **page_counts, **{f"answer_sent_back_{kind}": count for kind, count in answer_sent_back.items()}, **({"keep_going_sent_back": keep_going_sent} if keep_going_sent else {}), **(advisor.counts if advisor is not None else {})})
+        await asyncio.to_thread(record_turn_counts, {**meter.counts(sum(len(item["text"]) for item in held)), **combo.counts(forced and stop_reason in ("", "step_limit")), **page_counts, **{f"answer_sent_back_{kind}": count for kind, count in answer_sent_back.items()}, **({"keep_going_sent_back": keep_going_sent} if keep_going_sent else {}), **(advisor.counts if advisor is not None else {}), **loop_progress.counts(ended, last_step_status)})
     except Exception:
         logger.debug("[native_loop] could not record the prompt sizes.", exc_info=True)
     return {
