@@ -1788,7 +1788,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 # passed every check unseen (found 2026-11-02). The checks read a plain-quotes COPY; what the person sees, and what a rewrite is told it rejected, stays the model's own text.
                 checked_reply = plain_quotes(full_response)
                 safety_issue = safety_plan.reply_issue(checked_reply)
-                emotional_issue = None if safety_plan.active else emotional_reply_issue(final_state.get("emotional_state"), checked_reply)
+                emotional_issue = None if safety_plan.active else emotional_reply_issue(final_state.get("emotional_state"), checked_reply)  # the person's message is deliberately NOT passed: the "restating" check is switched off (docs/model-eval-plan.md Update 16 addendum)
                 # Sonic's identity boundary (backend/utils/identity_checks.py): no claimed feelings, no stake in
                 # whether the person stays or comes back. Not applied while a safety context is in force, which has
                 # its own rules for what the reply must do.

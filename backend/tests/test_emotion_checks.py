@@ -272,7 +272,7 @@ def test_a_low_reading_regenerates_a_scripted_reply_whatever_the_need_and_a_good
 
 
 def test_every_attunement_tag_has_a_revision_reason_the_model_is_told():
-    for tag in ("probing_question", "two_questions", "template_phrase", "thin_comfort", "hedged", "generalizing"):
+    for tag in ("probing_question", "two_questions", "template_phrase", "thin_comfort", "hedged", "generalizing", "restating"):
         assert ec._REVISION_REASONS[tag].strip(), tag
 
 
@@ -280,3 +280,52 @@ def test_the_eval_scorer_uses_the_same_patterns_as_the_live_check():
     from backend.evals import character_eval as ce
 
     assert ce._PROBE_RE is ec.PROBE_RE and ce._STATE_ASK_RE is ec.STATE_ASK_RE and ce.EXPLAIN_RE is ec.EXPLAIN_RE
+
+
+MESSAGE = ("My best friend and I haven't spoken in four days after the fight, and every time my phone buzzes I check it, and it is never her, so I just sit there waiting.")
+
+
+def test_a_reply_that_opens_by_handing_the_message_back_is_flagged_restating():
+    # three copied words in a row
+    assert ec.reply_attunement_issue("Every time my phone buzzes you check it. Nothing from her yet is its own kind of ache.", MESSAGE) == "restating"
+    # two separate pairs of content words copied
+    assert ec.reply_attunement_issue("Four days after the fight, with your best friend gone quiet. That weight sits on the whole day.", MESSAGE) == "restating"
+    # most of the opening's content words are the message's own
+    assert ec.reply_attunement_issue("Waiting phone, checking buzzes, never her.", MESSAGE) == "restating"
+
+
+def test_a_reply_that_opens_with_something_new_is_not_flagged_restating():
+    fresh = "A silence that long starts to feel like a verdict, and the buzzing makes you hope all over again each time. Nothing about it is petty."
+    assert ec.reply_attunement_issue(fresh, MESSAGE) is None
+    # a shared word or two is not restating, and a copy that sits after the opening is not read
+    assert ec.reply_attunement_issue("The waiting is the worst part, and it wears you down quietly. Nothing about it is silly.", MESSAGE) is None
+    later = "That kind of quiet is heavy to carry around, and it deserves more than a shrug. It would make sense to feel worn out by now. Four days after the fight, every buzz of your phone."
+    assert ec.reply_attunement_issue(later, MESSAGE) is None
+
+
+def test_restating_needs_the_message_and_ranks_below_the_other_tags():
+    echo = "Every time my phone buzzes you check it. Nothing from her yet is its own kind of ache."
+    assert ec.reply_attunement_issue(echo) is None and ec.reply_attunement_issue(echo, "") is None
+    assert ec.reply_attunement_issue("It sounds like every time my phone buzzes you check it.", MESSAGE) == "template_phrase"
+    # a short message gives too little to judge a ratio by, but a copied run of words still counts
+    assert ec.reply_attunement_issue("Quiet nights feel long, lonely and loud.", "Tonight is quiet and lonely.") is None
+    assert ec.reply_attunement_issue("Tonight is quiet and lonely, yes. That is a lot to sit in.", "Tonight is quiet and lonely.") == "restating"
+
+
+def test_the_emotional_check_passes_the_message_through_for_a_hurting_person_only():
+    echo = "Every time my phone buzzes you check it. Nothing from her yet is its own kind of ache."
+    assert ec.emotional_reply_issue(_state("low", "venting"), echo, MESSAGE) == "restating"
+    assert ec.emotional_reply_issue(_state("low", "venting"), echo) is None
+    assert ec.emotional_reply_issue(_state("positive", "connection"), echo, MESSAGE) is None
+    assert ec.build_emotional_revision_prompt("PROMPT", echo, "restating")[1] == ec._REVISION_REASONS["restating"]
+
+
+def test_the_restating_check_is_off_in_the_app_because_regenerating_did_not_beat_the_first_draft():
+    import pathlib
+
+    # 10 blind real-message pairs (2026-11-11): regenerated 3, first draft 3, both 3, neither 1; the regenerated reply twice lost for wrong energy. The check stays in emotion_checks for the eval and for later; the app does not pass the message.
+    source = (pathlib.Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
+    call = source[source.index('emotional_issue = None if safety_plan.active else emotional_reply_issue('):]
+    call = call.split(chr(10))[0]
+    assert 'emotional_reply_issue(final_state.get("emotional_state"), checked_reply)' in call and "plain_quotes(question)" not in call
+    assert ec.emotional_reply_issue(_state("low", "venting"), "Every time my phone buzzes you check it. Nothing from her yet is its own kind of ache.") is None

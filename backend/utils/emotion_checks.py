@@ -138,9 +138,54 @@ def _question_sentences(text: str):
     return [s for s in _sentences(text) if s.endswith("?")]
 
 
-def reply_attunement_issue(reply: str) -> Optional[str]:
+_STOPWORDS = frozenset("that this with have been were they them their there what when from your about just into than then also because would could should really very much more some like only still even over such".split())
+RESTATE_OVERLAP = 0.30      # share of the opening's content words that were already in the message
+RESTATE_MIN_MESSAGE_WORDS = 6
+_SUFFIXES = ("ing", "ed", "es", "s", "ly")
+
+
+def _stem(word: str) -> str:
+    word = word.lower()
+    for suffix in _SUFFIXES:
+        if word.endswith(suffix) and len(word) - len(suffix) >= 4:
+            return word[: -len(suffix)]
+    return word
+
+
+def _stems(text: str):
+    return [_stem(w) for w in re.findall(r"[A-Za-z']+", text)]
+
+
+def _content(stems):
+    return [w for w in stems if len(w) > 3 and w not in _STOPWORDS]
+
+
+def _grams(stems, n: int):
+    return {tuple(stems[i:i + n]) for i in range(len(stems) - n + 1)}
+
+
+def reply_restates_message(reply: str, message: str) -> bool:
+    """True when a reply's first two sentences mostly hand the person's own words back: a run of three words copied from the message that holds at least two content words, two separate pairs of content words copied, or (for a message long
+    enough to judge) RESTATE_OVERLAP or more of the opening's content words taken from it. Tuned 2026-11-11 on a person's own labels of 20 replies (13 marked "repeated what I said", 7 not): it caught 4 of the 13 and flagged none of the 7, and on 40
+    fresh drafts for real messages it flagged 12 (the looser first version flagged 25, mostly incidental phrases like "catch up with"). It errs toward letting a repeat through. Pure."""
+    head = " ".join(_sentences(reply_body(reply))[:2])
+    if not head or not message:
+        return False
+    head_stems, message_stems = _stems(head), _stems(message)
+    if any(len(_content(g)) >= 2 for g in _grams(head_stems, 3) & _grams(message_stems, 3)):
+        return True
+    pairs = {g for g in _grams(head_stems, 2) & _grams(message_stems, 2) if len(_content(g)) == 2}
+    if len(pairs) >= 2:
+        return True
+    message_words, head_words = set(_content(message_stems)), _content(head_stems)
+    if len(message_words) < RESTATE_MIN_MESSAGE_WORDS or not head_words:
+        return False
+    return sum(w in message_words for w in head_words) / len(head_words) >= RESTATE_OVERLAP
+
+
+def reply_attunement_issue(reply: str, message: Optional[str] = None) -> Optional[str]:
     """The tag of what is off about a reply to someone who is low, or None: "probing_question" (it ends by making them retell what happened, was said or why), "two_questions", "template_phrase" (a stock
-    reflective-listening phrase), "thin_comfort" ("that must be hard" with nothing given with it), "hedged" (more than MAX_HEDGES softeners) or "generalizing" (more than MAX_GENERAL "how such things go" phrases). Pure."""
+    reflective-listening phrase), "thin_comfort" ("that must be hard" with nothing given with it), "hedged" (more than MAX_HEDGES softeners) or "generalizing" (more than MAX_GENERAL "how such things go" phrases) or, when the message is given, "restating" (it opens by handing their own words back). Pure."""
     text = reply_body(reply)
     if not text:
         return None
@@ -161,6 +206,8 @@ def reply_attunement_issue(reply: str) -> Optional[str]:
         return "hedged"
     if len(GENERAL_RE.findall(text)) > MAX_GENERAL or CAUSE_GENERAL_RE.search(text):
         return "generalizing"
+    if message and reply_restates_message(text, message):
+        return "restating"
     return None
 
 
@@ -189,6 +236,10 @@ _REVISION_REASONS = {
         "the draft talked about how such things go in general (\"often\", \"can be\", \"tends to\", \"it's easy to\"). Write it again speaking only about THIS person and what they told you: say what it is like for them, "
         "straight to them, with their own details. They are being heard, not taught what is typical."
     ),
+    "restating": (
+        "the draft opens by handing back what they just said, in their own words. They already know what they told you. Write it again opening with something they did not say: what it is like for them, or what "
+        "you notice in what they described, plainly and in different words, without quoting or paraphrasing their message."
+    ),
     "hedged": (
         "the draft hedged too much (maybe, might, seems, probably, sort of). Write it again saying what you think it is like for them plainly, as something you are telling them, with at most one softener in the whole reply."
     ),
@@ -201,7 +252,7 @@ _REVISION_REASONS = {
 }
 
 
-def emotional_reply_issue(state: Optional[Dict[str, Any]], reply: str) -> Optional[str]:
+def emotional_reply_issue(state: Optional[Dict[str, Any]], reply: str, message: Optional[str] = None) -> Optional[str]:
     """The tag of the emotional need this reply failed to honor, or None when it is fine (or when
     nothing here applies). Only a need read from THIS message is checked: a feeling carried over from
     earlier turns doesn't oblige the reply to anything in particular."""
@@ -214,7 +265,7 @@ def emotional_reply_issue(state: Optional[Dict[str, Any]], reply: str) -> Option
     if need == "celebration" and valence in POSITIVE_VALENCES and not reply_shows_curiosity(reply):
         return "celebration_no_question"
     if valence in NEGATIVE_VALENCES:
-        return reply_attunement_issue(reply)       # a low person, whatever the need: hedged, scripted, thin or interviewing replies are regenerated once
+        return reply_attunement_issue(reply, message)       # a low person, whatever the need: hedged, scripted, thin or interviewing replies are regenerated once
     return None
 
 
