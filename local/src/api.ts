@@ -1119,6 +1119,8 @@ export interface FeedbackSummary {
     labels: { label: string; positive: number; negative: number }[];
     examples: { id: string; positive: number; negative: number }[];
     notes: { id: string; positive: number; negative: number }[];
+    /** Thumbs-downs whose reason was about the voice itself, by the voice that wrote the reply. Absent from an older server. */
+    reasons?: { label: string; repeated_me: number; nothing_new: number; didnt_attune: number }[];
   };
 }
 

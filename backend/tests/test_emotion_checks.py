@@ -252,6 +252,15 @@ def test_talk_about_how_such_things_go_is_allowed_once_and_regenerated_at_two():
     assert ec.reply_attunement_issue(own + " Waiting for her to call is the part that wears on you.") is None
 
 
+def test_when_x_happens_its_usually_because_of_y_is_regenerated_on_one_occurrence():
+    """Jack, 2026-11-11, blind round 3: "when x happens, its usually because of y" is the reply he did not want ("yeah no shit")."""
+    own = "Being told in front of everyone, with no room to answer, is a particular kind of sting."
+    assert ec.reply_attunement_issue(own + " When someone goes quiet like that, it is usually because they are overwhelmed.") == "generalizing"
+    assert ec.reply_attunement_issue(own + " Flatness is often what too much looks like, because the volume gets turned down.") == "generalizing"
+    assert ec.reply_attunement_issue(own + " That is usually a sign you are worn out.") == "generalizing"
+    assert ec.reply_attunement_issue(own + " The nod was the only thing you could manage, and the afternoon replayed it.") is None
+
+
 def test_a_low_reading_regenerates_a_scripted_reply_whatever_the_need_and_a_good_reply_passes():
     for need in ("venting", "reassurance", "solving", "connection"):
         assert ec.emotional_reply_issue(_state("low", need), "It sounds like you are carrying a lot.") == "template_phrase", need

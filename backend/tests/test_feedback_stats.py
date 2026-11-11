@@ -226,7 +226,7 @@ def test_a_section_that_cannot_be_built_is_left_out_without_taking_the_page_down
 
 
 def test_the_reasons_a_person_can_pick_on_a_thumbs_down_are_counted_under_their_own_names():
-    tags = ["code_wrong", "tool_failure", "forgot_context", "ignored_request", "tone_off", "too_long"]
+    tags = ["code_wrong", "tool_failure", "forgot_context", "ignored_request", "tone_off", "too_long", "repeated_me", "nothing_new", "didnt_attune"]
     assert list(fs.USER_ONLY_TAGS) == tags
     out = fs.summarize_feedback([row("dislike", tag) for tag in tags], now=NOW, days=7)
     assert sorted(item["tag"] for item in out["by_tag"]) == sorted(tags)

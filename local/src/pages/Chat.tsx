@@ -3386,6 +3386,9 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                     <option value="forgot_context">Forgot Earlier Context or Memory</option>
                     <option value="ignored_request">Did Not Do What I Asked</option>
                     <option value="tone_off">Tone Felt Off</option>
+                    <option value="repeated_me">Repeated Back What I Said</option>
+                    <option value="nothing_new">Nothing New in It</option>
+                    <option value="didnt_attune">Did Not Meet Me Where I Was</option>
                     <option value="too_long">Too Long or Wordy</option>
                     <option value="other">Other</option>
                   </select>
@@ -3400,7 +3403,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
                     onChange={(e) => setFeedbackReason(e.target.value)}
                     placeholder="Explain what was wrong with the response..."
                     rows={4}
-                    required
+                    required={!['repeated_me', 'nothing_new', 'didnt_attune'].includes(feedbackTag)}
                     style={{
                       width: '100%',
                       padding: '0.5rem',

@@ -27,7 +27,7 @@ CORRECTIONS_COLLECTION = "corrections"
 GRAPH_EDGES_COLLECTION = "graph_edges"
 DOCUMENTS_COLLECTION = "documents"
 # The first five are also what the answer checker writes (self_counters.REWARD_TAGS). The rest can only be chosen by a person on the thumbs-down card (Chat.tsx).
-USER_ONLY_TAGS = ("code_wrong", "tool_failure", "forgot_context", "ignored_request", "tone_off", "too_long")
+USER_ONLY_TAGS = ("code_wrong", "tool_failure", "forgot_context", "ignored_request", "tone_off", "too_long") + reply_stamp.VOICE_QUALITY_TAGS
 KNOWN_TAGS = ("hallucination", "incorrect_filter", "formatting", "incomplete") + USER_ONLY_TAGS + ("other",)
 MAX_MISSING_NAMES = 8
 PERSONAL_KB_PREFIX = "kb_"          # see isolation_kb_utils.make_personal_kb_id
@@ -79,7 +79,7 @@ def summarize_feedback(rows: Iterable[Dict[str, Any]], applied_turns: int = 0, t
         kind = correction_kinds.polarity(row)
         who = correction_kinds.source(row)
         if who == correction_kinds.USER:
-            voiced.append({"kind": kind, "voice": row.get("voice")})      # a person's thumb only: the answer checker's redos are not a reading of the voice
+            voiced.append({"kind": kind, "voice": row.get("voice"), "tag": row.get("tag")})      # a person's thumb only: the answer checker's redos are not a reading of the voice
         stored[kind] += 1
         stored["with_embedding" if row.get("has_embedding") else "without_embedding"] += 1
         if row.get("username"):

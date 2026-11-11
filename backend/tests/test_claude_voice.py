@@ -230,4 +230,5 @@ def test_the_voice_reminder_tells_the_model_to_speak_to_this_person_and_not_abou
     assert "FOR THEM" in reminder and "wants to be heard" in reminder
     for phrase in ("\"often\"", "\"can be\"", "\"tends to\"", "\"it's easy to\""):
         assert phrase in reminder, phrase
-    assert "what tends to help" not in reminder            # the old text asked for exactly the generalising it now forbids
+    assert "what tends to help" not in reminder
+    assert "usually because of Y" in reminder and "whether they made a deadline" in reminder and "no chores, no laundry" in reminder    # round 3: invented chores, an assumed timeline            # the old text asked for exactly the generalising it now forbids

@@ -102,12 +102,18 @@ def find_saved(db: Any, username: str, text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+# What a person can say was wrong with the VOICE of a reply, on the thumbs-down card (Chat.tsx). Jack, 2026-11-11: the blind A/B tests record a winner, not how often a model's replies lack substance, repeat him or miss how he feels,
+# so the rate has to come from real use: each of these is a reason on a rated reply, and the Health page counts them by the voice that wrote it.
+VOICE_QUALITY_TAGS = ("repeated_me", "nothing_new", "didnt_attune")
+
+
 def summarize(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     """Counts of a person's thumbs by voice, by example and by note, from feedback rows that carry a stamp (`voice`) and a polarity ("positive" or "negative", already read by correction_kinds). Rows
-    without a stamp are only counted. Counts and ids only. Pure."""
+    without a stamp are only counted. A thumbs-down whose reason (`tag`) is one of VOICE_QUALITY_TAGS is also counted under its voice in `reasons`. Counts and ids only. Pure."""
     labels: Dict[str, Dict[str, int]] = {}
     examples: Dict[str, Dict[str, int]] = {}
     notes: Dict[str, Dict[str, int]] = {}
+    reasons: Dict[str, Dict[str, int]] = {}
     stamped = unstamped = 0
     for row in rows:
         kind = row.get("kind")
@@ -119,6 +125,9 @@ def summarize(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
             continue
         stamped += 1
         labels.setdefault(stamp["label"], {"positive": 0, "negative": 0})[kind] += 1
+        tag = str(row.get("tag") or "").strip().lower()
+        if kind == "negative" and tag in VOICE_QUALITY_TAGS:
+            reasons.setdefault(stamp["label"], {name: 0 for name in VOICE_QUALITY_TAGS})[tag] += 1
         for example_id in stamp["examples"]:
             examples.setdefault(example_id, {"positive": 0, "negative": 0})[kind] += 1
         for note_id in stamp["notes"]:
@@ -127,4 +136,5 @@ def summarize(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     def listed(table: Dict[str, Dict[str, int]], key: str) -> List[Dict[str, Any]]:
         return sorted(({key: name, **counts} for name, counts in table.items()), key=lambda r: (-(r["positive"] + r["negative"]), r[key]))
 
-    return {"stamped": stamped, "unstamped": unstamped, "labels": listed(labels, "label"), "examples": listed(examples, "id"), "notes": listed(notes, "id")}
+    reason_rows = sorted(({"label": name, **counts} for name, counts in reasons.items()), key=lambda r: (-sum(r[t] for t in VOICE_QUALITY_TAGS), r["label"]))
+    return {"stamped": stamped, "unstamped": unstamped, "labels": listed(labels, "label"), "examples": listed(examples, "id"), "notes": listed(notes, "id"), "reasons": reason_rows}

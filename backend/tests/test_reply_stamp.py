@@ -110,7 +110,7 @@ def test_the_summary_counts_thumbs_by_voice_example_and_note_and_counts_the_unst
     assert summary["labels"] == [{"label": "haiku", "positive": 2, "negative": 1}, {"label": "flash", "positive": 1, "negative": 1}]
     assert summary["examples"] == [{"id": "big_win_energy", "positive": 2, "negative": 1}]
     assert summary["notes"] == [{"id": "went_quiet_after_something_vulnerable", "positive": 2, "negative": 1}]
-    assert rs.summarize([]) == {"stamped": 0, "unstamped": 0, "labels": [], "examples": [], "notes": []}
+    assert rs.summarize([]) == {"stamped": 0, "unstamped": 0, "labels": [], "examples": [], "notes": [], "reasons": []}
 
 
 def test_the_feedback_page_summary_counts_a_persons_thumbs_only_and_asks_for_the_stamp(monkeypatch):
@@ -244,3 +244,28 @@ def test_the_page_sends_its_identity_headers_with_a_thumb_so_the_server_files_it
     assert "'X-Principal': principal" in headers and "'x-user-id': principal" in headers and "Authorization: `Bearer ${token}`" in headers
     auth = (ROOT / "backend" / "auth" / "isolation_auth.py").read_text(encoding="utf-8")
     assert 'if "@" in normalized_principal:' in auth and 'return {**payload, "sub": verified_email, "email": verified_email}' in auth and "    return payload" in auth     # the header is what maps a token to the account
+
+
+def test_a_thumbs_down_about_the_voice_itself_is_counted_under_the_voice_that_wrote_the_reply():
+    """Jack, 2026-11-11: the rate of "repeated me / nothing new / did not meet me" per voice has to come from real use, not from a pairwise A/B."""
+    flash = {**STAMP, "label": "flash", "tier": "standard", "examples": [], "notes": []}
+    rows = [
+        {"kind": "negative", "voice": STAMP, "tag": "repeated_me"}, {"kind": "negative", "voice": STAMP, "tag": "nothing_new"}, {"kind": "negative", "voice": STAMP, "tag": "nothing_new"},
+        {"kind": "negative", "voice": flash, "tag": "didnt_attune"},
+        {"kind": "negative", "voice": STAMP, "tag": "formatting"},            # a different reason: counted as a thumbs-down, not here
+        {"kind": "positive", "voice": STAMP, "tag": "repeated_me"},          # a thumbs-up never counts as a complaint
+        {"kind": "negative", "voice": None, "tag": "repeated_me"},           # no stamp: nothing to attribute it to
+    ]
+    summary = rs.summarize(rows)
+    assert summary["reasons"] == [
+        {"label": "haiku", "repeated_me": 1, "nothing_new": 2, "didnt_attune": 0},
+        {"label": "flash", "repeated_me": 0, "nothing_new": 0, "didnt_attune": 1},
+    ]
+    assert rs.VOICE_QUALITY_TAGS == ("repeated_me", "nothing_new", "didnt_attune")
+
+
+def test_the_page_sends_the_tag_and_the_summary_keeps_it_so_the_reasons_reach_the_health_page():
+    rows = [{"username": "jack", "tag": "repeated_me", "rating": "negative", "source": "user", "created_at": "2026-11-08T12:00:00+00:00", "has_embedding": True, "voice": STAMP}]
+    summary = feedback_stats.summarize_feedback(rows)
+    assert summary["by_voice"]["reasons"] == [{"label": "haiku", "repeated_me": 1, "nothing_new": 0, "didnt_attune": 0}]
+    assert {"tag": "repeated_me", "count": 1} in summary["by_tag"]

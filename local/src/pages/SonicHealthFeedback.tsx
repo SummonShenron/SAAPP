@@ -13,6 +13,9 @@ const TAG_LABELS: Record<string, string> = {
   forgot_context: 'Forgot earlier context',
   ignored_request: 'Did not do what I asked',
   tone_off: 'Tone felt off',
+  repeated_me: 'Repeated back what I said',
+  nothing_new: 'Nothing new in it',
+  didnt_attune: 'Did not meet me where I was',
   too_long: 'Too long or wordy',
   other: 'Other',
 };
@@ -97,6 +100,16 @@ export const FeedbackTab: React.FC<{ feedback: FeedbackSummary | null | undefine
                 <h3 className="sh-subhead">By people note</h3>
                 {feedback.by_voice.notes.length === 0 ? <div className="sh-hint">No note was shown on a rated reply yet.</div> : <VoiceTable rows={feedback.by_voice.notes} first="Note" name={row => row.id ?? ''} />}
               </div>
+            </div>
+          )}
+          {feedback.by_voice.reasons && feedback.by_voice.reasons.length > 0 && (
+            <div>
+              <h3 className="sh-subhead">Thumbs-downs about the voice itself, by voice</h3>
+              <table className="sh-table sh-table-tight">
+                <thead><tr><th>Voice</th><th>{TAG_LABELS.repeated_me}</th><th>{TAG_LABELS.nothing_new}</th><th>{TAG_LABELS.didnt_attune}</th></tr></thead>
+                <tbody>{feedback.by_voice.reasons.map(row => <tr key={row.label}><td>{VOICE_LABELS[row.label] ?? row.label}</td><td>{row.repeated_me}</td><td>{row.nothing_new}</td><td>{row.didnt_attune}</td></tr>)}</tbody>
+              </table>
+              <div className="sh-hint">Compare each voice's count here with its total thumbs-down above: the share is how often it repeats you, adds nothing or misses how you feel.</div>
             </div>
           )}
         </section>

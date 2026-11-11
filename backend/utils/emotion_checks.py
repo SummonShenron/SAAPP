@@ -122,6 +122,11 @@ HEDGE_RE = re.compile(
 GENERAL_RE = re.compile(
     r"\b(?:often|sometimes)\b|\bcan (?:often |also )?(?:be|feel|start|make|read|sting)\b|\btend(?:s)? to\b|\bit'?s easy to\b|\bit'?s (?:natural|normal|common|understandable) (?:to|that|for)\b", re.IGNORECASE)
 MAX_GENERAL = 1
+# The sharper form Jack named (2026-11-11, round 3): "when X happens, it's usually because of Y" ("yeah, no shit"). One is enough to regenerate. Measured: 1 of 42 Haiku replies and 2 of 32 Flash replies in the three blind rounds.
+CAUSE_GENERAL_RE = re.compile(
+    r"\b(?:usually|often|typically|generally|tends? to be)\b[^.?!]{0,40}\b(?:because|since|due to|comes from|from)\b"
+    r"|\b(?:when|after|if)\b[^.?!]{0,100}\b(?:it'?s|that'?s|this is|it is)\b[^.?!]{0,12}\b(?:usually|often|typically|generally)\b"
+    r"|\b(?:is|are) (?:usually|often|typically) (?:a sign|because|the result|what happens)\b", re.IGNORECASE)
 MAX_HEDGES = 1                 # measured: Flash 0.3 a reply and never two; Haiku 1.3 and 30% with two or more
 COMFORT_RE = re.compile(r"\bmust be (?:hard|heavy|tough|difficult|a lot)\b|\bhard to sit with\b", re.IGNORECASE)
 EXPLAIN_RE = re.compile(
@@ -154,7 +159,7 @@ def reply_attunement_issue(reply: str) -> Optional[str]:
             return "thin_comfort"
     if len(HEDGE_RE.findall(text)) > MAX_HEDGES:
         return "hedged"
-    if len(GENERAL_RE.findall(text)) > MAX_GENERAL:
+    if len(GENERAL_RE.findall(text)) > MAX_GENERAL or CAUSE_GENERAL_RE.search(text):
         return "generalizing"
     return None
 
