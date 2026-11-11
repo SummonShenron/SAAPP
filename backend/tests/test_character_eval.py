@@ -673,19 +673,27 @@ def test_the_vent_scorers_want_the_details_not_a_restatement_and_not_a_line_that
     _fails(good, "", "empty")
 
 
-def test_the_interview_scorer_wants_at_most_one_question_none_probing_and_some_understanding():
-    one_question = ["That is a hard thing to sit in. People often replay the last conversation hunting for the mistake, and it rarely holds one.",
-                    "A blocked profile stings because it feels final. Silence after a fight is often a person stepping back, not a verdict on you.",
-                    "Replaying it is the mind looking for a way to fix it. It usually helps to put the phone down for a bit. Is there something you would rather do tonight?"]
-    _passes(ce.score_no_interview, one_question)
-    _passes(ce.score_no_interview, ["People go quiet after fights more often than you would think.", "Often it is about their own overwhelm.", "Rest if you can."])      # no question at all is fine
-    _fails(ce.score_no_interview, ["People often go quiet. What was the last thing she sent you?", "Okay.", "Rest."], "probes what happened or was said")
-    _fails(ce.score_no_interview, ["People often go quiet.", "When the thoughts come back, what is the first question that shows up?", "Rest."], "probes what happened or was said")
-    _fails(ce.score_no_interview, ["People often go quiet.", "What do you find yourself wishing she had said?", "Rest."], "probes what happened or was said")
-    _fails(ce.score_no_interview, ["People often go quiet.", "Did she say anything about what she needed?", "Rest."], "probes what happened or was said")
-    _fails(ce.score_no_interview, ["People often go quiet. How are you holding up?", "Okay.", "Rest."], "asks how they are")
-    _fails(ce.score_no_interview, ["People often go quiet. Is it the fight or the silence?", "Which one is worse, then?", "Rest."], "asks something in 2 of 3 replies")
-    _fails(ce.score_no_interview, ["That is hard.", "I am sorry.", "Rest if you can."], "never says what this does to people")
+def test_the_interview_scorer_allows_a_concrete_question_and_wants_no_probe_no_stock_phrase_no_empty_comfort_no_hedging_and_some_substance():
+    """Revised 2026-11-10 after Jack's blind A/B (docs/model-eval-plan.md Update 16): a question is fine (the replies he chose ended on one 9 of 14 times); what is not fine is a probe, a stock phrase, comfort with
+    nothing in it, hedging, and a question in every reply. The text below is made up."""
+    good = ["A blocked profile stings because it feels final, like a door closing without a knock. That is a lot to carry on top of the silence.",
+            "Replaying it is your mind hunting for a way to fix something that is not yours to fix. Do you want to work out what you would say to her, or put it down for tonight?",
+            "Rest if you can. The silence will still be there tomorrow, and you will have more to meet it with."]
+    _passes(ce.score_no_interview, good)
+    _passes(ce.score_no_interview, [good[1], "That is the part that makes it so hard: there is nothing to answer. Which would help more, a plan for tomorrow or just company tonight?", good[2]])      # two replies may ask
+    _passes(ce.score_no_interview, [good[0], "Because it came out of nowhere, your body is still bracing for the next message. How are you doing right now?", good[2]])                              # how they are, once
+    _passes(ce.score_no_interview, [good[0], "That kind of silence is loud.", "Rest if you can."])                                                                                      # no question at all is fine
+    for probe in ("What was the last thing she sent you?", "When the thoughts come back, what is the first question that shows up?", "What do you find yourself wishing she had said?", "Did she say anything about what she needed?"):
+        _fails(ce.score_no_interview, [good[0], good[2], probe], "turn 3: probing question")
+    _fails(ce.score_no_interview, [good[0], "Is it the fight or the silence? Which one is worse?", good[2]], "turn 2: two questions")
+    _fails(ce.score_no_interview, [good[0] + " Does that land?", good[1], "It is the waiting that wears you down because it never ends. Want to put it down for a bit?"], "asks something in 3 of 3 replies")
+    _fails(ce.score_no_interview, [good[0] + " How are you doing right now?", good[2], "Because it is the kind of thing that sits on you. How are you feeling tonight?"], "asks how they are in 2 of 3 replies")
+    _fails(ce.score_no_interview, ["It sounds like you are carrying a lot.", good[1], good[2]], "turn 1: template phrase")
+    _fails(ce.score_no_interview, [good[0], "My read of it is that she needed space.", good[2]], "turn 2: template phrase")
+    _fails(ce.score_no_interview, [good[0], good[2], "Lots of people replay the last conversation."], "turn 3: template phrase")
+    _fails(ce.score_no_interview, ["That must be hard to sit with.", good[1], good[2]], "turn 1: thin comfort")
+    _fails(ce.score_no_interview, [good[0], "Maybe it might seem like she probably needs some space.", good[2]], "turn 2: hedged")
+    _fails(ce.score_no_interview, ["That is hard.", "I am sorry.", "Rest if you can."], "never says what it is like")
     _fails(ce.score_no_interview, ["", "", ""], "empty")
 
 

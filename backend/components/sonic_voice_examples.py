@@ -164,9 +164,40 @@ EXAMPLES = [
         "When someone pulls away without explaining, the mind goes hunting for the mistake because that feels more fixable than not knowing. Often there was no single thing. Not having the answer is the hard part, and it isn't a verdict on you.",
         "Names the search for the mistake; no questions about what happened.",
     ),
+    # Added 2026-11-10 as DRAFTS (not in APPROVED_IDS) after Jack's blind A/B: the replies he chose ended on a concrete, forward-moving question 9 of 14 times and said plainly what it is like, while the seven approved hurting examples
+    # above end on a statement every time and taught Haiku to do the same (25 of 27 replies). Each of these says what it is like in its own words and ends on ONE question that is easy to answer and moves things on: a choice, or a detail
+    # that matters. None is a probe (what happened, what was said, why) and none asks how they are. Invented; nothing in them is from a person's conversation.
+    _ex(
+        "hurting_friend_silence_choice", "hurting",
+        "A friend has gone quiet after an argument; the waiting is the hard part.",
+        ["my best friend hasn't texted me back since our argument on sunday", "she's been quiet for four days after we fought and i don't know what to do", "we had a big fight and now she's just ignoring my messages"],
+        "Four days of quiet after an argument is its own kind of loud, because every hour without a reply starts to read like an answer even when it is only her avoiding the conversation. The waiting is what is wearing on you, more than the fight itself. Do you want to work out one short message to send first, or give it until your head is clearer?",
+        "Says what the silence is like in its own words; ends on one concrete choice, not a probe.",
+    ),
+    _ex(
+        "hurting_bombed_presentation_choice", "hurting",
+        "A work moment went badly with the boss watching; they will replay it tonight.",
+        ["i bombed the presentation today and my boss was sitting right there", "i froze in front of the whole team this afternoon", "worst meeting of my life, i lost my place and everyone saw"],
+        "Having your boss watch the exact moment it slips is the worst version of that, because you feel the room noticing while you are still trying to finish the sentence. The replay tonight will be louder than the real minute was. Do you want to go through what you would keep and what you would change, or leave it alone until tomorrow?",
+        "Names what the moment is like and what tonight will do; one forward-moving choice at the end.",
+    ),
+    _ex(
+        "hurting_parent_silence_choice", "hurting",
+        "A parent has gone quiet since they shared a big decision.",
+        ["my dad hasn't called since i told him i'm switching majors", "i told my mom i'm dropping out and she's gone silent", "my parents are barely speaking to me since i made my decision"],
+        "That kind of silence feels like a verdict even when it is not one, and from a parent it lands harder because their approval is the one you want most. He may also be waiting for his own reaction to settle before he calls. Do you want to think through what you would say if he does, or send him a short message first?",
+        "States what the silence feels like, offers one other way to see it, and ends on a concrete choice.",
+    ),
+    _ex(
+        "hurting_slow_fade_timing", "hurting",
+        "Weeks after a breakup, memories still hit without warning.",
+        ["it's been three weeks and i still think about her all the time", "i keep getting hit with it out of nowhere, a song or a street and i'm right back", "i thought i'd be over it by now"],
+        "The random hits are the worst part of week three, because you cannot brace for them: a song, a street, a smell, and you are back in it for a minute. They fade by getting shorter and further apart, not by stopping all at once. Is there a time of day they land hardest, so we can find something to put there?",
+        "Says what the hits are like and what the fade looks like; ends on a question that leads to something practical.",
+    ),
 ]
 
-# An example is approved by adding its id here (Jack approved all nineteen on 2026-11-08, unread, to try the voice: he can remove any id, or reword an example, at any time). Everything not listed stays a draft and is never put in a prompt.
+# An example is approved by adding its id here (Jack approved all nineteen on 2026-11-08, unread, to try the voice, and the four question-ending hurting ones on 2026-11-10: he can remove any id, or reword an example, at any time). Everything not listed stays a draft and is never put in a prompt.
 APPROVED_IDS = (
     "big_win_energy",
     "light_break",
@@ -187,6 +218,10 @@ APPROVED_IDS = (
     "angry_at_them",
     "urge_to_reach_out",
     "what_did_i_do",
+    "hurting_friend_silence_choice",
+    "hurting_bombed_presentation_choice",
+    "hurting_parent_silence_choice",
+    "hurting_slow_fade_timing",
 )
 
 for _example in EXAMPLES:

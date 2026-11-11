@@ -176,11 +176,12 @@ def test_the_voice_reminder_says_what_the_measured_gaps_were_and_the_app_and_the
     import pathlib
 
     text = cv.VOICE_REMINDER
-    for part in ("never open a reply with doubt", "\"I can't see anything about them\", \"I don't know why\", \"I'd be guessing\" or \"I won't guess\"", "labelled as a read, and promise nothing either way",
+    for part in ("never open a reply with doubt", "\"I can't see anything about them\", \"I don't know why\", \"I'd be guessing\" or \"I won't guess\"", "plain account of what it is like for them", "instead of hedging about it, and promise nothing either way", "at most one softener", "never \"my read\", \"my guess\" or \"it seems\"", "and do not announce doubt either",
                  "Never explain at length what you are or are not", "open your reaction with an exclamation mark, once", "never when they are low or the topic is serious",
                  "ask one pointed question about it", "this outranks the rule about not adding a question", "never how they feel about it", "If they are wrapping up or saying goodbye, ask nothing.",
-                 "open with the thing itself in plain words", "never with a label for it", "Then say one thing they did not say, as a read, using their own details", "never comfort that would fit anyone",
-                 "ends on a statement, never on a question", "Do not ask them to tell you more, what happened, what was said, what they wish had happened, or why",
+                 "open with the thing itself in plain words", "never with a label for it", "Then say one thing they did not say, in your own words and plainly, using their own details", "never comfort that would fit anyone",
+                 "may end on ONE question when it moves things forward", "never a question that makes them retell what happened, what was said or why", "never two questions, and not a question in every reply",
+                 "Give them something to hold", "only when it comes with that substance in the same reply",
                  "is a statement and is fine", "never as reassurance about what the other person feels or means", "Start every reply with the substance (\"I hear you.\" counts, when the rules above ask for it), never with their name",
                  "use their name at most once in three replies"):
         assert part in text, part
@@ -201,7 +202,7 @@ def test_a_running_meeting_gets_the_voice_reminder_without_the_pointed_question_
     assert cv.MEETING_MARKER in section                                          # the marker is the real first line of the meeting section
     in_meeting = cv.with_tail("PROMPT " + section, "voice")
     assert in_meeting.endswith(cv.MEETING_REMINDER) and "ask one pointed question about it" not in in_meeting and "In a meeting, ask at most one question in a reply" in in_meeting
-    assert "ends on a statement, never on a question" in in_meeting and "Start every reply with the substance" in in_meeting       # the rest of the voice reminder is unchanged
+    assert "may end on ONE question when it moves things forward" in in_meeting and "Start every reply with the substance" in in_meeting       # the rest of the voice reminder is unchanged
     plain = cv.with_tail("PROMPT with no meeting", "voice")
     assert plain.endswith(cv.VOICE_REMINDER) and "ask one pointed question about it" in plain and cv.MEETING_REMINDER not in plain
     assert cv.voice_reminder_for("no meeting here") == cv.VOICE_REMINDER
@@ -215,3 +216,18 @@ def test_the_meeting_section_says_to_move_on_after_one_follow_up_never_go_back_a
     for part in ("Ask at most one follow-up on an item, then move on.", "Never go back to an item they have answered, even after a detour", "do not restart or recap the meeting from the top",
                  "If they say you are looping or that something was already covered, believe them", "Stay on the agenda: do not raise anything outside it"):
         assert part in section, part
+
+
+def test_the_voice_reminder_no_longer_tells_the_model_to_hedge_or_to_never_end_a_hurting_reply_on_a_question():
+    """2026-11-10, Jack's blind A/B: Haiku hedged (30% of replies had two or more softeners, Flash 0%) and ended 25 of 27 replies on a statement. Both came from this reminder."""
+    text = cv.VOICE_REMINDER
+    for gone in ("Show doubt in your wording", "labelled as a read", "as a read, using their own details", "ends on a statement, never on a question", "as a read and never as your own experience"):
+        assert gone not in text, gone
+
+
+def test_the_voice_reminder_tells_the_model_to_speak_to_this_person_and_not_about_how_such_things_go():
+    reminder = cv.VOICE_REMINDER
+    assert "FOR THEM" in reminder and "wants to be heard" in reminder
+    for phrase in ("\"often\"", "\"can be\"", "\"tends to\"", "\"it's easy to\""):
+        assert phrase in reminder, phrase
+    assert "what tends to help" not in reminder            # the old text asked for exactly the generalising it now forbids
