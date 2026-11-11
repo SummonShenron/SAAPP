@@ -197,3 +197,77 @@ def test_a_plain_positive_reading_keeps_the_generic_warmth_guidance():
     context = eu.build_emotional_context(_state("positive", "none"), NOW)
     assert "ONE specific question" not in context
     assert "Let that warmth carry naturally" in context
+
+
+# ---- attunement (2026-11-10, Jack's blind A/B): hedged, scripted, thin or interviewing replies to someone low -------------------------------------------------------------------------------------------------------
+# Every text below is made up.
+
+SUBSTANTIVE = ("Four days of quiet after an argument is its own kind of loud, because every hour without a reply starts to read like an answer even when it is only her avoiding the conversation. "
+               "The waiting is what is wearing on you more than the fight itself.")
+
+
+def test_a_reply_that_makes_them_retell_what_happened_is_a_probing_question():
+    assert ec.reply_attunement_issue(SUBSTANTIVE + " What was the last thing she sent you?") == "probing_question"
+    assert ec.reply_attunement_issue(SUBSTANTIVE + " What did she say when you asked her why?") == "probing_question"
+    assert ec.reply_attunement_issue(SUBSTANTIVE + " Why do you think she went quiet?") == "probing_question"
+
+
+def test_a_concrete_forward_question_or_no_question_at_all_is_fine():
+    assert ec.reply_attunement_issue(SUBSTANTIVE + " Do you want to work out a short message to send first, or give it until your head is clearer?") is None
+    assert ec.reply_attunement_issue(SUBSTANTIVE) is None
+    assert ec.reply_attunement_issue("") is None
+
+
+def test_two_questions_in_one_reply_is_too_many():
+    assert ec.reply_attunement_issue(SUBSTANTIVE + " Do you want to send a message? Or wait until tomorrow?") == "two_questions"
+
+
+def test_stock_reflective_listening_phrases_are_caught():
+    for phrase in ("It sounds like you are carrying a lot.", "My read of it is that she needed space.", "Lots of people go quiet after a fight.", "Most people replay it for days.", "People often need space."):
+        assert ec.reply_attunement_issue(SUBSTANTIVE + " " + phrase) == "template_phrase", phrase
+    assert ec.reply_attunement_issue("That sounds awful, and the waiting is the worst of it because there is nothing to do with it.") is None      # "sounds awful" is not the template
+
+
+def test_that_must_be_hard_needs_something_with_it():
+    assert ec.reply_attunement_issue("That must be hard to sit with.") == "thin_comfort"
+    assert ec.reply_attunement_issue("That must be hard. I am sorry you are going through it, and I am here.") == "thin_comfort"
+    # long enough but still says nothing about what it is like
+    padding = "I am thinking about you and I hope the evening goes gently for you and that you find something small to do with the hours you have left before bed tonight and tomorrow too."
+    assert ec.reply_attunement_issue("That must be hard. " + padding) == "thin_comfort"
+    # with substance (an explaining phrase and enough words) it is allowed
+    assert ec.reply_attunement_issue("That must be hard. " + SUBSTANTIVE) is None
+
+
+def test_hedging_is_allowed_once_and_not_more():
+    assert ec.reply_attunement_issue("Four days of quiet is loud, because every hour without a reply reads like an answer. It might be only her avoiding the conversation.") is None
+    assert ec.reply_attunement_issue("Four days of quiet is loud. It might be that she is avoiding it, or maybe she probably needs space, and it seems like a lot.") == "hedged"
+
+
+def test_talk_about_how_such_things_go_is_allowed_once_and_regenerated_at_two():
+    """Jack, 2026-11-10: someone venting wants to be heard, not told what is typical ("often", "can be", "tends to")."""
+    own = "Four days of quiet after the argument is loud, because every hour without a reply starts to read like an answer."
+    assert ec.reply_attunement_issue(own + " Silence after a fight can feel like a verdict.") is None
+    assert ec.reply_attunement_issue(own + " Silence after a fight can feel like a verdict, and it is easy to read it as anger. It often is not.") == "generalizing"
+    assert ec.reply_attunement_issue("The replaying is your mind hunting for a way to fix it. People tend to do that, and it is common to do it at night.") in ("generalizing", "template_phrase")
+    assert ec.reply_attunement_issue(own + " Waiting for her to call is the part that wears on you.") is None
+
+
+def test_a_low_reading_regenerates_a_scripted_reply_whatever_the_need_and_a_good_reply_passes():
+    for need in ("venting", "reassurance", "solving", "connection"):
+        assert ec.emotional_reply_issue(_state("low", need), "It sounds like you are carrying a lot.") == "template_phrase", need
+    assert ec.emotional_reply_issue(_state("low", "venting"), SUBSTANTIVE) is None
+    # the older checks still win first
+    assert ec.emotional_reply_issue(_state("distressed", "venting"), "You should talk to someone. It sounds like a lot.") == "venting_advice"
+    # a positive feeling is not held to it
+    assert ec.emotional_reply_issue(_state("positive", "connection"), "It sounds like you are carrying a lot.") is None
+
+
+def test_every_attunement_tag_has_a_revision_reason_the_model_is_told():
+    for tag in ("probing_question", "two_questions", "template_phrase", "thin_comfort", "hedged", "generalizing"):
+        assert ec._REVISION_REASONS[tag].strip(), tag
+
+
+def test_the_eval_scorer_uses_the_same_patterns_as_the_live_check():
+    from backend.evals import character_eval as ce
+
+    assert ce._PROBE_RE is ec.PROBE_RE and ce._STATE_ASK_RE is ec.STATE_ASK_RE and ce.EXPLAIN_RE is ec.EXPLAIN_RE

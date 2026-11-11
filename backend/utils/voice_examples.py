@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from backend.components import sonic_voice_examples as registry
 from backend.utils import leanings
+from backend.utils.emotion_checks import PROBE_RE, STATE_ASK_RE
 from backend.utils.identity_checks import identity_reply_issue
 
 logger = logging.getLogger("SASS Logger")
@@ -198,15 +199,25 @@ def check_registry(examples: Optional[List[Dict[str, Any]]] = None) -> List[str]
 
 
 def check_set(examples: Optional[List[Dict[str, Any]]] = None) -> List[str]:
-    """Problems with the examples AS A SET, because the set is what teaches the voice: at most 30% end on a question; "I'm right here" and "I hear you" together at most twice (they were overused); at least 6 light and 5 hurting ones; and most light
+    """Problems with the examples AS A SET, because the set is what teaches the voice: at most half end on a question, and of the HURTING ones between 30% and 70% do (Jack's blind A/B, 2026-11-10: the replies he chose ended on a
+    question 9 of 14 times, and a set that never did taught Haiku to end every reply on a statement); no example asks a probe (what happened, what was said, why) or how they are; "I'm right here" and "I hear you" together at most twice (they were overused); at least 6 light and 5 hurting ones; and most light
     ones carry an exclamation mark (the clearest gap to the standard voice). Pure."""
     items = list(registry.EXAMPLES if examples is None else examples)
     if not items:
         return ["there are no examples"]
     problems: List[str] = []
     replies = [str(e.get("reply", "")) for e in items]
-    if sum(_ends_on_question(r) for r in replies) > 0.3 * len(items):
-        problems.append("more than 30% of the examples end on a question")
+    if sum(_ends_on_question(r) for r in replies) > 0.5 * len(items):
+        problems.append("more than half of the examples end on a question")
+    hurting_replies = [str(e.get("reply", "")) for e in items if e.get("tone") == "hurting"]
+    if hurting_replies:
+        asking = sum(_ends_on_question(r) for r in hurting_replies)
+        if not 0.3 * len(hurting_replies) <= asking <= 0.7 * len(hurting_replies):
+            problems.append(f"between 30% and 70% of the hurting examples should end on a question (end on a question: {asking} of {len(hurting_replies)})")
+    for reply in replies:
+        for sentence in (x for x in re.split(r"(?<=[.!?])\s+", reply) if x.strip().endswith("?")):
+            if PROBE_RE.search(sentence) or STATE_ASK_RE.search(sentence):
+                problems.append("an example asks a probe (what happened, what was said, why) or how they are")
     if sum(len(re.findall(r"right here|I hear you", r, re.IGNORECASE)) for r in replies) > 2:
         problems.append("'I'm right here' and 'I hear you' appear more than twice across the examples")
     tones = [e.get("tone") for e in items]

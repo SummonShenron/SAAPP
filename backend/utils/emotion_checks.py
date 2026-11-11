@@ -89,11 +89,103 @@ def reply_shows_curiosity(text: str) -> bool:
     return False
 
 
+# ---- attunement: a reply to someone low that is hedged, scripted, thin or interviews them (2026-11-10, Jack's blind A/B: docs/model-eval-plan.md Update 16) ----------------------------------------------------------
+# Flash won 13 of 14 decisive picks. Haiku hedged (1.3 softeners a reply, 30% with two or more, against Flash's 0.3 and none), leaned on stock reflective-listening phrases ("it sounds like" 15% of replies against 4%, "lots of
+# people" 11% against 4%, "my read of it" 7% against 0), and said "that must be hard" without giving anything with it. Every one of these is a pattern a check can see, so they are checks, on any base model, for a person who
+# is low (a negative feeling read from THIS message). What they do NOT forbid: a concrete question that moves things forward, a plain check on how they are doing now and then, and "that must be hard" when it comes with substance.
+PROBE_RE = re.compile(
+    r"\bwhat (?:was|is) the (?:last|first) (?:thing|question)\b"
+    r"|\bwhat did (?:she|he|they|your \w+|you) (?:say|tell|send|do|write)\b|\bwhat (?:she|he|they) (?:said|sent|told|wrote)\b"
+    r"|\b(?:did|has|had|have) (?:she|he|they) (?:say|said|mention\w*|tell|told|explain\w*|give|gave)\b"
+    r"|\bwhat do you (?:wish|want) (?:she|he|they)\b|\bwishing (?:she|he|they)\b"
+    r"|\bwhy do you (?:think|suppose)\b|\bwhen (?:they|those thoughts|the thoughts) come back\b"
+    r"|\bbefore (?:she|he|they) (?:went|stopped|got|left|started)\b"
+    r"|\bwhich part\b[^?]{0,50}\b(?:hurt|hurts|stings|snags|bothers|sticks)\b",
+    re.IGNORECASE,
+)
+STATE_ASK_RE = re.compile(
+    r"\bhow (?:are|do|did|is|has|have|was) (?:you|that|this|it|things|your (?:day|morning|night|afternoon|evening|head|heart|chest|body))[^?]{0,45}\b(?:feel\w*|doing|going|holding up|sitting|landing|been|today|tonight|morning|afternoon)\b"
+    r"|\bhow are you\b|\bhow'?s (?:the |your )?(?:day|morning|night|afternoon|evening|it going|things|everything)\b|\bwhat does (?:that|this|it) feel like\b|\bhow does (?:that|this|it) (?:feel|sit|land)\b|\bon your mind\b|\bhow heavy\b|\bwhat do you need\b|\bwhat would help\b"
+    r"|\bare you (?:staying|keeping|still) (?:warm|comfortable|laying|lying)\b|\bhave you (?:eaten|slept|had anything|had something|gotten (?:some )?(?:sleep|rest|food|air)|been able to get)\b"
+    r"|\b(?:set|put) (?:the|your) phone (?:down|away|in another room)\b|\bfresh air\b|\bsomething to (?:eat|drink)\b|\banything (?:that )?feels? grounding\b",
+    re.IGNORECASE,
+)
+# Stock reflective-listening phrasing and "lots of people" generalising. "That must be hard" is NOT here: it is allowed with substance (THIN_COMFORT below).
+TEMPLATE_PHRASE_RE = re.compile(
+    r"\b(?:it|that|this) sounds like\b|\bmy (?:read|guess)(?: of it| on it| is)?\b|\b(?:lots|a lot|plenty|so many) of (?:people|us)\b|\bmost people\b|\bpeople (?:often|usually|commonly|tend)\b",
+    re.IGNORECASE,
+)
+HEDGE_RE = re.compile(
+    r"\b(?:might|maybe|perhaps|possibly|probably|could be|i wonder|seems?|seemed|my guess|my read|sort of|kind of|a bit like|in some ways|tends? to|may be|may feel)\b", re.IGNORECASE)
+# "How such things go" talk (2026-11-10, Jack on a venting reply: "I don't like the 'often times can be x', the user is clearly venting and is just trying to be heard"). Haiku's hurt replies carried 1.45-1.6 of these each
+# (70-75% had one), Flash 1.2 (65%); with two or more it was 11 of 30 Haiku replies against 5 of 20 Flash, so one is let through and a second is regenerated.
+GENERAL_RE = re.compile(
+    r"\b(?:often|sometimes)\b|\bcan (?:often |also )?(?:be|feel|start|make|read|sting)\b|\btend(?:s)? to\b|\bit'?s easy to\b|\bit'?s (?:natural|normal|common|understandable) (?:to|that|for)\b", re.IGNORECASE)
+MAX_GENERAL = 1
+MAX_HEDGES = 1                 # measured: Flash 0.3 a reply and never two; Haiku 1.3 and 30% with two or more
+COMFORT_RE = re.compile(r"\bmust be (?:hard|heavy|tough|difficult|a lot)\b|\bhard to sit with\b", re.IGNORECASE)
+EXPLAIN_RE = re.compile(
+    r"\b(?:feels? like|it'?s like|is like|the hard part|what makes (?:it|that)|the part that|that'?s the part|the thing about|because|which is why|it'?s the kind of|the way (?:it|that)|that kind of)\b", re.IGNORECASE)
+THIN_COMFORT_WORDS = 40        # words in the rest of the reply that must come with "that must be hard", and one of the explaining phrases among them
+
+
+def _question_sentences(text: str):
+    return [s for s in _sentences(text) if s.endswith("?")]
+
+
+def reply_attunement_issue(reply: str) -> Optional[str]:
+    """The tag of what is off about a reply to someone who is low, or None: "probing_question" (it ends by making them retell what happened, was said or why), "two_questions", "template_phrase" (a stock
+    reflective-listening phrase), "thin_comfort" ("that must be hard" with nothing given with it), "hedged" (more than MAX_HEDGES softeners) or "generalizing" (more than MAX_GENERAL "how such things go" phrases). Pure."""
+    text = reply_body(reply)
+    if not text:
+        return None
+    questions = _question_sentences(text)
+    if questions and PROBE_RE.search(questions[-1]):
+        return "probing_question"
+    if len(questions) >= 2:
+        return "two_questions"
+    if TEMPLATE_PHRASE_RE.search(text):
+        return "template_phrase"
+    sentences = _sentences(text)
+    comfort = [s for s in sentences if COMFORT_RE.search(s)]
+    if comfort:
+        rest = " ".join(s for s in sentences if s not in comfort)
+        if len(rest.split()) < THIN_COMFORT_WORDS or not EXPLAIN_RE.search(rest):
+            return "thin_comfort"
+    if len(HEDGE_RE.findall(text)) > MAX_HEDGES:
+        return "hedged"
+    if len(GENERAL_RE.findall(text)) > MAX_GENERAL:
+        return "generalizing"
+    return None
+
+
 _REVISION_REASONS = {
     "venting_advice": (
         "the person mainly wants to be heard right now, and the draft gave advice or suggestions. Write it "
         "again so it stays with what they are feeling and what they actually said: no advice, tips, "
         "suggestions or lists. It is fine to end by inviting them to say more."
+    ),
+    "probing_question": (
+        "the draft ends by asking them to retell what happened, what was said or why, which makes them do the work. Write it again without that question: say what it is like for them, plainly and "
+        "specific to what they said, and if you ask anything, ask ONE concrete question that is easy to answer and moves forward (a choice between two next steps, or a specific detail about what they care about)."
+    ),
+    "two_questions": (
+        "the draft asked more than one question. Write it again with at most one: concrete, easy to answer, and moving things forward."
+    ),
+    "template_phrase": (
+        "the draft leaned on stock phrasing (\"it sounds like\", \"my read\", \"lots of people\", \"most people\"). Write it again without those: say plainly, in your own words, what it is like for them, "
+        "using what they told you."
+    ),
+    "thin_comfort": (
+        "the draft said that it must be hard, or hard to sit with, without giving them anything with it. Write it again: keep the warmth, but add what it is actually like or what tends to help, in your own "
+        "words and specific to what they said."
+    ),
+    "generalizing": (
+        "the draft talked about how such things go in general (\"often\", \"can be\", \"tends to\", \"it's easy to\"). Write it again speaking only about THIS person and what they told you: say what it is like for them, "
+        "straight to them, with their own details. They are being heard, not taught what is typical."
+    ),
+    "hedged": (
+        "the draft hedged too much (maybe, might, seems, probably, sort of). Write it again saying what you think it is like for them plainly, as something you are telling them, with at most one softener in the whole reply."
     ),
     "celebration_no_question": (
         "the person shared exciting news and the draft was warm but showed no real curiosity about it. "
@@ -116,6 +208,8 @@ def emotional_reply_issue(state: Optional[Dict[str, Any]], reply: str) -> Option
         return "venting_advice"
     if need == "celebration" and valence in POSITIVE_VALENCES and not reply_shows_curiosity(reply):
         return "celebration_no_question"
+    if valence in NEGATIVE_VALENCES:
+        return reply_attunement_issue(reply)       # a low person, whatever the need: hedged, scripted, thin or interviewing replies are regenerated once
     return None
 
 

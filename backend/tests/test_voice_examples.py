@@ -194,3 +194,35 @@ def test_the_app_selects_examples_for_every_base_model_with_the_safety_and_emoti
     assert "voice_examples_utils.tally_turn(turn_counts, voice_example_entries, tally)" in source
     assert "voice_examples_utils.warm(get_db(), embed_text)" in source
     assert "from backend.utils import voice_examples as voice_examples_utils" in source
+
+
+# ---- the set check after Jack's blind A/B (2026-11-10): hurting examples may end on a question, probes may not --------------------------------------------------------------------------------------------------------
+
+def test_the_set_check_wants_a_third_to_seven_tenths_of_the_hurting_examples_to_end_on_a_concrete_question_and_no_probe_anywhere():
+    def make(mutate):
+        items = [copy.deepcopy(e) for e in registry.EXAMPLES]
+        mutate(items)
+        return ve.check_set(items)
+
+    hurting = lambda items: [e for e in items if e["tone"] == "hurting"]
+    assert ve.check_set() == []
+    # none of the hurting examples ends on a question: the old set, which taught Haiku to end every reply on a statement
+    assert any("between 30% and 70%" in p for p in make(lambda items: [e.update(reply=e["reply"].rsplit("?", 1)[0].rsplit(".", 1)[0] + ".") for e in hurting(items)]))
+    # every hurting example ends on one
+    assert any("between 30% and 70%" in p for p in make(lambda items: [e.update(reply=e["reply"].rstrip(".!?") + " Does that fit?") for e in hurting(items)]))
+    # a probe or a how-are-you in an example teaches the interview
+    assert any("probe" in p for p in make(lambda items: items[0].update(reply=items[0]["reply"] + " What did she say when you asked?")))
+    assert any("probe" in p for p in make(lambda items: items[0].update(reply=items[0]["reply"] + " How are you feeling today?")))
+
+
+def test_the_four_question_ending_hurting_examples_are_approved_and_pass_the_live_attunement_check_with_no_generalising_talk():
+    from backend.utils import emotion_checks as ec
+
+    new_ids = ["hurting_friend_silence_choice", "hurting_bombed_presentation_choice", "hurting_parent_silence_choice", "hurting_slow_fade_timing"]
+    by_id = {e["id"]: e for e in registry.EXAMPLES}
+    for example_id in new_ids:
+        example = by_id[example_id]
+        assert example["tone"] == "hurting" and example_id in registry.APPROVED_IDS and example["approved"] and example["reply"].rstrip().endswith("?")
+        assert ec.reply_attunement_issue(example["reply"]) is None, example_id          # the examples obey the check the live reply is held to
+        assert not ec.GENERAL_RE.search(example["reply"]), example_id              # and teach none of the 'how such things go' talk Jack dislikes
+    assert len([e for e in registry.EXAMPLES if e["tone"] == "hurting"]) == 11
