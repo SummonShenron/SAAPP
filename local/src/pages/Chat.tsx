@@ -1768,6 +1768,8 @@ useEffect(() => {
     // the "quick scroll through the messages" stutter (each call re-measures layout mid-animation
     // and restarts it). While streaming, just pin the container to its bottom instantly instead.
     const isNewMessage = messages.length !== prevMessageCountRef.current;
+    // The thread filled from empty (first load or reload): land on the newest messages, not the top.
+    const isInitialLoad = prevMessageCountRef.current === 0 && messages.length > 0;
     prevMessageCountRef.current = messages.length;
     const justFinishedLoading = prevLoadingRef.current && !loading;
     prevLoadingRef.current = loading;
@@ -1789,7 +1791,7 @@ useEffect(() => {
     } else if (loading && chatWindowRef.current && nearBottomRef.current) {
       // Follow a running turn only while the user is already at the bottom; a poll must not move a user who scrolled up.
       pinToBottom(chatWindowRef.current);
-    } else if (justFinishedLoading && chatWindowRef.current) {
+    } else if ((justFinishedLoading || isInitialLoad) && chatWindowRef.current) {
       // The spinner/loader row between the messages and the bottom anchor unmounts the instant
       // loading flips false, and that message's follow-up/feedback controls mount at the same
       // moment — both change the container's scrollHeight right here. Without re-pinning, the

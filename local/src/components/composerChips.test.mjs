@@ -137,6 +137,8 @@ test('the model chip is two settings in one popup: the Base model (who writes th
   assert.match(specOption(BASE_MODEL, 'lite').hint, /safety context where Sonic always uses Gemini/);   // and for Gemini Lite
   assert.match(specOption(BASE_MODEL, 'haiku').hint, /safety context where Sonic always uses Gemini/);  // and for Claude Haiku, which also says where the messages go
   assert.match(specOption(BASE_MODEL, 'haiku').hint, /go to Anthropic/);
+  assert.match(specOption(BASE_MODEL, 'haiku').hint, /also reads each one first to route it and to notice how you are feeling/);   // the reasoner runs on Haiku for this choice (models.reasoner_llm_for), and the hint says so
+  assert.doesNotMatch(specOption(BASE_MODEL, 'auto').hint, /reads each one first/);   // Auto's reasoner stays on Gemini, so the hint must not say otherwise
   assert.match(specOption(BASE_MODEL, 'auto').hint, /safety context/);                                 // and for Auto, which also says what stays on Gemini
   assert.match(specOption(BASE_MODEL, 'auto').hint, /Claude Haiku \(Anthropic\) writes the plain turns/);   // Auto's plain turns are Haiku's, and the hint says where they go
   assert.match(specOption(BASE_MODEL, 'auto').hint, /Plain turns go to Anthropic/);

@@ -361,6 +361,24 @@ def advisor_llm_for(loop_llm):
     return None
 
 
+REASONER_HAIKU_CHOICES = ("haiku",)      # only the explicit "Claude Haiku" base model: Auto promises that a turn carrying a feeling never goes to Anthropic, and the reasoner reads every message (feeling and risk included), so Auto stays on the lite model
+_reasoner_haiku: dict = {}
+
+
+def reasoner_llm_for(reply_choice):
+    """(model, "haiku" | "lite") for the reasoner call that runs first on every turn (agent_workflow.reasoner_node), by the person's base-model setting: Claude Haiku (low effort, thinking ON, Flash Lite as its fallback)
+    for a person who chose the Claude Haiku base model, whose messages already go to Anthropic, and the Gemini lite model for everyone else (the standard voice, Auto, GPT, Lite, and a turn with no choice), so nobody's messages reach a provider they
+    did not pick. Thinking is on because the evals showed it matters: 331 of 331 right with it, three risk misses in 80 without it, on the job that also reads risk (docs/model-eval-plan.md). Costs about a third of the lite model per call, about
+    a quarter of a second slower. REASONER_HAIKU=off puts everyone back on the lite model. Falls back to the lite model when no Claude key or Haiku price is configured."""
+    from backend.models import claude_llm
+
+    if reply_choice in REASONER_HAIKU_CHOICES and os.getenv("REASONER_HAIKU", "").strip().lower() not in ("0", "off", "false", "no") and haiku_reply_available():
+        if "haiku" not in _reasoner_haiku:
+            _reasoner_haiku["haiku"] = claude_llm.ClaudeLLM(model_name=claude_llm.DEFAULT_MODEL, fallback=lite_llm, effort="low", thinking_off=False, max_tokens=4000)
+        return _reasoner_haiku["haiku"], "haiku"
+    return lite_llm, "lite"
+
+
 _summary_llm: dict = {}
 
 

@@ -927,6 +927,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         "rag_mode": effective_rag_mode,
         "deep_thinking": effective_deep_thinking,
         "tool_model": effective_tool_model,
+        "reply_model": reply_choice,         # the reasoner's model follows it (models.reasoner_llm_for)
         "execute_model": _settings.get("execute_model"),     # who carries out an approved plan: None = the same as their Code model
         "edit_decisions": bool(request.edit_decisions),
         "code_followup": code_followup,

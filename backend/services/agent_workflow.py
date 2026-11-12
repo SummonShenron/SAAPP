@@ -23,7 +23,7 @@ from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langchain_core.documents import Document
 from backend.services.search import get_secure_retriever
 from backend.models.claude_llm import ClaudeLLM
-from backend.models.models import advisor_llm_for, get_chat_llm, lite_llm, lite_llm_deep, plan_review_llm, review_llm, tool_agent_llm
+from backend.models.models import advisor_llm_for, get_chat_llm, lite_llm, lite_llm_deep, plan_review_llm, reasoner_llm_for, review_llm, tool_agent_llm
 from backend.state import graph_db
 from backend.utils.attachment_utils import retrieve_from_session
 from backend.utils.isolation_kb_utils import load_directory, load_user_directory_groups
@@ -986,8 +986,14 @@ async def reasoner_node(state: GraphState) -> GraphState:
         )
 
         try:
-            # 2. USE AINVOKE FOR NON-BLOCKING LLAMA CALL
-            response = await lite_llm.ainvoke(formatted_prompt)
+            # 2. USE AINVOKE FOR NON-BLOCKING LLAMA CALL. The model follows the person's base-model setting (models.reasoner_llm_for): Haiku for a person who chose the Claude Haiku base model, the lite Gemini model for everyone else.
+            reasoner_llm, reasoner_kind = reasoner_llm_for(state.get("reply_model"))
+            if reasoner_kind == "lite":
+                reasoner_llm = lite_llm      # this module's own name for it, as before
+            from backend.utils.self_counters import record_turn_counts
+
+            await asyncio.to_thread(record_turn_counts, {f"reasoner_on_{reasoner_kind}": 1})
+            response = await reasoner_llm.ainvoke(formatted_prompt)
             resp_content = response.content if hasattr(response, "content") else str(response)
 
             # Safely handle list vs string response types

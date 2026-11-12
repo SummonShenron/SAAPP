@@ -79,6 +79,7 @@ class GraphState(TypedDict):
     choice_cards: Optional[bool]                  # the page can show a choice card and report the answer (POST /api/chat/choice/{id}), so the ask_choice tool may be offered (backend/services/choice_cards.py)
     runner_cards: Optional[bool]                # the page can show a local-runner check card (Run / Cancel), so the run_local_check tool may be offered (backend/utils/runner_jobs.py)
     tool_model: Optional[str]                     # "claude" | "sonnet" | "gpt" | "gemini": the person's choice for the tool agent's reasoning steps; None = the server's default
+    reply_model: Optional[str]                    # "gemini" | "gpt" | "lite" | "haiku" | "auto": the person's base-model setting this turn; the reasoner runs on Haiku for "haiku" only (models.reasoner_llm_for)
     execute_model: Optional[str]                  # "claude" | "sonnet" | "gpt" | "gemini": the person's choice for the model that carries out an approved plan; None = the same as their Code model
     budget_level: Optional[str]                   # the usage budget guard's level this turn (backend/utils/budget_guard.py)
     insight_answer: Optional[str]                 # Woven into CONVERSATIONAL_PROMPT's {insight} slot
